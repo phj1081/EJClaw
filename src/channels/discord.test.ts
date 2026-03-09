@@ -161,9 +161,7 @@ function createMessage(overrides: {
     member: overrides.memberDisplayName
       ? { displayName: overrides.memberDisplayName }
       : null,
-    guild: overrides.guildName
-      ? { name: overrides.guildName }
-      : null,
+    guild: overrides.guildName ? { name: overrides.guildName } : null,
     channel: {
       name: overrides.channelName ?? 'general',
       messages: {
@@ -300,16 +298,20 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).not.toHaveBeenCalled();
     });
 
-    it('ignores bot messages', async () => {
+    it('ignores own messages but allows other bots', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
 
-      const msg = createMessage({ isBot: true, content: 'I am a bot' });
-      await triggerMessage(msg);
-
+      // Own messages (matching bot user id) should be ignored
+      const ownMsg = createMessage({ authorId: '999888777', content: 'I am self' });
+      await triggerMessage(ownMsg);
       expect(opts.onMessage).not.toHaveBeenCalled();
-      expect(opts.onChatMetadata).not.toHaveBeenCalled();
+
+      // Other bot messages should be processed
+      const otherBotMsg = createMessage({ isBot: true, content: 'I am another bot' });
+      await triggerMessage(otherBotMsg);
+      expect(opts.onMessage).toHaveBeenCalled();
     });
 
     it('uses member displayName when available (server nickname)', async () => {
@@ -641,8 +643,11 @@ describe('DiscordChannel', () => {
 
       await channel.sendMessage('dc:1234567890123456', 'Hello');
 
-      const fetchedChannel = await currentClient().channels.fetch('1234567890123456');
-      expect(currentClient().channels.fetch).toHaveBeenCalledWith('1234567890123456');
+      const fetchedChannel =
+        await currentClient().channels.fetch('1234567890123456');
+      expect(currentClient().channels.fetch).toHaveBeenCalledWith(
+        '1234567890123456',
+      );
     });
 
     it('strips dc: prefix from JID', async () => {
