@@ -31,6 +31,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getLastHumanMessageTimestamp,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
@@ -403,6 +404,26 @@ async function startMessageLoop(): Promise<void> {
                   isTriggerAllowed(chatJid, m.sender, allowlistCfg)),
             );
             if (!hasTrigger) continue;
+          }
+
+          // Bot-collaboration timeout: if all new messages are from bots,
+          // only process if a human sent a message within the last 12 hours.
+          const BOT_COLLAB_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+          const allFromBots = groupMessages.every(
+            (m) => m.is_from_me || !!m.is_bot_message,
+          );
+          if (allFromBots) {
+            const lastHuman = getLastHumanMessageTimestamp(chatJid);
+            if (
+              !lastHuman ||
+              Date.now() - new Date(lastHuman).getTime() > BOT_COLLAB_TIMEOUT_MS
+            ) {
+              logger.info(
+                { chatJid, lastHuman },
+                'Bot-collaboration timeout: no human message within 12h, skipping',
+              );
+              continue;
+            }
           }
 
           // Pull all messages since lastAgentTimestamp so non-trigger

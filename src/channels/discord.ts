@@ -160,6 +160,7 @@ export class DiscordChannel implements Channel {
         content,
         timestamp,
         is_from_me: false,
+        is_bot_message: message.author.bot ?? false,
       });
 
       logger.info(

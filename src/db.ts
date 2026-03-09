@@ -320,15 +320,15 @@ export function getNewMessages(
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
   // Subquery takes the N most recent, outer query re-sorts chronologically.
+  // Bot messages (is_bot_message=1) are included so bot-collaboration mode works.
+  // Content prefix filter is a backstop for pre-migration self-messages.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
-        AND is_bot_message = 0 AND content NOT LIKE ?
+        AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
@@ -353,15 +353,14 @@ export function getMessagesSince(
   botPrefix: string,
   limit: number = 200,
 ): NewMessage[] {
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
   // Subquery takes the N most recent, outer query re-sorts chronologically.
+  // Bot messages included for bot-collaboration mode.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
-        AND is_bot_message = 0 AND content NOT LIKE ?
+        AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
@@ -370,6 +369,22 @@ export function getMessagesSince(
   return db
     .prepare(sql)
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+}
+
+/**
+ * Get the timestamp of the last human (non-bot) message in a chat.
+ * Used for bot-collaboration timeout (12h cap).
+ */
+export function getLastHumanMessageTimestamp(chatJid: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT timestamp FROM messages
+       WHERE chat_jid = ? AND is_bot_message = 0 AND is_from_me = 0
+         AND content != '' AND content IS NOT NULL
+       ORDER BY timestamp DESC LIMIT 1`,
+    )
+    .get(chatJid) as { timestamp: string } | undefined;
+  return row?.timestamp ?? null;
 }
 
 export function createTask(

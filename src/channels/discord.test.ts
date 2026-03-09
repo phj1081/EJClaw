@@ -304,12 +304,18 @@ describe('DiscordChannel', () => {
       await channel.connect();
 
       // Own messages (matching bot user id) should be ignored
-      const ownMsg = createMessage({ authorId: '999888777', content: 'I am self' });
+      const ownMsg = createMessage({
+        authorId: '999888777',
+        content: 'I am self',
+      });
       await triggerMessage(ownMsg);
       expect(opts.onMessage).not.toHaveBeenCalled();
 
       // Other bot messages should be processed
-      const otherBotMsg = createMessage({ isBot: true, content: 'I am another bot' });
+      const otherBotMsg = createMessage({
+        isBot: true,
+        content: 'I am another bot',
+      });
       await triggerMessage(otherBotMsg);
       expect(opts.onMessage).toHaveBeenCalled();
     });
