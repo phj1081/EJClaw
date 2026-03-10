@@ -80,10 +80,15 @@ function prepareGroupEnvironment(
     );
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(projectRoot, 'container', 'skills');
+  // Sync skills into each group's .claude/skills/
+  // Sources: 1) user's global ~/.claude/skills/  2) container/skills/ (nanoclaw bundled)
   const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
+  const skillSources = [
+    path.join(os.homedir(), '.claude', 'skills'),
+    path.join(projectRoot, 'container', 'skills'),
+  ];
+  for (const skillsSrc of skillSources) {
+    if (!fs.existsSync(skillsSrc)) continue;
     for (const skillDir of fs.readdirSync(skillsSrc)) {
       const srcDir = path.join(skillsSrc, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
