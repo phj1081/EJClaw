@@ -7,6 +7,11 @@ export interface AdditionalMount {
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
+  // Per-group model/effort overrides (take precedence over global env vars)
+  codexModel?: string;
+  codexEffort?: string;
+  claudeModel?: string;
+  claudeEffort?: string;
 }
 
 export type AgentType = 'claude-code' | 'codex';

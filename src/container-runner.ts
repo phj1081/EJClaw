@@ -202,10 +202,16 @@ function prepareGroupEnvironment(
       process.env.OPENAI_API_KEY;
     if (openaiKey) env.OPENAI_API_KEY = openaiKey;
 
-    // Codex model/effort configuration
-    const codexModel = envVars.CODEX_MODEL || process.env.CODEX_MODEL;
+    // Codex model/effort configuration (per-group overrides global)
+    const codexModel =
+      group.containerConfig?.codexModel ||
+      envVars.CODEX_MODEL ||
+      process.env.CODEX_MODEL;
     if (codexModel) env.CODEX_MODEL = codexModel;
-    const codexEffort = envVars.CODEX_EFFORT || process.env.CODEX_EFFORT;
+    const codexEffort =
+      group.containerConfig?.codexEffort ||
+      envVars.CODEX_EFFORT ||
+      process.env.CODEX_EFFORT;
     if (codexEffort) env.CODEX_EFFORT = codexEffort;
 
     // Codex session directory
@@ -243,7 +249,7 @@ function prepareGroupEnvironment(
         process.env.CLAUDE_CODE_OAUTH_TOKEN ||
         '';
     }
-    // Model/thinking config
+    // Model/thinking config (per-group overrides global)
     for (const key of [
       'CLAUDE_MODEL',
       'CLAUDE_THINKING',
@@ -252,6 +258,12 @@ function prepareGroupEnvironment(
     ]) {
       const val = envVars[key as keyof typeof envVars] || process.env[key];
       if (val) env[key] = val;
+    }
+    if (group.containerConfig?.claudeModel) {
+      env.CLAUDE_MODEL = group.containerConfig.claudeModel;
+    }
+    if (group.containerConfig?.claudeEffort) {
+      env.CLAUDE_EFFORT = group.containerConfig.claudeEffort;
     }
   }
 
