@@ -128,11 +128,10 @@ async function runCodexExec(prompt: string, resume: boolean): Promise<{ result: 
   return new Promise((resolve) => {
     const args: string[] = [];
     const effectiveCwd = WORK_DIR || GROUP_DIR;
+    const codexModel = process.env.CODEX_MODEL || '';
+    const codexEffort = process.env.CODEX_EFFORT || '';
 
     if (resume) {
-      // Resume the most recent session with a new prompt
-      // --dangerously-bypass-approvals-and-sandbox: fully disables sandbox
-      // (--full-auto forces workspace-write which blocks /workspace/extra/ mounts)
       args.push(
         'exec', 'resume', '--last',
         '--dangerously-bypass-approvals-and-sandbox',
@@ -140,17 +139,16 @@ async function runCodexExec(prompt: string, resume: boolean): Promise<{ result: 
         prompt,
       );
     } else {
-      // Fresh session
-      // --dangerously-bypass-approvals-and-sandbox: fully disables sandbox
-      // (--full-auto forces workspace-write which blocks /workspace/extra/ mounts)
       args.push(
         'exec',
         '--dangerously-bypass-approvals-and-sandbox',
         '-C', effectiveCwd,
         '--skip-git-repo-check',
         '--color', 'never',
-        prompt,
       );
+      if (codexModel) args.push('-m', codexModel);
+      if (codexEffort) args.push('--effort', codexEffort);
+      args.push(prompt);
     }
 
     log(`Running: codex ${args.slice(0, 6).join(' ')}... (resume=${resume})`);

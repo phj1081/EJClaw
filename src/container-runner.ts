@@ -126,6 +126,8 @@ function prepareGroupEnvironment(
     'CLAUDE_EFFORT',
     'OPENAI_API_KEY',
     'CODEX_OPENAI_API_KEY',
+    'CODEX_MODEL',
+    'CODEX_EFFORT',
   ]);
 
   // Build a clean env without Claude Code nesting detection variables
@@ -173,6 +175,12 @@ function prepareGroupEnvironment(
       envVars.OPENAI_API_KEY ||
       process.env.OPENAI_API_KEY;
     if (openaiKey) env.OPENAI_API_KEY = openaiKey;
+
+    // Codex model/effort configuration
+    const codexModel = envVars.CODEX_MODEL || process.env.CODEX_MODEL;
+    if (codexModel) env.CODEX_MODEL = codexModel;
+    const codexEffort = envVars.CODEX_EFFORT || process.env.CODEX_EFFORT;
+    if (codexEffort) env.CODEX_EFFORT = codexEffort;
 
     // Codex session directory
     const hostCodexDir = path.join(os.homedir(), '.codex');
