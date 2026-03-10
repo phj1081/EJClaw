@@ -15,10 +15,7 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
-import {
-  resolveGroupFolderPath,
-  resolveGroupIpcPath,
-} from './group-folder.js';
+import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 import { RegisteredGroup } from './types.js';
@@ -116,8 +113,7 @@ function prepareGroupEnvironment(
 
   // Determine runner directory
   const agentType = group.agentType || 'claude-code';
-  const runnerDirName =
-    agentType === 'codex' ? 'codex-runner' : 'agent-runner';
+  const runnerDirName = agentType === 'codex' ? 'codex-runner' : 'agent-runner';
   const runnerDir = path.join(projectRoot, 'container', runnerDirName);
 
   // Build environment variables for the runner process
@@ -132,8 +128,21 @@ function prepareGroupEnvironment(
     'CODEX_OPENAI_API_KEY',
   ]);
 
+  // Build a clean env without Claude Code nesting detection variables
+  const cleanEnv = { ...(process.env as Record<string, string>) };
+  delete cleanEnv.CLAUDECODE;
+  delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
+
+  // Ensure node is findable by SDK subprocess (cli.js uses #!/usr/bin/env node)
+  const nodeBin = path.dirname(process.execPath);
+  const currentPath = cleanEnv.PATH || '/usr/local/bin:/usr/bin:/bin';
+  const enrichedPath = currentPath.includes(nodeBin)
+    ? currentPath
+    : `${nodeBin}:${currentPath}`;
+
   const env: Record<string, string> = {
-    ...process.env as Record<string, string>,
+    ...cleanEnv,
+    PATH: enrichedPath,
     TZ: TIMEZONE,
     HOME: os.homedir(),
     // Path configuration for the runner
@@ -200,9 +209,7 @@ function prepareGroupEnvironment(
       'CLAUDE_THINKING_BUDGET',
       'CLAUDE_EFFORT',
     ]) {
-      const val =
-        envVars[key as keyof typeof envVars] ||
-        process.env[key];
+      const val = envVars[key as keyof typeof envVars] || process.env[key];
       if (val) env[key] = val;
     }
   }
@@ -294,9 +301,7 @@ export async function runContainerAgent(
       if (onOutput) {
         parseBuffer += chunk;
         let startIdx: number;
-        while (
-          (startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1
-        ) {
+        while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
           const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
           if (endIdx === -1) break;
 
@@ -405,8 +410,7 @@ export async function runContainerAgent(
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const logFile = path.join(logsDir, `agent-${timestamp}.log`);
       const isVerbose =
-        process.env.LOG_LEVEL === 'debug' ||
-        process.env.LOG_LEVEL === 'trace';
+        process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
 
       const logLines = [
         `=== Agent Run Log ===`,
