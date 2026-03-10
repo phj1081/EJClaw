@@ -82,21 +82,7 @@ export async function run(_args: string[]): Promise<void> {
   }
   logger.info({ service }, 'Service status');
 
-  // 2. Check container runtime
-  let containerRuntime = 'none';
-  try {
-    execSync('command -v container', { stdio: 'ignore' });
-    containerRuntime = 'apple-container';
-  } catch {
-    try {
-      execSync('docker info', { stdio: 'ignore' });
-      containerRuntime = 'docker';
-    } catch {
-      // No runtime
-    }
-  }
-
-  // 3. Check credentials
+  // 2. Check credentials
   let credentials = 'missing';
   const envFile = path.join(projectRoot, '.env');
   if (fs.existsSync(envFile)) {
@@ -106,7 +92,7 @@ export async function run(_args: string[]): Promise<void> {
     }
   }
 
-  // 4. Check channel auth (detect configured channels by credentials)
+  // 3. Check channel auth (detect configured channels by credentials)
   const envVars = readEnvFile([
     'TELEGRAM_BOT_TOKEN',
     'SLACK_BOT_TOKEN',
@@ -139,7 +125,7 @@ export async function run(_args: string[]): Promise<void> {
   const configuredChannels = Object.keys(channelAuth);
   const anyChannelConfigured = configuredChannels.length > 0;
 
-  // 5. Check registered groups (using better-sqlite3, not sqlite3 CLI)
+  // 4. Check registered groups (using better-sqlite3, not sqlite3 CLI)
   let registeredGroups = 0;
   const dbPath = path.join(STORE_DIR, 'messages.db');
   if (fs.existsSync(dbPath)) {
@@ -155,7 +141,7 @@ export async function run(_args: string[]): Promise<void> {
     }
   }
 
-  // 6. Check mount allowlist
+  // 5. Check mount allowlist
   let mountAllowlist = 'missing';
   if (
     fs.existsSync(
@@ -178,7 +164,6 @@ export async function run(_args: string[]): Promise<void> {
 
   emitStatus('VERIFY', {
     SERVICE: service,
-    CONTAINER_RUNTIME: containerRuntime,
     CREDENTIALS: credentials,
     CONFIGURED_CHANNELS: configuredChannels.join(','),
     CHANNEL_AUTH: JSON.stringify(channelAuth),
