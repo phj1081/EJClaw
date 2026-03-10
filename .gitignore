@@ -6,10 +6,13 @@ dist/
 
 # Local data & auth
 store/
+store-*/
 data/
+data-*/
 logs/
 
 # Groups - only track base structure and specific CLAUDE.md files
+groups-*/
 groups/*
 !groups/main/
 !groups/global/

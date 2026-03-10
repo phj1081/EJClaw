@@ -4,35 +4,12 @@ export interface AdditionalMount {
   readonly?: boolean; // Default: true for safety
 }
 
-/**
- * Mount Allowlist - Security configuration for additional mounts
- * This file should be stored at ~/.config/nanoclaw/mount-allowlist.json
- * and is NOT mounted into any container, making it tamper-proof from agents.
- */
-export interface MountAllowlist {
-  // Directories that can be mounted into containers
-  allowedRoots: AllowedRoot[];
-  // Glob patterns for paths that should never be mounted (e.g., ".ssh", ".gnupg")
-  blockedPatterns: string[];
-  // If true, non-main groups can only mount read-only regardless of config
-  nonMainReadOnly: boolean;
-}
-
-export interface AllowedRoot {
-  // Absolute path or ~ for home (e.g., "~/projects", "/var/repos")
-  path: string;
-  // Whether read-write mounts are allowed under this root
-  allowReadWrite: boolean;
-  // Optional description for documentation
-  description?: string;
-}
-
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
-export type AgentType = 'claude-code' | 'codex' | 'both';
+export type AgentType = 'claude-code' | 'codex';
 
 export interface RegisteredGroup {
   name: string;

@@ -250,9 +250,6 @@ export class DiscordChannel implements Channel {
     const group = this.opts.registeredGroups()[jid];
     if (!group) return false;
     const groupType = group.agentType || 'claude-code';
-    // 'both' channels are owned by the claude-code bot (primary handler for
-    // message storage and typing). The codex bot skips them to avoid duplicates.
-    if (groupType === 'both') return this.agentTypeFilter === 'claude-code';
     return groupType === this.agentTypeFilter;
   }
 

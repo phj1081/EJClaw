@@ -140,9 +140,10 @@ function prepareGroupEnvironment(
   const extraPaths = [nodeBin, npmGlobalBin].filter(
     (p) => !currentPath.includes(p) && fs.existsSync(p),
   );
-  const enrichedPath = extraPaths.length > 0
-    ? `${extraPaths.join(':')}:${currentPath}`
-    : currentPath;
+  const enrichedPath =
+    extraPaths.length > 0
+      ? `${extraPaths.join(':')}:${currentPath}`
+      : currentPath;
 
   const env: Record<string, string> = {
     ...cleanEnv,
