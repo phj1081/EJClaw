@@ -4,9 +4,11 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
+  CODEX_CONTAINER_IMAGE,
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
@@ -26,6 +28,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -41,6 +44,7 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  agentType?: 'claude-code' | 'codex';
 }
 
 export interface ContainerOutput {
@@ -75,17 +79,6 @@ function buildVolumeMounts(
       containerPath: '/workspace/project',
       readonly: true,
     });
-
-    // Shadow .env so the agent cannot read secrets from the mounted project root.
-    // Credentials are injected by the credential proxy, never exposed to containers.
-    const envFile = path.join(projectRoot, '.env');
-    if (fs.existsSync(envFile)) {
-      mounts.push({
-        hostPath: '/dev/null',
-        containerPath: '/workspace/project/.env',
-        readonly: true,
-      });
-    }
 
     // Main also gets its group folder as the working directory
     mounts.push({
@@ -163,6 +156,40 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // For Codex groups: create a per-session writable .codex/ directory
+  if (group.agentType === 'codex') {
+    const hostCodexDir = path.join(process.env.HOME || os.homedir(), '.codex');
+    const sessionCodexDir = path.join(
+      DATA_DIR,
+      'sessions',
+      group.folder,
+      '.codex',
+    );
+    fs.mkdirSync(sessionCodexDir, { recursive: true });
+
+    // Always refresh auth credentials from host
+    const authSrc = path.join(hostCodexDir, 'auth.json');
+    const authDst = path.join(sessionCodexDir, 'auth.json');
+    if (fs.existsSync(authSrc)) {
+      fs.copyFileSync(authSrc, authDst);
+    }
+
+    // Only copy config files if they don't exist yet (preserves per-session customization)
+    for (const file of ['config.toml', 'config.json']) {
+      const src = path.join(hostCodexDir, file);
+      const dst = path.join(sessionCodexDir, file);
+      if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        fs.copyFileSync(src, dst);
+      }
+    }
+
+    mounts.push({
+      hostPath: sessionCodexDir,
+      containerPath: '/home/node/.codex',
+      readonly: false,
+    });
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -175,20 +202,24 @@ function buildVolumeMounts(
     readonly: false,
   });
 
-  // Copy agent-runner source into a per-group writable location so agents
+  // Copy runner source into a per-group writable location so agents
   // can customize it (add tools, change behavior) without affecting other
   // groups. Recompiled on container startup via entrypoint.sh.
+  const agentType = group.agentType || 'claude-code';
+  const runnerDirName = agentType === 'codex' ? 'codex-runner' : 'agent-runner';
+  const runnerSrcSuffix =
+    agentType === 'codex' ? 'codex-runner-src' : 'agent-runner-src';
   const agentRunnerSrc = path.join(
     projectRoot,
     'container',
-    'agent-runner',
+    runnerDirName,
     'src',
   );
   const groupAgentRunnerDir = path.join(
     DATA_DIR,
     'sessions',
     group.folder,
-    'agent-runner-src',
+    runnerSrcSuffix,
   );
   if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
     fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
@@ -215,31 +246,54 @@ function buildVolumeMounts(
 function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  isMain: boolean,
+  agentType: 'claude-code' | 'codex' = 'claude-code',
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
-
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  if (agentType === 'codex') {
+    // Codex uses OpenAI API — pass the key directly (no credential proxy)
+    const openaiKey =
+      process.env.CODEX_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+    if (openaiKey) {
+      args.push('-e', `OPENAI_API_KEY=${openaiKey}`);
+    }
   } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    // Route API traffic through the credential proxy (containers never see real secrets)
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
+
+    // Mirror the host's auth method with a placeholder value.
+    const authMode = detectAuthMode();
+    if (authMode === 'api-key') {
+      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    } else {
+      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    }
   }
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
+
+  // Pass model and thinking configuration to container agent (read from .env file)
+  const modelEnv = readEnvFile(['CLAUDE_MODEL', 'CLAUDE_THINKING', 'CLAUDE_THINKING_BUDGET', 'CLAUDE_EFFORT']);
+  if (modelEnv.CLAUDE_MODEL) {
+    args.push('-e', `CLAUDE_MODEL=${modelEnv.CLAUDE_MODEL}`);
+  }
+  if (modelEnv.CLAUDE_THINKING) {
+    args.push('-e', `CLAUDE_THINKING=${modelEnv.CLAUDE_THINKING}`);
+  }
+  if (modelEnv.CLAUDE_THINKING_BUDGET) {
+    args.push('-e', `CLAUDE_THINKING_BUDGET=${modelEnv.CLAUDE_THINKING_BUDGET}`);
+  }
+  if (modelEnv.CLAUDE_EFFORT) {
+    args.push('-e', `CLAUDE_EFFORT=${modelEnv.CLAUDE_EFFORT}`);
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -247,7 +301,14 @@ function buildContainerArgs(
   const hostUid = process.getuid?.();
   const hostGid = process.getgid?.();
   if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-    args.push('--user', `${hostUid}:${hostGid}`);
+    if (isMain) {
+      // Main containers start as root so the entrypoint can mount --bind
+      // to shadow .env. Privileges are dropped via setpriv in entrypoint.sh.
+      args.push('-e', `RUN_UID=${hostUid}`);
+      args.push('-e', `RUN_GID=${hostGid}`);
+    } else {
+      args.push('--user', `${hostUid}:${hostGid}`);
+    }
     args.push('-e', 'HOME=/home/node');
   }
 
@@ -259,7 +320,8 @@ function buildContainerArgs(
     }
   }
 
-  args.push(CONTAINER_IMAGE);
+  // Select container image based on agent type
+  args.push(agentType === 'codex' ? CODEX_CONTAINER_IMAGE : CONTAINER_IMAGE);
 
   return args;
 }
@@ -278,7 +340,13 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const agentType = group.agentType || 'claude-code';
+  const containerArgs = buildContainerArgs(
+    mounts,
+    containerName,
+    input.isMain,
+    agentType,
+  );
 
   logger.debug(
     {

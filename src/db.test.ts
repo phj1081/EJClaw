@@ -187,25 +187,26 @@ describe('getMessagesSince', () => {
       '2024-01-01T00:00:02.000Z',
       'Andy',
     );
-    // Should exclude m1, m2 (before/at timestamp), m3 (bot message)
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0].content).toBe('third');
+    // Should exclude m1, m2 (before/at timestamp); m3 (bot) is now included
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].content).toBe('bot reply');
+    expect(msgs[1].content).toBe('third');
   });
 
-  it('excludes bot messages via is_bot_message flag', () => {
+  it('includes bot messages with is_bot_message flag', () => {
     const msgs = getMessagesSince(
       'group@g.us',
       '2024-01-01T00:00:00.000Z',
       'Andy',
     );
     const botMsgs = msgs.filter((m) => m.content === 'bot reply');
-    expect(botMsgs).toHaveLength(0);
+    expect(botMsgs).toHaveLength(1);
   });
 
-  it('returns all non-bot messages when sinceTimestamp is empty', () => {
+  it('returns all messages including bot when sinceTimestamp is empty', () => {
     const msgs = getMessagesSince('group@g.us', '', 'Andy');
-    // 3 user messages (bot message excluded)
-    expect(msgs).toHaveLength(3);
+    // 3 user messages + 1 bot message
+    expect(msgs).toHaveLength(4);
   });
 
   it('filters pre-migration bot messages via content prefix backstop', () => {
@@ -275,8 +276,8 @@ describe('getNewMessages', () => {
       '2024-01-01T00:00:00.000Z',
       'Andy',
     );
-    // Excludes bot message, returns 3 user messages
-    expect(messages).toHaveLength(3);
+    // Includes bot message, returns all 4 messages
+    expect(messages).toHaveLength(4);
     expect(newTimestamp).toBe('2024-01-01T00:00:04.000Z');
   });
 
@@ -286,9 +287,10 @@ describe('getNewMessages', () => {
       '2024-01-01T00:00:02.000Z',
       'Andy',
     );
-    // Only g1 msg2 (after ts, not bot)
-    expect(messages).toHaveLength(1);
-    expect(messages[0].content).toBe('g1 msg2');
+    // bot reply (00:00:03) + g1 msg2 (00:00:04) after ts
+    expect(messages).toHaveLength(2);
+    expect(messages[0].content).toBe('bot reply');
+    expect(messages[1].content).toBe('g1 msg2');
   });
 
   it('returns empty for no registered groups', () => {

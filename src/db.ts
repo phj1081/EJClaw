@@ -119,6 +119,15 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add agent_type column if it doesn't exist (migration for Codex support)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN agent_type TEXT DEFAULT 'claude-code'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -316,10 +325,10 @@ export function getNewMessages(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
-        AND is_bot_message = 0 AND content NOT LIKE ?
+        AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
@@ -349,10 +358,10 @@ export function getMessagesSince(
   // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
-        AND is_bot_message = 0 AND content NOT LIKE ?
+        AND content NOT LIKE ?
         AND content != '' AND content IS NOT NULL
       ORDER BY timestamp DESC
       LIMIT ?
@@ -361,6 +370,18 @@ export function getMessagesSince(
   return db
     .prepare(sql)
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+}
+
+export function getLastHumanMessageTimestamp(chatJid: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT timestamp FROM messages
+       WHERE chat_jid = ? AND is_bot_message = 0 AND is_from_me = 0
+         AND content != '' AND content IS NOT NULL
+       ORDER BY timestamp DESC LIMIT 1`,
+    )
+    .get(chatJid) as { timestamp: string } | undefined;
+  return row?.timestamp ?? null;
 }
 
 export function createTask(

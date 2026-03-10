@@ -8,12 +8,21 @@ cd "$SCRIPT_DIR"
 
 IMAGE_NAME="nanoclaw-agent"
 TAG="${1:-latest}"
-CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
+CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-container}"
 
 echo "Building NanoClaw agent container image..."
 echo "Image: ${IMAGE_NAME}:${TAG}"
 
 ${CONTAINER_RUNTIME} build -t "${IMAGE_NAME}:${TAG}" .
+
+# Build Codex agent image (if Dockerfile.codex exists)
+if [ -f "$SCRIPT_DIR/Dockerfile.codex" ]; then
+  echo ""
+  echo "Building NanoClaw Codex agent container image..."
+  echo "Image: nanoclaw-codex-agent:${TAG}"
+  ${CONTAINER_RUNTIME} build -t "nanoclaw-codex-agent:${TAG}" -f Dockerfile.codex .
+  echo "Built nanoclaw-codex-agent:${TAG}"
+fi
 
 echo ""
 echo "Build complete!"

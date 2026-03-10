@@ -59,10 +59,15 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
-  enqueueMessageCheck(groupJid: string): void {
+  enqueueMessageCheck(groupJid: string, groupFolder?: string): void {
     if (this.shuttingDown) return;
 
     const state = this.getGroup(groupJid);
+
+    // Pre-set groupFolder so sendMessage can pipe IPC while container starts
+    if (groupFolder && !state.groupFolder) {
+      state.groupFolder = groupFolder;
+    }
 
     if (state.active) {
       state.pendingMessages = true;
