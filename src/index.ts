@@ -239,46 +239,86 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }, IDLE_TIMEOUT);
   };
 
-  await channel.setTyping?.(chatJid, true);
+  // Determine which agent types to run
+  const agentTypes: Array<'claude-code' | 'codex'> =
+    group.agentType === 'both'
+      ? ['claude-code', 'codex']
+      : [group.agentType || 'claude-code'];
+
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
-      }
-      // Clear typing indicator after sending a response — the runner may stay
-      // alive waiting for IPC messages, but the user shouldn't see "typing..."
-      await channel.setTyping?.(chatJid, false);
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
+  for (const agentType of agentTypes) {
+    // For 'both' groups, create a variant group with the specific agent type
+    // and a separate folder so each agent has its own session/workspace
+    const effectiveGroup: RegisteredGroup =
+      group.agentType === 'both'
+        ? {
+            ...group,
+            agentType,
+            folder: `${group.folder}_${agentType === 'claude-code' ? 'cc' : 'codex'}`,
+          }
+        : group;
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+    // Find the right channel to send responses through
+    const sendChannel =
+      group.agentType === 'both'
+        ? channels.find(
+            (c) =>
+              c.name.includes('discord') &&
+              c.name.includes(
+                agentType === 'codex' ? 'codex' : 'claude-code',
+              ),
+          ) || channel
+        : channel;
 
-    if (result.status === 'error') {
+    await sendChannel.setTyping?.(chatJid, true);
+
+    const output = await runAgent(
+      effectiveGroup,
+      prompt,
+      chatJid,
+      async (result) => {
+        if (result.result) {
+          const raw =
+            typeof result.result === 'string'
+              ? result.result
+              : JSON.stringify(result.result);
+          const text = raw
+            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+            .trim();
+          logger.info(
+            { group: group.name, agentType },
+            `Agent output: ${raw.slice(0, 200)}`,
+          );
+          if (text) {
+            await sendChannel.sendMessage(chatJid, text);
+            outputSentToUser = true;
+          }
+          await sendChannel.setTyping?.(chatJid, false);
+          resetIdleTimer();
+        }
+
+        if (result.status === 'success') {
+          queue.notifyIdle(chatJid);
+        }
+
+        if (result.status === 'error') {
+          hadError = true;
+        }
+      },
+    );
+
+    await sendChannel.setTyping?.(chatJid, false);
+
+    if (output === 'error') {
       hadError = true;
     }
-  });
+  }
 
-  await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
-  if (output === 'error' || hadError) {
-    // If we already sent output to the user, don't roll back the cursor —
-    // the user got their response and re-processing would send duplicates.
+  if (hadError) {
     if (outputSentToUser) {
       logger.warn(
         { group: group.name },
@@ -286,7 +326,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       );
       return true;
     }
-    // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
     logger.warn(

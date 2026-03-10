@@ -32,7 +32,7 @@ export interface ContainerConfig {
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
-export type AgentType = 'claude-code' | 'codex';
+export type AgentType = 'claude-code' | 'codex' | 'both';
 
 export interface RegisteredGroup {
   name: string;
