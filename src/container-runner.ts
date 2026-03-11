@@ -241,6 +241,26 @@ function prepareGroupEnvironment(
         fs.copyFileSync(src, dst);
       }
     }
+    // Sync skills into Codex session dir (same sources as Claude Code)
+    const codexSkillsDst = path.join(sessionCodexDir, 'skills');
+    const codexSkillSources = [
+      path.join(hostCodexDir, 'skills'),
+      path.join(projectRoot, 'container', 'skills'),
+    ];
+    for (const src of codexSkillSources) {
+      if (!fs.existsSync(src)) continue;
+      for (const entry of fs.readdirSync(src)) {
+        const srcPath = path.join(src, entry);
+        const dstPath = path.join(codexSkillsDst, entry);
+        if (fs.statSync(srcPath).isDirectory()) {
+          fs.cpSync(srcPath, dstPath, { recursive: true });
+        } else {
+          fs.mkdirSync(codexSkillsDst, { recursive: true });
+          fs.copyFileSync(srcPath, dstPath);
+        }
+      }
+    }
+
     env.CODEX_HOME = sessionCodexDir;
   } else {
     // Claude Code — pass real credentials directly
