@@ -278,7 +278,7 @@ export class DiscordChannel implements Channel {
                 if (!res.ok) throw new Error(`Download failed: ${res.status}`);
                 let text = await res.text();
                 // Truncate very large files
-                const MAX_TEXT_LENGTH = 8000;
+                const MAX_TEXT_LENGTH = 32_000;
                 if (text.length > MAX_TEXT_LENGTH) {
                   text =
                     text.slice(0, MAX_TEXT_LENGTH) +
