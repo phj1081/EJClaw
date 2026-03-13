@@ -7,31 +7,26 @@
 </p>
 
 <p align="center">
-  Fork of <a href="https://github.com/qwibitai/nanoclaw">qwibitai/nanoclaw</a>
+  Based on <a href="https://github.com/qwibitai/nanoclaw">qwibitai/nanoclaw</a>
 </p>
 
 ## Overview
 
-This fork runs two independent NanoClaw instances as systemd services:
+Two AI agents running as parallel systemd services, communicating over Discord:
 
-- **nanoclaw** (Claude Code) — powered by Claude Agent SDK, trigger `@claude`
-- **nanoclaw-codex** (Codex) — powered by Codex app-server JSON-RPC, trigger `@codex`
+- **Claude Code** — powered by Claude Agent SDK, trigger `@claude`
+- **Codex** — powered by Codex app-server (JSON-RPC), trigger `@codex`
 
-Each service has its own store, data, and groups directories. Discord channels can be registered with either agent, or both (`both` agent type for shared channels).
+Each agent has its own store, data, and groups directories. Discord channels can be registered with either agent, or both (`both` agent type for shared channels).
 
-## Key Differences from Upstream
+### Key Features
 
-| Area | Upstream NanoClaw | This Fork |
-|------|-------------------|-----------|
-| Agent runtime | Container-isolated (Docker/Apple Container) | Direct host processes (no containers) |
-| Agent backends | Claude Code only | Claude Code + OpenAI Codex |
-| Codex integration | N/A | `codex app-server` (JSON-RPC, streaming, `turn/steer`) |
-| Session management | Container-based | Per-group `CLAUDE_CONFIG_DIR` / `CODEX_HOME` |
-| Token management | Manual | Auto-refresh with session sync |
-| Channel | Multi-channel (WhatsApp, Telegram, etc.) | Discord-focused |
-| Image support | N/A | Bidirectional (receive as multimodal input, send as attachments) |
-| Skill sync | Per-container | SSOT from `~/.claude/skills/` to all agent sessions |
-| Deployment | Single service | Dual systemd services |
+- **Direct host processes** — no container overhead, agents run natively
+- **Bidirectional image support** — receive images as multimodal input, send as Discord attachments
+- **Skill sync** — single source of truth (`~/.claude/skills/`), auto-synced to all sessions
+- **OAuth auto-refresh** — token lifecycle managed automatically for headless environments
+- **Priority queue** — per-group serialization, global concurrency limit, idle preemption
+- **Auto-continue** — Codex text-only turns automatically retried to enforce task execution
 
 ## Architecture
 
@@ -187,4 +182,4 @@ npm test                                   # Run tests
 
 ## License
 
-MIT — Fork of [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw)
+MIT — Based on [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw)
