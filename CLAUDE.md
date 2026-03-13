@@ -1,6 +1,6 @@
 # NanoClaw
 
-Dual-agent AI assistant (Claude Code + Codex) over Discord. Fork of [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw).
+Dual-agent AI assistant (Claude Code + Codex) over Discord. Based on [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw).
 
 ## Quick Context
 
@@ -11,7 +11,7 @@ Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but 
 | File | Purpose |
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/container-runner.ts` | Spawns agent processes, manages env/sessions/MCP |
+| `src/agent-runner.ts` | Spawns agent processes, manages env/sessions/skills |
 | `src/token-refresh.ts` | OAuth auto-refresh + session directory sync |
 | `src/channels/discord.ts` | Discord channel (8s typing refresh) |
 | `src/ipc.ts` | IPC watcher and task processing |
@@ -29,7 +29,7 @@ Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but 
 |-------|-------------|
 | `/setup` | First-time installation, authentication, service configuration |
 | `/customize` | Adding channels, integrations, changing behavior |
-| `/debug` | Container issues, logs, troubleshooting |
+| `/debug` | Agent issues, logs, troubleshooting |
 | `/update-nanoclaw` | Bring upstream NanoClaw updates into a customized install |
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
@@ -40,8 +40,7 @@ Run commands directly—don't tell the user to run them.
 
 ```bash
 npm run build                              # Build main project
-cd container/agent-runner && npm run build # Build Claude runner
-cd container/codex-runner && npm run build # Build Codex runner
+npm run build:runners                      # Install + build both runners
 npm run dev                                # Dev mode with hot reload
 ```
 
