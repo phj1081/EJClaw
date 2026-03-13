@@ -303,22 +303,48 @@ export class DiscordChannel implements Channel {
 
       const textChannel = channel as TextChannel;
 
+      // Extract image attachments from [SendImage: /path] tags
+      const SEND_IMAGE_RE = /\[SendImage:\s*(\/[^\]]+)\]/g;
+      const imageFiles: string[] = [];
+      let match;
+      while ((match = SEND_IMAGE_RE.exec(text)) !== null) {
+        const imgPath = match[1].trim();
+        if (fs.existsSync(imgPath)) {
+          imageFiles.push(imgPath);
+        } else {
+          logger.warn({ path: imgPath }, 'SendImage file not found, skipping');
+        }
+      }
+      let cleaned = text.replace(SEND_IMAGE_RE, '').trim();
+
       // Convert @username mentions to Discord mention format
       const mentionMap: Record<string, string> = {
         눈쟁이: '216851709744513024',
       };
-      let resolved = text;
       for (const [name, id] of Object.entries(mentionMap)) {
-        resolved = resolved.replace(new RegExp(`@${name}`, 'g'), `<@${id}>`);
+        cleaned = cleaned.replace(new RegExp(`@${name}`, 'g'), `<@${id}>`);
       }
 
       // Discord has a 2000 character limit per message — split if needed
       const MAX_LENGTH = 2000;
-      if (resolved.length <= MAX_LENGTH) {
-        await textChannel.send(resolved);
+      const files = imageFiles.map((f) => ({
+        attachment: f,
+        name: path.basename(f),
+      }));
+
+      if (cleaned.length <= MAX_LENGTH) {
+        await textChannel.send({
+          content: cleaned || undefined,
+          files: files.length > 0 ? files : undefined,
+        });
       } else {
-        for (let i = 0; i < resolved.length; i += MAX_LENGTH) {
-          await textChannel.send(resolved.slice(i, i + MAX_LENGTH));
+        // Send text in chunks, attach images to the first chunk
+        for (let i = 0; i < cleaned.length; i += MAX_LENGTH) {
+          const chunk = cleaned.slice(i, i + MAX_LENGTH);
+          await textChannel.send({
+            content: chunk,
+            files: i === 0 && files.length > 0 ? files : undefined,
+          });
         }
       }
       logger.info({ jid, length: text.length }, 'Discord message sent');
