@@ -416,9 +416,12 @@ function usageEmoji(pct: number): string {
   return '🟢';
 }
 
-function formatResetKST(iso: string): string {
+function formatResetKST(value: string | number): string {
   try {
-    return new Date(iso).toLocaleString('ko-KR', {
+    // Handle unix timestamp (seconds) or ISO string
+    const date =
+      typeof value === 'number' ? new Date(value * 1000) : new Date(value);
+    return date.toLocaleString('ko-KR', {
       timeZone: 'Asia/Seoul',
       month: 'short',
       day: 'numeric',
@@ -426,7 +429,7 @@ function formatResetKST(iso: string): string {
       minute: '2-digit',
     });
   } catch {
-    return iso;
+    return String(value);
   }
 }
 
@@ -544,9 +547,10 @@ interface ClaudeUsageData {
 }
 
 interface CodexRateLimit {
-  limitName: string;
-  primary: { usedPercent: number; resetsAt: string };
-  secondary: { usedPercent: number; resetsAt: string };
+  limitId?: string;
+  limitName: string | null;
+  primary: { usedPercent: number; resetsAt: string | number };
+  secondary: { usedPercent: number; resetsAt: string | number };
 }
 
 async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
@@ -635,7 +639,13 @@ async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
               }) + '\n',
             );
           } else if (msg.id === 2 && msg.result) {
-            finish(msg.result);
+            // Extract rate limits from rateLimitsByLimitId object
+            const byId = msg.result.rateLimitsByLimitId;
+            if (byId && typeof byId === 'object') {
+              finish(Object.values(byId) as CodexRateLimit[]);
+            } else {
+              finish(null);
+            }
           }
         } catch {
           /* non-JSON line, skip */
@@ -659,8 +669,6 @@ async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
 
 async function buildUsageContent(): Promise<string> {
   const lines: string[] = [];
-  lines.push(`📊 **Usage 보고** (${ASSISTANT_NAME})`);
-  lines.push('');
 
   // Fetch API usage in parallel
   const [claudeUsage, codexUsage] = await Promise.all([
@@ -695,11 +703,12 @@ async function buildUsageContent(): Promise<string> {
     for (const limit of codexUsage) {
       const p = Math.round(limit.primary.usedPercent);
       const s = Math.round(limit.secondary.usedPercent);
+      const name = limit.limitName || limit.limitId || 'Codex';
       lines.push(
-        `• ${limit.limitName} 5시간: ${usageEmoji(p)} ${p}% (리셋: ${formatResetKST(limit.primary.resetsAt)})`,
+        `• ${name} 5시간: ${usageEmoji(p)} ${p}% (리셋: ${formatResetKST(limit.primary.resetsAt)})`,
       );
       lines.push(
-        `• ${limit.limitName} 7일: ${usageEmoji(s)} ${s}% (리셋: ${formatResetKST(limit.secondary.resetsAt)})`,
+        `• ${name} 7일: ${usageEmoji(s)} ${s}% (리셋: ${formatResetKST(limit.secondary.resetsAt)})`,
       );
     }
     lines.push('');
@@ -745,9 +754,9 @@ async function buildUsageContent(): Promise<string> {
   }
   lines.push(diskLine);
 
-  lines.push(`• 업타임: ${formatElapsed(process.uptime() * 1000)}`);
+  lines.push(`• 업타임: ${formatElapsed(os.uptime() * 1000)}`);
 
-  return lines.join('\n') + `\n\n_${new Date().toLocaleTimeString('ko-KR')}_`;
+  return lines.join('\n') + `\n\n_${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}_`;
 }
 
 // ── Dashboard Lifecycle ─────────────────────────────────────────
