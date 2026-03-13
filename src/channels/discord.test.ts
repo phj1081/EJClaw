@@ -504,6 +504,7 @@ describe('DiscordChannel', () => {
         vi.fn().mockResolvedValue({
           ok: true,
           arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+          text: () => Promise.resolve('Hello from text file'),
         }),
       );
     });
@@ -637,7 +638,15 @@ describe('DiscordChannel', () => {
             url: 'https://cdn.example.com/a.png',
           },
         ],
-        ['att2', { name: 'b.txt', contentType: 'text/plain' }],
+        [
+          'att2',
+          {
+            id: 'att2',
+            name: 'b.txt',
+            contentType: 'text/plain',
+            url: 'https://cdn.example.com/b.txt',
+          },
+        ],
       ]);
       const msg = createMessage({
         content: '',
@@ -650,7 +659,7 @@ describe('DiscordChannel', () => {
         'dc:1234567890123456',
         expect.objectContaining({
           content: expect.stringMatching(
-            /^\[Image: .+\.png\]\n\[File: b\.txt\]$/,
+            /^\[Image: .+\.png\]\n\[File: b\.txt\]\nHello from text file$/,
           ),
         }),
       );

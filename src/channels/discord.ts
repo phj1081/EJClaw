@@ -93,8 +93,7 @@ async function transcribeAudio(att: Attachment): Promise<string> {
 
     // Pick provider: Groq (fast) > OpenAI (fallback)
     const envVars = readEnvFile(['GROQ_API_KEY', 'OPENAI_API_KEY']);
-    const groqKey =
-      process.env.GROQ_API_KEY || envVars.GROQ_API_KEY || '';
+    const groqKey = process.env.GROQ_API_KEY || envVars.GROQ_API_KEY || '';
     const openaiKey =
       process.env.OPENAI_API_KEY || envVars.OPENAI_API_KEY || '';
 
@@ -267,6 +266,32 @@ export class DiscordChannel implements Channel {
               return `[Video: ${att.name || 'video'}]`;
             } else if (contentType.startsWith('audio/')) {
               return `[Audio: ${att.name || 'audio'}]`;
+            } else if (
+              contentType.startsWith('text/') ||
+              /\.(txt|md|json|csv|log|xml|yaml|yml|toml|ini|cfg|conf|sh|bash|zsh|py|js|ts|jsx|tsx|html|css|sql|rs|go|java|c|cpp|h|hpp|rb|php|swift|kt|scala|r|lua|pl|ex|exs|hs|ml|clj|dart|v|zig|nim|ps1|bat|cmd)$/i.test(
+                att.name || '',
+              )
+            ) {
+              // Download and inline text-based files
+              try {
+                const res = await fetch(att.url);
+                if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+                let text = await res.text();
+                // Truncate very large files
+                const MAX_TEXT_LENGTH = 8000;
+                if (text.length > MAX_TEXT_LENGTH) {
+                  text =
+                    text.slice(0, MAX_TEXT_LENGTH) +
+                    `\n...(truncated, ${text.length} chars total)`;
+                }
+                return `[File: ${att.name}]\n${text}`;
+              } catch (err) {
+                logger.error(
+                  { err, file: att.name },
+                  'Text file download failed',
+                );
+                return `[File: ${att.name || 'file'} (download failed)]`;
+              }
             } else {
               return `[File: ${att.name || 'file'}]`;
             }
