@@ -127,31 +127,135 @@ Skills are managed from a single source of truth (`~/.claude/skills/` on the ser
 
 - Linux (Ubuntu 22.04+) or macOS
 - Node.js 20+
-- [Claude Code CLI](https://claude.ai/download)
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
+- Two Discord bot tokens (one per agent) — create at [Discord Developer Portal](https://discord.com/developers/applications)
 
-### Environment Variables
-
-```bash
-# .env
-DISCORD_BOT_TOKEN=           # Claude Code bot token
-DISCORD_CODEX_BOT_TOKEN=     # Codex bot token (optional, for dual-bot)
-ANTHROPIC_API_KEY=            # Or use OAuth (CLAUDE_CODE_OAUTH_TOKEN)
-OPENAI_API_KEY=               # For Codex
-CODEX_MODEL=                  # Default codex model
-CODEX_EFFORT=                 # Default reasoning effort (low/medium/high)
-```
-
-### Service Management (Linux)
+### 1. Clone and Install
 
 ```bash
-systemctl --user start nanoclaw           # Claude Code service
-systemctl --user start nanoclaw-codex     # Codex service
-systemctl --user restart nanoclaw nanoclaw-codex  # Restart both
-journalctl --user -u nanoclaw -f          # Follow logs
+git clone https://github.com/phj1081/nanoclaw.git
+cd nanoclaw
+npm install
+npm run build:runners   # installs + builds both agent-runner and codex-runner
+npm run build           # builds main project
 ```
 
-### Service Management (macOS)
+### 2. Authenticate CLIs
+
+```bash
+# Claude Code — opens browser for OAuth login
+claude login
+
+# Codex — set API key
+export OPENAI_API_KEY=sk-...
+```
+
+### 3. Environment Variables
+
+Create `.env` in the project root:
+
+```bash
+# .env — shared config (read by both services)
+DISCORD_BOT_TOKEN=           # Claude Code Discord bot token
+ASSISTANT_NAME=claude        # Bot trigger name (@claude)
+ANTHROPIC_API_KEY=           # Or use OAuth (claude login)
+OPENAI_API_KEY=              # For Codex
+```
+
+For dual-service setup, create `.env.codex` for Codex-specific overrides:
+
+```bash
+# .env.codex — Codex service secrets (loaded via systemd EnvironmentFile)
+DISCORD_BOT_TOKEN=           # Codex Discord bot token (different from above)
+```
+
+> **Security**: Never put tokens in systemd service files or commit them to git. Use `.env` files with restricted permissions (`chmod 600`).
+
+### 4. Systemd Services (Linux)
+
+Create `~/.config/systemd/user/nanoclaw.service`:
+
+```ini
+[Unit]
+Description=NanoClaw Claude Code
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/path/to/node /path/to/nanoclaw/dist/index.js
+WorkingDirectory=/path/to/nanoclaw
+Restart=always
+RestartSec=5
+Environment=HOME=/home/youruser
+Environment=PATH=/path/to/node/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+```
+
+Create `~/.config/systemd/user/nanoclaw-codex.service`:
+
+```ini
+[Unit]
+Description=NanoClaw Codex
+After=network.target
+
+[Service]
+EnvironmentFile=/path/to/nanoclaw/.env.codex
+Type=simple
+ExecStart=/path/to/node /path/to/nanoclaw/dist/index.js
+WorkingDirectory=/path/to/nanoclaw
+Restart=always
+RestartSec=5
+Environment=HOME=/home/youruser
+Environment=PATH=/path/to/node/bin:/usr/local/bin:/usr/bin:/bin
+Environment=ASSISTANT_NAME=codex
+Environment=NANOCLAW_STORE_DIR=/path/to/nanoclaw/store-codex
+Environment=NANOCLAW_DATA_DIR=/path/to/nanoclaw/data-codex
+Environment=NANOCLAW_GROUPS_DIR=/path/to/nanoclaw/groups-codex
+
+[Install]
+WantedBy=default.target
+```
+
+Then enable and start:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable nanoclaw nanoclaw-codex
+systemctl --user start nanoclaw nanoclaw-codex
+
+# Logs
+journalctl --user -u nanoclaw -f
+journalctl --user -u nanoclaw-codex -f
+```
+
+### 5. Register Discord Channels
+
+Channels are stored in each service's SQLite database (`registered_groups` table). Use the IPC auth endpoint or insert directly:
+
+```bash
+# Example: register a channel for Claude Code
+sqlite3 store/nanoclaw.db "INSERT INTO registered_groups (jid, name, folder, agent_type, trigger_pattern) VALUES ('dc:CHANNEL_ID', 'my-channel', 'my-channel', 'claude-code', '@claude');"
+
+# Example: register a channel for Codex
+sqlite3 store-codex/nanoclaw.db "INSERT INTO registered_groups (jid, name, folder, agent_type, trigger_pattern) VALUES ('dc:CHANNEL_ID', 'my-channel', 'my-channel', 'codex', '@codex');"
+```
+
+Fields:
+
+| Field | Description |
+|-------|-------------|
+| `jid` | `dc:<discord_channel_id>` |
+| `name` | Display name |
+| `folder` | Group folder name (workspace directory) |
+| `agent_type` | `claude-code`, `codex`, or `both` |
+| `trigger_pattern` | Regex for activation (e.g., `@claude`) |
+| `work_dir` | Optional working directory override |
+| `container_config` | Optional JSON (e.g., `{"codexEffort":"high"}`) |
+
+### macOS (launchd)
 
 ```bash
 launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
@@ -159,25 +263,14 @@ launchctl load ~/Library/LaunchAgents/com.nanoclaw-codex.plist
 launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ```
 
-## Channel Registration
-
-Channels are registered in each service's SQLite database (`registered_groups` table). Each entry specifies:
-
-- **jid**: Discord channel ID (`dc:<channel_id>`)
-- **folder**: Group folder name (matches Discord channel name)
-- **trigger_pattern**: Regex for bot activation (`@claude` or `@codex`)
-- **agent_type**: `claude-code`, `codex`, or `both` (shared channel)
-- **work_dir**: Working directory for the agent
-- **container_config**: JSON config (e.g., `{"codexEffort":"high"}`)
-
 ## Development
 
 ```bash
-npm run build                              # Build main project
-cd container/agent-runner && npm run build # Build Claude runner
-cd container/codex-runner && npm run build # Build Codex runner
-npm run dev                                # Dev mode with hot reload
-npm test                                   # Run tests
+npm install                   # Install dependencies
+npm run build                 # Build main project
+npm run build:runners         # Install + build both runners
+npm run dev                   # Dev mode with hot reload
+npm test                      # Run tests
 ```
 
 ## License
