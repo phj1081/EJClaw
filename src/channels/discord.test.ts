@@ -98,6 +98,7 @@ vi.mock('discord.js', () => {
     Client: MockClient,
     Events,
     GatewayIntentBits,
+    MessageFlags: { SuppressEmbeds: 1 << 2 },
     TextChannel,
   };
 });
@@ -760,10 +761,12 @@ describe('DiscordChannel', () => {
       expect(mockChannel.send).toHaveBeenNthCalledWith(1, {
         content: 'x'.repeat(2000),
         files: undefined,
+        flags: 1 << 2,
       });
       expect(mockChannel.send).toHaveBeenNthCalledWith(2, {
         content: 'x'.repeat(1000),
         files: undefined,
+        flags: 1 << 2,
       });
     });
   });

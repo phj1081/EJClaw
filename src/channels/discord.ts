@@ -7,6 +7,7 @@ import {
   Events,
   GatewayIntentBits,
   Message,
+  MessageFlags,
   TextChannel,
 } from 'discord.js';
 
@@ -457,6 +458,7 @@ export class DiscordChannel implements Channel {
         await textChannel.send({
           content: cleaned || undefined,
           files: files.length > 0 ? files : undefined,
+          flags: MessageFlags.SuppressEmbeds,
         });
       } else {
         // Send text in chunks, attach images to the first chunk
@@ -465,6 +467,7 @@ export class DiscordChannel implements Channel {
           await textChannel.send({
             content: chunk,
             files: i === 0 && files.length > 0 ? files : undefined,
+            flags: MessageFlags.SuppressEmbeds,
           });
         }
       }
