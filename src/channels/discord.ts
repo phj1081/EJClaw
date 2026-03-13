@@ -330,8 +330,12 @@ export class DiscordChannel implements Channel {
           // Non-image local path links: convert to readable filename
           const basename = path.basename(trimmed.replace(/#.*$/, ''));
           const lineMatch = trimmed.match(/#L(\d+)/);
-          return lineMatch ? `\`${basename}:${lineMatch[1]}\`` : `\`${basename}\``;
+          return lineMatch
+            ? `\`${basename}:${lineMatch[1]}\``
+            : `\`${basename}\``;
         })
+        .replace(/^[ \t]*[•\-\*][ \t]*$/gm, '') // remove empty bullet lines
+        .replace(/\n{3,}/g, '\n\n') // collapse excessive blank lines
         .trim();
 
       // Convert @username mentions to Discord mention format
