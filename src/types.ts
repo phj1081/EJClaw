@@ -66,6 +66,7 @@ export interface TaskRunLog {
 // --- Channel abstraction ---
 
 export interface ChannelMeta {
+  name: string;
   position: number;
   category: string;
   categoryPosition: number;

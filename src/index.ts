@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { ChildProcess, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -410,6 +410,26 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(0)}KB`;
 }
 
+function usageEmoji(pct: number): string {
+  if (pct >= 80) return '🔴';
+  if (pct >= 50) return '🟡';
+  return '🟢';
+}
+
+function formatResetKST(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('ko-KR', {
+      timeZone: 'Asia/Seoul',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
 const STATUS_ICONS: Record<string, string> = {
   processing: '🟡',
   idle: '🟢',
@@ -420,7 +440,7 @@ const STATUS_ICONS: Record<string, string> = {
 let statusMessageId: string | null = null;
 let usageMessageId: string | null = null;
 
-// Cache for Discord channel metadata (position, category)
+// Cache for Discord channel metadata (name, position, category)
 let channelMetaCache = new Map<string, ChannelMeta>();
 let channelMetaLastRefresh = 0;
 const CHANNEL_META_REFRESH_MS = 300000; // 5 minutes
@@ -434,9 +454,7 @@ async function refreshChannelMeta(): Promise<void> {
   );
   if (!ch?.getChannelMeta) return;
 
-  const jids = Object.keys(registeredGroups).filter((j) =>
-    j.startsWith('dc:'),
-  );
+  const jids = Object.keys(registeredGroups).filter((j) => j.startsWith('dc:'));
   try {
     channelMetaCache = await ch.getChannelMeta(jids);
     channelMetaLastRefresh = now;
@@ -445,9 +463,7 @@ async function refreshChannelMeta(): Promise<void> {
   }
 }
 
-function getStatusLabel(
-  s: import('./group-queue.js').GroupStatus,
-): string {
+function getStatusLabel(s: import('./group-queue.js').GroupStatus): string {
   if (s.status === 'processing')
     return `처리 중 (${formatElapsed(s.elapsedMs || 0)})`;
   if (s.status === 'idle') return '대기 중';
@@ -498,7 +514,9 @@ function buildStatusContent(): string {
     const lines = catEntries.map((e) => {
       const icon = STATUS_ICONS[e.status.status] || '⚪';
       const label = getStatusLabel(e.status);
-      return `  ${icon} **${e.group.name}** — ${label}`;
+      // Prefer actual Discord channel name over DB-stored name
+      const name = e.meta?.name ? `#${e.meta.name}` : e.group.name;
+      return `  ${icon} **${name}** — ${label}`;
     });
 
     if (channelMetaCache.size > 0 && catName !== '기타') {
@@ -510,9 +528,7 @@ function buildStatusContent(): string {
     totalActive += catEntries.filter(
       (e) => e.status.status === 'processing',
     ).length;
-    totalIdle += catEntries.filter(
-      (e) => e.status.status === 'idle',
-    ).length;
+    totalIdle += catEntries.filter((e) => e.status.status === 'idle').length;
     total += catEntries.length;
   }
 
@@ -520,44 +536,223 @@ function buildStatusContent(): string {
   return `${header}\n\n${sections.join('\n\n')}\n\n_${new Date().toLocaleTimeString('ko-KR')}_`;
 }
 
-function buildUsageContent(): string {
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
-  const memPercent = Math.round((usedMem / totalMem) * 100);
+// ── API Usage Fetchers ──────────────────────────────────────────
+
+interface ClaudeUsageData {
+  five_hour?: { utilization: number; resets_at: string };
+  seven_day?: { utilization: number; resets_at: string };
+}
+
+interface CodexRateLimit {
+  limitName: string;
+  primary: { usedPercent: number; resetsAt: string };
+  secondary: { usedPercent: number; resetsAt: string };
+}
+
+async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
+  try {
+    const configDir =
+      process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    const credsPath = path.join(configDir, '.credentials.json');
+    if (!fs.existsSync(credsPath)) return null;
+
+    const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
+    const token = creds?.claudeAiOauth?.accessToken;
+    if (!token) return null;
+
+    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+      },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as ClaudeUsageData;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
+  // Find codex binary
+  const npmGlobalBin = path.join(os.homedir(), '.npm-global', 'bin', 'codex');
+  const codexBin = fs.existsSync(npmGlobalBin) ? npmGlobalBin : 'codex';
+
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (val: CodexRateLimit[] | null) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try {
+        proc.kill();
+      } catch {
+        /* ignore */
+      }
+      resolve(val);
+    };
+
+    const timer = setTimeout(() => finish(null), 20000);
+
+    let proc: ChildProcess;
+    try {
+      proc = spawn(codexBin, ['app-server'], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: {
+          ...(process.env as Record<string, string>),
+          PATH: [
+            path.dirname(process.execPath),
+            path.join(os.homedir(), '.npm-global', 'bin'),
+            process.env.PATH || '',
+          ].join(':'),
+        },
+      });
+    } catch {
+      resolve(null);
+      return;
+    }
+
+    proc.on('error', () => finish(null));
+    proc.on('close', () => finish(null));
+
+    let buf = '';
+    proc.stdout!.on('data', (chunk: Buffer) => {
+      buf += chunk.toString();
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id === 1) {
+            // Initialize done, query rate limits
+            proc.stdin!.write(
+              JSON.stringify({
+                jsonrpc: '2.0',
+                id: 2,
+                method: 'account/rateLimits/read',
+                params: {},
+              }) + '\n',
+            );
+          } else if (msg.id === 2 && msg.result) {
+            finish(msg.result);
+          }
+        } catch {
+          /* non-JSON line, skip */
+        }
+      }
+    });
+
+    // Send initialize
+    proc.stdin!.write(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: { clientInfo: { name: 'usage-monitor', version: '1.0' } },
+      }) + '\n',
+    );
+  });
+}
+
+// ── Usage Dashboard Builder ─────────────────────────────────────
+
+async function buildUsageContent(): Promise<string> {
+  const lines: string[] = [];
+  lines.push(`📊 **Usage 보고** (${ASSISTANT_NAME})`);
+  lines.push('');
+
+  // Fetch API usage in parallel
+  const [claudeUsage, codexUsage] = await Promise.all([
+    fetchClaudeUsage(),
+    fetchCodexUsage(),
+  ]);
+
+  // Claude Code usage
+  if (claudeUsage) {
+    lines.push('☁️ *Claude Code*');
+    if (claudeUsage.five_hour) {
+      // utilization may be fraction (0-1) or percentage (0-100)
+      const raw = claudeUsage.five_hour.utilization;
+      const pct = raw > 1 ? Math.round(raw) : Math.round(raw * 100);
+      lines.push(
+        `• 5시간: ${usageEmoji(pct)} ${pct}% (리셋: ${formatResetKST(claudeUsage.five_hour.resets_at)})`,
+      );
+    }
+    if (claudeUsage.seven_day) {
+      const raw = claudeUsage.seven_day.utilization;
+      const pct = raw > 1 ? Math.round(raw) : Math.round(raw * 100);
+      lines.push(
+        `• 7일: ${usageEmoji(pct)} ${pct}% (리셋: ${formatResetKST(claudeUsage.seven_day.resets_at)})`,
+      );
+    }
+    lines.push('');
+  }
+
+  // Codex usage
+  if (codexUsage && Array.isArray(codexUsage)) {
+    lines.push('🤖 *Codex CLI*');
+    for (const limit of codexUsage) {
+      const p = Math.round(limit.primary.usedPercent);
+      const s = Math.round(limit.secondary.usedPercent);
+      lines.push(
+        `• ${limit.limitName} 5시간: ${usageEmoji(p)} ${p}% (리셋: ${formatResetKST(limit.primary.resetsAt)})`,
+      );
+      lines.push(
+        `• ${limit.limitName} 7일: ${usageEmoji(s)} ${s}% (리셋: ${formatResetKST(limit.secondary.resetsAt)})`,
+      );
+    }
+    lines.push('');
+  }
+
+  if (!claudeUsage && !codexUsage) {
+    lines.push('_API 사용량 조회 불가_');
+    lines.push('');
+  }
+
+  // System resources
+  lines.push('🖥️ *서버*');
 
   const loadAvg = os.loadavg();
   const cpuCount = os.cpus().length;
+  const cpuPct1 = Math.round((loadAvg[0] / cpuCount) * 100);
+  const cpuPct5 = Math.round((loadAvg[1] / cpuCount) * 100);
+  const cpuPct15 = Math.round((loadAvg[2] / cpuCount) * 100);
+  lines.push(
+    `• CPU: ${usageEmoji(cpuPct1)} ${cpuPct1}% (1m) | ${cpuPct5}% (5m) | ${cpuPct15}% (15m)`,
+  );
 
-  let diskInfo = '확인 불가';
+  const totalMem = os.totalmem();
+  const usedMem = totalMem - os.freemem();
+  const memPct = Math.round((usedMem / totalMem) * 100);
+  lines.push(
+    `• 메모리: ${usageEmoji(memPct)} ${memPct}% (${(usedMem / 1073741824).toFixed(1)}GB / ${(totalMem / 1073741824).toFixed(1)}GB)`,
+  );
+
+  let diskLine = '• 디스크: 확인 불가';
   try {
-    const df = execSync('df -h / | tail -1', {
+    const df = execSync('df -B1 / | tail -1', {
       encoding: 'utf-8',
       timeout: 5000,
     }).trim();
     const parts = df.split(/\s+/);
-    diskInfo = `${parts[2]} / ${parts[1]} (${parts[4]})`;
+    const diskUsed = parseInt(parts[2], 10);
+    const diskTotal = parseInt(parts[1], 10);
+    const diskPct = Math.round((diskUsed / diskTotal) * 100);
+    diskLine = `• 디스크: ${usageEmoji(diskPct)} ${diskPct}% (${(diskUsed / 1073741824).toFixed(1)}GB / ${(diskTotal / 1073741824).toFixed(1)}GB)`;
   } catch {
     /* ignore */
   }
+  lines.push(diskLine);
 
-  const uptimeMs = process.uptime() * 1000;
-  const procMem = process.memoryUsage();
-
-  const lines = [
-    `**시스템 리소스** (${ASSISTANT_NAME})`,
-    ``,
-    `💻 CPU: ${loadAvg[0].toFixed(1)} / ${cpuCount} cores (1m avg)`,
-    `🧠 시스템 메모리: ${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPercent}%)`,
-    `💾 디스크: ${diskInfo}`,
-    `📦 프로세스 메모리: ${formatBytes(procMem.rss)}`,
-    `⏱️ 업타임: ${formatElapsed(uptimeMs)}`,
-  ];
+  lines.push(`• 업타임: ${formatElapsed(process.uptime() * 1000)}`);
 
   return (
     lines.join('\n') + `\n\n_${new Date().toLocaleTimeString('ko-KR')}_`
   );
 }
+
+// ── Dashboard Lifecycle ─────────────────────────────────────────
 
 async function startStatusDashboard(): Promise<void> {
   if (!STATUS_CHANNEL_ID) return;
@@ -592,6 +787,8 @@ async function startStatusDashboard(): Promise<void> {
   logger.info({ channelId: STATUS_CHANNEL_ID }, 'Status dashboard started');
 }
 
+let usageUpdateInProgress = false;
+
 async function startUsageDashboard(): Promise<void> {
   if (!STATUS_CHANNEL_ID) return;
 
@@ -601,11 +798,17 @@ async function startUsageDashboard(): Promise<void> {
     channels.find((c) => c.name.startsWith('discord') && c.isConnected());
 
   const updateUsage = async () => {
+    if (usageUpdateInProgress) return;
+    usageUpdateInProgress = true;
+
     const ch = findDiscordChannel();
-    if (!ch) return;
+    if (!ch) {
+      usageUpdateInProgress = false;
+      return;
+    }
 
     try {
-      const content = buildUsageContent();
+      const content = await buildUsageContent();
 
       if (usageMessageId && ch.editMessage) {
         await ch.editMessage(statusJid, usageMessageId, content);
@@ -616,6 +819,8 @@ async function startUsageDashboard(): Promise<void> {
     } catch (err) {
       logger.debug({ err }, 'Usage dashboard update failed');
       usageMessageId = null;
+    } finally {
+      usageUpdateInProgress = false;
     }
   };
 

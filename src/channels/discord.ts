@@ -464,6 +464,7 @@ export class DiscordChannel implements Channel {
         const jid = channelIdToJid.get(id);
         if (!jid || !channel) continue;
         result.set(jid, {
+          name: channel.name,
           position: channel.position,
           category: channel.parent?.name || '',
           categoryPosition: channel.parent?.position ?? 999,
@@ -478,6 +479,7 @@ export class DiscordChannel implements Channel {
           if (channel && 'position' in channel) {
             const tc = channel as TextChannel;
             result.set(jid, {
+              name: tc.name,
               position: tc.position,
               category: tc.parent?.name || '',
               categoryPosition: tc.parent?.position ?? 999,
