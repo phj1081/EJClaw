@@ -62,6 +62,8 @@ const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 const MAX_TURNS = 100;
+const MAX_AUTO_CONTINUES = 5;
+const AUTO_CONTINUE_PROMPT = 'Continue. Execute the task — don\'t just describe what you\'ll do.';
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -386,11 +388,12 @@ async function executeTurn(
   server: CodexAppServer,
   threadId: string,
   prompt: string,
-): Promise<{ result: string; error?: string; turnId: string }> {
+): Promise<{ result: string; error?: string; turnId: string; hadToolExecution: boolean }> {
   return new Promise((resolve) => {
     let agentText = '';
     let turnId = '';
     let resolved = false;
+    let hadToolExecution = false;
     let ipcPollTimer: ReturnType<typeof setTimeout> | null = null;
 
     const cleanup = () => {
@@ -412,6 +415,7 @@ async function executeTurn(
           result: agentText || '',
           error: 'Turn timed out after 5 minutes',
           turnId,
+          hadToolExecution,
         });
       }
     }, 5 * 60 * 1000);
@@ -474,9 +478,9 @@ async function executeTurn(
 
           if (status === 'failed') {
             const errMsg = (error?.message as string) || 'Turn failed';
-            resolve({ result: agentText || '', error: errMsg, turnId });
+            resolve({ result: agentText || '', error: errMsg, turnId, hadToolExecution });
           } else {
-            resolve({ result: agentText, turnId });
+            resolve({ result: agentText, turnId, hadToolExecution });
           }
           break;
         }
@@ -496,6 +500,7 @@ async function executeTurn(
       if (msg.method === 'item/commandExecution/requestApproval' ||
           msg.method === 'item/fileChange/requestApproval' ||
           msg.method === 'item/permissions/requestApproval') {
+        hadToolExecution = true;
         server.respond(msg.id, { decision: 'accept' });
         return;
       }
@@ -519,6 +524,7 @@ async function executeTurn(
             result: '',
             error: `Failed to start turn: ${err.message}`,
             turnId: '',
+            hadToolExecution: false,
           });
         }
       });
@@ -569,6 +575,7 @@ async function main(): Promise<void> {
       : await server.startThread();
 
     let turnCount = 0;
+    let autoContinueCount = 0;
 
     // Main turn loop
     while (true) {
@@ -583,9 +590,36 @@ async function main(): Promise<void> {
         break;
       }
 
-      log(`Starting turn ${turnCount}/${MAX_TURNS}...`);
+      log(`Starting turn ${turnCount}/${MAX_TURNS} (auto-continue: ${autoContinueCount}/${MAX_AUTO_CONTINUES})...`);
 
-      const { result, error } = await executeTurn(server, threadId, prompt);
+      const { result, error, hadToolExecution } = await executeTurn(server, threadId, prompt);
+
+      // Check close sentinel
+      if (shouldClose()) {
+        // Flush any pending output before exiting
+        if (result) {
+          writeOutput({ status: 'success', result, newSessionId: threadId });
+        }
+        log('Close sentinel detected, exiting');
+        break;
+      }
+
+      // Auto-continue: if the turn produced only text (no tool execution),
+      // nudge Codex to actually execute instead of just describing plans.
+      // This mimics `codex exec --full-auto` behavior.
+      if (!error && !hadToolExecution && result && autoContinueCount < MAX_AUTO_CONTINUES) {
+        autoContinueCount++;
+        log(`Turn had no tool execution, auto-continuing (${autoContinueCount}/${MAX_AUTO_CONTINUES})`);
+        // Still emit the intermediate text so user sees progress
+        writeOutput({ status: 'success', result, newSessionId: threadId });
+        prompt = AUTO_CONTINUE_PROMPT;
+        continue;
+      }
+
+      // Reset auto-continue counter when tools were actually executed
+      if (hadToolExecution) {
+        autoContinueCount = 0;
+      }
 
       if (error) {
         log(`Turn error: ${error}`);
@@ -603,12 +637,6 @@ async function main(): Promise<void> {
         });
       }
 
-      // Check close sentinel
-      if (shouldClose()) {
-        log('Close sentinel detected, exiting');
-        break;
-      }
-
       log('Turn done, waiting for next IPC message...');
 
       const nextMessage = await waitForIpcMessage();
@@ -619,6 +647,7 @@ async function main(): Promise<void> {
 
       log(`Got new message (${nextMessage.length} chars)`);
       prompt = nextMessage;
+      autoContinueCount = 0; // Reset on new user message
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
