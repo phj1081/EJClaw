@@ -10,7 +10,12 @@ import {
   TextChannel,
 } from 'discord.js';
 
-import { ASSISTANT_NAME, CACHE_DIR, DATA_DIR, TRIGGER_PATTERN } from '../config.js';
+import {
+  ASSISTANT_NAME,
+  CACHE_DIR,
+  DATA_DIR,
+  TRIGGER_PATTERN,
+} from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 
@@ -54,13 +59,10 @@ async function waitForPendingTranscription(
 }
 
 /**
- * Transcribe an audio attachment via OpenAI Whisper API.
+ * Transcribe an audio attachment via Groq Whisper (primary) or OpenAI Whisper (fallback).
  * Uses shared file cache so both services don't duplicate API calls.
  */
-async function transcribeAudio(
-  att: Attachment,
-  apiKey: string,
-): Promise<string> {
+async function transcribeAudio(att: Attachment): Promise<string> {
   fs.mkdirSync(TRANSCRIPTION_CACHE_DIR, { recursive: true });
   const cacheFile = path.join(TRANSCRIPTION_CACHE_DIR, `${att.id}.txt`);
   const pendingFile = path.join(TRANSCRIPTION_CACHE_DIR, `${att.id}.pending`);
@@ -83,34 +85,59 @@ async function transcribeAudio(
     // Mark as pending
     fs.writeFileSync(pendingFile, process.pid.toString());
 
+    const start = Date.now();
     const res = await fetch(att.url);
     if (!res.ok) throw new Error(`Download failed: ${res.status}`);
     const buffer = Buffer.from(await res.arrayBuffer());
+    const filename = att.name || 'audio.ogg';
+
+    // Pick provider: Groq (fast) > OpenAI (fallback)
+    const envVars = readEnvFile(['GROQ_API_KEY', 'OPENAI_API_KEY']);
+    const groqKey =
+      process.env.GROQ_API_KEY || envVars.GROQ_API_KEY || '';
+    const openaiKey =
+      process.env.OPENAI_API_KEY || envVars.OPENAI_API_KEY || '';
+
+    let apiUrl: string;
+    let apiKeyToUse: string;
+    let model: string;
+    let provider: string;
+
+    if (groqKey) {
+      apiUrl = 'https://api.groq.com/openai/v1/audio/transcriptions';
+      apiKeyToUse = groqKey;
+      model = 'whisper-large-v3-turbo';
+      provider = 'groq';
+    } else if (openaiKey) {
+      apiUrl = 'https://api.openai.com/v1/audio/transcriptions';
+      apiKeyToUse = openaiKey;
+      model = 'whisper-1';
+      provider = 'openai';
+    } else {
+      return `[Audio: ${filename} (no transcription API key)]`;
+    }
 
     const form = new FormData();
-    const filename = att.name || 'audio.ogg';
     form.append('file', new Blob([buffer]), filename);
-    form.append('model', 'whisper-1');
+    form.append('model', model);
 
-    const whisperRes = await fetch(
-      'https://api.openai.com/v1/audio/transcriptions',
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
-        body: form,
-      },
-    );
+    const whisperRes = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKeyToUse}` },
+      body: form,
+    });
     if (!whisperRes.ok) {
       const errText = await whisperRes.text();
-      throw new Error(`Whisper API ${whisperRes.status}: ${errText}`);
+      throw new Error(`${provider} Whisper ${whisperRes.status}: ${errText}`);
     }
     const data = (await whisperRes.json()) as { text: string };
+    const elapsed = Date.now() - start;
     const result = `[Voice message transcription]: ${data.text}`;
 
     // Save to cache for the other service
     fs.writeFileSync(cacheFile, result);
     logger.info(
-      { file: filename, length: data.text.length },
+      { file: filename, length: data.text.length, provider, elapsed },
       'Audio transcribed + cached',
     );
     return result;
@@ -223,15 +250,11 @@ export class DiscordChannel implements Channel {
 
       // Handle attachments — transcribe audio, placeholder for others
       if (message.attachments.size > 0) {
-        const openaiKey =
-          process.env.OPENAI_API_KEY ||
-          readEnvFile(['OPENAI_API_KEY']).OPENAI_API_KEY ||
-          '';
         const attachmentDescriptions = await Promise.all(
           [...message.attachments.values()].map(async (att) => {
             const contentType = att.contentType || '';
-            if (contentType.startsWith('audio/') && openaiKey) {
-              return transcribeAudio(att, openaiKey);
+            if (contentType.startsWith('audio/')) {
+              return transcribeAudio(att);
             } else if (contentType.startsWith('image/')) {
               try {
                 const imgPath = await downloadImage(att);
