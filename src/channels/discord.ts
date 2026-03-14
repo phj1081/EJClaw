@@ -677,12 +677,16 @@ registerChannel('discord', (opts: ChannelOpts) => {
   );
 });
 
-registerChannel('discord-codex', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['DISCORD_CODEX_BOT_TOKEN']);
-  const token =
-    process.env.DISCORD_CODEX_BOT_TOKEN ||
-    envVars.DISCORD_CODEX_BOT_TOKEN ||
-    '';
-  if (!token) return null; // Codex Discord bot is optional
-  return new DiscordChannel(token, opts, 'codex');
-});
+// Only register the secondary Codex bot channel when running as the primary (claude-code) service.
+// The codex service uses its own DISCORD_BOT_TOKEN via systemd EnvironmentFile override.
+if ((process.env.ASSISTANT_NAME || 'claude') !== 'codex') {
+  registerChannel('discord-codex', (opts: ChannelOpts) => {
+    const envVars = readEnvFile(['DISCORD_CODEX_BOT_TOKEN']);
+    const token =
+      process.env.DISCORD_CODEX_BOT_TOKEN ||
+      envVars.DISCORD_CODEX_BOT_TOKEN ||
+      '';
+    if (!token) return null; // Codex Discord bot is optional
+    return new DiscordChannel(token, opts, 'codex');
+  });
+}
