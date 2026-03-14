@@ -4,7 +4,7 @@ Dual-agent AI assistant (Claude Code + Codex) over Discord. Based on [qwibitai/n
 
 ## Quick Context
 
-Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but run with separate stores, data, and groups. Agents run as direct host processes (no containers). Claude Code uses the Agent SDK; Codex uses `codex app-server` via JSON-RPC. OAuth tokens auto-refresh and sync to per-group session dirs.
+Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but run with separate stores, data, and groups. Agents run as direct host processes (no containers). Claude Code uses the Agent SDK; Codex uses `codex app-server` via JSON-RPC. Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
 
 ## Key Files
 
@@ -12,7 +12,6 @@ Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but 
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
 | `src/agent-runner.ts` | Spawns agent processes, manages env/sessions/skills |
-| `src/token-refresh.ts` | OAuth auto-refresh + session directory sync |
 | `src/channels/discord.ts` | Discord channel (8s typing refresh, Groq/OpenAI Whisper transcription) |
 | `src/ipc.ts` | IPC watcher and task processing |
 | `src/router.ts` | Message formatting and outbound routing |
