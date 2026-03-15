@@ -394,7 +394,12 @@ export async function runAgentProcess(
           stdout += chunk.slice(0, remaining);
           stdoutTruncated = true;
           logger.warn(
-            { group: group.name, chatJid: input.chatJid, runId: input.runId, size: stdout.length },
+            {
+              group: group.name,
+              chatJid: input.chatJid,
+              runId: input.runId,
+              size: stdout.length,
+            },
             'Agent stdout truncated due to size limit',
           );
         } else {
@@ -424,7 +429,12 @@ export async function runAgentProcess(
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
             logger.warn(
-              { group: group.name, chatJid: input.chatJid, runId: input.runId, error: err },
+              {
+                group: group.name,
+                chatJid: input.chatJid,
+                runId: input.runId,
+                error: err,
+              },
               'Failed to parse streamed output chunk',
             );
           }
@@ -440,7 +450,12 @@ export async function runAgentProcess(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error(
-        { group: group.name, chatJid: input.chatJid, runId: input.runId, processName },
+        {
+          group: group.name,
+          chatJid: input.chatJid,
+          runId: input.runId,
+          processName,
+        },
         'Agent timeout, sending SIGTERM',
       );
       proc.kill('SIGTERM');
@@ -640,7 +655,12 @@ export async function runAgentProcess(
         resolve(output);
       } catch (err) {
         logger.error(
-          { group: group.name, chatJid: input.chatJid, runId: input.runId, error: err },
+          {
+            group: group.name,
+            chatJid: input.chatJid,
+            runId: input.runId,
+            error: err,
+          },
           'Failed to parse agent output',
         );
         resolve({
@@ -654,7 +674,13 @@ export async function runAgentProcess(
     proc.on('error', (err) => {
       clearTimeout(timeout);
       logger.error(
-        { group: group.name, chatJid: input.chatJid, runId: input.runId, processName, error: err },
+        {
+          group: group.name,
+          chatJid: input.chatJid,
+          runId: input.runId,
+          processName,
+          error: err,
+        },
         'Agent spawn error',
       );
       resolve({

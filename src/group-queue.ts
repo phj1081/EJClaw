@@ -245,7 +245,12 @@ export class GroupQueue {
       return true;
     } catch (err) {
       logger.warn(
-        { groupJid, runId: state.currentRunId, groupFolder: state.groupFolder, err },
+        {
+          groupJid,
+          runId: state.currentRunId,
+          groupFolder: state.groupFolder,
+          err,
+        },
         'Failed to queue follow-up message for active agent',
       );
       return false;
@@ -311,7 +316,10 @@ export class GroupQueue {
     let outcome: 'success' | 'retry_scheduled' | 'error' = 'success';
     try {
       if (this.processMessagesFn) {
-        const success = await this.processMessagesFn(groupJid, { runId, reason });
+        const success = await this.processMessagesFn(groupJid, {
+          runId,
+          reason,
+        });
         if (success) {
           state.retryCount = 0;
         } else {
@@ -321,7 +329,10 @@ export class GroupQueue {
       }
     } catch (err) {
       outcome = 'error';
-      logger.error({ groupJid, runId, err }, 'Error processing messages for group');
+      logger.error(
+        { groupJid, runId, err },
+        'Error processing messages for group',
+      );
       this.scheduleRetry(groupJid, state, runId);
     } finally {
       const durationMs = state.startedAt ? Date.now() - state.startedAt : null;

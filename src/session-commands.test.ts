@@ -47,19 +47,23 @@ describe('extractSessionCommand', () => {
 
 describe('isSessionCommandAllowed', () => {
   it('allows main group regardless of sender', () => {
-    expect(isSessionCommandAllowed(true, false)).toBe(true);
+    expect(isSessionCommandAllowed(true, false, false)).toBe(true);
   });
 
   it('allows trusted/admin sender (is_from_me) in non-main group', () => {
-    expect(isSessionCommandAllowed(false, true)).toBe(true);
+    expect(isSessionCommandAllowed(false, true, false)).toBe(true);
+  });
+
+  it('allows configured admin sender in non-main group', () => {
+    expect(isSessionCommandAllowed(false, false, true)).toBe(true);
   });
 
   it('denies untrusted sender in non-main group', () => {
-    expect(isSessionCommandAllowed(false, false)).toBe(false);
+    expect(isSessionCommandAllowed(false, false, false)).toBe(false);
   });
 
   it('allows trusted sender in main group', () => {
-    expect(isSessionCommandAllowed(true, true)).toBe(true);
+    expect(isSessionCommandAllowed(true, true, false)).toBe(true);
   });
 });
 
@@ -89,6 +93,7 @@ function makeDeps(
     clearSession: vi.fn(),
     advanceCursor: vi.fn(),
     formatMessages: vi.fn().mockReturnValue('<formatted>'),
+    isAdminSender: vi.fn().mockReturnValue(false),
     canSenderInteract: vi.fn().mockReturnValue(true),
     ...overrides,
   };
@@ -225,6 +230,25 @@ describe('handleSessionCommand', () => {
     expect(deps.runAgent).toHaveBeenCalledWith(
       '/compact',
       expect.any(Function),
+    );
+  });
+
+  it('allows configured admin sender in non-main group', async () => {
+    const deps = makeDeps({
+      isAdminSender: vi.fn().mockReturnValue(true),
+    });
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/clear', { is_from_me: false, sender: 'discord-user-1' })],
+      isMainGroup: false,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.clearSession).toHaveBeenCalledTimes(1);
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Current session cleared. The next message will start a new conversation.',
     );
   });
 

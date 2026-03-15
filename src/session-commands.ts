@@ -18,13 +18,14 @@ export function extractSessionCommand(
 
 /**
  * Check if a session command sender is authorized.
- * Allowed: main group (any sender), or trusted/admin sender (is_from_me) in any group.
+ * Allowed: main group (any sender), or trusted/admin sender in any group.
  */
 export function isSessionCommandAllowed(
   isMainGroup: boolean,
   isFromMe: boolean,
+  isAdminSender: boolean,
 ): boolean {
-  return isMainGroup || isFromMe;
+  return isMainGroup || isFromMe || isAdminSender;
 }
 
 /** Minimal agent result interface — matches the subset of AgentOutput used here. */
@@ -45,6 +46,7 @@ export interface SessionCommandDeps {
   clearSession: () => void;
   advanceCursor: (timestamp: string) => void;
   formatMessages: (msgs: NewMessage[], timezone: string) => string;
+  isAdminSender: (msg: NewMessage) => boolean;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
 }
@@ -89,7 +91,13 @@ export async function handleSessionCommand(opts: {
 
   if (!command || !cmdMsg) return { handled: false };
 
-  if (!isSessionCommandAllowed(isMainGroup, cmdMsg.is_from_me === true)) {
+  if (
+    !isSessionCommandAllowed(
+      isMainGroup,
+      cmdMsg.is_from_me === true,
+      deps.isAdminSender(cmdMsg),
+    )
+  ) {
     // DENIED: send denial if the sender would normally be allowed to interact,
     // then silently consume the command by advancing the cursor past it.
     // Trade-off: other messages in the same batch are also consumed (cursor is

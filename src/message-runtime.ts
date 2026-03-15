@@ -12,12 +12,10 @@ import {
   getMessagesSince,
   getNewMessages,
 } from './db.js';
+import { isSessionCommandSenderAllowed } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
 import { findChannel, formatMessages } from './router.js';
-import {
-  isTriggerAllowed,
-  loadSenderAllowlist,
-} from './sender-allowlist.js';
+import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
@@ -154,13 +152,19 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const registeredGroups = deps.getRegisteredGroups();
     const group = registeredGroups[chatJid];
     if (!group) {
-      logger.warn({ chatJid, runId, reason }, 'Registered group missing for queued run');
+      logger.warn(
+        { chatJid, runId, reason },
+        'Registered group missing for queued run',
+      );
       return true;
     }
 
     const channel = findChannel(deps.channels, chatJid);
     if (!channel) {
-      logger.warn({ chatJid, runId, reason }, 'No channel owns JID, skipping messages');
+      logger.warn(
+        { chatJid, runId, reason },
+        'No channel owns JID, skipping messages',
+      );
       return true;
     }
 
@@ -175,7 +179,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     if (missedMessages.length === 0) {
       logger.info(
-        { chatJid, group: group.name, groupFolder: group.folder, runId, reason },
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          reason,
+        },
         'No pending messages for queued run',
       );
       return true;
@@ -218,6 +228,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           deps.saveState();
         },
         formatMessages,
+        isAdminSender: (msg) => isSessionCommandSenderAllowed(msg.sender),
         canSenderInteract: (msg) => {
           const hasTrigger = deps.triggerPattern.test(msg.content.trim());
           const requiresTrigger =
@@ -227,11 +238,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             !requiresTrigger ||
             (hasTrigger &&
               (msg.is_from_me ||
-                isTriggerAllowed(
-                  chatJid,
-                  msg.sender,
-                  loadSenderAllowlist(),
-                )))
+                isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
           );
         },
       },
@@ -293,40 +300,48 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     await channel.setTyping?.(chatJid, true);
 
-    const output = await runAgent(group, prompt, chatJid, runId, async (result) => {
-      if (result.result) {
-        const raw =
-          typeof result.result === 'string'
-            ? result.result
-            : JSON.stringify(result.result);
-        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-        logger.info(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            resultStatus: result.status,
-          },
-          `Agent output: ${raw.slice(0, 200)}`,
-        );
-        if (text) {
-          await channel.sendMessage(chatJid, text);
-          outputSentToUser = true;
+    const output = await runAgent(
+      group,
+      prompt,
+      chatJid,
+      runId,
+      async (result) => {
+        if (result.result) {
+          const raw =
+            typeof result.result === 'string'
+              ? result.result
+              : JSON.stringify(result.result);
+          const text = raw
+            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
+            .trim();
+          logger.info(
+            {
+              chatJid,
+              group: group.name,
+              groupFolder: group.folder,
+              runId,
+              resultStatus: result.status,
+            },
+            `Agent output: ${raw.slice(0, 200)}`,
+          );
+          if (text) {
+            await channel.sendMessage(chatJid, text);
+            outputSentToUser = true;
+          }
         }
-      }
 
-      await channel.setTyping?.(chatJid, false);
-      resetIdleTimer();
+        await channel.setTyping?.(chatJid, false);
+        resetIdleTimer();
 
-      if (result.status === 'success') {
-        deps.queue.notifyIdle(chatJid, runId);
-      }
+        if (result.status === 'success') {
+          deps.queue.notifyIdle(chatJid, runId);
+        }
 
-      if (result.status === 'error') {
-        hadError = true;
-      }
-    });
+        if (result.status === 'error') {
+          hadError = true;
+        }
+      },
+    );
 
     await channel.setTyping?.(chatJid, false);
 
@@ -408,7 +423,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
             const channel = findChannel(deps.channels, chatJid);
             if (!channel) {
-              logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
+              logger.warn(
+                { chatJid },
+                'No channel owns JID, skipping messages',
+              );
               continue;
             }
 
@@ -420,8 +438,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               const lastHuman = getLastHumanMessageTimestamp(chatJid);
               if (
                 !lastHuman ||
-                Date.now() - new Date(lastHuman).getTime() >
-                  12 * 60 * 60 * 1000
+                Date.now() - new Date(lastHuman).getTime() > 12 * 60 * 60 * 1000
               ) {
                 logger.info(
                   { chatJid, lastHuman },
@@ -433,7 +450,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
             const loopCmdMsg = groupMessages.find(
               (msg) =>
-                extractSessionCommand(msg.content, deps.triggerPattern) !== null,
+                extractSessionCommand(msg.content, deps.triggerPattern) !==
+                null,
             );
 
             if (loopCmdMsg) {
@@ -441,9 +459,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 isSessionCommandAllowed(
                   isMainGroup,
                   loopCmdMsg.is_from_me === true,
+                  isSessionCommandSenderAllowed(loopCmdMsg.sender),
                 )
               ) {
-                deps.queue.closeStdin(chatJid);
+                deps.queue.closeStdin(chatJid, {
+                  reason: 'session-command-detected',
+                });
               }
               deps.queue.enqueueMessageCheck(chatJid);
               continue;

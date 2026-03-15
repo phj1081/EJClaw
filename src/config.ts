@@ -3,7 +3,11 @@ import path from 'path';
 
 import { readEnvFile } from './env.js';
 
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER']);
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME',
+  'ASSISTANT_HAS_OWN_NUMBER',
+  'SESSION_COMMAND_USER_IDS',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -15,6 +19,14 @@ export const SERVICE_AGENT_TYPE: 'claude-code' | 'codex' =
 export const ASSISTANT_HAS_OWN_NUMBER =
   (process.env.ASSISTANT_HAS_OWN_NUMBER ||
     envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
+export const SESSION_COMMAND_USER_IDS = new Set(
+  (process.env.SESSION_COMMAND_USER_IDS ||
+    envConfig.SESSION_COMMAND_USER_IDS ||
+    '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean),
+);
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 
@@ -72,3 +84,7 @@ export const USAGE_UPDATE_INTERVAL = 300000; // 5 minutes
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+export function isSessionCommandSenderAllowed(senderId: string): boolean {
+  return SESSION_COMMAND_USER_IDS.has(senderId);
+}
