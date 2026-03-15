@@ -20,7 +20,6 @@ export interface IpcDeps {
     groupFolder: string,
     isMain: boolean,
     availableGroups: AvailableGroup[],
-    registeredJids: Set<string>,
   ) => void;
 }
 
@@ -405,7 +404,6 @@ export async function processTaskIpc(
           sourceGroup,
           true,
           availableGroups,
-          new Set(Object.keys(registeredGroups)),
         );
       } else {
         logger.warn(

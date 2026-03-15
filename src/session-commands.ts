@@ -12,6 +12,7 @@ export function extractSessionCommand(
   let text = content.trim();
   text = text.replace(triggerPattern, '').trim();
   if (text === '/compact') return '/compact';
+  if (text === '/clear') return '/clear';
   return null;
 }
 
@@ -41,6 +42,7 @@ export interface SessionCommandDeps {
     onOutput: (result: AgentResult) => Promise<void>,
   ) => Promise<'success' | 'error'>;
   closeStdin: () => void;
+  clearSession: () => void;
   advanceCursor: (timestamp: string) => void;
   formatMessages: (msgs: NewMessage[], timezone: string) => string;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
@@ -63,6 +65,7 @@ export async function handleSessionCommand(opts: {
   missedMessages: NewMessage[];
   isMainGroup: boolean;
   groupName: string;
+  runId?: string;
   triggerPattern: RegExp;
   timezone: string;
   deps: SessionCommandDeps;
@@ -71,6 +74,7 @@ export async function handleSessionCommand(opts: {
     missedMessages,
     isMainGroup,
     groupName,
+    runId,
     triggerPattern,
     timezone,
     deps,
@@ -98,7 +102,17 @@ export async function handleSessionCommand(opts: {
   }
 
   // AUTHORIZED: process pre-compact messages first, then run the command
-  logger.info({ group: groupName, command }, 'Session command');
+  logger.info({ group: groupName, runId, command }, 'Session command');
+
+  if (command === '/clear') {
+    deps.closeStdin();
+    deps.clearSession();
+    deps.advanceCursor(cmdMsg.timestamp);
+    await deps.sendMessage(
+      'Current session cleared. The next message will start a new conversation.',
+    );
+    return { handled: true, success: true };
+  }
 
   const cmdIndex = missedMessages.indexOf(cmdMsg);
   const preCompactMsgs = missedMessages.slice(0, cmdIndex);
@@ -125,7 +139,7 @@ export async function handleSessionCommand(opts: {
 
     if (preResult === 'error' || hadPreError) {
       logger.warn(
-        { group: groupName },
+        { group: groupName, runId },
         'Pre-compact processing failed, aborting session command',
       );
       await deps.sendMessage(

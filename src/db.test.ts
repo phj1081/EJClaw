@@ -3,12 +3,15 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   createTask,
+  deleteSession,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
   getMessagesSince,
   getNewMessages,
+  getSession,
   getTaskById,
+  setSession,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
@@ -297,6 +300,16 @@ describe('getNewMessages', () => {
     const { messages, newTimestamp } = getNewMessages([], '', 'Andy');
     expect(messages).toHaveLength(0);
     expect(newTimestamp).toBe('');
+  });
+});
+
+describe('session accessors', () => {
+  it('deletes only the current service session for a group', () => {
+    setSession('group-a', 'session-123');
+    expect(getSession('group-a')).toBe('session-123');
+
+    deleteSession('group-a');
+    expect(getSession('group-a')).toBeUndefined();
   });
 });
 

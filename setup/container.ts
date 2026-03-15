@@ -29,14 +29,14 @@ export async function run(_args: string[]): Promise<void> {
   // Verify runner entry points exist
   const agentRunner = path.join(
     projectRoot,
-    'container',
+    'runners',
     'agent-runner',
     'dist',
     'index.js',
   );
   const codexRunner = path.join(
     projectRoot,
-    'container',
+    'runners',
     'codex-runner',
     'dist',
     'index.js',

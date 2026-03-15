@@ -9,7 +9,7 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
-import { STORE_DIR } from '../src/config.js';
+import { SERVICE_AGENT_TYPE, STORE_DIR } from '../src/config.js';
 import { isValidGroupFolder } from '../src/group-folder.js';
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
@@ -113,15 +113,31 @@ export async function run(args: string[]): Promise<void> {
     added_at TEXT NOT NULL,
     container_config TEXT,
     requires_trigger INTEGER DEFAULT 1,
-    is_main INTEGER DEFAULT 0
+    is_main INTEGER DEFAULT 0,
+    agent_type TEXT DEFAULT 'claude-code',
+    work_dir TEXT
   )`);
+
+  try {
+    db.exec(
+      `ALTER TABLE registered_groups ADD COLUMN agent_type TEXT DEFAULT 'claude-code'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    db.exec(`ALTER TABLE registered_groups ADD COLUMN work_dir TEXT`);
+  } catch {
+    /* column already exists */
+  }
 
   const isMainInt = parsed.isMain ? 1 : 0;
 
   db.prepare(
     `INSERT OR REPLACE INTO registered_groups
-     (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`,
+     (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, agent_type, work_dir)
+     VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, NULL)`,
   ).run(
     parsed.jid,
     parsed.name,
@@ -130,6 +146,7 @@ export async function run(args: string[]): Promise<void> {
     timestamp,
     requiresTriggerInt,
     isMainInt,
+    SERVICE_AGENT_TYPE,
   );
 
   db.close();

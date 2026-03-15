@@ -18,6 +18,10 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('@Andy /compact', trigger)).toBe('/compact');
   });
 
+  it('detects bare /clear', () => {
+    expect(extractSessionCommand('/clear', trigger)).toBe('/clear');
+  });
+
   it('rejects /compact with extra text', () => {
     expect(extractSessionCommand('/compact now please', trigger)).toBeNull();
   });
@@ -82,6 +86,7 @@ function makeDeps(
     setTyping: vi.fn().mockResolvedValue(undefined),
     runAgent: vi.fn().mockResolvedValue('success'),
     closeStdin: vi.fn(),
+    clearSession: vi.fn(),
     advanceCursor: vi.fn(),
     formatMessages: vi.fn().mockReturnValue('<formatted>'),
     canSenderInteract: vi.fn().mockReturnValue(true),
@@ -121,6 +126,26 @@ describe('handleSessionCommand', () => {
       expect.any(Function),
     );
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+  });
+
+  it('handles authorized /clear without invoking the agent', async () => {
+    const deps = makeDeps();
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/clear')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.closeStdin).toHaveBeenCalledTimes(1);
+    expect(deps.clearSession).toHaveBeenCalledTimes(1);
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Current session cleared. The next message will start a new conversation.',
+    );
   });
 
   it('sends denial to interactable sender in non-main group', async () => {

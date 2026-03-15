@@ -11,6 +11,11 @@ interface QueuedTask {
   fn: () => Promise<void>;
 }
 
+export interface GroupRunContext {
+  runId: string;
+  reason: 'messages' | 'drain';
+}
+
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 5000;
 
@@ -19,6 +24,7 @@ interface GroupState {
   idleWaiting: boolean;
   isTaskProcess: boolean;
   runningTaskId: string | null;
+  currentRunId: string | null;
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
@@ -40,8 +46,9 @@ export class GroupQueue {
   private groups = new Map<string, GroupState>();
   private activeCount = 0;
   private waitingGroups: string[] = [];
-  private processMessagesFn: ((groupJid: string) => Promise<boolean>) | null =
-    null;
+  private processMessagesFn:
+    | ((groupJid: string, context: GroupRunContext) => Promise<boolean>)
+    | null = null;
   private shuttingDown = false;
 
   private getGroup(groupJid: string): GroupState {
@@ -52,6 +59,7 @@ export class GroupQueue {
         idleWaiting: false,
         isTaskProcess: false,
         runningTaskId: null,
+        currentRunId: null,
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -65,8 +73,14 @@ export class GroupQueue {
     return state;
   }
 
-  setProcessMessagesFn(fn: (groupJid: string) => Promise<boolean>): void {
+  setProcessMessagesFn(
+    fn: (groupJid: string, context: GroupRunContext) => Promise<boolean>,
+  ): void {
     this.processMessagesFn = fn;
+  }
+
+  private createRunId(): string {
+    return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
   enqueueMessageCheck(groupJid: string, groupFolder?: string): void {
@@ -154,17 +168,38 @@ export class GroupQueue {
     state.process = proc;
     state.processName = processName;
     if (groupFolder) state.groupFolder = groupFolder;
+    logger.info(
+      {
+        groupJid,
+        runId: state.currentRunId,
+        processName,
+        groupFolder: state.groupFolder,
+        isTaskProcess: state.isTaskProcess,
+      },
+      'Registered active process for group',
+    );
   }
 
   /**
    * Mark the agent process as idle-waiting (finished work, waiting for IPC input).
    * If tasks are pending, preempt the idle agent process immediately.
    */
-  notifyIdle(groupJid: string): void {
+  notifyIdle(groupJid: string, runId?: string): void {
     const state = this.getGroup(groupJid);
     state.idleWaiting = true;
+    logger.info(
+      {
+        groupJid,
+        runId: runId ?? state.currentRunId,
+        pendingTasks: state.pendingTasks.length,
+      },
+      'Agent entered idle wait state',
+    );
     if (state.pendingTasks.length > 0) {
-      this.closeStdin(groupJid);
+      this.closeStdin(groupJid, {
+        runId: runId ?? state.currentRunId ?? undefined,
+        reason: 'pending-task-preemption',
+      });
     }
   }
 
@@ -174,8 +209,19 @@ export class GroupQueue {
    */
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskProcess)
+    if (!state.active || !state.groupFolder || state.isTaskProcess) {
+      logger.debug(
+        {
+          groupJid,
+          runId: state.currentRunId,
+          active: state.active,
+          groupFolder: state.groupFolder,
+          isTaskProcess: state.isTaskProcess,
+        },
+        'Cannot pipe follow-up message to active agent',
+      );
       return false;
+    }
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
@@ -186,8 +232,22 @@ export class GroupQueue {
       const tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
+      logger.info(
+        {
+          groupJid,
+          runId: state.currentRunId,
+          groupFolder: state.groupFolder,
+          textLength: text.length,
+          filename,
+        },
+        'Queued follow-up message for active agent',
+      );
       return true;
-    } catch {
+    } catch (err) {
+      logger.warn(
+        { groupJid, runId: state.currentRunId, groupFolder: state.groupFolder, err },
+        'Failed to queue follow-up message for active agent',
+      );
       return false;
     }
   }
@@ -195,7 +255,10 @@ export class GroupQueue {
   /**
    * Signal the active agent process to wind down by writing a close sentinel.
    */
-  closeStdin(groupJid: string): void {
+  closeStdin(
+    groupJid: string,
+    metadata?: { runId?: string; reason?: string },
+  ): void {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder) return;
 
@@ -203,8 +266,26 @@ export class GroupQueue {
     try {
       fs.mkdirSync(inputDir, { recursive: true });
       fs.writeFileSync(path.join(inputDir, '_close'), '');
-    } catch {
-      // ignore
+      logger.info(
+        {
+          groupJid,
+          runId: metadata?.runId ?? state.currentRunId,
+          groupFolder: state.groupFolder,
+          reason: metadata?.reason ?? 'unspecified',
+        },
+        'Signaled active agent to close stdin',
+      );
+    } catch (err) {
+      logger.warn(
+        {
+          groupJid,
+          runId: metadata?.runId ?? state.currentRunId,
+          groupFolder: state.groupFolder,
+          reason: metadata?.reason ?? 'unspecified',
+          err,
+        },
+        'Failed to signal active agent to close stdin',
+      );
     }
   }
 
@@ -213,36 +294,55 @@ export class GroupQueue {
     reason: 'messages' | 'drain',
   ): Promise<void> {
     const state = this.getGroup(groupJid);
+    const runId = this.createRunId();
     state.active = true;
     state.idleWaiting = false;
     state.isTaskProcess = false;
+    state.currentRunId = runId;
     state.pendingMessages = false;
     state.startedAt = Date.now();
     this.activeCount++;
 
-    logger.debug(
-      { groupJid, reason, activeCount: this.activeCount },
-      'Starting agent process for group',
+    logger.info(
+      { groupJid, runId, reason, activeCount: this.activeCount },
+      'Starting group message run',
     );
 
+    let outcome: 'success' | 'retry_scheduled' | 'error' = 'success';
     try {
       if (this.processMessagesFn) {
-        const success = await this.processMessagesFn(groupJid);
+        const success = await this.processMessagesFn(groupJid, { runId, reason });
         if (success) {
           state.retryCount = 0;
         } else {
-          this.scheduleRetry(groupJid, state);
+          outcome = 'retry_scheduled';
+          this.scheduleRetry(groupJid, state, runId);
         }
       }
     } catch (err) {
-      logger.error({ groupJid, err }, 'Error processing messages for group');
-      this.scheduleRetry(groupJid, state);
+      outcome = 'error';
+      logger.error({ groupJid, runId, err }, 'Error processing messages for group');
+      this.scheduleRetry(groupJid, state, runId);
     } finally {
+      const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
+      logger.info(
+        {
+          groupJid,
+          runId,
+          reason,
+          outcome,
+          durationMs,
+          pendingMessages: state.pendingMessages,
+          pendingTasks: state.pendingTasks.length,
+        },
+        'Finished group message run',
+      );
       state.active = false;
       state.startedAt = null;
       state.process = null;
       state.processName = null;
       state.groupFolder = null;
+      state.currentRunId = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -279,11 +379,15 @@ export class GroupQueue {
     }
   }
 
-  private scheduleRetry(groupJid: string, state: GroupState): void {
+  private scheduleRetry(
+    groupJid: string,
+    state: GroupState,
+    runId?: string,
+  ): void {
     state.retryCount++;
     if (state.retryCount > MAX_RETRIES) {
       logger.error(
-        { groupJid, retryCount: state.retryCount },
+        { groupJid, runId, retryCount: state.retryCount },
         'Max retries exceeded, dropping messages (will retry on next incoming message)',
       );
       state.retryCount = 0;
@@ -292,7 +396,7 @@ export class GroupQueue {
 
     const delayMs = BASE_RETRY_MS * Math.pow(2, state.retryCount - 1);
     logger.info(
-      { groupJid, retryCount: state.retryCount, delayMs },
+      { groupJid, runId, retryCount: state.retryCount, delayMs },
       'Scheduling retry with backoff',
     );
     setTimeout(() => {
@@ -412,7 +516,7 @@ export class GroupQueue {
     // via idle timeout or agent timeout.
     // This prevents reconnection restarts from killing working agents.
     const activeProcesses: string[] = [];
-    for (const [jid, state] of this.groups) {
+    for (const [, state] of this.groups) {
       if (state.process && !state.process.killed && state.processName) {
         activeProcesses.push(state.processName);
       }

@@ -15,29 +15,26 @@
 Two AI agents running as parallel systemd services, communicating over Discord:
 
 - **Claude Code** — powered by Claude Agent SDK, trigger `@claude`
-- **Codex** — powered by Codex app-server (JSON-RPC), trigger `@codex`
+- **Codex** — powered by Codex SDK, trigger `@codex`
 
-Each agent has its own store, data, and groups directories. Discord channels can be registered with either agent, or both (`both` agent type for shared channels).
+Each agent has its own store, data, and groups directories. Discord channels are registered per agent service.
 
 ### Key Features
 
 - **Direct host processes** — no container overhead, agents run natively
 - **Bidirectional image support** — receive images as multimodal input, send as Discord attachments
 - **Skill sync** — single source of truth (`~/.claude/skills/`), auto-synced to all sessions
-- **OAuth auto-refresh** — token lifecycle managed automatically for headless environments
 - **Priority queue** — per-group serialization, global concurrency limit, idle preemption
-- **Auto-continue** — Codex text-only turns automatically retried to enforce task execution
 
 ## Architecture
 
 ```
 Discord ──► SQLite ──► GroupQueue ──┬──► Claude Agent SDK (host process)
-                                    └──► Codex App-Server (JSON-RPC stdio)
-                                              ├── thread/start, thread/resume
-                                              ├── turn/start (streaming, multimodal)
-                                              ├── turn/steer (mid-turn injection)
-                                              ├── Auto-approval (bypass sandbox)
-                                              └── Auto-continue (text-only turn retry)
+                                    └──► Codex SDK (long-lived thread runner)
+                                              ├── thread start/resume
+                                              ├── multimodal input
+                                              ├── per-group model/effort config
+                                              └── follow-up messages via IPC
 ```
 
 ### Directory Layout
@@ -52,7 +49,6 @@ nanoclaw/
 │   ├── router.ts               # Outbound message formatting and routing
 │   ├── sender-allowlist.ts     # Security: sender-based access control
 │   ├── session-commands.ts     # Session commands (/compact)
-│   ├── token-refresh.ts        # OAuth auto-refresh + session directory sync
 │   ├── task-scheduler.ts       # Scheduled tasks (cron/interval/once)
 │   ├── ipc.ts                  # IPC watcher and task processing
 │   ├── db.ts                   # SQLite operations
@@ -62,7 +58,7 @@ nanoclaw/
 │       └── discord.ts          # Discord: mentions, images, typing, file attachments
 ├── runners/
 │   ├── agent-runner/           # Claude Code runner (Agent SDK, multimodal input)
-│   ├── codex-runner/           # Codex runner (app-server JSON-RPC, auto-continue)
+│   ├── codex-runner/           # Codex runner (SDK thread wrapper)
 │   └── skills/                 # Shared agent skills (browser, etc.)
 ├── store/                      # Claude Code service DB
 ├── store-codex/                # Codex service DB
@@ -75,17 +71,15 @@ nanoclaw/
 └── logs/                       # Service logs
 ```
 
-### Codex App-Server Integration
+### Codex SDK Integration
 
-The Codex runner (`runners/codex-runner/`) communicates with `codex app-server` via JSON-RPC over stdio:
+The Codex runner (`runners/codex-runner/`) uses `@openai/codex-sdk` with one long-lived thread per group:
 
-- **Session persistence**: Thread IDs stored in DB, sessions saved as JSONL on disk
-- **Streaming**: `item/agentMessage/delta` notifications for real-time text
-- **Mid-turn steering**: IPC messages injected via `turn/steer` during execution
-- **Auto-approval**: `approvalPolicy: "never"` + `sandbox: "danger-full-access"`
-- **Auto-continue**: Detects text-only turns (no tool execution) and automatically retries up to 5 times to nudge the agent into actually executing tasks
-- **Multimodal input**: Image attachments converted to `localImage` input blocks in `turn/start`
-- **Per-group config**: Model, effort, MCP servers configured per channel
+- **Session persistence**: Thread IDs stored in DB and resumed per group
+- **Follow-up messages**: Additional Discord messages are injected into the active runner via IPC
+- **Auto-approval**: `approvalPolicy: "never"` + `sandboxMode: "danger-full-access"`
+- **Multimodal input**: Image attachments converted to `local_image` SDK inputs
+- **Per-group config**: Model and reasoning effort can be overridden per channel
 
 ### Image Handling
 
@@ -101,15 +95,6 @@ Skills are managed from a single source of truth (`~/.claude/skills/` on the ser
 - Claude Code sessions: `~/.claude/skills/` + project `runners/skills/`
 - Codex sessions: Same sources, synced to per-group `.codex/` directories
 - Skills auto-register as slash commands (`/name`) in Claude Code and `$name` in Codex
-
-### OAuth Token Auto-Refresh
-
-`src/token-refresh.ts` handles Claude Code OAuth token lifecycle:
-
-- Checks every 5 minutes, refreshes 30 minutes before expiry
-- Tries `platform.claude.com` then falls back to `api.anthropic.com`
-- Syncs refreshed credentials to all per-group session directories
-- Solves the known headless environment token expiry issue
 
 ### GroupQueue
 
@@ -241,10 +226,10 @@ Channels are stored in each service's SQLite database (`registered_groups` table
 
 ```bash
 # Example: register a channel for Claude Code
-sqlite3 store/nanoclaw.db "INSERT INTO registered_groups (jid, name, folder, agent_type, trigger_pattern) VALUES ('dc:CHANNEL_ID', 'my-channel', 'my-channel', 'claude-code', '@claude');"
+sqlite3 store/messages.db "INSERT INTO registered_groups (jid, name, folder, trigger_pattern, added_at, agent_type) VALUES ('dc:CHANNEL_ID', 'my-channel', 'my-channel', '@claude', datetime('now'), 'claude-code');"
 
 # Example: register a channel for Codex
-sqlite3 store-codex/nanoclaw.db "INSERT INTO registered_groups (jid, name, folder, agent_type, trigger_pattern) VALUES ('dc:CHANNEL_ID', 'my-channel', 'my-channel', 'codex', '@codex');"
+sqlite3 store-codex/messages.db "INSERT INTO registered_groups (jid, name, folder, trigger_pattern, added_at, agent_type) VALUES ('dc:CHANNEL_ID', 'my-channel', 'my-channel', '@codex', datetime('now'), 'codex');"
 ```
 
 Fields:
@@ -254,7 +239,7 @@ Fields:
 | `jid` | `dc:<discord_channel_id>` |
 | `name` | Display name |
 | `folder` | Group folder name (workspace directory) |
-| `agent_type` | `claude-code`, `codex`, or `both` |
+| `agent_type` | `claude-code` or `codex` |
 | `trigger_pattern` | Regex for activation (e.g., `@claude`) |
 | `work_dir` | Optional working directory override |
 | `container_config` | Optional JSON (e.g., `{"codexEffort":"high"}`) |

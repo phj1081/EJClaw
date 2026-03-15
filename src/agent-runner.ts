@@ -29,6 +29,7 @@ export interface AgentInput {
   sessionId?: string;
   groupFolder: string;
   chatJid: string;
+  runId?: string;
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
@@ -324,15 +325,19 @@ export async function runAgentProcess(
     group,
     input.isMain,
   );
+  if (input.runId) {
+    env.NANOCLAW_RUN_ID = input.runId;
+  }
 
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const processName = `nanoclaw-${safeName}-${Date.now()}`;
+  const processSuffix = input.runId || `${Date.now()}`;
+  const processName = `nanoclaw-${safeName}-${processSuffix}`;
 
   // Check if runner is built
   const distEntry = path.join(runnerDir, 'dist', 'index.js');
   if (!fs.existsSync(distEntry)) {
     logger.error(
-      { runnerDir },
+      { runnerDir, chatJid: input.chatJid, runId: input.runId },
       'Runner not built. Run: cd runners/agent-runner && npm install && npm run build',
     );
     return {
@@ -345,6 +350,9 @@ export async function runAgentProcess(
   logger.info(
     {
       group: group.name,
+      chatJid: input.chatJid,
+      groupFolder: input.groupFolder,
+      runId: input.runId,
       processName,
       agentType: group.agentType || 'claude-code',
       isMain: input.isMain,
@@ -386,7 +394,7 @@ export async function runAgentProcess(
           stdout += chunk.slice(0, remaining);
           stdoutTruncated = true;
           logger.warn(
-            { group: group.name, size: stdout.length },
+            { group: group.name, chatJid: input.chatJid, runId: input.runId, size: stdout.length },
             'Agent stdout truncated due to size limit',
           );
         } else {
@@ -416,7 +424,7 @@ export async function runAgentProcess(
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
             logger.warn(
-              { group: group.name, error: err },
+              { group: group.name, chatJid: input.chatJid, runId: input.runId, error: err },
               'Failed to parse streamed output chunk',
             );
           }
@@ -432,7 +440,7 @@ export async function runAgentProcess(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error(
-        { group: group.name, processName },
+        { group: group.name, chatJid: input.chatJid, runId: input.runId, processName },
         'Agent timeout, sending SIGTERM',
       );
       proc.kill('SIGTERM');
@@ -455,9 +463,15 @@ export async function runAgentProcess(
       for (const line of lines) {
         if (!line) continue;
         if (line.includes('Turn in progress')) {
-          logger.info({ group: group.name }, line.replace(/^\[.*?\]\s*/, ''));
+          logger.info(
+            { group: group.name, chatJid: input.chatJid, runId: input.runId },
+            line.replace(/^\[.*?\]\s*/, ''),
+          );
         } else {
-          logger.debug({ agent: group.folder }, line);
+          logger.debug(
+            { agent: group.folder, chatJid: input.chatJid, runId: input.runId },
+            line,
+          );
         }
       }
       // Stderr activity means agent is alive — reset timeout
@@ -479,11 +493,13 @@ export async function runAgentProcess(
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');
         fs.writeFileSync(
-          path.join(logsDir, `agent-${ts}.log`),
+          path.join(logsDir, `agent-${input.runId || 'adhoc'}-${ts}.log`),
           [
             `=== Agent Run Log (TIMEOUT) ===`,
             `Timestamp: ${new Date().toISOString()}`,
             `Group: ${group.name}`,
+            `ChatJid: ${input.chatJid}`,
+            `RunId: ${input.runId || 'n/a'}`,
             `Process: ${processName}`,
             `Duration: ${duration}ms`,
             `Exit Code: ${code}`,
@@ -493,7 +509,14 @@ export async function runAgentProcess(
 
         if (hadStreamingOutput) {
           logger.info(
-            { group: group.name, processName, duration, code },
+            {
+              group: group.name,
+              chatJid: input.chatJid,
+              runId: input.runId,
+              processName,
+              duration,
+              code,
+            },
             'Agent timed out after output (idle cleanup)',
           );
           outputChain.then(() => {
@@ -511,7 +534,10 @@ export async function runAgentProcess(
       }
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const logFile = path.join(logsDir, `agent-${timestamp}.log`);
+      const logFile = path.join(
+        logsDir,
+        `agent-${input.runId || 'adhoc'}-${timestamp}.log`,
+      );
       const isVerbose =
         process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
 
@@ -519,6 +545,9 @@ export async function runAgentProcess(
         `=== Agent Run Log ===`,
         `Timestamp: ${new Date().toISOString()}`,
         `Group: ${group.name}`,
+        `ChatJid: ${input.chatJid}`,
+        `GroupFolder: ${input.groupFolder}`,
+        `RunId: ${input.runId || 'n/a'}`,
         `IsMain: ${input.isMain}`,
         `AgentType: ${group.agentType || 'claude-code'}`,
         `Duration: ${duration}ms`,
@@ -549,7 +578,14 @@ export async function runAgentProcess(
 
       if (code !== 0) {
         logger.error(
-          { group: group.name, code, duration, logFile },
+          {
+            group: group.name,
+            chatJid: input.chatJid,
+            runId: input.runId,
+            code,
+            duration,
+            logFile,
+          },
           'Agent exited with error',
         );
         resolve({
@@ -563,7 +599,13 @@ export async function runAgentProcess(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId },
+            {
+              group: group.name,
+              chatJid: input.chatJid,
+              runId: input.runId,
+              duration,
+              newSessionId,
+            },
             'Agent completed (streaming mode)',
           );
           resolve({ status: 'success', result: null, newSessionId });
@@ -586,13 +628,19 @@ export async function runAgentProcess(
         }
         const output: AgentOutput = JSON.parse(jsonLine);
         logger.info(
-          { group: group.name, duration, status: output.status },
+          {
+            group: group.name,
+            chatJid: input.chatJid,
+            runId: input.runId,
+            duration,
+            status: output.status,
+          },
           'Agent completed',
         );
         resolve(output);
       } catch (err) {
         logger.error(
-          { group: group.name, error: err },
+          { group: group.name, chatJid: input.chatJid, runId: input.runId, error: err },
           'Failed to parse agent output',
         );
         resolve({
@@ -606,7 +654,7 @@ export async function runAgentProcess(
     proc.on('error', (err) => {
       clearTimeout(timeout);
       logger.error(
-        { group: group.name, processName, error: err },
+        { group: group.name, chatJid: input.chatJid, runId: input.runId, processName, error: err },
         'Agent spawn error',
       );
       resolve({
@@ -651,7 +699,6 @@ export function writeGroupsSnapshot(
   groupFolder: string,
   isMain: boolean,
   groups: AvailableGroup[],
-  registeredJids: Set<string>,
 ): void {
   const groupIpcDir = resolveGroupIpcPath(groupFolder);
   fs.mkdirSync(groupIpcDir, { recursive: true });
