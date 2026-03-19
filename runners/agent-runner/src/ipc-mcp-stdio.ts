@@ -24,6 +24,8 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const agentType = process.env.NANOCLAW_AGENT_TYPE || 'claude-code';
+const allowGenericScheduling = agentType !== 'codex';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -67,9 +69,10 @@ server.tool(
   },
 );
 
-server.tool(
-  'schedule_task',
-  `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
+if (allowGenericScheduling) {
+  server.tool(
+    'schedule_task',
+    `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
 CONTEXT MODE - Choose based on task type:
 \u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
@@ -90,76 +93,77 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
 \u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
-  {
-    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
-    schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
-    schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
-    context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
-  },
-  async (args) => {
-    // Validate schedule_value before writing IPC
-    if (args.schedule_type === 'cron') {
-      try {
-        CronExpressionParser.parse(args.schedule_value);
-      } catch {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).` }],
-          isError: true,
-        };
+    {
+      prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
+      schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
+      schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
+      context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
+      target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    },
+    async (args) => {
+      // Validate schedule_value before writing IPC
+      if (args.schedule_type === 'cron') {
+        try {
+          CronExpressionParser.parse(args.schedule_value);
+        } catch {
+          return {
+            content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).` }],
+            isError: true,
+          };
+        }
+      } else if (args.schedule_type === 'interval') {
+        const ms = parseInt(args.schedule_value, 10);
+        if (isNaN(ms) || ms <= 0) {
+          return {
+            content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).` }],
+            isError: true,
+          };
+        }
+      } else if (args.schedule_type === 'once') {
+        if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
+          return {
+            content: [{ type: 'text' as const, text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".` }],
+            isError: true,
+          };
+        }
+        const date = new Date(args.schedule_value);
+        if (isNaN(date.getTime())) {
+          return {
+            content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".` }],
+            isError: true,
+          };
+        }
       }
-    } else if (args.schedule_type === 'interval') {
-      const ms = parseInt(args.schedule_value, 10);
-      if (isNaN(ms) || ms <= 0) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).` }],
-          isError: true,
-        };
-      }
-    } else if (args.schedule_type === 'once') {
-      if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
-        return {
-          content: [{ type: 'text' as const, text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".` }],
-          isError: true,
-        };
-      }
-      const date = new Date(args.schedule_value);
-      if (isNaN(date.getTime())) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".` }],
-          isError: true,
-        };
-      }
-    }
 
-    // Non-main groups can only schedule for themselves
-    const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+      // Non-main groups can only schedule for themselves
+      const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
 
-    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const data = {
-      type: 'schedule_task',
-      taskId,
-      prompt: args.prompt,
-      schedule_type: args.schedule_type,
-      schedule_value: args.schedule_value,
-      context_mode: args.context_mode || 'group',
-      targetJid,
-      createdBy: groupFolder,
-      timestamp: new Date().toISOString(),
-    };
+      const data = {
+        type: 'schedule_task',
+        taskId,
+        prompt: args.prompt,
+        schedule_type: args.schedule_type,
+        schedule_value: args.schedule_value,
+        context_mode: args.context_mode || 'group',
+        targetJid,
+        createdBy: groupFolder,
+        timestamp: new Date().toISOString(),
+      };
 
-    writeIpcFile(TASKS_DIR, data);
+      writeIpcFile(TASKS_DIR, data);
 
-    return {
-      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
-    };
-  },
-);
+      return {
+        content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
+      };
+    },
+  );
+}
 
 server.tool(
   'watch_ci',
-  'Schedule a background CI watcher that checks until a run or check reaches a terminal state, then sends one message and cancels itself.',
+  'Schedule a background CI watcher that checks until a run or check reaches a terminal state, then sends one message and cancels itself. Use this for CI, benchmark, deploy, or profiling completion tracking instead of generic recurring scheduling.',
   {
     target: z
       .string()
@@ -336,55 +340,57 @@ server.tool(
   },
 );
 
-server.tool(
-  'update_task',
-  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same.',
-  {
-    task_id: z.string().describe('The task ID to update'),
-    prompt: z.string().optional().describe('New prompt for the task'),
-    schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
-    schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
-  },
-  async (args: { task_id: string; prompt?: string; schedule_type?: 'cron' | 'interval' | 'once'; schedule_value?: string }) => {
-    // Validate schedule_value if provided
-    if (args.schedule_type === 'cron' || (!args.schedule_type && args.schedule_value)) {
-      if (args.schedule_value) {
-        try {
-          CronExpressionParser.parse(args.schedule_value);
-        } catch {
+if (allowGenericScheduling) {
+  server.tool(
+    'update_task',
+    'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same.',
+    {
+      task_id: z.string().describe('The task ID to update'),
+      prompt: z.string().optional().describe('New prompt for the task'),
+      schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
+      schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+    },
+    async (args: { task_id: string; prompt?: string; schedule_type?: 'cron' | 'interval' | 'once'; schedule_value?: string }) => {
+      // Validate schedule_value if provided
+      if (args.schedule_type === 'cron' || (!args.schedule_type && args.schedule_value)) {
+        if (args.schedule_value) {
+          try {
+            CronExpressionParser.parse(args.schedule_value);
+          } catch {
+            return {
+              content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}".` }],
+              isError: true,
+            };
+          }
+        }
+      }
+      if (args.schedule_type === 'interval' && args.schedule_value) {
+        const ms = parseInt(args.schedule_value, 10);
+        if (isNaN(ms) || ms <= 0) {
           return {
-            content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}".` }],
+            content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}".` }],
             isError: true,
           };
         }
       }
-    }
-    if (args.schedule_type === 'interval' && args.schedule_value) {
-      const ms = parseInt(args.schedule_value, 10);
-      if (isNaN(ms) || ms <= 0) {
-        return {
-          content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}".` }],
-          isError: true,
-        };
-      }
-    }
 
-    const data: Record<string, string | undefined> = {
-      type: 'update_task',
-      taskId: args.task_id,
-      groupFolder,
-      isMain: String(isMain),
-      timestamp: new Date().toISOString(),
-    };
-    if (args.prompt !== undefined) data.prompt = args.prompt;
-    if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
-    if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
+      const data: Record<string, string | undefined> = {
+        type: 'update_task',
+        taskId: args.task_id,
+        groupFolder,
+        isMain: String(isMain),
+        timestamp: new Date().toISOString(),
+      };
+      if (args.prompt !== undefined) data.prompt = args.prompt;
+      if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
+      if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
 
-    writeIpcFile(TASKS_DIR, data);
+      writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} update requested.` }] };
-  },
-);
+      return { content: [{ type: 'text' as const, text: `Task ${args.task_id} update requested.` }] };
+    },
+  );
+}
 
 server.tool(
   'register_group',

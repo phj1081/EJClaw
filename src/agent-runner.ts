@@ -206,6 +206,7 @@ function prepareGroupEnvironment(
     NANOCLAW_CHAT_JID: group.folder,
     NANOCLAW_GROUP_FOLDER: group.folder,
     NANOCLAW_IS_MAIN: isMain ? '1' : '0',
+    NANOCLAW_AGENT_TYPE: agentType,
     // Claude sessions directory — set CLAUDE_CONFIG_DIR so SDK uses per-group sessions
     CLAUDE_CONFIG_DIR: groupSessionsDir,
   };
@@ -314,6 +315,7 @@ NANOCLAW_IPC_DIR = ${JSON.stringify(env.NANOCLAW_IPC_DIR)}
 NANOCLAW_CHAT_JID = ${JSON.stringify(group.folder)}
 NANOCLAW_GROUP_FOLDER = ${JSON.stringify(group.folder)}
 NANOCLAW_IS_MAIN = ${JSON.stringify(isMain ? '1' : '0')}
+NANOCLAW_AGENT_TYPE = ${JSON.stringify(env.NANOCLAW_AGENT_TYPE)}
 `;
       // Inject memento-mcp if MEMENTO_MCP_SSE_URL is set
       const mementoSseUrl =
