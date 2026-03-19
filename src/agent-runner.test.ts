@@ -252,4 +252,48 @@ describe('agent-runner timeout behavior', () => {
       'Platform Claude Rules\n\n---\n\nGlobal Claude Memory\n',
     );
   });
+
+  it('injects the real chat JID into Codex MCP config', async () => {
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const path = String(p);
+      return (
+        path.includes('dist/index.js') ||
+        path.endsWith('/runners/agent-runner/dist/ipc-mcp-stdio.js')
+      );
+    });
+    vi.mocked(fs.readFileSync).mockReturnValue('');
+
+    const codexGroup: RegisteredGroup = {
+      ...testGroup,
+      folder: 'eyejokerdb-4',
+      agentType: 'codex',
+    };
+    const codexInput = {
+      ...testInput,
+      groupFolder: 'eyejokerdb-4',
+      chatJid: 'dc:1481348008183595170',
+    };
+
+    const resultPromise = runAgentProcess(
+      codexGroup,
+      codexInput,
+      () => {},
+      undefined,
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      '/tmp/ejclaw-test-data/sessions/eyejokerdb-4/.codex/config.toml',
+      expect.stringContaining(
+        'NANOCLAW_CHAT_JID = "dc:1481348008183595170"',
+      ),
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      '/tmp/ejclaw-test-data/sessions/eyejokerdb-4/.codex/config.toml',
+      expect.stringContaining('NANOCLAW_GROUP_FOLDER = "eyejokerdb-4"'),
+    );
+  });
 });

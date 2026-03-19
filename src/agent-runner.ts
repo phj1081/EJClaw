@@ -323,7 +323,7 @@ args = [${JSON.stringify(mcpServerPath)}]
 
 [mcp_servers.nanoclaw.env]
 NANOCLAW_IPC_DIR = ${JSON.stringify(env.NANOCLAW_IPC_DIR)}
-NANOCLAW_CHAT_JID = ${JSON.stringify(group.folder)}
+NANOCLAW_CHAT_JID = ${JSON.stringify(chatJid)}
 NANOCLAW_GROUP_FOLDER = ${JSON.stringify(group.folder)}
 NANOCLAW_IS_MAIN = ${JSON.stringify(isMain ? '1' : '0')}
 `;
