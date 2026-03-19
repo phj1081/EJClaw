@@ -124,7 +124,9 @@ export function renderWatchCiStatusMessage(args: {
 }): string {
   const target = extractWatchCiTarget(args.task.prompt) || 'CI watcher';
   const title =
-    args.phase === 'completed' ? `CI 감시 종료: ${target}` : `CI 감시 중: ${target}`;
+    args.phase === 'completed'
+      ? `CI 감시 종료: ${target}`
+      : `CI 감시 중: ${target}`;
   const statusLabel =
     args.phase === 'checking'
       ? '확인 중'
@@ -361,7 +363,10 @@ async function runTask(
 
   if (!currentTask) {
     await updateWatcherStatus('completed');
-    logger.debug({ taskId: task.id }, 'Task deleted during execution, skipping persistence');
+    logger.debug(
+      { taskId: task.id },
+      'Task deleted during execution, skipping persistence',
+    );
     return;
   }
 
@@ -402,9 +407,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
 
   const loop = async () => {
     try {
-      const dueTasks = getDueTasks(
-        deps.serviceAgentType || SERVICE_AGENT_TYPE,
-      );
+      const dueTasks = getDueTasks(deps.serviceAgentType || SERVICE_AGENT_TYPE);
       if (dueTasks.length > 0) {
         logger.info({ count: dueTasks.length }, 'Found due tasks');
       }

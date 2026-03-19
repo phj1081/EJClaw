@@ -437,9 +437,7 @@ describe('task CRUD', () => {
     expect(getDueTasks('claude-code').map((task) => task.id)).toEqual([
       'task-claude',
     ]);
-    expect(getDueTasks('codex').map((task) => task.id)).toEqual([
-      'task-codex',
-    ]);
+    expect(getDueTasks('codex').map((task) => task.id)).toEqual(['task-codex']);
   });
 });
 

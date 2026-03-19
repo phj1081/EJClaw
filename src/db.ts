@@ -117,13 +117,17 @@ function createSchema(database: Database.Database): void {
   }
 
   try {
-    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN status_message_id TEXT`);
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN status_message_id TEXT`,
+    );
   } catch {
     /* column already exists */
   }
 
   try {
-    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN status_started_at TEXT`);
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN status_started_at TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -637,7 +641,9 @@ export function updateTask(
 
 export function updateTaskStatusTracking(
   id: string,
-  updates: Partial<Pick<ScheduledTask, 'status_message_id' | 'status_started_at'>>,
+  updates: Partial<
+    Pick<ScheduledTask, 'status_message_id' | 'status_started_at'>
+  >,
 ): void {
   const fields: string[] = [];
   const values: unknown[] = [];

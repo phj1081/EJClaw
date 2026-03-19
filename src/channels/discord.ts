@@ -504,7 +504,6 @@ export class DiscordChannel implements Channel {
     return groupType === this.agentTypeFilter;
   }
 
-
   async disconnect(): Promise<void> {
     if (this.client) {
       this.client.destroy();
