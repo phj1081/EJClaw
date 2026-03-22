@@ -565,18 +565,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const isMainGroup = group.isMain === true;
     const isClaudeCodeAgent =
       (group.agentType || 'claude-code') === 'claude-code';
-    const QUIET_RUN_ROLLOVER_MS = Math.min(deps.idleTimeout, 10_000);
-    const MAX_SILENT_ROLLOVERS = 2;
-    const MAX_TOTAL_SILENT_WAIT_MS =
-      QUIET_RUN_ROLLOVER_MS * (MAX_SILENT_ROLLOVERS + 1);
     const FAILURE_FINAL_TEXT =
       '요청을 완료하지 못했습니다. 다시 시도해 주세요.';
-    const queueItemBaseCursor = normalizeStoredSeqCursor(
-      deps.getLastAgentTimestamps()[chatJid] || '0',
-      chatJid,
-    );
-    let silentRolloverCount = 0;
-    let totalSilentWaitMs = 0;
 
     while (true) {
       const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
@@ -656,7 +646,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }
 
       const prompt = formatMessages(missedMessages, deps.timezone);
-      const previousCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
       const startSeq = missedMessages[0].seq ?? null;
       const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
       if (endSeq !== null) {
@@ -670,8 +659,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           groupFolder: group.folder,
           runId,
           messageCount: missedMessages.length,
-          silentRolloverCount,
-          totalSilentWaitMs,
         },
         'Dispatching queued messages to agent',
       );
@@ -685,7 +672,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       let hadError = false;
       let producedDeliverySucceeded = true;
-      let quietStopReason: string | null = null;
       let visiblePhase: VisiblePhase = 'silent';
       let latestProgressText: string | null = null;
       let latestProgressRendered: string | null = null;
@@ -697,7 +683,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       let poisonedSessionDetected = false;
       let canPipeFollowUps = true;
       let pendingFollowUp: PendingFollowUp = null;
-      const attemptStartedAt = Date.now();
 
       const hasVisibleOutput = () => visiblePhase !== 'silent';
       const terminalObserved = () => visiblePhase === 'final';
@@ -935,10 +920,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               !hasVisibleOutput() && pendingFollowUp
                 ? 'follow-up-no-output-preemption'
                 : 'idle-timeout';
-            quietStopReason ??=
-              !hasVisibleOutput() && pendingFollowUp
-                ? 'follow-up-no-output-timeout'
-                : 'idle-timeout';
             if (!hasVisibleOutput() && pendingFollowUp) {
               logger.warn(
                 {
@@ -962,7 +943,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             }
             deps.queue.closeStdin(chatJid, { runId, reason: closeReason });
           },
-          hasVisibleOutput() ? deps.idleTimeout : QUIET_RUN_ROLLOVER_MS,
+          deps.idleTimeout,
         );
       };
 
@@ -1112,8 +1093,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             await finalizeProgressMessage();
             latestProgressTextForFinal = null;
           } else {
-            quietStopReason ??=
-              result.status === 'success' ? 'success-null-result' : 'error';
             await finalizeProgressMessage();
           }
 
@@ -1142,9 +1121,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       if (output === 'error') {
         hadError = true;
-        quietStopReason ??= 'error';
-      } else if (visiblePhase === 'silent') {
-        quietStopReason ??= 'success-null-result';
       }
 
       const settledVisiblePhase = visiblePhase as VisiblePhase;
@@ -1169,63 +1145,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       } else if (
         settledVisiblePhase === 'progress' &&
         !terminalObserved() &&
-        (hadError || quietStopReason === 'idle-timeout')
+        hadError
       ) {
         await publishFailureFinal();
       }
-
-      const pendingFollowUpSnapshot = pendingFollowUp as PendingFollowUp;
-      const quietWaitStartedAt =
-        pendingFollowUpSnapshot?.queuedAt ?? attemptStartedAt;
-      const quietWaitMs = Date.now() - quietWaitStartedAt;
 
       clearProgressTicker();
       if (idleTimer) clearTimeout(idleTimer);
       deps.queue.setActivityTouch?.(chatJid, null);
       deps.queue.setFollowUpPipeAllowed?.(chatJid, null);
       clearPendingFollowUp();
-
-      if (settledVisiblePhase === 'silent') {
-        const nextTotalSilentWaitMs = totalSilentWaitMs + quietWaitMs;
-        const canRolloverAgain =
-          silentRolloverCount < MAX_SILENT_ROLLOVERS &&
-          nextTotalSilentWaitMs <= MAX_TOTAL_SILENT_WAIT_MS;
-
-        if (canRolloverAgain) {
-          deps.getLastAgentTimestamps()[chatJid] = queueItemBaseCursor;
-          deps.saveState();
-          silentRolloverCount++;
-          totalSilentWaitMs = nextTotalSilentWaitMs;
-          logger.warn(
-            {
-              chatJid,
-              group: group.name,
-              groupFolder: group.folder,
-              runId,
-              quietStopReason,
-              rollbackCursor: queueItemBaseCursor,
-              silentRolloverCount,
-              totalSilentWaitMs,
-            },
-            'Retrying silent run within the same queue item',
-          );
-          continue;
-        }
-
-        logger.warn(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            quietStopReason,
-            silentRolloverCount,
-            totalSilentWaitMs: nextTotalSilentWaitMs,
-          },
-          'Silent run budget exhausted, emitting failure final',
-        );
-        await publishFailureFinal();
-      }
 
       if (!producedDeliverySucceeded) {
         logger.warn(
@@ -1242,8 +1171,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           groupFolder: group.folder,
           runId,
           visiblePhase: settledVisiblePhase,
-          silentRolloverCount,
-          totalSilentWaitMs,
         },
         'Queued run completed successfully',
       );

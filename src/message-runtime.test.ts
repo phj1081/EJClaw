@@ -896,7 +896,7 @@ describe('createMessageRuntime', () => {
     }
   });
 
-  it('retries a silent run internally before any visible output and succeeds in the same queue item', async () => {
+  it('does not retry or emit a synthetic final when a run completes silently', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
@@ -915,25 +915,11 @@ describe('createMessageRuntime', () => {
       },
     ]);
 
-    vi.mocked(agentRunner.runAgentProcess)
-      .mockResolvedValueOnce({
-        status: 'success',
-        result: null,
-        newSessionId: 'session-silent-rollover',
-      })
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: '두 번째 시도에서 성공했습니다.',
-          newSessionId: 'session-silent-rollover',
-        });
-        return {
-          status: 'success',
-          result: null,
-          newSessionId: 'session-silent-rollover',
-        };
-      });
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: null,
+      newSessionId: 'session-silent-run',
+    });
 
     const runtime = createMessageRuntime({
       assistantName: 'Andy',
@@ -963,17 +949,14 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
     expect(saveState).toHaveBeenCalled();
     expect(lastAgentTimestamps[chatJid]).toBe('1');
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      chatJid,
-      '두 번째 시도에서 성공했습니다.',
-    );
+    expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(channel.sendAndTrack).not.toHaveBeenCalled();
   });
 
-  it('retries a silent run with the original prompt still included after a queued follow-up arrives', async () => {
+  it('does not emit a synthetic failure final when follow-up activity happens during a silent run', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
@@ -1043,36 +1026,20 @@ describe('createMessageRuntime', () => {
       },
     );
 
-    vi.mocked(agentRunner.runAgentProcess)
-      .mockImplementationOnce(async () => {
-        lastAgentTimestamps[chatJid] = '2';
-        followUpPersisted = true;
-        activityTouch?.({
-          source: 'follow-up',
-          textLength: 9,
-          filename: 'follow-up.json',
-        });
-        return {
-          status: 'success',
-          result: null,
-          newSessionId: 'session-silent-follow-up',
-        };
-      })
-      .mockImplementationOnce(async (_group, input, _onProcess, onOutput) => {
-        expect(input.prompt).toContain('hello');
-        expect(input.prompt).toContain('follow-up');
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: '원래 요청과 follow-up을 같이 처리했습니다.',
-          newSessionId: 'session-silent-follow-up',
-        });
-        return {
-          status: 'success',
-          result: null,
-          newSessionId: 'session-silent-follow-up',
-        };
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(async () => {
+      lastAgentTimestamps[chatJid] = '2';
+      followUpPersisted = true;
+      activityTouch?.({
+        source: 'follow-up',
+        textLength: 9,
+        filename: 'follow-up.json',
       });
+      return {
+        status: 'success',
+        result: null,
+        newSessionId: 'session-silent-follow-up',
+      };
+    });
 
     const runtime = createMessageRuntime({
       assistantName: 'Andy',
@@ -1106,13 +1073,10 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
     expect(saveState).toHaveBeenCalled();
     expect(lastAgentTimestamps[chatJid]).toBe('2');
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      chatJid,
-      '원래 요청과 follow-up을 같이 처리했습니다.',
-    );
+    expect(channel.sendMessage).not.toHaveBeenCalled();
   });
 
   it('resets tracked progress after a final output that becomes empty after formatting', async () => {
@@ -1549,12 +1513,11 @@ describe('createMessageRuntime', () => {
     }
   });
 
-  it('emits one visible failure final after silent rollovers exhaust the quiet budget', async () => {
+  it('does not emit a visible failure final when a run stays silent', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
-    const closeStdin = vi.fn();
     const lastAgentTimestamps: Record<string, string> = {};
     const saveState = vi.fn();
 
@@ -1588,7 +1551,7 @@ describe('createMessageRuntime', () => {
       channels: [channel],
       queue: {
         registerProcess: vi.fn(),
-        closeStdin,
+        closeStdin: vi.fn(),
         notifyIdle: vi.fn(),
       } as any,
       getRegisteredGroups: () => ({ [chatJid]: group }),
@@ -1608,12 +1571,8 @@ describe('createMessageRuntime', () => {
       });
 
       expect(result).toBe(true);
-      expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(3);
-      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(
-        chatJid,
-        '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
-      );
+      expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).not.toHaveBeenCalled();
       expect(lastAgentTimestamps[chatJid]).toBe('1');
       expect(saveState).toHaveBeenCalled();
     } finally {
