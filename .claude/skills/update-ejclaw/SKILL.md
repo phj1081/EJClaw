@@ -1,11 +1,11 @@
 ---
-name: update-nanoclaw
-description: Safely merge upstream NanoClaw changes into a customized install with minimal drift.
+name: update-ejclaw
+description: Safely merge upstream EJClaw changes into a customized install with minimal drift.
 ---
 
-# Update NanoClaw
+# Update EJClaw
 
-커스텀된 NanoClaw에 upstream 변경을 가져올 때 쓰는 절차입니다. 현재 기준 중요 경로는 `src/`, `runners/`, `setup/`, `.claude/skills/`, `groups/`, `README.md` 입니다.
+커스텀된 EJClaw에 upstream 변경을 가져올 때 쓰는 절차입니다. 현재 기준 중요 경로는 `src/`, `runners/`, `setup/`, `.claude/skills/`, `groups/`, `README.md` 입니다.
 
 ## 원칙
 
@@ -76,16 +76,16 @@ git cherry-pick <hash1> <hash2>
 ## 6. 검증
 
 ```bash
-npm run typecheck
-npm test
-npm run build:runners
-npm run build
+pnpm typecheck
+pnpm test
+pnpm build:runners
+pnpm build
 ```
 
 런타임 경로가 바뀌었으면 추가로 확인합니다.
 
 ```bash
-npm run setup -- --step verify
+pnpm setup -- --step verify
 ```
 
 ## 7. 요약

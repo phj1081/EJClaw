@@ -7,7 +7,7 @@ vi.mock('./agent-runner.js', () => ({
 }));
 
 vi.mock('./config.js', () => ({
-  DATA_DIR: '/tmp/nanoclaw-test-data',
+  DATA_DIR: '/tmp/ejclaw-test-data',
   isSessionCommandSenderAllowed: vi.fn(() => false),
 }));
 

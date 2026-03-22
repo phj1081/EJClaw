@@ -1,5 +1,5 @@
 /**
- * Stdio MCP Server for NanoClaw
+ * Stdio MCP Server for EJClaw
  * Standalone process that agent teams subagents can inherit.
  * Reads context from environment variables, writes IPC files for the host.
  */
@@ -16,15 +16,15 @@ import {
   normalizeWatchCiIntervalSeconds,
 } from './watch-ci.js';
 
-const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
+const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
 const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 
 // Context from environment variables (set by the agent runner)
-const chatJid = process.env.NANOCLAW_CHAT_JID!;
-const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
-const isMain = process.env.NANOCLAW_IS_MAIN === '1';
-const agentType = process.env.NANOCLAW_AGENT_TYPE || 'claude-code';
+const chatJid = process.env.EJCLAW_CHAT_JID!;
+const groupFolder = process.env.EJCLAW_GROUP_FOLDER!;
+const isMain = process.env.EJCLAW_IS_MAIN === '1';
+const agentType = process.env.EJCLAW_AGENT_TYPE || 'claude-code';
 const allowGenericScheduling = agentType !== 'codex';
 
 function writeIpcFile(dir: string, data: object): string {
@@ -42,7 +42,7 @@ function writeIpcFile(dir: string, data: object): string {
 }
 
 const server = new McpServer({
-  name: 'nanoclaw',
+  name: 'ejclaw',
   version: '1.0.0',
 });
 

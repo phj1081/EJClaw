@@ -5,15 +5,15 @@ import fs from 'fs';
 import { spawn } from 'child_process';
 
 // Sentinel markers must match agent-runner.ts
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 
 // Mock config
 vi.mock('./config.js', () => ({
   AGENT_MAX_OUTPUT_SIZE: 10485760,
   AGENT_TIMEOUT: 1800000, // 30min
-  DATA_DIR: '/tmp/nanoclaw-test-data',
-  GROUPS_DIR: '/tmp/nanoclaw-test-groups',
+  DATA_DIR: '/tmp/ejclaw-test-data',
+  GROUPS_DIR: '/tmp/ejclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
   TIMEZONE: 'America/Los_Angeles',
 }));
@@ -287,7 +287,7 @@ describe('agent-runner timeout behavior', () => {
     const spawnEnv = vi.mocked(spawn).mock.calls[0]?.[2]?.env as
       | Record<string, string>
       | undefined;
-    expect(spawnEnv?.NANOCLAW_CHAT_JID).toBe(testInput.chatJid);
+    expect(spawnEnv?.EJCLAW_CHAT_JID).toBe(testInput.chatJid);
 
     const tomlWrite = vi
       .mocked(fs.writeFileSync)
@@ -295,7 +295,7 @@ describe('agent-runner timeout behavior', () => {
         String(call[0]).endsWith('/.codex/config.toml'),
       );
     expect(String(tomlWrite?.[1])).toContain(
-      `NANOCLAW_CHAT_JID = ${JSON.stringify(testInput.chatJid)}`,
+      `EJCLAW_CHAT_JID = ${JSON.stringify(testInput.chatJid)}`,
     );
   });
 
@@ -322,11 +322,11 @@ describe('agent-runner timeout behavior', () => {
     const spawnEnv = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as
       | Record<string, string>
       | undefined;
-    expect(spawnEnv?.NANOCLAW_IPC_DIR).toBe(
-      '/tmp/nanoclaw-test-data/ipc/test-group/tasks/task-123',
+    expect(spawnEnv?.EJCLAW_IPC_DIR).toBe(
+      '/tmp/ejclaw-test-data/ipc/test-group/tasks/task-123',
     );
     expect(spawnEnv?.CLAUDE_CONFIG_DIR).toBe(
-      '/tmp/nanoclaw-test-data/sessions/test-group/tasks/task-123/.claude',
+      '/tmp/ejclaw-test-data/sessions/test-group/tasks/task-123/.claude',
     );
   });
 
@@ -353,11 +353,11 @@ describe('agent-runner timeout behavior', () => {
     const spawnEnv = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as
       | Record<string, string>
       | undefined;
-    expect(spawnEnv?.NANOCLAW_IPC_DIR).toBe(
-      '/tmp/nanoclaw-test-data/ipc/test-group/tasks/task-watch-group',
+    expect(spawnEnv?.EJCLAW_IPC_DIR).toBe(
+      '/tmp/ejclaw-test-data/ipc/test-group/tasks/task-watch-group',
     );
     expect(spawnEnv?.CLAUDE_CONFIG_DIR).toBe(
-      '/tmp/nanoclaw-test-data/sessions/test-group/.claude',
+      '/tmp/ejclaw-test-data/sessions/test-group/.claude',
     );
   });
 
@@ -365,9 +365,9 @@ describe('agent-runner timeout behavior', () => {
     vi.useRealTimers();
     fakeProc = createFakeProcess();
     const overlayPath =
-      '/tmp/nanoclaw-test-groups/test-group/.codex/config.toml';
+      '/tmp/ejclaw-test-groups/test-group/.codex/config.toml';
     const sessionConfigPath =
-      '/tmp/nanoclaw-test-data/sessions/test-group/.codex/config.toml';
+      '/tmp/ejclaw-test-data/sessions/test-group/.codex/config.toml';
     let sessionToml = `model = "gpt-5.4"\n`;
 
     vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
@@ -428,7 +428,7 @@ OUROBOROS_LLM_BACKEND = "codex"
     const toml = String(tomlWrite?.[1]);
     expect(toml).toContain('[mcp_servers.ouroboros]');
     expect(toml).toContain('OUROBOROS_AGENT_RUNTIME = "codex"');
-    expect(toml).toContain('[mcp_servers.nanoclaw]');
+    expect(toml).toContain('[mcp_servers.ejclaw]');
   });
 
   it('waits for queued streamed output before resolving an error exit', async () => {

@@ -1,11 +1,11 @@
 /**
- * NanoClaw Codex Runner
+ * EJClaw Codex Runner
  *
  * App-server only runtime.
  *
  * Input protocol:
  *   Stdin: Full ContainerInput JSON (read until EOF)
- *   IPC:   Follow-up messages as JSON files in $NANOCLAW_IPC_DIR/input/
+ *   IPC:   Follow-up messages as JSON files in $EJCLAW_IPC_DIR/input/
  *          Sentinel: _close — signals session end
  *
  * Stdout protocol:
@@ -43,15 +43,15 @@ interface ContainerOutput {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const GROUP_DIR = process.env.NANOCLAW_GROUP_DIR || '/workspace/group';
-const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
-const WORK_DIR = process.env.NANOCLAW_WORK_DIR || '';
+const GROUP_DIR = process.env.EJCLAW_GROUP_DIR || '/workspace/group';
+const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
+const WORK_DIR = process.env.EJCLAW_WORK_DIR || '';
 const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 
 const EFFECTIVE_CWD = WORK_DIR || GROUP_DIR;
 const CODEX_MODEL = process.env.CODEX_MODEL || '';

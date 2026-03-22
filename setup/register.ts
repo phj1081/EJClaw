@@ -1,7 +1,7 @@
 /**
  * Step: register — Write channel registration config, create group folders.
  *
- * NanoClaw is Discord-only, so registrations must target Discord channel IDs.
+ * EJClaw is Discord-only, so registrations must target Discord channel IDs.
  * Uses parameterized SQL queries to prevent injection.
  */
 import fs from 'fs';

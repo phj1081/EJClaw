@@ -1,8 +1,8 @@
 {
-  "name": "nanoclaw-codex-runner",
+  "name": "ejclaw-codex-runner",
   "version": "1.0.0",
   "type": "module",
-  "description": "Codex app-server runner for NanoClaw",
+  "description": "Codex app-server runner for EJClaw",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

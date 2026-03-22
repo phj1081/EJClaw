@@ -40,17 +40,17 @@ const HOME_DIR = process.env.HOME || os.homedir();
 export const SENDER_ALLOWLIST_PATH = path.join(
   HOME_DIR,
   '.config',
-  'nanoclaw',
+  'ejclaw',
   'sender-allowlist.json',
 );
 export const STORE_DIR = path.resolve(
-  process.env.NANOCLAW_STORE_DIR || path.join(PROJECT_ROOT, 'store'),
+  process.env.EJCLAW_STORE_DIR || path.join(PROJECT_ROOT, 'store'),
 );
 export const GROUPS_DIR = path.resolve(
-  process.env.NANOCLAW_GROUPS_DIR || path.join(PROJECT_ROOT, 'groups'),
+  process.env.EJCLAW_GROUPS_DIR || path.join(PROJECT_ROOT, 'groups'),
 );
 export const DATA_DIR = path.resolve(
-  process.env.NANOCLAW_DATA_DIR || path.join(PROJECT_ROOT, 'data'),
+  process.env.EJCLAW_DATA_DIR || path.join(PROJECT_ROOT, 'data'),
 );
 // Shared cache directory (same across both services for dedup)
 export const CACHE_DIR = path.join(PROJECT_ROOT, 'cache');

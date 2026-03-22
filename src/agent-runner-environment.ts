@@ -87,14 +87,14 @@ function buildBaseRunnerEnv(args: {
         : currentPath,
     TZ: TIMEZONE,
     HOME: os.homedir(),
-    NANOCLAW_GROUP_DIR: args.groupDir,
-    NANOCLAW_IPC_DIR: args.groupIpcDir,
-    NANOCLAW_GLOBAL_DIR: args.globalDir,
-    ...(args.group.workDir ? { NANOCLAW_WORK_DIR: args.group.workDir } : {}),
-    NANOCLAW_CHAT_JID: args.chatJid,
-    NANOCLAW_GROUP_FOLDER: args.group.folder,
-    NANOCLAW_IS_MAIN: args.isMain ? '1' : '0',
-    NANOCLAW_AGENT_TYPE: args.agentType,
+    EJCLAW_GROUP_DIR: args.groupDir,
+    EJCLAW_IPC_DIR: args.groupIpcDir,
+    EJCLAW_GLOBAL_DIR: args.globalDir,
+    ...(args.group.workDir ? { EJCLAW_WORK_DIR: args.group.workDir } : {}),
+    EJCLAW_CHAT_JID: args.chatJid,
+    EJCLAW_GROUP_FOLDER: args.group.folder,
+    EJCLAW_IS_MAIN: args.isMain ? '1' : '0',
+    EJCLAW_AGENT_TYPE: args.agentType,
     CLAUDE_CONFIG_DIR: args.groupSessionsDir,
   };
 }
@@ -240,22 +240,22 @@ function prepareCodexSessionEnvironment(args: {
     let toml = fs.existsSync(sessionConfigPath)
       ? fs.readFileSync(sessionConfigPath, 'utf-8')
       : '';
-    toml = toml.replace(/\n?\[mcp_servers\.nanoclaw\][\s\S]*?(?=\n\[|$)/, '');
+    toml = toml.replace(/\n?\[mcp_servers\.ejclaw\][\s\S]*?(?=\n\[|$)/, '');
     toml = toml.replace(
       /\n?\[mcp_servers\.memento-mcp\][\s\S]*?(?=\n\[|$)/,
       '',
     );
     const mcpSection = `
-[mcp_servers.nanoclaw]
+[mcp_servers.ejclaw]
 command = "node"
 args = [${JSON.stringify(mcpServerPath)}]
 
-[mcp_servers.nanoclaw.env]
-NANOCLAW_IPC_DIR = ${JSON.stringify(args.env.NANOCLAW_IPC_DIR)}
-NANOCLAW_CHAT_JID = ${JSON.stringify(args.chatJid)}
-NANOCLAW_GROUP_FOLDER = ${JSON.stringify(args.group.folder)}
-NANOCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
-NANOCLAW_AGENT_TYPE = ${JSON.stringify(args.env.NANOCLAW_AGENT_TYPE)}
+[mcp_servers.ejclaw.env]
+EJCLAW_IPC_DIR = ${JSON.stringify(args.env.EJCLAW_IPC_DIR)}
+EJCLAW_CHAT_JID = ${JSON.stringify(args.chatJid)}
+EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.group.folder)}
+EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
+EJCLAW_AGENT_TYPE = ${JSON.stringify(args.env.EJCLAW_AGENT_TYPE)}
 `;
     const mementoSseUrl =
       args.envVars.MEMENTO_MCP_SSE_URL || process.env.MEMENTO_MCP_SSE_URL;

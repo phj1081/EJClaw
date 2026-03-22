@@ -1,5 +1,5 @@
 /**
- * Agent Process Runner for NanoClaw
+ * Agent Process Runner for EJClaw
  * Spawns agent execution as direct host processes and handles IPC
  */
 import { ChildProcess, spawn } from 'child_process';
@@ -21,8 +21,8 @@ import { logger } from './logger.js';
 import { AgentType, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 
 export interface AgentInput {
   prompt: string;
@@ -75,12 +75,12 @@ export async function runAgentProcess(
     }
   }
   if (input.runId) {
-    env.NANOCLAW_RUN_ID = input.runId;
+    env.EJCLAW_RUN_ID = input.runId;
   }
 
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const processSuffix = input.runId || `${Date.now()}`;
-  const processName = `nanoclaw-${safeName}-${processSuffix}`;
+  const processName = `ejclaw-${safeName}-${processSuffix}`;
 
   // Check if runner is built
   const distEntry = path.join(runnerDir, 'dist', 'index.js');
@@ -119,7 +119,7 @@ export async function runAgentProcess(
       env,
     });
 
-    onProcess(proc, processName, env.NANOCLAW_IPC_DIR);
+    onProcess(proc, processName, env.EJCLAW_IPC_DIR);
 
     let stdout = '';
     let stderr = '';

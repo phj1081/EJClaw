@@ -1,10 +1,10 @@
-# NanoClaw
+# EJClaw
 
-Dual-agent AI assistant (Claude Code + Codex) over Discord. Based on [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw).
+Dual-agent AI assistant (Claude Code + Codex) over Discord. Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw).
 
 ## Quick Context
 
-Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but run with separate stores, data, and groups (will be unified — DB supports shared access via WAL mode + service partitioning). Agents run as direct host processes (no containers). Claude Code uses the Agent SDK; Codex uses the Codex SDK (`codex exec`). Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
+Two systemd services (`ejclaw`, `ejclaw-codex`) share the same codebase but run with separate stores, data, and groups (will be unified — DB supports shared access via WAL mode + service partitioning). Agents run as direct host processes (no containers). Claude Code uses the Agent SDK; Codex uses the Codex SDK (`codex exec`). Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
 
 ## Key Files
 
@@ -29,7 +29,7 @@ Two systemd services (`nanoclaw`, `nanoclaw-codex`) share the same codebase but 
 | `/setup` | First-time installation, authentication, service configuration |
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Agent issues, logs, troubleshooting |
-| `/update-nanoclaw` | Bring upstream NanoClaw updates into a customized install |
+| `/update-ejclaw` | Bring upstream EJClaw updates into a customized install |
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
 
@@ -45,17 +45,17 @@ npm run dev                                # Dev mode with hot reload
 
 Service management (Linux):
 ```bash
-systemctl --user restart nanoclaw nanoclaw-codex  # Restart both
-systemctl --user status nanoclaw                  # Check status
-journalctl --user -u nanoclaw -f                  # Follow logs
+systemctl --user restart ejclaw ejclaw-codex      # Restart both
+systemctl --user status ejclaw                    # Check status
+journalctl --user -u ejclaw -f                    # Follow logs
 ```
 
-Deploy to server: `scp dist/*.js clone-ej@100.64.185.108:~/nanoclaw/dist/`
+Deploy to server: `scp dist/*.js clone-ej@100.64.185.108:~/EJClaw/dist/`
 
 ## Dual-Service Architecture
 
-- `nanoclaw.service` — Claude Code bot (`@claude`), `SERVICE_ID=claude`, `SERVICE_AGENT_TYPE=claude-code`
-- `nanoclaw-codex.service` — Codex bot (`@codex`), `SERVICE_ID=codex`, `SERVICE_AGENT_TYPE=codex`
+- `ejclaw.service` — Claude Code bot (`@claude`), `SERVICE_ID=claude`, `SERVICE_AGENT_TYPE=claude-code`
+- `ejclaw-codex.service` — Codex bot (`@codex`), `SERVICE_ID=codex`, `SERVICE_AGENT_TYPE=codex`
 - Both share the same codebase (`dist/index.js`), differentiated by env vars
 - Unified dirs (`store/`, `groups/`, `data/` shared by both services):
   - `router_state`: keys prefixed with `{SERVICE_ID}:` (e.g., `claude:last_timestamp`)
@@ -70,8 +70,8 @@ Unified DB + directories (both services share `store/`, `groups/`, `data/`):
 | 항목 | 경로 |
 |------|------|
 | **DB** | `store/messages.db` (공유, WAL 모드) |
-| 서비스 로그 (Claude) | `journalctl --user -u nanoclaw -f` 또는 `logs/nanoclaw.log` |
-| 서비스 로그 (Codex) | `journalctl --user -u nanoclaw-codex -f` 또는 `logs/nanoclaw-codex.log` |
+| 서비스 로그 (Claude) | `journalctl --user -u ejclaw -f` 또는 `logs/ejclaw.log` |
+| 서비스 로그 (Codex) | `journalctl --user -u ejclaw-codex -f` 또는 `logs/ejclaw-codex.log` |
 | 그룹별 로그 | `groups/{name}/logs/` (공유 채널은 양쪽 봇 로그가 같은 폴더) |
 | Claude 세션 | `data/sessions/{name}/.claude/` |
 | Codex 세션 | `data/sessions/{name}/.codex/` |

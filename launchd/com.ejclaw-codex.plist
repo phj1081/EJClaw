@@ -23,11 +23,11 @@
         <string>{{HOME}}</string>
         <key>ASSISTANT_NAME</key>
         <string>Andy-Codex</string>
-        <key>NANOCLAW_STORE_DIR</key>
+        <key>EJCLAW_STORE_DIR</key>
         <string>{{PROJECT_ROOT}}/store-codex</string>
-        <key>NANOCLAW_GROUPS_DIR</key>
+        <key>EJCLAW_GROUPS_DIR</key>
         <string>{{PROJECT_ROOT}}/groups-codex</string>
-        <key>NANOCLAW_DATA_DIR</key>
+        <key>EJCLAW_DATA_DIR</key>
         <string>{{PROJECT_ROOT}}/data-codex</string>
     </dict>
     <key>StandardOutPath</key>

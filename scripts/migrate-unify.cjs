@@ -4,15 +4,15 @@
  * 
  * Run AFTER stopping both services.
  */
-const Database = require('/home/clone-ej/nanoclaw/node_modules/better-sqlite3');
+const Database = require('/home/clone-ej/EJClaw/node_modules/better-sqlite3');
 const fs = require('fs');
 const path = require('path');
 
-const BASE = '/home/clone-ej/nanoclaw';
+const BASE = '/home/clone-ej/EJClaw';
 const CLAUDE_DB = path.join(BASE, 'store/messages.db');
 const CODEX_DB = path.join(BASE, 'store-codex/messages.db');
 
-console.log('=== NanoClaw Data Unification ===\n');
+console.log('=== EJClaw Data Unification ===\n');
 
 // 1. Open both DBs
 const primary = new Database(CLAUDE_DB);
@@ -215,6 +215,6 @@ console.log('');
 
 console.log('=== Migration complete ===');
 console.log('Next steps:');
-console.log('1. Update .env.codex to remove NANOCLAW_STORE_DIR, NANOCLAW_DATA_DIR, NANOCLAW_GROUPS_DIR');
+console.log('1. Update .env.codex to remove EJCLAW_STORE_DIR, EJCLAW_DATA_DIR, EJCLAW_GROUPS_DIR');
 console.log('2. Restart both services');
 console.log('3. Verify, then rename old dirs to .bak');

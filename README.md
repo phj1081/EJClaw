@@ -2,7 +2,7 @@
 
 Dual-agent AI assistant (Claude Code + Codex) over Discord.
 
-Forked from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), heavily customized for production use.
+Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now maintained as EJClaw for personal production use.
 
 ## Overview
 
@@ -77,12 +77,12 @@ GROQ_API_KEY=                # Voice transcription (Groq Whisper)
 ### Systemd Services (Linux)
 
 ```bash
-systemctl --user enable nanoclaw nanoclaw-codex
-systemctl --user start nanoclaw nanoclaw-codex
+systemctl --user enable ejclaw ejclaw-codex
+systemctl --user start ejclaw ejclaw-codex
 
 # Logs
-journalctl --user -u nanoclaw -f
-journalctl --user -u nanoclaw-codex -f
+journalctl --user -u ejclaw -f
+journalctl --user -u ejclaw-codex -f
 ```
 
 ## Development
@@ -96,4 +96,4 @@ npm test                     # Run tests
 
 ## License
 
-MIT — Based on [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw)
+MIT — Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw)

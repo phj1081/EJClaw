@@ -1,10 +1,10 @@
 /**
- * NanoClaw Agent Runner
+ * EJClaw Agent Runner
  * Runs as a child process, receives config via stdin, outputs result to stdout
  *
  * Input protocol:
  *   Stdin: Full RunnerInput JSON (read until EOF, like before)
- *   IPC:   Follow-up messages written as JSON files to $NANOCLAW_IPC_DIR/input/
+ *   IPC:   Follow-up messages written as JSON files to $EJCLAW_IPC_DIR/input/
  *          Files: {type:"message", text:"..."}.json — polled and consumed
  *          Sentinel: /workspace/ipc/input/_close — signals session end
  *
@@ -60,10 +60,10 @@ interface SDKUserMessage {
 }
 
 // Paths configurable via env vars.
-const GROUP_DIR = process.env.NANOCLAW_GROUP_DIR || '/workspace/group';
-const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
+const GROUP_DIR = process.env.EJCLAW_GROUP_DIR || '/workspace/group';
+const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
 // Optional: override cwd (agent works in this directory instead of GROUP_DIR)
-const WORK_DIR = process.env.NANOCLAW_WORK_DIR || '';
+const WORK_DIR = process.env.EJCLAW_WORK_DIR || '';
 
 const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
@@ -161,8 +161,8 @@ async function readStdin(): Promise<string> {
   });
 }
 
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
+const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
@@ -469,22 +469,22 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__ejclaw__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
       mcpServers: {
-        nanoclaw: {
+        ejclaw: {
           command: 'node',
           args: [mcpServerPath],
           env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-            NANOCLAW_AGENT_TYPE:
-              process.env.NANOCLAW_AGENT_TYPE || 'claude-code',
+            EJCLAW_CHAT_JID: containerInput.chatJid,
+            EJCLAW_GROUP_FOLDER: containerInput.groupFolder,
+            EJCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            EJCLAW_AGENT_TYPE:
+              process.env.EJCLAW_AGENT_TYPE || 'claude-code',
           },
         },
         ...(process.env.MEMENTO_MCP_SSE_URL

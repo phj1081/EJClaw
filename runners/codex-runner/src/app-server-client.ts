@@ -144,8 +144,8 @@ export class CodexAppServerClient {
 
     await this.request('initialize', {
       clientInfo: {
-        name: 'nanoclaw_codex_runner',
-        title: 'NanoClaw Codex Runner',
+        name: 'ejclaw_codex_runner',
+        title: 'EJClaw Codex Runner',
         version: '1.0.0',
       },
       capabilities: {
@@ -182,7 +182,7 @@ export class CodexAppServerClient {
       model: options.model,
       approvalPolicy: 'never',
       sandbox: 'danger-full-access',
-      serviceName: 'nanoclaw',
+      serviceName: 'ejclaw',
     };
 
     const result = sessionId
@@ -362,7 +362,7 @@ export class CodexAppServerClient {
     this.respondError(
       message.id,
       -32601,
-      `NanoClaw does not handle server request ${message.method}`,
+      `EJClaw does not handle server request ${message.method}`,
     );
   }
 
