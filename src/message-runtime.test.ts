@@ -335,11 +335,11 @@ describe('createMessageRuntime', () => {
 
     expect(result).toBe(true);
     expect(clearSession).not.toHaveBeenCalled();
+    expect(notifyIdle).toHaveBeenCalledWith(chatJid, 'run-2');
     expect(closeStdin).toHaveBeenCalledWith(chatJid, {
       runId: 'run-2',
       reason: 'output-delivered-close',
     });
-    expect(notifyIdle).toHaveBeenCalledWith(chatJid, 'run-2');
   });
 
   it('tracks Codex progress in one editable message and promotes the last progress when the run ends without a final phase', async () => {
@@ -611,7 +611,6 @@ describe('createMessageRuntime', () => {
           newSessionId: 'session-follow-up',
         });
         await vi.advanceTimersByTimeAsync(800);
-
         await onOutput?.({
           status: 'success',
           phase: 'progress',
@@ -1328,7 +1327,7 @@ describe('createMessageRuntime', () => {
     }
   });
 
-  it('recreates a tracked progress message when editing the existing one fails', async () => {
+  it('retries editing progress message instead of creating a duplicate when edit fails', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -1345,12 +1344,10 @@ describe('createMessageRuntime', () => {
       },
     ]);
 
-    vi.mocked(channel.sendAndTrack!)
-      .mockResolvedValueOnce('progress-1')
-      .mockResolvedValueOnce('progress-2');
-    vi.mocked(channel.editMessage!).mockRejectedValueOnce(
-      new Error('discord edit failed'),
-    );
+    vi.mocked(channel.sendAndTrack!).mockResolvedValueOnce('progress-1');
+    vi.mocked(channel.editMessage!)
+      .mockRejectedValueOnce(new Error('discord edit failed'))
+      .mockResolvedValue(undefined as any);
 
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
@@ -1361,10 +1358,11 @@ describe('createMessageRuntime', () => {
           newSessionId: 'session-progress-recreate',
         });
         await vi.advanceTimersByTimeAsync(10_000);
+        // Second progress triggers ticker → edit fails → retries next tick
         await onOutput?.({
           status: 'success',
           phase: 'progress',
-          result: '진행 중입니다.',
+          result: '아직 진행 중.',
           newSessionId: 'session-progress-recreate',
         });
         await onOutput?.({
@@ -1409,21 +1407,22 @@ describe('createMessageRuntime', () => {
       });
 
       expect(result).toBe(true);
-      expect(channel.sendAndTrack).toHaveBeenNthCalledWith(
-        1,
+      // Only one progress message created — no duplicate
+      expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+      expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
         '진행 중입니다.\n\n0초',
       );
+      // 같은 메시지를 계속 편집하고, 마지막엔 final로 승격한다.
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '진행 중입니다.\n\n10초',
+        expect.any(String),
       );
-      expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
-      expect(channel.editMessage).toHaveBeenCalledWith(
+      expect(channel.editMessage).toHaveBeenLastCalledWith(
         chatJid,
         'progress-1',
-        '진행 중입니다.',
+        '아직 진행 중.',
       );
       expect(channel.sendMessage).not.toHaveBeenCalled();
     } finally {
@@ -1535,6 +1534,78 @@ describe('createMessageRuntime', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('closes stdin immediately after producing visible output (no idle lingering)', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const closeStdin = vi.fn();
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '진행 상황입니다.',
+          newSessionId: 'session-close-after-output',
+        });
+        await onOutput?.({
+          status: 'success',
+          result: null,
+          newSessionId: 'session-close-after-output',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'session-close-after-output',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin,
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-close-after-output',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(closeStdin).toHaveBeenCalledWith(chatJid, {
+      runId: 'run-close-after-output',
+      reason: 'output-delivered-close',
+    });
   });
 
   it('does not roll back when a streamed progress message was already posted before an error', async () => {

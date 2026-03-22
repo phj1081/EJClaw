@@ -682,6 +682,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     let producedDeliverySucceeded = true;
     let isFirstLogicalTurn = true;
     let poisonedSessionDetected = false;
+    // Visible output 이후에는 같은 프로세스에 follow-up을 더 밀어넣지 않고 fresh run으로 넘긴다.
     let canPipeFollowUps = true;
     const isClaudeCodeAgent =
       (group.agentType || 'claude-code') === 'claude-code';
@@ -950,7 +951,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         latestProgressRendered = null;
         if (progressEditFailCount >= 3) {
           clearProgressTicker();
-          progressMessageId = null;
         }
       }
     };
@@ -1186,6 +1186,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
         if (result.status === 'success' && !poisonedSessionDetected) {
           deps.queue.notifyIdle(chatJid, runId);
+          // After producing visible output, close stdin so the process exits
+          // promptly instead of lingering in idle wait. New messages will
+          // always start a fresh run.
           if (finalOutputSentToUser || progressOutputSentToUser) {
             deps.queue.closeStdin(chatJid, {
               runId,
