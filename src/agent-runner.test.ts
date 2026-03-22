@@ -325,6 +325,9 @@ describe('agent-runner timeout behavior', () => {
     expect(spawnEnv?.EJCLAW_IPC_DIR).toBe(
       '/tmp/ejclaw-test-data/ipc/test-group/tasks/task-123',
     );
+    expect(spawnEnv?.EJCLAW_HOST_IPC_DIR).toBe(
+      '/tmp/ejclaw-test-data/ipc/test-group',
+    );
     expect(spawnEnv?.CLAUDE_CONFIG_DIR).toBe(
       '/tmp/ejclaw-test-data/sessions/test-group/tasks/task-123/.claude',
     );
@@ -355,6 +358,9 @@ describe('agent-runner timeout behavior', () => {
       | undefined;
     expect(spawnEnv?.EJCLAW_IPC_DIR).toBe(
       '/tmp/ejclaw-test-data/ipc/test-group/tasks/task-watch-group',
+    );
+    expect(spawnEnv?.EJCLAW_HOST_IPC_DIR).toBe(
+      '/tmp/ejclaw-test-data/ipc/test-group',
     );
     expect(spawnEnv?.CLAUDE_CONFIG_DIR).toBe(
       '/tmp/ejclaw-test-data/sessions/test-group/.claude',

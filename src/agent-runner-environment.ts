@@ -60,6 +60,7 @@ function buildBaseRunnerEnv(args: {
   isMain: boolean;
   groupDir: string;
   groupIpcDir: string;
+  hostIpcDir: string;
   globalDir: string;
   groupSessionsDir: string;
   agentType: AgentType;
@@ -89,6 +90,7 @@ function buildBaseRunnerEnv(args: {
     HOME: os.homedir(),
     EJCLAW_GROUP_DIR: args.groupDir,
     EJCLAW_IPC_DIR: args.groupIpcDir,
+    EJCLAW_HOST_IPC_DIR: args.hostIpcDir,
     EJCLAW_GLOBAL_DIR: args.globalDir,
     ...(args.group.workDir ? { EJCLAW_WORK_DIR: args.group.workDir } : {}),
     EJCLAW_CHAT_JID: args.chatJid,
@@ -329,6 +331,7 @@ export function prepareGroupEnvironment(
   const groupIpcDir = runtimeTaskId
     ? resolveTaskRuntimeIpcPath(group.folder, runtimeTaskId)
     : resolveGroupIpcPath(group.folder);
+  const hostIpcDir = resolveGroupIpcPath(group.folder);
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
@@ -388,6 +391,7 @@ export function prepareGroupEnvironment(
     isMain,
     groupDir,
     groupIpcDir,
+    hostIpcDir,
     globalDir,
     groupSessionsDir,
     agentType,

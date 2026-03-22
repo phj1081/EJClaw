@@ -13,10 +13,12 @@ import { AvailableGroup } from './agent-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { isWatchCiTask } from './task-watch-status.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  nudgeScheduler?: () => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -256,7 +258,9 @@ export async function processTaskIpc(
             );
             break;
           }
-          nextRun = new Date(Date.now() + ms).toISOString();
+          nextRun = isWatchCiTask({ prompt: data.prompt })
+            ? new Date().toISOString()
+            : new Date(Date.now() + ms).toISOString();
         } else if (scheduleType === 'once') {
           const date = new Date(data.schedule_value);
           if (isNaN(date.getTime())) {
@@ -299,6 +303,9 @@ export async function processTaskIpc(
           },
           'Task created via IPC',
         );
+        if (nextRun && new Date(nextRun).getTime() <= Date.now()) {
+          deps.nudgeScheduler?.();
+        }
       }
       break;
 

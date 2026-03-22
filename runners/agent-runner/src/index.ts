@@ -394,7 +394,11 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
-): Promise<{ newSessionId?: string; closedDuringQuery: boolean }> {
+): Promise<{
+  newSessionId?: string;
+  closedDuringQuery: boolean;
+  terminalResultObserved: boolean;
+}> {
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -422,6 +426,7 @@ async function runQuery(
   let newSessionId: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let terminalResultObserved = false;
 
   // Discover additional directories
   const extraDirs: string[] = [];
@@ -554,6 +559,15 @@ async function runQuery(
           newSessionId
         });
       }
+
+      // Single-turn runtimes must terminate the query after the first
+      // terminal result. Leaving the message stream open can keep the SDK
+      // query alive indefinitely, which pins the host queue after a reply.
+      terminalResultObserved = true;
+      ipcPolling = false;
+      stream.end();
+      log('Terminal result observed, ending query stream');
+      break;
     }
   }
 
@@ -561,7 +575,7 @@ async function runQuery(
   log(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}`,
   );
-  return { newSessionId, closedDuringQuery };
+  return { newSessionId, closedDuringQuery, terminalResultObserved };
 }
 
 async function main(): Promise<void> {
@@ -726,8 +740,10 @@ async function main(): Promise<void> {
       sessionId = queryResult.newSessionId;
     }
 
-    if (!queryResult.closedDuringQuery) {
+    if (!queryResult.closedDuringQuery && !queryResult.terminalResultObserved) {
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+    } else if (queryResult.terminalResultObserved) {
+      log('Terminal result already emitted, exiting single-turn runtime');
     } else {
       log('Close sentinel consumed during query, exiting');
     }

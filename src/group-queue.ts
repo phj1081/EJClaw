@@ -209,7 +209,12 @@ export class GroupQueue {
 
   sendMessage(groupJid: string, text: string): boolean {
     const state = this.getGroup(groupJid);
-    if (!state.active || !state.ipcDir || state.isTaskProcess) {
+    if (
+      !state.active ||
+      !state.ipcDir ||
+      state.isTaskProcess ||
+      state.closingStdin
+    ) {
       logger.debug(
         {
           groupJid,
@@ -217,6 +222,7 @@ export class GroupQueue {
           active: state.active,
           ipcDir: state.ipcDir,
           isTaskProcess: state.isTaskProcess,
+          closingStdin: state.closingStdin,
         },
         'Cannot pipe follow-up message to active agent',
       );

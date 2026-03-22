@@ -28,6 +28,7 @@ describe('GroupQueue', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.clearAllMocks();
     queue = new GroupQueue();
   });
 
@@ -82,6 +83,38 @@ describe('GroupQueue', () => {
     });
     expect(fs.writeFileSync).toHaveBeenCalled();
     expect(fs.renameSync).toHaveBeenCalled();
+
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('does not pipe follow-up messages after stdin close was requested', async () => {
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+    let releaseRun!: (value: boolean) => void;
+    const blocker = new Promise<boolean>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    const processMessages = vi.fn(async () => await blocker);
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
+    await vi.advanceTimersByTimeAsync(10);
+
+    vi.mocked(fs.mkdirSync).mockClear();
+    vi.mocked(fs.writeFileSync).mockClear();
+    vi.mocked(fs.renameSync).mockClear();
+
+    queue.closeStdin('group1@g.us');
+
+    vi.mocked(fs.mkdirSync).mockClear();
+    vi.mocked(fs.writeFileSync).mockClear();
+    vi.mocked(fs.renameSync).mockClear();
+
+    expect(queue.sendMessage('group1@g.us', '후속 메시지')).toBe(false);
+    expect(fs.mkdirSync).not.toHaveBeenCalled();
+    expect(fs.writeFileSync).not.toHaveBeenCalled();
+    expect(fs.renameSync).not.toHaveBeenCalled();
 
     releaseRun(true);
     await vi.advanceTimersByTimeAsync(10);

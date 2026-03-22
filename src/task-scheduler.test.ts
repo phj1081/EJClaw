@@ -28,6 +28,7 @@ import {
   computeNextRun,
   extractWatchCiTarget,
   isWatchCiTask,
+  nudgeSchedulerLoop,
   renderWatchCiStatusMessage,
   startSchedulerLoop,
 } from './task-scheduler.js';
@@ -229,6 +230,65 @@ Check the run.
       'shared@g.us::task:task-watch-group',
     );
     expect(enqueueTask.mock.calls[0][1]).toBe('task-watch-group');
+  });
+
+  it('picks up newly due tasks immediately when nudged', async () => {
+    const enqueueTask = vi.fn();
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(enqueueTask).not.toHaveBeenCalled();
+
+    createTask({
+      id: 'task-watch-immediate',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 654321
+
+Task ID:
+task-watch-immediate
+
+Check instructions:
+Check the run.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 1000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    nudgeSchedulerLoop();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+    expect(enqueueTask).toHaveBeenCalledWith(
+      'shared@g.us::task:task-watch-immediate',
+      'task-watch-immediate',
+      expect.any(Function),
+    );
   });
 
   it('uses dedicated IPC but shared session state for group-context CI watchers', async () => {

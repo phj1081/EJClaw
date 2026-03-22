@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -53,6 +53,7 @@ beforeEach(() => {
 
   deps = {
     sendMessage: async () => {},
+    nudgeScheduler: vi.fn(),
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;
@@ -547,6 +548,42 @@ describe('schedule_task schedule types', () => {
     const nextRun = new Date(tasks[0].next_run!).getTime();
     expect(nextRun).toBeGreaterThanOrEqual(before + 3600000 - 1000);
     expect(nextRun).toBeLessThanOrEqual(Date.now() + 3600000 + 1000);
+  });
+
+  it('starts watch_ci interval tasks immediately and nudges the scheduler', async () => {
+    const before = Date.now();
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 123456
+
+Task ID:
+task-watch-ci
+
+Check instructions:
+Check the run.
+        `.trim(),
+        schedule_type: 'interval',
+        schedule_value: '60000',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].schedule_type).toBe('interval');
+    const nextRun = new Date(tasks[0].next_run!).getTime();
+    expect(nextRun).toBeGreaterThanOrEqual(before - 1000);
+    expect(nextRun).toBeLessThanOrEqual(Date.now() + 1000);
+    expect(deps.nudgeScheduler).toHaveBeenCalledTimes(1);
   });
 
   it('rejects invalid interval (non-numeric)', async () => {

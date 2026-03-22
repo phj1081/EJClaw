@@ -17,8 +17,9 @@ import {
 } from './watch-ci.js';
 
 const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
-const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
-const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const HOST_IPC_DIR = process.env.EJCLAW_HOST_IPC_DIR || IPC_DIR;
+const MESSAGES_DIR = path.join(HOST_IPC_DIR, 'messages');
+const TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.EJCLAW_CHAT_JID!;

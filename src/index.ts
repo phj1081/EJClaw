@@ -58,7 +58,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { createMessageRuntime } from './message-runtime.js';
-import { startSchedulerLoop } from './task-scheduler.js';
+import { nudgeSchedulerLoop, startSchedulerLoop } from './task-scheduler.js';
 import { startUnifiedDashboard } from './unified-dashboard.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -409,6 +409,7 @@ async function main(): Promise<void> {
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
     },
+    nudgeScheduler: nudgeSchedulerLoop,
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async (force: boolean) => {

@@ -331,6 +331,30 @@ async function runTask(
 }
 
 let schedulerRunning = false;
+let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
+let schedulerLoopFn: (() => Promise<void>) | null = null;
+let schedulerTickInFlight = false;
+let schedulerTickPending = false;
+
+function scheduleSchedulerTick(delayMs: number): void {
+  if (!schedulerRunning || !schedulerLoopFn) return;
+  if (schedulerTimer) {
+    clearTimeout(schedulerTimer);
+  }
+  schedulerTimer = setTimeout(() => {
+    schedulerTimer = null;
+    void schedulerLoopFn?.();
+  }, delayMs);
+}
+
+export function nudgeSchedulerLoop(): void {
+  if (!schedulerRunning || !schedulerLoopFn) return;
+  if (schedulerTickInFlight) {
+    schedulerTickPending = true;
+    return;
+  }
+  scheduleSchedulerTick(0);
+}
 
 export function startSchedulerLoop(deps: SchedulerDependencies): void {
   if (schedulerRunning) {
@@ -341,6 +365,12 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
   logger.info('Scheduler loop started');
 
   const loop = async () => {
+    if (schedulerTickInFlight) {
+      schedulerTickPending = true;
+      return;
+    }
+    schedulerTickInFlight = true;
+
     try {
       const dueTasks = getDueTasks(deps.serviceAgentType || SERVICE_AGENT_TYPE);
       if (dueTasks.length > 0) {
@@ -362,15 +392,35 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
       }
     } catch (err) {
       logger.error({ err }, 'Error in scheduler loop');
+    } finally {
+      schedulerTickInFlight = false;
     }
 
-    setTimeout(loop, SCHEDULER_POLL_INTERVAL);
+    if (!schedulerRunning) {
+      return;
+    }
+
+    if (schedulerTickPending) {
+      schedulerTickPending = false;
+      scheduleSchedulerTick(0);
+      return;
+    }
+
+    scheduleSchedulerTick(SCHEDULER_POLL_INTERVAL);
   };
 
-  loop();
+  schedulerLoopFn = loop;
+  void loop();
 }
 
 /** @internal - for tests only. */
 export function _resetSchedulerLoopForTests(): void {
   schedulerRunning = false;
+  schedulerLoopFn = null;
+  schedulerTickInFlight = false;
+  schedulerTickPending = false;
+  if (schedulerTimer) {
+    clearTimeout(schedulerTimer);
+    schedulerTimer = null;
+  }
 }
