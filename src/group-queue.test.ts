@@ -123,6 +123,49 @@ describe('GroupQueue', () => {
     expect(processMessages).toHaveBeenCalledTimes(3);
   });
 
+  it('reserves one foreground slot so queued tasks do not block new messages', async () => {
+    let resolveTaskOne!: () => void;
+    let resolveTaskTwo!: () => void;
+    let messageStarted = false;
+
+    const processMessages = vi.fn(async (groupJid: string) => {
+      if (groupJid === 'group3@g.us') {
+        messageStarted = true;
+      }
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+
+    queue.enqueueTask('group1@g.us', 'task-1', async () => {
+      await new Promise<void>((resolve) => {
+        resolveTaskOne = resolve;
+      });
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.enqueueTask('group2@g.us', 'task-2', async () => {
+      await new Promise<void>((resolve) => {
+        resolveTaskTwo = resolve;
+      });
+    });
+    queue.enqueueMessageCheck('group3@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(messageStarted).toBe(true);
+    expect(processMessages).toHaveBeenCalledWith('group3@g.us', {
+      runId: expect.any(String),
+      reason: 'messages',
+    });
+
+    resolveTaskOne!();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(messageStarted).toBe(true);
+
+    resolveTaskTwo!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
   // --- Tasks prioritized over messages ---
 
   it('drains tasks before messages for same group', async () => {

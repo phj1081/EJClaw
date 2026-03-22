@@ -17,6 +17,8 @@ export interface GroupRunContext {
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 5000;
+const MAX_CONCURRENT_TASKS =
+  MAX_CONCURRENT_AGENTS > 1 ? MAX_CONCURRENT_AGENTS - 1 : 1;
 
 interface GroupState {
   active: boolean;
@@ -46,6 +48,7 @@ export interface GroupStatus {
 export class GroupQueue {
   private groups = new Map<string, GroupState>();
   private activeCount = 0;
+  private activeTaskCount = 0;
   private waitingGroups: string[] = [];
   private processMessagesFn:
     | ((groupJid: string, context: GroupRunContext) => Promise<boolean>)
@@ -156,14 +159,22 @@ export class GroupQueue {
       return;
     }
 
-    if (this.activeCount >= MAX_CONCURRENT_AGENTS) {
+    if (
+      this.activeCount >= MAX_CONCURRENT_AGENTS ||
+      this.activeTaskCount >= MAX_CONCURRENT_TASKS
+    ) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
       if (!this.waitingGroups.includes(groupJid)) {
         this.waitingGroups.push(groupJid);
       }
       logger.debug(
-        { groupJid, taskId, activeCount: this.activeCount },
-        'At concurrency limit, task queued',
+        {
+          groupJid,
+          taskId,
+          activeCount: this.activeCount,
+          activeTaskCount: this.activeTaskCount,
+        },
+        'At task concurrency limit, task queued',
       );
       return;
     }
@@ -350,6 +361,7 @@ export class GroupQueue {
     state.runningTaskId = task.id;
     state.startedAt = Date.now();
     this.activeCount++;
+    this.activeTaskCount++;
 
     logger.debug(
       { groupJid, taskId: task.id, activeCount: this.activeCount },
@@ -370,6 +382,7 @@ export class GroupQueue {
       state.processName = null;
       state.ipcDir = null;
       this.activeCount--;
+      this.activeTaskCount--;
       this.drainGroup(groupJid);
     }
   }
@@ -449,23 +462,44 @@ export class GroupQueue {
       this.waitingGroups.length > 0 &&
       this.activeCount < MAX_CONCURRENT_AGENTS
     ) {
-      const nextJid = this.waitingGroups.shift()!;
+      const nextMessageIndex = this.waitingGroups.findIndex((jid) => {
+        const state = this.getGroup(jid);
+        return state.pendingMessages;
+      });
+      const nextIndex =
+        nextMessageIndex !== -1
+          ? nextMessageIndex
+          : this.waitingGroups.findIndex((jid) => {
+              const state = this.getGroup(jid);
+              return (
+                state.pendingTasks.length > 0 &&
+                this.activeTaskCount < MAX_CONCURRENT_TASKS
+              );
+            });
+
+      if (nextIndex === -1) {
+        return;
+      }
+
+      const [nextJid] = this.waitingGroups.splice(nextIndex, 1);
       const state = this.getGroup(nextJid);
 
-      // Prioritize tasks over messages
-      if (state.pendingTasks.length > 0) {
+      if (state.pendingMessages) {
+        this.runForGroup(nextJid, 'drain').catch((err) =>
+          logger.error(
+            { groupJid: nextJid, err },
+            'Unhandled error in runForGroup (waiting)',
+          ),
+        );
+      } else if (
+        state.pendingTasks.length > 0 &&
+        this.activeTaskCount < MAX_CONCURRENT_TASKS
+      ) {
         const task = state.pendingTasks.shift()!;
         this.runTask(nextJid, task).catch((err) =>
           logger.error(
             { groupJid: nextJid, taskId: task.id, err },
             'Unhandled error in runTask (waiting)',
-          ),
-        );
-      } else if (state.pendingMessages) {
-        this.runForGroup(nextJid, 'drain').catch((err) =>
-          logger.error(
-            { groupJid: nextJid, err },
-            'Unhandled error in runForGroup (waiting)',
           ),
         );
       }
