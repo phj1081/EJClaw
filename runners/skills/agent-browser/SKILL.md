@@ -6,19 +6,20 @@ allowed-tools: Bash(agent-browser:*)
 
 # Browser Automation with agent-browser
 
+Powered by gstack browse — persistent headless Chromium with ~100ms per command.
+
 ## Quick start
 
 ```bash
-agent-browser open <url>        # Navigate to page
+agent-browser goto <url>        # Navigate to page
 agent-browser snapshot -i       # Get interactive elements with refs
 agent-browser click @e1         # Click element by ref
 agent-browser fill @e2 "text"   # Fill input by ref
-agent-browser close             # Close browser
 ```
 
 ## Core workflow
 
-1. Navigate: `agent-browser open <url>`
+1. Navigate: `agent-browser goto <url>`
 2. Snapshot: `agent-browser snapshot -i` (returns elements with refs like `@e1`, `@e2`)
 3. Interact using refs from the snapshot
 4. Re-snapshot after navigation or significant DOM changes
@@ -28,11 +29,11 @@ agent-browser close             # Close browser
 ### Navigation
 
 ```bash
-agent-browser open <url>      # Navigate to URL
+agent-browser goto <url>      # Navigate to URL
 agent-browser back            # Go back
 agent-browser forward         # Go forward
 agent-browser reload          # Reload page
-agent-browser close           # Close browser
+agent-browser url             # Get current URL
 ```
 
 ### Snapshot (page analysis)
@@ -43,43 +44,45 @@ agent-browser snapshot -i         # Interactive elements only (recommended)
 agent-browser snapshot -c         # Compact output
 agent-browser snapshot -d 3       # Limit depth to 3
 agent-browser snapshot -s "#main" # Scope to CSS selector
+agent-browser snapshot -D         # Diff against previous snapshot
+agent-browser snapshot -a         # Annotated screenshot with ref labels
+agent-browser snapshot -C         # Find non-ARIA clickable elements (@c refs)
 ```
 
 ### Interactions (use @refs from snapshot)
 
 ```bash
 agent-browser click @e1           # Click
-agent-browser dblclick @e1        # Double-click
 agent-browser fill @e2 "text"     # Clear and type
 agent-browser type @e2 "text"     # Type without clearing
 agent-browser press Enter         # Press key
 agent-browser hover @e1           # Hover
-agent-browser check @e1           # Check checkbox
-agent-browser uncheck @e1         # Uncheck checkbox
 agent-browser select @e1 "value"  # Select dropdown option
 agent-browser scroll down 500     # Scroll page
 agent-browser upload @e1 file.pdf # Upload files
+agent-browser viewport 1280x720  # Set viewport size
 ```
 
-### Get information
+### Content extraction
 
 ```bash
-agent-browser get text @e1        # Get element text
-agent-browser get html @e1        # Get innerHTML
-agent-browser get value @e1       # Get input value
-agent-browser get attr @e1 href   # Get attribute
-agent-browser get title           # Get page title
-agent-browser get url             # Get current URL
-agent-browser get count ".item"   # Count matching elements
+agent-browser text                # Get all page text
+agent-browser text @e1            # Get element text
+agent-browser html @e1            # Get innerHTML
+agent-browser links               # Get all links
+agent-browser forms               # Get all forms
+agent-browser accessibility       # Full accessibility tree
 ```
 
 ### Screenshots & PDF
 
 ```bash
-agent-browser screenshot          # Save to temp directory
-agent-browser screenshot path.png # Save to specific path
-agent-browser screenshot --full   # Full page
-agent-browser pdf output.pdf      # Save as PDF
+agent-browser screenshot                    # Full page screenshot
+agent-browser screenshot --viewport         # Viewport only
+agent-browser screenshot @e1               # Element screenshot
+agent-browser screenshot --clip x,y,w,h    # Region screenshot
+agent-browser pdf output.pdf               # Save as PDF
+agent-browser responsive                    # Multi-viewport screenshots
 ```
 
 ### Wait
@@ -92,54 +95,57 @@ agent-browser wait --url "**/dashboard"    # Wait for URL pattern
 agent-browser wait --load networkidle      # Wait for network idle
 ```
 
-### Semantic locators (alternative to refs)
+### Inspection & Debugging
 
 ```bash
-agent-browser find role button click --name "Submit"
-agent-browser find text "Sign In" click
-agent-browser find label "Email" fill "user@test.com"
-agent-browser find placeholder "Search" type "query"
-```
-
-### Authentication with saved state
-
-```bash
-# Login once
-agent-browser open https://app.example.com/login
-agent-browser snapshot -i
-agent-browser fill @e1 "username"
-agent-browser fill @e2 "password"
-agent-browser click @e3
-agent-browser wait --url "**/dashboard"
-agent-browser state save auth.json
-
-# Later: load saved state
-agent-browser state load auth.json
-agent-browser open https://app.example.com/dashboard
+agent-browser js "document.title"          # Run JavaScript expression
+agent-browser eval script.js               # Run JavaScript file
+agent-browser css @e1 color                # Get CSS property
+agent-browser attrs @e1                    # Get all attributes
+agent-browser is visible @e1               # Check element state
+agent-browser console                      # View console logs
+agent-browser console --errors             # Console errors only
+agent-browser network                      # View network requests
+agent-browser perf                         # Performance metrics
 ```
 
 ### Cookies & Storage
 
 ```bash
-agent-browser cookies                     # Get all cookies
-agent-browser cookies set name value      # Set cookie
-agent-browser cookies clear               # Clear cookies
-agent-browser storage local               # Get localStorage
-agent-browser storage local set k v       # Set value
+agent-browser cookies                      # Get all cookies
+agent-browser storage                      # Get localStorage
+agent-browser storage set key value        # Set localStorage value
 ```
 
-### JavaScript
+### Tabs
 
 ```bash
-agent-browser eval "document.title"   # Run JavaScript
+agent-browser tabs                         # List open tabs
+agent-browser tab <id>                     # Switch to tab
+agent-browser newtab <url>                 # Open new tab
+agent-browser closetab                     # Close current tab
+```
+
+### Dialog handling
+
+```bash
+agent-browser dialog-accept               # Accept dialog (default behavior)
+agent-browser dialog-accept "text"        # Accept prompt with text
+agent-browser dialog-dismiss              # Dismiss dialog
+```
+
+### Compare
+
+```bash
+agent-browser diff <url1> <url2>          # Compare two pages
 ```
 
 ## Example: Form submission
 
 ```bash
-agent-browser open https://example.com/form
+agent-browser goto https://example.com/form
 agent-browser snapshot -i
-# Output shows: textbox "Email" [ref=e1], textbox "Password" [ref=e2], button "Submit" [ref=e3]
+# Output: @e1 [textbox] "Email", @e2 [textbox] "Password", @e3 [button] "Submit"
 
 agent-browser fill @e1 "user@example.com"
 agent-browser fill @e2 "password123"
@@ -151,9 +157,15 @@ agent-browser snapshot -i  # Check result
 ## Example: Data extraction
 
 ```bash
-agent-browser open https://example.com/products
+agent-browser goto https://example.com/products
 agent-browser snapshot -i
-agent-browser get text @e1  # Get product title
-agent-browser get attr @e2 href  # Get link URL
-agent-browser screenshot products.png
+agent-browser text @e1            # Get product title
+agent-browser screenshot items.png
 ```
+
+## Notes
+
+- Server auto-starts on first command, auto-shuts after 30min idle
+- ~100ms per command after initial startup (~3s first time)
+- Refs (`@e1`, `@e2`) are assigned from accessibility tree — re-snapshot after DOM changes
+- `@c` refs from `-C` flag target non-ARIA clickable elements (divs with onclick, cursor:pointer)
