@@ -857,9 +857,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       producedFinalText = null;
     };
 
-    const flushProducedFinalText = async (
-      replaceMessageId?: string | null,
-    ) => {
+    const flushProducedFinalText = async (replaceMessageId?: string | null) => {
       if (!producedFinalText) {
         return;
       }
