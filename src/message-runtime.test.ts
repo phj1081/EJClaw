@@ -425,9 +425,13 @@ describe('createMessageRuntime', () => {
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
+        'CI 상태 확인 중입니다.\n\n10초',
+      );
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
         'CI 상태 확인 중입니다.',
       );
-      expect(channel.sendMessage).not.toHaveBeenCalled();
       expect(notifyIdle).toHaveBeenCalledTimes(1);
       expect(notifyIdle).toHaveBeenCalledWith(chatJid, 'run-progress');
       expect(persistSession).toHaveBeenCalledWith(
@@ -585,7 +589,7 @@ describe('createMessageRuntime', () => {
     );
   });
 
-  it('resets the idle timeout when follow-up Codex progress keeps arriving', async () => {
+  it('discards late progress and duplicate final after a terminal final', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -607,36 +611,34 @@ describe('createMessageRuntime', () => {
       async (_group, _input, _onProcess, onOutput) => {
         await onOutput?.({
           status: 'success',
-          result: '초기 응답입니다.',
-          newSessionId: 'session-follow-up',
+          phase: 'progress',
+          result: '첫 번째 진행상황입니다.',
+          newSessionId: 'session-terminal',
         });
-        await vi.advanceTimersByTimeAsync(800);
+        await vi.advanceTimersByTimeAsync(10_000);
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '최종 답변입니다.',
+          newSessionId: 'session-terminal',
+        });
         await onOutput?.({
           status: 'success',
           phase: 'progress',
-          result: '후속 작업 진행 중입니다.',
-          newSessionId: 'session-follow-up',
+          result: '늦게 도착한 진행상황입니다.',
+          newSessionId: 'session-terminal',
         });
-        await vi.advanceTimersByTimeAsync(800);
-
         await onOutput?.({
           status: 'success',
-          phase: 'progress',
-          result: '후속 작업 계속 진행 중입니다.',
-          newSessionId: 'session-follow-up',
-        });
-        await vi.advanceTimersByTimeAsync(800);
-
-        await onOutput?.({
-          status: 'success',
-          result: null,
-          newSessionId: 'session-follow-up',
+          phase: 'final',
+          result: '중복 최종 답변입니다.',
+          newSessionId: 'session-terminal',
         });
 
         return {
           status: 'success',
           result: null,
-          newSessionId: 'session-follow-up',
+          newSessionId: 'session-terminal',
         };
       },
     );
@@ -665,28 +667,37 @@ describe('createMessageRuntime', () => {
 
     try {
       const result = await runtime.processGroupMessages(chatJid, {
-        runId: 'run-follow-up-progress',
+        runId: 'run-terminal-final',
         reason: 'messages',
       });
 
       expect(result).toBe(true);
       expect(closeStdin).toHaveBeenCalledWith(chatJid, {
-        runId: 'run-follow-up-progress',
+        runId: 'run-terminal-final',
         reason: 'output-delivered-close',
       });
-      expect(channel.sendMessage).toHaveBeenCalledWith(
-        chatJid,
-        '초기 응답입니다.',
-      );
+      expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
       expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
-        '후속 작업 진행 중입니다.\n\n0초',
+        '첫 번째 진행상황입니다.\n\n0초',
       );
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        '후속 작업 계속 진행 중입니다.\n\n0초',
+        '첫 번째 진행상황입니다.\n\n10초',
       );
+      expect(channel.editMessage).not.toHaveBeenCalledWith(
+        chatJid,
+        'progress-1',
+        '늦게 도착한 진행상황입니다.\n\n0초',
+      );
+      expect(channel.editMessage).not.toHaveBeenCalledWith(
+        chatJid,
+        'progress-1',
+        '중복 최종 답변입니다.',
+      );
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '최종 답변입니다.');
     } finally {
       vi.useRealTimers();
     }
@@ -718,23 +729,8 @@ describe('createMessageRuntime', () => {
           newSessionId: 'session-long-progress',
         });
         await vi.advanceTimersByTimeAsync(70_000);
-        expect(channel.editMessage).toHaveBeenLastCalledWith(
-          chatJid,
-          'progress-1',
-          '오래 걸리는 작업입니다.\n\n1분 10초',
-        );
         await vi.advanceTimersByTimeAsync(50_000);
-        expect(channel.editMessage).toHaveBeenLastCalledWith(
-          chatJid,
-          'progress-1',
-          '오래 걸리는 작업입니다.\n\n2분 0초',
-        );
         await vi.advanceTimersByTimeAsync(3_480_000);
-        expect(channel.editMessage).toHaveBeenLastCalledWith(
-          chatJid,
-          'progress-1',
-          '오래 걸리는 작업입니다.\n\n1시간 0분 0초',
-        );
         await vi.advanceTimersByTimeAsync(70_000);
         await onOutput?.({
           status: 'success',
@@ -782,10 +778,19 @@ describe('createMessageRuntime', () => {
         chatJid,
         '오래 걸리는 작업입니다.\n\n0초',
       );
-      expect(channel.editMessage).toHaveBeenLastCalledWith(
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
         '오래 걸리는 작업입니다.\n\n1시간 0초',
+      );
+      expect(channel.editMessage).toHaveBeenCalledWith(
+        chatJid,
+        'progress-1',
+        '오래 걸리는 작업입니다.\n\n1시간 10초',
+      );
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
+        '오래 걸리는 작업입니다.',
       );
     } finally {
       vi.useRealTimers();
@@ -874,9 +879,13 @@ describe('createMessageRuntime', () => {
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
+        '테스트를 돌리는 중입니다.\n\n10초',
+      );
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
         '테스트가 끝났습니다.',
       );
-      expect(channel.sendMessage).not.toHaveBeenCalled();
       expect(notifyIdle).toHaveBeenCalledTimes(1);
       expect(notifyIdle).toHaveBeenCalledWith(chatJid, 'run-final');
     } finally {
@@ -884,11 +893,12 @@ describe('createMessageRuntime', () => {
     }
   });
 
-  it('starts a fresh tracked progress message for each Codex turn in one runner session', async () => {
-    vi.useFakeTimers();
+  it('retries a silent run internally before any visible output and succeeds in the same queue item', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
 
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
@@ -898,48 +908,29 @@ describe('createMessageRuntime', () => {
         sender_name: 'User',
         content: 'hello',
         timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
       },
     ]);
 
-    vi.mocked(channel.sendAndTrack!)
-      .mockResolvedValueOnce('progress-1')
-      .mockResolvedValueOnce('progress-2');
-
-    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
-      async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'progress',
-          result: '첫 번째 진행상황입니다.',
-          newSessionId: 'session-multi-turn',
-        });
-        await vi.advanceTimersByTimeAsync(10_000);
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockResolvedValueOnce({
+        status: 'success',
+        result: null,
+        newSessionId: 'session-silent-rollover',
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
         await onOutput?.({
           status: 'success',
           phase: 'final',
-          result: '첫 번째 결과입니다.',
-          newSessionId: 'session-multi-turn',
-        });
-        await onOutput?.({
-          status: 'success',
-          phase: 'progress',
-          result: '두 번째 진행상황입니다.',
-          newSessionId: 'session-multi-turn',
-        });
-        await vi.advanceTimersByTimeAsync(10_000);
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: '두 번째 결과입니다.',
-          newSessionId: 'session-multi-turn',
+          result: '두 번째 시도에서 성공했습니다.',
+          newSessionId: 'session-silent-rollover',
         });
         return {
           status: 'success',
           result: null,
-          newSessionId: 'session-multi-turn',
+          newSessionId: 'session-silent-rollover',
         };
-      },
-    );
+      });
 
     const runtime = createMessageRuntime({
       assistantName: 'Andy',
@@ -957,57 +948,168 @@ describe('createMessageRuntime', () => {
       getSessions: () => ({}),
       getLastTimestamp: () => '',
       setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
-      saveState: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
       persistSession: vi.fn(),
       clearSession: vi.fn(),
     });
 
-    try {
-      const result = await runtime.processGroupMessages(chatJid, {
-        runId: 'run-multi-turn',
-        reason: 'messages',
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-silent-rollover',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(saveState).toHaveBeenCalled();
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      '두 번째 시도에서 성공했습니다.',
+    );
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+  });
+
+  it('retries a silent run with the original prompt still included after a queued follow-up arrives', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+    let activityTouch:
+      | ((meta?: {
+          source: 'follow-up';
+          textLength: number;
+          filename: string;
+        }) => void)
+      | null = null;
+    let followUpPersisted = false;
+
+    vi.mocked(db.getMessagesSince).mockImplementation(
+      (_chatJid, sinceSeqCursor) => {
+        if (String(sinceSeqCursor || '0') === '0') {
+          return followUpPersisted
+            ? [
+                {
+                  id: 'msg-1',
+                  chat_jid: chatJid,
+                  sender: 'user@test',
+                  sender_name: 'User',
+                  content: 'hello',
+                  timestamp: '2026-03-19T00:00:00.000Z',
+                  seq: 1,
+                },
+                {
+                  id: 'msg-2',
+                  chat_jid: chatJid,
+                  sender: 'codex@test',
+                  sender_name: 'Codex',
+                  content: 'follow-up',
+                  timestamp: '2026-03-19T00:00:05.000Z',
+                  seq: 2,
+                },
+              ]
+            : [
+                {
+                  id: 'msg-1',
+                  chat_jid: chatJid,
+                  sender: 'user@test',
+                  sender_name: 'User',
+                  content: 'hello',
+                  timestamp: '2026-03-19T00:00:00.000Z',
+                  seq: 1,
+                },
+              ];
+        }
+
+        if (String(sinceSeqCursor || '0') === '1' && followUpPersisted) {
+          return [
+            {
+              id: 'msg-2',
+              chat_jid: chatJid,
+              sender: 'codex@test',
+              sender_name: 'Codex',
+              content: 'follow-up',
+              timestamp: '2026-03-19T00:00:05.000Z',
+              seq: 2,
+            },
+          ];
+        }
+
+        return [];
+      },
+    );
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async () => {
+        lastAgentTimestamps[chatJid] = '2';
+        followUpPersisted = true;
+        activityTouch?.({
+          source: 'follow-up',
+          textLength: 9,
+          filename: 'follow-up.json',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'session-silent-follow-up',
+        };
+      })
+      .mockImplementationOnce(async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('hello');
+        expect(input.prompt).toContain('follow-up');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '원래 요청과 follow-up을 같이 처리했습니다.',
+          newSessionId: 'session-silent-follow-up',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'session-silent-follow-up',
+        };
       });
 
-      expect(result).toBe(true);
-      expect(channel.sendAndTrack).toHaveBeenNthCalledWith(
-        1,
-        chatJid,
-        '첫 번째 진행상황입니다.\n\n0초',
-      );
-      expect(channel.sendAndTrack).toHaveBeenNthCalledWith(
-        2,
-        chatJid,
-        '두 번째 진행상황입니다.\n\n0초',
-      );
-      expect(channel.editMessage).toHaveBeenNthCalledWith(
-        1,
-        chatJid,
-        'progress-1',
-        '첫 번째 진행상황입니다.\n\n10초',
-      );
-      expect(channel.editMessage).toHaveBeenNthCalledWith(
-        2,
-        chatJid,
-        'progress-1',
-        '첫 번째 결과입니다.',
-      );
-      expect(channel.editMessage).toHaveBeenNthCalledWith(
-        3,
-        chatJid,
-        'progress-2',
-        '두 번째 진행상황입니다.\n\n10초',
-      );
-      expect(channel.editMessage).toHaveBeenNthCalledWith(
-        4,
-        chatJid,
-        'progress-2',
-        '두 번째 결과입니다.',
-      );
-      expect(channel.sendMessage).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        setActivityTouch: vi.fn(
+          (_jid, touch) => (activityTouch = touch as typeof activityTouch),
+        ),
+        setFollowUpPipeAllowed: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-silent-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(saveState).toHaveBeenCalled();
+    expect(lastAgentTimestamps[chatJid]).toBe('2');
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      '원래 요청과 follow-up을 같이 처리했습니다.',
+    );
   });
 
   it('resets tracked progress after a final output that becomes empty after formatting', async () => {
@@ -1120,9 +1222,13 @@ describe('createMessageRuntime', () => {
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-2',
+        '두 번째 진행상황입니다.\n\n10초',
+      );
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
         '두 번째 진행상황입니다.',
       );
-      expect(channel.sendMessage).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -1216,19 +1322,33 @@ describe('createMessageRuntime', () => {
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
+        '커밋은 정상 들어갔고 pre-commit도 통과했습니다.\n\n10초',
+      );
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
         '커밋은 정상 들어갔고 pre-commit도 통과했습니다.',
       );
-      expect(channel.sendMessage).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('promotes progress-only output for a follow-up turn after a prior final in the same run', async () => {
+  it('ignores follow-up activity after a final was already observed in the same run', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
+    const closeStdin = vi.fn();
+    const enqueueMessageCheck = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = { [chatJid]: '1' };
+    let activityTouch:
+      | ((meta?: {
+          source: 'follow-up';
+          textLength: number;
+          filename: string;
+        }) => void)
+      | null = null;
 
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
@@ -1238,12 +1358,9 @@ describe('createMessageRuntime', () => {
         sender_name: 'User',
         content: 'hello',
         timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 2,
       },
     ]);
-
-    vi.mocked(channel.sendAndTrack!).mockResolvedValueOnce(
-      'progress-follow-up',
-    );
 
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
@@ -1251,24 +1368,23 @@ describe('createMessageRuntime', () => {
           status: 'success',
           phase: 'final',
           result: '첫 번째 턴 최종 답변',
-          newSessionId: 'session-follow-up',
+          newSessionId: 'session-final-boundary',
         });
-        await onOutput?.({
-          status: 'success',
-          phase: 'progress',
-          result: '두 번째 턴 진행상황입니다.',
-          newSessionId: 'session-follow-up',
+        activityTouch?.({
+          source: 'follow-up',
+          textLength: 32,
+          filename: 'late-follow-up.json',
         });
-        await vi.advanceTimersByTimeAsync(10_000);
+        lastAgentTimestamps[chatJid] = '3';
         await onOutput?.({
           status: 'success',
           result: null,
-          newSessionId: 'session-follow-up',
+          newSessionId: 'session-final-boundary',
         });
         return {
           status: 'success',
           result: null,
-          newSessionId: 'session-follow-up',
+          newSessionId: 'session-final-boundary',
         };
       },
     );
@@ -1282,14 +1398,18 @@ describe('createMessageRuntime', () => {
       channels: [channel],
       queue: {
         registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
+        closeStdin,
         notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+        setActivityTouch: vi.fn(
+          (_jid, touch) => (activityTouch = touch as typeof activityTouch),
+        ),
       } as any,
       getRegisteredGroups: () => ({ [chatJid]: group }),
       getSessions: () => ({}),
       getLastTimestamp: () => '',
       setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
       saveState: vi.fn(),
       persistSession: vi.fn(),
       clearSession: vi.fn(),
@@ -1297,31 +1417,23 @@ describe('createMessageRuntime', () => {
 
     try {
       const result = await runtime.processGroupMessages(chatJid, {
-        runId: 'run-follow-up-progress-only',
+        runId: 'run-final-boundary',
         reason: 'messages',
       });
 
       expect(result).toBe(true);
-      expect(channel.sendMessage).toHaveBeenNthCalledWith(
-        1,
+      expect(closeStdin).toHaveBeenCalledWith(chatJid, {
+        runId: 'run-final-boundary',
+        reason: 'output-delivered-close',
+      });
+      expect(channel.sendMessage).toHaveBeenCalledWith(
         chatJid,
         '첫 번째 턴 최종 답변',
       );
-      expect(channel.sendAndTrack).toHaveBeenCalledWith(
-        chatJid,
-        '두 번째 턴 진행상황입니다.\n\n0초',
-      );
-      expect(channel.editMessage).toHaveBeenCalledWith(
-        chatJid,
-        'progress-follow-up',
-        '두 번째 턴 진행상황입니다.\n\n10초',
-      );
-      expect(channel.editMessage).toHaveBeenCalledWith(
-        chatJid,
-        'progress-follow-up',
-        '두 번째 턴 진행상황입니다.',
-      );
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+      expect(channel.sendAndTrack).not.toHaveBeenCalled();
+      expect(enqueueMessageCheck).not.toHaveBeenCalled();
+      expect(lastAgentTimestamps[chatJid]).toBe('3');
     } finally {
       vi.useRealTimers();
     }
@@ -1413,7 +1525,7 @@ describe('createMessageRuntime', () => {
         chatJid,
         '진행 중입니다.\n\n0초',
       );
-      // 같은 메시지를 계속 편집하고, 마지막엔 final로 승격한다.
+      // 같은 progress 메시지는 유지하고, final은 별도 메시지로 보낸다.
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
@@ -1422,29 +1534,22 @@ describe('createMessageRuntime', () => {
       expect(channel.editMessage).toHaveBeenLastCalledWith(
         chatJid,
         'progress-1',
-        '아직 진행 중.',
+        '아직 진행 중.\n\n10초',
       );
-      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+      expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '아직 진행 중.');
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('requeues a queued follow-up as a fresh run when the active agent ends without follow-up output', async () => {
+  it('emits one visible failure final after silent rollovers exhaust the quiet budget', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
     const closeStdin = vi.fn();
-    const enqueueMessageCheck = vi.fn();
-    let activityTouch:
-      | ((meta?: {
-          source: 'follow-up';
-          textLength: number;
-          filename: string;
-        }) => void)
-      | null = null;
-    const lastAgentTimestamps: Record<string, string> = { [chatJid]: '1' };
+    const lastAgentTimestamps: Record<string, string> = {};
     const saveState = vi.fn();
 
     vi.mocked(db.getMessagesSince).mockReturnValue([
@@ -1455,34 +1560,17 @@ describe('createMessageRuntime', () => {
         sender_name: 'User',
         content: 'hello',
         timestamp: '2026-03-19T00:00:00.000Z',
-        seq: 2,
+        seq: 1,
       },
     ]);
 
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
-      async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: '초기 턴 응답입니다.',
-          newSessionId: 'session-follow-up-rerun',
-        });
-        activityTouch?.({
-          source: 'follow-up',
-          textLength: 48,
-          filename: 'follow-up.json',
-        });
-        lastAgentTimestamps[chatJid] = '3';
-        await vi.advanceTimersByTimeAsync(10_000);
-        await onOutput?.({
-          status: 'success',
-          result: null,
-          newSessionId: 'session-follow-up-rerun',
-        });
+      async () => {
+        await vi.advanceTimersByTimeAsync(1_100);
         return {
           status: 'success',
           result: null,
-          newSessionId: 'session-follow-up-rerun',
+          newSessionId: 'session-quiet-budget',
         };
       },
     );
@@ -1498,10 +1586,6 @@ describe('createMessageRuntime', () => {
         registerProcess: vi.fn(),
         closeStdin,
         notifyIdle: vi.fn(),
-        enqueueMessageCheck,
-        setActivityTouch: vi.fn(
-          (_jid, touch) => (activityTouch = touch as typeof activityTouch),
-        ),
       } as any,
       getRegisteredGroups: () => ({ [chatJid]: group }),
       getSessions: () => ({}),
@@ -1515,22 +1599,19 @@ describe('createMessageRuntime', () => {
 
     try {
       const result = await runtime.processGroupMessages(chatJid, {
-        runId: 'run-follow-up-rerun',
+        runId: 'run-quiet-budget',
         reason: 'messages',
       });
 
       expect(result).toBe(true);
-      expect(closeStdin).toHaveBeenCalledWith(chatJid, {
-        runId: 'run-follow-up-rerun',
-        reason: 'follow-up-no-output-preemption',
-      });
-      expect(lastAgentTimestamps[chatJid]).toBe('2');
-      expect(saveState).toHaveBeenCalled();
-      expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid, group.folder);
+      expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(3);
+      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
         chatJid,
-        '초기 턴 응답입니다.',
+        '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
       );
+      expect(lastAgentTimestamps[chatJid]).toBe('1');
+      expect(saveState).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -1608,7 +1689,7 @@ describe('createMessageRuntime', () => {
     });
   });
 
-  it('does not roll back when a streamed progress message was already posted before an error', async () => {
+  it('publishes exactly one final after a visible progress when the run errors', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
@@ -1680,6 +1761,11 @@ describe('createMessageRuntime', () => {
     expect(channel.sendAndTrack).toHaveBeenCalledWith(
       chatJid,
       '중간 진행상황입니다.\n\n0초',
+    );
+    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
     );
     expect(lastAgentTimestamps[chatJid]).toBe('1');
     expect(saveState).toHaveBeenCalled();

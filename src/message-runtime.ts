@@ -563,593 +563,542 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
 
     const isMainGroup = group.isMain === true;
-    const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
-    const rawMissedMessages = getMessagesSinceSeq(
-      chatJid,
-      sinceSeqCursor,
-      deps.assistantName,
-    );
-    const missedMessages = getProcessableMessages(
-      chatJid,
-      rawMissedMessages,
-      channel,
-    );
-
-    if (missedMessages.length === 0) {
-      const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
-      if (lastIgnored) {
-        advanceLastAgentCursor(chatJid, lastIgnored.timestamp);
-      }
-      return true;
-    }
-
-    const cmdResult = await handleSessionCommand({
-      missedMessages,
-      isMainGroup,
-      groupName: group.name,
-      runId,
-      triggerPattern: deps.triggerPattern,
-      timezone: deps.timezone,
-      deps: {
-        sendMessage: (text) => channel.sendMessage(chatJid, text),
-        setTyping: (typing) =>
-          channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
-        runAgent: (prompt, onOutput) =>
-          runAgent(group, prompt, chatJid, runId, onOutput),
-        closeStdin: () =>
-          deps.queue.closeStdin(chatJid, {
-            reason: 'session-command',
-          }),
-        clearSession: () => deps.clearSession(group.folder),
-        advanceCursor: (cursorOrTimestamp) => {
-          advanceLastAgentCursor(chatJid, cursorOrTimestamp);
-        },
-        formatMessages,
-        isAdminSender: (msg) => isSessionCommandSenderAllowed(msg.sender),
-        canSenderInteract: (msg) => {
-          const hasTrigger = deps.triggerPattern.test(msg.content.trim());
-          const requiresTrigger =
-            !isMainGroup && group.requiresTrigger !== false;
-          return (
-            isMainGroup ||
-            !requiresTrigger ||
-            (hasTrigger &&
-              (msg.is_from_me ||
-                isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
-          );
-        },
-      },
-    });
-    if (cmdResult.handled) return cmdResult.success;
-
-    if (!isMainGroup && group.requiresTrigger !== false) {
-      const allowlistCfg = loadSenderAllowlist();
-      const hasTrigger = missedMessages.some(
-        (msg) =>
-          deps.triggerPattern.test(msg.content.trim()) &&
-          (msg.is_from_me ||
-            isTriggerAllowed(chatJid, msg.sender, allowlistCfg)),
-      );
-      if (!hasTrigger) {
-        logger.info(
-          { chatJid, group: group.name, groupFolder: group.folder, runId },
-          'Skipping queued run because no allowed trigger was found',
-        );
-        return true;
-      }
-    }
-
-    const prompt = formatMessages(missedMessages, deps.timezone);
-    const previousCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
-    const startSeq = missedMessages[0].seq ?? null;
-    const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
-    if (endSeq !== null) {
-      advanceLastAgentCursor(chatJid, endSeq);
-    }
-
-    logger.info(
-      {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        runId,
-        messageCount: missedMessages.length,
-      },
-      'Dispatching queued messages to agent',
-    );
-
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let producedFinalText: string | null = null;
-    let followUpQueuedAt: number | null = null;
-    let followUpQueuedTextLength: number | null = null;
-    let followUpQueuedFilename: string | null = null;
-    let followUpRollbackCursor: string | null = null;
-    let followUpRestartRequested = false;
-    let followUpEndedWithoutOutputReason: string | null = null;
-    let followUpNoOutputWarnTimer: ReturnType<typeof setTimeout> | null = null;
-    let hadError = false;
-    let latestProgressText: string | null = null;
-    let latestProgressRendered: string | null = null;
-    let progressMessageId: string | null = null;
-    let progressStartedAt: number | null = null;
-    let progressTicker: ReturnType<typeof setInterval> | null = null;
-    let progressEditFailCount = 0;
-    let promotableTrackedProgressMessageId: string | null = null;
-    let finalOutputSentToUser = false;
-    let progressOutputSentToUser = false;
-    let latestModelProgressTextForFinalFallback: string | null = null;
-    let sawNonProgressOutput = false;
-    let producedDeliverySucceeded = true;
-    let isFirstLogicalTurn = true;
-    let poisonedSessionDetected = false;
-    // Visible output 이후에는 같은 프로세스에 follow-up을 더 밀어넣지 않고 fresh run으로 넘긴다.
-    let canPipeFollowUps = true;
     const isClaudeCodeAgent =
       (group.agentType || 'claude-code') === 'claude-code';
-    const FOLLOW_UP_NO_OUTPUT_WARN_MS = 10_000;
+    const QUIET_RUN_ROLLOVER_MS = Math.min(deps.idleTimeout, 10_000);
+    const MAX_SILENT_ROLLOVERS = 2;
+    const MAX_TOTAL_SILENT_WAIT_MS =
+      QUIET_RUN_ROLLOVER_MS * (MAX_SILENT_ROLLOVERS + 1);
+    const FAILURE_FINAL_TEXT = '요청을 완료하지 못했습니다. 다시 시도해 주세요.';
+    const queueItemBaseCursor = normalizeStoredSeqCursor(
+      deps.getLastAgentTimestamps()[chatJid] || '0',
+      chatJid,
+    );
+    let silentRolloverCount = 0;
+    let totalSilentWaitMs = 0;
 
-    const resetIdleTimer = () => {
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => {
-        logger.debug(
-          { group: group.name, chatJid, runId },
-          'Idle timeout, closing agent stdin',
-        );
-        if (followUpQueuedAt !== null) {
-          logger.warn(
-            {
-              group: group.name,
-              chatJid,
-              runId,
-              followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
-              followUpQueuedTextLength,
-              followUpQueuedFilename,
-              followUpWaitMs: Date.now() - followUpQueuedAt,
-            },
-            'Idle timeout reached while a queued follow-up still had no agent output',
-          );
-          followUpRestartRequested = true;
-        }
-        deps.queue.closeStdin(chatJid, { reason: 'idle-timeout' });
-      }, deps.idleTimeout);
-    };
-
-    const clearFollowUpNoOutputWarnTimer = () => {
-      if (followUpNoOutputWarnTimer) {
-        clearTimeout(followUpNoOutputWarnTimer);
-        followUpNoOutputWarnTimer = null;
-      }
-    };
-
-    const clearPendingFollowUpDiagnostics = () => {
-      clearFollowUpNoOutputWarnTimer();
-      followUpQueuedAt = null;
-      followUpQueuedTextLength = null;
-      followUpQueuedFilename = null;
-      followUpRollbackCursor = null;
-      followUpRestartRequested = false;
-      followUpEndedWithoutOutputReason = null;
-    };
-
-    const scheduleFollowUpNoOutputWarning = () => {
-      clearFollowUpNoOutputWarnTimer();
-      followUpNoOutputWarnTimer = setTimeout(() => {
-        if (followUpQueuedAt === null) return;
-        logger.warn(
-          {
-            group: group.name,
-            chatJid,
-            runId,
-            followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
-            followUpQueuedTextLength,
-            followUpQueuedFilename,
-            elapsedMs: Date.now() - followUpQueuedAt,
-          },
-          'No agent output observed within 10s of queuing a follow-up message',
-        );
-        followUpRestartRequested = true;
-        deps.queue.closeStdin(chatJid, {
-          runId,
-          reason: 'follow-up-no-output-preemption',
-        });
-      }, FOLLOW_UP_NO_OUTPUT_WARN_MS);
-    };
-
-    const noteFollowUpQueued = (meta?: {
-      source: 'follow-up';
-      textLength: number;
-      filename: string;
-    }) => {
-      if (meta?.source !== 'follow-up') return;
-      if (followUpRollbackCursor === null) {
-        followUpRollbackCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
-      }
-      followUpQueuedAt = Date.now();
-      followUpQueuedTextLength = meta.textLength;
-      followUpQueuedFilename = meta.filename;
-      scheduleFollowUpNoOutputWarning();
-      logger.info(
-        {
-          group: group.name,
-          chatJid,
-          runId,
-          followUpQueuedTextLength,
-          followUpQueuedFilename,
-        },
-        'Registered follow-up activity for active agent',
-      );
-    };
-
-    const noteAgentOutputObserved = (phase?: string) => {
-      if (followUpQueuedAt === null) return;
-      logger.info(
-        {
-          group: group.name,
-          chatJid,
-          runId,
-          followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
-          followUpQueuedTextLength,
-          followUpQueuedFilename,
-          followUpWaitMs: Date.now() - followUpQueuedAt,
-          resultPhase: phase,
-        },
-        'Agent produced output after a queued follow-up',
-      );
-      clearPendingFollowUpDiagnostics();
-    };
-
-    const warnFollowUpEndedWithoutOutput = (reasonText: string) => {
-      if (followUpQueuedAt === null) return;
-      followUpEndedWithoutOutputReason = reasonText;
-    };
-
-    const requeuePendingFollowUp = (reasonText: string): boolean => {
-      if (followUpQueuedAt === null || followUpRollbackCursor === null) {
-        return false;
-      }
-
-      const lastAgentTimestamps = deps.getLastAgentTimestamps();
-      const currentCursor = lastAgentTimestamps[chatJid] || '0';
-      lastAgentTimestamps[chatJid] = normalizeStoredSeqCursor(
-        followUpRollbackCursor,
+    while (true) {
+      const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
+      const rawMissedMessages = getMessagesSinceSeq(
         chatJid,
+        sinceSeqCursor,
+        deps.assistantName,
       );
-      deps.saveState();
-
-      logger.warn(
-        {
-          group: group.name,
-          chatJid,
-          runId,
-          followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
-          followUpQueuedTextLength,
-          followUpQueuedFilename,
-          followUpWaitMs: Date.now() - followUpQueuedAt,
-          reason: reasonText,
-          rollbackCursor: followUpRollbackCursor,
-          currentCursor,
-        },
-        'Re-queueing queued follow-up after active agent ended without output',
+      const missedMessages = getProcessableMessages(
+        chatJid,
+        rawMissedMessages,
+        channel,
       );
 
-      clearPendingFollowUpDiagnostics();
-      deps.queue.enqueueMessageCheck(chatJid, group.folder);
-      return true;
-    };
-
-    deps.queue.setActivityTouch?.(chatJid, (meta) => {
-      noteFollowUpQueued(meta);
-      resetIdleTimer();
-    });
-    deps.queue.setFollowUpPipeAllowed?.(chatJid, () => canPipeFollowUps);
-
-    const clearProgressTicker = () => {
-      if (progressTicker) {
-        clearInterval(progressTicker);
-        progressTicker = null;
-      }
-    };
-
-    const resetTurnOutputState = () => {
-      finalOutputSentToUser = false;
-      progressOutputSentToUser = false;
-      latestModelProgressTextForFinalFallback = null;
-      sawNonProgressOutput = false;
-      producedFinalText = null;
-    };
-
-    const flushProducedFinalText = async (replaceMessageId?: string | null) => {
-      if (!producedFinalText) {
-        return;
-      }
-
-      try {
-        const workItem = createProducedWorkItem({
-          group_folder: group.folder,
-          chat_jid: chatJid,
-          agent_type: group.agentType || 'claude-code',
-          start_seq: isFirstLogicalTurn ? startSeq : null,
-          end_seq: isFirstLogicalTurn ? endSeq : null,
-          result_payload: producedFinalText,
-        });
-        const delivered = await deliverOpenWorkItem(channel, workItem, {
-          replaceMessageId,
-        });
-        if (delivered) {
-          finalOutputSentToUser = true;
-        } else {
-          producedDeliverySucceeded = false;
+      if (missedMessages.length === 0) {
+        const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
+        if (lastIgnored) {
+          advanceLastAgentCursor(chatJid, lastIgnored.timestamp);
         }
-      } catch (err) {
-        producedDeliverySucceeded = false;
-        logger.warn(
-          { group: group.name, chatJid, runId, err },
-          'Failed to persist produced output for delivery',
-        );
-      } finally {
-        producedFinalText = null;
-        latestModelProgressTextForFinalFallback = null;
-        promotableTrackedProgressMessageId = null;
-        isFirstLogicalTurn = false;
-      }
-    };
-
-    const resetProgressState = () => {
-      clearProgressTicker();
-      latestProgressText = null;
-      latestProgressRendered = null;
-      progressMessageId = null;
-      progressStartedAt = null;
-      progressEditFailCount = 0;
-    };
-
-    const renderProgressMessage = (text: string) => {
-      const elapsedSeconds =
-        progressStartedAt === null
-          ? 0
-          : Math.floor((Date.now() - progressStartedAt) / 10_000) * 10;
-      const hours = Math.floor(elapsedSeconds / 3600);
-      const minutes = Math.floor((elapsedSeconds % 3600) / 60);
-      const seconds = elapsedSeconds % 60;
-      const elapsedParts: string[] = [];
-
-      if (hours > 0) elapsedParts.push(`${hours}시간`);
-      if (minutes > 0) elapsedParts.push(`${minutes}분`);
-      elapsedParts.push(`${seconds}초`);
-
-      return `${text}\n\n${elapsedParts.join(' ')}`;
-    };
-
-    const syncTrackedProgressMessage = async () => {
-      if (!progressMessageId || !channel.editMessage || !latestProgressText) {
-        return;
+        return true;
       }
 
-      const rendered = renderProgressMessage(latestProgressText);
-      if (rendered === latestProgressRendered) {
-        return;
-      }
-
-      try {
-        await channel.editMessage(chatJid, progressMessageId, rendered);
-        latestProgressRendered = rendered;
-        progressEditFailCount = 0;
-      } catch (err) {
-        progressEditFailCount++;
-        logger.warn(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            progressMessageId,
-            progressEditFailCount,
-            err,
+      const cmdResult = await handleSessionCommand({
+        missedMessages,
+        isMainGroup,
+        groupName: group.name,
+        runId,
+        triggerPattern: deps.triggerPattern,
+        timezone: deps.timezone,
+        deps: {
+          sendMessage: (text) => channel.sendMessage(chatJid, text),
+          setTyping: (typing) =>
+            channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
+          runAgent: (prompt, onOutput) =>
+            runAgent(group, prompt, chatJid, runId, onOutput),
+          closeStdin: () =>
+            deps.queue.closeStdin(chatJid, {
+              reason: 'session-command',
+            }),
+          clearSession: () => deps.clearSession(group.folder),
+          advanceCursor: (cursorOrTimestamp) => {
+            advanceLastAgentCursor(chatJid, cursorOrTimestamp);
           },
-          'Failed to edit tracked progress message; will retry before recreating',
+          formatMessages,
+          isAdminSender: (msg) => isSessionCommandSenderAllowed(msg.sender),
+          canSenderInteract: (msg) => {
+            const hasTrigger = deps.triggerPattern.test(msg.content.trim());
+            const requiresTrigger =
+              !isMainGroup && group.requiresTrigger !== false;
+            return (
+              isMainGroup ||
+              !requiresTrigger ||
+              (hasTrigger &&
+                (msg.is_from_me ||
+                  isTriggerAllowed(
+                    chatJid,
+                    msg.sender,
+                    loadSenderAllowlist(),
+                  )))
+            );
+          },
+        },
+      });
+      if (cmdResult.handled) return cmdResult.success;
+
+      if (!isMainGroup && group.requiresTrigger !== false) {
+        const allowlistCfg = loadSenderAllowlist();
+        const hasTrigger = missedMessages.some(
+          (msg) =>
+            deps.triggerPattern.test(msg.content.trim()) &&
+            (msg.is_from_me ||
+              isTriggerAllowed(chatJid, msg.sender, allowlistCfg)),
         );
-        latestProgressRendered = null;
-        if (progressEditFailCount >= 3) {
-          clearProgressTicker();
+        if (!hasTrigger) {
+          logger.info(
+            { chatJid, group: group.name, groupFolder: group.folder, runId },
+            'Skipping queued run because no allowed trigger was found',
+          );
+          return true;
         }
       }
-    };
 
-    const ensureProgressTicker = () => {
-      if (!progressMessageId || !channel.editMessage || progressTicker) {
-        return;
+      const prompt = formatMessages(missedMessages, deps.timezone);
+      const previousCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
+      const startSeq = missedMessages[0].seq ?? null;
+      const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
+      if (endSeq !== null) {
+        advanceLastAgentCursor(chatJid, endSeq);
       }
 
-      progressTicker = setInterval(() => {
-        void syncTrackedProgressMessage();
-      }, 10_000);
-    };
-
-    const finalizeProgressMessage = async (options?: {
-      preserveTrackedMessage?: boolean;
-    }): Promise<string | null> => {
       logger.info(
         {
           chatJid,
           group: group.name,
           groupFolder: group.folder,
           runId,
-          progressMessageId,
-          latestProgressText,
+          messageCount: missedMessages.length,
+          silentRolloverCount,
+          totalSilentWaitMs,
         },
-        'Finalizing tracked progress message',
+        'Dispatching queued messages to agent',
       );
-      const trackedMessageId = progressMessageId;
-      if (!options?.preserveTrackedMessage) {
-        await syncTrackedProgressMessage();
-      }
-      resetProgressState();
-      return trackedMessageId;
-    };
 
-    const sendProgressMessage = async (text: string) => {
-      if (!text || (text === latestProgressText && progressMessageId)) {
-        return;
-      }
+      type VisiblePhase = 'silent' | 'progress' | 'final';
+      type PendingFollowUp =
+        | {
+            queuedAt: number;
+            textLength: number;
+            filename: string;
+          }
+        | null;
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+      let hadError = false;
+      let producedDeliverySucceeded = true;
+      let quietStopReason: string | null = null;
+      let visiblePhase: VisiblePhase = 'silent';
+      let latestProgressText: string | null = null;
+      let latestProgressRendered: string | null = null;
+      let progressMessageId: string | null = null;
+      let progressStartedAt: number | null = null;
+      let progressTicker: ReturnType<typeof setInterval> | null = null;
+      let progressEditFailCount = 0;
+      let latestProgressTextForFinal: string | null = null;
+      let poisonedSessionDetected = false;
+      let canPipeFollowUps = true;
+      let pendingFollowUp: PendingFollowUp = null;
+      const attemptStartedAt = Date.now();
 
-      if (progressStartedAt === null) {
-        resetTurnOutputState();
-        progressStartedAt = Date.now();
-      }
-      latestModelProgressTextForFinalFallback = text;
-      latestProgressText = text;
-      const rendered = renderProgressMessage(text);
+      const hasVisibleOutput = () => visiblePhase !== 'silent';
+      const terminalObserved = () => visiblePhase === 'final';
 
-      if (progressMessageId && channel.editMessage) {
-        logger.info(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            progressMessageId,
-            text,
-          },
-          'Updating tracked progress message',
-        );
-        await syncTrackedProgressMessage();
-        progressOutputSentToUser = true;
-        return;
-      }
+      const clearProgressTicker = () => {
+        if (progressTicker) {
+          clearInterval(progressTicker);
+          progressTicker = null;
+        }
+      };
 
-      if (!channel.sendAndTrack) {
-        latestProgressRendered = rendered;
-        await channel.sendMessage(chatJid, rendered);
-        progressOutputSentToUser = true;
-        return;
-      }
+      const resetProgressState = () => {
+        clearProgressTicker();
+        latestProgressText = null;
+        latestProgressRendered = null;
+        progressMessageId = null;
+        progressStartedAt = null;
+        progressEditFailCount = 0;
+      };
 
-      try {
-        progressMessageId = await channel.sendAndTrack(chatJid, rendered);
-      } catch (err) {
-        logger.warn(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            err,
-          },
-          'Failed to send tracked progress message',
-        );
-        latestProgressRendered = rendered;
-        await channel.sendMessage(chatJid, rendered);
-        progressOutputSentToUser = true;
-        return;
-      }
+      const clearPendingFollowUp = () => {
+        pendingFollowUp = null;
+      };
 
-      if (progressMessageId) {
-        logger.info(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            progressMessageId,
-            text,
-          },
-          'Created tracked progress message',
-        );
-        latestProgressRendered = rendered;
-        ensureProgressTicker();
-        progressOutputSentToUser = true;
-        return;
-      }
+      const renderProgressMessage = (text: string) => {
+        const elapsedSeconds =
+          progressStartedAt === null
+            ? 0
+            : Math.floor((Date.now() - progressStartedAt) / 10_000) * 10;
+        const hours = Math.floor(elapsedSeconds / 3600);
+        const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+        const seconds = elapsedSeconds % 60;
+        const elapsedParts: string[] = [];
 
-      latestProgressRendered = rendered;
-      await channel.sendMessage(chatJid, rendered);
-      progressOutputSentToUser = true;
-    };
+        if (hours > 0) elapsedParts.push(`${hours}시간`);
+        if (minutes > 0) elapsedParts.push(`${minutes}분`);
+        elapsedParts.push(`${seconds}초`);
 
-    await channel.setTyping?.(chatJid, true);
+        return `${text}\n\n${elapsedParts.join(' ')}`;
+      };
 
-    const output = await runAgent(
-      group,
-      prompt,
-      chatJid,
-      runId,
-      async (result) => {
-        if (
-          isClaudeCodeAgent &&
-          shouldResetSessionOnAgentFailure(result) &&
-          !poisonedSessionDetected
-        ) {
-          poisonedSessionDetected = true;
-          hadError = true;
-          deps.clearSession(group.folder);
-          deps.queue.closeStdin(chatJid, {
-            runId,
-            reason: 'poisoned-session-detected',
-          });
-          logger.warn(
-            { chatJid, group: group.name, groupFolder: group.folder, runId },
-            'Detected poisoned Claude session from streamed output, forcing close',
-          );
+      const syncTrackedProgressMessage = async () => {
+        if (!progressMessageId || !channel.editMessage || !latestProgressText) {
+          return;
         }
 
-        if (result.result) {
-          const raw =
-            typeof result.result === 'string'
-              ? result.result
-              : JSON.stringify(result.result);
-          const text = formatOutbound(raw);
-          if (text) {
-            canPipeFollowUps = false;
+        const rendered = renderProgressMessage(latestProgressText);
+        if (rendered === latestProgressRendered) {
+          return;
+        }
+
+        try {
+          await channel.editMessage(chatJid, progressMessageId, rendered);
+          latestProgressRendered = rendered;
+          progressEditFailCount = 0;
+        } catch (err) {
+          progressEditFailCount++;
+          logger.warn(
+            {
+              chatJid,
+              group: group.name,
+              groupFolder: group.folder,
+              runId,
+              progressMessageId,
+              progressEditFailCount,
+              err,
+            },
+            'Failed to edit tracked progress message; will retry before recreating',
+          );
+          latestProgressRendered = null;
+          if (progressEditFailCount >= 3) {
+            clearProgressTicker();
           }
+        }
+      };
+
+      const ensureProgressTicker = () => {
+        if (!progressMessageId || !channel.editMessage || progressTicker) {
+          return;
+        }
+
+        progressTicker = setInterval(() => {
+          void syncTrackedProgressMessage();
+        }, 10_000);
+      };
+
+      const finalizeProgressMessage = async (options?: {
+        preserveTrackedMessage?: boolean;
+      }): Promise<string | null> => {
+        logger.info(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            progressMessageId,
+            latestProgressText,
+          },
+          'Finalizing tracked progress message',
+        );
+        const trackedMessageId = progressMessageId;
+        if (!options?.preserveTrackedMessage) {
+          await syncTrackedProgressMessage();
+        }
+        resetProgressState();
+        return trackedMessageId;
+      };
+
+      const deliverFinalText = async (
+        text: string,
+        replaceMessageId?: string | null,
+      ) => {
+        visiblePhase = 'final';
+        try {
+          const workItem = createProducedWorkItem({
+            group_folder: group.folder,
+            chat_jid: chatJid,
+            agent_type: group.agentType || 'claude-code',
+            start_seq: startSeq,
+            end_seq: endSeq,
+            result_payload: text,
+          });
+          const delivered = await deliverOpenWorkItem(channel, workItem, {
+            replaceMessageId,
+          });
+          if (!delivered) {
+            producedDeliverySucceeded = false;
+          }
+        } catch (err) {
+          producedDeliverySucceeded = false;
+          logger.warn(
+            { group: group.name, chatJid, runId, err },
+            'Failed to persist produced output for delivery',
+          );
+        } finally {
+          latestProgressTextForFinal = null;
+        }
+      };
+
+      const publishFailureFinal = async () => {
+        if (terminalObserved()) {
+          return;
+        }
+        await finalizeProgressMessage();
+        await deliverFinalText(FAILURE_FINAL_TEXT);
+      };
+
+      const sendProgressMessage = async (text: string) => {
+        if (!text || (text === latestProgressText && progressMessageId)) {
+          return;
+        }
+
+        if (progressStartedAt === null) {
+          progressStartedAt = Date.now();
+        }
+        latestProgressTextForFinal = text;
+        latestProgressText = text;
+        const rendered = renderProgressMessage(text);
+
+        if (progressMessageId && channel.editMessage) {
           logger.info(
             {
               chatJid,
               group: group.name,
               groupFolder: group.folder,
               runId,
-              resultStatus: result.status,
-              resultPhase: result.phase,
               progressMessageId,
+              text,
             },
-            `Agent output: ${raw.slice(0, 200)}`,
+            'Updating tracked progress message',
           );
-          noteAgentOutputObserved(result.phase);
+          await syncTrackedProgressMessage();
+          visiblePhase = 'progress';
+          return;
+        }
+
+        if (!channel.sendAndTrack) {
+          latestProgressRendered = rendered;
+          await channel.sendMessage(chatJid, rendered);
+          visiblePhase = 'progress';
+          return;
+        }
+
+        try {
+          progressMessageId = await channel.sendAndTrack(chatJid, rendered);
+        } catch (err) {
+          logger.warn(
+            {
+              chatJid,
+              group: group.name,
+              groupFolder: group.folder,
+              runId,
+              err,
+            },
+            'Failed to send tracked progress message',
+          );
+          latestProgressRendered = rendered;
+          await channel.sendMessage(chatJid, rendered);
+          visiblePhase = 'progress';
+          return;
+        }
+
+        if (progressMessageId) {
+          logger.info(
+            {
+              chatJid,
+              group: group.name,
+              groupFolder: group.folder,
+              runId,
+              progressMessageId,
+              text,
+            },
+            'Created tracked progress message',
+          );
+          latestProgressRendered = rendered;
+          ensureProgressTicker();
+          visiblePhase = 'progress';
+          return;
+        }
+
+        latestProgressRendered = rendered;
+        await channel.sendMessage(chatJid, rendered);
+        visiblePhase = 'progress';
+      };
+
+      const resetIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        if (hasVisibleOutput()) {
+          idleTimer = null;
+          return;
+        }
+        idleTimer = setTimeout(() => {
+          const closeReason =
+            !hasVisibleOutput() && pendingFollowUp
+              ? 'follow-up-no-output-preemption'
+              : 'idle-timeout';
+          quietStopReason ??=
+            !hasVisibleOutput() && pendingFollowUp
+              ? 'follow-up-no-output-timeout'
+              : 'idle-timeout';
+          if (!hasVisibleOutput() && pendingFollowUp) {
+            logger.warn(
+              {
+                group: group.name,
+                chatJid,
+                runId,
+                followUpQueuedAt: new Date(
+                  pendingFollowUp.queuedAt,
+                ).toISOString(),
+                followUpQueuedTextLength: pendingFollowUp.textLength,
+                followUpQueuedFilename: pendingFollowUp.filename,
+                followUpWaitMs: Date.now() - pendingFollowUp.queuedAt,
+              },
+              'Idle timeout reached while a queued follow-up still had no visible output',
+            );
+          } else {
+            logger.debug(
+              { group: group.name, chatJid, runId, closeReason },
+              'Idle timeout, closing agent stdin',
+            );
+          }
+          deps.queue.closeStdin(chatJid, { runId, reason: closeReason });
+        }, hasVisibleOutput() ? deps.idleTimeout : QUIET_RUN_ROLLOVER_MS);
+      };
+
+      const noteFollowUpQueued = (meta?: {
+        source: 'follow-up';
+        textLength: number;
+        filename: string;
+      }) => {
+        if (meta?.source !== 'follow-up' || terminalObserved()) return;
+        pendingFollowUp = {
+          queuedAt: Date.now(),
+          textLength: meta.textLength,
+          filename: meta.filename,
+        };
+        logger.info(
+          {
+            group: group.name,
+            chatJid,
+            runId,
+            followUpQueuedTextLength: pendingFollowUp.textLength,
+            followUpQueuedFilename: pendingFollowUp.filename,
+          },
+          'Registered follow-up activity for active agent',
+        );
+        resetIdleTimer();
+      };
+
+      const noteVisibleOutputObserved = (phase?: string) => {
+        if (!pendingFollowUp) return;
+        logger.info(
+          {
+            group: group.name,
+            chatJid,
+            runId,
+            followUpQueuedAt: new Date(pendingFollowUp.queuedAt).toISOString(),
+            followUpQueuedTextLength: pendingFollowUp.textLength,
+            followUpQueuedFilename: pendingFollowUp.filename,
+            followUpWaitMs: Date.now() - pendingFollowUp.queuedAt,
+            resultPhase: phase,
+          },
+          'Agent produced visible output after a queued follow-up',
+        );
+        clearPendingFollowUp();
+      };
+
+      deps.queue.setActivityTouch?.(chatJid, noteFollowUpQueued);
+      deps.queue.setFollowUpPipeAllowed?.(chatJid, () => canPipeFollowUps);
+
+      resetIdleTimer();
+      await channel.setTyping?.(chatJid, true);
+
+      const output = await runAgent(
+        group,
+        prompt,
+        chatJid,
+        runId,
+        async (result) => {
+          if (terminalObserved()) {
+            logger.info(
+              {
+                chatJid,
+                group: group.name,
+                groupFolder: group.folder,
+                runId,
+                resultStatus: result.status,
+                resultPhase: result.phase,
+              },
+              'Discarding late agent output after terminal final',
+            );
+            return;
+          }
+
+          if (
+            isClaudeCodeAgent &&
+            shouldResetSessionOnAgentFailure(result) &&
+            !poisonedSessionDetected
+          ) {
+            poisonedSessionDetected = true;
+            hadError = true;
+            deps.clearSession(group.folder);
+            deps.queue.closeStdin(chatJid, {
+              runId,
+              reason: 'poisoned-session-detected',
+            });
+            logger.warn(
+              { chatJid, group: group.name, groupFolder: group.folder, runId },
+              'Detected poisoned Claude session from streamed output, forcing close',
+            );
+          }
+
+          const raw =
+            result.result === null || result.result === undefined
+              ? null
+              : typeof result.result === 'string'
+                ? result.result
+                : JSON.stringify(result.result);
+          const text = raw ? formatOutbound(raw) : null;
+
+          if (raw) {
+            logger.info(
+              {
+                chatJid,
+                group: group.name,
+                groupFolder: group.folder,
+                runId,
+                resultStatus: result.status,
+                resultPhase: result.phase,
+                progressMessageId,
+              },
+              `Agent output: ${raw.slice(0, 200)}`,
+            );
+          }
+
           if (result.phase === 'progress') {
-            if (finalOutputSentToUser || sawNonProgressOutput) {
-              logger.info(
-                {
-                  chatJid,
-                  group: group.name,
-                  groupFolder: group.folder,
-                  runId,
-                },
-                'New logical turn detected (follow-up), resetting turn state',
-              );
-              resetTurnOutputState();
-              resetProgressState();
-              isFirstLogicalTurn = false;
-              await channel.setTyping?.(chatJid, true);
-            }
             if (text) {
+              canPipeFollowUps = false;
+              noteVisibleOutputObserved(result.phase);
               await sendProgressMessage(text);
             }
             if (!poisonedSessionDetected) {
               resetIdleTimer();
             }
+            if (result.status === 'error') {
+              hadError = true;
+            }
             return;
           }
 
-          sawNonProgressOutput = true;
-
           if (text) {
-            const trackedProgressMessageId = await finalizeProgressMessage({
-              preserveTrackedMessage: !!(
-                progressMessageId && channel.editMessage
-              ),
-            });
-            producedFinalText = text;
-            await flushProducedFinalText(trackedProgressMessageId);
-          } else {
+            canPipeFollowUps = false;
+            noteVisibleOutputObserved(result.phase);
+            await finalizeProgressMessage();
+            await deliverFinalText(text);
+          } else if (raw) {
             logger.info(
               {
                 chatJid,
@@ -1163,137 +1112,146 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               'Agent output became empty after formatting; resetting tracked progress state',
             );
             await finalizeProgressMessage();
-            latestModelProgressTextForFinalFallback = null;
+            latestProgressTextForFinal = null;
+          } else {
+            quietStopReason ??=
+              result.status === 'success' ? 'success-null-result' : 'error';
+            await finalizeProgressMessage();
           }
-        } else {
-          if (result.status === 'success') {
-            warnFollowUpEndedWithoutOutput('success-null-result');
+
+          await channel.setTyping?.(chatJid, false);
+          if (!poisonedSessionDetected) {
+            resetIdleTimer();
           }
-          promotableTrackedProgressMessageId = await finalizeProgressMessage({
-            preserveTrackedMessage: !!(
-              !sawNonProgressOutput &&
-              latestModelProgressTextForFinalFallback &&
-              progressMessageId &&
-              channel.editMessage
-            ),
-          });
-        }
 
-        await channel.setTyping?.(chatJid, false);
-        if (!poisonedSessionDetected) {
-          resetIdleTimer();
-        }
+          if (result.status === 'success' && !poisonedSessionDetected) {
+            deps.queue.notifyIdle(chatJid, runId);
+            if (hasVisibleOutput()) {
+              deps.queue.closeStdin(chatJid, {
+                runId,
+                reason: 'output-delivered-close',
+              });
+            }
+          }
 
-        if (result.status === 'success' && !poisonedSessionDetected) {
-          deps.queue.notifyIdle(chatJid, runId);
-          // After producing visible output, close stdin so the process exits
-          // promptly instead of lingering in idle wait. New messages will
-          // always start a fresh run.
-          if (finalOutputSentToUser || progressOutputSentToUser) {
-            deps.queue.closeStdin(chatJid, {
+          if (result.status === 'error') {
+            hadError = true;
+          }
+        },
+      );
+
+      await channel.setTyping?.(chatJid, false);
+
+      if (output === 'error') {
+        hadError = true;
+        quietStopReason ??= 'error';
+      } else if (visiblePhase === 'silent') {
+        quietStopReason ??= 'success-null-result';
+      }
+
+      const settledVisiblePhase = visiblePhase as VisiblePhase;
+
+      if (
+        output === 'success' &&
+        settledVisiblePhase === 'progress' &&
+        !hadError &&
+        latestProgressTextForFinal
+      ) {
+        logger.info(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+          },
+          'Sending a separate final message from the last progress output after agent completion',
+        );
+        await finalizeProgressMessage();
+        await deliverFinalText(latestProgressTextForFinal);
+      } else if (
+        settledVisiblePhase === 'progress' &&
+        !terminalObserved() &&
+        (hadError || quietStopReason === 'idle-timeout')
+      ) {
+        await publishFailureFinal();
+      }
+
+      const pendingFollowUpSnapshot = pendingFollowUp as PendingFollowUp;
+      const quietWaitStartedAt =
+        pendingFollowUpSnapshot?.queuedAt ?? attemptStartedAt;
+      const quietWaitMs = Date.now() - quietWaitStartedAt;
+
+      clearProgressTicker();
+      if (idleTimer) clearTimeout(idleTimer);
+      deps.queue.setActivityTouch?.(chatJid, null);
+      deps.queue.setFollowUpPipeAllowed?.(chatJid, null);
+      clearPendingFollowUp();
+
+      if (settledVisiblePhase === 'silent') {
+        const nextTotalSilentWaitMs = totalSilentWaitMs + quietWaitMs;
+        const canRolloverAgain =
+          silentRolloverCount < MAX_SILENT_ROLLOVERS &&
+          nextTotalSilentWaitMs <= MAX_TOTAL_SILENT_WAIT_MS;
+
+        if (canRolloverAgain) {
+          deps.getLastAgentTimestamps()[chatJid] = queueItemBaseCursor;
+          deps.saveState();
+          silentRolloverCount++;
+          totalSilentWaitMs = nextTotalSilentWaitMs;
+          logger.warn(
+            {
+              chatJid,
+              group: group.name,
+              groupFolder: group.folder,
               runId,
-              reason: 'output-delivered-close',
-            });
-          }
+              quietStopReason,
+              rollbackCursor: queueItemBaseCursor,
+              silentRolloverCount,
+              totalSilentWaitMs,
+            },
+            'Retrying silent run within the same queue item',
+          );
+          continue;
         }
 
-        if (result.status === 'error') {
-          hadError = true;
-        }
-      },
-    );
+        logger.warn(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            quietStopReason,
+            silentRolloverCount,
+            totalSilentWaitMs: nextTotalSilentWaitMs,
+          },
+          'Silent run budget exhausted, emitting failure final',
+        );
+        await publishFailureFinal();
+      }
 
-    await channel.setTyping?.(chatJid, false);
+      if (!producedDeliverySucceeded) {
+        logger.warn(
+          { chatJid, group: group.name, groupFolder: group.folder, runId },
+          'Persisted produced output for delivery retry without rerunning agent',
+        );
+        return false;
+      }
 
-    if (output === 'error') {
-      hadError = true;
-    }
-
-    if (
-      output === 'success' &&
-      !hadError &&
-      !producedFinalText &&
-      !sawNonProgressOutput &&
-      latestModelProgressTextForFinalFallback
-    ) {
       logger.info(
         {
           chatJid,
           group: group.name,
           groupFolder: group.folder,
           runId,
+          visiblePhase: settledVisiblePhase,
+          silentRolloverCount,
+          totalSilentWaitMs,
         },
-        'Promoting last progress output to final message after agent completion',
+        'Queued run completed successfully',
       );
-      const trackedProgressMessageId = await finalizeProgressMessage({
-        preserveTrackedMessage: !!(progressMessageId && channel.editMessage),
-      });
-      producedFinalText = latestModelProgressTextForFinalFallback;
-      await flushProducedFinalText(
-        trackedProgressMessageId || promotableTrackedProgressMessageId,
-      );
-    }
 
-    clearProgressTicker();
-
-    if (idleTimer) clearTimeout(idleTimer);
-    deps.queue.setActivityTouch?.(chatJid, null);
-    deps.queue.setFollowUpPipeAllowed?.(chatJid, null);
-
-    const finalFollowUpRequeueReason =
-      followUpEndedWithoutOutputReason ||
-      (followUpRestartRequested ? 'follow-up-no-output-timeout' : null);
-    if (
-      finalFollowUpRequeueReason &&
-      requeuePendingFollowUp(finalFollowUpRequeueReason)
-    ) {
       return true;
     }
-
-    clearPendingFollowUpDiagnostics();
-
-    if (hadError) {
-      if (
-        finalOutputSentToUser ||
-        progressOutputSentToUser ||
-        producedFinalText
-      ) {
-        logger.warn(
-          { chatJid, group: group.name, groupFolder: group.folder, runId },
-          'Agent error after output was produced, skipping cursor rollback to prevent duplicates',
-        );
-        return producedFinalText ? producedDeliverySucceeded : true;
-      }
-      deps.getLastAgentTimestamps()[chatJid] = previousCursor;
-      deps.saveState();
-      logger.warn(
-        { chatJid, group: group.name, groupFolder: group.folder, runId },
-        'Agent error, rolled back message cursor for retry',
-      );
-      return false;
-    }
-
-    if (!producedDeliverySucceeded) {
-      logger.warn(
-        { chatJid, group: group.name, groupFolder: group.folder, runId },
-        'Persisted produced output for delivery retry without rerunning agent',
-      );
-      return false;
-    }
-
-    logger.info(
-      {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        runId,
-        outputSentToUser: finalOutputSentToUser,
-        progressOutputSentToUser,
-      },
-      'Queued run completed successfully',
-    );
-
-    return true;
   };
 
   const startMessageLoop = async (): Promise<void> => {

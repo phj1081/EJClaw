@@ -111,6 +111,18 @@ export class GroupQueue {
     state.followUpPipeAllowed = allowed;
   }
 
+  private canPreemptIdleActiveRun(state: GroupState): boolean {
+    if (!state.idleWaiting) {
+      return false;
+    }
+
+    if (!state.followUpPipeAllowed) {
+      return true;
+    }
+
+    return state.followUpPipeAllowed();
+  }
+
   private createRunId(): string {
     return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -127,7 +139,7 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
-      if (state.idleWaiting) {
+      if (this.canPreemptIdleActiveRun(state)) {
         this.closeStdin(groupJid, {
           runId: state.currentRunId ?? undefined,
           reason: 'pending-message-preemption',
@@ -187,7 +199,7 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
-      if (state.idleWaiting) {
+      if (this.canPreemptIdleActiveRun(state)) {
         this.closeStdin(groupJid);
       }
       logger.debug({ groupJid, taskId }, 'Agent active, task queued');
