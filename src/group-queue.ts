@@ -21,7 +21,6 @@ const BASE_RETRY_MS = 5000;
 
 interface GroupState {
   active: boolean;
-  idleWaiting: boolean;
   closingStdin: boolean;
   isTaskProcess: boolean;
   runningTaskId: string | null;
@@ -39,7 +38,7 @@ interface GroupState {
 
 export interface GroupStatus {
   jid: string;
-  status: 'processing' | 'idle' | 'waiting' | 'inactive';
+  status: 'processing' | 'waiting' | 'inactive';
   elapsedMs: number | null;
   pendingMessages: boolean;
   pendingTasks: number;
@@ -59,7 +58,6 @@ export class GroupQueue {
     if (!state) {
       state = {
         active: false,
-        idleWaiting: false,
         closingStdin: false,
         isTaskProcess: false,
         runningTaskId: null,
@@ -85,10 +83,6 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
-  private canPreemptIdleActiveRun(state: GroupState): boolean {
-    return state.idleWaiting;
-  }
-
   private createRunId(): string {
     return `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
@@ -105,12 +99,6 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
-      if (this.canPreemptIdleActiveRun(state)) {
-        this.closeStdin(groupJid, {
-          runId: state.currentRunId ?? undefined,
-          reason: 'pending-message-preemption',
-        });
-      }
       logger.debug({ groupJid }, 'Agent active, message queued');
       return;
     }
@@ -165,9 +153,6 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
-      if (this.canPreemptIdleActiveRun(state)) {
-        this.closeStdin(groupJid);
-      }
       logger.debug({ groupJid, taskId }, 'Agent active, task queued');
       return;
     }
@@ -213,29 +198,6 @@ export class GroupQueue {
   }
 
   /**
-   * Mark the agent process as idle-waiting (finished work, waiting for IPC input).
-   * If tasks are pending, preempt the idle agent process immediately.
-   */
-  notifyIdle(groupJid: string, runId?: string): void {
-    const state = this.getGroup(groupJid);
-    state.idleWaiting = true;
-    logger.info(
-      {
-        groupJid,
-        runId: runId ?? state.currentRunId,
-        pendingTasks: state.pendingTasks.length,
-      },
-      'Agent entered idle wait state',
-    );
-    if (state.pendingTasks.length > 0) {
-      this.closeStdin(groupJid, {
-        runId: runId ?? state.currentRunId ?? undefined,
-        reason: 'pending-task-preemption',
-      });
-    }
-  }
-
-  /**
    * Signal the active agent process to wind down by writing a close sentinel.
    */
   closeStdin(
@@ -245,7 +207,6 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     if (!state.active || !state.groupFolder) return;
     state.closingStdin = true;
-    state.idleWaiting = false;
 
     const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
@@ -281,7 +242,6 @@ export class GroupQueue {
     const state = this.getGroup(groupJid);
     const runId = this.createRunId();
     state.active = true;
-    state.idleWaiting = false;
     state.closingStdin = false;
     state.isTaskProcess = false;
     state.currentRunId = runId;
@@ -332,7 +292,6 @@ export class GroupQueue {
       );
       state.active = false;
       state.startedAt = null;
-      state.idleWaiting = false;
       state.closingStdin = false;
       state.process = null;
       state.processName = null;
@@ -346,7 +305,6 @@ export class GroupQueue {
   private async runTask(groupJid: string, task: QueuedTask): Promise<void> {
     const state = this.getGroup(groupJid);
     state.active = true;
-    state.idleWaiting = false;
     state.closingStdin = false;
     state.isTaskProcess = true;
     state.runningTaskId = task.id;
@@ -367,7 +325,6 @@ export class GroupQueue {
       state.isTaskProcess = false;
       state.runningTaskId = null;
       state.startedAt = null;
-      state.idleWaiting = false;
       state.closingStdin = false;
       state.process = null;
       state.processName = null;
@@ -495,10 +452,8 @@ export class GroupQueue {
         };
       }
       let status: GroupStatus['status'];
-      if (state.active && !state.idleWaiting) {
+      if (state.active) {
         status = 'processing';
-      } else if (state.active && state.idleWaiting) {
-        status = 'idle';
       } else if (
         state.pendingMessages ||
         state.pendingTasks.length > 0 ||

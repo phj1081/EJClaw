@@ -126,6 +126,25 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       channel?.isOwnMessage?.bind(channel),
     );
 
+  const filterLoopingPairedBotMessages = (
+    chatJid: string,
+    messages: Parameters<typeof filterProcessableMessages>[0],
+    failureText: string,
+  ) => {
+    if (!isPairedRoomJid(chatJid)) return messages;
+
+    // Keep mentionless paired-room collaboration intact, but drop the generic
+    // failure boilerplate from other bots so paired agents do not amplify it
+    // into a reply loop.
+    return messages.filter(
+      (message) =>
+        !(
+          message.is_bot_message &&
+          message.content.trim() === failureText
+        ),
+    );
+  };
+
   const deliverOpenWorkItem = async (
     channel: Channel,
     item: WorkItem,
@@ -575,10 +594,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         sinceSeqCursor,
         deps.assistantName,
       );
-      const missedMessages = getProcessableMessages(
+      const missedMessages = filterLoopingPairedBotMessages(
         chatJid,
-        rawMissedMessages,
-        channel,
+        getProcessableMessages(chatJid, rawMissedMessages, channel),
+        FAILURE_FINAL_TEXT,
       );
 
       if (missedMessages.length === 0) {

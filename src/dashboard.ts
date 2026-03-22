@@ -33,7 +33,6 @@ interface CodexRateLimit {
 
 const STATUS_ICONS: Record<string, string> = {
   processing: '🟡',
-  idle: '🟢',
   waiting: '🔵',
   inactive: '⚪',
 };
@@ -107,7 +106,6 @@ function getStatusLabel(status: GroupStatus): string {
   if (status.status === 'processing') {
     return `처리 중 (${formatElapsed(status.elapsedMs || 0)})`;
   }
-  if (status.status === 'idle') return '대기 중';
   if (status.status === 'waiting') {
     return status.pendingTasks > 0
       ? `큐 대기 (태스크 ${status.pendingTasks}개)`
@@ -152,7 +150,7 @@ export function buildStatusContent(opts: DashboardOptions): string {
 
   const sections: string[] = [];
   let totalActive = 0;
-  let totalIdle = 0;
+  let totalWaiting = 0;
   let total = 0;
 
   for (const [categoryName, categoryEntries] of sortedCategories) {
@@ -177,13 +175,13 @@ export function buildStatusContent(opts: DashboardOptions): string {
     totalActive += categoryEntries.filter(
       (entry) => entry.status.status === 'processing',
     ).length;
-    totalIdle += categoryEntries.filter(
-      (entry) => entry.status.status === 'idle',
+    totalWaiting += categoryEntries.filter(
+      (entry) => entry.status.status === 'waiting',
     ).length;
     total += categoryEntries.length;
   }
 
-  const header = `**에이전트 상태** (${opts.assistantName}) — 활성 ${totalActive} | 대기 ${totalIdle} | 전체 ${total}`;
+  const header = `**에이전트 상태** (${opts.assistantName}) — 활성 ${totalActive} | 큐대기 ${totalWaiting} | 전체 ${total}`;
   return `${header}\n\n${sections.join('\n\n')}\n\n_${new Date().toLocaleTimeString('ko-KR')}_`;
 }
 

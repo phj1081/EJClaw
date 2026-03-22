@@ -190,6 +190,130 @@ describe('createMessageRuntime', () => {
     });
   });
 
+  it('ignores generic failure bot messages in paired rooms', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'other-bot@test',
+        sender_name: 'Other Bot',
+        content: '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
+        timestamp: '2026-03-18T09:00:00.000Z',
+        is_bot_message: true,
+      },
+    ]);
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-ignore-bot-failure-loop',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(lastAgentTimestamps[chatJid]).toBe('0');
+    expect(saveState).toHaveBeenCalled();
+  });
+
+  it('keeps mentionless substantive bot messages in paired rooms', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'other-bot@test',
+        sender_name: 'Other Bot',
+        content: '정리해보면 Reaction Engine이 1순위 같아.',
+        timestamp: '2026-03-18T09:00:00.000Z',
+        is_bot_message: true,
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: '그 방향이 맞습니다.',
+          newSessionId: 'session-paired-bot',
+        });
+        return {
+          status: 'success',
+          result: '그 방향이 맞습니다.',
+          newSessionId: 'session-paired-bot',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-mentionless-paired-bot-message',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      '그 방향이 맞습니다.',
+    );
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
+    expect(saveState).toHaveBeenCalled();
+  });
+
   it('clears Claude sessions and closes stdin immediately on poisoned output', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');

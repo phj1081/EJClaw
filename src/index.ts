@@ -355,14 +355,13 @@ async function refreshChannelMeta(): Promise<void> {
 }
 
 function getStatusLabel(s: {
-  status: 'processing' | 'idle' | 'waiting' | 'inactive';
+  status: 'processing' | 'waiting' | 'inactive';
   elapsedMs: number | null;
   pendingMessages: boolean;
   pendingTasks: number;
 }): string {
   if (s.status === 'processing')
     return `처리 중 (${formatElapsed(s.elapsedMs || 0)})`;
-  if (s.status === 'idle') return '대기 중';
   if (s.status === 'waiting')
     return s.pendingTasks > 0
       ? `큐 대기 (태스크 ${s.pendingTasks}개)`
@@ -425,7 +424,7 @@ function writeLocalStatusSnapshot(): void {
           name: string;
           folder: string;
           agentType: 'claude-code' | 'codex';
-          status: 'processing' | 'idle' | 'waiting' | 'inactive';
+          status: 'processing' | 'waiting' | 'inactive';
           elapsedMs: number | null;
           pendingMessages: boolean;
           pendingTasks: number;
@@ -443,7 +442,7 @@ function buildStatusContent(): string {
   // Collect all entries keyed by jid, with agent type info
   interface RoomEntry {
     agentType: 'claude-code' | 'codex';
-    status: 'processing' | 'idle' | 'waiting' | 'inactive';
+    status: 'processing' | 'waiting' | 'inactive';
     elapsedMs: number | null;
     pendingMessages: boolean;
     pendingTasks: number;
@@ -1059,7 +1058,7 @@ async function main(): Promise<void> {
         (
           status,
         ): status is typeof status & {
-          status: 'processing' | 'idle' | 'waiting';
+          status: 'processing' | 'waiting';
         } => status.status !== 'inactive',
       )
       .map((status) => ({
