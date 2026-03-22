@@ -151,7 +151,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       assistantName: deps.assistantName,
     };
 
-    const runAttempt = async (provider: string): Promise<{
+    const runAttempt = async (
+      provider: string,
+    ): Promise<{
       output?: AgentOutput;
       error?: unknown;
       sawOutput: boolean;
@@ -212,7 +214,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       if (provider !== 'claude') {
         logger.info(
-          { chatJid, group: group.name, groupFolder: group.folder, runId, provider },
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            provider,
+          },
           `Claude provider in cooldown, routing request to ${provider}`,
         );
       }
@@ -238,7 +246,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             sessionId: persistSessionIds ? sessionId : undefined,
           },
           (proc, processName) =>
-            deps.queue.registerProcess(chatJid, proc, processName, group.folder),
+            deps.queue.registerProcess(
+              chatJid,
+              proc,
+              processName,
+              group.folder,
+            ),
           wrappedOnOutput,
           provider === 'claude' ? undefined : getFallbackEnvOverrides(),
         );
@@ -368,7 +381,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const output = primaryAttempt.output;
     if (!output) {
       logger.error(
-        { chatJid, group: group.name, groupFolder: group.folder, runId, provider },
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          provider,
+        },
         'Agent produced no output object',
       );
       return 'error';
@@ -831,7 +850,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           progressMessageId = await channel.sendAndTrack(chatJid, rendered);
         } catch (err) {
           logger.warn(
-            { chatJid, group: group.name, groupFolder: group.folder, runId, err },
+            {
+              chatJid,
+              group: group.name,
+              groupFolder: group.folder,
+              runId,
+              err,
+            },
             'Failed to send tracked progress message',
           );
           return;

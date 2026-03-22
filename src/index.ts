@@ -222,9 +222,12 @@ function loadState(): void {
   lastTimestamp = normalizeStoredSeqCursor(
     getRouterState('last_seq') || getRouterState('last_timestamp'),
   );
-  const agentTs = getRouterState('last_agent_seq') || getRouterState('last_agent_timestamp');
+  const agentTs =
+    getRouterState('last_agent_seq') || getRouterState('last_agent_timestamp');
   try {
-    const parsed = agentTs ? (JSON.parse(agentTs) as Record<string, string>) : {};
+    const parsed = agentTs
+      ? (JSON.parse(agentTs) as Record<string, string>)
+      : {};
     lastAgentTimestamp = Object.fromEntries(
       Object.entries(parsed).map(([chatJid, cursor]) => [
         chatJid,
@@ -843,7 +846,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   queue.setActivityTouch(chatJid, null);
 
   if (hadError) {
-    if (finalOutputSentToUser || progressOutputSentToUser || producedFinalText) {
+    if (
+      finalOutputSentToUser ||
+      progressOutputSentToUser ||
+      producedFinalText
+    ) {
       logger.warn(
         { group: group.name },
         'Agent error after output was produced, skipping cursor rollback to prevent duplicates',
@@ -913,8 +920,7 @@ async function runAgent(
     'settings.json',
   );
   const groupHasOverride = hasGroupProviderOverride(settingsPath);
-  const canFallback =
-    isClaudeCode && isFallbackEnabled() && !groupHasOverride;
+  const canFallback = isClaudeCode && isFallbackEnabled() && !groupHasOverride;
 
   const agentInput = {
     prompt,
@@ -925,7 +931,9 @@ async function runAgent(
     assistantName: ASSISTANT_NAME,
   };
 
-  const runAttempt = async (provider: string): Promise<{
+  const runAttempt = async (
+    provider: string,
+  ): Promise<{
     output?: AgentOutput;
     error?: unknown;
     sawOutput: boolean;
@@ -1124,7 +1132,10 @@ async function runAgent(
 
   const output = primaryAttempt.output;
   if (!output) {
-    logger.error({ group: group.name, chatJid, provider }, 'Agent produced no output object');
+    logger.error(
+      { group: group.name, chatJid, provider },
+      'Agent produced no output object',
+    );
     return 'error';
   }
 
@@ -1750,7 +1761,9 @@ async function buildUsageContent(): Promise<string> {
     lines.push('_조회 불가_');
   }
   if (shouldFetchClaudeUsage && usageApiPollingDisabled) {
-    lines.push('_* Claude 사용량 조회는 반복된 429로 이번 프로세스에서 일시 중지_');
+    lines.push(
+      '_* Claude 사용량 조회는 반복된 429로 이번 프로세스에서 일시 중지_',
+    );
   }
   if (claudeUsageIsCached) {
     lines.push('_* Claude 사용량은 작업 중일 때는 캐시값 유지_');
@@ -2081,9 +2094,7 @@ async function announceRestartRecovery(
   const explicitContext = consumeRestartContext();
   const dedupeSince = new Date(processStartedAtMs - 60_000).toISOString();
   if (explicitContext) {
-    if (
-      hasRecentRestartAnnouncement(explicitContext.chatJid, dedupeSince)
-    ) {
+    if (hasRecentRestartAnnouncement(explicitContext.chatJid, dedupeSince)) {
       logger.info(
         { chatJid: explicitContext.chatJid },
         'Skipped duplicate restart recovery announcement',
@@ -2173,7 +2184,11 @@ async function main(): Promise<void> {
     );
     if (writtenPaths.length > 0) {
       logger.info(
-        { signal, interruptedGroupCount: interruptedGroups.length, writtenPaths },
+        {
+          signal,
+          interruptedGroupCount: interruptedGroups.length,
+          writtenPaths,
+        },
         'Stored shutdown restart context for interrupted groups',
       );
     }

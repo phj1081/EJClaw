@@ -648,7 +648,9 @@ export function getMessagesSince(
   return rows.map(normalizeMessageRow);
 }
 
-function normalizeSeqCursor(cursor: string | number | null | undefined): number {
+function normalizeSeqCursor(
+  cursor: string | number | null | undefined,
+): number {
   if (typeof cursor === 'number') {
     return Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
   }
@@ -662,21 +664,23 @@ export function getLatestMessageSeqAtOrBefore(
   chatJid?: string,
 ): number {
   if (!timestamp) return 0;
-  const row = (chatJid
-    ? db
-        .prepare(
-          `SELECT COALESCE(MAX(seq), 0) AS maxSeq
+  const row = (
+    chatJid
+      ? db
+          .prepare(
+            `SELECT COALESCE(MAX(seq), 0) AS maxSeq
            FROM messages
            WHERE chat_jid = ? AND timestamp <= ?`,
-        )
-        .get(chatJid, timestamp)
-    : db
-        .prepare(
-          `SELECT COALESCE(MAX(seq), 0) AS maxSeq
+          )
+          .get(chatJid, timestamp)
+      : db
+          .prepare(
+            `SELECT COALESCE(MAX(seq), 0) AS maxSeq
            FROM messages
            WHERE timestamp <= ?`,
-        )
-        .get(timestamp)) as { maxSeq: number | null };
+          )
+          .get(timestamp)
+  ) as { maxSeq: number | null };
   return row.maxSeq ?? 0;
 }
 

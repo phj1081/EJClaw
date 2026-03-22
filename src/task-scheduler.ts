@@ -119,7 +119,9 @@ function formatTimeLabel(timestampIso: string): string {
     .replace(/시 (\d{2})$/, '분 $1초');
 }
 
-function formatWatchIntervalLabel(task: Pick<ScheduledTask, 'schedule_type' | 'schedule_value'>): string | null {
+function formatWatchIntervalLabel(
+  task: Pick<ScheduledTask, 'schedule_type' | 'schedule_value'>,
+): string | null {
   if (task.schedule_type !== 'interval') return null;
   const ms = parseInt(task.schedule_value, 10);
   if (!Number.isFinite(ms) || ms <= 0) return null;

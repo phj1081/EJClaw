@@ -95,9 +95,7 @@ describe('createMessageRuntime', () => {
       ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
       ANTHROPIC_MODEL: 'kimi-k2.5',
     });
-    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(
-      false,
-    );
+    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
     vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
     vi.mocked(providerFallback.detectFallbackTrigger).mockReturnValue({
       shouldFallback: false,

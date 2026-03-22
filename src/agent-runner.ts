@@ -353,14 +353,9 @@ args = [${JSON.stringify(mementoSseUrl)}, "--header", ${JSON.stringify(`Authoriz
       env.ANTHROPIC_API_KEY =
         envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
     }
-    if (
-      envVars.ANTHROPIC_AUTH_TOKEN ||
-      process.env.ANTHROPIC_AUTH_TOKEN
-    ) {
+    if (envVars.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN) {
       env.ANTHROPIC_AUTH_TOKEN =
-        envVars.ANTHROPIC_AUTH_TOKEN ||
-        process.env.ANTHROPIC_AUTH_TOKEN ||
-        '';
+        envVars.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || '';
     }
     if (envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL) {
       env.ANTHROPIC_BASE_URL =

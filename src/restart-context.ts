@@ -159,8 +159,7 @@ export function writeShutdownRestartContext(
 
     const payload: RestartContext = {
       chatJid: existing?.chatJid || mainChatJid,
-      summary:
-        existing?.summary || '서비스 재시작으로 진행 중인 작업이 중단됨',
+      summary: existing?.summary || '서비스 재시작으로 진행 중인 작업이 중단됨',
       verify: existing?.verify ?? [],
       writtenAt: new Date().toISOString(),
       source: existing?.source || 'shutdown-snapshot',
@@ -181,7 +180,9 @@ export function buildInterruptedRestartAnnouncement(
   const lines = ['서비스 재시작으로 이전 작업이 중단됐습니다.'];
   lines.push(`- 직전 상태: ${interrupted.status}`);
   if (interrupted.elapsedMs !== null) {
-    lines.push(`- 직전 실행 시간: ${Math.round(interrupted.elapsedMs / 1000)}초`);
+    lines.push(
+      `- 직전 실행 시간: ${Math.round(interrupted.elapsedMs / 1000)}초`,
+    );
   }
   if (interrupted.pendingMessages) {
     lines.push('- 미처리 메시지가 남아 있었음');
@@ -216,9 +217,7 @@ export function consumeRestartContext(): RestartContext | null {
   }
 }
 
-export function buildRestartAnnouncement(
-  context: RestartContext,
-): string {
+export function buildRestartAnnouncement(context: RestartContext): string {
   const lines = ['재시작 완료.', `- 변경: ${context.summary}`];
   if (context.interruptedGroups && context.interruptedGroups.length > 0) {
     lines.push(`- 중단 작업 감지: ${context.interruptedGroups.length}개`);

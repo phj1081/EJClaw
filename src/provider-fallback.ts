@@ -63,8 +63,7 @@ function loadConfig(): FallbackConfig {
     'FALLBACK_COOLDOWN_MS',
   ]);
 
-  const baseUrl =
-    process.env.FALLBACK_BASE_URL || env.FALLBACK_BASE_URL || '';
+  const baseUrl = process.env.FALLBACK_BASE_URL || env.FALLBACK_BASE_URL || '';
   const authToken =
     process.env.FALLBACK_AUTH_TOKEN || env.FALLBACK_AUTH_TOKEN || '';
   const model = process.env.FALLBACK_MODEL || env.FALLBACK_MODEL || '';
