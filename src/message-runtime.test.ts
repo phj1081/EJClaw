@@ -314,6 +314,59 @@ describe('createMessageRuntime', () => {
     expect(saveState).toHaveBeenCalled();
   });
 
+  it('ignores watcher status control messages in paired rooms', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'codex-bot@test',
+        sender_name: 'Codex',
+        content: '\u2063\u2063\u2063CI 감시 중: run 123',
+        timestamp: '2026-03-23T00:00:00.000Z',
+        is_bot_message: true,
+      },
+    ]);
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-ignore-watch-status',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(channel.setTyping).not.toHaveBeenCalled();
+    expect(lastAgentTimestamps[chatJid]).toBe('0');
+    expect(saveState).toHaveBeenCalled();
+  });
+
   it('allows follow-up messages without a trigger after a visible reply in non-main groups', async () => {
     const chatJid = 'group@test';
     const group: RegisteredGroup = {

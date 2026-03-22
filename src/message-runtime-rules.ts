@@ -2,6 +2,7 @@ import { getLastHumanMessageTimestamp, isPairedRoomJid } from './db.js';
 import { filterProcessableMessages } from './bot-message-filter.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
+import { isTaskStatusControlMessage } from './task-watch-status.js';
 import {
   type Channel,
   type NewMessage,
@@ -105,7 +106,7 @@ export function getProcessableMessages(
     messages,
     isPairedRoomJid(chatJid),
     channel?.isOwnMessage?.bind(channel),
-  );
+  ).filter((message) => !isTaskStatusControlMessage(message.content));
 }
 
 export function filterLoopingPairedBotMessages(
