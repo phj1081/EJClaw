@@ -1411,4 +1411,55 @@ describe('createMessageRuntime', () => {
       'success-null-result 폴백 응답입니다.',
     );
   });
+
+  it('recovery queues a group when an open work item is waiting for delivery', () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const enqueueMessageCheck = vi.fn();
+
+    vi.mocked(db.getOpenWorkItem).mockReturnValue({
+      id: 99,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'claude-code',
+      status: 'produced',
+      start_seq: 1,
+      end_seq: 1,
+      result_payload: '미전달 결과',
+      delivery_attempts: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: null,
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [makeChannel(chatJid)],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    runtime.recoverPendingMessages();
+
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid, group.folder);
+    expect(db.getMessagesSinceSeq).not.toHaveBeenCalled();
+  });
 });

@@ -1288,6 +1288,19 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const recoverPendingMessages = (): void => {
     const registeredGroups = deps.getRegisteredGroups();
     for (const [chatJid, group] of Object.entries(registeredGroups)) {
+      const openWorkItem = getOpenWorkItem(
+        chatJid,
+        (group.agentType || 'claude-code') as 'claude-code' | 'codex',
+      );
+      if (openWorkItem) {
+        logger.info(
+          { chatJid, group: group.name, workItemId: openWorkItem.id },
+          'Recovery: found open work item awaiting delivery',
+        );
+        deps.queue.enqueueMessageCheck(chatJid, group.folder);
+        continue;
+      }
+
       const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '';
       const rawPending = getMessagesSinceSeq(
         chatJid,

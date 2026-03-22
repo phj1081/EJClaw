@@ -50,7 +50,9 @@ import {
   buildRestartAnnouncement,
   buildInterruptedRestartAnnouncement,
   consumeRestartContext,
+  getInterruptedRecoveryCandidates,
   inferRecentRestartContext,
+  type RestartContext,
   writeShutdownRestartContext,
 } from './restart-context.js';
 import {
@@ -980,7 +982,7 @@ async function startUsageDashboard(): Promise<void> {
 
 async function announceRestartRecovery(
   processStartedAtMs: number,
-): Promise<void> {
+): Promise<RestartContext | null> {
   const explicitContext = consumeRestartContext();
   const dedupeSince = new Date(processStartedAtMs - 60_000).toISOString();
   if (explicitContext) {
@@ -989,7 +991,7 @@ async function announceRestartRecovery(
         { chatJid: explicitContext.chatJid },
         'Skipped duplicate restart recovery announcement',
       );
-      return;
+      return explicitContext;
     }
 
     await sendFormattedChannelMessage(
@@ -1013,21 +1015,21 @@ async function announceRestartRecovery(
         buildInterruptedRestartAnnouncement(interrupted),
       );
     }
-    return;
+    return explicitContext;
   }
 
   const inferred = inferRecentRestartContext(
     registeredGroups,
     processStartedAtMs,
   );
-  if (!inferred) return;
+  if (!inferred) return null;
 
   if (hasRecentRestartAnnouncement(inferred.chatJid, dedupeSince)) {
     logger.info(
       { chatJid: inferred.chatJid },
       'Skipped duplicate inferred restart recovery announcement',
     );
-    return;
+    return null;
   }
 
   await sendFormattedChannelMessage(
@@ -1039,6 +1041,7 @@ async function announceRestartRecovery(
     { chatJid: inferred.chatJid },
     'Sent inferred restart recovery announcement',
   );
+  return null;
 }
 
 async function main(): Promise<void> {
@@ -1175,7 +1178,23 @@ async function main(): Promise<void> {
   });
   queue.setProcessMessagesFn(runtime.processGroupMessages);
   runtime.recoverPendingMessages();
-  await announceRestartRecovery(processStartedAtMs);
+  const restartContext = await announceRestartRecovery(processStartedAtMs);
+  for (const candidate of getInterruptedRecoveryCandidates(
+    restartContext,
+    registeredGroups,
+  )) {
+    queue.enqueueMessageCheck(candidate.chatJid, candidate.groupFolder);
+    logger.info(
+      {
+        chatJid: candidate.chatJid,
+        groupFolder: candidate.groupFolder,
+        status: candidate.status,
+        pendingMessages: candidate.pendingMessages,
+        pendingTasks: candidate.pendingTasks,
+      },
+      'Queued interrupted group for restart recovery',
+    );
+  }
   // Purge old messages in status channel before creating fresh dashboards
   if (STATUS_CHANNEL_ID && SERVICE_AGENT_TYPE === 'claude-code') {
     const statusJid = `dc:${STATUS_CHANNEL_ID}`;

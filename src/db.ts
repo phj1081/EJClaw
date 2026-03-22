@@ -507,10 +507,6 @@ export function getAllChats(): ChatInfo[] {
  * Only call this for registered groups where message history is needed.
  */
 export function storeMessage(msg: NewMessage): void {
-  const existing = db
-    .prepare('SELECT seq FROM messages WHERE id = ? AND chat_jid = ?')
-    .get(msg.id, msg.chat_jid) as { seq: number | null } | undefined;
-
   const nextSeq = () => {
     const result = db
       .prepare('INSERT INTO message_sequence DEFAULT VALUES')
@@ -519,36 +515,21 @@ export function storeMessage(msg: NewMessage): void {
   };
 
   db.transaction(() => {
-    if (existing?.seq != null) {
-      db.prepare(
-        `INSERT INTO messages (
-           id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id, chat_jid) DO UPDATE SET
-           sender = excluded.sender,
-           sender_name = excluded.sender_name,
-           content = excluded.content,
-           timestamp = excluded.timestamp,
-           is_from_me = excluded.is_from_me,
-           is_bot_message = excluded.is_bot_message`,
-      ).run(
-        msg.id,
-        msg.chat_jid,
-        msg.sender,
-        msg.sender_name,
-        msg.content,
-        msg.timestamp,
-        existing.seq,
-        msg.is_from_me ? 1 : 0,
-        msg.is_bot_message ? 1 : 0,
-      );
-      return;
-    }
-
+    const existing = db
+      .prepare('SELECT seq FROM messages WHERE id = ? AND chat_jid = ?')
+      .get(msg.id, msg.chat_jid) as { seq: number | null } | undefined;
+    const seq = existing?.seq ?? nextSeq();
     db.prepare(
       `INSERT INTO messages (
          id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id, chat_jid) DO UPDATE SET
+         sender = excluded.sender,
+         sender_name = excluded.sender_name,
+         content = excluded.content,
+         timestamp = excluded.timestamp,
+         is_from_me = excluded.is_from_me,
+         is_bot_message = excluded.is_bot_message`,
     ).run(
       msg.id,
       msg.chat_jid,
@@ -556,7 +537,7 @@ export function storeMessage(msg: NewMessage): void {
       msg.sender_name,
       msg.content,
       msg.timestamp,
-      nextSeq(),
+      seq,
       msg.is_from_me ? 1 : 0,
       msg.is_bot_message ? 1 : 0,
     );

@@ -30,6 +30,14 @@ export interface InferredRestartContext {
   lines: string[];
 }
 
+export interface RestartRecoveryCandidate {
+  chatJid: string;
+  groupFolder: string;
+  status: RestartInterruptedGroup['status'];
+  pendingMessages: boolean;
+  pendingTasks: number;
+}
+
 const INFER_WINDOW_MS = 3 * 60 * 1000;
 
 function getRestartContextPath(serviceId: string = SERVICE_ID): string {
@@ -227,6 +235,32 @@ export function buildRestartAnnouncement(context: RestartContext): string {
   }
   lines.push(`- 기록 시각: ${formatKoreanTimestamp(context.writtenAt)}`);
   return lines.join('\n');
+}
+
+export function getInterruptedRecoveryCandidates(
+  context: RestartContext | null,
+  registeredGroups: Record<string, RegisteredGroup>,
+): RestartRecoveryCandidate[] {
+  if (!context?.interruptedGroups?.length) return [];
+
+  const seen = new Set<string>();
+  const candidates: RestartRecoveryCandidate[] = [];
+
+  for (const interrupted of context.interruptedGroups) {
+    if (seen.has(interrupted.chatJid)) continue;
+    const group = registeredGroups[interrupted.chatJid];
+    if (!group) continue;
+    seen.add(interrupted.chatJid);
+    candidates.push({
+      chatJid: interrupted.chatJid,
+      groupFolder: group.folder,
+      status: interrupted.status,
+      pendingMessages: interrupted.pendingMessages,
+      pendingTasks: interrupted.pendingTasks,
+    });
+  }
+
+  return candidates;
 }
 
 export function inferRecentRestartContext(
