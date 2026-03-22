@@ -39,7 +39,7 @@ import {
 } from './db.js';
 import { composeDashboardContent } from './dashboard-render.js';
 import { GroupQueue } from './group-queue.js';
-import { resolveGroupFolderPath } from './group-folder.js';
+import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatOutbound } from './router.js';
 import {
@@ -428,7 +428,10 @@ async function main(): Promise<void> {
     restartContext,
     registeredGroups,
   )) {
-    queue.enqueueMessageCheck(candidate.chatJid, candidate.groupFolder);
+    queue.enqueueMessageCheck(
+      candidate.chatJid,
+      resolveGroupIpcPath(candidate.groupFolder),
+    );
     logger.info(
       {
         chatJid: candidate.chatJid,

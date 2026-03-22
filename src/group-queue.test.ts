@@ -77,10 +77,9 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     expect(queue.sendMessage('group1@g.us', '후속 메시지')).toBe(true);
-    expect(fs.mkdirSync).toHaveBeenCalledWith(
-      `${ipcDir}/input`,
-      { recursive: true },
-    );
+    expect(fs.mkdirSync).toHaveBeenCalledWith(`${ipcDir}/input`, {
+      recursive: true,
+    });
     expect(fs.writeFileSync).toHaveBeenCalled();
     expect(fs.renameSync).toHaveBeenCalled();
 

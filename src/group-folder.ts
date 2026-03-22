@@ -29,7 +29,11 @@ function assertValidRuntimeSegment(segment: string, label: string): void {
   if (!RUNTIME_SEGMENT_PATTERN.test(segment)) {
     throw new Error(`Invalid ${label} "${segment}"`);
   }
-  if (segment.includes('/') || segment.includes('\\') || segment.includes('..')) {
+  if (
+    segment.includes('/') ||
+    segment.includes('\\') ||
+    segment.includes('..')
+  ) {
     throw new Error(`Invalid ${label} "${segment}"`);
   }
 }
@@ -76,7 +80,10 @@ export function resolveTaskRuntimeIpcPath(
   return ipcPath;
 }
 
-export function resolveTaskSessionsPath(folder: string, taskId: string): string {
+export function resolveTaskSessionsPath(
+  folder: string,
+  taskId: string,
+): string {
   assertValidGroupFolder(folder);
   assertValidRuntimeSegment(taskId, 'task ID');
   const sessionsBaseDir = path.resolve(DATA_DIR, 'sessions');

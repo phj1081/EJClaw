@@ -53,7 +53,9 @@ describe('group folder validation', () => {
   it('throws for unsafe folder names', () => {
     expect(() => resolveGroupFolderPath('../../etc')).toThrow();
     expect(() => resolveGroupIpcPath('/tmp')).toThrow();
-    expect(() => resolveTaskRuntimeIpcPath('family-chat', '../../etc')).toThrow();
+    expect(() =>
+      resolveTaskRuntimeIpcPath('family-chat', '../../etc'),
+    ).toThrow();
     expect(() => resolveTaskSessionsPath('family-chat', '/tmp')).toThrow();
   });
 });

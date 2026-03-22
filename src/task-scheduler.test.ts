@@ -10,7 +10,9 @@ const { runAgentProcessMock, writeTasksSnapshotMock } = vi.hoisted(() => ({
 
 vi.mock('./agent-runner.js', async () => {
   const actual =
-    await vi.importActual<typeof import('./agent-runner.js')>('./agent-runner.js');
+    await vi.importActual<typeof import('./agent-runner.js')>(
+      './agent-runner.js',
+    );
   return {
     ...actual,
     runAgentProcess: runAgentProcessMock,

@@ -533,7 +533,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               continue;
             }
 
-            deps.queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(group.folder));
+            deps.queue.enqueueMessageCheck(
+              chatJid,
+              resolveGroupIpcPath(group.folder),
+            );
           }
         }
       } catch (err) {
@@ -555,7 +558,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           { chatJid, group: group.name, workItemId: openWorkItem.id },
           'Recovery: found open work item awaiting delivery',
         );
-        deps.queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(group.folder));
+        deps.queue.enqueueMessageCheck(
+          chatJid,
+          resolveGroupIpcPath(group.folder),
+        );
         continue;
       }
 
@@ -576,7 +582,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           { group: group.name, pendingCount: pending.length },
           'Recovery: found unprocessed messages',
         );
-        deps.queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(group.folder));
+        deps.queue.enqueueMessageCheck(
+          chatJid,
+          resolveGroupIpcPath(group.folder),
+        );
       } else if (rawPending.length > 0) {
         const endSeq = rawPending[rawPending.length - 1].seq;
         if (endSeq != null) {
