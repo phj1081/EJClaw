@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import { createTaskStatusTracker } from './task-status-tracker.js';
+import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
@@ -272,6 +274,71 @@ Check the run.
     });
 
     expect(rendered).not.toContain('- 경과 시간:');
+  });
+
+  it('edits the existing watcher status message with refreshed elapsed time', async () => {
+    vi.setSystemTime(new Date('2026-03-19T07:00:00.000Z'));
+
+    createTask({
+      id: 'task-watch-status',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 123456
+
+Task ID:
+task-watch-status
+
+Check instructions:
+Check the run.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const sendTrackedMessage = vi.fn(async () => 'msg-123');
+    const editTrackedMessage = vi.fn(async () => {});
+
+    const tracker = createTaskStatusTracker(getTaskById('task-watch-status')!, {
+      sendTrackedMessage,
+      editTrackedMessage,
+    });
+
+    await tracker.update('checking');
+
+    const firstState = getTaskById('task-watch-status');
+    expect(sendTrackedMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      expect.stringContaining(`${TASK_STATUS_MESSAGE_PREFIX}CI 감시 중:`),
+    );
+    expect(firstState?.status_message_id).toBe('msg-123');
+    expect(firstState?.status_started_at).toBe('2026-03-19T07:00:00.000Z');
+
+    vi.setSystemTime(new Date('2026-03-19T07:02:10.000Z'));
+    await tracker.update('waiting', '2026-03-19T07:04:10.000Z');
+
+    expect(editTrackedMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'msg-123',
+      expect.stringContaining('- 경과 시간: 2분 10초'),
+    );
+    expect(editTrackedMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'msg-123',
+      expect.stringContaining('- 다음 확인: 16시 04분 10초'),
+    );
+
+    const secondState = getTaskById('task-watch-status');
+    expect(secondState?.status_message_id).toBe('msg-123');
+    expect(secondState?.status_started_at).toBe('2026-03-19T07:00:00.000Z');
   });
 
   it('computeNextRun anchors interval tasks to scheduled time to prevent drift', () => {

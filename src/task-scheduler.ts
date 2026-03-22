@@ -18,20 +18,14 @@ import {
   getDueTasks,
   getTaskById,
   logTaskRun,
-  updateTaskStatusTracking,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
-import {
-  getTaskQueueJid,
-  isWatchCiTask,
-  renderWatchCiStatusMessage,
-  TASK_STATUS_MESSAGE_PREFIX,
-  type WatcherStatusPhase,
-} from './task-watch-status.js';
+import { createTaskStatusTracker } from './task-status-tracker.js';
+import { getTaskQueueJid } from './task-watch-status.js';
 import { AgentType, RegisteredGroup, ScheduledTask } from './types.js';
 export {
   extractWatchCiTarget,
@@ -102,22 +96,90 @@ export interface SchedulerDependencies {
   ) => Promise<void>;
 }
 
+interface TaskExecutionContext {
+  group: RegisteredGroup;
+  groupDir: string;
+  isMain: boolean;
+  queueJid: string;
+  sessionId?: string;
+  taskAgentType: AgentType;
+}
+
+function resolveTaskExecutionContext(
+  task: ScheduledTask,
+  deps: SchedulerDependencies,
+): TaskExecutionContext {
+  const groupDir = resolveGroupFolderPath(task.group_folder);
+  fs.mkdirSync(groupDir, { recursive: true });
+
+  const groups = deps.registeredGroups();
+  const group = Object.values(groups).find(
+    (registeredGroup) => registeredGroup.folder === task.group_folder,
+  );
+  if (!group) {
+    throw new Error(`Group not found: ${task.group_folder}`);
+  }
+
+  const isMain = group.isMain === true;
+  const taskAgentType =
+    task.agent_type || deps.serviceAgentType || SERVICE_AGENT_TYPE;
+  const sessions = deps.getSessions();
+
+  return {
+    group,
+    groupDir,
+    isMain,
+    queueJid: getTaskQueueJid(task),
+    sessionId:
+      task.context_mode === 'group' ? sessions[task.group_folder] : undefined,
+    taskAgentType,
+  };
+}
+
+function writeTaskSnapshotForGroup(
+  taskAgentType: AgentType,
+  groupFolder: string,
+  isMain: boolean,
+): void {
+  const tasks = getAllTasks(taskAgentType);
+  writeTasksSnapshot(
+    groupFolder,
+    isMain,
+    tasks.map((task) => ({
+      id: task.id,
+      groupFolder: task.group_folder,
+      prompt: task.prompt,
+      schedule_type: task.schedule_type,
+      schedule_value: task.schedule_value,
+      status: task.status,
+      next_run: task.next_run,
+    })),
+  );
+}
+
 async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
-  let groupDir: string;
+  let context: TaskExecutionContext;
   try {
-    groupDir = resolveGroupFolderPath(task.group_folder);
+    context = resolveTaskExecutionContext(task, deps);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    // Stop retry churn for malformed legacy rows.
-    updateTask(task.id, { status: 'paused' });
-    logger.error(
-      { taskId: task.id, groupFolder: task.group_folder, error },
-      'Task has invalid group folder',
-    );
+    if (error.startsWith('Group not found:')) {
+      logger.error(
+        { taskId: task.id, groupFolder: task.group_folder, error },
+        'Group not found for task',
+      );
+    } else {
+      // Stop retry churn for malformed legacy rows.
+      updateTask(task.id, { status: 'paused' });
+      logger.error(
+        { taskId: task.id, groupFolder: task.group_folder, error },
+        'Task has invalid group folder',
+      );
+    }
     logTaskRun({
       task_id: task.id,
       run_at: new Date().toISOString(),
@@ -128,134 +190,42 @@ async function runTask(
     });
     return;
   }
-  fs.mkdirSync(groupDir, { recursive: true });
 
   logger.info(
     { taskId: task.id, group: task.group_folder },
     'Running scheduled task',
   );
 
-  const groups = deps.registeredGroups();
-  const group = Object.values(groups).find(
-    (g) => g.folder === task.group_folder,
-  );
-
-  if (!group) {
-    logger.error(
-      { taskId: task.id, groupFolder: task.group_folder },
-      'Group not found for task',
-    );
-    logTaskRun({
-      task_id: task.id,
-      run_at: new Date().toISOString(),
-      duration_ms: Date.now() - startTime,
-      status: 'error',
-      result: null,
-      error: `Group not found: ${task.group_folder}`,
-    });
-    return;
-  }
-
   // Update tasks snapshot for agent to read (filtered by group)
-  const isMain = group.isMain === true;
-  const taskAgentType =
-    task.agent_type || deps.serviceAgentType || SERVICE_AGENT_TYPE;
-  const tasks = getAllTasks(taskAgentType);
-  writeTasksSnapshot(
+  writeTaskSnapshotForGroup(
+    context.taskAgentType,
     task.group_folder,
-    isMain,
-    tasks.map((t) => ({
-      id: t.id,
-      groupFolder: t.group_folder,
-      prompt: t.prompt,
-      schedule_type: t.schedule_type,
-      schedule_value: t.schedule_value,
-      status: t.status,
-      next_run: t.next_run,
-    })),
+    context.isMain,
   );
 
   let result: string | null = null;
   let error: string | null = null;
-  let statusMessageId = task.status_message_id;
-  let statusStartedAt = task.status_started_at;
-  const queueJid = getTaskQueueJid(task);
-
-  // For group context mode, use the group's current session
-  const sessions = deps.getSessions();
-  const sessionId =
-    task.context_mode === 'group' ? sessions[task.group_folder] : undefined;
-
-  const shouldTrackStatus =
-    isWatchCiTask(task) &&
-    typeof deps.sendTrackedMessage === 'function' &&
-    typeof deps.editTrackedMessage === 'function';
-
-  const persistStatusTracking = () => {
-    const currentTask = getTaskById(task.id);
-    if (!currentTask) return;
-    updateTaskStatusTracking(task.id, {
-      status_message_id: statusMessageId,
-      status_started_at: statusStartedAt,
-    });
-  };
-
-  const updateWatcherStatus = async (
-    phase: WatcherStatusPhase,
-    nextRun?: string | null,
-  ) => {
-    if (!shouldTrackStatus) {
-      return;
-    }
-
-    const checkedAt = new Date().toISOString();
-    if (!statusStartedAt) {
-      statusStartedAt = checkedAt;
-    }
-
-    const text = renderWatchCiStatusMessage({
-      task,
-      phase,
-      checkedAt,
-      statusStartedAt,
-      nextRun,
-    });
-    const payload = `${TASK_STATUS_MESSAGE_PREFIX}${text}`;
-
-    if (statusMessageId) {
-      try {
-        await deps.editTrackedMessage!(task.chat_jid, statusMessageId, payload);
-        persistStatusTracking();
-        return;
-      } catch {
-        statusMessageId = null;
-        persistStatusTracking();
-      }
-    }
-
-    const messageId = await deps.sendTrackedMessage!(task.chat_jid, payload);
-    if (messageId) {
-      statusMessageId = messageId;
-      persistStatusTracking();
-    }
-  };
+  const statusTracker = createTaskStatusTracker(task, {
+    sendTrackedMessage: deps.sendTrackedMessage,
+    editTrackedMessage: deps.editTrackedMessage,
+  });
 
   try {
-    await updateWatcherStatus('checking');
+    await statusTracker.update('checking');
 
     const output = await runAgentProcess(
-      group,
+      context.group,
       {
         prompt: task.prompt,
-        sessionId,
+        sessionId: context.sessionId,
         groupFolder: task.group_folder,
         chatJid: task.chat_jid,
-        isMain,
+        isMain: context.isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
       },
       (proc, processName) =>
-        deps.onProcess(queueJid, proc, processName, task.group_folder),
+        deps.onProcess(context.queueJid, proc, processName, task.group_folder),
       async (streamedOutput: AgentOutput) => {
         if (streamedOutput.phase === 'progress') {
           return;
@@ -281,7 +251,7 @@ async function runTask(
     logger.info(
       {
         taskId: task.id,
-        agentType: taskAgentType,
+        agentType: context.taskAgentType,
         durationMs: Date.now() - startTime,
       },
       'Task completed',
@@ -296,7 +266,7 @@ async function runTask(
   const nextRun = currentTask ? computeNextRun(task) : null;
 
   if (!currentTask) {
-    await updateWatcherStatus('completed');
+    await statusTracker.update('completed');
     logger.debug(
       { taskId: task.id },
       'Task deleted during execution, skipping persistence',
@@ -305,11 +275,11 @@ async function runTask(
   }
 
   if (error) {
-    await updateWatcherStatus('retrying', nextRun);
+    await statusTracker.update('retrying', nextRun);
   } else if (nextRun) {
-    await updateWatcherStatus('waiting', nextRun);
+    await statusTracker.update('waiting', nextRun);
   } else {
-    await updateWatcherStatus('completed');
+    await statusTracker.update('completed');
   }
 
   logTaskRun({

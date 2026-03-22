@@ -23,7 +23,7 @@ import {
   readPairedRoomPrompt,
   readPlatformPrompt,
 } from './platform-prompts.js';
-import { RegisteredGroup } from './types.js';
+import { AgentType, RegisteredGroup } from './types.js';
 
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -49,6 +49,278 @@ export interface AgentOutput {
   error?: string;
 }
 
+function syncDirectoryEntries(sources: string[], destination: string): void {
+  for (const source of sources) {
+    if (!fs.existsSync(source)) continue;
+    for (const entry of fs.readdirSync(source)) {
+      const srcPath = path.join(source, entry);
+      const dstPath = path.join(destination, entry);
+      if (fs.statSync(srcPath).isDirectory()) {
+        fs.cpSync(srcPath, dstPath, { recursive: true });
+      } else {
+        fs.mkdirSync(destination, { recursive: true });
+        fs.copyFileSync(srcPath, dstPath);
+      }
+    }
+  }
+}
+
+function ensureClaudeSessionSettings(groupSessionsDir: string): void {
+  const settingsFile = path.join(groupSessionsDir, 'settings.json');
+  if (fs.existsSync(settingsFile)) return;
+
+  fs.writeFileSync(
+    settingsFile,
+    JSON.stringify(
+      {
+        env: {
+          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+}
+
+function buildBaseRunnerEnv(args: {
+  group: RegisteredGroup;
+  chatJid: string;
+  isMain: boolean;
+  groupDir: string;
+  groupIpcDir: string;
+  globalDir: string;
+  groupSessionsDir: string;
+  agentType: AgentType;
+  envVars: Record<string, string>;
+}): Record<string, string> {
+  const cleanEnv = { ...(process.env as Record<string, string>) };
+  for (const [key, value] of Object.entries(args.envVars)) {
+    if (value && !cleanEnv[key]) cleanEnv[key] = value;
+  }
+  delete cleanEnv.CLAUDECODE;
+  delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
+
+  const nodeBin = path.dirname(process.execPath);
+  const npmGlobalBin = path.join(os.homedir(), '.npm-global', 'bin');
+  const currentPath = cleanEnv.PATH || '/usr/local/bin:/usr/bin:/bin';
+  const extraPaths = [nodeBin, npmGlobalBin].filter(
+    (candidate) =>
+      !currentPath.includes(candidate) && fs.existsSync(candidate),
+  );
+
+  return {
+    ...cleanEnv,
+    PATH:
+      extraPaths.length > 0
+        ? `${extraPaths.join(':')}:${currentPath}`
+        : currentPath,
+    TZ: TIMEZONE,
+    HOME: os.homedir(),
+    NANOCLAW_GROUP_DIR: args.groupDir,
+    NANOCLAW_IPC_DIR: args.groupIpcDir,
+    NANOCLAW_GLOBAL_DIR: args.globalDir,
+    ...(args.group.workDir ? { NANOCLAW_WORK_DIR: args.group.workDir } : {}),
+    NANOCLAW_CHAT_JID: args.chatJid,
+    NANOCLAW_GROUP_FOLDER: args.group.folder,
+    NANOCLAW_IS_MAIN: args.isMain ? '1' : '0',
+    NANOCLAW_AGENT_TYPE: args.agentType,
+    CLAUDE_CONFIG_DIR: args.groupSessionsDir,
+  };
+}
+
+function prepareClaudeEnvironment(args: {
+  env: Record<string, string>;
+  envVars: Record<string, string>;
+  group: RegisteredGroup;
+}): void {
+  if (args.envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY) {
+    args.env.ANTHROPIC_API_KEY =
+      args.envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+  }
+  if (args.envVars.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN) {
+    args.env.ANTHROPIC_AUTH_TOKEN =
+      args.envVars.ANTHROPIC_AUTH_TOKEN ||
+      process.env.ANTHROPIC_AUTH_TOKEN ||
+      '';
+  }
+  if (args.envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL) {
+    args.env.ANTHROPIC_BASE_URL =
+      args.envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL || '';
+  }
+  if (
+    args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
+    process.env.CLAUDE_CODE_OAUTH_TOKEN
+  ) {
+    args.env.CLAUDE_CODE_OAUTH_TOKEN =
+      args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
+      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+      '';
+  }
+  for (const key of [
+    'CLAUDE_MODEL',
+    'CLAUDE_THINKING',
+    'CLAUDE_THINKING_BUDGET',
+    'CLAUDE_EFFORT',
+  ]) {
+    const value =
+      args.envVars[key as keyof typeof args.envVars] || process.env[key];
+    if (value) args.env[key] = value;
+  }
+  if (args.group.agentConfig?.claudeModel) {
+    args.env.CLAUDE_MODEL = args.group.agentConfig.claudeModel;
+  }
+  if (args.group.agentConfig?.claudeEffort) {
+    args.env.CLAUDE_EFFORT = args.group.agentConfig.claudeEffort;
+  }
+}
+
+function prepareCodexSessionEnvironment(args: {
+  env: Record<string, string>;
+  envVars: Record<string, string>;
+  projectRoot: string;
+  group: RegisteredGroup;
+  groupDir: string;
+  chatJid: string;
+  isMain: boolean;
+  isPairedRoom: boolean;
+}): void {
+  const openaiKey =
+    args.envVars.CODEX_OPENAI_API_KEY ||
+    process.env.CODEX_OPENAI_API_KEY ||
+    args.envVars.OPENAI_API_KEY ||
+    process.env.OPENAI_API_KEY;
+  if (openaiKey) args.env.OPENAI_API_KEY = openaiKey;
+
+  const codexModel =
+    args.group.agentConfig?.codexModel ||
+    args.envVars.CODEX_MODEL ||
+    process.env.CODEX_MODEL;
+  if (codexModel) args.env.CODEX_MODEL = codexModel;
+
+  const codexEffort =
+    args.group.agentConfig?.codexEffort ||
+    args.envVars.CODEX_EFFORT ||
+    process.env.CODEX_EFFORT;
+  if (codexEffort) args.env.CODEX_EFFORT = codexEffort;
+
+  const hostCodexDir = path.join(os.homedir(), '.codex');
+  const sessionCodexDir = path.join(
+    DATA_DIR,
+    'sessions',
+    args.group.folder,
+    '.codex',
+  );
+  fs.mkdirSync(sessionCodexDir, { recursive: true });
+
+  const authSrc = path.join(hostCodexDir, 'auth.json');
+  const authDst = path.join(sessionCodexDir, 'auth.json');
+  if (fs.existsSync(authSrc)) fs.copyFileSync(authSrc, authDst);
+  for (const file of ['config.toml', 'config.json']) {
+    const src = path.join(hostCodexDir, file);
+    const dst = path.join(sessionCodexDir, file);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, dst);
+    }
+  }
+
+  const overlayPath = path.join(args.groupDir, '.codex', 'config.toml');
+  const sessionConfigPath = path.join(sessionCodexDir, 'config.toml');
+  if (fs.existsSync(overlayPath)) {
+    const overlayToml = fs.readFileSync(overlayPath, 'utf-8').trim();
+    if (overlayToml) {
+      const baseToml = fs.existsSync(sessionConfigPath)
+        ? fs.readFileSync(sessionConfigPath, 'utf-8').trimEnd()
+        : '';
+      fs.writeFileSync(
+        sessionConfigPath,
+        [baseToml, overlayToml].filter(Boolean).join('\n\n') + '\n',
+      );
+    }
+  }
+
+  const sessionAgentsPath = path.join(sessionCodexDir, 'AGENTS.md');
+  const sessionAgents = [
+    readPlatformPrompt('codex', args.projectRoot),
+    args.isPairedRoom
+      ? readPairedRoomPrompt('codex', args.projectRoot)
+      : undefined,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join('\n\n---\n\n')
+    .trim();
+  if (sessionAgents) {
+    fs.writeFileSync(sessionAgentsPath, sessionAgents + '\n');
+  } else if (fs.existsSync(sessionAgentsPath)) {
+    fs.unlinkSync(sessionAgentsPath);
+  }
+
+  syncDirectoryEntries(
+    [
+      path.join(os.homedir(), '.claude', 'skills'),
+      path.join(args.projectRoot, 'runners', 'skills'),
+    ],
+    path.join(sessionCodexDir, 'skills'),
+  );
+
+  const mcpServerPath = path.join(
+    args.projectRoot,
+    'runners',
+    'agent-runner',
+    'dist',
+    'ipc-mcp-stdio.js',
+  );
+  if (fs.existsSync(mcpServerPath)) {
+    let toml = fs.existsSync(sessionConfigPath)
+      ? fs.readFileSync(sessionConfigPath, 'utf-8')
+      : '';
+    toml = toml.replace(/\n?\[mcp_servers\.nanoclaw\][\s\S]*?(?=\n\[|$)/, '');
+    toml = toml.replace(
+      /\n?\[mcp_servers\.memento-mcp\][\s\S]*?(?=\n\[|$)/,
+      '',
+    );
+    const mcpSection = `
+[mcp_servers.nanoclaw]
+command = "node"
+args = [${JSON.stringify(mcpServerPath)}]
+
+[mcp_servers.nanoclaw.env]
+NANOCLAW_IPC_DIR = ${JSON.stringify(args.env.NANOCLAW_IPC_DIR)}
+NANOCLAW_CHAT_JID = ${JSON.stringify(args.chatJid)}
+NANOCLAW_GROUP_FOLDER = ${JSON.stringify(args.group.folder)}
+NANOCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
+NANOCLAW_AGENT_TYPE = ${JSON.stringify(args.env.NANOCLAW_AGENT_TYPE)}
+`;
+    const mementoSseUrl =
+      args.envVars.MEMENTO_MCP_SSE_URL || process.env.MEMENTO_MCP_SSE_URL;
+    const mementoAccessKey =
+      args.envVars.MEMENTO_ACCESS_KEY || process.env.MEMENTO_ACCESS_KEY || '';
+    const mementoRemotePath =
+      args.envVars.MEMENTO_MCP_REMOTE_PATH ||
+      process.env.MEMENTO_MCP_REMOTE_PATH ||
+      'mcp-remote';
+    const mementoSection = mementoSseUrl
+      ? `
+[mcp_servers.memento-mcp]
+command = ${JSON.stringify(mementoRemotePath)}
+args = [${JSON.stringify(mementoSseUrl)}, "--header", ${JSON.stringify(`Authorization:Bearer ${mementoAccessKey}`)}]
+`
+      : '';
+    fs.writeFileSync(
+      sessionConfigPath,
+      toml.trimEnd() + '\n' + mcpSection + mementoSection,
+    );
+  }
+
+  delete args.env.ANTHROPIC_API_KEY;
+  delete args.env.ANTHROPIC_AUTH_TOKEN;
+  delete args.env.ANTHROPIC_BASE_URL;
+  delete args.env.CLAUDE_CODE_OAUTH_TOKEN;
+  args.env.CODEX_HOME = sessionCodexDir;
+}
+
 /**
  * Prepare the group's environment: directories, sessions, env vars.
  * Returns the environment variables and paths for the runner process.
@@ -70,24 +342,7 @@ function prepareGroupEnvironment(
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
-
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (!fs.existsSync(settingsFile)) {
-    fs.writeFileSync(
-      settingsFile,
-      JSON.stringify(
-        {
-          env: {
-            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-          },
-        },
-        null,
-        2,
-      ) + '\n',
-    );
-  }
+  ensureClaudeSessionSettings(groupSessionsDir);
 
   // Sync skills into each group's .claude/ session dir
   // Sources: 1) user's global ~/.claude/skills  2) project workDir/.claude/skills  3) runners/skills/
@@ -99,20 +354,7 @@ function prepareGroupEnvironment(
     ...(workDirClaude ? [path.join(workDirClaude, 'skills')] : []),
     path.join(projectRoot, 'runners', 'skills'),
   ];
-  const skillsDst = path.join(groupSessionsDir, 'skills');
-  for (const src of skillSources) {
-    if (!fs.existsSync(src)) continue;
-    for (const entry of fs.readdirSync(src)) {
-      const srcPath = path.join(src, entry);
-      const dstPath = path.join(skillsDst, entry);
-      if (fs.statSync(srcPath).isDirectory()) {
-        fs.cpSync(srcPath, dstPath, { recursive: true });
-      } else {
-        fs.mkdirSync(skillsDst, { recursive: true });
-        fs.copyFileSync(srcPath, dstPath);
-      }
-    }
-  }
+  syncDirectoryEntries(skillSources, path.join(groupSessionsDir, 'skills'));
 
   // Per-group IPC namespace
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -172,240 +414,32 @@ function prepareGroupEnvironment(
     'MEMENTO_MCP_REMOTE_PATH',
   ]);
 
-  // Build a clean env without Claude Code nesting detection variables
-  const cleanEnv = { ...(process.env as Record<string, string>) };
-  // Merge .env file values (readEnvFile only reads file, doesn't set process.env)
-  for (const [k, v] of Object.entries(envVars)) {
-    if (v && !cleanEnv[k]) cleanEnv[k] = v;
-  }
-  delete cleanEnv.CLAUDECODE;
-  delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
-
-  // Ensure node and npm-global binaries (codex, etc.) are findable
-  const nodeBin = path.dirname(process.execPath);
-  const npmGlobalBin = path.join(os.homedir(), '.npm-global', 'bin');
-  const currentPath = cleanEnv.PATH || '/usr/local/bin:/usr/bin:/bin';
-  const extraPaths = [nodeBin, npmGlobalBin].filter(
-    (p) => !currentPath.includes(p) && fs.existsSync(p),
-  );
-  const enrichedPath =
-    extraPaths.length > 0
-      ? `${extraPaths.join(':')}:${currentPath}`
-      : currentPath;
-
-  const env: Record<string, string> = {
-    ...cleanEnv,
-    PATH: enrichedPath,
-    TZ: TIMEZONE,
-    HOME: os.homedir(),
-    // Path configuration for the runner
-    NANOCLAW_GROUP_DIR: groupDir,
-    NANOCLAW_IPC_DIR: groupIpcDir,
-    NANOCLAW_GLOBAL_DIR: globalDir,
-    // Working directory override (agent uses this as cwd instead of group dir)
-    ...(group.workDir ? { NANOCLAW_WORK_DIR: group.workDir } : {}),
-    // MCP server context
-    NANOCLAW_CHAT_JID: chatJid,
-    NANOCLAW_GROUP_FOLDER: group.folder,
-    NANOCLAW_IS_MAIN: isMain ? '1' : '0',
-    NANOCLAW_AGENT_TYPE: agentType,
-    // Claude sessions directory — set CLAUDE_CONFIG_DIR so SDK uses per-group sessions
-    CLAUDE_CONFIG_DIR: groupSessionsDir,
-  };
+  const env = buildBaseRunnerEnv({
+    group,
+    chatJid,
+    isMain,
+    groupDir,
+    groupIpcDir,
+    globalDir,
+    groupSessionsDir,
+    agentType,
+    envVars,
+  });
 
   // Pass credentials directly (no proxy needed on host)
   if (agentType === 'codex') {
-    const openaiKey =
-      envVars.CODEX_OPENAI_API_KEY ||
-      process.env.CODEX_OPENAI_API_KEY ||
-      envVars.OPENAI_API_KEY ||
-      process.env.OPENAI_API_KEY;
-    if (openaiKey) env.OPENAI_API_KEY = openaiKey;
-
-    // Codex model/effort configuration (per-group overrides global)
-    const codexModel =
-      group.agentConfig?.codexModel ||
-      envVars.CODEX_MODEL ||
-      process.env.CODEX_MODEL;
-    if (codexModel) env.CODEX_MODEL = codexModel;
-    const codexEffort =
-      group.agentConfig?.codexEffort ||
-      envVars.CODEX_EFFORT ||
-      process.env.CODEX_EFFORT;
-    if (codexEffort) env.CODEX_EFFORT = codexEffort;
-
-    // Codex session directory
-    const hostCodexDir = path.join(os.homedir(), '.codex');
-    const sessionCodexDir = path.join(
-      DATA_DIR,
-      'sessions',
-      group.folder,
-      '.codex',
-    );
-    fs.mkdirSync(sessionCodexDir, { recursive: true });
-    const authSrc = path.join(hostCodexDir, 'auth.json');
-    const authDst = path.join(sessionCodexDir, 'auth.json');
-    if (fs.existsSync(authSrc)) fs.copyFileSync(authSrc, authDst);
-    for (const file of ['config.toml', 'config.json']) {
-      const src = path.join(hostCodexDir, file);
-      const dst = path.join(sessionCodexDir, file);
-      if (fs.existsSync(src)) {
-        fs.copyFileSync(src, dst);
-      }
-    }
-    const groupCodexConfigOverlayPath = path.join(
-      groupDir,
-      '.codex',
-      'config.toml',
-    );
-    const sessionCodexConfigPath = path.join(sessionCodexDir, 'config.toml');
-    if (fs.existsSync(groupCodexConfigOverlayPath)) {
-      const overlayToml = fs
-        .readFileSync(groupCodexConfigOverlayPath, 'utf-8')
-        .trim();
-      if (overlayToml) {
-        const baseToml = fs.existsSync(sessionCodexConfigPath)
-          ? fs.readFileSync(sessionCodexConfigPath, 'utf-8').trimEnd()
-          : '';
-        const mergedToml = [baseToml, overlayToml]
-          .filter((value) => value.length > 0)
-          .join('\n\n');
-        fs.writeFileSync(sessionCodexConfigPath, mergedToml + '\n');
-      }
-    }
-    const sessionAgentsPath = path.join(sessionCodexDir, 'AGENTS.md');
-    const codexPlatformPrompt = readPlatformPrompt('codex', projectRoot);
-    const codexPairedRoomPrompt = isPairedRoom
-      ? readPairedRoomPrompt('codex', projectRoot)
-      : undefined;
-    const sessionAgents = [codexPlatformPrompt, codexPairedRoomPrompt]
-      .filter((value): value is string => Boolean(value))
-      .join('\n\n---\n\n')
-      .trim();
-    if (sessionAgents) {
-      fs.writeFileSync(sessionAgentsPath, sessionAgents + '\n');
-    } else if (fs.existsSync(sessionAgentsPath)) {
-      fs.unlinkSync(sessionAgentsPath);
-    }
-    // Sync skills into Codex session dir
-    // SSOT: ~/.claude/skills/ (shared with Claude Code) + runners/skills/
-    const codexSkillSources = [
-      path.join(os.homedir(), '.claude', 'skills'),
-      path.join(projectRoot, 'runners', 'skills'),
-    ];
-    const codexSkillsDst = path.join(sessionCodexDir, 'skills');
-    for (const src of codexSkillSources) {
-      if (!fs.existsSync(src)) continue;
-      for (const entry of fs.readdirSync(src)) {
-        const srcPath = path.join(src, entry);
-        const dstPath = path.join(codexSkillsDst, entry);
-        if (fs.statSync(srcPath).isDirectory()) {
-          fs.cpSync(srcPath, dstPath, { recursive: true });
-        } else {
-          fs.mkdirSync(codexSkillsDst, { recursive: true });
-          fs.copyFileSync(srcPath, dstPath);
-        }
-      }
-    }
-
-    // Inject nanoclaw MCP server into Codex config.toml
-    const mcpServerPath = path.join(
+    prepareCodexSessionEnvironment({
+      env,
+      envVars,
       projectRoot,
-      'runners',
-      'agent-runner',
-      'dist',
-      'ipc-mcp-stdio.js',
-    );
-    const configTomlPath = path.join(sessionCodexDir, 'config.toml');
-    if (fs.existsSync(mcpServerPath)) {
-      let toml = fs.existsSync(configTomlPath)
-        ? fs.readFileSync(configTomlPath, 'utf-8')
-        : '';
-      // Remove existing nanoclaw/memento MCP sections if present (to refresh env vars)
-      toml = toml.replace(/\n?\[mcp_servers\.nanoclaw\][\s\S]*?(?=\n\[|$)/, '');
-      toml = toml.replace(
-        /\n?\[mcp_servers\.memento-mcp\][\s\S]*?(?=\n\[|$)/,
-        '',
-      );
-      const mcpSection = `
-[mcp_servers.nanoclaw]
-command = "node"
-args = [${JSON.stringify(mcpServerPath)}]
-
-[mcp_servers.nanoclaw.env]
-NANOCLAW_IPC_DIR = ${JSON.stringify(env.NANOCLAW_IPC_DIR)}
-NANOCLAW_CHAT_JID = ${JSON.stringify(chatJid)}
-NANOCLAW_GROUP_FOLDER = ${JSON.stringify(group.folder)}
-NANOCLAW_IS_MAIN = ${JSON.stringify(isMain ? '1' : '0')}
-NANOCLAW_AGENT_TYPE = ${JSON.stringify(env.NANOCLAW_AGENT_TYPE)}
-`;
-      // Inject memento-mcp if MEMENTO_MCP_SSE_URL is set
-      const mementoSseUrl =
-        envVars.MEMENTO_MCP_SSE_URL || process.env.MEMENTO_MCP_SSE_URL;
-      const mementoAccessKey =
-        envVars.MEMENTO_ACCESS_KEY || process.env.MEMENTO_ACCESS_KEY || '';
-      const mementoRemotePath =
-        envVars.MEMENTO_MCP_REMOTE_PATH ||
-        process.env.MEMENTO_MCP_REMOTE_PATH ||
-        'mcp-remote';
-      const mementoSection = mementoSseUrl
-        ? `
-[mcp_servers.memento-mcp]
-command = ${JSON.stringify(mementoRemotePath)}
-args = [${JSON.stringify(mementoSseUrl)}, "--header", ${JSON.stringify(`Authorization:Bearer ${mementoAccessKey}`)}]
-`
-        : '';
-
-      toml = toml.trimEnd() + '\n' + mcpSection + mementoSection;
-      fs.writeFileSync(configTomlPath, toml);
-    }
-
-    // Sanitize secrets: prevent API keys from leaking to codex subprocesses
-    delete env.ANTHROPIC_API_KEY;
-    delete env.ANTHROPIC_AUTH_TOKEN;
-    delete env.ANTHROPIC_BASE_URL;
-    delete env.CLAUDE_CODE_OAUTH_TOKEN;
-
-    env.CODEX_HOME = sessionCodexDir;
+      group,
+      groupDir,
+      chatJid,
+      isMain,
+      isPairedRoom,
+    });
   } else {
-    // Claude Code — pass real credentials directly
-    if (envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY) {
-      env.ANTHROPIC_API_KEY =
-        envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
-    }
-    if (envVars.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN) {
-      env.ANTHROPIC_AUTH_TOKEN =
-        envVars.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || '';
-    }
-    if (envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL) {
-      env.ANTHROPIC_BASE_URL =
-        envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL || '';
-    }
-    if (
-      envVars.CLAUDE_CODE_OAUTH_TOKEN ||
-      process.env.CLAUDE_CODE_OAUTH_TOKEN
-    ) {
-      env.CLAUDE_CODE_OAUTH_TOKEN =
-        envVars.CLAUDE_CODE_OAUTH_TOKEN ||
-        process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-        '';
-    }
-    // Model/thinking config (per-group overrides global)
-    for (const key of [
-      'CLAUDE_MODEL',
-      'CLAUDE_THINKING',
-      'CLAUDE_THINKING_BUDGET',
-      'CLAUDE_EFFORT',
-    ]) {
-      const val = envVars[key as keyof typeof envVars] || process.env[key];
-      if (val) env[key] = val;
-    }
-    if (group.agentConfig?.claudeModel) {
-      env.CLAUDE_MODEL = group.agentConfig.claudeModel;
-    }
-    if (group.agentConfig?.claudeEffort) {
-      env.CLAUDE_EFFORT = group.agentConfig.claudeEffort;
-    }
+    prepareClaudeEnvironment({ env, envVars, group });
   }
 
   return { env, groupDir, runnerDir };
