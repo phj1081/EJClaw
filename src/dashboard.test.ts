@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { DashboardOptions } from './dashboard.js';
+import type { DashboardOptions } from './dashboard-status-content.js';
 
 function makeOptions(sessionId?: string): DashboardOptions {
   const sessions: Record<string, string> = sessionId
@@ -42,7 +42,7 @@ describe('buildStatusContent', () => {
   ): Promise<(opts: DashboardOptions) => string> {
     vi.resetModules();
     process.env.STATUS_SHOW_ROOMS = statusShowRooms;
-    const mod = await import('./dashboard.js');
+    const mod = await import('./dashboard-status-content.js');
     return mod.buildStatusContent;
   }
 

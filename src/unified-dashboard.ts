@@ -91,7 +91,7 @@ function findDiscordChannel(channels: Channel[]): Channel | undefined {
   );
 }
 
-async function purgeDashboardChannel(
+export async function purgeDashboardChannel(
   opts: Pick<UnifiedDashboardOptions, 'channels' | 'statusChannelId'>,
 ): Promise<void> {
   if (!opts.statusChannelId) return;
