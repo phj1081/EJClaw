@@ -61,6 +61,7 @@ describe('task scheduler', () => {
       id: 'task-claude',
       group_folder: 'shared-group',
       chat_jid: 'shared@g.us',
+      agent_type: 'claude-code',
       prompt: 'claude task',
       schedule_type: 'once',
       schedule_value: dueAt,
@@ -126,7 +127,11 @@ Check the run.
     expect(extractWatchCiTarget(prompt)).toBe('GitHub Actions run 123456');
 
     const rendered = renderWatchCiStatusMessage({
-      task: { prompt },
+      task: {
+        prompt,
+        schedule_type: 'interval',
+        schedule_value: '60000',
+      } as any,
       phase: 'waiting',
       checkedAt: '2026-03-19T07:02:10.000Z',
       nextRun: '2026-03-19T07:04:10.000Z',
@@ -134,9 +139,11 @@ Check the run.
 
     expect(rendered).toContain('CI 감시 중: GitHub Actions run 123456');
     expect(rendered).toContain('- 상태: 대기 중');
-    expect(rendered).toContain('- 마지막 확인:');
-    expect(rendered).toContain('- 다음 확인:');
-    expect(rendered).not.toContain('2분 10초');
+    expect(rendered).toContain('- 마지막 확인: 16시 02분 10초');
+    expect(rendered).toContain('- 확인 간격: 1분');
+    expect(rendered).toContain('- 다음 확인: 16시 04분 10초');
+    expect(rendered).not.toContain('16:02:10');
+    expect(rendered).not.toContain('16:04:10');
   });
 
   it('computeNextRun anchors interval tasks to scheduled time to prevent drift', () => {

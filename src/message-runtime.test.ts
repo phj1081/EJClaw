@@ -7,6 +7,7 @@ vi.mock('./agent-runner.js', () => ({
 }));
 
 vi.mock('./config.js', () => ({
+  DATA_DIR: '/tmp/nanoclaw-test-data',
   isSessionCommandSenderAllowed: vi.fn(() => false),
 }));
 
@@ -27,6 +28,20 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
+vi.mock('./provider-fallback.js', () => ({
+  detectFallbackTrigger: vi.fn(() => ({ shouldFallback: false, reason: '' })),
+  getActiveProvider: vi.fn(() => 'claude'),
+  getFallbackEnvOverrides: vi.fn(() => ({
+    ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+    ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
+    ANTHROPIC_MODEL: 'kimi-k2.5',
+  })),
+  getFallbackProviderName: vi.fn(() => 'kimi'),
+  hasGroupProviderOverride: vi.fn(() => false),
+  isFallbackEnabled: vi.fn(() => true),
+  markPrimaryCooldown: vi.fn(),
+}));
+
 vi.mock('./sender-allowlist.js', () => ({
   isTriggerAllowed: vi.fn(() => true),
   loadSenderAllowlist: vi.fn(() => ({})),
@@ -42,6 +57,7 @@ vi.mock('./session-commands.js', () => ({
 import * as agentRunner from './agent-runner.js';
 import * as db from './db.js';
 import { createMessageRuntime } from './message-runtime.js';
+import * as providerFallback from './provider-fallback.js';
 import type { Channel, RegisteredGroup } from './types.js';
 
 function makeGroup(agentType: 'claude-code' | 'codex'): RegisteredGroup {
@@ -72,6 +88,21 @@ function makeChannel(chatJid: string): Channel {
 describe('createMessageRuntime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(providerFallback.getActiveProvider).mockReturnValue('claude');
+    vi.mocked(providerFallback.getFallbackProviderName).mockReturnValue('kimi');
+    vi.mocked(providerFallback.getFallbackEnvOverrides).mockReturnValue({
+      ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+      ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
+      ANTHROPIC_MODEL: 'kimi-k2.5',
+    });
+    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(
+      false,
+    );
+    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
+    vi.mocked(providerFallback.detectFallbackTrigger).mockReturnValue({
+      shouldFallback: false,
+      reason: '',
+    });
   });
 
   it('clears Claude sessions and closes stdin immediately on poisoned output', async () => {
@@ -312,6 +343,114 @@ describe('createMessageRuntime', () => {
       expect(persistSession).toHaveBeenCalledWith(
         group.folder,
         'session-progress',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resets the idle timeout when follow-up Codex progress keeps arriving', async () => {
+    vi.useFakeTimers();
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const closeStdin = vi.fn();
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: '초기 응답입니다.',
+          newSessionId: 'session-follow-up',
+        });
+        await vi.advanceTimersByTimeAsync(800);
+        expect(closeStdin).not.toHaveBeenCalled();
+
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '후속 작업 진행 중입니다.',
+          newSessionId: 'session-follow-up',
+        });
+        await vi.advanceTimersByTimeAsync(800);
+        expect(closeStdin).not.toHaveBeenCalled();
+
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '후속 작업 계속 진행 중입니다.',
+          newSessionId: 'session-follow-up',
+        });
+        await vi.advanceTimersByTimeAsync(800);
+        expect(closeStdin).not.toHaveBeenCalled();
+
+        await onOutput?.({
+          status: 'success',
+          result: null,
+          newSessionId: 'session-follow-up',
+        });
+
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'session-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin,
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    try {
+      const result = await runtime.processGroupMessages(chatJid, {
+        runId: 'run-follow-up-progress',
+        reason: 'messages',
+      });
+
+      expect(result).toBe(true);
+      expect(closeStdin).not.toHaveBeenCalled();
+      expect(channel.sendMessage).toHaveBeenCalledWith(
+        chatJid,
+        '초기 응답입니다.',
+      );
+      expect(channel.sendAndTrack).toHaveBeenCalledWith(
+        chatJid,
+        '후속 작업 진행 중입니다.\n\n0초',
+      );
+      expect(channel.editMessage).toHaveBeenCalledWith(
+        chatJid,
+        'progress-1',
+        '후속 작업 계속 진행 중입니다.\n\n0초',
       );
     } finally {
       vi.useRealTimers();
@@ -1018,5 +1157,173 @@ describe('createMessageRuntime', () => {
     );
     expect(lastAgentTimestamps[chatJid]).toBe('2026-03-19T00:00:00.000Z');
     expect(saveState).toHaveBeenCalled();
+  });
+
+  it('retries with the fallback provider when Claude returns a 429 error before any output', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+      },
+    ]);
+
+    vi.mocked(providerFallback.detectFallbackTrigger).mockReturnValue({
+      shouldFallback: true,
+      reason: '429',
+      retryAfterMs: 60_000,
+    });
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockResolvedValueOnce({
+        status: 'error',
+        result: null,
+        error: '429 rate limited retry after 60',
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'fallback 응답입니다.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-fallback-429',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(agentRunner.runAgentProcess).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({ sessionId: undefined }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.objectContaining({
+        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+        ANTHROPIC_MODEL: 'kimi-k2.5',
+      }),
+    );
+    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
+      '429',
+      60_000,
+    );
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'fallback 응답입니다.',
+    );
+  });
+
+  it('retries with the fallback provider when Claude ends with success-null-result before any output', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: null,
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'success-null-result 폴백 응답입니다.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-fallback-success-null',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
+      'success-null-result',
+      undefined,
+    );
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'success-null-result 폴백 응답입니다.',
+    );
   });
 });

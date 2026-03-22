@@ -414,6 +414,30 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  it('sendMessage touches active run activity after piping follow-up', async () => {
+    let resolveProcess: () => void;
+    const touch = vi.fn();
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveProcess = resolve;
+      });
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess('group1@g.us', {} as any, 'agent-1', 'test-group');
+    queue.setActivityTouch('group1@g.us', touch);
+
+    expect(queue.sendMessage('group1@g.us', 'hello')).toBe(true);
+    expect(touch).toHaveBeenCalledTimes(1);
+
+    resolveProcess!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
   it('sendMessage returns false for task agents so user messages queue up', async () => {
     let resolveTask: () => void;
 

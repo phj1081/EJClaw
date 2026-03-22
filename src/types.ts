@@ -28,6 +28,7 @@ export interface NewMessage {
   sender_name: string;
   content: string;
   timestamp: string;
+  seq?: number;
   is_from_me?: boolean;
   is_bot_message?: boolean;
 }

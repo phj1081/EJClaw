@@ -26,6 +26,7 @@ groups/global/*
 *.keys.json
 .env
 .env.codex
+.env.minimax
 
 # Temp files
 .tmp-*

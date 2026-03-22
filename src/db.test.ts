@@ -3,17 +3,24 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   createTask,
+  createProducedWorkItem,
   deleteSession,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
   getDueTasks,
+  getLatestMessageSeqAtOrBefore,
+  getMessagesSinceSeq,
+  getNewMessagesBySeq,
+  getOpenWorkItem,
   getRegisteredAgentTypesForJid,
   getMessagesSince,
   getNewMessages,
   isPairedRoomJid,
   getSession,
   getTaskById,
+  markWorkItemDelivered,
+  markWorkItemDeliveryRetry,
   setSession,
   setRegisteredGroup,
   storeChatMetadata,
@@ -412,6 +419,7 @@ describe('task CRUD', () => {
       id: 'task-claude',
       group_folder: 'main',
       chat_jid: 'group@g.us',
+      agent_type: 'claude-code',
       prompt: 'claude task',
       schedule_type: 'once',
       schedule_value: dueAt,
@@ -593,5 +601,83 @@ describe('paired room registration', () => {
 
     expect(getRegisteredAgentTypesForJid('dc:solo')).toEqual(['claude-code']);
     expect(isPairedRoomJid('dc:solo')).toBe(false);
+  });
+});
+
+describe('message seq cursors', () => {
+  beforeEach(() => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+    store({
+      id: 'seq-1',
+      chat_jid: 'group@g.us',
+      sender: 'alice',
+      sender_name: 'Alice',
+      content: 'first',
+      timestamp: '2024-01-01T00:00:01.000Z',
+    });
+    store({
+      id: 'seq-2',
+      chat_jid: 'group@g.us',
+      sender: 'bob',
+      sender_name: 'Bob',
+      content: 'second',
+      timestamp: '2024-01-01T00:00:02.000Z',
+    });
+    store({
+      id: 'seq-3',
+      chat_jid: 'group@g.us',
+      sender: 'carol',
+      sender_name: 'Carol',
+      content: 'third',
+      timestamp: '2024-01-01T00:00:03.000Z',
+    });
+  });
+
+  it('assigns monotonic seq values and preserves them on upsert', () => {
+    const { messages } = getNewMessagesBySeq(['group@g.us'], 0, 'Andy');
+    expect(messages.map((m) => m.seq)).toEqual([1, 2, 3]);
+
+    store({
+      id: 'seq-2',
+      chat_jid: 'group@g.us',
+      sender: 'bob',
+      sender_name: 'Bob',
+      content: 'second updated',
+      timestamp: '2024-01-01T00:00:02.500Z',
+    });
+
+    const afterUpdate = getMessagesSinceSeq('group@g.us', 0, 'Andy');
+    expect(afterUpdate.map((m) => m.seq)).toEqual([1, 2, 3]);
+    expect(afterUpdate[1].content).toBe('second updated');
+  });
+
+  it('maps legacy timestamp cursors to the latest seq at or before that time', () => {
+    expect(
+      getLatestMessageSeqAtOrBefore('2024-01-01T00:00:02.000Z', 'group@g.us'),
+    ).toBe(2);
+  });
+});
+
+describe('work items', () => {
+  it('tracks produced, retry, and delivered states', () => {
+    const item = createProducedWorkItem({
+      group_folder: 'discord_test',
+      chat_jid: 'dc:123',
+      agent_type: 'claude-code',
+      start_seq: 10,
+      end_seq: 12,
+      result_payload: 'hello',
+    });
+
+    expect(getOpenWorkItem('dc:123', 'claude-code')?.id).toBe(item.id);
+
+    markWorkItemDeliveryRetry(item.id, 'send failed');
+    const retried = getOpenWorkItem('dc:123', 'claude-code');
+    expect(retried?.status).toBe('delivery_retry');
+    expect(retried?.delivery_attempts).toBe(1);
+    expect(retried?.last_error).toBe('send failed');
+
+    markWorkItemDelivered(item.id, 'msg-1');
+    expect(getOpenWorkItem('dc:123', 'claude-code')).toBeUndefined();
   });
 });

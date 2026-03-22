@@ -5,6 +5,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   SERVICE_AGENT_TYPE,
@@ -13,6 +14,7 @@ import {
   STATUS_UPDATE_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
+  USAGE_DASHBOARD_ENABLED,
   USAGE_UPDATE_INTERVAL,
 } from './config.js';
 import './channels/index.js';
@@ -31,20 +33,26 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
-  getLastHumanMessageTimestamp,
-  getMessagesSince,
-  getNewMessages,
+  getLatestMessageSeqAtOrBefore,
+  getMessagesSinceSeq,
+  getNewMessagesBySeq,
+  getOpenWorkItem,
+  hasRecentRestartAnnouncement,
   getRegisteredGroup,
   getRouterState,
   initDatabase,
   isPairedRoomJid,
+  markWorkItemDelivered,
+  markWorkItemDeliveryRetry,
   setRegisteredGroup,
   setRouterState,
   updateRegisteredGroupName,
   deleteSession,
   setSession,
   storeChatMetadata,
+  createProducedWorkItem,
   storeMessage,
+  WorkItem,
 } from './db.js';
 import { filterProcessableMessages } from './bot-message-filter.js';
 import { GroupQueue } from './group-queue.js';
@@ -52,6 +60,13 @@ import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
+import {
+  buildRestartAnnouncement,
+  buildInterruptedRestartAnnouncement,
+  consumeRestartContext,
+  inferRecentRestartContext,
+  writeShutdownRestartContext,
+} from './restart-context.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
@@ -63,6 +78,15 @@ import {
   handleSessionCommand,
   isSessionCommandAllowed,
 } from './session-commands.js';
+import {
+  detectFallbackTrigger,
+  getActiveProvider,
+  getFallbackEnvOverrides,
+  getFallbackProviderName,
+  hasGroupProviderOverride,
+  isFallbackEnabled,
+  markPrimaryCooldown,
+} from './provider-fallback.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import {
   readStatusSnapshots,
@@ -75,6 +99,51 @@ import { logger } from './logger.js';
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
+export async function sendFormattedChannelMessage(
+  channels: Channel[],
+  jid: string,
+  rawText: string,
+): Promise<void> {
+  const channel = findChannel(channels, jid);
+  if (!channel) {
+    logger.warn({ jid }, 'No channel owns JID, cannot send message');
+    return;
+  }
+  const text = formatOutbound(rawText);
+  if (text) await channel.sendMessage(jid, text);
+}
+
+export async function sendFormattedTrackedChannelMessage(
+  channels: Channel[],
+  jid: string,
+  rawText: string,
+): Promise<string | null> {
+  const channel = findChannel(channels, jid);
+  if (!channel) {
+    logger.warn({ jid }, 'No channel owns JID, cannot send tracked message');
+    return null;
+  }
+  const text = formatOutbound(rawText);
+  if (!text || !channel.sendAndTrack) return null;
+  return channel.sendAndTrack(jid, text);
+}
+
+export async function editFormattedTrackedChannelMessage(
+  channels: Channel[],
+  jid: string,
+  messageId: string,
+  rawText: string,
+): Promise<void> {
+  const channel = findChannel(channels, jid);
+  if (!channel) {
+    logger.warn({ jid }, 'No channel owns JID, cannot edit tracked message');
+    return;
+  }
+  const text = formatOutbound(rawText);
+  if (!text || !channel.editMessage) return;
+  await channel.editMessage(jid, messageId, text);
+}
+
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
@@ -84,8 +153,27 @@ let messageLoopRunning = false;
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 
-function advanceLastAgentCursor(chatJid: string, timestamp: string): void {
-  lastAgentTimestamp[chatJid] = timestamp;
+function normalizeStoredSeqCursor(
+  cursor: string | undefined,
+  chatJid?: string,
+): string {
+  if (!cursor) return '0';
+  if (/^\d+$/.test(cursor.trim())) return cursor.trim();
+  return String(getLatestMessageSeqAtOrBefore(cursor, chatJid));
+}
+
+function advanceLastAgentCursor(
+  chatJid: string,
+  cursorOrTimestamp: string | number,
+): void {
+  if (typeof cursorOrTimestamp === 'number') {
+    lastAgentTimestamp[chatJid] = String(cursorOrTimestamp);
+  } else {
+    lastAgentTimestamp[chatJid] = normalizeStoredSeqCursor(
+      cursorOrTimestamp,
+      chatJid,
+    );
+  }
   saveState();
 }
 
@@ -98,13 +186,53 @@ function getProcessableMessages(
   return filterProcessableMessages(messages, isPairedRoomJid(chatJid), isOwn);
 }
 
-function loadState(): void {
-  lastTimestamp = getRouterState('last_timestamp') || '';
-  const agentTs = getRouterState('last_agent_timestamp');
+async function deliverOpenWorkItem(
+  channel: Channel,
+  item: WorkItem,
+): Promise<boolean> {
   try {
-    lastAgentTimestamp = agentTs ? JSON.parse(agentTs) : {};
+    await channel.sendMessage(item.chat_jid, item.result_payload);
+    markWorkItemDelivered(item.id);
+    logger.info(
+      {
+        chatJid: item.chat_jid,
+        workItemId: item.id,
+        deliveryAttempts: item.delivery_attempts + 1,
+      },
+      'Delivered produced work item',
+    );
+    return true;
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    markWorkItemDeliveryRetry(item.id, errorMessage);
+    logger.warn(
+      {
+        chatJid: item.chat_jid,
+        workItemId: item.id,
+        deliveryAttempts: item.delivery_attempts + 1,
+        err,
+      },
+      'Failed to deliver produced work item',
+    );
+    return false;
+  }
+}
+
+function loadState(): void {
+  lastTimestamp = normalizeStoredSeqCursor(
+    getRouterState('last_seq') || getRouterState('last_timestamp'),
+  );
+  const agentTs = getRouterState('last_agent_seq') || getRouterState('last_agent_timestamp');
+  try {
+    const parsed = agentTs ? (JSON.parse(agentTs) as Record<string, string>) : {};
+    lastAgentTimestamp = Object.fromEntries(
+      Object.entries(parsed).map(([chatJid, cursor]) => [
+        chatJid,
+        normalizeStoredSeqCursor(cursor, chatJid),
+      ]),
+    );
   } catch {
-    logger.warn('Corrupted last_agent_timestamp in DB, resetting');
+    logger.warn('Corrupted last_agent_seq in DB, resetting');
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
@@ -121,8 +249,8 @@ function loadState(): void {
 }
 
 function saveState(): void {
-  setRouterState('last_timestamp', lastTimestamp);
-  setRouterState('last_agent_timestamp', JSON.stringify(lastAgentTimestamp));
+  setRouterState('last_seq', lastTimestamp);
+  setRouterState('last_agent_seq', JSON.stringify(lastAgentTimestamp));
 }
 
 function clearSession(groupFolder: string): void {
@@ -193,12 +321,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     return true;
   }
 
+  const openWorkItem = getOpenWorkItem(
+    chatJid,
+    (group.agentType || 'claude-code') as 'claude-code' | 'codex',
+  );
+  if (openWorkItem) {
+    const delivered = await deliverOpenWorkItem(channel, openWorkItem);
+    if (!delivered) {
+      return false;
+    }
+  }
+
   const isMainGroup = group.isMain === true;
 
-  const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const rawMissedMessages = getMessagesSince(
+  const sinceSeqCursor = lastAgentTimestamp[chatJid] || '0';
+  const rawMissedMessages = getMessagesSinceSeq(
     chatJid,
-    sinceTimestamp,
+    sinceSeqCursor,
     ASSISTANT_NAME,
   );
   const missedMessages = getProcessableMessages(
@@ -228,7 +367,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
       runAgent: (prompt, onOutput) =>
         runAgent(group, prompt, chatJid, onOutput),
-      closeStdin: () => queue.closeStdin(chatJid),
+      closeStdin: () =>
+        queue.closeStdin(chatJid, {
+          reason: 'session-command',
+        }),
       clearSession: () => clearSession(group.folder),
       advanceCursor: (ts) => {
         advanceLastAgentCursor(chatJid, ts);
@@ -268,11 +410,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
-  const previousCursor = lastAgentTimestamp[chatJid] || '';
-  advanceLastAgentCursor(
-    chatJid,
-    missedMessages[missedMessages.length - 1].timestamp,
-  );
+  const previousCursor = lastAgentTimestamp[chatJid] || '0';
+  const startSeq = missedMessages[0].seq ?? null;
+  const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
+  if (endSeq !== null) {
+    advanceLastAgentCursor(chatJid, endSeq);
+  }
 
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
@@ -281,14 +424,125 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let producedFinalText: string | null = null;
 
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       logger.debug({ group: group.name }, 'Idle timeout, closing agent stdin');
-      queue.closeStdin(chatJid);
+      if (followUpQueuedAt !== null) {
+        logger.warn(
+          {
+            group: group.name,
+            chatJid,
+            followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
+            followUpQueuedTextLength,
+            followUpQueuedFilename,
+            followUpWaitMs: Date.now() - followUpQueuedAt,
+          },
+          'Idle timeout reached while a queued follow-up still had no agent output',
+        );
+      }
+      queue.closeStdin(chatJid, { reason: 'idle-timeout' });
     }, IDLE_TIMEOUT);
   };
+  let followUpQueuedAt: number | null = null;
+  let followUpQueuedTextLength: number | null = null;
+  let followUpQueuedFilename: string | null = null;
+  let followUpNoOutputWarnTimer: ReturnType<typeof setTimeout> | null = null;
+  const FOLLOW_UP_NO_OUTPUT_WARN_MS = 10_000;
+
+  const clearFollowUpNoOutputWarnTimer = () => {
+    if (followUpNoOutputWarnTimer) {
+      clearTimeout(followUpNoOutputWarnTimer);
+      followUpNoOutputWarnTimer = null;
+    }
+  };
+
+  const clearPendingFollowUpDiagnostics = () => {
+    clearFollowUpNoOutputWarnTimer();
+    followUpQueuedAt = null;
+    followUpQueuedTextLength = null;
+    followUpQueuedFilename = null;
+  };
+
+  const scheduleFollowUpNoOutputWarning = () => {
+    clearFollowUpNoOutputWarnTimer();
+    followUpNoOutputWarnTimer = setTimeout(() => {
+      if (followUpQueuedAt === null) return;
+      logger.warn(
+        {
+          group: group.name,
+          chatJid,
+          followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
+          followUpQueuedTextLength,
+          followUpQueuedFilename,
+          elapsedMs: Date.now() - followUpQueuedAt,
+        },
+        'No agent output observed within 10s of queuing a follow-up message',
+      );
+    }, FOLLOW_UP_NO_OUTPUT_WARN_MS);
+  };
+
+  const noteFollowUpQueued = (meta?: {
+    source: 'follow-up';
+    textLength: number;
+    filename: string;
+  }) => {
+    if (meta?.source !== 'follow-up') return;
+    followUpQueuedAt = Date.now();
+    followUpQueuedTextLength = meta.textLength;
+    followUpQueuedFilename = meta.filename;
+    scheduleFollowUpNoOutputWarning();
+    logger.info(
+      {
+        group: group.name,
+        chatJid,
+        followUpQueuedTextLength,
+        followUpQueuedFilename,
+      },
+      'Registered follow-up activity for active agent',
+    );
+  };
+
+  const noteAgentOutputObserved = (phase?: string) => {
+    if (followUpQueuedAt === null) return;
+    logger.info(
+      {
+        group: group.name,
+        chatJid,
+        followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
+        followUpQueuedTextLength,
+        followUpQueuedFilename,
+        followUpWaitMs: Date.now() - followUpQueuedAt,
+        resultPhase: phase,
+      },
+      'Agent produced output after a queued follow-up',
+    );
+    clearPendingFollowUpDiagnostics();
+  };
+
+  const warnFollowUpEndedWithoutOutput = (reason: string) => {
+    if (followUpQueuedAt === null) return;
+    logger.warn(
+      {
+        group: group.name,
+        chatJid,
+        followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
+        followUpQueuedTextLength,
+        followUpQueuedFilename,
+        followUpWaitMs: Date.now() - followUpQueuedAt,
+        reason,
+      },
+      'Active agent ended a turn without any output after a queued follow-up',
+    );
+    clearPendingFollowUpDiagnostics();
+  };
+
+  queue.setActivityTouch(chatJid, (meta) => {
+    noteFollowUpQueued(meta);
+    resetIdleTimer();
+  });
 
   let hadError = false;
   let latestProgressText: string | null = null;
@@ -300,6 +554,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let progressOutputSentToUser = false;
   let latestModelProgressTextForFinalFallback: string | null = null;
   let sawNonProgressOutput = false;
+  let producedDeliverySucceeded = true;
+  let isFirstLogicalTurn = true;
   let poisonedSessionDetected = false;
   const isClaudeCodeAgent =
     (group.agentType || 'claude-code') === 'claude-code';
@@ -308,6 +564,47 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (progressTicker) {
       clearInterval(progressTicker);
       progressTicker = null;
+    }
+  };
+
+  const resetTurnOutputState = () => {
+    finalOutputSentToUser = false;
+    progressOutputSentToUser = false;
+    latestModelProgressTextForFinalFallback = null;
+    sawNonProgressOutput = false;
+    producedFinalText = null;
+  };
+
+  const flushProducedFinalText = async () => {
+    if (!producedFinalText) {
+      return;
+    }
+
+    try {
+      const workItem = createProducedWorkItem({
+        group_folder: group.folder,
+        chat_jid: chatJid,
+        agent_type: group.agentType || 'claude-code',
+        start_seq: isFirstLogicalTurn ? startSeq : null,
+        end_seq: isFirstLogicalTurn ? endSeq : null,
+        result_payload: producedFinalText,
+      });
+      const delivered = await deliverOpenWorkItem(channel, workItem);
+      if (delivered) {
+        finalOutputSentToUser = true;
+      } else {
+        producedDeliverySucceeded = false;
+      }
+    } catch (err) {
+      producedDeliverySucceeded = false;
+      logger.warn(
+        { group: group.name, chatJid, err },
+        'Failed to persist produced output for delivery',
+      );
+    } finally {
+      producedFinalText = null;
+      latestModelProgressTextForFinalFallback = null;
+      isFirstLogicalTurn = false;
     }
   };
 
@@ -379,11 +676,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return;
     }
 
-    latestModelProgressTextForFinalFallback = text;
-    latestProgressText = text;
     if (progressStartedAt === null) {
+      resetTurnOutputState();
       progressStartedAt = Date.now();
     }
+    latestModelProgressTextForFinalFallback = text;
+    latestProgressText = text;
     const rendered = renderProgressMessage(text);
 
     if (progressMessageId && channel.editMessage) {
@@ -400,7 +698,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       return;
     }
 
-    progressMessageId = await channel.sendAndTrack(chatJid, rendered);
+    try {
+      progressMessageId = await channel.sendAndTrack(chatJid, rendered);
+    } catch (err) {
+      logger.warn(
+        { group: group.name, chatJid, err },
+        'Failed to send tracked progress message',
+      );
+      return;
+    }
     if (progressMessageId) {
       logger.info(
         { group: group.name, chatJid, progressMessageId, text },
@@ -423,7 +729,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       poisonedSessionDetected = true;
       hadError = true;
       clearSession(group.folder);
-      queue.closeStdin(chatJid);
+      queue.closeStdin(chatJid, {
+        reason: 'poisoned-session-detected',
+      });
       logger.warn(
         { group: group.name, chatJid },
         'Detected poisoned Claude session from streamed output, forcing close',
@@ -446,18 +754,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         },
         `Agent output: ${raw.slice(0, 200)}`,
       );
+      noteAgentOutputObserved(result.phase);
       if (result.phase === 'progress') {
+        if (finalOutputSentToUser || sawNonProgressOutput) {
+          logger.info(
+            { group: group.name, chatJid },
+            'New logical turn detected (follow-up), resetting turn state',
+          );
+          resetTurnOutputState();
+          resetProgressState();
+          isFirstLogicalTurn = false;
+          await channel.setTyping?.(chatJid, true);
+        }
         if (text) {
           await sendProgressMessage(text);
+        }
+        if (!poisonedSessionDetected) {
+          resetIdleTimer();
         }
         return;
       }
       sawNonProgressOutput = true;
       if (text) {
         await finalizeProgressMessage();
-        await channel.sendMessage(chatJid, text);
-        finalOutputSentToUser = true;
-        latestModelProgressTextForFinalFallback = null;
+        producedFinalText = text;
+        await flushProducedFinalText();
       } else {
         logger.info(
           {
@@ -473,6 +794,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         latestModelProgressTextForFinalFallback = null;
       }
     } else {
+      if (result.status === 'success') {
+        warnFollowUpEndedWithoutOutput('success-null-result');
+      }
       await finalizeProgressMessage();
     }
 
@@ -500,7 +824,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (
     output === 'success' &&
     !hadError &&
-    !finalOutputSentToUser &&
+    !producedFinalText &&
     !sawNonProgressOutput &&
     latestModelProgressTextForFinalFallback
   ) {
@@ -508,28 +832,37 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       { group: group.name, chatJid },
       'Promoting last progress output to final message after agent completion',
     );
-    await channel.sendMessage(chatJid, latestModelProgressTextForFinalFallback);
-    finalOutputSentToUser = true;
-    latestModelProgressTextForFinalFallback = null;
+    producedFinalText = latestModelProgressTextForFinalFallback;
+    await flushProducedFinalText();
   }
 
   clearProgressTicker();
 
   if (idleTimer) clearTimeout(idleTimer);
+  clearPendingFollowUpDiagnostics();
+  queue.setActivityTouch(chatJid, null);
 
   if (hadError) {
-    if (finalOutputSentToUser || progressOutputSentToUser) {
+    if (finalOutputSentToUser || progressOutputSentToUser || producedFinalText) {
       logger.warn(
         { group: group.name },
-        'Agent error after output was sent, skipping cursor rollback to prevent duplicates',
+        'Agent error after output was produced, skipping cursor rollback to prevent duplicates',
       );
-      return true;
+      return producedFinalText ? producedDeliverySucceeded : true;
     }
     lastAgentTimestamp[chatJid] = previousCursor;
     saveState();
     logger.warn(
       { group: group.name },
       'Agent error, rolled back message cursor for retry',
+    );
+    return false;
+  }
+
+  if (!producedDeliverySucceeded) {
+    logger.warn(
+      { group: group.name, chatJid },
+      'Persisted produced output for delivery retry without rerunning agent',
     );
     return false;
   }
@@ -571,51 +904,261 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  // Wrap onOutput to track session ID from streamed results
-  const wrappedOnOutput = onOutput
-    ? async (output: AgentOutput) => {
-        if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+  const isClaudeCode = (group.agentType || 'claude-code') === 'claude-code';
+  const settingsPath = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    '.claude',
+    'settings.json',
+  );
+  const groupHasOverride = hasGroupProviderOverride(settingsPath);
+  const canFallback =
+    isClaudeCode && isFallbackEnabled() && !groupHasOverride;
+
+  const agentInput = {
+    prompt,
+    sessionId,
+    groupFolder: group.folder,
+    chatJid,
+    isMain,
+    assistantName: ASSISTANT_NAME,
+  };
+
+  const runAttempt = async (provider: string): Promise<{
+    output?: AgentOutput;
+    error?: unknown;
+    sawOutput: boolean;
+    sawSuccessNullResultWithoutOutput: boolean;
+    streamedTriggerReason?: {
+      reason: string;
+      retryAfterMs?: number;
+    };
+  }> => {
+    const persistSessionIds = provider === 'claude';
+    let sawOutput = false;
+    let sawSuccessNullResultWithoutOutput = false;
+    let streamedTriggerReason:
+      | {
+          reason: string;
+          retryAfterMs?: number;
         }
-        await onOutput(output);
-      }
-    : undefined;
+      | undefined;
 
-  try {
-    const output = await runAgentProcess(
-      group,
-      {
-        prompt,
-        sessionId,
-        groupFolder: group.folder,
-        chatJid,
-        isMain,
-        assistantName: ASSISTANT_NAME,
-      },
-      (proc, processName) =>
-        queue.registerProcess(chatJid, proc, processName, group.folder),
-      wrappedOnOutput,
-    );
+    const wrappedOnOutput = onOutput
+      ? async (output: AgentOutput) => {
+          if (persistSessionIds && output.newSessionId) {
+            sessions[group.folder] = output.newSessionId;
+            setSession(group.folder, output.newSessionId);
+          }
 
-    if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+          if (output.result !== null && output.result !== undefined) {
+            sawOutput = true;
+          } else if (
+            provider === 'claude' &&
+            output.status === 'success' &&
+            !sawOutput
+          ) {
+            sawSuccessNullResultWithoutOutput = true;
+          }
+
+          if (
+            provider === 'claude' &&
+            output.status === 'error' &&
+            !sawOutput &&
+            !streamedTriggerReason
+          ) {
+            const trigger = detectFallbackTrigger(output.error);
+            if (trigger.shouldFallback) {
+              streamedTriggerReason = {
+                reason: trigger.reason,
+                retryAfterMs: trigger.retryAfterMs,
+              };
+            }
+          }
+
+          await onOutput(output);
+        }
+      : undefined;
+
+    if (provider !== 'claude') {
+      logger.info(
+        {
+          group: group.name,
+          chatJid,
+          provider,
+        },
+        `Claude provider in cooldown, routing request to ${provider}`,
+      );
     }
 
-    if (output.status === 'error') {
+    logger.info(
+      {
+        group: group.name,
+        chatJid,
+        provider,
+        canFallback,
+        groupHasOverride,
+      },
+      `Using provider: ${provider}`,
+    );
+
+    try {
+      const output = await runAgentProcess(
+        group,
+        {
+          ...agentInput,
+          sessionId: persistSessionIds ? sessionId : undefined,
+        },
+        (proc, processName) =>
+          queue.registerProcess(chatJid, proc, processName, group.folder),
+        wrappedOnOutput,
+        provider === 'claude' ? undefined : getFallbackEnvOverrides(),
+      );
+
+      if (persistSessionIds && output.newSessionId) {
+        sessions[group.folder] = output.newSessionId;
+        setSession(group.folder, output.newSessionId);
+      }
+
+      logger.info(
+        {
+          group: group.name,
+          chatJid,
+          provider,
+          status: output.status,
+          sawOutput,
+        },
+        `Provider response completed (provider: ${provider})`,
+      );
+
+      return {
+        output,
+        sawOutput,
+        sawSuccessNullResultWithoutOutput,
+        streamedTriggerReason,
+      };
+    } catch (error) {
+      return {
+        error,
+        sawOutput,
+        sawSuccessNullResultWithoutOutput,
+        streamedTriggerReason,
+      };
+    }
+  };
+
+  const runFallbackAttempt = async (
+    reason: string,
+    retryAfterMs?: number,
+  ): Promise<'success' | 'error'> => {
+    const fallbackName = getFallbackProviderName();
+    markPrimaryCooldown(reason, retryAfterMs);
+
+    logger.info(
+      {
+        group: group.name,
+        chatJid,
+        reason,
+        retryAfterMs,
+        fallbackProvider: fallbackName,
+      },
+      `Falling back to provider: ${fallbackName} (reason: ${reason})`,
+    );
+
+    const fallbackAttempt = await runAttempt(fallbackName);
+    if (fallbackAttempt.error) {
       logger.error(
-        { group: group.name, error: output.error },
-        'Agent process error',
+        {
+          group: group.name,
+          provider: fallbackName,
+          err: fallbackAttempt.error,
+        },
+        'Fallback provider also threw',
+      );
+      return 'error';
+    }
+
+    if (fallbackAttempt.output?.status === 'error') {
+      logger.error(
+        {
+          group: group.name,
+          provider: fallbackName,
+          error: fallbackAttempt.output.error,
+        },
+        `Fallback provider (${fallbackName}) also failed`,
       );
       return 'error';
     }
 
     return 'success';
-  } catch (err) {
-    logger.error({ group: group.name, err }, 'Agent error');
+  };
+
+  const provider = canFallback ? getActiveProvider() : 'claude';
+  const primaryAttempt = await runAttempt(provider);
+
+  if (primaryAttempt.error) {
+    if (canFallback && provider === 'claude' && !primaryAttempt.sawOutput) {
+      const errMsg =
+        primaryAttempt.error instanceof Error
+          ? primaryAttempt.error.message
+          : String(primaryAttempt.error);
+      const trigger = primaryAttempt.streamedTriggerReason
+        ? {
+            shouldFallback: true,
+            reason: primaryAttempt.streamedTriggerReason.reason,
+            retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
+          }
+        : detectFallbackTrigger(errMsg);
+      if (trigger.shouldFallback) {
+        return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
+      }
+    }
+
+    logger.error(
+      { group: group.name, chatJid, provider, err: primaryAttempt.error },
+      'Agent error',
+    );
     return 'error';
   }
+
+  const output = primaryAttempt.output;
+  if (!output) {
+    logger.error({ group: group.name, chatJid, provider }, 'Agent produced no output object');
+    return 'error';
+  }
+
+  if (
+    canFallback &&
+    provider === 'claude' &&
+    !primaryAttempt.sawOutput &&
+    primaryAttempt.sawSuccessNullResultWithoutOutput
+  ) {
+    return runFallbackAttempt('success-null-result');
+  }
+
+  if (output.status === 'error') {
+    if (canFallback && provider === 'claude' && !primaryAttempt.sawOutput) {
+      const trigger = primaryAttempt.streamedTriggerReason
+        ? {
+            shouldFallback: true,
+            reason: primaryAttempt.streamedTriggerReason.reason,
+            retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
+          }
+        : detectFallbackTrigger(output.error);
+      if (trigger.shouldFallback) {
+        return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
+      }
+    }
+
+    logger.error(
+      { group: group.name, chatJid, provider, error: output.error },
+      'Agent process error',
+    );
+    return 'error';
+  }
+
+  return 'success';
 }
 
 // ── Status & Usage Dashboards ───────────────────────────────────
@@ -924,8 +1467,31 @@ interface CodexRateLimit {
 }
 
 let usageApiBackoffUntil = 0;
+let usageApi429Streak = 0;
+let usageApiPollingDisabled = false;
+
+function parseRetryAfterMs(retryAfter: string | null): number | null {
+  if (!retryAfter) return null;
+
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+
+  const absolute = Date.parse(retryAfter);
+  if (!Number.isNaN(absolute)) {
+    return Math.max(0, absolute - Date.now());
+  }
+
+  return null;
+}
 
 async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
+  if (usageApiPollingDisabled) {
+    logger.debug('Skipping usage API call (polling disabled for this process)');
+    return null;
+  }
+
   // Skip if in backoff period (after 429)
   if (Date.now() < usageApiBackoffUntil) {
     logger.debug('Skipping usage API call (backoff active)');
@@ -957,15 +1523,27 @@ async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       if (res.status === 429) {
-        // Back off for 10 minutes on rate limit
-        usageApiBackoffUntil = Date.now() + 600_000;
+        const retryAfter = res.headers.get('retry-after');
+        const retryAfterMs = parseRetryAfterMs(retryAfter);
+        const backoffMs = Math.max(600_000, retryAfterMs ?? 0);
+        usageApi429Streak += 1;
+        usageApiBackoffUntil = Date.now() + backoffMs;
+        if (usageApi429Streak >= 3) {
+          usageApiPollingDisabled = true;
+        }
         logger.warn(
           {
             status: 429,
-            retryAfter: res.headers.get('retry-after'),
+            retryAfter,
+            retryAfterMs,
+            backoffMs,
+            consecutive429s: usageApi429Streak,
+            pollingDisabled: usageApiPollingDisabled,
             body: body.slice(0, 200),
           },
-          'Usage API rate limited (429), backing off 10min',
+          usageApiPollingDisabled
+            ? 'Usage API rate limited repeatedly (429), disabling usage polling for this process'
+            : 'Usage API rate limited (429), backing off',
         );
       } else {
         logger.warn(
@@ -975,6 +1553,7 @@ async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
       }
       return null;
     }
+    usageApi429Streak = 0;
     return (await res.json()) as ClaudeUsageData;
   } catch (err) {
     logger.debug({ err }, 'Usage API fetch failed');
@@ -1082,14 +1661,20 @@ async function buildUsageContent(): Promise<string> {
         (entry) => entry.status === 'processing' || entry.status === 'waiting',
       ),
   );
+  const shouldFetchClaudeUsage = USAGE_DASHBOARD_ENABLED;
 
   const [liveClaudeUsage, codexUsage] = await Promise.all([
-    hasActiveClaudeWork ? Promise.resolve(null) : fetchClaudeUsage(),
+    shouldFetchClaudeUsage && !hasActiveClaudeWork
+      ? fetchClaudeUsage()
+      : Promise.resolve(null),
     fetchCodexUsage(),
   ]);
-  const claudeUsage = liveClaudeUsage || cachedClaudeUsageData;
-  const claudeUsageIsCached = !liveClaudeUsage && !!cachedClaudeUsageData;
-  if (liveClaudeUsage) {
+  const claudeUsage = shouldFetchClaudeUsage
+    ? liveClaudeUsage || cachedClaudeUsageData
+    : null;
+  const claudeUsageIsCached =
+    shouldFetchClaudeUsage && !liveClaudeUsage && !!cachedClaudeUsageData;
+  if (shouldFetchClaudeUsage && liveClaudeUsage) {
     cachedClaudeUsageData = liveClaudeUsage;
   }
 
@@ -1163,6 +1748,9 @@ async function buildUsageContent(): Promise<string> {
     lines.push('```');
   } else {
     lines.push('_조회 불가_');
+  }
+  if (shouldFetchClaudeUsage && usageApiPollingDisabled) {
+    lines.push('_* Claude 사용량 조회는 반복된 429로 이번 프로세스에서 일시 중지_');
   }
   if (claudeUsageIsCached) {
     lines.push('_* Claude 사용량은 작업 중일 때는 캐시값 유지_');
@@ -1314,7 +1902,7 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(
+      const { messages, newSeqCursor } = getNewMessagesBySeq(
         jids,
         lastTimestamp,
         ASSISTANT_NAME,
@@ -1324,7 +1912,7 @@ async function startMessageLoop(): Promise<void> {
         logger.info({ count: messages.length }, 'New messages');
 
         // Advance the "seen" cursor for all messages immediately
-        lastTimestamp = newTimestamp;
+        lastTimestamp = newSeqCursor;
         saveState();
 
         // Deduplicate by group
@@ -1357,33 +1945,11 @@ async function startMessageLoop(): Promise<void> {
 
           if (processableGroupMessages.length === 0) {
             const lastIgnored = groupMessages[groupMessages.length - 1];
-            if (lastIgnored) {
-              advanceLastAgentCursor(chatJid, lastIgnored.timestamp);
+            if (lastIgnored?.seq != null) {
+              advanceLastAgentCursor(chatJid, lastIgnored.seq);
             }
             continue;
           }
-
-          // --- Bot-collaboration timeout ---
-          // If all new messages are from bots, only process if a human
-          // sent a message within the last 12 hours.
-          const BOT_COLLAB_TIMEOUT_MS = 12 * 60 * 60 * 1000;
-          const allFromBots = processableGroupMessages.every(
-            (m) => m.is_from_me || !!m.is_bot_message,
-          );
-          if (allFromBots) {
-            const lastHuman = getLastHumanMessageTimestamp(chatJid);
-            if (
-              !lastHuman ||
-              Date.now() - new Date(lastHuman).getTime() > BOT_COLLAB_TIMEOUT_MS
-            ) {
-              logger.info(
-                { chatJid, lastHuman },
-                'Bot-collaboration timeout: no human message within 12h, skipping',
-              );
-              continue;
-            }
-          }
-          // --- End bot-collaboration timeout ---
 
           // --- Session command interception (message loop) ---
           // Scan ALL messages in the batch for a session command.
@@ -1402,7 +1968,9 @@ async function startMessageLoop(): Promise<void> {
                 isSessionCommandSenderAllowed(loopCmdMsg.sender),
               )
             ) {
-              queue.closeStdin(chatJid);
+              queue.closeStdin(chatJid, {
+                reason: 'session-command-detected',
+              });
             }
             // Enqueue so processGroupMessages handles auth + cursor advancement.
             // Don't pipe via IPC — slash commands need a fresh agent with
@@ -1430,7 +1998,7 @@ async function startMessageLoop(): Promise<void> {
 
           // Pull all messages since lastAgentTimestamp so non-trigger
           // context that accumulated between triggers is included.
-          const allPending = getMessagesSince(
+          const allPending = getMessagesSinceSeq(
             chatJid,
             lastAgentTimestamp[chatJid] || '',
             ASSISTANT_NAME,
@@ -1451,10 +2019,10 @@ async function startMessageLoop(): Promise<void> {
               { chatJid, count: messagesToSend.length },
               'Piped messages to active agent',
             );
-            advanceLastAgentCursor(
-              chatJid,
-              messagesToSend[messagesToSend.length - 1].timestamp,
-            );
+            const endSeq = messagesToSend[messagesToSend.length - 1].seq;
+            if (endSeq != null) {
+              advanceLastAgentCursor(chatJid, endSeq);
+            }
             // Show typing indicator while the agent processes the piped message
             channel
               .setTyping?.(chatJid, true)
@@ -1480,10 +2048,10 @@ async function startMessageLoop(): Promise<void> {
  */
 function recoverPendingMessages(): void {
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
-    const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-    const rawPending = getMessagesSince(
+    const sinceSeqCursor = lastAgentTimestamp[chatJid] || '';
+    const rawPending = getMessagesSinceSeq(
       chatJid,
-      sinceTimestamp,
+      sinceSeqCursor,
       ASSISTANT_NAME,
     );
     const recoveryChannel = findChannel(channels, chatJid);
@@ -1499,15 +2067,81 @@ function recoverPendingMessages(): void {
       );
       queue.enqueueMessageCheck(chatJid, group.folder);
     } else if (rawPending.length > 0) {
-      advanceLastAgentCursor(
-        chatJid,
-        rawPending[rawPending.length - 1].timestamp,
-      );
+      const endSeq = rawPending[rawPending.length - 1].seq;
+      if (endSeq != null) {
+        advanceLastAgentCursor(chatJid, endSeq);
+      }
     }
   }
 }
 
+async function announceRestartRecovery(
+  processStartedAtMs: number,
+): Promise<void> {
+  const explicitContext = consumeRestartContext();
+  const dedupeSince = new Date(processStartedAtMs - 60_000).toISOString();
+  if (explicitContext) {
+    if (
+      hasRecentRestartAnnouncement(explicitContext.chatJid, dedupeSince)
+    ) {
+      logger.info(
+        { chatJid: explicitContext.chatJid },
+        'Skipped duplicate restart recovery announcement',
+      );
+      return;
+    }
+
+    await sendFormattedChannelMessage(
+      channels,
+      explicitContext.chatJid,
+      buildRestartAnnouncement(explicitContext),
+    );
+    logger.info(
+      { chatJid: explicitContext.chatJid },
+      'Sent explicit restart recovery announcement',
+    );
+
+    for (const interrupted of explicitContext.interruptedGroups ?? []) {
+      if (interrupted.chatJid === explicitContext.chatJid) continue;
+      if (hasRecentRestartAnnouncement(interrupted.chatJid, dedupeSince)) {
+        continue;
+      }
+      await sendFormattedChannelMessage(
+        channels,
+        interrupted.chatJid,
+        buildInterruptedRestartAnnouncement(interrupted),
+      );
+    }
+    return;
+  }
+
+  const inferred = inferRecentRestartContext(
+    registeredGroups,
+    processStartedAtMs,
+  );
+  if (!inferred) return;
+
+  if (hasRecentRestartAnnouncement(inferred.chatJid, dedupeSince)) {
+    logger.info(
+      { chatJid: inferred.chatJid },
+      'Skipped duplicate inferred restart recovery announcement',
+    );
+    return;
+  }
+
+  await sendFormattedChannelMessage(
+    channels,
+    inferred.chatJid,
+    inferred.lines.join('\n'),
+  );
+  logger.info(
+    { chatJid: inferred.chatJid },
+    'Sent inferred restart recovery announcement',
+  );
+}
+
 async function main(): Promise<void> {
+  const processStartedAtMs = Date.now();
   initDatabase();
   logger.info('Database initialized');
   loadState();
@@ -1515,6 +2149,34 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    const interruptedGroups = queue
+      .getStatuses(Object.keys(registeredGroups))
+      .filter(
+        (
+          status,
+        ): status is typeof status & {
+          status: 'processing' | 'idle' | 'waiting';
+        } => status.status !== 'inactive',
+      )
+      .map((status) => ({
+        chatJid: status.jid,
+        groupName: registeredGroups[status.jid]?.name || status.jid,
+        status: status.status,
+        elapsedMs: status.elapsedMs,
+        pendingMessages: status.pendingMessages,
+        pendingTasks: status.pendingTasks,
+      }));
+    const writtenPaths = writeShutdownRestartContext(
+      registeredGroups,
+      interruptedGroups,
+      signal,
+    );
+    if (writtenPaths.length > 0) {
+      logger.info(
+        { signal, interruptedGroupCount: interruptedGroups.length, writtenPaths },
+        'Stored shutdown restart context for interrupted groups',
+      );
+    }
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -1581,15 +2243,12 @@ async function main(): Promise<void> {
     queue,
     onProcess: (groupJid, proc, processName, groupFolder) =>
       queue.registerProcess(groupJid, proc, processName, groupFolder),
-    sendMessage: async (jid, rawText) => {
-      const channel = findChannel(channels, jid);
-      if (!channel) {
-        logger.warn({ jid }, 'No channel owns JID, cannot send message');
-        return;
-      }
-      const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
-    },
+    sendMessage: (jid, rawText) =>
+      sendFormattedChannelMessage(channels, jid, rawText),
+    sendTrackedMessage: (jid, rawText) =>
+      sendFormattedTrackedChannelMessage(channels, jid, rawText),
+    editTrackedMessage: (jid, messageId, rawText) =>
+      editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {
@@ -1611,6 +2270,7 @@ async function main(): Promise<void> {
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
+  await announceRestartRecovery(processStartedAtMs);
   // Purge old messages in status channel before creating fresh dashboards
   if (STATUS_CHANNEL_ID && SERVICE_AGENT_TYPE === 'claude-code') {
     const statusJid = `dc:${STATUS_CHANNEL_ID}`;

@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc",
     "build:runners": "npm --prefix runners/agent-runner install && npm --prefix runners/agent-runner run build && npm --prefix runners/codex-runner install && npm --prefix runners/codex-runner run build",
+    "restart:hint": "tsx src/restart-context-cli.ts write",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",

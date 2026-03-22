@@ -1,0 +1,83 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import {
+  editFormattedTrackedChannelMessage,
+  sendFormattedChannelMessage,
+  sendFormattedTrackedChannelMessage,
+} from './index.js';
+import { Channel } from './types.js';
+
+function makeChannel(overrides: Partial<Channel> = {}): Channel {
+  return {
+    name: 'test',
+    connect: async () => {},
+    sendMessage: async () => {},
+    isConnected: () => true,
+    ownsJid: (jid: string) => jid === 'dc:test',
+    disconnect: async () => {},
+    ...overrides,
+  };
+}
+
+describe('index scheduler messaging helpers', () => {
+  it('sends formatted tracked messages through sendAndTrack', async () => {
+    const sendAndTrack = vi.fn(async () => 'msg-123');
+    const channel = makeChannel({ sendAndTrack });
+
+    const messageId = await sendFormattedTrackedChannelMessage(
+      [channel],
+      'dc:test',
+      '<internal>hidden</internal>watching ci',
+    );
+
+    expect(messageId).toBe('msg-123');
+    expect(sendAndTrack).toHaveBeenCalledWith('dc:test', 'watching ci');
+  });
+
+  it('edits formatted tracked messages through editMessage', async () => {
+    const editMessage = vi.fn(async () => {});
+    const channel = makeChannel({ editMessage });
+
+    await editFormattedTrackedChannelMessage(
+      [channel],
+      'dc:test',
+      'msg-123',
+      '<internal>hidden</internal>still watching',
+    );
+
+    expect(editMessage).toHaveBeenCalledWith(
+      'dc:test',
+      'msg-123',
+      'still watching',
+    );
+  });
+
+  it('skips empty messages after formatting', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const sendAndTrack = vi.fn(async () => 'msg-123');
+    const editMessage = vi.fn(async () => {});
+    const channel = makeChannel({ sendMessage, sendAndTrack, editMessage });
+
+    const trackedResult = await sendFormattedTrackedChannelMessage(
+      [channel],
+      'dc:test',
+      '<internal>only hidden</internal>',
+    );
+    await editFormattedTrackedChannelMessage(
+      [channel],
+      'dc:test',
+      'msg-123',
+      '<internal>only hidden</internal>',
+    );
+    await sendFormattedChannelMessage(
+      [channel],
+      'dc:test',
+      '<internal>only hidden</internal>',
+    );
+
+    expect(trackedResult).toBeNull();
+    expect(sendAndTrack).not.toHaveBeenCalled();
+    expect(editMessage).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+});

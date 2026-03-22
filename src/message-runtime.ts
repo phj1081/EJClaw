@@ -8,12 +8,20 @@ import {
 import {
   getAllChats,
   getAllTasks,
-  getLastHumanMessageTimestamp,
   getMessagesSince,
   getNewMessages,
 } from './db.js';
-import { isSessionCommandSenderAllowed } from './config.js';
+import { DATA_DIR, isSessionCommandSenderAllowed } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
+import {
+  detectFallbackTrigger,
+  getActiveProvider,
+  getFallbackEnvOverrides,
+  getFallbackProviderName,
+  hasGroupProviderOverride,
+  isFallbackEnabled,
+  markPrimaryCooldown,
+} from './provider-fallback.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
@@ -26,6 +34,7 @@ import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { isTaskStatusControlMessage } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import path from 'path';
 
 export interface MessageRuntimeDeps {
   assistantName: string;
@@ -121,63 +130,298 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     let resetSessionRequested = false;
 
-    const wrappedOnOutput = onOutput
-      ? async (output: AgentOutput) => {
-          if (output.newSessionId) {
-            deps.persistSession(group.folder, output.newSessionId);
+    const settingsPath = path.join(
+      DATA_DIR,
+      'sessions',
+      group.folder,
+      '.claude',
+      'settings.json',
+    );
+    const groupHasOverride = hasGroupProviderOverride(settingsPath);
+    const canFallback =
+      isClaudeCodeAgent && isFallbackEnabled() && !groupHasOverride;
+
+    const agentInput = {
+      prompt,
+      sessionId,
+      groupFolder: group.folder,
+      chatJid,
+      runId,
+      isMain,
+      assistantName: deps.assistantName,
+    };
+
+    const runAttempt = async (provider: string): Promise<{
+      output?: AgentOutput;
+      error?: unknown;
+      sawOutput: boolean;
+      sawSuccessNullResultWithoutOutput: boolean;
+      streamedTriggerReason?: {
+        reason: string;
+        retryAfterMs?: number;
+      };
+    }> => {
+      const persistSessionIds = provider === 'claude';
+      let sawOutput = false;
+      let sawSuccessNullResultWithoutOutput = false;
+      let streamedTriggerReason:
+        | {
+            reason: string;
+            retryAfterMs?: number;
           }
-          if (isClaudeCodeAgent && shouldResetSessionOnAgentFailure(output)) {
-            resetSessionRequested = true;
+        | undefined;
+
+      const wrappedOnOutput = onOutput
+        ? async (output: AgentOutput) => {
+            if (persistSessionIds && output.newSessionId) {
+              deps.persistSession(group.folder, output.newSessionId);
+            }
+            if (
+              persistSessionIds &&
+              isClaudeCodeAgent &&
+              shouldResetSessionOnAgentFailure(output)
+            ) {
+              resetSessionRequested = true;
+            }
+            if (output.result !== null && output.result !== undefined) {
+              sawOutput = true;
+            } else if (
+              provider === 'claude' &&
+              output.status === 'success' &&
+              !sawOutput
+            ) {
+              sawSuccessNullResultWithoutOutput = true;
+            }
+            if (
+              provider === 'claude' &&
+              output.status === 'error' &&
+              !sawOutput &&
+              !streamedTriggerReason
+            ) {
+              const trigger = detectFallbackTrigger(output.error);
+              if (trigger.shouldFallback) {
+                streamedTriggerReason = {
+                  reason: trigger.reason,
+                  retryAfterMs: trigger.retryAfterMs,
+                };
+              }
+            }
+            await onOutput(output);
           }
-          await onOutput(output);
-        }
-      : undefined;
+        : undefined;
 
-    try {
-      const output = await runAgentProcess(
-        group,
-        {
-          prompt,
-          sessionId,
-          groupFolder: group.folder,
-          chatJid,
-          runId,
-          isMain,
-          assistantName: deps.assistantName,
-        },
-        (proc, processName) =>
-          deps.queue.registerProcess(chatJid, proc, processName, group.folder),
-        wrappedOnOutput,
-      );
-
-      if (output.newSessionId) {
-        deps.persistSession(group.folder, output.newSessionId);
-      }
-
-      if (
-        isClaudeCodeAgent &&
-        (resetSessionRequested || shouldResetSessionOnAgentFailure(output))
-      ) {
-        deps.clearSession(group.folder);
-        logger.warn(
-          { group: group.name, chatJid, runId },
-          'Cleared poisoned agent session after unrecoverable error',
+      if (provider !== 'claude') {
+        logger.info(
+          { chatJid, group: group.name, groupFolder: group.folder, runId, provider },
+          `Claude provider in cooldown, routing request to ${provider}`,
         );
       }
 
-      if (output.status === 'error') {
+      logger.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          provider,
+          canFallback,
+          groupHasOverride,
+        },
+        `Using provider: ${provider}`,
+      );
+
+      try {
+        const output = await runAgentProcess(
+          group,
+          {
+            ...agentInput,
+            sessionId: persistSessionIds ? sessionId : undefined,
+          },
+          (proc, processName) =>
+            deps.queue.registerProcess(chatJid, proc, processName, group.folder),
+          wrappedOnOutput,
+          provider === 'claude' ? undefined : getFallbackEnvOverrides(),
+        );
+
+        if (persistSessionIds && output.newSessionId) {
+          deps.persistSession(group.folder, output.newSessionId);
+        }
+
+        logger.info(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            provider,
+            status: output.status,
+            sawOutput,
+          },
+          `Provider response completed (provider: ${provider})`,
+        );
+
+        return {
+          output,
+          sawOutput,
+          sawSuccessNullResultWithoutOutput,
+          streamedTriggerReason,
+        };
+      } catch (error) {
+        return {
+          error,
+          sawOutput,
+          sawSuccessNullResultWithoutOutput,
+          streamedTriggerReason,
+        };
+      }
+    };
+
+    const runFallbackAttempt = async (
+      reason: string,
+      retryAfterMs?: number,
+    ): Promise<'success' | 'error'> => {
+      const fallbackName = getFallbackProviderName();
+      markPrimaryCooldown(reason, retryAfterMs);
+
+      logger.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          reason,
+          retryAfterMs,
+          fallbackProvider: fallbackName,
+        },
+        `Falling back to provider: ${fallbackName} (reason: ${reason})`,
+      );
+
+      const fallbackAttempt = await runAttempt(fallbackName);
+      if (fallbackAttempt.error) {
         logger.error(
-          { group: group.name, chatJid, runId, error: output.error },
-          'Agent process error',
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            provider: fallbackName,
+            err: fallbackAttempt.error,
+          },
+          'Fallback provider also threw',
+        );
+        return 'error';
+      }
+
+      if (fallbackAttempt.output?.status === 'error') {
+        logger.error(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            provider: fallbackName,
+            error: fallbackAttempt.output.error,
+          },
+          `Fallback provider (${fallbackName}) also failed`,
         );
         return 'error';
       }
 
       return 'success';
-    } catch (err) {
-      logger.error({ group: group.name, chatJid, runId, err }, 'Agent error');
+    };
+
+    const provider = canFallback ? getActiveProvider() : 'claude';
+    const primaryAttempt = await runAttempt(provider);
+
+    if (primaryAttempt.error) {
+      if (canFallback && provider === 'claude' && !primaryAttempt.sawOutput) {
+        const errMsg =
+          primaryAttempt.error instanceof Error
+            ? primaryAttempt.error.message
+            : String(primaryAttempt.error);
+        const trigger = primaryAttempt.streamedTriggerReason
+          ? {
+              shouldFallback: true,
+              reason: primaryAttempt.streamedTriggerReason.reason,
+              retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
+            }
+          : detectFallbackTrigger(errMsg);
+        if (trigger.shouldFallback) {
+          return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
+        }
+      }
+
+      logger.error(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          provider,
+          err: primaryAttempt.error,
+        },
+        'Agent error',
+      );
       return 'error';
     }
+
+    const output = primaryAttempt.output;
+    if (!output) {
+      logger.error(
+        { chatJid, group: group.name, groupFolder: group.folder, runId, provider },
+        'Agent produced no output object',
+      );
+      return 'error';
+    }
+
+    if (
+      canFallback &&
+      provider === 'claude' &&
+      !primaryAttempt.sawOutput &&
+      primaryAttempt.sawSuccessNullResultWithoutOutput
+    ) {
+      return runFallbackAttempt('success-null-result');
+    }
+
+    if (
+      isClaudeCodeAgent &&
+      (resetSessionRequested || shouldResetSessionOnAgentFailure(output))
+    ) {
+      deps.clearSession(group.folder);
+      logger.warn(
+        { group: group.name, chatJid, runId },
+        'Cleared poisoned agent session after unrecoverable error',
+      );
+    }
+
+    if (output.status === 'error') {
+      if (canFallback && provider === 'claude' && !primaryAttempt.sawOutput) {
+        const trigger = primaryAttempt.streamedTriggerReason
+          ? {
+              shouldFallback: true,
+              reason: primaryAttempt.streamedTriggerReason.reason,
+              retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
+            }
+          : detectFallbackTrigger(output.error);
+        if (trigger.shouldFallback) {
+          return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
+        }
+      }
+
+      logger.error(
+        {
+          group: group.name,
+          chatJid,
+          runId,
+          provider,
+          error: output.error,
+        },
+        'Agent process error',
+      );
+      return 'error';
+    }
+
+    return 'success';
   };
 
   const processGroupMessages = async (
@@ -323,6 +567,21 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
+        if (followUpQueuedAt !== null) {
+          logger.warn(
+            {
+              chatJid,
+              group: group.name,
+              groupFolder: group.folder,
+              runId,
+              followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
+              followUpQueuedTextLength,
+              followUpQueuedFilename,
+              followUpWaitMs: Date.now() - followUpQueuedAt,
+            },
+            'Idle timeout reached while a queued follow-up still had no agent output',
+          );
+        }
         logger.info(
           { chatJid, group: group.name, groupFolder: group.folder, runId },
           'Idle timeout reached, closing active agent stdin',
@@ -333,6 +592,111 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         });
       }, deps.idleTimeout);
     };
+    let followUpQueuedAt: number | null = null;
+    let followUpQueuedTextLength: number | null = null;
+    let followUpQueuedFilename: string | null = null;
+    let followUpNoOutputWarnTimer: ReturnType<typeof setTimeout> | null = null;
+    const FOLLOW_UP_NO_OUTPUT_WARN_MS = 10_000;
+
+    const clearFollowUpNoOutputWarnTimer = () => {
+      if (followUpNoOutputWarnTimer) {
+        clearTimeout(followUpNoOutputWarnTimer);
+        followUpNoOutputWarnTimer = null;
+      }
+    };
+
+    const clearPendingFollowUpDiagnostics = () => {
+      clearFollowUpNoOutputWarnTimer();
+      followUpQueuedAt = null;
+      followUpQueuedTextLength = null;
+      followUpQueuedFilename = null;
+    };
+
+    const scheduleFollowUpNoOutputWarning = () => {
+      clearFollowUpNoOutputWarnTimer();
+      followUpNoOutputWarnTimer = setTimeout(() => {
+        if (followUpQueuedAt === null) return;
+        logger.warn(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
+            followUpQueuedTextLength,
+            followUpQueuedFilename,
+            elapsedMs: Date.now() - followUpQueuedAt,
+          },
+          'No agent output observed within 10s of queuing a follow-up message',
+        );
+      }, FOLLOW_UP_NO_OUTPUT_WARN_MS);
+    };
+
+    const noteFollowUpQueued = (meta?: {
+      source: 'follow-up';
+      textLength: number;
+      filename: string;
+    }) => {
+      if (meta?.source !== 'follow-up') return;
+      followUpQueuedAt = Date.now();
+      followUpQueuedTextLength = meta.textLength;
+      followUpQueuedFilename = meta.filename;
+      scheduleFollowUpNoOutputWarning();
+      logger.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          followUpQueuedTextLength,
+          followUpQueuedFilename,
+        },
+        'Registered follow-up activity for active agent',
+      );
+    };
+
+    const noteAgentOutputObserved = (phase?: string) => {
+      if (followUpQueuedAt === null) return;
+      logger.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
+          followUpQueuedTextLength,
+          followUpQueuedFilename,
+          followUpWaitMs: Date.now() - followUpQueuedAt,
+          resultPhase: phase,
+        },
+        'Agent produced output after a queued follow-up',
+      );
+      clearPendingFollowUpDiagnostics();
+    };
+
+    const warnFollowUpEndedWithoutOutput = (reason: string) => {
+      if (followUpQueuedAt === null) return;
+      logger.warn(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
+          followUpQueuedTextLength,
+          followUpQueuedFilename,
+          followUpWaitMs: Date.now() - followUpQueuedAt,
+          reason,
+        },
+        'Active agent ended a turn without any output after a queued follow-up',
+      );
+      clearPendingFollowUpDiagnostics();
+    };
+
+    deps.queue.setActivityTouch?.(chatJid, (meta) => {
+      noteFollowUpQueued(meta);
+      resetIdleTimer();
+    });
 
     let hadError = false;
     let finalOutputSentToUser = false;
@@ -463,7 +827,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }
 
       if (channel.sendAndTrack) {
-        progressMessageId = await channel.sendAndTrack(chatJid, rendered);
+        try {
+          progressMessageId = await channel.sendAndTrack(chatJid, rendered);
+        } catch (err) {
+          logger.warn(
+            { chatJid, group: group.name, groupFolder: group.folder, runId, err },
+            'Failed to send tracked progress message',
+          );
+          return;
+        }
         if (progressMessageId) {
           logger.info(
             {
@@ -532,6 +904,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             },
             `Agent output: ${raw.slice(0, 200)}`,
           );
+          noteAgentOutputObserved(result.phase);
           if (result.phase === 'progress') {
             // Detect new logical turn (follow-up IPC): if a final was already
             // sent in this run, a new progress output means a follow-up turn
@@ -556,6 +929,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             }
             if (text) {
               await sendProgressMessage(text);
+            }
+            if (!poisonedSessionDetected) {
+              resetIdleTimer();
             }
             return;
           }
@@ -584,6 +960,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             latestModelProgressTextForFinalFallback = null;
           }
         } else {
+          if (result.status === 'success') {
+            warnFollowUpEndedWithoutOutput('success-null-result');
+          }
           await finalizeProgressMessage();
         }
 
@@ -636,6 +1015,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     clearProgressTicker();
 
     if (idleTimer) clearTimeout(idleTimer);
+    clearPendingFollowUpDiagnostics();
+    deps.queue.setActivityTouch?.(chatJid, null);
 
     if (hadError) {
       if (finalOutputSentToUser || progressOutputSentToUser) {
@@ -723,23 +1104,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             }
 
             const isMainGroup = group.isMain === true;
-            const allFromBots = groupMessages.every(
-              (msg) => msg.is_from_me || !!msg.is_bot_message,
-            );
-            if (allFromBots) {
-              const lastHuman = getLastHumanMessageTimestamp(chatJid);
-              if (
-                !lastHuman ||
-                Date.now() - new Date(lastHuman).getTime() > 12 * 60 * 60 * 1000
-              ) {
-                logger.info(
-                  { chatJid, lastHuman },
-                  'Bot-collaboration timeout: no human message within 12h, skipping',
-                );
-                continue;
-              }
-            }
-
             const loopCmdMsg = groupMessages.find(
               (msg) =>
                 extractSessionCommand(msg.content, deps.triggerPattern) !==

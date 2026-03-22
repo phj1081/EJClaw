@@ -761,7 +761,7 @@ describe('DiscordChannel', () => {
       expect(currentClient().channels.fetch).toHaveBeenCalledWith('9876543210');
     });
 
-    it('handles send failure gracefully', async () => {
+    it('propagates send failure to the caller', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
@@ -770,10 +770,9 @@ describe('DiscordChannel', () => {
         new Error('Channel not found'),
       );
 
-      // Should not throw
       await expect(
         channel.sendMessage('dc:1234567890123456', 'Will fail'),
-      ).resolves.toBeUndefined();
+      ).rejects.toThrow('Channel not found');
     });
 
     it('does nothing when client is not initialized', async () => {

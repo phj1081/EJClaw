@@ -156,6 +156,8 @@ function prepareGroupEnvironment(
   // Build environment variables for the runner process
   const envVars = readEnvFile([
     'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
     'CLAUDE_CODE_OAUTH_TOKEN',
     'CLAUDE_MODEL',
     'CLAUDE_THINKING',
@@ -340,6 +342,8 @@ args = [${JSON.stringify(mementoSseUrl)}, "--header", ${JSON.stringify(`Authoriz
 
     // Sanitize secrets: prevent API keys from leaking to codex subprocesses
     delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.ANTHROPIC_BASE_URL;
     delete env.CLAUDE_CODE_OAUTH_TOKEN;
 
     env.CODEX_HOME = sessionCodexDir;
@@ -348,6 +352,19 @@ args = [${JSON.stringify(mementoSseUrl)}, "--header", ${JSON.stringify(`Authoriz
     if (envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY) {
       env.ANTHROPIC_API_KEY =
         envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+    }
+    if (
+      envVars.ANTHROPIC_AUTH_TOKEN ||
+      process.env.ANTHROPIC_AUTH_TOKEN
+    ) {
+      env.ANTHROPIC_AUTH_TOKEN =
+        envVars.ANTHROPIC_AUTH_TOKEN ||
+        process.env.ANTHROPIC_AUTH_TOKEN ||
+        '';
+    }
+    if (envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL) {
+      env.ANTHROPIC_BASE_URL =
+        envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL || '';
     }
     if (
       envVars.CLAUDE_CODE_OAUTH_TOKEN ||
@@ -384,6 +401,7 @@ export async function runAgentProcess(
   input: AgentInput,
   onProcess: (proc: ChildProcess, processName: string) => void,
   onOutput?: (output: AgentOutput) => Promise<void>,
+  envOverrides?: Record<string, string>,
 ): Promise<AgentOutput> {
   const startTime = Date.now();
   const { env, groupDir, runnerDir } = prepareGroupEnvironment(
@@ -391,6 +409,13 @@ export async function runAgentProcess(
     input.isMain,
     input.chatJid,
   );
+
+  // Apply provider fallback overrides (e.g. Kimi env vars when Claude is in cooldown)
+  if (envOverrides) {
+    for (const [key, value] of Object.entries(envOverrides)) {
+      if (value) env[key] = value;
+    }
+  }
   if (input.runId) {
     env.NANOCLAW_RUN_ID = input.runId;
   }

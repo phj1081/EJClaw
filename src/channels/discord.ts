@@ -484,6 +484,7 @@ export class DiscordChannel implements Channel {
       logger.info({ jid, length: text.length }, 'Discord message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Discord message');
+      throw err;
     }
   }
 
@@ -551,7 +552,7 @@ export class DiscordChannel implements Channel {
       return msg.id;
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send tracked Discord message');
-      return null;
+      throw err;
     }
   }
 

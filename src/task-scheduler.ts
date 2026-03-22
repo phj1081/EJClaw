@@ -113,11 +113,33 @@ function formatTimeLabel(timestampIso: string): string {
     second: '2-digit',
     hour12: false,
     timeZone: TIMEZONE,
-  }).format(new Date(timestampIso));
+  })
+    .format(new Date(timestampIso))
+    .replace(/:/g, '시 ')
+    .replace(/시 (\d{2})$/, '분 $1초');
+}
+
+function formatWatchIntervalLabel(task: Pick<ScheduledTask, 'schedule_type' | 'schedule_value'>): string | null {
+  if (task.schedule_type !== 'interval') return null;
+  const ms = parseInt(task.schedule_value, 10);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}초`;
+
+  const totalMinutes = Math.floor(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    const seconds = totalSeconds % 60;
+    return seconds > 0 ? `${totalMinutes}분 ${seconds}초` : `${totalMinutes}분`;
+  }
+
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}시간 ${minutes}분` : `${hours}시간`;
 }
 
 export function renderWatchCiStatusMessage(args: {
-  task: Pick<ScheduledTask, 'prompt'>;
+  task: Pick<ScheduledTask, 'prompt' | 'schedule_type' | 'schedule_value'>;
   phase: WatcherStatusPhase;
   checkedAt: string;
   nextRun?: string | null;
@@ -141,6 +163,10 @@ export function renderWatchCiStatusMessage(args: {
     `- 상태: ${statusLabel}`,
     `- 마지막 확인: ${formatTimeLabel(args.checkedAt)}`,
   ];
+  const intervalLabel = formatWatchIntervalLabel(args.task);
+  if (intervalLabel) {
+    lines.push(`- 확인 간격: ${intervalLabel}`);
+  }
 
   if (args.nextRun) {
     lines.push(`- 다음 확인: ${formatTimeLabel(args.nextRun)}`);

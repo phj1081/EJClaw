@@ -11,6 +11,12 @@ interface QueuedTask {
   fn: () => Promise<void>;
 }
 
+export interface GroupActivityTouchMeta {
+  source: 'follow-up';
+  textLength: number;
+  filename: string;
+}
+
 export interface GroupRunContext {
   runId: string;
   reason: 'messages' | 'drain';
@@ -35,6 +41,7 @@ interface GroupState {
   retryTimer: ReturnType<typeof setTimeout> | null;
   retryScheduledAt: number | null;
   startedAt: number | null;
+  activityTouch: ((meta?: GroupActivityTouchMeta) => void) | null;
 }
 
 export interface GroupStatus {
@@ -73,6 +80,7 @@ export class GroupQueue {
         retryTimer: null,
         retryScheduledAt: null,
         startedAt: null,
+        activityTouch: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -83,6 +91,14 @@ export class GroupQueue {
     fn: (groupJid: string, context: GroupRunContext) => Promise<boolean>,
   ): void {
     this.processMessagesFn = fn;
+  }
+
+  setActivityTouch(
+    groupJid: string,
+    touch: ((meta?: GroupActivityTouchMeta) => void) | null,
+  ): void {
+    const state = this.getGroup(groupJid);
+    state.activityTouch = touch;
   }
 
   private createRunId(): string {
@@ -262,6 +278,11 @@ export class GroupQueue {
       const tempPath = `${filepath}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
+      state.activityTouch?.({
+        source: 'follow-up',
+        textLength: text.length,
+        filename,
+      });
       logger.info(
         {
           groupJid,
@@ -390,6 +411,7 @@ export class GroupQueue {
       state.processName = null;
       state.groupFolder = null;
       state.currentRunId = null;
+      state.activityTouch = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -424,6 +446,7 @@ export class GroupQueue {
       state.process = null;
       state.processName = null;
       state.groupFolder = null;
+      state.activityTouch = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }

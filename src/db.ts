@@ -21,6 +21,61 @@ import {
 
 let db: Database.Database;
 
+export interface WorkItem {
+  id: number;
+  group_folder: string;
+  chat_jid: string;
+  agent_type: AgentType;
+  status: 'produced' | 'delivery_retry' | 'delivered';
+  start_seq: number | null;
+  end_seq: number | null;
+  result_payload: string;
+  delivery_attempts: number;
+  delivery_message_id: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+  delivered_at: string | null;
+}
+
+function backfillMessageSeq(database: Database.Database): void {
+  const rows = database
+    .prepare(
+      `SELECT rowid, seq
+       FROM messages
+       ORDER BY CASE WHEN seq IS NULL THEN 1 ELSE 0 END, seq, timestamp, rowid`,
+    )
+    .all() as Array<{ rowid: number; seq: number | null }>;
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  let nextSeq = 1;
+  const assignSeq = database.prepare(
+    'UPDATE messages SET seq = ? WHERE rowid = ? AND seq IS NULL',
+  );
+  const tx = database.transaction(() => {
+    for (const row of rows) {
+      if (row.seq === null) {
+        assignSeq.run(nextSeq, row.rowid);
+      }
+      nextSeq = Math.max(nextSeq, (row.seq ?? nextSeq) + 1);
+    }
+  });
+  tx();
+
+  const maxSeqRow = database
+    .prepare('SELECT MAX(seq) AS maxSeq FROM messages')
+    .get() as { maxSeq: number | null };
+  const maxSeq = maxSeqRow.maxSeq ?? 0;
+  if (maxSeq > 0) {
+    database
+      .prepare('INSERT OR IGNORE INTO message_sequence (id) VALUES (?)')
+      .run(maxSeq);
+  }
+}
+
 function createSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
@@ -37,12 +92,39 @@ function createSchema(database: Database.Database): void {
       sender_name TEXT,
       content TEXT,
       timestamp TEXT,
+      seq INTEGER,
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+    CREATE TABLE IF NOT EXISTS message_sequence (
+      id INTEGER PRIMARY KEY AUTOINCREMENT
+    );
+
+    CREATE TABLE IF NOT EXISTS work_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      agent_type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'produced',
+      start_seq INTEGER,
+      end_seq INTEGER,
+      result_payload TEXT NOT NULL,
+      delivery_attempts INTEGER NOT NULL DEFAULT 0,
+      delivery_message_id TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      delivered_at TEXT,
+      CHECK (status IN ('produced', 'delivery_retry', 'delivered'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_work_items_group_agent ON work_items(chat_jid, agent_type, status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_open
+      ON work_items(chat_jid, agent_type)
+      WHERE status IN ('produced', 'delivery_retry');
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
@@ -167,6 +249,19 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN seq INTEGER`);
+  } catch {
+    /* column already exists */
+  }
+
+  backfillMessageSeq(database);
+
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_seq ON messages(seq);
+    CREATE INDEX IF NOT EXISTS idx_messages_chat_jid_seq ON messages(chat_jid, seq);
+  `);
 
   // Migrate registered_groups to composite keys so Claude/Codex can share a jid/folder.
   const registeredGroupsSql = (
@@ -412,18 +507,60 @@ export function getAllChats(): ChatInfo[] {
  * Only call this for registered groups where message history is needed.
  */
 export function storeMessage(msg: NewMessage): void {
-  db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    msg.id,
-    msg.chat_jid,
-    msg.sender,
-    msg.sender_name,
-    msg.content,
-    msg.timestamp,
-    msg.is_from_me ? 1 : 0,
-    msg.is_bot_message ? 1 : 0,
-  );
+  const existing = db
+    .prepare('SELECT seq FROM messages WHERE id = ? AND chat_jid = ?')
+    .get(msg.id, msg.chat_jid) as { seq: number | null } | undefined;
+
+  const nextSeq = () => {
+    const result = db
+      .prepare('INSERT INTO message_sequence DEFAULT VALUES')
+      .run() as Database.RunResult;
+    return Number(result.lastInsertRowid);
+  };
+
+  db.transaction(() => {
+    if (existing?.seq != null) {
+      db.prepare(
+        `INSERT INTO messages (
+           id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id, chat_jid) DO UPDATE SET
+           sender = excluded.sender,
+           sender_name = excluded.sender_name,
+           content = excluded.content,
+           timestamp = excluded.timestamp,
+           is_from_me = excluded.is_from_me,
+           is_bot_message = excluded.is_bot_message`,
+      ).run(
+        msg.id,
+        msg.chat_jid,
+        msg.sender,
+        msg.sender_name,
+        msg.content,
+        msg.timestamp,
+        existing.seq,
+        msg.is_from_me ? 1 : 0,
+        msg.is_bot_message ? 1 : 0,
+      );
+      return;
+    }
+
+    db.prepare(
+      `INSERT INTO messages (
+         id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      msg.id,
+      msg.chat_jid,
+      msg.sender,
+      msg.sender_name,
+      msg.content,
+      msg.timestamp,
+      nextSeq(),
+      msg.is_from_me ? 1 : 0,
+      msg.is_bot_message ? 1 : 0,
+    );
+  })();
 }
 
 function normalizeMessageRow(
@@ -511,6 +648,105 @@ export function getMessagesSince(
   return rows.map(normalizeMessageRow);
 }
 
+function normalizeSeqCursor(cursor: string | number | null | undefined): number {
+  if (typeof cursor === 'number') {
+    return Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
+  }
+  if (!cursor) return 0;
+  const parsed = Number.parseInt(cursor, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+export function getLatestMessageSeqAtOrBefore(
+  timestamp: string,
+  chatJid?: string,
+): number {
+  if (!timestamp) return 0;
+  const row = (chatJid
+    ? db
+        .prepare(
+          `SELECT COALESCE(MAX(seq), 0) AS maxSeq
+           FROM messages
+           WHERE chat_jid = ? AND timestamp <= ?`,
+        )
+        .get(chatJid, timestamp)
+    : db
+        .prepare(
+          `SELECT COALESCE(MAX(seq), 0) AS maxSeq
+           FROM messages
+           WHERE timestamp <= ?`,
+        )
+        .get(timestamp)) as { maxSeq: number | null };
+  return row.maxSeq ?? 0;
+}
+
+export function getNewMessagesBySeq(
+  jids: string[],
+  lastSeqCursor: string | number,
+  botPrefix: string,
+  limit: number = 200,
+): { messages: NewMessage[]; newSeqCursor: string } {
+  const sinceSeq = normalizeSeqCursor(lastSeqCursor);
+  if (jids.length === 0) {
+    return { messages: [], newSeqCursor: String(sinceSeq) };
+  }
+
+  const placeholders = jids.map(() => '?').join(',');
+  const sql = `
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
+    FROM messages
+    WHERE seq > ? AND chat_jid IN (${placeholders})
+      AND content NOT LIKE ?
+      AND content != '' AND content IS NOT NULL
+    ORDER BY seq
+    LIMIT ?
+  `;
+
+  const rows = db
+    .prepare(sql)
+    .all(sinceSeq, ...jids, `${botPrefix}:%`, limit) as Array<
+    NewMessage & {
+      seq: number;
+      is_from_me?: boolean | number;
+      is_bot_message?: boolean | number;
+    }
+  >;
+
+  const lastSeq = rows.length > 0 ? rows[rows.length - 1].seq : sinceSeq;
+  return {
+    messages: rows.map(normalizeMessageRow),
+    newSeqCursor: String(lastSeq),
+  };
+}
+
+export function getMessagesSinceSeq(
+  chatJid: string,
+  sinceSeqCursor: string | number,
+  botPrefix: string,
+  limit: number = 200,
+): NewMessage[] {
+  const sinceSeq = normalizeSeqCursor(sinceSeqCursor);
+  const sql = `
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
+    FROM messages
+    WHERE chat_jid = ? AND seq > ?
+      AND content NOT LIKE ?
+      AND content != '' AND content IS NOT NULL
+    ORDER BY seq
+    LIMIT ?
+  `;
+  const rows = db
+    .prepare(sql)
+    .all(chatJid, sinceSeq, `${botPrefix}:%`, limit) as Array<
+    NewMessage & {
+      seq: number;
+      is_from_me?: boolean | number;
+      is_bot_message?: boolean | number;
+    }
+  >;
+  return rows.map(normalizeMessageRow);
+}
+
 export function getLastHumanMessageTimestamp(chatJid: string): string | null {
   const row = db
     .prepare(
@@ -521,6 +757,110 @@ export function getLastHumanMessageTimestamp(chatJid: string): string | null {
     )
     .get(chatJid) as { timestamp: string } | undefined;
   return row?.timestamp ?? null;
+}
+
+export function hasRecentRestartAnnouncement(
+  chatJid: string,
+  sinceTimestamp: string,
+): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM messages
+       WHERE chat_jid = ?
+         AND timestamp >= ?
+         AND is_bot_message = 1
+         AND (
+           content LIKE '재시작 완료.%'
+           OR content LIKE '재시작 감지.%'
+           OR content LIKE '서비스 재시작으로 이전 작업이 중단됐습니다.%'
+         )
+       LIMIT 1`,
+    )
+    .get(chatJid, sinceTimestamp) as { 1: number } | undefined;
+  return !!row;
+}
+
+export function getOpenWorkItem(
+  chatJid: string,
+  agentType: AgentType = SERVICE_AGENT_TYPE,
+): WorkItem | undefined {
+  return db
+    .prepare(
+      `SELECT *
+       FROM work_items
+       WHERE chat_jid = ? AND agent_type = ? AND status IN ('produced', 'delivery_retry')
+       ORDER BY id ASC
+       LIMIT 1`,
+    )
+    .get(chatJid, agentType) as WorkItem | undefined;
+}
+
+export function createProducedWorkItem(input: {
+  group_folder: string;
+  chat_jid: string;
+  agent_type?: AgentType;
+  start_seq: number | null;
+  end_seq: number | null;
+  result_payload: string;
+}): WorkItem {
+  const now = new Date().toISOString();
+  const agentType = input.agent_type || SERVICE_AGENT_TYPE;
+  const result = db
+    .prepare(
+      `INSERT INTO work_items (
+         group_folder,
+         chat_jid,
+         agent_type,
+         status,
+         start_seq,
+         end_seq,
+         result_payload,
+         delivery_attempts,
+         created_at,
+         updated_at
+       ) VALUES (?, ?, ?, 'produced', ?, ?, ?, 0, ?, ?)`,
+    )
+    .run(
+      input.group_folder,
+      input.chat_jid,
+      agentType,
+      input.start_seq,
+      input.end_seq,
+      input.result_payload,
+      now,
+      now,
+    ) as Database.RunResult;
+
+  return db
+    .prepare('SELECT * FROM work_items WHERE id = ?')
+    .get(Number(result.lastInsertRowid)) as WorkItem;
+}
+
+export function markWorkItemDelivered(
+  id: number,
+  deliveryMessageId?: string | null,
+): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE work_items
+     SET status = 'delivered',
+         delivered_at = ?,
+         delivery_message_id = ?,
+         updated_at = ?
+     WHERE id = ?`,
+  ).run(now, deliveryMessageId || null, now, id);
+}
+
+export function markWorkItemDeliveryRetry(id: number, error: string): void {
+  const now = new Date().toISOString();
+  db.prepare(
+    `UPDATE work_items
+     SET status = 'delivery_retry',
+         delivery_attempts = delivery_attempts + 1,
+         last_error = ?,
+         updated_at = ?
+     WHERE id = ?`,
+  ).run(error, now, id);
 }
 
 export function createTask(
