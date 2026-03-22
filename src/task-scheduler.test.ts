@@ -134,16 +134,46 @@ Check the run.
       } as any,
       phase: 'waiting',
       checkedAt: '2026-03-19T07:02:10.000Z',
+      statusStartedAt: '2026-03-19T07:00:00.000Z',
       nextRun: '2026-03-19T07:04:10.000Z',
     });
 
     expect(rendered).toContain('CI 감시 중: GitHub Actions run 123456');
     expect(rendered).toContain('- 상태: 대기 중');
     expect(rendered).toContain('- 마지막 확인: 16시 02분 10초');
+    expect(rendered).toContain('- 경과 시간: 2분 10초');
     expect(rendered).toContain('- 확인 간격: 1분');
     expect(rendered).toContain('- 다음 확인: 16시 04분 10초');
     expect(rendered).not.toContain('16:02:10');
     expect(rendered).not.toContain('16:04:10');
+  });
+
+  it('omits watcher elapsed time when tracking has not started yet', () => {
+    const prompt = `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 123456
+
+Task ID:
+task-123
+
+Check instructions:
+Check the run.
+`.trim();
+
+    const rendered = renderWatchCiStatusMessage({
+      task: {
+        prompt,
+        schedule_type: 'interval',
+        schedule_value: '60000',
+      } as any,
+      phase: 'checking',
+      checkedAt: '2026-03-19T07:02:10.000Z',
+      statusStartedAt: null,
+    });
+
+    expect(rendered).not.toContain('- 경과 시간:');
   });
 
   it('computeNextRun anchors interval tasks to scheduled time to prevent drift', () => {

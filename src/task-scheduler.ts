@@ -140,10 +140,28 @@ function formatWatchIntervalLabel(
   return minutes > 0 ? `${hours}시간 ${minutes}분` : `${hours}시간`;
 }
 
+function formatElapsedLabel(startedAtIso: string, checkedAtIso: string): string {
+  const elapsedMs = Math.max(
+    0,
+    new Date(checkedAtIso).getTime() - new Date(startedAtIso).getTime(),
+  );
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}시간`);
+  if (minutes > 0) parts.push(`${minutes}분`);
+  parts.push(`${seconds}초`);
+  return parts.join(' ');
+}
+
 export function renderWatchCiStatusMessage(args: {
   task: Pick<ScheduledTask, 'prompt' | 'schedule_type' | 'schedule_value'>;
   phase: WatcherStatusPhase;
   checkedAt: string;
+  statusStartedAt?: string | null;
   nextRun?: string | null;
 }): string {
   const target = extractWatchCiTarget(args.task.prompt) || 'CI watcher';
@@ -165,6 +183,11 @@ export function renderWatchCiStatusMessage(args: {
     `- 상태: ${statusLabel}`,
     `- 마지막 확인: ${formatTimeLabel(args.checkedAt)}`,
   ];
+  if (args.statusStartedAt) {
+    lines.push(
+      `- 경과 시간: ${formatElapsedLabel(args.statusStartedAt, args.checkedAt)}`,
+    );
+  }
   const intervalLabel = formatWatchIntervalLabel(args.task);
   if (intervalLabel) {
     lines.push(`- 확인 간격: ${intervalLabel}`);
@@ -290,6 +313,7 @@ async function runTask(
       task,
       phase,
       checkedAt,
+      statusStartedAt,
       nextRun,
     });
     const payload = `${TASK_STATUS_MESSAGE_PREFIX}${text}`;
