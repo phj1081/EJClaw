@@ -66,7 +66,6 @@ const IPC_DIR = process.env.NANOCLAW_IPC_DIR || '/workspace/ipc';
 const WORK_DIR = process.env.NANOCLAW_WORK_DIR || '';
 
 const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
-const MAX_TURNS = 100;
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
@@ -384,28 +383,6 @@ function drainIpcInput(): string[] {
 }
 
 /**
- * Wait for a new IPC message or _close sentinel.
- * Returns the messages as a single string, or null if _close.
- */
-function waitForIpcMessage(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const poll = () => {
-      if (shouldClose()) {
-        resolve(null);
-        return;
-      }
-      const messages = drainIpcInput();
-      if (messages.length > 0) {
-        resolve(messages.join('\n'));
-        return;
-      }
-      setTimeout(poll, IPC_POLL_MS);
-    };
-    poll();
-  });
-}
-
-/**
  * Run a single query and stream results via writeOutput.
  * Uses MessageStream (AsyncIterable) to keep isSingleUserTurn=false,
  * allowing agent teams subagents to run to completion.
@@ -417,8 +394,7 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
-  resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+): Promise<{ newSessionId?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -444,7 +420,6 @@ async function runQuery(
   setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
 
   let newSessionId: string | undefined;
-  let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
 
@@ -486,7 +461,6 @@ async function runQuery(
       effort,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
-      resumeSessionAt: resumeAt,
       allowedTools: [
         'Bash',
         'Read', 'Write', 'Edit', 'Glob', 'Grep',
@@ -536,10 +510,6 @@ async function runQuery(
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
 
-    if (message.type === 'assistant' && 'uuid' in message) {
-      lastAssistantUuid = (message as { uuid: string }).uuid;
-    }
-
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
@@ -588,8 +558,10 @@ async function runQuery(
   }
 
   ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  log(
+    `Query done. Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}`,
+  );
+  return { newSessionId, closedDuringQuery };
 }
 
 async function main(): Promise<void> {
@@ -740,49 +712,24 @@ async function main(): Promise<void> {
   }
   // --- End slash command handling ---
 
-  // Query loop: run query → wait for IPC message → run new query → repeat
-  let resumeAt: string | undefined;
-  let turnCount = 0;
   try {
-    while (true) {
-      turnCount++;
-      if (turnCount > MAX_TURNS) {
-        log(`Turn limit reached (${MAX_TURNS}), exiting`);
-        writeOutput({ status: 'success', result: '[세션 턴 제한 도달. 새 메시지로 다시 시작됩니다.]', newSessionId: sessionId });
-        break;
-      }
-      log(`Starting query (session: ${sessionId || 'new'}, turn: ${turnCount}/${MAX_TURNS}, resumeAt: ${resumeAt || 'latest'})...`);
+    log(`Starting query (session: ${sessionId || 'new'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
-      if (queryResult.newSessionId) {
-        sessionId = queryResult.newSessionId;
-      }
-      if (queryResult.lastAssistantUuid) {
-        resumeAt = queryResult.lastAssistantUuid;
-      }
+    const queryResult = await runQuery(
+      prompt,
+      sessionId,
+      mcpServerPath,
+      containerInput,
+      sdkEnv,
+    );
+    if (queryResult.newSessionId) {
+      sessionId = queryResult.newSessionId;
+    }
 
-      // If _close was consumed during the query, exit immediately.
-      // Don't emit a session-update marker (it would reset the host's
-      // idle timer and cause a 30-min delay before the next _close).
-      if (queryResult.closedDuringQuery) {
-        log('Close sentinel consumed during query, exiting');
-        break;
-      }
-
-      // Emit session update so host can track it
+    if (!queryResult.closedDuringQuery) {
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });
-
-      log('Query ended, waiting for next IPC message...');
-
-      // Wait for the next message or _close sentinel
-      const nextMessage = await waitForIpcMessage();
-      if (nextMessage === null) {
-        log('Close sentinel received, exiting');
-        break;
-      }
-
-      log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
+    } else {
+      log('Close sentinel consumed during query, exiting');
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

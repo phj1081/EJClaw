@@ -49,7 +49,6 @@ const WORK_DIR = process.env.NANOCLAW_WORK_DIR || '';
 const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
-const MAX_TURNS = 100;
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
@@ -132,24 +131,6 @@ function drainIpcInput(): string[] {
     log(`IPC drain error: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
-}
-
-function waitForIpcMessage(): Promise<string | null> {
-  return new Promise((resolve) => {
-    const poll = () => {
-      if (consumeCloseSentinel()) {
-        resolve(null);
-        return;
-      }
-      const messages = drainIpcInput();
-      if (messages.length > 0) {
-        resolve(messages.join('\n'));
-        return;
-      }
-      setTimeout(poll, IPC_POLL_MS);
-    };
-    poll();
-  });
 }
 
 function extractImagePaths(text: string): { cleanText: string; imagePaths: string[] } {
@@ -364,61 +345,28 @@ async function runAppServerSession(
       return;
     }
 
-    let turnCount = 0;
-    while (true) {
-      turnCount++;
-      if (turnCount > MAX_TURNS) {
-        log(`Turn limit reached (${MAX_TURNS}), exiting`);
-        writeOutput({
-          status: 'success',
-          result: '[세션 턴 제한 도달. 새 메시지로 다시 시작됩니다.]',
-          newSessionId: threadId,
-        });
-        break;
-      }
+    log('Starting app-server turn...');
+    const { result, error } = await executeAppServerTurn(client, threadId, prompt);
 
-      log(`Starting app-server turn ${turnCount}/${MAX_TURNS}...`);
-      const { result, error } = await executeAppServerTurn(client, threadId, prompt);
+    if (error) {
+      log(`App-server turn error: ${error}`);
+      writeOutput({
+        status: 'error',
+        result: result || null,
+        newSessionId: threadId,
+        error,
+      });
+    } else {
+      writeOutput({
+        status: 'success',
+        result: result || null,
+        ...(result ? { phase: 'final' as const } : {}),
+        newSessionId: threadId,
+      });
+    }
 
-      if (consumeCloseSentinel()) {
-        if (result) {
-          writeOutput({
-            status: 'success',
-            result,
-            newSessionId: threadId,
-          });
-        }
-        log('Close sentinel detected, exiting app-server runtime');
-        break;
-      }
-
-      if (error) {
-        log(`App-server turn error: ${error}`);
-        writeOutput({
-          status: 'error',
-          result: result || null,
-          newSessionId: threadId,
-          error,
-        });
-      } else {
-        writeOutput({
-          status: 'success',
-          result: result || null,
-          ...(result ? { phase: 'final' as const } : {}),
-          newSessionId: threadId,
-        });
-      }
-
-      log('App-server turn done, waiting for next IPC message...');
-
-      const nextMessage = await waitForIpcMessage();
-      if (nextMessage === null) {
-        log('Close sentinel received, exiting app-server runtime');
-        break;
-      }
-
-      log(`Got new app-server message (${nextMessage.length} chars)`);
-      prompt = nextMessage;
+    if (consumeCloseSentinel()) {
+      log('Close sentinel detected, exiting app-server runtime');
     }
   } finally {
     await client.close();
