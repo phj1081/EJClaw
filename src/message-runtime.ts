@@ -8,11 +8,19 @@ import {
 import {
   getAllChats,
   getAllTasks,
-  getMessagesSince,
-  getNewMessages,
+  getLatestMessageSeqAtOrBefore,
+  getMessagesSinceSeq,
+  getNewMessagesBySeq,
+  getOpenWorkItem,
+  createProducedWorkItem,
+  markWorkItemDelivered,
+  markWorkItemDeliveryRetry,
+  isPairedRoomJid,
+  type WorkItem,
 } from './db.js';
 import { DATA_DIR, isSessionCommandSenderAllowed } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
+import { filterProcessableMessages } from './bot-message-filter.js';
 import {
   detectFallbackTrigger,
   getActiveProvider,
@@ -31,7 +39,6 @@ import {
   isSessionCommandControlMessage,
 } from './session-commands.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
-import { isTaskStatusControlMessage } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import path from 'path';
@@ -80,23 +87,76 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 } {
   let messageLoopRunning = false;
 
-  const filterOwnChannelMessages = (messages: NewMessage[]): NewMessage[] =>
-    messages.filter((msg) => {
-      const channel = findChannel(deps.channels, msg.chat_jid);
-      if (channel?.isOwnMessage?.(msg)) {
-        return false;
-      }
-      if (msg.is_bot_message && isSessionCommandControlMessage(msg.content)) {
-        return false;
-      }
-      if (msg.is_bot_message && isTaskStatusControlMessage(msg.content)) {
-        return false;
-      }
-      return true;
-    });
-
   const getCurrentAvailableGroups = (): AvailableGroup[] =>
     getAvailableGroups(deps.getRegisteredGroups());
+
+  const normalizeStoredSeqCursor = (
+    cursor: string | undefined,
+    chatJid?: string,
+  ): string => {
+    if (!cursor) return '0';
+    if (/^\d+$/.test(cursor.trim())) return cursor.trim();
+    return String(getLatestMessageSeqAtOrBefore(cursor, chatJid));
+  };
+
+  const advanceLastAgentCursor = (
+    chatJid: string,
+    cursorOrTimestamp: string | number,
+  ): void => {
+    const lastAgentTimestamps = deps.getLastAgentTimestamps();
+    if (typeof cursorOrTimestamp === 'number') {
+      lastAgentTimestamps[chatJid] = String(cursorOrTimestamp);
+    } else {
+      lastAgentTimestamps[chatJid] = normalizeStoredSeqCursor(
+        cursorOrTimestamp,
+        chatJid,
+      );
+    }
+    deps.saveState();
+  };
+
+  const getProcessableMessages = (
+    chatJid: string,
+    messages: Parameters<typeof filterProcessableMessages>[0],
+    channel?: Channel,
+  ) =>
+    filterProcessableMessages(
+      messages,
+      isPairedRoomJid(chatJid),
+      channel?.isOwnMessage?.bind(channel),
+    );
+
+  const deliverOpenWorkItem = async (
+    channel: Channel,
+    item: WorkItem,
+  ): Promise<boolean> => {
+    try {
+      await channel.sendMessage(item.chat_jid, item.result_payload);
+      markWorkItemDelivered(item.id);
+      logger.info(
+        {
+          chatJid: item.chat_jid,
+          workItemId: item.id,
+          deliveryAttempts: item.delivery_attempts + 1,
+        },
+        'Delivered produced work item',
+      );
+      return true;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      markWorkItemDeliveryRetry(item.id, errorMessage);
+      logger.warn(
+        {
+          chatJid: item.chat_jid,
+          workItemId: item.id,
+          deliveryAttempts: item.delivery_attempts + 1,
+          err,
+        },
+        'Failed to deliver produced work item',
+      );
+      return false;
+    }
+  };
 
   const runAgent = async (
     group: RegisteredGroup,
@@ -447,59 +507,45 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     chatJid: string,
     context: GroupRunContext,
   ): Promise<boolean> => {
-    const { runId, reason } = context;
-    const registeredGroups = deps.getRegisteredGroups();
-    const group = registeredGroups[chatJid];
-    if (!group) {
-      logger.warn(
-        { chatJid, runId, reason },
-        'Registered group missing for queued run',
-      );
-      return true;
-    }
+    const { runId } = context;
+    const group = deps.getRegisteredGroups()[chatJid];
+    if (!group) return true;
 
     const channel = findChannel(deps.channels, chatJid);
     if (!channel) {
-      logger.warn(
-        { chatJid, runId, reason },
-        'No channel owns JID, skipping messages',
-      );
+      logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
       return true;
+    }
+
+    const openWorkItem = getOpenWorkItem(
+      chatJid,
+      (group.agentType || 'claude-code') as 'claude-code' | 'codex',
+    );
+    if (openWorkItem) {
+      const delivered = await deliverOpenWorkItem(channel, openWorkItem);
+      if (!delivered) return false;
     }
 
     const isMainGroup = group.isMain === true;
-    const lastAgentTimestamps = deps.getLastAgentTimestamps();
-    const sinceTimestamp = lastAgentTimestamps[chatJid] || '';
-    const missedMessages = filterOwnChannelMessages(
-      getMessagesSince(chatJid, sinceTimestamp, deps.assistantName),
+    const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
+    const rawMissedMessages = getMessagesSinceSeq(
+      chatJid,
+      sinceSeqCursor,
+      deps.assistantName,
+    );
+    const missedMessages = getProcessableMessages(
+      chatJid,
+      rawMissedMessages,
+      channel,
     );
 
     if (missedMessages.length === 0) {
-      logger.info(
-        {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
-          reason,
-        },
-        'No pending messages for queued run',
-      );
+      const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
+      if (lastIgnored) {
+        advanceLastAgentCursor(chatJid, lastIgnored.timestamp);
+      }
       return true;
     }
-
-    logger.info(
-      {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        runId,
-        reason,
-        messageCount: missedMessages.length,
-        sinceTimestamp,
-      },
-      'Loaded pending messages for queued run',
-    );
 
     const cmdResult = await handleSessionCommand({
       missedMessages,
@@ -516,13 +562,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           runAgent(group, prompt, chatJid, runId, onOutput),
         closeStdin: () =>
           deps.queue.closeStdin(chatJid, {
-            runId,
             reason: 'session-command',
           }),
         clearSession: () => deps.clearSession(group.folder),
-        advanceCursor: (timestamp) => {
-          lastAgentTimestamps[chatJid] = timestamp;
-          deps.saveState();
+        advanceCursor: (cursorOrTimestamp) => {
+          advanceLastAgentCursor(chatJid, cursorOrTimestamp);
         },
         formatMessages,
         isAdminSender: (msg) => isSessionCommandSenderAllowed(msg.sender),
@@ -560,10 +604,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
 
     const prompt = formatMessages(missedMessages, deps.timezone);
-    const previousCursor = lastAgentTimestamps[chatJid] || '';
-    lastAgentTimestamps[chatJid] =
-      missedMessages[missedMessages.length - 1].timestamp;
-    deps.saveState();
+    const previousCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
+    const startSeq = missedMessages[0].seq ?? null;
+    const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
+    if (endSeq !== null) {
+      advanceLastAgentCursor(chatJid, endSeq);
+    }
 
     logger.info(
       {
@@ -577,21 +623,40 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     );
 
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let producedFinalText: string | null = null;
+    let followUpQueuedAt: number | null = null;
+    let followUpQueuedTextLength: number | null = null;
+    let followUpQueuedFilename: string | null = null;
+    let followUpNoOutputWarnTimer: ReturnType<typeof setTimeout> | null = null;
+    let hadError = false;
     let latestProgressText: string | null = null;
     let latestProgressRendered: string | null = null;
     let progressMessageId: string | null = null;
     let progressStartedAt: number | null = null;
     let progressTicker: ReturnType<typeof setInterval> | null = null;
+    let finalOutputSentToUser = false;
+    let progressOutputSentToUser = false;
+    let latestModelProgressTextForFinalFallback: string | null = null;
+    let sawNonProgressOutput = false;
+    let producedDeliverySucceeded = true;
+    let isFirstLogicalTurn = true;
+    let poisonedSessionDetected = false;
+    const isClaudeCodeAgent =
+      (group.agentType || 'claude-code') === 'claude-code';
+    const FOLLOW_UP_NO_OUTPUT_WARN_MS = 10_000;
 
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
+        logger.debug(
+          { group: group.name, chatJid, runId },
+          'Idle timeout, closing agent stdin',
+        );
         if (followUpQueuedAt !== null) {
           logger.warn(
             {
-              chatJid,
               group: group.name,
-              groupFolder: group.folder,
+              chatJid,
               runId,
               followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
               followUpQueuedTextLength,
@@ -601,21 +666,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             'Idle timeout reached while a queued follow-up still had no agent output',
           );
         }
-        logger.info(
-          { chatJid, group: group.name, groupFolder: group.folder, runId },
-          'Idle timeout reached, closing active agent stdin',
-        );
-        deps.queue.closeStdin(chatJid, {
-          runId,
-          reason: 'idle-timeout',
-        });
+        deps.queue.closeStdin(chatJid, { reason: 'idle-timeout' });
       }, deps.idleTimeout);
     };
-    let followUpQueuedAt: number | null = null;
-    let followUpQueuedTextLength: number | null = null;
-    let followUpQueuedFilename: string | null = null;
-    let followUpNoOutputWarnTimer: ReturnType<typeof setTimeout> | null = null;
-    const FOLLOW_UP_NO_OUTPUT_WARN_MS = 10_000;
 
     const clearFollowUpNoOutputWarnTimer = () => {
       if (followUpNoOutputWarnTimer) {
@@ -637,9 +690,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         if (followUpQueuedAt === null) return;
         logger.warn(
           {
-            chatJid,
             group: group.name,
-            groupFolder: group.folder,
+            chatJid,
             runId,
             followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
             followUpQueuedTextLength,
@@ -663,9 +715,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       scheduleFollowUpNoOutputWarning();
       logger.info(
         {
-          chatJid,
           group: group.name,
-          groupFolder: group.folder,
+          chatJid,
           runId,
           followUpQueuedTextLength,
           followUpQueuedFilename,
@@ -678,9 +729,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (followUpQueuedAt === null) return;
       logger.info(
         {
-          chatJid,
           group: group.name,
-          groupFolder: group.folder,
+          chatJid,
           runId,
           followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
           followUpQueuedTextLength,
@@ -693,19 +743,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       clearPendingFollowUpDiagnostics();
     };
 
-    const warnFollowUpEndedWithoutOutput = (reason: string) => {
+    const warnFollowUpEndedWithoutOutput = (reasonText: string) => {
       if (followUpQueuedAt === null) return;
       logger.warn(
         {
-          chatJid,
           group: group.name,
-          groupFolder: group.folder,
+          chatJid,
           runId,
           followUpQueuedAt: new Date(followUpQueuedAt).toISOString(),
           followUpQueuedTextLength,
           followUpQueuedFilename,
           followUpWaitMs: Date.now() - followUpQueuedAt,
-          reason,
+          reason: reasonText,
         },
         'Active agent ended a turn without any output after a queued follow-up',
       );
@@ -716,15 +765,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       noteFollowUpQueued(meta);
       resetIdleTimer();
     });
-
-    let hadError = false;
-    let finalOutputSentToUser = false;
-    let progressOutputSentToUser = false;
-    let latestModelProgressTextForFinalFallback: string | null = null;
-    let sawNonProgressOutput = false;
-    let poisonedSessionDetected = false;
-    const isClaudeCodeAgent =
-      (group.agentType || 'claude-code') === 'claude-code';
 
     const clearProgressTicker = () => {
       if (progressTicker) {
@@ -738,6 +778,40 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       progressOutputSentToUser = false;
       latestModelProgressTextForFinalFallback = null;
       sawNonProgressOutput = false;
+      producedFinalText = null;
+    };
+
+    const flushProducedFinalText = async () => {
+      if (!producedFinalText) {
+        return;
+      }
+
+      try {
+        const workItem = createProducedWorkItem({
+          group_folder: group.folder,
+          chat_jid: chatJid,
+          agent_type: group.agentType || 'claude-code',
+          start_seq: isFirstLogicalTurn ? startSeq : null,
+          end_seq: isFirstLogicalTurn ? endSeq : null,
+          result_payload: producedFinalText,
+        });
+        const delivered = await deliverOpenWorkItem(channel, workItem);
+        if (delivered) {
+          finalOutputSentToUser = true;
+        } else {
+          producedDeliverySucceeded = false;
+        }
+      } catch (err) {
+        producedDeliverySucceeded = false;
+        logger.warn(
+          { group: group.name, chatJid, runId, err },
+          'Failed to persist produced output for delivery',
+        );
+      } finally {
+        producedFinalText = null;
+        latestModelProgressTextForFinalFallback = null;
+        isFirstLogicalTurn = false;
+      }
     };
 
     const resetProgressState = () => {
@@ -756,14 +830,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const hours = Math.floor(elapsedSeconds / 3600);
       const minutes = Math.floor((elapsedSeconds % 3600) / 60);
       const seconds = elapsedSeconds % 60;
-      const elapsedLabel =
-        hours > 0
-          ? `${hours}시간 ${minutes}분 ${seconds}초`
-          : minutes > 0
-            ? `${minutes}분 ${seconds}초`
-            : `${seconds}초`;
+      const elapsedParts: string[] = [];
 
-      return `${text}\n\n${elapsedLabel}`;
+      if (hours > 0) elapsedParts.push(`${hours}시간`);
+      if (minutes > 0) elapsedParts.push(`${minutes}분`);
+      elapsedParts.push(`${seconds}초`);
+
+      return `${text}\n\n${elapsedParts.join(' ')}`;
     };
 
     const syncTrackedProgressMessage = async () => {
@@ -817,10 +890,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }
 
       if (progressStartedAt === null) {
-        // A fresh progress cycle after a prior final in the same active agent
-        // session represents a new logical turn (follow-up IPC message). Reset
-        // turn-scoped output flags so progress-only completion can still be
-        // promoted to a final message.
         resetTurnOutputState();
         progressStartedAt = Date.now();
       }
@@ -845,44 +914,42 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         return;
       }
 
-      if (channel.sendAndTrack) {
-        try {
-          progressMessageId = await channel.sendAndTrack(chatJid, rendered);
-        } catch (err) {
-          logger.warn(
-            {
-              chatJid,
-              group: group.name,
-              groupFolder: group.folder,
-              runId,
-              err,
-            },
-            'Failed to send tracked progress message',
-          );
-          return;
-        }
-        if (progressMessageId) {
-          logger.info(
-            {
-              chatJid,
-              group: group.name,
-              groupFolder: group.folder,
-              runId,
-              progressMessageId,
-              text,
-            },
-            'Created tracked progress message',
-          );
-          latestProgressRendered = rendered;
-          ensureProgressTicker();
-          progressOutputSentToUser = true;
-          return;
-        }
+      if (!channel.sendAndTrack) {
+        return;
       }
 
-      latestProgressRendered = rendered;
-      await channel.sendMessage(chatJid, rendered);
-      progressOutputSentToUser = true;
+      try {
+        progressMessageId = await channel.sendAndTrack(chatJid, rendered);
+      } catch (err) {
+        logger.warn(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            err,
+          },
+          'Failed to send tracked progress message',
+        );
+        return;
+      }
+
+      if (progressMessageId) {
+        logger.info(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            progressMessageId,
+            text,
+          },
+          'Created tracked progress message',
+        );
+        latestProgressRendered = rendered;
+        ensureProgressTicker();
+        progressOutputSentToUser = true;
+      }
     };
 
     await channel.setTyping?.(chatJid, true);
@@ -903,7 +970,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           deps.clearSession(group.folder);
           deps.queue.closeStdin(chatJid, {
             runId,
-            reason: 'poisoned-session',
+            reason: 'poisoned-session-detected',
           });
           logger.warn(
             { chatJid, group: group.name, groupFolder: group.folder, runId },
@@ -931,10 +998,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           );
           noteAgentOutputObserved(result.phase);
           if (result.phase === 'progress') {
-            // Detect new logical turn (follow-up IPC): if a final was already
-            // sent in this run, a new progress output means a follow-up turn
-            // has started.  Reset turn-level state so the promotion logic at
-            // end-of-run works correctly for the new turn.
             if (finalOutputSentToUser || sawNonProgressOutput) {
               logger.info(
                 {
@@ -945,11 +1008,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 },
                 'New logical turn detected (follow-up), resetting turn state',
               );
-              finalOutputSentToUser = false;
-              sawNonProgressOutput = false;
-              progressOutputSentToUser = false;
-              latestModelProgressTextForFinalFallback = null;
+              resetTurnOutputState();
               resetProgressState();
+              isFirstLogicalTurn = false;
               await channel.setTyping?.(chatJid, true);
             }
             if (text) {
@@ -965,9 +1026,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
           if (text) {
             await finalizeProgressMessage();
-            await channel.sendMessage(chatJid, text);
-            finalOutputSentToUser = true;
-            latestModelProgressTextForFinalFallback = null;
+            producedFinalText = text;
+            await flushProducedFinalText();
           } else {
             logger.info(
               {
@@ -992,7 +1052,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         }
 
         await channel.setTyping?.(chatJid, false);
-
         if (!poisonedSessionDetected) {
           resetIdleTimer();
         }
@@ -1016,7 +1075,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     if (
       output === 'success' &&
       !hadError &&
-      !finalOutputSentToUser &&
+      !producedFinalText &&
       !sawNonProgressOutput &&
       latestModelProgressTextForFinalFallback
     ) {
@@ -1029,33 +1088,41 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         },
         'Promoting last progress output to final message after agent completion',
       );
-      await channel.sendMessage(
-        chatJid,
-        latestModelProgressTextForFinalFallback,
-      );
-      finalOutputSentToUser = true;
-      latestModelProgressTextForFinalFallback = null;
+      producedFinalText = latestModelProgressTextForFinalFallback;
+      await flushProducedFinalText();
     }
 
     clearProgressTicker();
 
     if (idleTimer) clearTimeout(idleTimer);
     clearPendingFollowUpDiagnostics();
-    deps.queue.setActivityTouch?.(chatJid, null);
+      deps.queue.setActivityTouch?.(chatJid, null);
 
     if (hadError) {
-      if (finalOutputSentToUser || progressOutputSentToUser) {
+      if (
+        finalOutputSentToUser ||
+        progressOutputSentToUser ||
+        producedFinalText
+      ) {
         logger.warn(
           { chatJid, group: group.name, groupFolder: group.folder, runId },
-          'Agent error after conversational output was sent, skipping cursor rollback to prevent duplicates',
+          'Agent error after output was produced, skipping cursor rollback to prevent duplicates',
         );
-        return true;
+        return producedFinalText ? producedDeliverySucceeded : true;
       }
-      lastAgentTimestamps[chatJid] = previousCursor;
+      deps.getLastAgentTimestamps()[chatJid] = previousCursor;
       deps.saveState();
       logger.warn(
         { chatJid, group: group.name, groupFolder: group.folder, runId },
         'Agent error, rolled back message cursor for retry',
+      );
+      return false;
+    }
+
+    if (!producedDeliverySucceeded) {
+      logger.warn(
+        { chatJid, group: group.name, groupFolder: group.folder, runId },
+        'Persisted produced output for delivery retry without rerunning agent',
       );
       return false;
     }
@@ -1088,22 +1155,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       try {
         const registeredGroups = deps.getRegisteredGroups();
         const jids = Object.keys(registeredGroups);
-        const { messages: rawMessages, newTimestamp } = getNewMessages(
+        const { messages, newSeqCursor } = getNewMessagesBySeq(
           jids,
           deps.getLastTimestamp(),
           deps.assistantName,
         );
-        const messages = filterOwnChannelMessages(rawMessages);
 
-        if (rawMessages.length > 0) {
+        if (messages.length > 0) {
           logger.info({ count: messages.length }, 'New messages');
 
-          deps.setLastTimestamp(newTimestamp);
+          deps.setLastTimestamp(newSeqCursor);
           deps.saveState();
-
-          if (messages.length === 0) {
-            continue;
-          }
 
           const messagesByGroup = new Map<string, NewMessage[]>();
           for (const msg of messages) {
@@ -1129,6 +1191,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             }
 
             const isMainGroup = group.isMain === true;
+            const processableGroupMessages = getProcessableMessages(
+              chatJid,
+              groupMessages,
+              channel,
+            );
+
+            if (processableGroupMessages.length === 0) {
+              const lastIgnored = groupMessages[groupMessages.length - 1];
+              if (lastIgnored?.seq != null) {
+                advanceLastAgentCursor(chatJid, lastIgnored.seq);
+              }
+              continue;
+            }
+
             const loopCmdMsg = groupMessages.find(
               (msg) =>
                 extractSessionCommand(msg.content, deps.triggerPattern) !==
@@ -1155,7 +1231,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               !isMainGroup && group.requiresTrigger !== false;
             if (needsTrigger) {
               const allowlistCfg = loadSenderAllowlist();
-              const hasTrigger = groupMessages.some(
+              const hasTrigger = processableGroupMessages.some(
                 (msg) =>
                   deps.triggerPattern.test(msg.content.trim()) &&
                   (msg.is_from_me ||
@@ -1164,16 +1240,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               if (!hasTrigger) continue;
             }
 
-            const lastAgentTimestamps = deps.getLastAgentTimestamps();
-            const allPending = filterOwnChannelMessages(
-              getMessagesSince(
-                chatJid,
-                lastAgentTimestamps[chatJid] || '',
-                deps.assistantName,
-              ),
+            const allPending = getMessagesSinceSeq(
+              chatJid,
+              deps.getLastAgentTimestamps()[chatJid] || '',
+              deps.assistantName,
+            );
+            const processablePending = getProcessableMessages(
+              chatJid,
+              allPending,
+              channel,
             );
             const messagesToSend =
-              allPending.length > 0 ? allPending : groupMessages;
+              processablePending.length > 0
+                ? processablePending
+                : processableGroupMessages;
             const formatted = formatMessages(messagesToSend, deps.timezone);
 
             if (deps.queue.sendMessage(chatJid, formatted)) {
@@ -1181,9 +1261,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 { chatJid, count: messagesToSend.length },
                 'Piped messages to active agent',
               );
-              lastAgentTimestamps[chatJid] =
-                messagesToSend[messagesToSend.length - 1].timestamp;
-              deps.saveState();
+              const endSeq = messagesToSend[messagesToSend.length - 1].seq;
+              if (endSeq != null) {
+                advanceLastAgentCursor(chatJid, endSeq);
+              }
               channel
                 .setTyping?.(chatJid, true)
                 ?.catch((err) =>
@@ -1206,11 +1287,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
   const recoverPendingMessages = (): void => {
     const registeredGroups = deps.getRegisteredGroups();
-    const lastAgentTimestamps = deps.getLastAgentTimestamps();
     for (const [chatJid, group] of Object.entries(registeredGroups)) {
-      const sinceTimestamp = lastAgentTimestamps[chatJid] || '';
-      const pending = filterOwnChannelMessages(
-        getMessagesSince(chatJid, sinceTimestamp, deps.assistantName),
+      const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '';
+      const rawPending = getMessagesSinceSeq(
+        chatJid,
+        sinceSeqCursor,
+        deps.assistantName,
+      );
+      const recoveryChannel = findChannel(deps.channels, chatJid);
+      const pending = getProcessableMessages(
+        chatJid,
+        rawPending,
+        recoveryChannel ?? undefined,
       );
       if (pending.length > 0) {
         logger.info(
@@ -1218,6 +1306,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           'Recovery: found unprocessed messages',
         );
         deps.queue.enqueueMessageCheck(chatJid, group.folder);
+      } else if (rawPending.length > 0) {
+        const endSeq = rawPending[rawPending.length - 1].seq;
+        if (endSeq != null) {
+          advanceLastAgentCursor(chatJid, endSeq);
+        }
       }
     }
   };

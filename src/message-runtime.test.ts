@@ -11,13 +11,98 @@ vi.mock('./config.js', () => ({
   isSessionCommandSenderAllowed: vi.fn(() => false),
 }));
 
-vi.mock('./db.js', () => ({
+vi.mock('./db.js', () => {
+  const getMessagesSince = vi.fn(
+    (
+      _chatJid?: string,
+      _sinceCursor?: string,
+      _botPrefix?: string,
+      _limit?: number,
+    ) => [],
+  );
+  const getNewMessages = vi.fn(
+    (
+      _jids?: string[],
+      _lastSeqCursor?: string,
+      _botPrefix?: string,
+      _limit?: number,
+    ) => ({ messages: [], newSeqCursor: '0' }),
+  );
+  const withSeqs = (messages: Array<Record<string, unknown>>) =>
+    messages.map((message, index) => ({
+      ...message,
+      seq:
+        typeof message.seq === 'number'
+          ? message.seq
+          : index + 1,
+    }));
+
+  return {
   getAllChats: vi.fn(() => []),
   getAllTasks: vi.fn(() => []),
   getLastHumanMessageTimestamp: vi.fn(() => null),
-  getMessagesSince: vi.fn(),
-  getNewMessages: vi.fn(() => ({ messages: [], newTimestamp: '' })),
-}));
+  getMessagesSince,
+  getNewMessages,
+  getLatestMessageSeqAtOrBefore: vi.fn(() => 0),
+  getMessagesSinceSeq: vi.fn(
+    (
+      chatJid: string,
+      sinceSeqCursor: string,
+      botPrefix: string,
+      limit?: number,
+    ) => withSeqs(getMessagesSince(chatJid, sinceSeqCursor, botPrefix, limit)),
+  ),
+  getNewMessagesBySeq: vi.fn(
+    (
+      jids: string[],
+      lastSeqCursor: string,
+      botPrefix: string,
+      limit?: number,
+    ) => {
+      const result:
+        | {
+            messages?: Array<Record<string, unknown>>;
+            newSeqCursor?: string;
+            newTimestamp?: string;
+          }
+        | undefined =
+        getNewMessages(jids, lastSeqCursor, botPrefix, limit) || {
+        messages: [],
+        newSeqCursor: '0',
+      };
+      const messages = withSeqs(result.messages || []);
+      const lastSeq =
+        messages.length > 0
+          ? String(messages[messages.length - 1].seq)
+          : String(lastSeqCursor || '0');
+      return {
+        messages,
+        newSeqCursor: result.newSeqCursor || result.newTimestamp || lastSeq,
+      };
+    },
+  ),
+  getOpenWorkItem: vi.fn(() => undefined),
+  createProducedWorkItem: vi.fn((input) => ({
+    id: 1,
+    group_folder: input.group_folder,
+    chat_jid: input.chat_jid,
+    agent_type: input.agent_type || 'claude-code',
+    status: 'produced',
+    start_seq: input.start_seq,
+    end_seq: input.end_seq,
+    result_payload: input.result_payload,
+    delivery_attempts: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    delivered_at: null,
+    delivery_message_id: null,
+    last_error: null,
+  })),
+  markWorkItemDelivered: vi.fn(),
+  markWorkItemDeliveryRetry: vi.fn(),
+  isPairedRoomJid: vi.fn(() => false),
+  };
+});
 
 vi.mock('./logger.js', () => ({
   logger: {
@@ -173,14 +258,14 @@ describe('createMessageRuntime', () => {
     expect(clearSession).toHaveBeenCalledWith(group.folder);
     expect(closeStdin).toHaveBeenCalledWith(chatJid, {
       runId: 'run-1',
-      reason: 'poisoned-session',
+      reason: 'poisoned-session-detected',
     });
     expect(notifyIdle).not.toHaveBeenCalled();
     expect(channel.sendMessage).toHaveBeenCalledWith(
       chatJid,
       'An image in the conversation exceeds the dimension limit for many-image requests (2000px). Start a new session with fewer images.',
     );
-    expect(lastAgentTimestamps[chatJid]).toBe('2026-03-18T09:00:00.000Z');
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
     expect(saveState).toHaveBeenCalled();
   });
 
@@ -548,7 +633,7 @@ describe('createMessageRuntime', () => {
       expect(channel.editMessage).toHaveBeenLastCalledWith(
         chatJid,
         'progress-1',
-        '오래 걸리는 작업입니다.\n\n1시간 1분 10초',
+        '오래 걸리는 작업입니다.\n\n1시간 0초',
       );
     } finally {
       vi.useRealTimers();
@@ -1153,7 +1238,7 @@ describe('createMessageRuntime', () => {
       chatJid,
       '중간 진행상황입니다.\n\n0초',
     );
-    expect(lastAgentTimestamps[chatJid]).toBe('2026-03-19T00:00:00.000Z');
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
     expect(saveState).toHaveBeenCalled();
   });
 
