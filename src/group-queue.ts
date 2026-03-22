@@ -1,8 +1,10 @@
 import { ChildProcess } from 'child_process';
-import fs from 'fs';
-import path from 'path';
 
-import { DATA_DIR, MAX_CONCURRENT_AGENTS } from './config.js';
+import { MAX_CONCURRENT_AGENTS } from './config.js';
+import {
+  queueFollowUpMessage,
+  writeCloseSentinel,
+} from './group-queue-ipc.js';
 import { logger } from './logger.js';
 
 interface QueuedTask {
@@ -213,14 +215,8 @@ export class GroupQueue {
       return false;
     }
 
-    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
-      fs.mkdirSync(inputDir, { recursive: true });
-      const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
-      const filepath = path.join(inputDir, filename);
-      const tempPath = `${filepath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
-      fs.renameSync(tempPath, filepath);
+      const filename = queueFollowUpMessage(state.groupFolder, text);
       logger.info(
         {
           groupJid,
@@ -257,10 +253,8 @@ export class GroupQueue {
     if (!state.active || !state.groupFolder) return;
     state.closingStdin = true;
 
-    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
     try {
-      fs.mkdirSync(inputDir, { recursive: true });
-      fs.writeFileSync(path.join(inputDir, '_close'), '');
+      writeCloseSentinel(state.groupFolder);
       logger.info(
         {
           groupJid,

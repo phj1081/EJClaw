@@ -7,7 +7,13 @@ import {
   fetchClaudeUsageViaCli,
   type ClaudeUsageData,
 } from './claude-usage.js';
-import { USAGE_DASHBOARD_ENABLED } from './config.js';
+import { STATUS_SHOW_ROOMS, USAGE_DASHBOARD_ENABLED } from './config.js';
+import {
+  composeDashboardContent,
+  type DashboardRoomLine,
+  getStatusLabel as formatDashboardStatusLabel,
+  renderCategorizedRoomSections,
+} from './dashboard-render.js';
 import { readEnvFile } from './env.js';
 import { GroupQueue, GroupStatus } from './group-queue.js';
 import { logger } from './logger.js';
@@ -103,15 +109,7 @@ async function refreshChannelMeta(opts: DashboardOptions): Promise<void> {
 }
 
 function getStatusLabel(status: GroupStatus): string {
-  if (status.status === 'processing') {
-    return `처리 중 (${formatElapsed(status.elapsedMs || 0)})`;
-  }
-  if (status.status === 'waiting') {
-    return status.pendingTasks > 0
-      ? `큐 대기 (태스크 ${status.pendingTasks}개)`
-      : '큐 대기 (메시지)';
-  }
-  return '비활성';
+  return formatDashboardStatusLabel(status);
 }
 
 function getSessionLabel(sessionId: string | undefined): string {
@@ -122,6 +120,8 @@ function getSessionLabel(sessionId: string | undefined): string {
 
 /** @internal - exported for testing */
 export function buildStatusContent(opts: DashboardOptions): string {
+  if (!STATUS_SHOW_ROOMS) return '';
+
   const registeredGroups = opts.registeredGroups();
   const sessions = opts.getSessions();
   const jids = Object.keys(registeredGroups);
@@ -148,7 +148,7 @@ export function buildStatusContent(opts: DashboardOptions): string {
     return posA - posB;
   });
 
-  const sections: string[] = [];
+  const roomLines: DashboardRoomLine[] = [];
   let totalActive = 0;
   let totalWaiting = 0;
   let total = 0;
@@ -158,19 +158,18 @@ export function buildStatusContent(opts: DashboardOptions): string {
       (a, b) => (a.meta?.position ?? 999) - (b.meta?.position ?? 999),
     );
 
-    const lines = categoryEntries.map((entry) => {
+    categoryEntries.forEach((entry) => {
       const icon = STATUS_ICONS[entry.status.status] || '⚪';
       const label = getStatusLabel(entry.status);
       const sessionLabel = getSessionLabel(sessions[entry.group.folder]);
       const name = entry.meta?.name ? `#${entry.meta.name}` : entry.group.name;
-      return `  ${icon} **${name}** — ${label} · ${sessionLabel}`;
+      roomLines.push({
+        category: categoryName,
+        categoryPosition: entry.meta?.categoryPosition ?? 999,
+        position: entry.meta?.position ?? 999,
+        line: `  ${icon} **${name}** — ${label} · ${sessionLabel}`,
+      });
     });
-
-    if (channelMetaCache.size > 0 && categoryName !== '기타') {
-      sections.push(`📁 **${categoryName}**\n${lines.join('\n')}`);
-    } else {
-      sections.push(lines.join('\n'));
-    }
 
     totalActive += categoryEntries.filter(
       (entry) => entry.status.status === 'processing',
@@ -182,7 +181,15 @@ export function buildStatusContent(opts: DashboardOptions): string {
   }
 
   const header = `**에이전트 상태** (${opts.assistantName}) — 활성 ${totalActive} | 큐대기 ${totalWaiting} | 전체 ${total}`;
-  return `${header}\n\n${sections.join('\n\n')}\n\n_${new Date().toLocaleTimeString('ko-KR')}_`;
+  return composeDashboardContent(
+    [
+      `${header}\n\n${renderCategorizedRoomSections({
+        lines: roomLines,
+        showCategoryHeaders: channelMetaCache.size > 0,
+      })}`,
+    ],
+    new Date(),
+  );
 }
 
 async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
@@ -473,6 +480,10 @@ export async function startStatusDashboard(
     try {
       await refreshChannelMeta(opts);
       const content = buildStatusContent(opts);
+      if (!content) {
+        statusMessageId = null;
+        return;
+      }
 
       if (statusMessageId && ch.editMessage) {
         await ch.editMessage(statusJid, statusMessageId, content);

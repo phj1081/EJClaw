@@ -1,9 +1,9 @@
 import {
-  getLatestMessageSeqAtOrBefore,
   getLastHumanMessageTimestamp,
   isPairedRoomJid,
 } from './db.js';
 import { filterProcessableMessages } from './bot-message-filter.js';
+import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   type Channel,
@@ -12,15 +12,6 @@ import {
 } from './types.js';
 
 const BOT_COLLABORATION_WINDOW_MS = 12 * 60 * 60 * 1000;
-
-export function normalizeStoredSeqCursor(
-  cursor: string | undefined,
-  chatJid?: string,
-): string {
-  if (!cursor) return '0';
-  if (/^\d+$/.test(cursor.trim())) return cursor.trim();
-  return String(getLatestMessageSeqAtOrBefore(cursor, chatJid));
-}
 
 export function advanceLastAgentCursor(
   lastAgentTimestamps: Record<string, string>,

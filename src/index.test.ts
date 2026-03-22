@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  composeDashboardContent,
   editFormattedTrackedChannelMessage,
   sendFormattedChannelMessage,
   sendFormattedTrackedChannelMessage,
@@ -79,5 +80,23 @@ describe('index scheduler messaging helpers', () => {
     expect(sendAndTrack).not.toHaveBeenCalled();
     expect(editMessage).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('composeDashboardContent', () => {
+  it('returns an empty string when all dashboard sections are disabled', () => {
+    expect(
+      composeDashboardContent([], new Date('2026-03-23T04:00:00+09:00')),
+    ).toBe('');
+  });
+
+  it('keeps non-status sections when room status is hidden', () => {
+    const content = composeDashboardContent(
+      ['**사용량**\nCodex OK'],
+      new Date('2026-03-23T04:00:00+09:00'),
+    );
+
+    expect(content).toContain('**사용량**');
+    expect(content).not.toContain('**📊 에이전트 상태**');
   });
 });

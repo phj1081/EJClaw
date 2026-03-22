@@ -11,6 +11,7 @@ import {
   SERVICE_AGENT_TYPE,
   isSessionCommandSenderAllowed,
   STATUS_CHANNEL_ID,
+  STATUS_SHOW_ROOMS,
   STATUS_UPDATE_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
@@ -23,6 +24,7 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import { writeGroupsSnapshot } from './agent-runner.js';
+import { listAvailableGroups } from './available-groups.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
@@ -41,6 +43,12 @@ import {
   storeChatMetadata,
   storeMessage,
 } from './db.js';
+import {
+  composeDashboardContent,
+  formatElapsed,
+  getStatusLabel as formatDashboardStatusLabel,
+  renderCategorizedRoomSections,
+} from './dashboard-render.js';
 import { GroupQueue } from './group-queue.js';
 import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath } from './group-folder.js';
@@ -69,9 +77,11 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, ChannelMeta, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { normalizeStoredSeqCursor } from './message-cursor.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+export { composeDashboardContent } from './dashboard-render.js';
 
 export async function sendFormattedChannelMessage(
   channels: Channel[],
@@ -148,15 +158,6 @@ const runtime = createMessageRuntime({
   clearSession,
 });
 
-function normalizeStoredSeqCursor(
-  cursor: string | undefined,
-  chatJid?: string,
-): string {
-  if (!cursor) return '0';
-  if (/^\d+$/.test(cursor.trim())) return cursor.trim();
-  return String(getLatestMessageSeqAtOrBefore(cursor, chatJid));
-}
-
 function loadState(): void {
   lastTimestamp = normalizeStoredSeqCursor(
     getRouterState('last_seq') || getRouterState('last_timestamp'),
@@ -229,17 +230,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
  * Returns groups ordered by most recent activity.
  */
 export function getAvailableGroups(): import('./agent-runner.js').AvailableGroup[] {
-  const chats = getAllChats();
-  const registeredJids = new Set(Object.keys(registeredGroups));
-
-  return chats
-    .filter((c) => c.jid !== '__group_sync__' && c.is_group)
-    .map((c) => ({
-      jid: c.jid,
-      name: c.name,
-      lastActivity: c.last_message_time,
-      isRegistered: registeredJids.has(c.jid),
-    }));
+  return listAvailableGroups(registeredGroups);
 }
 
 /** @internal - exported for testing */
@@ -250,22 +241,6 @@ export function _setRegisteredGroups(
 }
 
 // ── Status & Usage Dashboards ───────────────────────────────────
-
-function formatElapsed(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  if (s < 60) return `${s}s`;
-  if (s < 3600) {
-    const m = Math.floor(s / 60);
-    const rem = s % 60;
-    return `${m}m${rem.toString().padStart(2, '0')}s`;
-  }
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (h < 24) return `${h}h${m.toString().padStart(2, '0')}m`;
-  const d = Math.floor(h / 24);
-  const remH = h % 24;
-  return `${d}d${remH}h`;
-}
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1073741824) return `${(bytes / 1073741824).toFixed(1)}GB`;
@@ -360,13 +335,11 @@ function getStatusLabel(s: {
   pendingMessages: boolean;
   pendingTasks: number;
 }): string {
-  if (s.status === 'processing')
-    return `처리 중 (${formatElapsed(s.elapsedMs || 0)})`;
-  if (s.status === 'waiting')
-    return s.pendingTasks > 0
-      ? `큐 대기 (태스크 ${s.pendingTasks}개)`
-      : '큐 대기 (메시지)';
-  return '비활성';
+  return formatDashboardStatusLabel({
+    status: s.status,
+    elapsedMs: s.elapsedMs,
+    pendingTasks: s.pendingTasks,
+  });
 }
 
 function getAgentDisplayName(agentType: 'claude-code' | 'codex'): string {
@@ -434,6 +407,8 @@ function writeLocalStatusSnapshot(): void {
 }
 
 function buildStatusContent(): string {
+  if (!STATUS_SHOW_ROOMS) return '';
+
   const snapshots = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS);
   const chatNameByJid = new Map(
     getAllChats().map((chat) => [chat.jid, chat.name]),
@@ -504,11 +479,9 @@ function buildStatusContent(): string {
     return posA - posB;
   });
 
-  const sections: string[] = [];
+  const roomLines = [];
   for (const [catName, rooms] of sortedCategories) {
     rooms.sort((a, b) => (a.meta?.position ?? 999) - (b.meta?.position ?? 999));
-
-    const roomLines: string[] = [];
     for (const room of rooms) {
       // Sort agents: claude-code first, codex second
       room.agents.sort((a, b) =>
@@ -525,18 +498,21 @@ function buildStatusContent(): string {
         const tag = getAgentDisplayName(a.agentType);
         return `${tag} ${icon} ${label}`;
       });
-      roomLines.push(`  **${room.name}** — ${agentParts.join(' | ')}`);
-    }
-
-    if (channelMetaCache.size > 0 && catName !== '기타') {
-      sections.push(`📁 **${catName}**\n${roomLines.join('\n')}`);
-    } else {
-      sections.push(roomLines.join('\n'));
+      roomLines.push({
+        category: catName,
+        categoryPosition: room.meta?.categoryPosition ?? 999,
+        position: room.meta?.position ?? 999,
+        line: `  **${room.name}** — ${agentParts.join(' | ')}`,
+      });
     }
   }
 
   const header = `**📊 에이전트 상태** — 활성 ${totalActive} / ${totalRooms}`;
-  return `${header}\n\n${sections.join('\n\n')}`;
+  const sections = renderCategorizedRoomSections({
+    lines: roomLines,
+    showCategoryHeaders: channelMetaCache.size > 0,
+  });
+  return `${header}\n\n${sections}`;
 }
 
 // ── API Usage Fetchers ──────────────────────────────────────────
@@ -907,17 +883,14 @@ async function refreshUsageCache(): Promise<void> {
 }
 
 function buildUnifiedDashboard(): string {
-  const status = buildStatusContent();
-  const parts = [status];
-
+  const parts: string[] = [];
+  if (STATUS_SHOW_ROOMS) {
+    parts.push(buildStatusContent());
+  }
   if (cachedUsageContent) {
     parts.push(cachedUsageContent);
   }
-
-  parts.push(
-    `_${new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}_`,
-  );
-  return parts.join('\n\n');
+  return composeDashboardContent(parts);
 }
 
 async function startStatusDashboard(): Promise<void> {
@@ -944,6 +917,10 @@ async function startStatusDashboard(): Promise<void> {
     try {
       await refreshChannelMeta();
       const content = buildUnifiedDashboard();
+      if (!content) {
+        statusMessageId = null;
+        return;
+      }
 
       if (statusMessageId && ch.editMessage) {
         await ch.editMessage(statusJid, statusMessageId, content);

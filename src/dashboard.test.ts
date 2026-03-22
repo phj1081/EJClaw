@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildStatusContent, type DashboardOptions } from './dashboard.js';
+import type { DashboardOptions } from './dashboard.js';
 
 function makeOptions(sessionId?: string): DashboardOptions {
   const sessions: Record<string, string> = sessionId
@@ -37,13 +37,33 @@ function makeOptions(sessionId?: string): DashboardOptions {
 }
 
 describe('buildStatusContent', () => {
-  it('shows cleared sessions as empty', () => {
+  async function loadBuildStatusContent(
+    statusShowRooms = 'true',
+  ): Promise<(opts: DashboardOptions) => string> {
+    vi.resetModules();
+    process.env.STATUS_SHOW_ROOMS = statusShowRooms;
+    const mod = await import('./dashboard.js');
+    return mod.buildStatusContent;
+  }
+
+  afterEach(() => {
+    delete process.env.STATUS_SHOW_ROOMS;
+  });
+
+  it('shows cleared sessions as empty', async () => {
+    const buildStatusContent = await loadBuildStatusContent();
     const content = buildStatusContent(makeOptions());
     expect(content).toContain('세션 없음');
   });
 
-  it('shows a shortened session id when a session exists', () => {
+  it('shows a shortened session id when a session exists', async () => {
+    const buildStatusContent = await loadBuildStatusContent();
     const content = buildStatusContent(makeOptions('session-1234567890'));
     expect(content).toContain('세션 34567890');
+  });
+
+  it('returns an empty string when room status display is disabled', async () => {
+    const buildStatusContent = await loadBuildStatusContent('false');
+    expect(buildStatusContent(makeOptions())).toBe('');
   });
 });
