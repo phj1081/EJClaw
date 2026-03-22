@@ -664,11 +664,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       );
 
       type VisiblePhase = 'silent' | 'progress' | 'final';
-      type PendingFollowUp = {
-        queuedAt: number;
-        textLength: number;
-        filename: string;
-      } | null;
       let idleTimer: ReturnType<typeof setTimeout> | null = null;
       let hadError = false;
       let producedDeliverySucceeded = true;
@@ -681,8 +676,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       let progressEditFailCount = 0;
       let latestProgressTextForFinal: string | null = null;
       let poisonedSessionDetected = false;
-      let canPipeFollowUps = true;
-      let pendingFollowUp: PendingFollowUp = null;
+      let closeRequested = false;
 
       const hasVisibleOutput = () => visiblePhase !== 'silent';
       const terminalObserved = () => visiblePhase === 'final';
@@ -701,10 +695,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         progressMessageId = null;
         progressStartedAt = null;
         progressEditFailCount = 0;
-      };
-
-      const clearPendingFollowUp = () => {
-        pendingFollowUp = null;
       };
 
       const renderProgressMessage = (text: string) => {
@@ -830,6 +820,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         await deliverFinalText(FAILURE_FINAL_TEXT);
       };
 
+      const requestAgentClose = (reason: string) => {
+        if (closeRequested) return;
+        closeRequested = true;
+        deps.queue.closeStdin(chatJid, { runId, reason });
+      };
+
       const sendProgressMessage = async (text: string) => {
         if (!text || (text === latestProgressText && progressMessageId)) {
           return;
@@ -914,83 +910,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           idleTimer = null;
           return;
         }
-        idleTimer = setTimeout(
-          () => {
-            const closeReason =
-              !hasVisibleOutput() && pendingFollowUp
-                ? 'follow-up-no-output-preemption'
-                : 'idle-timeout';
-            if (!hasVisibleOutput() && pendingFollowUp) {
-              logger.warn(
-                {
-                  group: group.name,
-                  chatJid,
-                  runId,
-                  followUpQueuedAt: new Date(
-                    pendingFollowUp.queuedAt,
-                  ).toISOString(),
-                  followUpQueuedTextLength: pendingFollowUp.textLength,
-                  followUpQueuedFilename: pendingFollowUp.filename,
-                  followUpWaitMs: Date.now() - pendingFollowUp.queuedAt,
-                },
-                'Idle timeout reached while a queued follow-up still had no visible output',
-              );
-            } else {
-              logger.debug(
-                { group: group.name, chatJid, runId, closeReason },
-                'Idle timeout, closing agent stdin',
-              );
-            }
-            deps.queue.closeStdin(chatJid, { runId, reason: closeReason });
-          },
-          deps.idleTimeout,
-        );
+        idleTimer = setTimeout(() => {
+          logger.debug(
+            { group: group.name, chatJid, runId },
+            'Idle timeout, closing agent stdin',
+          );
+          requestAgentClose('idle-timeout');
+        }, deps.idleTimeout);
       };
-
-      const noteFollowUpQueued = (meta?: {
-        source: 'follow-up';
-        textLength: number;
-        filename: string;
-      }) => {
-        if (meta?.source !== 'follow-up' || terminalObserved()) return;
-        pendingFollowUp = {
-          queuedAt: Date.now(),
-          textLength: meta.textLength,
-          filename: meta.filename,
-        };
-        logger.info(
-          {
-            group: group.name,
-            chatJid,
-            runId,
-            followUpQueuedTextLength: pendingFollowUp.textLength,
-            followUpQueuedFilename: pendingFollowUp.filename,
-          },
-          'Registered follow-up activity for active agent',
-        );
-        resetIdleTimer();
-      };
-
-      const noteVisibleOutputObserved = (phase?: string) => {
-        if (!pendingFollowUp) return;
-        logger.info(
-          {
-            group: group.name,
-            chatJid,
-            runId,
-            followUpQueuedAt: new Date(pendingFollowUp.queuedAt).toISOString(),
-            followUpQueuedTextLength: pendingFollowUp.textLength,
-            followUpQueuedFilename: pendingFollowUp.filename,
-            followUpWaitMs: Date.now() - pendingFollowUp.queuedAt,
-            resultPhase: phase,
-          },
-          'Agent produced visible output after a queued follow-up',
-        );
-        clearPendingFollowUp();
-      };
-
-      deps.queue.setActivityTouch?.(chatJid, noteFollowUpQueued);
-      deps.queue.setFollowUpPipeAllowed?.(chatJid, () => canPipeFollowUps);
 
       resetIdleTimer();
       await channel.setTyping?.(chatJid, true);
@@ -1059,8 +986,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
           if (result.phase === 'progress') {
             if (text) {
-              canPipeFollowUps = false;
-              noteVisibleOutputObserved(result.phase);
               await sendProgressMessage(text);
             }
             if (!poisonedSessionDetected) {
@@ -1073,8 +998,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           }
 
           if (text) {
-            canPipeFollowUps = false;
-            noteVisibleOutputObserved(result.phase);
             await finalizeProgressMessage();
             await deliverFinalText(text);
           } else if (raw) {
@@ -1097,18 +1020,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           }
 
           await channel.setTyping?.(chatJid, false);
-          if (!poisonedSessionDetected) {
-            resetIdleTimer();
-          }
-
           if (result.status === 'success' && !poisonedSessionDetected) {
-            deps.queue.notifyIdle(chatJid, runId);
-            if (hasVisibleOutput()) {
-              deps.queue.closeStdin(chatJid, {
-                runId,
-                reason: 'output-delivered-close',
-              });
-            }
+            requestAgentClose('output-delivered-close');
           }
 
           if (result.status === 'error') {
@@ -1152,9 +1065,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       clearProgressTicker();
       if (idleTimer) clearTimeout(idleTimer);
-      deps.queue.setActivityTouch?.(chatJid, null);
-      deps.queue.setFollowUpPipeAllowed?.(chatJid, null);
-      clearPendingFollowUp();
 
       if (!producedDeliverySucceeded) {
         logger.warn(
@@ -1277,42 +1187,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               if (!hasTrigger) continue;
             }
 
-            const allPending = getMessagesSinceSeq(
-              chatJid,
-              deps.getLastAgentTimestamps()[chatJid] || '',
-              deps.assistantName,
-            );
-            const processablePending = getProcessableMessages(
-              chatJid,
-              allPending,
-              channel,
-            );
-            const messagesToSend =
-              processablePending.length > 0
-                ? processablePending
-                : processableGroupMessages;
-            const formatted = formatMessages(messagesToSend, deps.timezone);
-
-            if (deps.queue.sendMessage(chatJid, formatted)) {
-              logger.debug(
-                { chatJid, count: messagesToSend.length },
-                'Piped messages to active agent',
-              );
-              const endSeq = messagesToSend[messagesToSend.length - 1].seq;
-              if (endSeq != null) {
-                advanceLastAgentCursor(chatJid, endSeq);
-              }
-              channel
-                .setTyping?.(chatJid, true)
-                ?.catch((err) =>
-                  logger.warn(
-                    { chatJid, err },
-                    'Failed to set typing indicator',
-                  ),
-                );
-            } else {
-              deps.queue.enqueueMessageCheck(chatJid, group.folder);
-            }
+            deps.queue.enqueueMessageCheck(chatJid, group.folder);
           }
         }
       } catch (err) {

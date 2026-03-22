@@ -11,12 +11,6 @@ interface QueuedTask {
   fn: () => Promise<void>;
 }
 
-export interface GroupActivityTouchMeta {
-  source: 'follow-up';
-  textLength: number;
-  filename: string;
-}
-
 export interface GroupRunContext {
   runId: string;
   reason: 'messages' | 'drain';
@@ -41,8 +35,6 @@ interface GroupState {
   retryTimer: ReturnType<typeof setTimeout> | null;
   retryScheduledAt: number | null;
   startedAt: number | null;
-  activityTouch: ((meta?: GroupActivityTouchMeta) => void) | null;
-  followUpPipeAllowed: (() => boolean) | null;
 }
 
 export interface GroupStatus {
@@ -81,8 +73,6 @@ export class GroupQueue {
         retryTimer: null,
         retryScheduledAt: null,
         startedAt: null,
-        activityTouch: null,
-        followUpPipeAllowed: null,
       };
       this.groups.set(groupJid, state);
     }
@@ -95,32 +85,8 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
-  setActivityTouch(
-    groupJid: string,
-    touch: ((meta?: GroupActivityTouchMeta) => void) | null,
-  ): void {
-    const state = this.getGroup(groupJid);
-    state.activityTouch = touch;
-  }
-
-  setFollowUpPipeAllowed(
-    groupJid: string,
-    allowed: (() => boolean) | null,
-  ): void {
-    const state = this.getGroup(groupJid);
-    state.followUpPipeAllowed = allowed;
-  }
-
   private canPreemptIdleActiveRun(state: GroupState): boolean {
-    if (!state.idleWaiting) {
-      return false;
-    }
-
-    if (!state.followUpPipeAllowed) {
-      return true;
-    }
-
-    return state.followUpPipeAllowed();
+    return state.idleWaiting;
   }
 
   private createRunId(): string {
@@ -270,80 +236,6 @@ export class GroupQueue {
   }
 
   /**
-   * Send a follow-up message to the active agent process via IPC file.
-   * Returns true if the message was written, false if no active agent process.
-   */
-  sendMessage(groupJid: string, text: string): boolean {
-    const state = this.getGroup(groupJid);
-    if (!state.active || !state.groupFolder || state.isTaskProcess) {
-      logger.debug(
-        {
-          groupJid,
-          runId: state.currentRunId,
-          active: state.active,
-          closingStdin: state.closingStdin,
-          groupFolder: state.groupFolder,
-          isTaskProcess: state.isTaskProcess,
-        },
-        'Cannot pipe follow-up message to active agent',
-      );
-      return false;
-    }
-    if (state.closingStdin) {
-      logger.info(
-        { groupJid, runId: state.currentRunId, groupFolder: state.groupFolder },
-        'Skipping follow-up IPC because active agent is closing',
-      );
-      return false;
-    }
-    if (state.followUpPipeAllowed && !state.followUpPipeAllowed()) {
-      logger.info(
-        { groupJid, runId: state.currentRunId, groupFolder: state.groupFolder },
-        'Skipping follow-up IPC because active agent requires a fresh logical run',
-      );
-      return false;
-    }
-    state.idleWaiting = false; // Agent is about to receive work, no longer idle
-
-    const inputDir = path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
-    try {
-      fs.mkdirSync(inputDir, { recursive: true });
-      const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
-      const filepath = path.join(inputDir, filename);
-      const tempPath = `${filepath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
-      fs.renameSync(tempPath, filepath);
-      state.activityTouch?.({
-        source: 'follow-up',
-        textLength: text.length,
-        filename,
-      });
-      logger.info(
-        {
-          groupJid,
-          runId: state.currentRunId,
-          groupFolder: state.groupFolder,
-          textLength: text.length,
-          filename,
-        },
-        'Queued follow-up message for active agent',
-      );
-      return true;
-    } catch (err) {
-      logger.warn(
-        {
-          groupJid,
-          runId: state.currentRunId,
-          groupFolder: state.groupFolder,
-          err,
-        },
-        'Failed to queue follow-up message for active agent',
-      );
-      return false;
-    }
-  }
-
-  /**
    * Signal the active agent process to wind down by writing a close sentinel.
    */
   closeStdin(
@@ -446,8 +338,6 @@ export class GroupQueue {
       state.processName = null;
       state.groupFolder = null;
       state.currentRunId = null;
-      state.activityTouch = null;
-      state.followUpPipeAllowed = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }
@@ -482,8 +372,6 @@ export class GroupQueue {
       state.process = null;
       state.processName = null;
       state.groupFolder = null;
-      state.activityTouch = null;
-      state.followUpPipeAllowed = null;
       this.activeCount--;
       this.drainGroup(groupJid);
     }

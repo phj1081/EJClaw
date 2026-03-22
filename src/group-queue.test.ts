@@ -8,7 +8,7 @@ vi.mock('./config.js', () => ({
   MAX_CONCURRENT_AGENTS: 2,
 }));
 
-// Mock fs operations used by sendMessage/closeStdin
+// Mock fs operations used by closeStdin
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
   return {
@@ -409,7 +409,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
-  it('keeps a post-final follow-up queued instead of preempting the idle run', async () => {
+  it('preempts an idle run so the next message is handled in a fresh run', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;
 
@@ -425,7 +425,6 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     queue.registerProcess('group1@g.us', {} as any, 'agent-1', 'test-group');
-    queue.setFollowUpPipeAllowed('group1@g.us', () => false);
     queue.notifyIdle('group1@g.us');
 
     const writeFileSync = vi.mocked(fs.default.writeFileSync);
@@ -436,119 +435,7 @@ describe('GroupQueue', () => {
     const closeWrites = writeFileSync.mock.calls.filter(
       (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
     );
-    expect(closeWrites).toHaveLength(0);
-
-    resolveProcess!();
-    await vi.advanceTimersByTimeAsync(10);
-
-    expect(processMessages).toHaveBeenCalledTimes(2);
-  });
-
-  it('sendMessage resets idleWaiting so a subsequent task enqueue does not preempt', async () => {
-    const fs = await import('fs');
-    let resolveProcess: () => void;
-
-    const processMessages = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        resolveProcess = resolve;
-      });
-      return true;
-    });
-
-    queue.setProcessMessagesFn(processMessages);
-    queue.enqueueMessageCheck('group1@g.us');
-    await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess('group1@g.us', {} as any, 'agent-1', 'test-group');
-
-    // Agent becomes idle
-    queue.notifyIdle('group1@g.us');
-
-    // A new user message arrives — resets idleWaiting
-    queue.sendMessage('group1@g.us', 'hello');
-
-    // Task enqueued after message reset — should NOT preempt (agent is working)
-    const writeFileSync = vi.mocked(fs.default.writeFileSync);
-    writeFileSync.mockClear();
-
-    const taskFn = vi.fn(async () => {});
-    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
-
-    const closeWrites = writeFileSync.mock.calls.filter(
-      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
-    );
-    expect(closeWrites).toHaveLength(0);
-
-    resolveProcess!();
-    await vi.advanceTimersByTimeAsync(10);
-  });
-
-  it('sendMessage touches active run activity after piping follow-up', async () => {
-    let resolveProcess: () => void;
-    const touch = vi.fn();
-
-    const processMessages = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        resolveProcess = resolve;
-      });
-      return true;
-    });
-
-    queue.setProcessMessagesFn(processMessages);
-    queue.enqueueMessageCheck('group1@g.us');
-    await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess('group1@g.us', {} as any, 'agent-1', 'test-group');
-    queue.setActivityTouch('group1@g.us', touch);
-
-    expect(queue.sendMessage('group1@g.us', 'hello')).toBe(true);
-    expect(touch).toHaveBeenCalledTimes(1);
-
-    resolveProcess!();
-    await vi.advanceTimersByTimeAsync(10);
-  });
-
-  it('sendMessage returns false for task agents so user messages queue up', async () => {
-    let resolveTask: () => void;
-
-    const taskFn = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        resolveTask = resolve;
-      });
-    });
-
-    // Start a task (sets isTaskProcess = true)
-    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
-    await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess('group1@g.us', {} as any, 'agent-1', 'test-group');
-
-    // sendMessage should return false — user messages must not go to task agents
-    const result = queue.sendMessage('group1@g.us', 'hello');
-    expect(result).toBe(false);
-
-    resolveTask!();
-    await vi.advanceTimersByTimeAsync(10);
-  });
-
-  it('does not pipe follow-up messages to an agent after closeStdin', async () => {
-    let resolveProcess: () => void;
-
-    const processMessages = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        resolveProcess = resolve;
-      });
-      return true;
-    });
-
-    queue.setProcessMessagesFn(processMessages);
-    queue.enqueueMessageCheck('group1@g.us', 'test-group');
-    await vi.advanceTimersByTimeAsync(10);
-
-    queue.registerProcess('group1@g.us', {} as any, 'agent-1', 'test-group');
-    queue.notifyIdle('group1@g.us');
-    queue.closeStdin('group1@g.us');
-
-    expect(queue.sendMessage('group1@g.us', 'hello after clear')).toBe(false);
-
-    queue.enqueueMessageCheck('group1@g.us', 'test-group');
+    expect(closeWrites).toHaveLength(1);
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
