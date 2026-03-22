@@ -152,6 +152,61 @@ describe('task scheduler', () => {
     expect(enqueueTask.mock.calls[0][1]).toBe('task-group-context');
   });
 
+  it('keeps watch_ci tasks on a dedicated queue even in group context', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-watch-group',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 123456
+
+Task ID:
+task-watch-group
+
+Check instructions:
+Check the run.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'group',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn();
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+    expect(enqueueTask.mock.calls[0][0]).toBe(
+      'shared@g.us::task:task-watch-group',
+    );
+    expect(enqueueTask.mock.calls[0][1]).toBe('task-watch-group');
+  });
+
   it('renders watcher heartbeat messages with target and timing', () => {
     const prompt = `
 [BACKGROUND CI WATCH]

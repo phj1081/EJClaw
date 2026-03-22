@@ -203,9 +203,9 @@ export function renderWatchCiStatusMessage(args: {
 }
 
 function getTaskQueueJid(
-  task: Pick<ScheduledTask, 'chat_jid' | 'context_mode' | 'id'>,
+  task: Pick<ScheduledTask, 'chat_jid' | 'context_mode' | 'id' | 'prompt'>,
 ): string {
-  return task.context_mode === 'isolated'
+  return task.context_mode === 'isolated' || isWatchCiTask(task)
     ? `${task.chat_jid}::task:${task.id}`
     : task.chat_jid;
 }
