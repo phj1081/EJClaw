@@ -6,7 +6,11 @@ import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { AGENT_MAX_OUTPUT_SIZE, AGENT_TIMEOUT, IDLE_TIMEOUT } from './config.js';
+import {
+  AGENT_MAX_OUTPUT_SIZE,
+  AGENT_TIMEOUT,
+  IDLE_TIMEOUT,
+} from './config.js';
 import { prepareGroupEnvironment } from './agent-runner-environment.js';
 export {
   type AvailableGroup,
