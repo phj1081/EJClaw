@@ -1,10 +1,7 @@
 import { ChildProcess } from 'child_process';
 
 import { MAX_CONCURRENT_AGENTS } from './config.js';
-import {
-  queueFollowUpMessage,
-  writeCloseSentinel,
-} from './group-queue-ipc.js';
+import { queueFollowUpMessage, writeCloseSentinel } from './group-queue-ipc.js';
 import { logger } from './logger.js';
 
 interface QueuedTask {

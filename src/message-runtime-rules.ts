@@ -1,7 +1,4 @@
-import {
-  getLastHumanMessageTimestamp,
-  isPairedRoomJid,
-} from './db.js';
+import { getLastHumanMessageTimestamp, isPairedRoomJid } from './db.js';
 import { filterProcessableMessages } from './bot-message-filter.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';

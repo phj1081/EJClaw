@@ -3,7 +3,10 @@ import path from 'path';
 
 import { DATA_DIR } from './config.js';
 
-export function queueFollowUpMessage(groupFolder: string, text: string): string {
+export function queueFollowUpMessage(
+  groupFolder: string,
+  text: string,
+): string {
   const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
   fs.mkdirSync(inputDir, { recursive: true });
   const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
