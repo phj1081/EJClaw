@@ -29,6 +29,7 @@ export class MessageTurnController {
   private previousProgressText: string | null = null;
   private pendingProgressText: string | null = null;
   private toolActivities: string[] = [];
+  private progressCreating = false;
   private latestProgressRendered: string | null = null;
   private progressMessageId: string | null = null;
   private progressStartedAt: number | null = null;
@@ -105,9 +106,18 @@ export class MessageTurnController {
     }
 
     if (result.phase === 'tool-activity') {
-      // Flush pending progress so the message exists for tool activity sub-lines
-      if (this.pendingProgressText && !this.progressMessageId) {
-        void this.sendProgressMessage(this.pendingProgressText);
+      // Ensure a progress message exists for tool activity sub-lines
+      if (!this.progressMessageId && !this.progressCreating) {
+        this.progressCreating = true;
+        const heading = this.pendingProgressText || '작업 중...';
+        this.sendProgressMessage(heading).then(() => {
+          this.progressCreating = false;
+          this.ensureProgressTicker();
+          // Replay any queued tool activities now that the message exists
+          if (this.toolActivities.length > 0 && this.progressMessageId) {
+            void this.syncTrackedProgressMessage();
+          }
+        });
         this.pendingProgressText = null;
       }
       if (text) {
@@ -121,7 +131,14 @@ export class MessageTurnController {
 
     if (result.phase === 'progress') {
       if (text) {
-        this.bufferProgress(text);
+        if (this.progressMessageId) {
+          // Progress message already visible — update heading directly
+          this.latestProgressText = text;
+          this.toolActivities = [];
+          void this.syncTrackedProgressMessage();
+        } else {
+          this.bufferProgress(text);
+        }
       }
       if (!this.poisonedSessionDetected) {
         this.resetIdleTimer();
@@ -223,7 +240,7 @@ export class MessageTurnController {
     const elapsedSeconds =
       this.progressStartedAt === null
         ? 0
-        : Math.floor((Date.now() - this.progressStartedAt) / 10_000) * 10;
+        : Math.floor((Date.now() - this.progressStartedAt) / 5_000) * 5;
     const hours = Math.floor(elapsedSeconds / 3600);
     const minutes = Math.floor((elapsedSeconds % 3600) / 60);
     const seconds = elapsedSeconds % 60;
@@ -241,9 +258,7 @@ export class MessageTurnController {
               const isLast = i === this.toolActivities.length - 1;
               const connector = isLast ? '└' : '├';
               const isSummary = a.startsWith('📋');
-              return isSummary
-                ? `${connector} ${a}`
-                : `${connector}  ${a}`;
+              return isSummary ? `${connector} ${a}` : `${connector}  ${a}`;
             })
             .join('\n')
         : '';
@@ -267,6 +282,7 @@ export class MessageTurnController {
   private resetProgressState(): void {
     this.clearProgressTicker();
     this.pendingProgressText = null;
+    this.progressCreating = false;
     this.toolActivities = [];
     this.latestProgressText = null;
     this.previousProgressText = null;
@@ -299,11 +315,9 @@ export class MessageTurnController {
     if (this.toolActivities.length > MAX_ACTIVITIES) {
       this.toolActivities = this.toolActivities.slice(-MAX_ACTIVITIES);
     }
-    // Update the displayed progress message with tool activity sub-lines
-    if (this.latestProgressText && this.progressMessageId) {
-      void this.syncTrackedProgressMessage();
-      this.ensureProgressTicker();
-    }
+    // Don't sync here — let the ticker handle periodic updates
+    // to avoid flooding Discord with edits.
+    this.ensureProgressTicker();
   }
 
   /**
@@ -327,9 +341,6 @@ export class MessageTurnController {
     }
 
     const rendered = this.renderProgressMessage(this.latestProgressText);
-    if (rendered === this.latestProgressRendered) {
-      return;
-    }
 
     try {
       await this.options.channel.editMessage(
@@ -361,17 +372,15 @@ export class MessageTurnController {
   }
 
   private ensureProgressTicker(): void {
-    if (
-      !this.progressMessageId ||
-      !this.options.channel.editMessage ||
-      this.progressTicker
-    ) {
+    if (this.progressTicker || !this.options.channel.editMessage) {
       return;
     }
 
     this.progressTicker = setInterval(() => {
-      void this.syncTrackedProgressMessage();
-    }, 10_000);
+      if (this.progressMessageId && this.latestProgressText && !this.progressCreating) {
+        void this.syncTrackedProgressMessage();
+      }
+    }, 5_000);
   }
 
   private async finalizeProgressMessage(): Promise<void> {

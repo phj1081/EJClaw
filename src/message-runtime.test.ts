@@ -1451,14 +1451,15 @@ describe('createMessageRuntime', () => {
           result: '커밋은 정상 들어갔고 pre-commit도 통과했습니다.',
           newSessionId: 'session-progress-only',
         });
-        await vi.advanceTimersByTimeAsync(10_000);
-        // Third progress: flushes second (edits tracked message with new text)
+        // Third progress: updates tracked message heading directly
         await onOutput?.({
           status: 'success',
           phase: 'progress',
           result: '테스트도 통과했습니다.',
           newSessionId: 'session-progress-only',
         });
+        // Advance timer so the ticker fires and syncs the tracked message
+        await vi.advanceTimersByTimeAsync(5_000);
         await onOutput?.({
           status: 'success',
           result: null,
@@ -1506,17 +1507,17 @@ describe('createMessageRuntime', () => {
         chatJid,
         P('검증 중입니다.\n\n0초'),
       );
-      // Second progress flushed when third arrives — edits tracked message
+      // Ticker fires after advanceTimersByTime — edits tracked message with latest heading
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        P('커밋은 정상 들어갔고 pre-commit도 통과했습니다.\n\n10초'),
+        P('테스트도 통과했습니다.\n\n5초'),
       );
       // finish() promotes the last flushed progress text to a final message
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
         chatJid,
-        '커밋은 정상 들어갔고 pre-commit도 통과했습니다.',
+        '검증 중입니다.',
       );
     } finally {
       vi.useRealTimers();
@@ -1561,14 +1562,15 @@ describe('createMessageRuntime', () => {
           result: '아직 진행 중.',
           newSessionId: 'session-progress-recreate',
         });
-        await vi.advanceTimersByTimeAsync(10_000);
-        // Third progress: flushes second (edit fails once, then succeeds on retry in syncTrackedProgressMessage)
+        // Third progress: updates heading directly (edit fails once on ticker, then succeeds on retry)
         await onOutput?.({
           status: 'success',
           phase: 'progress',
           result: '거의 완료.',
           newSessionId: 'session-progress-recreate',
         });
+        // Advance timer so the ticker fires and syncs (first edit fails, second succeeds)
+        await vi.advanceTimersByTimeAsync(5_000);
         await onOutput?.({
           status: 'success',
           result: null,
@@ -1627,7 +1629,7 @@ describe('createMessageRuntime', () => {
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
         chatJid,
-        '아직 진행 중.',
+        '진행 중입니다.',
       );
     } finally {
       vi.useRealTimers();

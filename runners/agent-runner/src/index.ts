@@ -558,7 +558,7 @@ async function runQuery(
       if (summary) {
         writeOutput({
           status: 'success',
-          phase: 'tool-activity',
+          phase: 'progress',
           result: `📋 ${summary}`,
           newSessionId,
         });
