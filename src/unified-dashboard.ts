@@ -96,17 +96,16 @@ function formatResetRemaining(value: string | number): string {
     const date =
       typeof value === 'number' ? new Date(value * 1000) : new Date(value);
     const diffMs = date.getTime() - Date.now();
-    if (diffMs <= 0) return '리셋됨';
+    if (diffMs <= 0) return ' reset';
     const hours = Math.floor(diffMs / 3_600_000);
     const minutes = Math.floor((diffMs % 3_600_000) / 60_000);
-    if (hours > 24) {
+    if (hours >= 24) {
       const days = Math.floor(hours / 24);
-      return `${days}일 후`;
+      return `${String(days).padStart(2)}d`.padStart(6);
     }
-    if (hours > 0) return `${hours}h ${minutes}m 후`;
-    return `${minutes}m 후`;
+    return `${hours}h${String(minutes).padStart(2, '0')}m`.padStart(6);
   } catch {
-    return String(value);
+    return String(value).padStart(6);
   }
 }
 
