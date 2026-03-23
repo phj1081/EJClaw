@@ -157,6 +157,7 @@ function prepareCodexSessionEnvironment(args: {
   chatJid: string;
   isMain: boolean;
   isPairedRoom: boolean;
+  memoryBriefing?: string;
 }): void {
   const openaiKey =
     args.envVars.CODEX_OPENAI_API_KEY ||
@@ -213,6 +214,7 @@ function prepareCodexSessionEnvironment(args: {
     args.isPairedRoom
       ? readPairedRoomPrompt('codex', args.projectRoot)
       : undefined,
+    args.memoryBriefing,
   ]
     .filter((value): value is string => Boolean(value))
     .join('\n\n---\n\n')
@@ -298,6 +300,7 @@ export function prepareGroupEnvironment(
   isMain: boolean,
   chatJid: string,
   options?: {
+    memoryBriefing?: string;
     runtimeTaskId?: string;
     useTaskScopedSession?: boolean;
   },
@@ -352,6 +355,7 @@ export function prepareGroupEnvironment(
     claudePlatformPrompt,
     claudePairedRoomPrompt,
     globalClaudeMemory,
+    options?.memoryBriefing,
   ]
     .filter((value): value is string => Boolean(value))
     .join('\n\n---\n\n')
@@ -409,6 +413,7 @@ export function prepareGroupEnvironment(
       chatJid,
       isMain,
       isPairedRoom,
+      memoryBriefing: options?.memoryBriefing,
     });
   } else {
     prepareClaudeEnvironment({ env, envVars, group });

@@ -27,6 +27,7 @@ const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 export interface AgentInput {
   prompt: string;
   sessionId?: string;
+  memoryBriefing?: string;
   groupFolder: string;
   chatJid: string;
   runId?: string;
@@ -63,6 +64,7 @@ export async function runAgentProcess(
     input.isMain,
     input.chatJid,
     {
+      memoryBriefing: input.memoryBriefing,
       runtimeTaskId: input.runtimeTaskId,
       useTaskScopedSession: input.useTaskScopedSession,
     },

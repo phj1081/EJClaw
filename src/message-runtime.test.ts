@@ -1957,6 +1957,86 @@ describe('createMessageRuntime', () => {
     );
   });
 
+  it('retries with the fallback provider when Claude returns only a usage exhaustion banner', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-24T00:00:00.000Z',
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'usage fallback 응답입니다.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-fallback-usage-exhausted',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
+      'usage-exhausted',
+      undefined,
+    );
+    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'usage fallback 응답입니다.',
+    );
+  });
+
   it('retries with the fallback provider when Claude ends with success-null-result before any output', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');

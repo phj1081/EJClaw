@@ -1,4 +1,7 @@
 import { spawn } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { logger } from './logger.js';
 
@@ -7,8 +10,24 @@ export interface ClaudeUsageData {
   seven_day?: { utilization: number; resets_at: string };
 }
 
+export interface ClaudeAccountProfile {
+  index: number;
+  planType: string;
+}
+
+export interface ClaudeAccountUsage {
+  index: number;
+  isActive: boolean;
+  isRateLimited: boolean;
+  usage: ClaudeUsageData | null;
+}
+
 const CLAUDE_EXPECT_TIMEOUT_MS = 25000;
 const ANSI_RE = /\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+const HOST_CLAUDE_DIR = path.join(os.homedir(), '.claude');
+const CLAUDE_ACCOUNTS_DIR = path.join(os.homedir(), '.claude-accounts');
+
+let cachedProfiles: ClaudeAccountProfile[] = [];
 
 const EXPECT_PROGRAM = `
 set timeout 20
@@ -114,8 +133,59 @@ export function parseClaudeUsagePanel(rawText: string): ClaudeUsageData | null {
   };
 }
 
+function listClaudeConfigDirs(): string[] {
+  if (!fs.existsSync(CLAUDE_ACCOUNTS_DIR)) {
+    return [HOST_CLAUDE_DIR];
+  }
+
+  const dirs = fs
+    .readdirSync(CLAUDE_ACCOUNTS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .sort((a, b) => Number(a.name) - Number(b.name))
+    .map((entry) => path.join(CLAUDE_ACCOUNTS_DIR, entry.name));
+
+  return dirs.length > 0 ? dirs : [HOST_CLAUDE_DIR];
+}
+
+function inferClaudePlanType(configDir: string): string {
+  const credentialsPath = path.join(configDir, '.credentials.json');
+  return fs.existsSync(credentialsPath) ? 'OAuth' : 'Default';
+}
+
+function ensureProfiles(): ClaudeAccountProfile[] {
+  const profiles = listClaudeConfigDirs().map((configDir, index) => ({
+    index,
+    planType: inferClaudePlanType(configDir),
+  }));
+  cachedProfiles = profiles;
+  return profiles;
+}
+
+function readCredentialsFile(configDir: string): string | null {
+  try {
+    const credentialsPath = path.join(configDir, '.credentials.json');
+    if (!fs.existsSync(credentialsPath)) return null;
+    return fs.readFileSync(credentialsPath, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function detectActiveClaudeIndex(configDirs: string[]): number {
+  if (configDirs.length <= 1) return 0;
+
+  const hostCredentials = readCredentialsFile(HOST_CLAUDE_DIR);
+  if (!hostCredentials) return 0;
+
+  const matchIndex = configDirs.findIndex(
+    (configDir) => readCredentialsFile(configDir) === hostCredentials,
+  );
+  return matchIndex >= 0 ? matchIndex : 0;
+}
+
 export async function fetchClaudeUsageViaCli(
   binary = 'claude',
+  configDir?: string,
 ): Promise<ClaudeUsageData | null> {
   return new Promise((resolve) => {
     let output = '';
@@ -135,6 +205,7 @@ export async function fetchClaudeUsageViaCli(
         env: {
           ...(process.env as Record<string, string>),
           CLAUDE_BINARY: binary,
+          ...(configDir ? { CLAUDE_CONFIG_DIR: configDir } : {}),
         },
       });
     } catch (err) {
@@ -180,4 +251,33 @@ export async function fetchClaudeUsageViaCli(
       finish(parsed);
     });
   });
+}
+
+export async function fetchAllClaudeProfiles(): Promise<ClaudeAccountProfile[]> {
+  return ensureProfiles();
+}
+
+export function getClaudeProfile(
+  index: number,
+): ClaudeAccountProfile | undefined {
+  return (cachedProfiles.length > 0 ? cachedProfiles : ensureProfiles()).find(
+    (profile) => profile.index === index,
+  );
+}
+
+export async function fetchAllClaudeUsage(): Promise<ClaudeAccountUsage[]> {
+  const configDirs = listClaudeConfigDirs();
+  const profiles = ensureProfiles();
+  const activeIndex = detectActiveClaudeIndex(configDirs);
+
+  const usages = await Promise.all(
+    configDirs.map((configDir) => fetchClaudeUsageViaCli('claude', configDir)),
+  );
+
+  return profiles.map((profile, index) => ({
+    index: profile.index,
+    isActive: index === activeIndex,
+    isRateLimited: false,
+    usage: usages[index] || null,
+  }));
 }

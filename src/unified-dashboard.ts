@@ -5,9 +5,15 @@ import path from 'path';
 
 import { STATUS_SHOW_ROOMS, USAGE_DASHBOARD_ENABLED } from './config.js';
 import {
-  fetchClaudeUsageViaCli,
-  type ClaudeUsageData,
+  fetchAllClaudeUsage,
+  fetchAllClaudeProfiles,
+  getClaudeProfile,
+  type ClaudeAccountUsage,
 } from './claude-usage.js';
+import {
+  getAllCodexAccounts,
+  updateCodexAccountUsage,
+} from './codex-token-rotation.js';
 import {
   composeDashboardContent,
   formatElapsed,
@@ -16,7 +22,6 @@ import {
   renderCategorizedRoomSections,
 } from './dashboard-render.js';
 import { getAllChats, updateRegisteredGroupName } from './db.js';
-import { readEnvFile } from './env.js';
 import type { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import {
@@ -61,11 +66,8 @@ const STATUS_SNAPSHOT_MAX_AGE_MS = 60000;
 
 let statusMessageId: string | null = null;
 let cachedUsageContent = '';
-let cachedClaudeUsageData: ClaudeUsageData | null = null;
+let cachedClaudeAccounts: ClaudeAccountUsage[] = [];
 let usageUpdateInProgress = false;
-let usageApiBackoffUntil = 0;
-let usageApi429Streak = 0;
-let usageApiPollingDisabled = false;
 let channelMetaCache = new Map<string, ChannelMeta>();
 let channelMetaLastRefresh = 0;
 
@@ -82,6 +84,25 @@ function formatResetKST(value: string | number): string {
     });
   } catch {
     return String(value);
+  }
+}
+
+function formatResetRemaining(value: string | number): string {
+  try {
+    const date =
+      typeof value === 'number' ? new Date(value * 1000) : new Date(value);
+    const diffMs = date.getTime() - Date.now();
+    if (diffMs <= 0) return ' reset';
+    const hours = Math.floor(diffMs / 3_600_000);
+    const minutes = Math.floor((diffMs % 3_600_000) / 60_000);
+    if (hours >= 24) {
+      const days = Math.floor(hours / 24);
+      const remH = hours % 24;
+      return `${String(days).padStart(2)}d ${String(remH).padStart(2)}h`;
+    }
+    return `${String(hours).padStart(2)}h ${String(minutes).padStart(2)}m`;
+  } catch {
+    return String(value).padStart(6);
   }
 }
 
@@ -106,22 +127,6 @@ export async function purgeDashboardChannel(
   if (channel?.purgeChannel) {
     await channel.purgeChannel(statusJid);
   }
-}
-
-function parseRetryAfterMs(retryAfter: string | null): number | null {
-  if (!retryAfter) return null;
-
-  const seconds = Number(retryAfter);
-  if (Number.isFinite(seconds) && seconds > 0) {
-    return seconds * 1000;
-  }
-
-  const absolute = Date.parse(retryAfter);
-  if (!Number.isNaN(absolute)) {
-    return Math.max(0, absolute - Date.now());
-  }
-
-  return null;
 }
 
 async function refreshChannelMeta(
@@ -339,86 +344,9 @@ function buildStatusContent(): string {
   return `${header}\n\n${sections}`;
 }
 
-async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
-  if (usageApiPollingDisabled) {
-    logger.debug('Skipping usage API call (polling disabled for this process)');
-    return null;
-  }
-  if (Date.now() < usageApiBackoffUntil) {
-    logger.debug('Skipping usage API call (backoff active)');
-    return null;
-  }
-
-  const cliUsage = await fetchClaudeUsageViaCli();
-  if (cliUsage) {
-    usageApi429Streak = 0;
-    return cliUsage;
-  }
-
-  try {
-    const envToken = readEnvFile(['CLAUDE_CODE_OAUTH_TOKEN']);
-    let token =
-      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      envToken.CLAUDE_CODE_OAUTH_TOKEN ||
-      '';
-    if (!token) {
-      const configDir =
-        process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-      const credsPath = path.join(configDir, '.credentials.json');
-      if (!fs.existsSync(credsPath)) return null;
-      const creds = JSON.parse(fs.readFileSync(credsPath, 'utf-8'));
-      token = creds?.claudeAiOauth?.accessToken || '';
-    }
-    if (!token) return null;
-
-    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-      },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      if (res.status === 429) {
-        const retryAfter = res.headers.get('retry-after');
-        const retryAfterMs = parseRetryAfterMs(retryAfter);
-        const backoffMs = Math.max(600_000, retryAfterMs ?? 0);
-        usageApi429Streak += 1;
-        usageApiBackoffUntil = Date.now() + backoffMs;
-        if (usageApi429Streak >= 3) {
-          usageApiPollingDisabled = true;
-        }
-        logger.warn(
-          {
-            status: 429,
-            retryAfter,
-            retryAfterMs,
-            backoffMs,
-            consecutive429s: usageApi429Streak,
-            pollingDisabled: usageApiPollingDisabled,
-            body: body.slice(0, 200),
-          },
-          usageApiPollingDisabled
-            ? 'Usage API rate limited repeatedly (429), disabling usage polling for this process'
-            : 'Usage API rate limited (429), backing off',
-        );
-      } else {
-        logger.warn(
-          { status: res.status, body: body.slice(0, 200) },
-          'Usage API returned non-OK status',
-        );
-      }
-      return null;
-    }
-    usageApi429Streak = 0;
-    return (await res.json()) as ClaudeUsageData;
-  } catch (err) {
-    logger.debug({ err }, 'Usage API fetch failed');
-    return null;
-  }
-}
-
-async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
+async function fetchCodexUsage(
+  codexHomeOverride?: string,
+): Promise<CodexRateLimit[] | null> {
   const npmGlobalBin = path.join(os.homedir(), '.npm-global', 'bin', 'codex');
   const codexBin = fs.existsSync(npmGlobalBin) ? npmGlobalBin : 'codex';
 
@@ -441,17 +369,22 @@ async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
 
     const timer = setTimeout(() => finish(null), 20_000);
 
+    const spawnEnv: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      PATH: [
+        path.dirname(process.execPath),
+        path.join(os.homedir(), '.npm-global', 'bin'),
+        process.env.PATH || '',
+      ].join(':'),
+    };
+    if (codexHomeOverride) {
+      spawnEnv.CODEX_HOME = codexHomeOverride;
+    }
+
     try {
       proc = spawn(codexBin, ['app-server'], {
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...(process.env as Record<string, string>),
-          PATH: [
-            path.dirname(process.execPath),
-            path.join(os.homedir(), '.npm-global', 'bin'),
-            process.env.PATH || '',
-          ].join(':'),
-        },
+        env: spawnEnv,
       });
     } catch {
       resolve(null);
@@ -509,32 +442,76 @@ async function fetchCodexUsage(): Promise<CodexRateLimit[] | null> {
   });
 }
 
-async function buildUsageContent(): Promise<string> {
-  const activeSnapshots = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS);
-  const hasActiveClaudeWork = activeSnapshots.some(
-    (snapshot) =>
-      snapshot.agentType === 'claude-code' &&
-      snapshot.entries.some(
-        (entry) => entry.status === 'processing' || entry.status === 'waiting',
-      ),
+type UsageRow = {
+  name: string;
+  h5pct: number;
+  h5reset: string;
+  d7pct: number;
+  d7reset: string;
+};
+
+export function mergeClaudeDashboardAccounts(
+  liveAccounts: ClaudeAccountUsage[] | null | undefined,
+  cachedAccounts: ClaudeAccountUsage[],
+): ClaudeAccountUsage[] {
+  if (!liveAccounts) return cachedAccounts;
+
+  const cachedByIndex = new Map(
+    cachedAccounts.map((account) => [account.index, account]),
   );
+
+  return liveAccounts.map((account) => ({
+    ...account,
+    usage: account.usage || cachedByIndex.get(account.index)?.usage || null,
+  }));
+}
+
+export function buildClaudeUsageRows(
+  claudeAccounts: ClaudeAccountUsage[],
+): UsageRow[] {
+  const isMultiAccount = claudeAccounts.length > 1;
+
+  return claudeAccounts.map((account) => {
+    const usage = account.usage;
+    const h5 = usage?.five_hour;
+    const d7 = usage?.seven_day;
+    const profile = getClaudeProfile(account.index);
+    const planSuffix = profile ? ` ${profile.planType}` : '';
+    const label = isMultiAccount
+      ? `Claude${account.index + 1}${account.isActive ? '*' : ''}${account.isRateLimited ? '!' : ''}${planSuffix}`
+      : `Claude${account.isActive ? '*' : ''}${account.isRateLimited ? '!' : ''}${planSuffix}`;
+
+    return {
+      name: label,
+      h5pct: h5
+        ? h5.utilization > 1
+          ? Math.round(h5.utilization)
+          : Math.round(h5.utilization * 100)
+        : -1,
+      h5reset: h5 ? formatResetRemaining(h5.resets_at) : '',
+      d7pct: d7
+        ? d7.utilization > 1
+          ? Math.round(d7.utilization)
+          : Math.round(d7.utilization * 100)
+        : -1,
+      d7reset: d7 ? formatResetRemaining(d7.resets_at) : '',
+    };
+  });
+}
+
+async function buildUsageContent(): Promise<string> {
   const shouldFetchClaudeUsage = USAGE_DASHBOARD_ENABLED;
+  let liveClaudeAccounts: ClaudeAccountUsage[] | null = null;
 
-  const [liveClaudeUsage, codexUsage] = await Promise.all([
-    shouldFetchClaudeUsage && !hasActiveClaudeWork
-      ? fetchClaudeUsage()
-      : Promise.resolve(null),
-    fetchCodexUsage(),
-  ]);
-
-  const claudeUsage = shouldFetchClaudeUsage
-    ? liveClaudeUsage || cachedClaudeUsageData
-    : null;
-  const claudeUsageIsCached =
-    shouldFetchClaudeUsage && !liveClaudeUsage && !!cachedClaudeUsageData;
-  if (shouldFetchClaudeUsage && liveClaudeUsage) {
-    cachedClaudeUsageData = liveClaudeUsage;
+  const codexUsagePromise = fetchCodexUsage();
+  if (shouldFetchClaudeUsage) {
+    try {
+      liveClaudeAccounts = await fetchAllClaudeUsage();
+    } catch (err) {
+      logger.warn({ err }, 'Failed to fetch Claude usage for dashboard');
+    }
   }
+  const codexUsage = await codexUsagePromise;
 
   const lines: string[] = ['📊 *사용량*'];
   const bar = (pct: number) => {
@@ -542,36 +519,55 @@ async function buildUsageContent(): Promise<string> {
     return '█'.repeat(filled) + '░'.repeat(10 - filled);
   };
 
-  type UsageRow = {
-    name: string;
-    h5pct: number;
-    h5reset: string;
-    d7pct: number;
-    d7reset: string;
-  };
   const rows: UsageRow[] = [];
 
-  if (claudeUsage) {
-    const h5 = claudeUsage.five_hour;
-    const d7 = claudeUsage.seven_day;
-    rows.push({
-      name: claudeUsageIsCached ? 'Claude*' : 'Claude',
-      h5pct: h5
-        ? h5.utilization > 1
-          ? Math.round(h5.utilization)
-          : Math.round(h5.utilization * 100)
-        : -1,
-      h5reset: h5 ? formatResetKST(h5.resets_at) : '',
-      d7pct: d7
-        ? d7.utilization > 1
-          ? Math.round(d7.utilization)
-          : Math.round(d7.utilization * 100)
-        : -1,
-      d7reset: d7 ? formatResetKST(d7.resets_at) : '',
-    });
+  if (shouldFetchClaudeUsage) {
+    cachedClaudeAccounts = mergeClaudeDashboardAccounts(
+      liveClaudeAccounts,
+      cachedClaudeAccounts,
+    );
+    rows.push(...buildClaudeUsageRows(cachedClaudeAccounts));
   }
 
-  if (codexUsage && Array.isArray(codexUsage)) {
+  const codexAccounts = getAllCodexAccounts();
+  if (codexAccounts.length > 1) {
+    // Multi-account: show each account with plan + status
+    for (const acct of codexAccounts) {
+      const icon = acct.isActive ? '*' : acct.isRateLimited ? '!' : ' ';
+      const label = `Codex${acct.index + 1}${icon}`;
+      if (acct.isActive && codexUsage && Array.isArray(codexUsage)) {
+        const relevant = codexUsage.filter(
+          (limit) =>
+            limit.primary.usedPercent > 0 || limit.secondary.usedPercent > 0,
+        );
+        const display = relevant.length > 0 ? relevant : codexUsage.slice(0, 1);
+        for (const limit of display) {
+          rows.push({
+            name: `${label} ${acct.planType}`,
+            h5pct: Math.round(limit.primary.usedPercent),
+            h5reset: formatResetRemaining(limit.primary.resetsAt),
+            d7pct: Math.round(limit.secondary.usedPercent),
+            d7reset: formatResetRemaining(limit.secondary.resetsAt),
+          });
+        }
+      } else {
+        // Show cached usage from last scan
+        const pct = acct.cachedUsagePct != null ? acct.cachedUsagePct : -1;
+        const d7pct =
+          acct.cachedUsageD7Pct != null ? acct.cachedUsageD7Pct : -1;
+        const reset = acct.resetAt || '';
+        const d7reset = acct.resetD7At || '';
+        rows.push({
+          name: `${label} ${acct.planType}`,
+          h5pct: pct,
+          h5reset: reset,
+          d7pct,
+          d7reset,
+        });
+      }
+    }
+  } else if (codexUsage && Array.isArray(codexUsage)) {
+    // Single account: existing behavior
     const relevant = codexUsage.filter(
       (limit) =>
         limit.primary.usedPercent > 0 || limit.secondary.usedPercent > 0,
@@ -589,8 +585,15 @@ async function buildUsageContent(): Promise<string> {
   }
 
   if (rows.length > 0) {
+    // Emoji characters take 2 columns in monospace — count visual width
+    const visualWidth = (s: string) =>
+      [...s].reduce((w, c) => w + (c.codePointAt(0)! > 0x7f ? 2 : 1), 0);
+    const maxNameWidth =
+      Math.max(8, ...rows.map((r) => visualWidth(r.name))) + 1;
+    const padName = (s: string) =>
+      s + ' '.repeat(maxNameWidth - visualWidth(s));
     lines.push('```');
-    lines.push('        5-Hour             7-Day');
+    lines.push(`${' '.repeat(maxNameWidth)}5-Hour             7-Day`);
     for (const row of rows) {
       const h5 =
         row.h5pct >= 0
@@ -600,21 +603,17 @@ async function buildUsageContent(): Promise<string> {
         row.d7pct >= 0
           ? `${bar(row.d7pct)} ${String(row.d7pct).padStart(3)}%`
           : '  —  ';
-      lines.push(`${row.name.padEnd(8)}${h5}   ${d7}`);
+      const reset =
+        row.h5reset || row.d7reset
+          ? `  ${row.h5reset || ''}${row.d7reset ? ` / ${row.d7reset}` : ''}`
+          : '';
+      lines.push(`${padName(row.name)}${h5}   ${d7}${reset}`);
     }
     lines.push('```');
   } else {
     lines.push('_조회 불가_');
   }
 
-  if (shouldFetchClaudeUsage && usageApiPollingDisabled) {
-    lines.push(
-      '_* Claude 사용량 조회는 반복된 429로 이번 프로세스에서 일시 중지_',
-    );
-  }
-  if (claudeUsageIsCached) {
-    lines.push('_* Claude 사용량은 작업 중일 때는 캐시값 유지_');
-  }
   lines.push('');
   lines.push('🖥️ *서버*');
 
@@ -670,13 +669,80 @@ function buildUnifiedDashboardContent(): string {
   return composeDashboardContent(sections);
 }
 
+const CODEX_ACCOUNTS_DIR = path.join(os.homedir(), '.codex-accounts');
+const CODEX_FULL_SCAN_INTERVAL = 3_600_000; // 1 hour
+
+/**
+ * Scan ALL Codex accounts by spawning app-server with each auth.
+ * Called on startup and every hour to keep cached usage fresh.
+ */
+async function refreshAllCodexAccountUsage(): Promise<void> {
+  const codexAccounts = getAllCodexAccounts();
+  if (codexAccounts.length <= 1) return;
+
+  logger.info(
+    { accountCount: codexAccounts.length },
+    'Scanning all Codex accounts for usage data',
+  );
+
+  for (const acct of codexAccounts) {
+    const accountDir = path.join(CODEX_ACCOUNTS_DIR, String(acct.index + 1));
+    if (!fs.existsSync(accountDir)) continue;
+
+    try {
+      const usage = await fetchCodexUsage(accountDir);
+      if (usage && Array.isArray(usage)) {
+        const relevant = usage.filter(
+          (l) => l.primary.usedPercent > 0 || l.secondary.usedPercent > 0,
+        );
+        const display = relevant.length > 0 ? relevant : usage.slice(0, 1);
+        if (usage.length > 0) {
+          // Find max primary (5h) and secondary (7d) across all limits
+          // Always capture reset times from first limit as baseline
+          let maxH5 = 0;
+          let maxD7 = 0;
+          let h5Reset: string | number | undefined = usage[0].primary.resetsAt;
+          let d7Reset: string | number | undefined =
+            usage[0].secondary.resetsAt;
+          for (const limit of usage) {
+            if (limit.primary.usedPercent >= maxH5) {
+              maxH5 = limit.primary.usedPercent;
+              h5Reset = limit.primary.resetsAt;
+            }
+            if (limit.secondary.usedPercent >= maxD7) {
+              maxD7 = limit.secondary.usedPercent;
+              d7Reset = limit.secondary.resetsAt;
+            }
+          }
+          const pct = Math.round(maxH5);
+          const d7Pct = Math.round(maxD7);
+          const resetStr = h5Reset ? formatResetRemaining(h5Reset) : undefined;
+          const resetD7Str = d7Reset
+            ? formatResetRemaining(d7Reset)
+            : undefined;
+          updateCodexAccountUsage(pct, resetStr, acct.index, d7Pct, resetD7Str);
+          logger.info(
+            { account: acct.index + 1, h5: pct, d7: d7Pct, reset: resetStr },
+            `Codex account #${acct.index + 1} usage: 5h=${pct}% 7d=${d7Pct}%`,
+          );
+        }
+      }
+    } catch (err) {
+      logger.debug(
+        { err, account: acct.index + 1 },
+        'Failed to fetch usage for Codex account',
+      );
+    }
+  }
+}
+
 async function refreshUsageCache(): Promise<void> {
   if (usageUpdateInProgress) return;
   usageUpdateInProgress = true;
   try {
     cachedUsageContent = await buildUsageContent();
-  } catch {
-    /* keep previous cache */
+  } catch (err) {
+    logger.warn({ err }, 'Failed to build usage content');
   } finally {
     usageUpdateInProgress = false;
   }
@@ -695,6 +761,7 @@ export async function startUnifiedDashboard(
   }
 
   if (isRenderer) {
+    await fetchAllClaudeProfiles();
     await refreshUsageCache();
   }
 
@@ -709,6 +776,13 @@ export async function startUnifiedDashboard(
       await refreshChannelMeta(opts);
       const content = buildUnifiedDashboardContent();
       if (!content) {
+        logger.warn(
+          {
+            cachedUsageLength: cachedUsageContent.length,
+            statusShowRooms: STATUS_SHOW_ROOMS,
+          },
+          'Dashboard content empty, skipping render',
+        );
         statusMessageId = null;
         return;
       }
@@ -720,7 +794,7 @@ export async function startUnifiedDashboard(
         if (id) statusMessageId = id;
       }
     } catch (err) {
-      logger.debug({ err }, 'Dashboard update failed');
+      logger.warn({ err }, 'Dashboard update failed');
       statusMessageId = null;
     }
   };
@@ -730,6 +804,16 @@ export async function startUnifiedDashboard(
 
   if (isRenderer) {
     setInterval(refreshUsageCache, opts.usageUpdateInterval);
+    // Full scan of all Codex accounts on startup + hourly
+    // After scan, refresh dashboard so cached data is visible immediately
+    void refreshAllCodexAccountUsage().then(() => {
+      void refreshUsageCache().then(() => void updateStatus());
+    });
+    setInterval(
+      () =>
+        void refreshAllCodexAccountUsage().then(() => void refreshUsageCache()),
+      CODEX_FULL_SCAN_INTERVAL,
+    );
   }
 
   logger.info(

@@ -17,6 +17,8 @@
 import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -65,11 +67,19 @@ interface AssistantContentBlock {
   text?: string;
 }
 
+interface MementoCallToolResult {
+  isError?: boolean;
+}
+
 // Paths configurable via env vars.
 const GROUP_DIR = process.env.EJCLAW_GROUP_DIR || '/workspace/group';
 const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
 // Optional: override cwd (agent works in this directory instead of GROUP_DIR)
 const WORK_DIR = process.env.EJCLAW_WORK_DIR || '';
+const GROUP_FOLDER = process.env.EJCLAW_GROUP_FOLDER || '';
+const MEMENTO_SSE_URL = process.env.MEMENTO_MCP_SSE_URL || '';
+const MEMENTO_ACCESS_KEY = process.env.MEMENTO_ACCESS_KEY || '';
+const MEMENTO_TIMEOUT_MS = 4_000;
 
 const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
@@ -221,6 +231,103 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
   return null;
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function trimSummary(summary: string, maxChars: number): string {
+  if (summary.length <= maxChars) return summary;
+  return summary.slice(0, Math.max(0, maxChars - 1)).trimEnd() + '…';
+}
+
+async function callMementoTool(
+  name: string,
+  args: Record<string, unknown>,
+  timeoutMs = MEMENTO_TIMEOUT_MS,
+): Promise<boolean> {
+  if (!MEMENTO_SSE_URL || !MEMENTO_ACCESS_KEY) return false;
+
+  const transport = new SSEClientTransport(new URL(MEMENTO_SSE_URL), {
+    requestInit: {
+      headers: {
+        Authorization: `Bearer ${MEMENTO_ACCESS_KEY}`,
+      },
+    },
+  });
+  const client = new Client({ name: 'ejclaw-precompact', version: '1.0.0' });
+
+  try {
+    await withTimeout(client.connect(transport), timeoutMs, `${name}/connect`);
+    const result = await withTimeout(
+      client.callTool({
+        name,
+        arguments: args,
+      }) as Promise<MementoCallToolResult>,
+      timeoutMs,
+      `${name}/call`,
+    );
+
+    if (result.isError) {
+      log(`Memento tool returned error: ${name}`);
+      return false;
+    }
+
+    return true;
+  } catch (err) {
+    log(`Memento tool failed (${name}): ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
+async function persistCompactMemory(summary: string, sessionId: string): Promise<void> {
+  const normalized = summary.trim();
+  if (!normalized) return;
+
+  const tasks: Promise<boolean>[] = [
+    callMementoTool('reflect', {
+      summary: normalized,
+    }),
+  ];
+
+  if (GROUP_FOLDER) {
+    tasks.push(
+      callMementoTool('remember', {
+        content: trimSummary(normalized, 300),
+        topic: 'room-memory',
+        type: 'fact',
+        keywords: [`room:${GROUP_FOLDER}`],
+        source: `compact:${sessionId}`,
+      }),
+    );
+  }
+
+  const results = await Promise.allSettled(tasks);
+  const succeeded = results.filter(
+    (result) => result.status === 'fulfilled' && result.value,
+  ).length;
+
+  if (succeeded > 0) {
+    log(`Persisted compact memory (${succeeded}/${results.length})`);
+  }
+}
+
 /**
  * Archive the full transcript to conversations/ before compaction.
  */
@@ -258,6 +365,10 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
+
+      if (summary) {
+        await persistCompactMemory(summary, sessionId);
+      }
     } catch (err) {
       log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
     }

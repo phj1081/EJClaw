@@ -11,6 +11,7 @@ import { DATA_DIR } from './config.js';
 import { getAllTasks } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
+import { buildRoomMemoryBriefing } from './memento-client.js';
 import {
   detectFallbackTrigger,
   getActiveProvider,
@@ -21,6 +22,16 @@ import {
   markPrimaryCooldown,
 } from './provider-fallback.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import {
+  rotateCodexToken,
+  getCodexAccountCount,
+  markCodexTokenHealthy,
+} from './codex-token-rotation.js';
+import {
+  rotateToken,
+  getTokenCount,
+  markTokenHealthy,
+} from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
 
 export interface MessageAgentExecutorDeps {
@@ -30,6 +41,14 @@ export interface MessageAgentExecutorDeps {
   getSessions: () => Record<string, string>;
   persistSession: (groupFolder: string, sessionId: string) => void;
   clearSession: (groupFolder: string) => void;
+}
+
+function isClaudeUsageExhaustedMessage(text: string): boolean {
+  const normalized = text.trim();
+  return (
+    /^you(?:'re| are) out of extra usage\b/i.test(normalized) ||
+    /^you(?:'ve| have) hit your limit\b/i.test(normalized)
+  );
 }
 
 export async function runAgentForGroup(
@@ -48,6 +67,12 @@ export async function runAgentForGroup(
     (group.agentType || 'claude-code') === 'claude-code';
   const sessions = deps.getSessions();
   const sessionId = sessions[group.folder];
+  const memoryBriefing = sessionId
+    ? undefined
+    : await buildRoomMemoryBriefing({
+        groupFolder: group.folder,
+        groupName: group.name,
+      }).catch(() => undefined);
 
   const tasks = getAllTasks(group.agentType || 'claude-code');
   writeTasksSnapshot(
@@ -86,6 +111,7 @@ export async function runAgentForGroup(
   const agentInput = {
     prompt,
     sessionId,
+    memoryBriefing,
     groupFolder: group.folder,
     chatJid,
     runId,
@@ -127,6 +153,20 @@ export async function runAgentForGroup(
           ) {
             resetSessionRequested = true;
           }
+          if (
+            canFallback &&
+            provider === 'claude' &&
+            output.status === 'success' &&
+            !sawOutput &&
+            !streamedTriggerReason &&
+            typeof output.result === 'string' &&
+            isClaudeUsageExhaustedMessage(output.result)
+          ) {
+            streamedTriggerReason = {
+              reason: 'usage-exhausted',
+            };
+            return;
+          }
           if (output.result !== null && output.result !== undefined) {
             sawOutput = true;
           } else if (
@@ -137,7 +177,6 @@ export async function runAgentForGroup(
             sawSuccessNullResultWithoutOutput = true;
           }
           if (
-            provider === 'claude' &&
             output.status === 'error' &&
             !sawOutput &&
             !streamedTriggerReason
@@ -299,6 +338,18 @@ export async function runAgentForGroup(
           }
         : detectFallbackTrigger(errMsg);
       if (trigger.shouldFallback) {
+        // Try rotating token before falling back to another provider
+        if (getTokenCount() > 1 && rotateToken(errMsg)) {
+          logger.info(
+            { chatJid, group: group.name, runId, reason: trigger.reason },
+            'Rate-limited, retrying with rotated token',
+          );
+          const retryAttempt = await runAttempt('claude');
+          if (!retryAttempt.error) {
+            markTokenHealthy();
+            return 'success';
+          }
+        }
         return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
       }
     }
@@ -336,6 +387,19 @@ export async function runAgentForGroup(
     canFallback &&
     provider === 'claude' &&
     !primaryAttempt.sawOutput &&
+    primaryAttempt.streamedTriggerReason &&
+    output.status !== 'error'
+  ) {
+    return runFallbackAttempt(
+      primaryAttempt.streamedTriggerReason.reason,
+      primaryAttempt.streamedTriggerReason.retryAfterMs,
+    );
+  }
+
+  if (
+    canFallback &&
+    provider === 'claude' &&
+    !primaryAttempt.sawOutput &&
     primaryAttempt.sawSuccessNullResultWithoutOutput
   ) {
     return runFallbackAttempt('success-null-result');
@@ -362,7 +426,37 @@ export async function runAgentForGroup(
           }
         : detectFallbackTrigger(output.error);
       if (trigger.shouldFallback) {
+        if (getTokenCount() > 1 && rotateToken(output.error ?? undefined)) {
+          logger.info(
+            { chatJid, group: group.name, runId, reason: trigger.reason },
+            'Rate-limited (output error), retrying with rotated token',
+          );
+          const retryAttempt = await runAttempt('claude');
+          if (!retryAttempt.error) {
+            markTokenHealthy();
+            return 'success';
+          }
+        }
         return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
+      }
+    }
+
+    // Codex rate-limit rotation (non-Claude agents)
+    if (!isClaudeCodeAgent && getCodexAccountCount() > 1) {
+      const trigger = detectFallbackTrigger(output.error);
+      if (
+        trigger.shouldFallback &&
+        rotateCodexToken(output.error ?? undefined)
+      ) {
+        logger.info(
+          { chatJid, group: group.name, runId, reason: trigger.reason },
+          'Codex rate-limited, retrying with rotated account',
+        );
+        const retryAttempt = await runAttempt('codex');
+        if (!retryAttempt.error) {
+          markCodexTokenHealthy();
+          return 'success';
+        }
       }
     }
 
@@ -377,6 +471,30 @@ export async function runAgentForGroup(
       'Agent process error',
     );
     return 'error';
+  }
+
+  // Codex may report success but have streamed a rate-limit error.
+  // Rotate token and retry immediately with the new account.
+  if (
+    !isClaudeCodeAgent &&
+    primaryAttempt.streamedTriggerReason &&
+    getCodexAccountCount() > 1 &&
+    rotateCodexToken(output.error ?? undefined)
+  ) {
+    logger.info(
+      {
+        chatJid,
+        group: group.name,
+        runId,
+        reason: primaryAttempt.streamedTriggerReason.reason,
+      },
+      'Codex rate-limited (streamed), retrying with rotated account',
+    );
+    const retryAttempt = await runAttempt('codex');
+    if (!retryAttempt.error) {
+      markCodexTokenHealthy();
+      return 'success';
+    }
   }
 
   return 'success';
