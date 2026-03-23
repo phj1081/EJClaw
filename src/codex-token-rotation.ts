@@ -29,9 +29,13 @@ interface CodexAccount {
   lastUsagePct?: number;
   lastUsageD7Pct?: number;
   resetAt?: string;
+  resetD7At?: string;
 }
 
-function parseJwtAuth(idToken: string): { planType: string; expiresAt: string | null } {
+function parseJwtAuth(idToken: string): {
+  planType: string;
+  expiresAt: string | null;
+} {
   try {
     const parts = idToken.split('.');
     if (parts.length < 2) return { planType: '?', expiresAt: null };
@@ -108,6 +112,7 @@ function saveCodexState(): void {
       usagePcts: accounts.map((a) => a.lastUsagePct ?? null),
       usageD7Pcts: accounts.map((a) => a.lastUsageD7Pct ?? null),
       resetAts: accounts.map((a) => a.resetAt ?? null),
+      resetD7Ats: accounts.map((a) => a.resetD7At ?? null),
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(state));
   } catch {
@@ -149,17 +154,23 @@ function loadCodexState(): void {
       }
     }
     if (Array.isArray(state.usageD7Pcts)) {
-      for (let i = 0; i < Math.min(state.usageD7Pcts.length, accounts.length); i++) {
-        if (typeof state.usageD7Pcts[i] === 'number') accounts[i].lastUsageD7Pct = state.usageD7Pcts[i];
+      for (
+        let i = 0;
+        i < Math.min(state.usageD7Pcts.length, accounts.length);
+        i++
+      ) {
+        if (typeof state.usageD7Pcts[i] === 'number')
+          accounts[i].lastUsageD7Pct = state.usageD7Pcts[i];
       }
     }
     if (Array.isArray(state.resetAts)) {
-      for (
-        let i = 0;
-        i < Math.min(state.resetAts.length, accounts.length);
-        i++
-      ) {
+      for (let i = 0; i < Math.min(state.resetAts.length, accounts.length); i++) {
         if (state.resetAts[i]) accounts[i].resetAt = state.resetAts[i];
+      }
+    }
+    if (Array.isArray(state.resetD7Ats)) {
+      for (let i = 0; i < Math.min(state.resetD7Ats.length, accounts.length); i++) {
+        if (state.resetD7Ats[i]) accounts[i].resetD7At = state.resetD7Ats[i];
       }
     }
     logger.info(
@@ -275,6 +286,7 @@ export function updateCodexAccountUsage(
   resetAt?: string,
   accountIndex?: number,
   d7Pct?: number,
+  resetD7At?: string,
 ): void {
   if (accounts.length === 0) return;
   const idx = accountIndex ?? currentIndex;
@@ -283,6 +295,7 @@ export function updateCodexAccountUsage(
     acct.lastUsagePct = usagePct;
     if (d7Pct != null) acct.lastUsageD7Pct = d7Pct;
     if (resetAt) acct.resetAt = resetAt;
+    if (resetD7At) acct.resetD7At = resetD7At;
     saveCodexState();
   }
 }
@@ -309,6 +322,7 @@ export function getAllCodexAccounts(): {
   cachedUsagePct?: number;
   cachedUsageD7Pct?: number;
   resetAt?: string;
+  resetD7At?: string;
 }[] {
   const now = Date.now();
   return accounts.map((a, i) => ({
@@ -320,5 +334,6 @@ export function getAllCodexAccounts(): {
     cachedUsagePct: a.lastUsagePct,
     cachedUsageD7Pct: a.lastUsageD7Pct,
     resetAt: a.resetAt,
+    resetD7At: a.resetD7At,
   }));
 }

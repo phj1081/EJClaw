@@ -646,17 +646,17 @@ async function buildUsageContent(): Promise<string> {
         }
       } else {
         // Show cached usage from last scan
-        const pct =
-          acct.cachedUsagePct != null ? acct.cachedUsagePct : -1;
+        const pct = acct.cachedUsagePct != null ? acct.cachedUsagePct : -1;
         const d7pct =
           acct.cachedUsageD7Pct != null ? acct.cachedUsageD7Pct : -1;
         const reset = acct.resetAt || '';
+        const d7reset = acct.resetD7At || '';
         rows.push({
           name: `${label} ${acct.planType}`,
           h5pct: pct,
           h5reset: reset,
           d7pct,
-          d7reset: '',
+          d7reset,
         });
       }
     }
@@ -794,20 +794,42 @@ async function refreshAllCodexAccountUsage(): Promise<void> {
           (l) => l.primary.usedPercent > 0 || l.secondary.usedPercent > 0,
         );
         const display = relevant.length > 0 ? relevant : usage.slice(0, 1);
-        if (display.length > 0) {
-          const pct = Math.round(display[0].primary.usedPercent);
-          const resetVal = display[0].primary.resetsAt;
-          const resetStr = resetVal ? formatResetRemaining(resetVal) : undefined;
-          const d7Pct = Math.round(display[0].secondary.usedPercent);
-          updateCodexAccountUsage(pct, resetStr, acct.index, d7Pct);
+        if (usage.length > 0) {
+          // Find max primary (5h) and secondary (7d) across all limits
+          let maxH5 = 0;
+          let maxD7 = 0;
+          let h5Reset: string | number | undefined;
+          let d7Reset: string | number | undefined;
+          for (const limit of usage) {
+            if (limit.primary.usedPercent > maxH5) {
+              maxH5 = limit.primary.usedPercent;
+              h5Reset = limit.primary.resetsAt;
+            }
+            if (limit.secondary.usedPercent > maxD7) {
+              maxD7 = limit.secondary.usedPercent;
+              d7Reset = limit.secondary.resetsAt;
+            }
+          }
+          const pct = Math.round(maxH5);
+          const d7Pct = Math.round(maxD7);
+          const resetStr = h5Reset
+            ? formatResetRemaining(h5Reset)
+            : undefined;
+          const resetD7Str = d7Reset
+            ? formatResetRemaining(d7Reset)
+            : undefined;
+          updateCodexAccountUsage(pct, resetStr, acct.index, d7Pct, resetD7Str);
           logger.info(
-            { account: acct.index + 1, usagePct: pct, reset: resetStr },
-            `Codex account #${acct.index + 1} usage: ${pct}%`,
+            { account: acct.index + 1, h5: pct, d7: d7Pct, reset: resetStr },
+            `Codex account #${acct.index + 1} usage: 5h=${pct}% 7d=${d7Pct}%`,
           );
         }
       }
     } catch (err) {
-      logger.debug({ err, account: acct.index + 1 }, 'Failed to fetch usage for Codex account');
+      logger.debug(
+        { err, account: acct.index + 1 },
+        'Failed to fetch usage for Codex account',
+      );
     }
   }
 }
@@ -881,7 +903,10 @@ export async function startUnifiedDashboard(
     setInterval(refreshUsageCache, opts.usageUpdateInterval);
     // Full scan of all Codex accounts on startup + hourly
     void refreshAllCodexAccountUsage();
-    setInterval(() => void refreshAllCodexAccountUsage(), CODEX_FULL_SCAN_INTERVAL);
+    setInterval(
+      () => void refreshAllCodexAccountUsage(),
+      CODEX_FULL_SCAN_INTERVAL,
+    );
   }
 
   logger.info(
