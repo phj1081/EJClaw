@@ -697,7 +697,10 @@ async function buildUsageContent(): Promise<string> {
         row.d7pct >= 0
           ? `${bar(row.d7pct)} ${String(row.d7pct).padStart(3)}%`
           : '  —  ';
-      lines.push(`${padName(row.name)}${h5}   ${d7}`);
+      const reset = row.h5reset || row.d7reset
+        ? `  ${row.h5reset || ''}${row.d7reset ? ` / ${row.d7reset}` : ''}`
+        : '';
+      lines.push(`${padName(row.name)}${h5}   ${d7}${reset}`);
     }
     lines.push('```');
   } else {
@@ -812,9 +815,7 @@ async function refreshAllCodexAccountUsage(): Promise<void> {
           }
           const pct = Math.round(maxH5);
           const d7Pct = Math.round(maxD7);
-          const resetStr = h5Reset
-            ? formatResetRemaining(h5Reset)
-            : undefined;
+          const resetStr = h5Reset ? formatResetRemaining(h5Reset) : undefined;
           const resetD7Str = d7Reset
             ? formatResetRemaining(d7Reset)
             : undefined;
