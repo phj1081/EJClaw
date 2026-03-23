@@ -32,7 +32,7 @@ interface ContainerInput {
 
 interface ContainerOutput {
   status: 'success' | 'error';
-  phase?: 'progress' | 'final';
+  phase?: 'progress' | 'final' | 'tool-activity';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -554,12 +554,21 @@ async function runQuery(
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_progress') {
       const tp = message as Record<string, unknown>;
       const summary = typeof tp.summary === 'string' ? tp.summary : '';
+      const description = typeof tp.description === 'string' ? tp.description : '';
       if (summary) {
         log(`Subagent progress: ${summary.slice(0, 200)}`);
         writeOutput({
           status: 'success',
           phase: 'progress',
           result: summary,
+          newSessionId,
+        });
+      }
+      if (description) {
+        writeOutput({
+          status: 'success',
+          phase: 'tool-activity',
+          result: description,
           newSessionId,
         });
       }

@@ -28,6 +28,7 @@ export class MessageTurnController {
   private latestProgressText: string | null = null;
   private previousProgressText: string | null = null;
   private pendingProgressText: string | null = null;
+  private toolActivities: string[] = [];
   private latestProgressRendered: string | null = null;
   private progressMessageId: string | null = null;
   private progressStartedAt: number | null = null;
@@ -101,6 +102,16 @@ export class MessageTurnController {
         },
         `Agent output: ${raw.slice(0, 200)}`,
       );
+    }
+
+    if (result.phase === 'tool-activity') {
+      if (text) {
+        this.addToolActivity(text);
+      }
+      if (!this.poisonedSessionDetected) {
+        this.resetIdleTimer();
+      }
+      return;
     }
 
     if (result.phase === 'progress') {
@@ -217,11 +228,14 @@ export class MessageTurnController {
     if (minutes > 0) elapsedParts.push(`${minutes}분`);
     elapsedParts.push(`${seconds}초`);
 
+    const activityLines = this.toolActivities.length > 0
+      ? '\n' + this.toolActivities.map((a) => `├ ${a}`).join('\n')
+      : '';
     const suffix = `\n\n${elapsedParts.join(' ')}`;
-    const maxText = 2000 - TASK_STATUS_MESSAGE_PREFIX.length - suffix.length;
+    const maxText = 2000 - TASK_STATUS_MESSAGE_PREFIX.length - activityLines.length - suffix.length;
     const truncated =
       text.length > maxText ? text.slice(0, maxText - 1) + '…' : text;
-    return `${TASK_STATUS_MESSAGE_PREFIX}${truncated}${suffix}`;
+    return `${TASK_STATUS_MESSAGE_PREFIX}${truncated}${activityLines}${suffix}`;
   }
 
   private clearProgressTicker(): void {
@@ -233,6 +247,7 @@ export class MessageTurnController {
   private resetProgressState(): void {
     this.clearProgressTicker();
     this.pendingProgressText = null;
+    this.toolActivities = [];
     this.latestProgressText = null;
     this.previousProgressText = null;
     this.latestProgressRendered = null;
@@ -252,6 +267,22 @@ export class MessageTurnController {
       void this.sendProgressMessage(this.pendingProgressText);
     }
     this.pendingProgressText = text;
+    this.toolActivities = [];
+  }
+
+  /**
+   * Append a tool activity line and update the progress message in-place.
+   */
+  private addToolActivity(description: string): void {
+    const MAX_ACTIVITIES = 5;
+    this.toolActivities.push(description);
+    if (this.toolActivities.length > MAX_ACTIVITIES) {
+      this.toolActivities = this.toolActivities.slice(-MAX_ACTIVITIES);
+    }
+    // Update the displayed progress message with tool activity sub-lines
+    if (this.latestProgressText && this.progressMessageId) {
+      void this.syncTrackedProgressMessage();
+    }
   }
 
   /**
