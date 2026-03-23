@@ -555,20 +555,12 @@ async function runQuery(
       const tp = message as Record<string, unknown>;
       const summary = typeof tp.summary === 'string' ? tp.summary : '';
       const description = typeof tp.description === 'string' ? tp.description : '';
-      if (summary) {
-        log(`Subagent progress: ${summary.slice(0, 200)}`);
-        writeOutput({
-          status: 'success',
-          phase: 'progress',
-          result: summary,
-          newSessionId,
-        });
-      }
-      if (description) {
+      const activityText = description || summary;
+      if (activityText) {
         writeOutput({
           status: 'success',
           phase: 'tool-activity',
-          result: description,
+          result: activityText,
           newSessionId,
         });
       }

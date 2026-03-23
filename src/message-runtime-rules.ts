@@ -44,7 +44,9 @@ export function createImplicitContinuationTracker(idleTimeout: number) {
         implicitContinuationUntil.delete(chatJid);
         return false;
       }
-      return messages.some((message) => message.is_from_me !== true);
+      return messages.some(
+        (message) => message.is_from_me !== true && !message.is_bot_message,
+      );
     },
   };
 }

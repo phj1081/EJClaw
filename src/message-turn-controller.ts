@@ -228,11 +228,16 @@ export class MessageTurnController {
     if (minutes > 0) elapsedParts.push(`${minutes}분`);
     elapsedParts.push(`${seconds}초`);
 
-    const activityLines = this.toolActivities.length > 0
-      ? '\n' + this.toolActivities.map((a) => `├ ${a}`).join('\n')
-      : '';
+    const activityLines =
+      this.toolActivities.length > 0
+        ? '\n' + this.toolActivities.map((a) => `├ ${a}`).join('\n')
+        : '';
     const suffix = `\n\n${elapsedParts.join(' ')}`;
-    const maxText = 2000 - TASK_STATUS_MESSAGE_PREFIX.length - activityLines.length - suffix.length;
+    const maxText =
+      2000 -
+      TASK_STATUS_MESSAGE_PREFIX.length -
+      activityLines.length -
+      suffix.length;
     const truncated =
       text.length > maxText ? text.slice(0, maxText - 1) + '…' : text;
     return `${TASK_STATUS_MESSAGE_PREFIX}${truncated}${activityLines}${suffix}`;
@@ -265,16 +270,16 @@ export class MessageTurnController {
   private bufferProgress(text: string): void {
     if (this.pendingProgressText) {
       void this.sendProgressMessage(this.pendingProgressText);
+      this.toolActivities = [];
     }
     this.pendingProgressText = text;
-    this.toolActivities = [];
   }
 
   /**
    * Append a tool activity line and update the progress message in-place.
    */
   private addToolActivity(description: string): void {
-    const MAX_ACTIVITIES = 5;
+    const MAX_ACTIVITIES = 2;
     this.toolActivities.push(description);
     if (this.toolActivities.length > MAX_ACTIVITIES) {
       this.toolActivities = this.toolActivities.slice(-MAX_ACTIVITIES);
