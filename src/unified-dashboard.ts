@@ -613,13 +613,13 @@ async function buildUsageContent(): Promise<string> {
           ? Math.round(h5.utilization)
           : Math.round(h5.utilization * 100)
         : -1,
-      h5reset: h5 ? formatResetKST(h5.resets_at) : '',
+      h5reset: h5 ? formatResetRemaining(h5.resets_at) : '',
       d7pct: d7
         ? d7.utilization > 1
           ? Math.round(d7.utilization)
           : Math.round(d7.utilization * 100)
         : -1,
-      d7reset: d7 ? formatResetKST(d7.resets_at) : '',
+      d7reset: d7 ? formatResetRemaining(d7.resets_at) : '',
     });
   }
 
@@ -639,9 +639,9 @@ async function buildUsageContent(): Promise<string> {
           rows.push({
             name: `${label} ${acct.planType}`,
             h5pct: Math.round(limit.primary.usedPercent),
-            h5reset: formatResetKST(limit.primary.resetsAt),
+            h5reset: formatResetRemaining(limit.primary.resetsAt),
             d7pct: Math.round(limit.secondary.usedPercent),
-            d7reset: formatResetKST(limit.secondary.resetsAt),
+            d7reset: formatResetRemaining(limit.secondary.resetsAt),
           });
         }
       } else {
@@ -697,9 +697,10 @@ async function buildUsageContent(): Promise<string> {
         row.d7pct >= 0
           ? `${bar(row.d7pct)} ${String(row.d7pct).padStart(3)}%`
           : '  —  ';
-      const reset = row.h5reset || row.d7reset
-        ? `  ${row.h5reset || ''}${row.d7reset ? ` / ${row.d7reset}` : ''}`
-        : '';
+      const reset =
+        row.h5reset || row.d7reset
+          ? `  ${row.h5reset || ''}${row.d7reset ? ` / ${row.d7reset}` : ''}`
+          : '';
       lines.push(`${padName(row.name)}${h5}   ${d7}${reset}`);
     }
     lines.push('```');
