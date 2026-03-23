@@ -1,5 +1,10 @@
 # EJClaw
 
+![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.81-blueviolet)
+![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.116.0-green)
+![Node](https://img.shields.io/badge/Node-20+-339933?logo=nodedotjs&logoColor=white)
+![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
+
 Dual-agent AI assistant (Claude Code + Codex) over Discord.
 
 Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now maintained as EJClaw for personal production use.
