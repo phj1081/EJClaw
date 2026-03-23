@@ -534,6 +534,7 @@ async function runQuery(
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
         PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
       },
+      agentProgressSummaries: true,
     }
   })) {
     messageCount++;
@@ -548,6 +549,25 @@ async function runQuery(
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
       const tn = message as { task_id: string; status: string; summary: string };
       log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
+    }
+
+    if ((message as { type: string }).type === 'task_progress') {
+      const tp = message as { task_id: string; summary?: string };
+      const summary = tp.summary || '';
+      log(`Subagent progress: task=${tp.task_id} summary=${summary.slice(0, 200)}`);
+      if (summary) {
+        writeOutput({
+          status: 'success',
+          phase: 'progress',
+          result: summary,
+          newSessionId,
+        });
+      }
+    }
+
+    if ((message as { type: string }).type === 'task_started') {
+      const ts = message as { task_id: string; teammate_name?: string };
+      log(`Subagent started: task=${ts.task_id} name=${ts.teammate_name || 'unknown'}`);
     }
 
     if (message.type === 'tool_progress') {
