@@ -9,7 +9,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@openai/codex": "^0.115.0"
+    "@openai/codex": "^0.116.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",

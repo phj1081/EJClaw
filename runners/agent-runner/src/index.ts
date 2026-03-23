@@ -581,7 +581,8 @@ async function runQuery(
       const taskId = typeof tp.task_id === 'string' ? tp.task_id : undefined;
       const summary = typeof tp.summary === 'string' ? tp.summary : '';
       const description = typeof tp.description === 'string' ? tp.description : '';
-      if (description) {
+      if (description && description.length <= 80) {
+        // Short tool description → show as sub-line in progress
         writeOutput({
           status: 'success',
           phase: 'tool-activity',
@@ -589,6 +590,9 @@ async function runQuery(
           agentId: taskId,
           newSessionId,
         });
+      } else if (description) {
+        // Long AI summary → skip (too long for progress sub-line)
+        log(`Skipping long task_progress description (${description.length} chars)`);
       }
     }
 

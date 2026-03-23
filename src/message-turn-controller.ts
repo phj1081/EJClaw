@@ -42,6 +42,7 @@ export class MessageTurnController {
   private progressEditFailCount = 0;
   private latestProgressTextForFinal: string | null = null;
   private subagents = new Map<string, SubagentTrack>();
+  private lastIntermediateText: string | null = null;
   private poisonedSessionDetected = false;
   private closeRequested = false;
 
@@ -114,6 +115,7 @@ export class MessageTurnController {
     if (result.phase === 'intermediate') {
       // Send as standalone message without touching progress state
       if (text) {
+        this.lastIntermediateText = text;
         await this.options.channel.sendMessage(this.options.chatJid, text);
       }
       if (!this.poisonedSessionDetected) {
@@ -158,7 +160,11 @@ export class MessageTurnController {
     if (result.phase === 'progress') {
       if (result.agentId) {
         if (result.agentDone) {
-          this.subagents.delete(result.agentId);
+          const done = this.subagents.get(result.agentId);
+          if (done) {
+            done.label = done.label.replace('🔄', '✅');
+            done.activities = [];
+          }
         } else {
           const label =
             text ||
@@ -212,9 +218,18 @@ export class MessageTurnController {
     // Final arrived — flush any buffered progress that isn't the same text,
     // then discard the pending buffer so it never shows up.
     if (text) {
-      await this.flushPendingProgress(text);
-      await this.finalizeProgressMessage();
-      await this.deliverFinalText(text);
+      if (this.lastIntermediateText && text === this.lastIntermediateText) {
+        // Already sent as intermediate — skip duplicate, just finalize
+        this.lastIntermediateText = null;
+        await this.finalizeProgressMessage();
+        this.visiblePhase = 'final';
+        this.latestProgressTextForFinal = null;
+      } else {
+        this.lastIntermediateText = null;
+        await this.flushPendingProgress(text);
+        await this.finalizeProgressMessage();
+        await this.deliverFinalText(text);
+      }
     } else if (raw) {
       logger.info(
         {
@@ -347,8 +362,7 @@ export class MessageTurnController {
       body = text + activityLines;
     }
 
-    const maxBody =
-      2000 - TASK_STATUS_MESSAGE_PREFIX.length - suffix.length;
+    const maxBody = 2000 - TASK_STATUS_MESSAGE_PREFIX.length - suffix.length;
     const truncated =
       body.length > maxBody ? body.slice(0, maxBody - 1) + '…' : body;
     return `${TASK_STATUS_MESSAGE_PREFIX}${truncated}${suffix}`;
