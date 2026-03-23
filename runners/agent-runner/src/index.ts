@@ -555,12 +555,19 @@ async function runQuery(
       const tp = message as Record<string, unknown>;
       const summary = typeof tp.summary === 'string' ? tp.summary : '';
       const description = typeof tp.description === 'string' ? tp.description : '';
-      const activityText = description || summary;
-      if (activityText) {
+      if (summary) {
         writeOutput({
           status: 'success',
           phase: 'tool-activity',
-          result: activityText,
+          result: `📋 ${summary}`,
+          newSessionId,
+        });
+      }
+      if (description) {
+        writeOutput({
+          status: 'success',
+          phase: 'tool-activity',
+          result: description,
           newSessionId,
         });
       }

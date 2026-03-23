@@ -105,6 +105,11 @@ export class MessageTurnController {
     }
 
     if (result.phase === 'tool-activity') {
+      // Flush pending progress so the message exists for tool activity sub-lines
+      if (this.pendingProgressText && !this.progressMessageId) {
+        void this.sendProgressMessage(this.pendingProgressText);
+        this.pendingProgressText = null;
+      }
       if (text) {
         this.addToolActivity(text);
       }
@@ -230,7 +235,17 @@ export class MessageTurnController {
 
     const activityLines =
       this.toolActivities.length > 0
-        ? '\n' + this.toolActivities.map((a) => `├ ${a}`).join('\n')
+        ? '\n' +
+          this.toolActivities
+            .map((a, i) => {
+              const isLast = i === this.toolActivities.length - 1;
+              const connector = isLast ? '└' : '├';
+              const isSummary = a.startsWith('📋');
+              return isSummary
+                ? `${connector} ${a}`
+                : `${connector}  ${a}`;
+            })
+            .join('\n')
         : '';
     const suffix = `\n\n${elapsedParts.join(' ')}`;
     const maxText =
@@ -287,6 +302,7 @@ export class MessageTurnController {
     // Update the displayed progress message with tool activity sub-lines
     if (this.latestProgressText && this.progressMessageId) {
       void this.syncTrackedProgressMessage();
+      this.ensureProgressTicker();
     }
   }
 
