@@ -238,7 +238,7 @@ export async function runAgentProcess(
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
         if (!line) continue;
-        if (line.includes('Turn in progress')) {
+        if (line.includes('Turn in progress') || line.includes('Subagent') || line.includes('Intermediate assistant')) {
           logger.info(
             { group: group.name, chatJid: input.chatJid, runId: input.runId },
             line.replace(/^\[.*?\]\s*/, ''),

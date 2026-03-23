@@ -212,7 +212,10 @@ export class MessageTurnController {
     if (minutes > 0) elapsedParts.push(`${minutes}분`);
     elapsedParts.push(`${seconds}초`);
 
-    return `${TASK_STATUS_MESSAGE_PREFIX}${text}\n\n${elapsedParts.join(' ')}`;
+    const suffix = `\n\n${elapsedParts.join(' ')}`;
+    const maxText = 2000 - TASK_STATUS_MESSAGE_PREFIX.length - suffix.length;
+    const truncated = text.length > maxText ? text.slice(0, maxText - 1) + '…' : text;
+    return `${TASK_STATUS_MESSAGE_PREFIX}${truncated}${suffix}`;
   }
 
   private clearProgressTicker(): void {

@@ -551,11 +551,11 @@ async function runQuery(
       log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
     }
 
-    if ((message as { type: string }).type === 'task_progress') {
-      const tp = message as { task_id: string; summary?: string };
-      const summary = tp.summary || '';
-      log(`Subagent progress: task=${tp.task_id} summary=${summary.slice(0, 200)}`);
+    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_progress') {
+      const tp = message as Record<string, unknown>;
+      const summary = typeof tp.summary === 'string' ? tp.summary : '';
       if (summary) {
+        log(`Subagent progress: ${summary.slice(0, 200)}`);
         writeOutput({
           status: 'success',
           phase: 'progress',
@@ -565,7 +565,7 @@ async function runQuery(
       }
     }
 
-    if ((message as { type: string }).type === 'task_started') {
+    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_started') {
       const ts = message as { task_id: string; teammate_name?: string };
       log(`Subagent started: task=${ts.task_id} name=${ts.teammate_name || 'unknown'}`);
     }
@@ -644,6 +644,10 @@ async function runQuery(
     if (message.type === 'assistant') {
       const stopReason = (message as { stop_reason?: string }).stop_reason;
       const textResult = extractAssistantText(message);
+      // Only log when there's something interesting (text or terminal)
+      if (textResult || stopReason === 'end_turn') {
+        log(`Assistant: stop=${stopReason} text=${textResult ? textResult.length + ' chars' : 'null'}`);
+      }
       if (stopReason === 'end_turn' && textResult) {
         resultCount++;
         log(
@@ -658,6 +662,16 @@ async function runQuery(
         ipcPolling = false;
         stream.end();
         break;
+      }
+      // Intermediate assistant text between tool calls → progress
+      if (stopReason !== 'end_turn' && textResult) {
+        log(`Intermediate assistant text (${textResult.length} chars, stop=${stopReason})`);
+        writeOutput({
+          status: 'success',
+          phase: 'progress',
+          result: textResult,
+          newSessionId,
+        });
       }
     }
   }
