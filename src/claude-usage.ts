@@ -253,7 +253,9 @@ export async function fetchClaudeUsageViaCli(
   });
 }
 
-export async function fetchAllClaudeProfiles(): Promise<ClaudeAccountProfile[]> {
+export async function fetchAllClaudeProfiles(): Promise<
+  ClaudeAccountProfile[]
+> {
   return ensureProfiles();
 }
 

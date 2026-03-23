@@ -29,7 +29,10 @@ function syncHostClaudeAccount(accountDir: string): void {
     path.join(accountDir, '.credentials.json'),
     path.join(HOST_CLAUDE_DIR, '.credentials.json'),
   );
-  copyIfExists(path.join(accountDir, 'settings.json'), path.join(HOST_CLAUDE_DIR, 'settings.json'));
+  copyIfExists(
+    path.join(accountDir, 'settings.json'),
+    path.join(HOST_CLAUDE_DIR, 'settings.json'),
+  );
 }
 
 export function getTokenCount(): number {
@@ -47,8 +50,7 @@ export function rotateToken(_reason?: string): boolean {
   const nextIndex =
     candidates.find(
       (index) => index !== activeIndex && !rateLimitedAccounts.has(index),
-    ) ??
-    candidates.find((index) => index !== activeIndex);
+    ) ?? candidates.find((index) => index !== activeIndex);
 
   if (nextIndex === undefined) return false;
 

@@ -74,7 +74,8 @@ function resolveActiveIndex(accountDirs: string[]): number {
   const hostAuth = readTextIfExists(path.join(HOST_CODEX_DIR, 'auth.json'));
   if (hostAuth) {
     const matchIndex = accountDirs.findIndex(
-      (accountDir) => readTextIfExists(path.join(accountDir, 'auth.json')) === hostAuth,
+      (accountDir) =>
+        readTextIfExists(path.join(accountDir, 'auth.json')) === hostAuth,
     );
     if (matchIndex >= 0) {
       activeIndexCache = matchIndex;
@@ -93,7 +94,10 @@ function copyIfExists(src: string, dst: string): void {
 }
 
 function syncHostCodexAccount(accountDir: string): void {
-  copyIfExists(path.join(accountDir, 'auth.json'), path.join(HOST_CODEX_DIR, 'auth.json'));
+  copyIfExists(
+    path.join(accountDir, 'auth.json'),
+    path.join(HOST_CODEX_DIR, 'auth.json'),
+  );
 }
 
 export function getAllCodexAccounts(): CodexAccountState[] {
@@ -134,8 +138,7 @@ export function rotateCodexToken(_reason?: string): boolean {
   const nextIndex =
     candidates.find(
       (index) => index !== activeIndex && !rateLimitedAccounts.has(index),
-    ) ??
-    candidates.find((index) => index !== activeIndex);
+    ) ?? candidates.find((index) => index !== activeIndex);
 
   if (nextIndex === undefined) return false;
 
