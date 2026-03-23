@@ -542,12 +542,10 @@ async function runQuery(
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
 
-    // Flush pending progress on any non-assistant message (ensures it's
-    // emitted before tool-activity or other events that depend on it).
+    // Flush pending intermediate text as a regular message on non-assistant events.
     if (message.type !== 'assistant' && pendingProgressText) {
       writeOutput({
         status: 'success',
-        phase: 'progress',
         result: pendingProgressText,
         newSessionId,
       });
@@ -627,7 +625,7 @@ async function runQuery(
         log(`Discarding pending progress (matches result)`);
         pendingProgressText = null;
       } else if (pendingProgressText) {
-        writeOutput({ status: 'success', phase: 'progress', result: pendingProgressText, newSessionId });
+        writeOutput({ status: 'success', result: pendingProgressText, newSessionId });
         pendingProgressText = null;
       }
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
@@ -698,11 +696,10 @@ async function runQuery(
       // this would cause a duplicate. The pending text is flushed when the next
       // non-result message arrives, or discarded if result matches.
       if (stopReason !== 'end_turn' && textResult) {
-        // Flush any previous pending progress first
+        // Flush previous pending as a regular message (not progress heading)
         if (pendingProgressText) {
           writeOutput({
             status: 'success',
-            phase: 'progress',
             result: pendingProgressText,
             newSessionId,
           });
