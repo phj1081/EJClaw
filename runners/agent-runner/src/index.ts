@@ -32,7 +32,7 @@ interface ContainerInput {
 
 interface ContainerOutput {
   status: 'success' | 'error';
-  phase?: 'progress' | 'final' | 'tool-activity';
+  phase?: 'progress' | 'final' | 'tool-activity' | 'intermediate';
   result: string | null;
   newSessionId?: string;
   error?: string;
@@ -546,6 +546,7 @@ async function runQuery(
     if (message.type !== 'assistant' && pendingProgressText) {
       writeOutput({
         status: 'success',
+        phase: 'intermediate',
         result: pendingProgressText,
         newSessionId,
       });
@@ -625,7 +626,7 @@ async function runQuery(
         log(`Discarding pending progress (matches result)`);
         pendingProgressText = null;
       } else if (pendingProgressText) {
-        writeOutput({ status: 'success', result: pendingProgressText, newSessionId });
+        writeOutput({ status: 'success', phase: 'intermediate', result: pendingProgressText, newSessionId });
         pendingProgressText = null;
       }
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
@@ -700,6 +701,7 @@ async function runQuery(
         if (pendingProgressText) {
           writeOutput({
             status: 'success',
+            phase: 'intermediate',
             result: pendingProgressText,
             newSessionId,
           });

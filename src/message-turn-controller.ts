@@ -105,6 +105,17 @@ export class MessageTurnController {
       );
     }
 
+    if (result.phase === 'intermediate') {
+      // Send as standalone message without touching progress state
+      if (text) {
+        await this.options.channel.sendMessage(this.options.chatJid, text);
+      }
+      if (!this.poisonedSessionDetected) {
+        this.resetIdleTimer();
+      }
+      return;
+    }
+
     if (result.phase === 'tool-activity') {
       // Ensure a progress message exists for tool activity sub-lines
       if (!this.progressMessageId && !this.progressCreating) {

@@ -41,7 +41,7 @@ export interface AgentInput {
 export interface AgentOutput {
   status: 'success' | 'error';
   result: string | null;
-  phase?: 'progress' | 'final' | 'tool-activity';
+  phase?: 'progress' | 'final' | 'tool-activity' | 'intermediate';
   newSessionId?: string;
   error?: string;
 }
