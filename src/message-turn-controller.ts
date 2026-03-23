@@ -133,6 +133,7 @@ export class MessageTurnController {
       if (text) {
         if (this.progressMessageId) {
           // Progress message already visible — update heading directly
+          this.previousProgressText = this.latestProgressText;
           this.latestProgressText = text;
           this.toolActivities = [];
           void this.syncTrackedProgressMessage();
@@ -153,6 +154,18 @@ export class MessageTurnController {
     // then discard the pending buffer so it never shows up.
     if (text) {
       await this.flushPendingProgress(text);
+      // If the displayed progress heading matches the final text,
+      // revert to the previous heading so it doesn't show twice.
+      if (
+        this.latestProgressText === text &&
+        this.previousProgressText &&
+        this.progressMessageId &&
+        this.options.channel.editMessage
+      ) {
+        this.latestProgressText = this.previousProgressText;
+        this.toolActivities = [];
+        await this.syncTrackedProgressMessage();
+      }
       await this.finalizeProgressMessage();
       await this.deliverFinalText(text);
     } else if (raw) {
@@ -377,7 +390,11 @@ export class MessageTurnController {
     }
 
     this.progressTicker = setInterval(() => {
-      if (this.progressMessageId && this.latestProgressText && !this.progressCreating) {
+      if (
+        this.progressMessageId &&
+        this.latestProgressText &&
+        !this.progressCreating
+      ) {
         void this.syncTrackedProgressMessage();
       }
     }, 5_000);

@@ -555,14 +555,6 @@ async function runQuery(
       const tp = message as Record<string, unknown>;
       const summary = typeof tp.summary === 'string' ? tp.summary : '';
       const description = typeof tp.description === 'string' ? tp.description : '';
-      if (summary) {
-        writeOutput({
-          status: 'success',
-          phase: 'progress',
-          result: `📋 ${summary}`,
-          newSessionId,
-        });
-      }
       if (description) {
         writeOutput({
           status: 'success',
@@ -574,8 +566,17 @@ async function runQuery(
     }
 
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_started') {
-      const ts = message as { task_id: string; teammate_name?: string };
-      log(`Subagent started: task=${ts.task_id} name=${ts.teammate_name || 'unknown'}`);
+      const ts = message as { task_id: string; description?: string };
+      const desc = ts.description || '';
+      log(`Subagent started: task=${ts.task_id} desc=${desc.slice(0, 200)}`);
+      if (desc) {
+        writeOutput({
+          status: 'success',
+          phase: 'progress',
+          result: `🔄 ${desc}`,
+          newSessionId,
+        });
+      }
     }
 
     if (message.type === 'tool_progress') {
