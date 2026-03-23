@@ -428,22 +428,26 @@ export async function runAgentForGroup(
   }
 
   // Codex may report success but have streamed a rate-limit error.
-  // Rotate token so the NEXT request uses a fresh account.
+  // Rotate token and retry immediately with the new account.
   if (
     !isClaudeCodeAgent &&
     primaryAttempt.streamedTriggerReason &&
-    getCodexAccountCount() > 1
+    getCodexAccountCount() > 1 &&
+    rotateCodexToken()
   ) {
-    if (rotateCodexToken()) {
-      logger.info(
-        {
-          chatJid,
-          group: group.name,
-          runId,
-          reason: primaryAttempt.streamedTriggerReason.reason,
-        },
-        'Codex rate-limited (streamed), rotated account for next request',
-      );
+    logger.info(
+      {
+        chatJid,
+        group: group.name,
+        runId,
+        reason: primaryAttempt.streamedTriggerReason.reason,
+      },
+      'Codex rate-limited (streamed), retrying with rotated account',
+    );
+    const retryAttempt = await runAttempt('codex');
+    if (!retryAttempt.error) {
+      markCodexTokenHealthy();
+      return 'success';
     }
   }
 
