@@ -48,7 +48,7 @@ function isClaudeUsageExhaustedMessage(text: string): boolean {
   const normalized = text
     .trim()
     .toLowerCase()
-    .replace(/[''`]/g, "'")
+    .replace(/[’‘`]/g, "'")
     .replace(/\s+/g, ' ')
     .replace(/^error:\s*/i, '');
   const looksLikeBanner =

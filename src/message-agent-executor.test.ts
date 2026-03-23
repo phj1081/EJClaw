@@ -48,6 +48,7 @@ vi.mock('./provider-fallback.js', () => ({
   getFallbackProviderName: vi.fn(() => 'kimi'),
   hasGroupProviderOverride: vi.fn(() => false),
   isFallbackEnabled: vi.fn(() => true),
+  isUsageExhausted: vi.fn(() => false),
   markPrimaryCooldown: vi.fn(),
 }));
 
@@ -102,9 +103,85 @@ function makeDeps() {
   };
 }
 
+describe('runAgentForGroup room memory', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
+    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(false);
+    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: 'ok',
+      newSessionId: 'session-123',
+    });
+    vi.mocked(buildRoomMemoryBriefing).mockResolvedValue(
+      '## Shared Room Memory\n- remembered context',
+    );
+  });
+
+  it('injects a room memory briefing when starting a fresh session', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const deps = makeDeps();
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-1',
+    });
+
+    expect(result).toBe('success');
+    expect(buildRoomMemoryBriefing).toHaveBeenCalledWith({
+      groupFolder: 'test-group',
+      groupName: 'Test Group',
+    });
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        prompt: 'hello',
+        sessionId: undefined,
+        memoryBriefing: '## Shared Room Memory\n- remembered context',
+      }),
+      expect.any(Function),
+      undefined,
+      undefined,
+    );
+  });
+
+  it('skips the room memory briefing for existing sessions', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const deps = {
+      ...makeDeps(),
+      getSessions: () => ({ 'test-group': 'session-existing' }),
+    };
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'hello again',
+      chatJid: 'group@test',
+      runId: 'run-2',
+    });
+
+    expect(result).toBe('success');
+    expect(buildRoomMemoryBriefing).not.toHaveBeenCalled();
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        prompt: 'hello again',
+        sessionId: 'session-existing',
+        memoryBriefing: undefined,
+      }),
+      expect.any(Function),
+      undefined,
+      undefined,
+    );
+  });
+});
+
 describe('runAgentForGroup Claude rotation', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    vi.mocked(buildRoomMemoryBriefing).mockResolvedValue(undefined);
     vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
     vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
     vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
@@ -160,7 +237,7 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(outputs).toEqual(['회전된 Claude 응답입니다.']);
   });
 
-  it('falls back to Kimi only after all Claude accounts are exhausted', async () => {
+  it('stops after all Claude accounts are usage-exhausted without falling back to Kimi', async () => {
     const outputs: string[] = [];
 
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
@@ -213,25 +290,14 @@ describe('runAgentForGroup Claude rotation', () => {
       },
     });
 
-    expect(result).toBe('success');
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(3);
+    expect(result).toBe('error');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
     expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(2);
     expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
       'usage-exhausted',
       undefined,
     );
-    expect(agentRunner.runAgentProcess).toHaveBeenNthCalledWith(
-      3,
-      expect.anything(),
-      expect.anything(),
-      expect.any(Function),
-      expect.any(Function),
-      expect.objectContaining({
-        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
-        ANTHROPIC_MODEL: 'kimi-k2.5',
-      }),
-    );
-    expect(outputs).toEqual(['Kimi 폴백 응답입니다.']);
+    expect(outputs).toEqual([]);
   });
 
   it('does not mistake a normal response quoting the banner text for a usage error', async () => {

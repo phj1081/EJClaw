@@ -180,7 +180,7 @@ function makeChannel(chatJid: string): Channel {
 
 describe('createMessageRuntime', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
     vi.mocked(providerFallback.getFallbackProviderName).mockReturnValue('kimi');
     vi.mocked(providerFallback.getFallbackEnvOverrides).mockReturnValue({
@@ -1957,7 +1957,7 @@ describe('createMessageRuntime', () => {
     );
   });
 
-  it('retries with the fallback provider when Claude returns only a usage exhaustion banner', async () => {
+  it('silently suppresses a usage exhaustion banner without falling back', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const channel = makeChannel(chatJid);
@@ -2025,19 +2025,15 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
     expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
       'usage-exhausted',
       undefined,
     );
-    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      chatJid,
-      'usage fallback 응답입니다.',
-    );
+    expect(channel.sendMessage).not.toHaveBeenCalled();
   });
 
-  it('suppresses duplicate streamed usage banners before retrying the fallback provider', async () => {
+  it('suppresses duplicate streamed usage banners without emitting a visible reply', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const channel = makeChannel(chatJid);
@@ -2110,16 +2106,12 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
     expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
       'usage-exhausted',
       undefined,
     );
-    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      chatJid,
-      'duplicate banner fallback 응답입니다.',
-    );
+    expect(channel.sendMessage).not.toHaveBeenCalled();
   });
 
   it('retries with the fallback provider when Claude ends with success-null-result before any output', async () => {
