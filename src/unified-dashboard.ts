@@ -101,9 +101,10 @@ function formatResetRemaining(value: string | number): string {
     const minutes = Math.floor((diffMs % 3_600_000) / 60_000);
     if (hours >= 24) {
       const days = Math.floor(hours / 24);
-      return `${String(days).padStart(2)}d`.padStart(7);
+      const remH = hours % 24;
+      return `${String(days).padStart(2)}d ${String(remH).padStart(2)}h`;
     }
-    return `${hours}h ${String(minutes).padStart(2, '0')}m`.padStart(7);
+    return `${String(hours).padStart(2)}h ${String(minutes).padStart(2)}m`;
   } catch {
     return String(value).padStart(6);
   }
