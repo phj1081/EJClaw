@@ -307,14 +307,14 @@ Check the run.
             phase: 'intermediate',
             result: "You're out of extra usage · resets 4am (Asia/Seoul)",
           });
-        await onOutput?.({
-          status: 'success',
-          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
+          await onOutput?.({
+            status: 'success',
+            result: "You're out of extra usage · resets 4am (Asia/Seoul)",
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
         },
       )
       .mockImplementationOnce(
@@ -324,14 +324,14 @@ Check the run.
           _onProcess: unknown,
           onOutput?: (output: Record<string, unknown>) => Promise<void>,
         ) => {
-        await onOutput?.({
-          status: 'success',
-          result: 'rotated scheduled task response',
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
+          await onOutput?.({
+            status: 'success',
+            result: 'rotated scheduled task response',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
         },
       );
 

@@ -156,11 +156,7 @@ export function rotateToken(
   for (let i = 1; i < tokens.length; i++) {
     const idx = (currentIndex + i) % tokens.length;
     const state = tokens[idx];
-    if (
-      ignoreRL ||
-      !state.rateLimitedUntil ||
-      state.rateLimitedUntil <= now
-    ) {
+    if (ignoreRL || !state.rateLimitedUntil || state.rateLimitedUntil <= now) {
       state.rateLimitedUntil = null;
       currentIndex = idx;
       logger.info(

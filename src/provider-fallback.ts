@@ -48,15 +48,13 @@ interface FallbackConfig {
 // ── State ────────────────────────────────────────────────────────
 
 let cooldown: CooldownState | null = null;
-let lastUsageAvailabilityCheck:
-  | {
-      checkedAt: number;
-      result: 'available' | 'exhausted' | 'unknown';
-    }
-  | null = null;
-let usageAvailabilityCheckPromise:
-  | Promise<'available' | 'exhausted' | 'unknown'>
-  | null = null;
+let lastUsageAvailabilityCheck: {
+  checkedAt: number;
+  result: 'available' | 'exhausted' | 'unknown';
+} | null = null;
+let usageAvailabilityCheckPromise: Promise<
+  'available' | 'exhausted' | 'unknown'
+> | null = null;
 
 const USAGE_RECOVERY_RECHECK_MS = 30_000;
 
@@ -213,7 +211,10 @@ export async function getActiveProvider(): Promise<string> {
       }
       if (usageAvailability === 'exhausted') {
         // Current token exhausted — try rotating to another token (ignore cooldowns)
-        if (getTokenCount() > 1 && rotateToken(undefined, { ignoreRateLimits: true })) {
+        if (
+          getTokenCount() > 1 &&
+          rotateToken(undefined, { ignoreRateLimits: true })
+        ) {
           logger.info(
             'Claude current token exhausted, rotated to next token — retrying',
           );

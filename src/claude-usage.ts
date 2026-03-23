@@ -58,13 +58,17 @@ function loadUsageDiskCache(): void {
     if (fs.existsSync(USAGE_CACHE_FILE)) {
       usageDiskCache = JSON.parse(fs.readFileSync(USAGE_CACHE_FILE, 'utf-8'));
     }
-  } catch { /* start fresh */ }
+  } catch {
+    /* start fresh */
+  }
 }
 
 function saveUsageDiskCache(): void {
   try {
     fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(usageDiskCache));
-  } catch { /* best effort */ }
+  } catch {
+    /* best effort */
+  }
 }
 
 function cacheKey(token: string): string {
@@ -104,7 +108,9 @@ async function fetchUsageForToken(
       return null;
     }
     if (res.status === 429) {
-      logger.warn('Claude usage API: rate limited (429), returning cached data');
+      logger.warn(
+        'Claude usage API: rate limited (429), returning cached data',
+      );
       return usageDiskCache[cacheKey(token)]?.usage ?? null;
     }
     if (!res.ok) {
