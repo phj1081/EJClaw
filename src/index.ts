@@ -63,10 +63,14 @@ import { startUnifiedDashboard } from './unified-dashboard.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
+import { initTokenRotation } from './token-rotation.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 export { composeDashboardContent } from './dashboard-render.js';
+
+// Initialize token rotation early (reads CLAUDE_CODE_OAUTH_TOKENS from env)
+initTokenRotation();
 
 export async function sendFormattedChannelMessage(
   channels: Channel[],

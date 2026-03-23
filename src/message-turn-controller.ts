@@ -113,10 +113,22 @@ export class MessageTurnController {
     }
 
     if (result.phase === 'intermediate') {
-      // Send as standalone message without touching progress state
       if (text) {
-        this.lastIntermediateText = text;
-        await this.options.channel.sendMessage(this.options.chatJid, text);
+        if (this.subagents.size > 0) {
+          // Subagents active — standalone to not disrupt progress
+          this.lastIntermediateText = text;
+          await this.options.channel.sendMessage(this.options.chatJid, text);
+        } else if (this.progressMessageId) {
+          // Progress exists — update heading
+          this.previousProgressText = this.latestProgressText;
+          this.latestProgressText = text;
+          this.latestProgressTextForFinal = text;
+          this.toolActivities = [];
+          void this.syncTrackedProgressMessage();
+        } else {
+          // No progress yet — buffer (creates on next event)
+          this.bufferProgress(text);
+        }
       }
       if (!this.poisonedSessionDetected) {
         this.resetIdleTimer();

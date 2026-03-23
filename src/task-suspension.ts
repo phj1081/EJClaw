@@ -105,10 +105,7 @@ export function evaluateTaskSuspension(
 /**
  * Apply suspension to a task in the DB.
  */
-export function suspendTask(
-  taskId: string,
-  suspendedUntil: string,
-): void {
+export function suspendTask(taskId: string, suspendedUntil: string): void {
   updateTask(taskId, { suspended_until: suspendedUntil });
   logger.info(
     { taskId, suspendedUntil },

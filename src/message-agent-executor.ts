@@ -21,6 +21,7 @@ import {
   markPrimaryCooldown,
 } from './provider-fallback.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import { rotateToken, getTokenCount, markTokenHealthy } from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
 
 export interface MessageAgentExecutorDeps {
@@ -299,6 +300,18 @@ export async function runAgentForGroup(
           }
         : detectFallbackTrigger(errMsg);
       if (trigger.shouldFallback) {
+        // Try rotating token before falling back to another provider
+        if (getTokenCount() > 1 && rotateToken()) {
+          logger.info(
+            { chatJid, group: group.name, runId, reason: trigger.reason },
+            'Rate-limited, retrying with rotated token',
+          );
+          const retryAttempt = await runAttempt('claude');
+          if (!retryAttempt.error) {
+            markTokenHealthy();
+            return 'success';
+          }
+        }
         return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
       }
     }
@@ -362,6 +375,17 @@ export async function runAgentForGroup(
           }
         : detectFallbackTrigger(output.error);
       if (trigger.shouldFallback) {
+        if (getTokenCount() > 1 && rotateToken()) {
+          logger.info(
+            { chatJid, group: group.name, runId, reason: trigger.reason },
+            'Rate-limited (output error), retrying with rotated token',
+          );
+          const retryAttempt = await runAttempt('claude');
+          if (!retryAttempt.error) {
+            markTokenHealthy();
+            return 'success';
+          }
+        }
         return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
       }
     }

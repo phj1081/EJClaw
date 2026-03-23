@@ -5,6 +5,7 @@ import path from 'path';
 import { GROUPS_DIR, TIMEZONE } from './config.js';
 import { isPairedRoomJid } from './db.js';
 import { readEnvFile } from './env.js';
+import { getCurrentToken } from './token-rotation.js';
 import {
   resolveGroupFolderPath,
   resolveGroupIpcPath,
@@ -120,14 +121,14 @@ function prepareClaudeEnvironment(args: {
     args.env.ANTHROPIC_BASE_URL =
       args.envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL || '';
   }
-  if (
-    args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
-    process.env.CLAUDE_CODE_OAUTH_TOKEN
-  ) {
-    args.env.CLAUDE_CODE_OAUTH_TOKEN =
+  {
+    const oauthToken =
       args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
-      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      '';
+      getCurrentToken() ||
+      process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    if (oauthToken) {
+      args.env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+    }
   }
   for (const key of [
     'CLAUDE_MODEL',
