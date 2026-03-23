@@ -450,7 +450,7 @@ async function runTask(
       while (
         shouldRotateClaudeToken(trigger.reason) &&
         getTokenCount() > 1 &&
-        rotateToken(lastRotationMessage)
+        rotateToken(lastRotationMessage, { ignoreRateLimits: true })
       ) {
         logger.info(
           {
@@ -534,35 +534,33 @@ async function runTask(
       error = 'Claude usage exhausted';
       // Fall through to task completion handling below
     } else {
+      const attempt = await runTaskAttempt(provider);
+      result = attempt.attemptResult;
+      error = attempt.attemptError;
 
-    const attempt = await runTaskAttempt(provider);
-    result = attempt.attemptResult;
-    error = attempt.attemptError;
-
-    if (
-      provider === 'claude' &&
-      attempt.streamedTriggerReason &&
-      !attempt.sawOutput
-    ) {
-      await retryClaudeTaskWithRotation(attempt.streamedTriggerReason);
-    } else if (attempt.output.status === 'error' && provider === 'claude') {
-      const trigger = attempt.streamedTriggerReason
-        ? {
-            shouldFallback: true,
-            reason: attempt.streamedTriggerReason.reason,
-            retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
-          }
-        : detectFallbackTrigger(error);
-      if (trigger.shouldFallback) {
-        await retryClaudeTaskWithRotation({
-          reason: trigger.reason,
-          retryAfterMs: trigger.retryAfterMs,
-        });
+      if (
+        provider === 'claude' &&
+        attempt.streamedTriggerReason &&
+        !attempt.sawOutput
+      ) {
+        await retryClaudeTaskWithRotation(attempt.streamedTriggerReason);
+      } else if (attempt.output.status === 'error' && provider === 'claude') {
+        const trigger = attempt.streamedTriggerReason
+          ? {
+              shouldFallback: true,
+              reason: attempt.streamedTriggerReason.reason,
+              retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
+            }
+          : detectFallbackTrigger(error);
+        if (trigger.shouldFallback) {
+          await retryClaudeTaskWithRotation({
+            reason: trigger.reason,
+            retryAfterMs: trigger.retryAfterMs,
+          });
+        }
+      } else if (attempt.output.status === 'error') {
+        error = attempt.attemptError || 'Unknown error';
       }
-    } else if (attempt.output.status === 'error') {
-      error = attempt.attemptError || 'Unknown error';
-    }
-
     } // end else (non-exhausted path)
 
     logger.info(

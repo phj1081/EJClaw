@@ -351,7 +351,7 @@ export async function runAgentForGroup(
     while (
       shouldRotateClaudeToken(trigger.reason) &&
       getTokenCount() > 1 &&
-      rotateToken(lastRotationMessage)
+      rotateToken(lastRotationMessage, { ignoreRateLimits: true })
     ) {
       logger.info(
         { chatJid, group: group.name, runId, reason: trigger.reason },
@@ -422,7 +422,9 @@ export async function runAgentForGroup(
           retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
         };
         lastRotationMessage =
-          typeof retryOutput.result === 'string' ? retryOutput.result : undefined;
+          typeof retryOutput.result === 'string'
+            ? retryOutput.result
+            : undefined;
         continue;
       }
 
