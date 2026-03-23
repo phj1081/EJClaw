@@ -5,6 +5,8 @@ import path from 'path';
 import { GROUPS_DIR, TIMEZONE } from './config.js';
 import { isPairedRoomJid } from './db.js';
 import { readEnvFile } from './env.js';
+import { getActiveCodexAuthPath } from './codex-token-rotation.js';
+import { getCurrentToken } from './token-rotation.js';
 import {
   resolveGroupFolderPath,
   resolveGroupIpcPath,
@@ -120,14 +122,15 @@ function prepareClaudeEnvironment(args: {
     args.env.ANTHROPIC_BASE_URL =
       args.envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL || '';
   }
-  if (
-    args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
-    process.env.CLAUDE_CODE_OAUTH_TOKEN
-  ) {
-    args.env.CLAUDE_CODE_OAUTH_TOKEN =
+  {
+    // Token rotation takes priority over static .env value
+    const oauthToken =
+      getCurrentToken() ||
       args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
-      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
-      '';
+      process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    if (oauthToken) {
+      args.env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+    }
   }
   for (const key of [
     'CLAUDE_MODEL',
@@ -182,7 +185,11 @@ function prepareCodexSessionEnvironment(args: {
   const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
   fs.mkdirSync(sessionCodexDir, { recursive: true });
 
-  const authSrc = path.join(hostCodexDir, 'auth.json');
+  const rotatedAuthSrc = getActiveCodexAuthPath();
+  const authSrc =
+    rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
+      ? rotatedAuthSrc
+      : path.join(hostCodexDir, 'auth.json');
   const authDst = path.join(sessionCodexDir, 'auth.json');
   if (fs.existsSync(authSrc)) fs.copyFileSync(authSrc, authDst);
   for (const file of ['config.toml', 'config.json']) {

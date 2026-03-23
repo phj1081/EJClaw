@@ -1,9 +1,11 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
+import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
   SCHEDULER_POLL_INTERVAL,
   SERVICE_AGENT_TYPE,
   TIMEZONE,
@@ -30,6 +32,26 @@ import {
 import { logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import {
+  detectFallbackTrigger,
+  getActiveProvider,
+  getFallbackEnvOverrides,
+  getFallbackProviderName,
+  hasGroupProviderOverride,
+  isFallbackEnabled,
+  isUsageExhausted,
+  markPrimaryCooldown,
+} from './provider-fallback.js';
+import {
+  rotateCodexToken,
+  getCodexAccountCount,
+  markCodexTokenHealthy,
+} from './codex-token-rotation.js';
+import {
+  rotateToken,
+  getTokenCount,
+  markTokenHealthy,
+} from './token-rotation.js';
+import {
   evaluateTaskSuspension,
   formatSuspensionNotice,
   suspendTask,
@@ -49,6 +71,25 @@ export {
   renderWatchCiStatusMessage,
   shouldUseTaskScopedSession,
 } from './task-watch-status.js';
+
+function isClaudeUsageExhaustedMessage(text: string): boolean {
+  const normalized = text
+    .trim()
+    .toLowerCase()
+    .replace(/[’‘`]/g, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/^error:\s*/i, '');
+  const looksLikeBanner =
+    normalized.startsWith("you're out of extra usage") ||
+    normalized.startsWith('you are out of extra usage') ||
+    normalized.startsWith("you've hit your limit") ||
+    normalized.startsWith('you have hit your limit');
+  const hasResetHint =
+    normalized.includes('resets ') ||
+    normalized.includes('reset at ') ||
+    normalized.includes('try again');
+  return looksLikeBanner && hasResetHint && normalized.length <= 160;
+}
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -238,51 +279,289 @@ async function runTask(
     sendTrackedMessage: deps.sendTrackedMessage,
     editTrackedMessage: deps.editTrackedMessage,
   });
+  const settingsPath = path.join(
+    DATA_DIR,
+    'sessions',
+    task.group_folder,
+    '.claude',
+    'settings.json',
+  );
+  const canFallback =
+    context.taskAgentType === 'claude-code' &&
+    isFallbackEnabled() &&
+    !hasGroupProviderOverride(settingsPath);
 
   try {
     await statusTracker.update('checking');
 
-    const output = await runAgentProcess(
-      context.group,
-      {
-        prompt: task.prompt,
-        sessionId: context.sessionId,
-        groupFolder: task.group_folder,
-        chatJid: task.chat_jid,
-        isMain: context.isMain,
-        isScheduledTask: true,
-        runtimeTaskId: context.runtimeTaskId,
-        useTaskScopedSession: context.useTaskScopedSession,
-        assistantName: ASSISTANT_NAME,
+    const runTaskAttempt = async (
+      provider: string,
+    ): Promise<{
+      output: AgentOutput;
+      sawOutput: boolean;
+      streamedTriggerReason?: {
+        reason: string;
+        retryAfterMs?: number;
+      };
+      attemptResult: string | null;
+      attemptError: string | null;
+    }> => {
+      let sawOutput = false;
+      let attemptResult: string | null = null;
+      let attemptError: string | null = null;
+      let streamedTriggerReason:
+        | {
+            reason: string;
+            retryAfterMs?: number;
+          }
+        | undefined;
+
+      const output = await runAgentProcess(
+        context.group,
+        {
+          prompt: task.prompt,
+          sessionId: context.sessionId,
+          groupFolder: task.group_folder,
+          chatJid: task.chat_jid,
+          isMain: context.isMain,
+          isScheduledTask: true,
+          runtimeTaskId: context.runtimeTaskId,
+          useTaskScopedSession: context.useTaskScopedSession,
+          assistantName: ASSISTANT_NAME,
+        },
+        (proc, processName) =>
+          deps.onProcess(
+            context.queueJid,
+            proc,
+            processName,
+            context.runtimeIpcDir,
+          ),
+        async (streamedOutput: AgentOutput) => {
+          if (streamedOutput.phase === 'progress') {
+            return;
+          }
+
+          if (
+            canFallback &&
+            provider === 'claude' &&
+            !sawOutput &&
+            streamedOutput.status === 'success' &&
+            typeof streamedOutput.result === 'string' &&
+            isClaudeUsageExhaustedMessage(streamedOutput.result)
+          ) {
+            if (!streamedTriggerReason) {
+              logger.warn(
+                {
+                  taskId: task.id,
+                  taskChatJid: task.chat_jid,
+                  group: context.group.name,
+                  groupFolder: task.group_folder,
+                  resultPreview: streamedOutput.result.slice(0, 120),
+                },
+                'Detected Claude usage exhaustion banner during scheduled task output',
+              );
+            }
+            streamedTriggerReason = { reason: 'usage-exhausted' };
+            return;
+          }
+
+          if (streamedOutput.result) {
+            sawOutput = true;
+            attemptResult = streamedOutput.result;
+            await deps.sendMessage(task.chat_jid, streamedOutput.result);
+          }
+
+          if (streamedOutput.status === 'error') {
+            attemptError = streamedOutput.error || 'Unknown error';
+            if (!sawOutput && !streamedTriggerReason) {
+              const trigger = detectFallbackTrigger(streamedOutput.error);
+              if (trigger.shouldFallback) {
+                streamedTriggerReason = {
+                  reason: trigger.reason,
+                  retryAfterMs: trigger.retryAfterMs,
+                };
+              }
+            }
+          }
+        },
+        provider === 'claude' ? undefined : getFallbackEnvOverrides(),
+      );
+
+      if (output.status === 'error' && !attemptError) {
+        attemptError = output.error || 'Unknown error';
+      } else if (output.result && !attemptResult) {
+        attemptResult = output.result;
+      }
+
+      return {
+        output,
+        sawOutput,
+        streamedTriggerReason,
+        attemptResult,
+        attemptError,
+      };
+    };
+
+    const shouldRotateClaudeToken = (reason: string): boolean =>
+      reason === '429' || reason === 'usage-exhausted';
+
+    const runFallbackTaskAttempt = async (
+      reason: string,
+      retryAfterMs?: number,
+    ): Promise<void> => {
+      if (!canFallback) {
+        error = reason;
+        return;
+      }
+
+      const fallbackName = getFallbackProviderName();
+      markPrimaryCooldown(reason, retryAfterMs);
+
+      logger.info(
+        {
+          taskId: task.id,
+          group: context.group.name,
+          groupFolder: task.group_folder,
+          reason,
+          retryAfterMs,
+          fallbackProvider: fallbackName,
+        },
+        `Falling back to provider: ${fallbackName} for scheduled task (reason: ${reason})`,
+      );
+
+      const fallbackAttempt = await runTaskAttempt(fallbackName);
+      result = fallbackAttempt.attemptResult;
+      error =
+        fallbackAttempt.output.status === 'error'
+          ? fallbackAttempt.attemptError || 'Unknown error'
+          : null;
+    };
+
+    const retryClaudeTaskWithRotation = async (
+      initialTrigger: {
+        reason: string;
+        retryAfterMs?: number;
       },
-      (proc, processName) =>
-        deps.onProcess(
-          context.queueJid,
-          proc,
-          processName,
-          context.runtimeIpcDir,
-        ),
-      async (streamedOutput: AgentOutput) => {
-        if (streamedOutput.phase === 'progress') {
+      rotationMessage?: string,
+    ): Promise<void> => {
+      let trigger = initialTrigger;
+      let lastRotationMessage = rotationMessage;
+
+      while (
+        shouldRotateClaudeToken(trigger.reason) &&
+        getTokenCount() > 1 &&
+        rotateToken(lastRotationMessage, { ignoreRateLimits: true })
+      ) {
+        logger.info(
+          {
+            taskId: task.id,
+            group: context.group.name,
+            groupFolder: task.group_folder,
+            reason: trigger.reason,
+          },
+          'Scheduled task Claude rate-limited, retrying with rotated account',
+        );
+
+        const retryAttempt = await runTaskAttempt('claude');
+        result = retryAttempt.attemptResult;
+        error = retryAttempt.attemptError;
+
+        if (
+          retryAttempt.streamedTriggerReason &&
+          !retryAttempt.sawOutput &&
+          retryAttempt.output.status !== 'error'
+        ) {
+          trigger = {
+            reason: retryAttempt.streamedTriggerReason.reason,
+            retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
+          };
+          lastRotationMessage =
+            typeof retryAttempt.output.result === 'string'
+              ? retryAttempt.output.result
+              : undefined;
+          continue;
+        }
+
+        if (retryAttempt.output.status === 'error' && !retryAttempt.sawOutput) {
+          const retryTrigger = retryAttempt.streamedTriggerReason
+            ? {
+                shouldFallback: true,
+                reason: retryAttempt.streamedTriggerReason.reason,
+                retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
+              }
+            : detectFallbackTrigger(retryAttempt.attemptError);
+          if (retryTrigger.shouldFallback) {
+            trigger = {
+              reason: retryTrigger.reason,
+              retryAfterMs: retryTrigger.retryAfterMs,
+            };
+            lastRotationMessage = retryAttempt.attemptError || undefined;
+            continue;
+          }
+        }
+
+        if (retryAttempt.output.status === 'success') {
+          markTokenHealthy();
+          error = null;
           return;
         }
-        if (streamedOutput.result) {
-          result = streamedOutput.result;
-          // Forward result to user (sendMessage handles formatting)
-          await deps.sendMessage(task.chat_jid, streamedOutput.result);
-        }
-        if (streamedOutput.status === 'error') {
-          error = streamedOutput.error || 'Unknown error';
-        }
-      },
-    );
 
-    if (output.status === 'error') {
-      error = output.error || 'Unknown error';
-    } else if (output.result) {
-      // Result was already forwarded to the user via the streaming callback above
-      result = output.result;
-    }
+        return;
+      }
+
+      // Usage exhausted: don't fall back to Kimi — just mark cooldown and skip
+      if (trigger.reason === 'usage-exhausted') {
+        markPrimaryCooldown(trigger.reason, trigger.retryAfterMs);
+        logger.info(
+          { taskId: task.id, group: context.group.name },
+          'All Claude tokens usage-exhausted, skipping Kimi fallback for scheduled task',
+        );
+        error = 'Claude usage exhausted';
+        return;
+      }
+
+      await runFallbackTaskAttempt(trigger.reason, trigger.retryAfterMs);
+    };
+
+    const provider = canFallback ? await getActiveProvider() : 'claude';
+
+    // Already in usage-exhausted cooldown — skip task instead of running on Kimi
+    if (provider !== 'claude' && isUsageExhausted()) {
+      logger.info(
+        { taskId: task.id, group: context.group.name, provider },
+        'Claude usage exhausted (cooldown active), skipping scheduled task',
+      );
+      error = 'Claude usage exhausted';
+      // Fall through to task completion handling below
+    } else {
+      const attempt = await runTaskAttempt(provider);
+      result = attempt.attemptResult;
+      error = attempt.attemptError;
+
+      if (
+        provider === 'claude' &&
+        attempt.streamedTriggerReason &&
+        !attempt.sawOutput
+      ) {
+        await retryClaudeTaskWithRotation(attempt.streamedTriggerReason);
+      } else if (attempt.output.status === 'error' && provider === 'claude') {
+        const trigger = attempt.streamedTriggerReason
+          ? {
+              shouldFallback: true,
+              reason: attempt.streamedTriggerReason.reason,
+              retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
+            }
+          : detectFallbackTrigger(error);
+        if (trigger.shouldFallback) {
+          await retryClaudeTaskWithRotation({
+            reason: trigger.reason,
+            retryAfterMs: trigger.retryAfterMs,
+          });
+        }
+      } else if (attempt.output.status === 'error') {
+        error = attempt.attemptError || 'Unknown error';
+      }
+    } // end else (non-exhausted path)
 
     logger.info(
       {
@@ -313,6 +592,31 @@ async function runTask(
   // Clear suspension on success
   if (!error && currentTask.suspended_until) {
     updateTask(task.id, { suspended_until: null });
+  }
+
+  // Try token rotation before suspending
+  if (error) {
+    const trigger = detectFallbackTrigger(error);
+    if (trigger.shouldFallback) {
+      const isCodex = SERVICE_AGENT_TYPE === 'codex';
+      const rotated = isCodex
+        ? getCodexAccountCount() > 1 && rotateCodexToken(error)
+        : getTokenCount() > 1 && rotateToken(error);
+      if (rotated) {
+        logger.info(
+          {
+            taskId: task.id,
+            agent: SERVICE_AGENT_TYPE,
+            reason: trigger.reason,
+          },
+          'Task rate-limited, rotated token — will retry on next schedule',
+        );
+        if (isCodex) markCodexTokenHealthy();
+        else markTokenHealthy();
+        // Clear the error so suspension doesn't trigger
+        error = null;
+      }
+    }
   }
 
   // Check for repeated quota/auth errors → auto-suspend

@@ -122,7 +122,7 @@ vi.mock('./logger.js', () => ({
 
 vi.mock('./provider-fallback.js', () => ({
   detectFallbackTrigger: vi.fn(() => ({ shouldFallback: false, reason: '' })),
-  getActiveProvider: vi.fn(() => 'claude'),
+  getActiveProvider: vi.fn(async () => 'claude'),
   getFallbackEnvOverrides: vi.fn(() => ({
     ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
     ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
@@ -181,7 +181,7 @@ function makeChannel(chatJid: string): Channel {
 describe('createMessageRuntime', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(providerFallback.getActiveProvider).mockReturnValue('claude');
+    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
     vi.mocked(providerFallback.getFallbackProviderName).mockReturnValue('kimi');
     vi.mocked(providerFallback.getFallbackEnvOverrides).mockReturnValue({
       ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
@@ -2034,6 +2034,91 @@ describe('createMessageRuntime', () => {
     expect(channel.sendMessage).toHaveBeenCalledWith(
       chatJid,
       'usage fallback 응답입니다.',
+    );
+  });
+
+  it('suppresses duplicate streamed usage banners before retrying the fallback provider', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-24T00:00:00.000Z',
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'duplicate banner fallback 응답입니다.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-fallback-usage-exhausted-duplicate',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
+      'usage-exhausted',
+      undefined,
+    );
+    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'duplicate banner fallback 응답입니다.',
     );
   });
 

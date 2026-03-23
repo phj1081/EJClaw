@@ -19,6 +19,7 @@ import {
   getFallbackProviderName,
   hasGroupProviderOverride,
   isFallbackEnabled,
+  isUsageExhausted,
   markPrimaryCooldown,
 } from './provider-fallback.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
@@ -44,11 +45,22 @@ export interface MessageAgentExecutorDeps {
 }
 
 function isClaudeUsageExhaustedMessage(text: string): boolean {
-  const normalized = text.trim();
-  return (
-    /^you(?:'re| are) out of extra usage\b/i.test(normalized) ||
-    /^you(?:'ve| have) hit your limit\b/i.test(normalized)
-  );
+  const normalized = text
+    .trim()
+    .toLowerCase()
+    .replace(/[''`]/g, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/^error:\s*/i, '');
+  const looksLikeBanner =
+    normalized.startsWith("you're out of extra usage") ||
+    normalized.startsWith('you are out of extra usage') ||
+    normalized.startsWith("you've hit your limit") ||
+    normalized.startsWith('you have hit your limit');
+  const hasResetHint =
+    normalized.includes('resets ') ||
+    normalized.includes('reset at ') ||
+    normalized.includes('try again');
+  return looksLikeBanner && hasResetHint && normalized.length <= 160;
 }
 
 export async function runAgentForGroup(
@@ -158,10 +170,20 @@ export async function runAgentForGroup(
             provider === 'claude' &&
             output.status === 'success' &&
             !sawOutput &&
-            !streamedTriggerReason &&
             typeof output.result === 'string' &&
             isClaudeUsageExhaustedMessage(output.result)
           ) {
+            if (!streamedTriggerReason) {
+              logger.warn(
+                {
+                  chatJid,
+                  group: group.name,
+                  runId,
+                  resultPreview: output.result.slice(0, 120),
+                },
+                'Detected Claude usage exhaustion banner in successful output',
+              );
+            }
             streamedTriggerReason = {
               reason: 'usage-exhausted',
             };
@@ -321,7 +343,166 @@ export async function runAgentForGroup(
     return 'success';
   };
 
-  const provider = canFallback ? getActiveProvider() : 'claude';
+  const shouldRotateClaudeToken = (reason: string): boolean =>
+    reason === '429' || reason === 'usage-exhausted';
+
+  const retryClaudeWithRotation = async (
+    initialTrigger: {
+      reason: string;
+      retryAfterMs?: number;
+    },
+    rotationMessage?: string,
+  ): Promise<'success' | 'error'> => {
+    let trigger = initialTrigger;
+    let lastRotationMessage = rotationMessage;
+
+    while (
+      shouldRotateClaudeToken(trigger.reason) &&
+      getTokenCount() > 1 &&
+      rotateToken(lastRotationMessage, { ignoreRateLimits: true })
+    ) {
+      logger.info(
+        { chatJid, group: group.name, runId, reason: trigger.reason },
+        'Claude rate-limited, retrying with rotated account',
+      );
+
+      const retryAttempt = await runAttempt('claude');
+
+      if (retryAttempt.error) {
+        if (!retryAttempt.sawOutput) {
+          const errMsg =
+            retryAttempt.error instanceof Error
+              ? retryAttempt.error.message
+              : String(retryAttempt.error);
+          const retryTrigger = retryAttempt.streamedTriggerReason
+            ? {
+                shouldFallback: true,
+                reason: retryAttempt.streamedTriggerReason.reason,
+                retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
+              }
+            : detectFallbackTrigger(errMsg);
+          if (retryTrigger.shouldFallback) {
+            trigger = {
+              reason: retryTrigger.reason,
+              retryAfterMs: retryTrigger.retryAfterMs,
+            };
+            lastRotationMessage = errMsg;
+            continue;
+          }
+        }
+
+        logger.error(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            provider: 'claude',
+            err: retryAttempt.error,
+          },
+          'Rotated Claude account also threw',
+        );
+        return 'error';
+      }
+
+      const retryOutput = retryAttempt.output;
+      if (!retryOutput) {
+        logger.error(
+          {
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+            provider: 'claude',
+          },
+          'Rotated Claude account produced no output object',
+        );
+        return 'error';
+      }
+
+      if (
+        !retryAttempt.sawOutput &&
+        retryAttempt.streamedTriggerReason &&
+        retryOutput.status !== 'error'
+      ) {
+        trigger = {
+          reason: retryAttempt.streamedTriggerReason.reason,
+          retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
+        };
+        lastRotationMessage =
+          typeof retryOutput.result === 'string'
+            ? retryOutput.result
+            : undefined;
+        continue;
+      }
+
+      if (
+        !retryAttempt.sawOutput &&
+        retryAttempt.sawSuccessNullResultWithoutOutput
+      ) {
+        return runFallbackAttempt('success-null-result');
+      }
+
+      if (retryOutput.status === 'error') {
+        if (!retryAttempt.sawOutput) {
+          const retryTrigger = retryAttempt.streamedTriggerReason
+            ? {
+                shouldFallback: true,
+                reason: retryAttempt.streamedTriggerReason.reason,
+                retryAfterMs: retryAttempt.streamedTriggerReason.retryAfterMs,
+              }
+            : detectFallbackTrigger(retryOutput.error);
+          if (retryTrigger.shouldFallback) {
+            trigger = {
+              reason: retryTrigger.reason,
+              retryAfterMs: retryTrigger.retryAfterMs,
+            };
+            lastRotationMessage = retryOutput.error ?? undefined;
+            continue;
+          }
+        }
+
+        logger.error(
+          {
+            group: group.name,
+            chatJid,
+            runId,
+            provider: 'claude',
+            error: retryOutput.error,
+          },
+          'Rotated Claude account failed',
+        );
+        return 'error';
+      }
+
+      markTokenHealthy();
+      return 'success';
+    }
+
+    // Usage exhausted: don't fall back to Kimi — log only, no response
+    if (trigger.reason === 'usage-exhausted') {
+      markPrimaryCooldown(trigger.reason, trigger.retryAfterMs);
+      logger.info(
+        { chatJid, group: group.name, runId },
+        'All Claude tokens usage-exhausted, silently skipping (no Kimi fallback)',
+      );
+      return 'error';
+    }
+
+    return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
+  };
+
+  const provider = canFallback ? await getActiveProvider() : 'claude';
+
+  // Already in usage-exhausted cooldown — log only, no response
+  if (provider !== 'claude' && isUsageExhausted()) {
+    logger.info(
+      { chatJid, group: group.name, runId, provider },
+      'Claude usage exhausted (cooldown active), silently skipping',
+    );
+    return 'error';
+  }
+
   const primaryAttempt = await runAttempt(provider);
 
   if (primaryAttempt.error) {
@@ -338,19 +519,13 @@ export async function runAgentForGroup(
           }
         : detectFallbackTrigger(errMsg);
       if (trigger.shouldFallback) {
-        // Try rotating token before falling back to another provider
-        if (getTokenCount() > 1 && rotateToken(errMsg)) {
-          logger.info(
-            { chatJid, group: group.name, runId, reason: trigger.reason },
-            'Rate-limited, retrying with rotated token',
-          );
-          const retryAttempt = await runAttempt('claude');
-          if (!retryAttempt.error) {
-            markTokenHealthy();
-            return 'success';
-          }
-        }
-        return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
+        return retryClaudeWithRotation(
+          {
+            reason: trigger.reason,
+            retryAfterMs: trigger.retryAfterMs,
+          },
+          errMsg,
+        );
       }
     }
 
@@ -390,10 +565,10 @@ export async function runAgentForGroup(
     primaryAttempt.streamedTriggerReason &&
     output.status !== 'error'
   ) {
-    return runFallbackAttempt(
-      primaryAttempt.streamedTriggerReason.reason,
-      primaryAttempt.streamedTriggerReason.retryAfterMs,
-    );
+    return retryClaudeWithRotation({
+      reason: primaryAttempt.streamedTriggerReason.reason,
+      retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
+    });
   }
 
   if (
@@ -426,18 +601,13 @@ export async function runAgentForGroup(
           }
         : detectFallbackTrigger(output.error);
       if (trigger.shouldFallback) {
-        if (getTokenCount() > 1 && rotateToken(output.error ?? undefined)) {
-          logger.info(
-            { chatJid, group: group.name, runId, reason: trigger.reason },
-            'Rate-limited (output error), retrying with rotated token',
-          );
-          const retryAttempt = await runAttempt('claude');
-          if (!retryAttempt.error) {
-            markTokenHealthy();
-            return 'success';
-          }
-        }
-        return runFallbackAttempt(trigger.reason, trigger.retryAfterMs);
+        return retryClaudeWithRotation(
+          {
+            reason: trigger.reason,
+            retryAfterMs: trigger.retryAfterMs,
+          },
+          output.error ?? undefined,
+        );
       }
     }
 

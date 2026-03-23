@@ -8,6 +8,42 @@ const { runAgentProcessMock, writeTasksSnapshotMock } = vi.hoisted(() => ({
   writeTasksSnapshotMock: vi.fn(),
 }));
 
+vi.mock('./provider-fallback.js', () => ({
+  detectFallbackTrigger: vi.fn((error?: string | null) => {
+    const lower = (error || '').toLowerCase();
+    if (
+      lower.includes('429') ||
+      lower.includes('rate limit') ||
+      lower.includes('hit your limit')
+    ) {
+      return { shouldFallback: true, reason: '429' };
+    }
+    return { shouldFallback: false, reason: '' };
+  }),
+  getActiveProvider: vi.fn(async () => 'claude'),
+  getFallbackEnvOverrides: vi.fn(() => ({
+    ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
+    ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
+    ANTHROPIC_MODEL: 'kimi-k2.5',
+  })),
+  getFallbackProviderName: vi.fn(() => 'kimi'),
+  hasGroupProviderOverride: vi.fn(() => false),
+  isFallbackEnabled: vi.fn(() => true),
+  markPrimaryCooldown: vi.fn(),
+}));
+
+vi.mock('./token-rotation.js', () => ({
+  rotateToken: vi.fn(() => false),
+  getTokenCount: vi.fn(() => 1),
+  markTokenHealthy: vi.fn(),
+}));
+
+vi.mock('./codex-token-rotation.js', () => ({
+  rotateCodexToken: vi.fn(() => false),
+  getCodexAccountCount: vi.fn(() => 1),
+  markCodexTokenHealthy: vi.fn(),
+}));
+
 vi.mock('./agent-runner.js', async () => {
   const actual =
     await vi.importActual<typeof import('./agent-runner.js')>(
@@ -21,8 +57,10 @@ vi.mock('./agent-runner.js', async () => {
 });
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import * as providerFallback from './provider-fallback.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
+import * as tokenRotation from './token-rotation.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
@@ -39,6 +77,11 @@ describe('task scheduler', () => {
     _resetSchedulerLoopForTests();
     runAgentProcessMock.mockClear();
     writeTasksSnapshotMock.mockClear();
+    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
+    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
+    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
+    vi.mocked(tokenRotation.rotateToken).mockReturnValue(false);
     vi.useFakeTimers();
   });
 
@@ -232,6 +275,103 @@ Check the run.
     expect(enqueueTask.mock.calls[0][1]).toBe('task-watch-group');
   });
 
+  it('suppresses Claude usage banners for scheduled tasks and retries with a rotated account', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-usage-banner',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'claude-code',
+      prompt: 'claude task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
+    vi.mocked(tokenRotation.rotateToken).mockReturnValueOnce(true);
+
+    (runAgentProcessMock as any)
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            phase: 'intermediate',
+            result: "You're out of extra usage · resets 4am (Asia/Seoul)",
+          });
+          await onOutput?.({
+            status: 'success',
+            result: "You're out of extra usage · resets 4am (Asia/Seoul)",
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result: 'rotated scheduled task response',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      );
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+    const sendMessage = vi.fn(async () => {});
+
+    startSchedulerLoop({
+      serviceAgentType: 'claude-code',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Claude',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'claude-code',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
+    expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
+    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'rotated scheduled task response',
+    );
+  });
+
   it('picks up newly due tasks immediately when nudged', async () => {
     const enqueueTask = vi.fn();
 
@@ -352,6 +492,7 @@ Check the run.
       }),
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
     expect(writeTasksSnapshotMock).toHaveBeenCalledWith(
       'shared-group',
@@ -411,6 +552,7 @@ Check the run.
       }),
       expect.any(Function),
       expect.any(Function),
+      undefined,
     );
     expect(writeTasksSnapshotMock).toHaveBeenCalledWith(
       'shared-group',

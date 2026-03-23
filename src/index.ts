@@ -63,10 +63,14 @@ import { startUnifiedDashboard } from './unified-dashboard.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
+import { initCodexTokenRotation } from './codex-token-rotation.js';
+import { initTokenRotation } from './token-rotation.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 export { composeDashboardContent } from './dashboard-render.js';
+
+// Token rotation is initialized lazily on first use or at startup below
 
 export async function sendFormattedChannelMessage(
   channels: Channel[],
@@ -293,6 +297,8 @@ async function main(): Promise<void> {
   const processStartedAtMs = Date.now();
   initDatabase();
   logger.info('Database initialized');
+  initTokenRotation();
+  initCodexTokenRotation();
   loadState();
 
   // Graceful shutdown handlers

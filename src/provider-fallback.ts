@@ -14,8 +14,10 @@
 
 import fs from 'fs';
 
+import { fetchClaudeUsage, type ClaudeUsageData } from './claude-usage.js';
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { rotateToken, getTokenCount } from './token-rotation.js';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -46,6 +48,15 @@ interface FallbackConfig {
 // ── State ────────────────────────────────────────────────────────
 
 let cooldown: CooldownState | null = null;
+let lastUsageAvailabilityCheck: {
+  checkedAt: number;
+  result: 'available' | 'exhausted' | 'unknown';
+} | null = null;
+let usageAvailabilityCheckPromise: Promise<
+  'available' | 'exhausted' | 'unknown'
+> | null = null;
+
+const USAGE_RECOVERY_RECHECK_MS = 30_000;
 
 // ── Config ───────────────────────────────────────────────────────
 
@@ -116,16 +127,112 @@ export function getFallbackProviderName(): string {
   return loadConfig().providerName;
 }
 
+function normalizeUtilization(utilization: number): number {
+  return utilization > 1 ? utilization : utilization * 100;
+}
+
+type ClaudeUsageWindow = NonNullable<ClaudeUsageData[keyof ClaudeUsageData]>;
+
+function hasExhaustedClaudeUsageWindow(
+  usage: ClaudeUsageData | null,
+): boolean | null {
+  if (!usage) return null;
+  const windows: ClaudeUsageWindow[] = [];
+  if (usage.five_hour) windows.push(usage.five_hour);
+  if (usage.seven_day) windows.push(usage.seven_day);
+  if (usage.seven_day_sonnet) windows.push(usage.seven_day_sonnet);
+  if (usage.seven_day_opus) windows.push(usage.seven_day_opus);
+  if (windows.length === 0) return null;
+  return windows.some(
+    (window) => normalizeUtilization(window.utilization) >= 100,
+  );
+}
+
+function clearUsageAvailabilityCache(): void {
+  lastUsageAvailabilityCheck = null;
+  usageAvailabilityCheckPromise = null;
+}
+
+async function getClaudeUsageAvailability(): Promise<
+  'available' | 'exhausted' | 'unknown'
+> {
+  const now = Date.now();
+  if (
+    lastUsageAvailabilityCheck &&
+    now - lastUsageAvailabilityCheck.checkedAt < USAGE_RECOVERY_RECHECK_MS
+  ) {
+    return lastUsageAvailabilityCheck.result;
+  }
+
+  if (!usageAvailabilityCheckPromise) {
+    usageAvailabilityCheckPromise = (async () => {
+      const usage = await fetchClaudeUsage();
+      const exhausted = hasExhaustedClaudeUsageWindow(usage);
+      const result =
+        exhausted === null ? 'unknown' : exhausted ? 'exhausted' : 'available';
+      lastUsageAvailabilityCheck = {
+        checkedAt: Date.now(),
+        result,
+      };
+      return result;
+    })();
+
+    void usageAvailabilityCheckPromise.finally(() => {
+      usageAvailabilityCheckPromise = null;
+    });
+  }
+
+  return usageAvailabilityCheckPromise;
+}
+
 /**
  * Determine which provider should be used for the next request.
  * Returns 'claude' when Claude is healthy or cooldown has expired,
  * or the fallback provider name during an active cooldown.
  */
-export function getActiveProvider(): string {
+export async function getActiveProvider(): Promise<string> {
   const config = loadConfig();
   if (!config.enabled) return 'claude';
 
   if (cooldown) {
+    if (cooldown.reason === 'usage-exhausted') {
+      const usageAvailability = await getClaudeUsageAvailability();
+      if (usageAvailability === 'available') {
+        logger.info(
+          {
+            provider: 'claude',
+            reason: cooldown.reason,
+          },
+          'Claude usage recovered, retrying primary provider',
+        );
+        cooldown = null;
+        clearUsageAvailabilityCache();
+        return 'claude';
+      }
+      if (usageAvailability === 'exhausted') {
+        // Current token exhausted — try rotating to another token (ignore cooldowns)
+        if (
+          getTokenCount() > 1 &&
+          rotateToken(undefined, { ignoreRateLimits: true })
+        ) {
+          logger.info(
+            'Claude current token exhausted, rotated to next token — retrying',
+          );
+          cooldown = null;
+          clearUsageAvailabilityCache();
+          return 'claude';
+        }
+        logger.debug(
+          {
+            provider: config.providerName,
+            reason: cooldown.reason,
+          },
+          'All Claude tokens exhausted, keeping cooldown active',
+        );
+        return config.providerName;
+      }
+    }
+
     if (Date.now() < cooldown.expiresAt) {
       return config.providerName;
     }
@@ -161,6 +268,7 @@ export function markPrimaryCooldown(
     expiresAt: now + durationMs,
     reason,
   };
+  clearUsageAvailabilityCache();
 
   logger.info(
     {
@@ -175,6 +283,7 @@ export function markPrimaryCooldown(
 
 /** Manually clear cooldown (e.g. after a successful Claude response). */
 export function clearPrimaryCooldown(): void {
+  clearUsageAvailabilityCache();
   if (cooldown) {
     logger.info(
       { reason: cooldown.reason },
@@ -184,6 +293,11 @@ export function clearPrimaryCooldown(): void {
   }
 }
 
+/** Check if Claude is currently in usage-exhausted cooldown. */
+export function isUsageExhausted(): boolean {
+  return cooldown?.reason === 'usage-exhausted';
+}
+
 /** Get current cooldown info (for diagnostics / status dashboard). */
 export function getCooldownInfo(): {
   active: boolean;
@@ -191,14 +305,18 @@ export function getCooldownInfo(): {
   expiresAt?: string;
   remainingMs?: number;
 } {
-  if (!cooldown || Date.now() >= cooldown.expiresAt) {
+  if (!cooldown) {
+    return { active: false };
+  }
+  const remainingMs = Math.max(cooldown.expiresAt - Date.now(), 0);
+  if (cooldown.reason !== 'usage-exhausted' && remainingMs === 0) {
     return { active: false };
   }
   return {
     active: true,
     reason: cooldown.reason,
     expiresAt: new Date(cooldown.expiresAt).toISOString(),
-    remainingMs: cooldown.expiresAt - Date.now(),
+    remainingMs,
   };
 }
 
@@ -247,6 +365,8 @@ export function detectFallbackTrigger(
   if (
     lower.includes('429') ||
     lower.includes('rate limit') ||
+    lower.includes('usage limit') ||
+    lower.includes('hit your limit') ||
     lower.includes('too many requests') ||
     lower.includes('rate_limit')
   ) {

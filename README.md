@@ -1,5 +1,10 @@
 # EJClaw
 
+![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.81-blueviolet)
+![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.115.0-green)
+![Node](https://img.shields.io/badge/Node-24+-339933?logo=nodedotjs&logoColor=white)
+![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
+
 Dual-agent AI assistant (Claude Code + Codex) over Discord.
 
 Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now maintained as EJClaw for personal production use.
@@ -47,7 +52,7 @@ Each agent has access to:
 ### Prerequisites
 
 - Linux (Ubuntu 22.04+) or macOS
-- Node.js 20+ (fnm recommended)
+- Node.js 24+ (fnm recommended)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
 - Bun 1.0+ (for browser automation)
