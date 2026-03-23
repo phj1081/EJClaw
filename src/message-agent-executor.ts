@@ -21,7 +21,16 @@ import {
   markPrimaryCooldown,
 } from './provider-fallback.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
-import { rotateToken, getTokenCount, markTokenHealthy } from './token-rotation.js';
+import {
+  rotateCodexToken,
+  getCodexAccountCount,
+  markCodexTokenHealthy,
+} from './codex-token-rotation.js';
+import {
+  rotateToken,
+  getTokenCount,
+  markTokenHealthy,
+} from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
 
 export interface MessageAgentExecutorDeps {
@@ -138,7 +147,6 @@ export async function runAgentForGroup(
             sawSuccessNullResultWithoutOutput = true;
           }
           if (
-            provider === 'claude' &&
             output.status === 'error' &&
             !sawOutput &&
             !streamedTriggerReason
@@ -390,6 +398,22 @@ export async function runAgentForGroup(
       }
     }
 
+    // Codex rate-limit rotation (non-Claude agents)
+    if (!isClaudeCodeAgent && getCodexAccountCount() > 1) {
+      const trigger = detectFallbackTrigger(output.error);
+      if (trigger.shouldFallback && rotateCodexToken()) {
+        logger.info(
+          { chatJid, group: group.name, runId, reason: trigger.reason },
+          'Codex rate-limited, retrying with rotated account',
+        );
+        const retryAttempt = await runAttempt('codex');
+        if (!retryAttempt.error) {
+          markCodexTokenHealthy();
+          return 'success';
+        }
+      }
+    }
+
     logger.error(
       {
         group: group.name,
@@ -401,6 +425,26 @@ export async function runAgentForGroup(
       'Agent process error',
     );
     return 'error';
+  }
+
+  // Codex may report success but have streamed a rate-limit error.
+  // Rotate token so the NEXT request uses a fresh account.
+  if (
+    !isClaudeCodeAgent &&
+    primaryAttempt.streamedTriggerReason &&
+    getCodexAccountCount() > 1
+  ) {
+    if (rotateCodexToken()) {
+      logger.info(
+        {
+          chatJid,
+          group: group.name,
+          runId,
+          reason: primaryAttempt.streamedTriggerReason.reason,
+        },
+        'Codex rate-limited (streamed), rotated account for next request',
+      );
+    }
   }
 
   return 'success';

@@ -5,6 +5,7 @@ import path from 'path';
 import { GROUPS_DIR, TIMEZONE } from './config.js';
 import { isPairedRoomJid } from './db.js';
 import { readEnvFile } from './env.js';
+import { getActiveCodexAuthPath } from './codex-token-rotation.js';
 import { getCurrentToken } from './token-rotation.js';
 import {
   resolveGroupFolderPath,
@@ -182,7 +183,10 @@ function prepareCodexSessionEnvironment(args: {
   const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
   fs.mkdirSync(sessionCodexDir, { recursive: true });
 
-  const authSrc = path.join(hostCodexDir, 'auth.json');
+  const rotatedAuthSrc = getActiveCodexAuthPath();
+  const authSrc = rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
+    ? rotatedAuthSrc
+    : path.join(hostCodexDir, 'auth.json');
   const authDst = path.join(sessionCodexDir, 'auth.json');
   if (fs.existsSync(authSrc)) fs.copyFileSync(authSrc, authDst);
   for (const file of ['config.toml', 'config.json']) {

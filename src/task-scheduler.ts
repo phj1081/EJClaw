@@ -29,6 +29,17 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
+import { detectFallbackTrigger } from './provider-fallback.js';
+import {
+  rotateCodexToken,
+  getCodexAccountCount,
+  markCodexTokenHealthy,
+} from './codex-token-rotation.js';
+import {
+  rotateToken,
+  getTokenCount,
+  markTokenHealthy,
+} from './token-rotation.js';
 import {
   evaluateTaskSuspension,
   formatSuspensionNotice,
@@ -313,6 +324,27 @@ async function runTask(
   // Clear suspension on success
   if (!error && currentTask.suspended_until) {
     updateTask(task.id, { suspended_until: null });
+  }
+
+  // Try token rotation before suspending
+  if (error) {
+    const trigger = detectFallbackTrigger(error);
+    if (trigger.shouldFallback) {
+      const isCodex = SERVICE_AGENT_TYPE === 'codex';
+      const rotated = isCodex
+        ? getCodexAccountCount() > 1 && rotateCodexToken()
+        : getTokenCount() > 1 && rotateToken();
+      if (rotated) {
+        logger.info(
+          { taskId: task.id, agent: SERVICE_AGENT_TYPE, reason: trigger.reason },
+          'Task rate-limited, rotated token — will retry on next schedule',
+        );
+        if (isCodex) markCodexTokenHealthy();
+        else markTokenHealthy();
+        // Clear the error so suspension doesn't trigger
+        error = null;
+      }
+    }
   }
 
   // Check for repeated quota/auth errors → auto-suspend

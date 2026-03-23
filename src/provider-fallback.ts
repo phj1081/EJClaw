@@ -247,6 +247,8 @@ export function detectFallbackTrigger(
   if (
     lower.includes('429') ||
     lower.includes('rate limit') ||
+    lower.includes('usage limit') ||
+    lower.includes('hit your limit') ||
     lower.includes('too many requests') ||
     lower.includes('rate_limit')
   ) {
