@@ -462,7 +462,7 @@ export class DiscordChannel implements Channel {
       }
 
       // Split files into batches of MAX_ATTACHMENTS
-      const fileBatches: typeof files[] = [];
+      const fileBatches: (typeof files)[] = [];
       for (let i = 0; i < files.length; i += MAX_ATTACHMENTS) {
         fileBatches.push(files.slice(i, i + MAX_ATTACHMENTS));
       }

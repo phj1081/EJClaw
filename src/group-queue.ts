@@ -95,7 +95,10 @@ export class GroupQueue {
   enterRecoveryMode(): void {
     this.recoveryMode = true;
     logger.info(
-      { maxConcurrent: RECOVERY_CONCURRENT_AGENTS, durationMs: RECOVERY_DURATION_MS },
+      {
+        maxConcurrent: RECOVERY_CONCURRENT_AGENTS,
+        durationMs: RECOVERY_DURATION_MS,
+      },
       'Entering recovery mode (staggered restart)',
     );
     this.recoveryTimer = setTimeout(() => {
@@ -157,7 +160,11 @@ export class GroupQueue {
         this.waitingGroups.push(groupJid);
       }
       logger.debug(
-        { groupJid, activeCount: this.activeCount, max: this.effectiveMaxConcurrent },
+        {
+          groupJid,
+          activeCount: this.activeCount,
+          max: this.effectiveMaxConcurrent,
+        },
         'At concurrency limit, message queued',
       );
       return;
