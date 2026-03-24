@@ -672,6 +672,11 @@ async function runQuery(
       log(`Session initialized: ${newSessionId}`);
     }
 
+    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+      const meta = (message as { compact_metadata?: { trigger?: string; pre_tokens?: number } }).compact_metadata;
+      log(`Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`);
+    }
+
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
       const tn = message as { task_id: string; status: string; summary: string };
       log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
@@ -943,7 +948,8 @@ async function main(): Promise<void> {
         // Observe compact_boundary to confirm compaction completed
         if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
           compactBoundarySeen = true;
-          log('Compact boundary observed — compaction completed');
+          const meta = (message as { compact_metadata?: { trigger?: string; pre_tokens?: number } }).compact_metadata;
+          log(`Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`);
         }
 
         if (message.type === 'result') {
