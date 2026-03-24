@@ -219,7 +219,10 @@ export function updateTokenValue(index: number, newAccessToken: string): void {
   }
   tokens[index].token = newAccessToken;
   logger.info(
-    { index, masked: `${newAccessToken.slice(0, 20)}...${newAccessToken.slice(-4)}` },
+    {
+      index,
+      masked: `${newAccessToken.slice(0, 20)}...${newAccessToken.slice(-4)}`,
+    },
     'Token value updated after OAuth refresh',
   );
 }

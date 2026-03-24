@@ -81,10 +81,7 @@ function readCredentials(accountIndex: number): CredentialsFile | null {
   }
 }
 
-function writeCredentials(
-  accountIndex: number,
-  creds: CredentialsFile,
-): void {
+function writeCredentials(accountIndex: number, creds: CredentialsFile): void {
   const credsPath = getCredentialsPath(accountIndex);
   const dir = path.dirname(credsPath);
   if (!fs.existsSync(dir)) {
