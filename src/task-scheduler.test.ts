@@ -39,6 +39,20 @@ vi.mock('./token-rotation.js', () => ({
 }));
 
 vi.mock('./codex-token-rotation.js', () => ({
+  detectCodexRotationTrigger: vi.fn((error?: string | null) => {
+    const lower = (error || '').toLowerCase();
+    if (
+      lower.includes('429') ||
+      lower.includes('rate limit') ||
+      lower.includes('oauth token has expired') ||
+      lower.includes('authentication_error') ||
+      lower.includes('failed to authenticate') ||
+      lower.includes('401')
+    ) {
+      return { shouldRotate: true, reason: 'auth-expired' };
+    }
+    return { shouldRotate: false, reason: '' };
+  }),
   rotateCodexToken: vi.fn(() => false),
   getCodexAccountCount: vi.fn(() => 1),
   markCodexTokenHealthy: vi.fn(),
@@ -77,10 +91,13 @@ describe('task scheduler', () => {
     _resetSchedulerLoopForTests();
     runAgentProcessMock.mockClear();
     writeTasksSnapshotMock.mockClear();
+    vi.mocked(providerFallback.markPrimaryCooldown).mockClear();
     vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
     vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
     vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
+    vi.mocked(tokenRotation.markTokenHealthy).mockClear();
+    vi.mocked(tokenRotation.rotateToken).mockClear();
     vi.mocked(tokenRotation.rotateToken).mockReturnValue(false);
     vi.useFakeTimers();
   });
@@ -369,6 +386,105 @@ Check the run.
     expect(sendMessage).toHaveBeenCalledWith(
       'shared@g.us',
       'rotated scheduled task response',
+    );
+  });
+
+  it('suppresses Claude OAuth expiry banners for scheduled tasks and retries with a rotated account', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-auth-expired-banner',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'claude-code',
+      prompt: 'claude task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
+    vi.mocked(tokenRotation.rotateToken).mockReturnValueOnce(true);
+
+    (runAgentProcessMock as any)
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            phase: 'intermediate',
+            result:
+              'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+          });
+          await onOutput?.({
+            status: 'success',
+            result:
+              'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result: 'rotated scheduled task auth response',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      );
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+    const sendMessage = vi.fn(async () => {});
+
+    startSchedulerLoop({
+      serviceAgentType: 'claude-code',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Claude',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'claude-code',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
+    expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
+    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'rotated scheduled task auth response',
     );
   });
 

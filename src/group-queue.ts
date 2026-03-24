@@ -553,22 +553,132 @@ export class GroupQueue {
     });
   }
 
-  async shutdown(_gracePeriodMs: number): Promise<void> {
+  private isProcessAlive(proc: ChildProcess): boolean {
+    return proc.exitCode === null && proc.signalCode === null;
+  }
+
+  private waitForProcessExit(proc: ChildProcess): Promise<void> {
+    if (!this.isProcessAlive(proc)) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      const handleExit = () => {
+        proc.off('close', handleExit);
+        proc.off('exit', handleExit);
+        resolve();
+      };
+
+      proc.once('close', handleExit);
+      proc.once('exit', handleExit);
+    });
+  }
+
+  async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
 
-    // Count active agent processes but don't kill them — they'll finish on their own
-    // via idle timeout or agent timeout.
-    // This prevents reconnection restarts from killing working agents.
-    const activeProcesses: string[] = [];
-    for (const [, state] of this.groups) {
-      if (state.process && !state.process.killed && state.processName) {
-        activeProcesses.push(state.processName);
+    const activeProcesses: Array<{
+      groupJid: string;
+      process: ChildProcess;
+      processName: string;
+    }> = [];
+
+    for (const [groupJid, state] of this.groups) {
+      if (state.retryTimer) {
+        clearTimeout(state.retryTimer);
+        state.retryTimer = null;
+      }
+      state.retryScheduledAt = null;
+
+      if (state.process && state.processName) {
+        activeProcesses.push({
+          groupJid,
+          process: state.process,
+          processName: state.processName,
+        });
+
+        if (state.active && state.ipcDir && !state.closingStdin) {
+          this.closeStdin(groupJid, { reason: 'shutdown' });
+        }
       }
     }
 
+    if (activeProcesses.length === 0) {
+      logger.info('GroupQueue shutdown with no active agent processes');
+      return;
+    }
+
     logger.info(
-      { activeCount: this.activeCount, detachedProcesses: activeProcesses },
-      'GroupQueue shutting down (agent processes detached, not killed)',
+      {
+        activeCount: this.activeCount,
+        processNames: activeProcesses.map(({ processName }) => processName),
+        gracePeriodMs,
+      },
+      'GroupQueue shutting down, waiting for active agent processes to exit',
     );
+
+    const graceWaitMs = Math.max(gracePeriodMs, 0);
+    if (graceWaitMs > 0) {
+      await Promise.race([
+        Promise.all(
+          activeProcesses.map(({ process }) => this.waitForProcessExit(process)),
+        ),
+        new Promise((resolve) => setTimeout(resolve, graceWaitMs)),
+      ]);
+    }
+
+    const stillRunning = activeProcesses.filter(({ process }) =>
+      this.isProcessAlive(process),
+    );
+
+    if (stillRunning.length === 0) {
+      logger.info('All active agent processes exited during shutdown');
+      return;
+    }
+
+    logger.warn(
+      {
+        processNames: stillRunning.map(({ processName }) => processName),
+      },
+      'Terminating lingering agent processes during shutdown',
+    );
+
+    for (const { process } of stillRunning) {
+      try {
+        process.kill('SIGTERM');
+      } catch (err) {
+        logger.warn({ err }, 'Failed to SIGTERM lingering agent process');
+      }
+    }
+
+    await Promise.race([
+      Promise.all(
+        stillRunning.map(({ process }) => this.waitForProcessExit(process)),
+      ),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+
+    const stubborn = stillRunning.filter(({ process }) =>
+      this.isProcessAlive(process),
+    );
+
+    if (stubborn.length === 0) {
+      return;
+    }
+
+    logger.error(
+      {
+        processNames: stubborn.map(({ processName }) => processName),
+      },
+      'Force-killing stubborn agent processes during shutdown',
+    );
+
+    for (const { process } of stubborn) {
+      try {
+        process.kill('SIGKILL');
+      } catch (err) {
+        logger.warn({ err }, 'Failed to SIGKILL stubborn agent process');
+      }
+    }
   }
 }

@@ -378,6 +378,19 @@ export function detectFallbackTrigger(
     return { shouldFallback: true, reason: '429', retryAfterMs };
   }
 
+  if (
+    (lower.includes('failed to authenticate') ||
+      lower.includes('authentication_error')) &&
+    (lower.includes('401') || lower.includes('unauthorized')) &&
+    (lower.includes('oauth token has expired') ||
+      lower.includes('obtain a new token') ||
+      lower.includes('refresh your existing token') ||
+      lower.includes('invalid authentication credentials') ||
+      lower.includes('terminated'))
+  ) {
+    return { shouldFallback: true, reason: 'auth-expired' };
+  }
+
   // 503 Overloaded
   if (lower.includes('503') || lower.includes('overloaded')) {
     return { shouldFallback: true, reason: 'overloaded' };

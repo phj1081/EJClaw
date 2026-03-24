@@ -27,6 +27,7 @@ vi.mock('./logger.js', () => ({
 import { fetchClaudeUsage } from './claude-usage.js';
 import {
   clearPrimaryCooldown,
+  detectFallbackTrigger,
   getActiveProvider,
   getCooldownInfo,
   markPrimaryCooldown,
@@ -99,5 +100,25 @@ describe('provider fallback usage recovery', () => {
 
     await expect(getActiveProvider()).resolves.toBe('claude');
     expect(getCooldownInfo()).toEqual({ active: false });
+  });
+
+  it('treats terminated 401 auth failures as an auth-expired fallback trigger', () => {
+    expect(
+      detectFallbackTrigger('Failed to authenticate. API Error: 401 terminated'),
+    ).toEqual({
+      shouldFallback: true,
+      reason: 'auth-expired',
+    });
+  });
+
+  it('treats invalid authentication credentials as an auth-expired fallback trigger', () => {
+    expect(
+      detectFallbackTrigger(
+        'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+      ),
+    ).toEqual({
+      shouldFallback: true,
+      reason: 'auth-expired',
+    });
   });
 });

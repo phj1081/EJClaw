@@ -63,6 +63,20 @@ vi.mock('./token-rotation.js', () => ({
 }));
 
 vi.mock('./codex-token-rotation.js', () => ({
+  detectCodexRotationTrigger: vi.fn((error?: string | null) => {
+    const lower = (error || '').toLowerCase();
+    if (
+      lower.includes('429') ||
+      lower.includes('rate limit') ||
+      lower.includes('oauth token has expired') ||
+      lower.includes('authentication_error') ||
+      lower.includes('failed to authenticate') ||
+      lower.includes('401')
+    ) {
+      return { shouldRotate: true, reason: 'auth-expired' };
+    }
+    return { shouldRotate: false, reason: '' };
+  }),
   rotateCodexToken: vi.fn(() => false),
   getCodexAccountCount: vi.fn(() => 1),
   markCodexTokenHealthy: vi.fn(),
@@ -73,6 +87,7 @@ vi.mock('./memento-client.js', () => ({
 }));
 
 import * as agentRunner from './agent-runner.js';
+import * as codexTokenRotation from './codex-token-rotation.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import * as providerFallback from './provider-fallback.js';
@@ -237,6 +252,61 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(outputs).toEqual(['회전된 Claude 응답입니다.']);
   });
 
+  it('rotates to another Claude account when Claude streams an OAuth expiry banner', async () => {
+    const outputs: string[] = [];
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
+    vi.mocked(tokenRotation.rotateToken).mockReturnValueOnce(true);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '새 Claude 토큰 응답입니다.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-auth-expired-claude',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
+    expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
+    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    expect(outputs).toEqual(['새 Claude 토큰 응답입니다.']);
+  });
+
   it('stops after all Claude accounts are usage-exhausted without falling back to Kimi', async () => {
     const outputs: string[] = [];
 
@@ -336,5 +406,71 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(outputs).toEqual([
       "상태 문구 예시: You're out of extra usage · resets 4am (Asia/Seoul) 라는 배너가 뜰 수 있습니다.",
     ]);
+  });
+});
+
+describe('runAgentForGroup Codex rotation', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(buildRoomMemoryBriefing).mockResolvedValue(undefined);
+    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
+    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(false);
+    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
+    vi.mocked(codexTokenRotation.getCodexAccountCount).mockReturnValue(2);
+    vi.mocked(codexTokenRotation.rotateCodexToken).mockReturnValueOnce(true);
+  });
+
+  it('retries Codex with a rotated account when OAuth auth expires', async () => {
+    const codexGroup: RegisteredGroup = {
+      ...makeGroup(),
+      folder: 'test-codex',
+      agentType: 'codex',
+    };
+    const outputs: string[] = [];
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'error',
+          result: null,
+          error:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
+        });
+        return {
+          status: 'error',
+          result: null,
+          error:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"OAuth token has expired. Please obtain a new token or refresh your existing token."}}',
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '새 계정으로 재시도 성공',
+          newSessionId: 'codex-thread-2',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'codex-thread-2',
+        };
+      });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: codexGroup,
+      prompt: 'hello codex',
+      chatJid: 'group@test',
+      runId: 'run-codex-auth-expired',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(codexTokenRotation.rotateCodexToken).toHaveBeenCalledTimes(1);
+    expect(codexTokenRotation.markCodexTokenHealthy).toHaveBeenCalledTimes(1);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(outputs).toEqual(['새 계정으로 재시도 성공']);
   });
 });

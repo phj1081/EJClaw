@@ -42,6 +42,7 @@ import {
   markPrimaryCooldown,
 } from './provider-fallback.js';
 import {
+  detectCodexRotationTrigger,
   rotateCodexToken,
   getCodexAccountCount,
   markCodexTokenHealthy,
@@ -89,6 +90,28 @@ function isClaudeUsageExhaustedMessage(text: string): boolean {
     normalized.includes('reset at ') ||
     normalized.includes('try again');
   return looksLikeBanner && hasResetHint && normalized.length <= 160;
+}
+
+function isClaudeAuthExpiredMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  const looksLikeAuthFailure = normalized.startsWith(
+    'failed to authenticate',
+  );
+  const hasExpiredTokenMarker =
+    normalized.includes('oauth token has expired') ||
+    normalized.includes('authentication_error') ||
+    normalized.includes('obtain a new token') ||
+    normalized.includes('refresh your existing token') ||
+    normalized.includes('invalid authentication credentials');
+  const hasUnauthorizedMarker =
+    normalized.includes('401') || normalized.includes('authentication error');
+  const hasTerminatedMarker = normalized.includes('terminated');
+
+  return (
+    looksLikeAuthFailure &&
+    hasUnauthorizedMarker &&
+    (hasExpiredTokenMarker || hasTerminatedMarker)
+  );
 }
 
 /**
@@ -347,21 +370,32 @@ async function runTask(
             !sawOutput &&
             streamedOutput.status === 'success' &&
             typeof streamedOutput.result === 'string' &&
-            isClaudeUsageExhaustedMessage(streamedOutput.result)
+            (isClaudeUsageExhaustedMessage(streamedOutput.result) ||
+              isClaudeAuthExpiredMessage(streamedOutput.result))
           ) {
             if (!streamedTriggerReason) {
+              const reason = isClaudeUsageExhaustedMessage(
+                streamedOutput.result,
+              )
+                ? 'usage-exhausted'
+                : 'auth-expired';
               logger.warn(
                 {
                   taskId: task.id,
                   taskChatJid: task.chat_jid,
                   group: context.group.name,
                   groupFolder: task.group_folder,
+                  reason,
                   resultPreview: streamedOutput.result.slice(0, 120),
                 },
-                'Detected Claude usage exhaustion banner during scheduled task output',
+                'Detected Claude fallback trigger during scheduled task output',
               );
             }
-            streamedTriggerReason = { reason: 'usage-exhausted' };
+            streamedTriggerReason = {
+              reason: isClaudeUsageExhaustedMessage(streamedOutput.result)
+                ? 'usage-exhausted'
+                : 'auth-expired',
+            };
             return;
           }
 
@@ -403,7 +437,9 @@ async function runTask(
     };
 
     const shouldRotateClaudeToken = (reason: string): boolean =>
-      reason === '429' || reason === 'usage-exhausted';
+      reason === '429' ||
+      reason === 'usage-exhausted' ||
+      reason === 'auth-expired';
 
     const runFallbackTaskAttempt = async (
       reason: string,
@@ -596,25 +632,42 @@ async function runTask(
 
   // Try token rotation before suspending
   if (error) {
-    const trigger = detectFallbackTrigger(error);
-    if (trigger.shouldFallback) {
-      const isCodex = SERVICE_AGENT_TYPE === 'codex';
-      const rotated = isCodex
-        ? getCodexAccountCount() > 1 && rotateCodexToken(error)
-        : getTokenCount() > 1 && rotateToken(error);
-      if (rotated) {
-        logger.info(
-          {
-            taskId: task.id,
-            agent: SERVICE_AGENT_TYPE,
-            reason: trigger.reason,
-          },
-          'Task rate-limited, rotated token — will retry on next schedule',
-        );
-        if (isCodex) markCodexTokenHealthy();
-        else markTokenHealthy();
-        // Clear the error so suspension doesn't trigger
-        error = null;
+    const isCodex = SERVICE_AGENT_TYPE === 'codex';
+    if (isCodex) {
+      const trigger = detectCodexRotationTrigger(error);
+      if (trigger.shouldRotate) {
+        const rotated = getCodexAccountCount() > 1 && rotateCodexToken(error);
+        if (rotated) {
+          logger.info(
+            {
+              taskId: task.id,
+              agent: SERVICE_AGENT_TYPE,
+              reason: trigger.reason,
+            },
+            'Task rate-limited, rotated token — will retry on next schedule',
+          );
+          markCodexTokenHealthy();
+          // Clear the error so suspension doesn't trigger
+          error = null;
+        }
+      }
+    } else {
+      const trigger = detectFallbackTrigger(error);
+      if (trigger.shouldFallback) {
+        const rotated = getTokenCount() > 1 && rotateToken(error);
+        if (rotated) {
+          logger.info(
+            {
+              taskId: task.id,
+              agent: SERVICE_AGENT_TYPE,
+              reason: trigger.reason,
+            },
+            'Task rate-limited, rotated token — will retry on next schedule',
+          );
+          markTokenHealthy();
+          // Clear the error so suspension doesn't trigger
+          error = null;
+        }
       }
     }
   }

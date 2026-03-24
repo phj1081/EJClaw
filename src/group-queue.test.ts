@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { EventEmitter } from 'events';
 import fs from 'fs';
 
 import { GroupQueue } from './group-queue.js';
@@ -302,6 +303,54 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(100);
 
     expect(processMessages).not.toHaveBeenCalled();
+  });
+
+  it('signals and terminates active agent processes during shutdown', async () => {
+    class FakeProcess extends EventEmitter {
+      exitCode: number | null = null;
+      signalCode: NodeJS.Signals | null = null;
+      kill = vi.fn((signal?: NodeJS.Signals) => {
+        this.signalCode = signal ?? 'SIGTERM';
+        return true;
+      });
+    }
+
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+    let releaseRun!: (value: boolean) => void;
+    const blocker = new Promise<boolean>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    const processMessages = vi.fn(async () => await blocker);
+    queue.setProcessMessagesFn(processMessages);
+
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const proc = new FakeProcess();
+    queue.registerProcess(
+      'group1@g.us',
+      proc as unknown as import('child_process').ChildProcess,
+      'proc-1',
+      ipcDir,
+    );
+
+    vi.mocked(fs.writeFileSync).mockClear();
+
+    const shutdownPromise = queue.shutdown(1_000);
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('/input/_close'),
+      '',
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await shutdownPromise;
+
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
   });
 
   // --- Max retries exceeded ---

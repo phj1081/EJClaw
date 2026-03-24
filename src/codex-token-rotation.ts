@@ -32,6 +32,11 @@ interface CodexAccount {
   resetD7At?: string;
 }
 
+export interface CodexRotationTriggerResult {
+  shouldRotate: boolean;
+  reason: string;
+}
+
 function parseJwtAuth(idToken: string): {
   planType: string;
   expiresAt: string | null;
@@ -224,6 +229,53 @@ function computeCooldownUntil(error?: string): number {
 export function getActiveCodexAuthPath(): string | null {
   if (accounts.length === 0) return null;
   return accounts[currentIndex]?.authPath ?? null;
+}
+
+export function detectCodexRotationTrigger(
+  error?: string | null,
+): CodexRotationTriggerResult {
+  if (!error) return { shouldRotate: false, reason: '' };
+
+  const lower = error.toLowerCase();
+
+  if (
+    lower.includes('429') ||
+    lower.includes('rate limit') ||
+    lower.includes('usage limit') ||
+    lower.includes('hit your limit') ||
+    lower.includes('too many requests') ||
+    lower.includes('rate_limit')
+  ) {
+    return { shouldRotate: true, reason: '429' };
+  }
+
+  if (lower.includes('503') || lower.includes('overloaded')) {
+    return { shouldRotate: true, reason: 'overloaded' };
+  }
+
+  if (
+    lower.includes('econnrefused') ||
+    lower.includes('econnreset') ||
+    lower.includes('etimedout') ||
+    lower.includes('enotfound') ||
+    lower.includes('fetch failed') ||
+    lower.includes('network error')
+  ) {
+    return { shouldRotate: true, reason: 'network-error' };
+  }
+
+  if (
+    lower.includes('401') ||
+    lower.includes('authentication_error') ||
+    lower.includes('failed to authenticate') ||
+    lower.includes('oauth token has expired') ||
+    lower.includes('refresh your existing token') ||
+    lower.includes('unauthorized')
+  ) {
+    return { shouldRotate: true, reason: 'auth-expired' };
+  }
+
+  return { shouldRotate: false, reason: '' };
 }
 
 /**

@@ -20,6 +20,23 @@ import {
 } from './platform-prompts.js';
 import type { AgentType, RegisteredGroup } from './types.js';
 
+function writeCodexApiKeyAuth(
+  authPath: string,
+  openaiKey: string,
+): void {
+  fs.writeFileSync(
+    authPath,
+    JSON.stringify(
+      {
+        auth_mode: 'apikey',
+        OPENAI_API_KEY: openaiKey,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+}
+
 function syncDirectoryEntries(sources: string[], destination: string): void {
   for (const source of sources) {
     if (!fs.existsSync(source)) continue;
@@ -185,13 +202,21 @@ function prepareCodexSessionEnvironment(args: {
   const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
   fs.mkdirSync(sessionCodexDir, { recursive: true });
 
-  const rotatedAuthSrc = getActiveCodexAuthPath();
-  const authSrc =
-    rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
-      ? rotatedAuthSrc
-      : path.join(hostCodexDir, 'auth.json');
   const authDst = path.join(sessionCodexDir, 'auth.json');
-  if (fs.existsSync(authSrc)) fs.copyFileSync(authSrc, authDst);
+  if (openaiKey) {
+    writeCodexApiKeyAuth(authDst, openaiKey);
+  } else {
+    const rotatedAuthSrc = getActiveCodexAuthPath();
+    const authSrc =
+      rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
+        ? rotatedAuthSrc
+        : path.join(hostCodexDir, 'auth.json');
+    if (fs.existsSync(authSrc)) {
+      fs.copyFileSync(authSrc, authDst);
+    } else if (fs.existsSync(authDst)) {
+      fs.unlinkSync(authDst);
+    }
+  }
   for (const file of ['config.toml', 'config.json']) {
     const src = path.join(hostCodexDir, file);
     const dst = path.join(sessionCodexDir, file);
