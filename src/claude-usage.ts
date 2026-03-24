@@ -72,7 +72,8 @@ function saveUsageDiskCache(): void {
 }
 
 function cacheKey(token: string): string {
-  return token.slice(0, 12);
+  // Use last 8 chars — prefix is always "sk-ant-oat01-" for all tokens
+  return token.slice(-8);
 }
 
 // Rate limit: at most one API call per token per 5 minutes
