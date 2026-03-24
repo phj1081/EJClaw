@@ -4,16 +4,26 @@ vi.mock('./claude-usage.js', () => ({
   fetchClaudeUsage: vi.fn(),
 }));
 
-vi.mock('./env.js', () => ({
-  readEnvFile: vi.fn(() => ({
+vi.mock('./env.js', () => {
+  const store: Record<string, string> = {
     FALLBACK_PROVIDER_NAME: 'kimi',
     FALLBACK_BASE_URL: 'https://api.kimi.com/coding/',
     FALLBACK_AUTH_TOKEN: 'test-kimi-key',
     FALLBACK_MODEL: 'kimi-k2.5',
     FALLBACK_SMALL_MODEL: 'kimi-k2.5',
     FALLBACK_COOLDOWN_MS: '600000',
-  })),
-}));
+  };
+  return {
+    readEnvFile: vi.fn((keys: string[]) => {
+      const result: Record<string, string> = {};
+      for (const k of keys) {
+        if (store[k]) result[k] = store[k];
+      }
+      return result;
+    }),
+    getEnv: vi.fn((key: string) => store[key]),
+  };
+});
 
 vi.mock('./logger.js', () => ({
   logger: {

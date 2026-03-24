@@ -1,0 +1,180 @@
+/**
+ * Agent Error Detection (SSOT)
+ *
+ * Single source of truth for classifying agent errors from output text
+ * and error strings. Used by both message-agent-executor and task-scheduler.
+ */
+
+// ── Banner / text detection ─────────────────────────────────────
+
+export function isClaudeAuthError(text: string): boolean {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('failed to authenticate') &&
+    (lower.includes('401') || lower.includes('authentication_error'))
+  );
+}
+
+export function isClaudeUsageExhaustedMessage(text: string): boolean {
+  const normalized = text
+    .trim()
+    .toLowerCase()
+    .replace(/['\u2018\u2019`]/g, "'")
+    .replace(/\s+/g, ' ')
+    .replace(/^error:\s*/i, '');
+  const looksLikeBanner =
+    normalized.startsWith("you're out of extra usage") ||
+    normalized.startsWith('you are out of extra usage') ||
+    normalized.startsWith("you've hit your limit") ||
+    normalized.startsWith('you have hit your limit');
+  const hasResetHint =
+    normalized.includes('resets ') ||
+    normalized.includes('reset at ') ||
+    normalized.includes('try again');
+  return looksLikeBanner && hasResetHint && normalized.length <= 160;
+}
+
+export function isClaudeAuthExpiredMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  const looksLikeAuthFailure = normalized.startsWith('failed to authenticate');
+  const hasExpiredTokenMarker =
+    normalized.includes('oauth token has expired') ||
+    normalized.includes('authentication_error') ||
+    normalized.includes('obtain a new token') ||
+    normalized.includes('refresh your existing token') ||
+    normalized.includes('invalid authentication credentials');
+  const hasUnauthorizedMarker =
+    normalized.includes('401') || normalized.includes('authentication error');
+  const hasTerminatedMarker = normalized.includes('terminated');
+
+  return (
+    looksLikeAuthFailure &&
+    hasUnauthorizedMarker &&
+    (hasExpiredTokenMarker || hasTerminatedMarker)
+  );
+}
+
+// ── Rotation decision ───────────────────────────────────────────
+
+export function shouldRotateClaudeToken(reason: string): boolean {
+  return (
+    reason === '429' ||
+    reason === 'usage-exhausted' ||
+    reason === 'auth-expired'
+  );
+}
+
+// ── Unified error classification ────────────────────────────────
+
+export type ErrorCategory =
+  | 'rate-limit'
+  | 'auth-expired'
+  | 'overloaded'
+  | 'network-error'
+  | 'none';
+
+export interface AgentErrorClassification {
+  category: ErrorCategory;
+  reason: string; // '429' | 'auth-expired' | 'overloaded' | 'network-error' | ''
+  retryAfterMs?: number;
+}
+
+const NONE: AgentErrorClassification = {
+  category: 'none',
+  reason: '',
+};
+
+/**
+ * Classify an agent error string into a category.
+ * Handles patterns common to both Claude and Codex: 429, 503, network.
+ * Auth errors are provider-specific — use classifyClaudeAuthError or
+ * classifyCodexAuthError for those.
+ */
+export function classifyAgentError(
+  error: string | null | undefined,
+): AgentErrorClassification {
+  if (!error) return NONE;
+
+  const lower = error.toLowerCase();
+
+  // 429 / Rate Limit
+  if (
+    lower.includes('429') ||
+    lower.includes('rate limit') ||
+    lower.includes('usage limit') ||
+    lower.includes('hit your limit') ||
+    lower.includes('too many requests') ||
+    lower.includes('rate_limit')
+  ) {
+    const retryMatch = error.match(/retry[\s_-]*after[:\s]*(\d+)/i);
+    const retryAfterMs = retryMatch
+      ? parseInt(retryMatch[1], 10) * 1000
+      : undefined;
+    return { category: 'rate-limit', reason: '429', retryAfterMs };
+  }
+
+  // 503 / Overloaded
+  if (lower.includes('503') || lower.includes('overloaded')) {
+    return { category: 'overloaded', reason: 'overloaded' };
+  }
+
+  // Network / connection errors
+  if (
+    lower.includes('econnrefused') ||
+    lower.includes('econnreset') ||
+    lower.includes('etimedout') ||
+    lower.includes('enotfound') ||
+    lower.includes('fetch failed') ||
+    lower.includes('network error')
+  ) {
+    return { category: 'network-error', reason: 'network-error' };
+  }
+
+  return NONE;
+}
+
+// ── Provider-specific auth checks ───────────────────────────────
+
+/** Claude auth: strict 3-condition AND (auth failure + 401 + specific marker). */
+export function classifyClaudeAuthError(
+  error: string | null | undefined,
+): AgentErrorClassification {
+  if (!error) return NONE;
+  const lower = error.toLowerCase();
+
+  if (
+    (lower.includes('failed to authenticate') ||
+      lower.includes('authentication_error')) &&
+    (lower.includes('401') || lower.includes('unauthorized')) &&
+    (lower.includes('oauth token has expired') ||
+      lower.includes('obtain a new token') ||
+      lower.includes('refresh your existing token') ||
+      lower.includes('invalid authentication credentials') ||
+      lower.includes('terminated'))
+  ) {
+    return { category: 'auth-expired', reason: 'auth-expired' };
+  }
+
+  return NONE;
+}
+
+/** Codex auth: loose OR check (any single auth indicator). */
+export function classifyCodexAuthError(
+  error: string | null | undefined,
+): AgentErrorClassification {
+  if (!error) return NONE;
+  const lower = error.toLowerCase();
+
+  if (
+    lower.includes('401') ||
+    lower.includes('authentication_error') ||
+    lower.includes('failed to authenticate') ||
+    lower.includes('oauth token has expired') ||
+    lower.includes('refresh your existing token') ||
+    lower.includes('unauthorized')
+  ) {
+    return { category: 'auth-expired', reason: 'auth-expired' };
+  }
+
+  return NONE;
+}

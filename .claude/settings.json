@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50"
+  },
   "extraKnownMarketplaces": {
     "nanoclaw-skills": {
       "source": {

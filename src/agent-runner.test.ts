@@ -54,6 +54,7 @@ vi.mock('fs', async () => {
 // Mock env
 vi.mock('./env.js', () => ({
   readEnvFile: vi.fn(() => ({})),
+  getEnv: vi.fn(() => undefined),
 }));
 
 // Create a controllable fake ChildProcess

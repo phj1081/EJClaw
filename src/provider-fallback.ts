@@ -14,8 +14,12 @@
 
 import fs from 'fs';
 
+import {
+  classifyAgentError,
+  classifyClaudeAuthError,
+} from './agent-error-detection.js';
 import { fetchClaudeUsage, type ClaudeUsageData } from './claude-usage.js';
-import { readEnvFile } from './env.js';
+import { getEnv } from './env.js';
 import { logger } from './logger.js';
 import { rotateToken, getTokenCount } from './token-rotation.js';
 
@@ -65,33 +69,21 @@ let _config: FallbackConfig | null = null;
 function loadConfig(): FallbackConfig {
   if (_config) return _config;
 
-  const env = readEnvFile([
-    'FALLBACK_PROVIDER_NAME',
-    'FALLBACK_BASE_URL',
-    'FALLBACK_AUTH_TOKEN',
-    'FALLBACK_MODEL',
-    'FALLBACK_SMALL_MODEL',
-    'FALLBACK_COOLDOWN_MS',
-  ]);
-
-  const baseUrl = process.env.FALLBACK_BASE_URL || env.FALLBACK_BASE_URL || '';
-  const authToken =
-    process.env.FALLBACK_AUTH_TOKEN || env.FALLBACK_AUTH_TOKEN || '';
-  const model = process.env.FALLBACK_MODEL || env.FALLBACK_MODEL || '';
+  const baseUrl = getEnv('FALLBACK_BASE_URL') || '';
+  const authToken = getEnv('FALLBACK_AUTH_TOKEN') || '';
+  const model = getEnv('FALLBACK_MODEL') || '';
+  const explicitlyDisabled =
+    (getEnv('FALLBACK_ENABLED') || '').toLowerCase() === 'false';
 
   _config = {
-    enabled: Boolean(baseUrl && authToken && model),
-    providerName:
-      process.env.FALLBACK_PROVIDER_NAME ||
-      env.FALLBACK_PROVIDER_NAME ||
-      'kimi',
+    enabled: !explicitlyDisabled && Boolean(baseUrl && authToken && model),
+    providerName: getEnv('FALLBACK_PROVIDER_NAME') || 'kimi',
     baseUrl,
     authToken,
     model,
-    smallModel:
-      process.env.FALLBACK_SMALL_MODEL || env.FALLBACK_SMALL_MODEL || model,
+    smallModel: getEnv('FALLBACK_SMALL_MODEL') || model,
     defaultCooldownMs: parseInt(
-      process.env.FALLBACK_COOLDOWN_MS || env.FALLBACK_COOLDOWN_MS || '600000',
+      getEnv('FALLBACK_COOLDOWN_MS') || '600000',
       10,
     ),
   };
@@ -359,53 +351,31 @@ export function detectFallbackTrigger(
 ): FallbackTriggerResult {
   if (!error) return { shouldFallback: false, reason: '' };
 
-  const lower = error.toLowerCase();
+  // Delegated to shared SSOT — original priority preserved:
+  // 429 first, then auth-expired, then 503/network
+  const common = classifyAgentError(error);
 
-  // 429 Rate Limit
-  if (
-    lower.includes('429') ||
-    lower.includes('rate limit') ||
-    lower.includes('usage limit') ||
-    lower.includes('hit your limit') ||
-    lower.includes('too many requests') ||
-    lower.includes('rate_limit')
-  ) {
-    // Try to extract retry-after value (seconds → ms)
-    const retryMatch = error.match(/retry[\s_-]*after[:\s]*(\d+)/i);
-    const retryAfterMs = retryMatch
-      ? parseInt(retryMatch[1], 10) * 1000
-      : undefined;
-    return { shouldFallback: true, reason: '429', retryAfterMs };
+  // 429 rate-limit (highest priority)
+  if (common.category === 'rate-limit') {
+    return {
+      shouldFallback: true,
+      reason: common.reason,
+      retryAfterMs: common.retryAfterMs,
+    };
   }
 
-  if (
-    (lower.includes('failed to authenticate') ||
-      lower.includes('authentication_error')) &&
-    (lower.includes('401') || lower.includes('unauthorized')) &&
-    (lower.includes('oauth token has expired') ||
-      lower.includes('obtain a new token') ||
-      lower.includes('refresh your existing token') ||
-      lower.includes('invalid authentication credentials') ||
-      lower.includes('terminated'))
-  ) {
-    return { shouldFallback: true, reason: 'auth-expired' };
+  // Claude-specific strict auth check (before 503/network)
+  const auth = classifyClaudeAuthError(error);
+  if (auth.category !== 'none') {
+    return { shouldFallback: true, reason: auth.reason };
   }
 
-  // 503 Overloaded
-  if (lower.includes('503') || lower.includes('overloaded')) {
-    return { shouldFallback: true, reason: 'overloaded' };
-  }
-
-  // Network / connection errors
-  if (
-    lower.includes('econnrefused') ||
-    lower.includes('econnreset') ||
-    lower.includes('etimedout') ||
-    lower.includes('enotfound') ||
-    lower.includes('fetch failed') ||
-    lower.includes('network error')
-  ) {
-    return { shouldFallback: true, reason: 'network-error' };
+  // 503 overloaded, network errors
+  if (common.category !== 'none') {
+    return {
+      shouldFallback: true,
+      reason: common.reason,
+    };
   }
 
   return { shouldFallback: false, reason: '' };

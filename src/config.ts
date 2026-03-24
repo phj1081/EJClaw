@@ -2,29 +2,14 @@ import os from 'os';
 import path from 'path';
 
 import type { AgentType } from './types.js';
-import { readEnvFile } from './env.js';
+import { getEnv } from './env.js';
 
-const envConfig = readEnvFile([
-  'ASSISTANT_NAME',
-  'ASSISTANT_HAS_OWN_NUMBER',
-  'SERVICE_ID',
-  'SERVICE_AGENT_TYPE',
-  'SESSION_COMMAND_ALLOWED_SENDERS',
-  'SESSION_COMMAND_USER_IDS',
-  'STATUS_SHOW_ROOMS',
-  'USAGE_DASHBOARD',
-]);
-
-export const ASSISTANT_NAME =
-  process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
+export const ASSISTANT_NAME = getEnv('ASSISTANT_NAME') || 'Andy';
 export const ASSISTANT_HAS_OWN_NUMBER =
-  (process.env.ASSISTANT_HAS_OWN_NUMBER ||
-    envConfig.ASSISTANT_HAS_OWN_NUMBER) === 'true';
+  getEnv('ASSISTANT_HAS_OWN_NUMBER') === 'true';
 const ASSISTANT_SLUG = ASSISTANT_NAME.trim().toLowerCase();
-const rawServiceAgentType =
-  process.env.SERVICE_AGENT_TYPE || envConfig.SERVICE_AGENT_TYPE;
-export const SERVICE_ID =
-  process.env.SERVICE_ID || envConfig.SERVICE_ID || ASSISTANT_SLUG;
+const rawServiceAgentType = getEnv('SERVICE_AGENT_TYPE');
+export const SERVICE_ID = getEnv('SERVICE_ID') || ASSISTANT_SLUG;
 export const SERVICE_AGENT_TYPE: AgentType =
   rawServiceAgentType === 'codex' || rawServiceAgentType === 'claude-code'
     ? rawServiceAgentType
@@ -84,10 +69,9 @@ export const STATUS_CHANNEL_ID = process.env.STATUS_CHANNEL_ID || '';
 export const STATUS_UPDATE_INTERVAL = 10000; // 10s
 export const USAGE_UPDATE_INTERVAL = 300000; // 5 minutes
 export const STATUS_SHOW_ROOMS =
-  (process.env.STATUS_SHOW_ROOMS || envConfig.STATUS_SHOW_ROOMS || 'true') !==
-  'false';
+  (getEnv('STATUS_SHOW_ROOMS') || 'true') !== 'false';
 export const USAGE_DASHBOARD_ENABLED =
-  (process.env.USAGE_DASHBOARD || envConfig.USAGE_DASHBOARD) === 'true';
+  getEnv('USAGE_DASHBOARD') === 'true';
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
@@ -95,10 +79,8 @@ export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const rawSessionCommandAllowedSenders =
-  process.env.SESSION_COMMAND_ALLOWED_SENDERS ||
-  process.env.SESSION_COMMAND_USER_IDS ||
-  envConfig.SESSION_COMMAND_ALLOWED_SENDERS ||
-  envConfig.SESSION_COMMAND_USER_IDS ||
+  getEnv('SESSION_COMMAND_ALLOWED_SENDERS') ||
+  getEnv('SESSION_COMMAND_USER_IDS') ||
   '';
 
 const SESSION_COMMAND_ALLOWED_SENDERS = new Set(

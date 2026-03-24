@@ -18,7 +18,7 @@ import {
   TRIGGER_PATTERN,
 } from '../config.js';
 import { isPairedRoomJid } from '../db.js';
-import { readEnvFile } from '../env.js';
+import { getEnv } from '../env.js';
 import { logger } from '../logger.js';
 import { formatOutbound } from '../router.js';
 
@@ -95,10 +95,8 @@ async function transcribeAudio(att: Attachment): Promise<string> {
     const filename = att.name || 'audio.ogg';
 
     // Pick provider: Groq (fast) > OpenAI (fallback)
-    const envVars = readEnvFile(['GROQ_API_KEY', 'OPENAI_API_KEY']);
-    const groqKey = process.env.GROQ_API_KEY || envVars.GROQ_API_KEY || '';
-    const openaiKey =
-      process.env.OPENAI_API_KEY || envVars.OPENAI_API_KEY || '';
+    const groqKey = getEnv('GROQ_API_KEY') || '';
+    const openaiKey = getEnv('OPENAI_API_KEY') || '';
 
     let apiUrl: string;
     let apiKeyToUse: string;
@@ -674,17 +672,13 @@ export class DiscordChannel implements Channel {
 }
 
 registerChannel('discord', (opts: ChannelOpts) => {
-  const envVars = readEnvFile(['DISCORD_BOT_TOKEN', 'DISCORD_CODEX_BOT_TOKEN']);
-  const token =
-    process.env.DISCORD_BOT_TOKEN || envVars.DISCORD_BOT_TOKEN || '';
+  const token = getEnv('DISCORD_BOT_TOKEN') || '';
   if (!token) {
     logger.warn('Discord: DISCORD_BOT_TOKEN not set');
     return null;
   }
   // If a second Codex bot token exists, this instance only handles claude-code groups
-  const hasCodexBot = !!(
-    process.env.DISCORD_CODEX_BOT_TOKEN || envVars.DISCORD_CODEX_BOT_TOKEN
-  );
+  const hasCodexBot = !!getEnv('DISCORD_CODEX_BOT_TOKEN');
   return new DiscordChannel(
     token,
     opts,
@@ -696,11 +690,7 @@ registerChannel('discord', (opts: ChannelOpts) => {
 // The codex service uses its own DISCORD_BOT_TOKEN via systemd EnvironmentFile override.
 if ((process.env.ASSISTANT_NAME || 'claude') !== 'codex') {
   registerChannel('discord-codex', (opts: ChannelOpts) => {
-    const envVars = readEnvFile(['DISCORD_CODEX_BOT_TOKEN']);
-    const token =
-      process.env.DISCORD_CODEX_BOT_TOKEN ||
-      envVars.DISCORD_CODEX_BOT_TOKEN ||
-      '';
+    const token = getEnv('DISCORD_CODEX_BOT_TOKEN') || '';
     if (!token) return null; // Codex Discord bot is optional
     return new DiscordChannel(token, opts, 'codex');
   });

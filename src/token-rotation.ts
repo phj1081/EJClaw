@@ -14,8 +14,12 @@ import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';
-import { readEnvFile } from './env.js';
+import { getEnv } from './env.js';
 import { logger } from './logger.js';
+import {
+  computeCooldownUntil,
+  findNextAvailable,
+} from './token-rotation-base.js';
 
 const STATE_FILE = path.join(DATA_DIR, 'token-rotation-state.json');
 
@@ -32,14 +36,8 @@ export function initTokenRotation(): void {
   if (initialized) return;
   initialized = true;
 
-  const envFile = readEnvFile([
-    'CLAUDE_CODE_OAUTH_TOKENS',
-    'CLAUDE_CODE_OAUTH_TOKEN',
-  ]);
-  const multi =
-    process.env.CLAUDE_CODE_OAUTH_TOKENS || envFile.CLAUDE_CODE_OAUTH_TOKENS;
-  const single =
-    process.env.CLAUDE_CODE_OAUTH_TOKEN || envFile.CLAUDE_CODE_OAUTH_TOKEN;
+  const multi = getEnv('CLAUDE_CODE_OAUTH_TOKENS');
+  const single = getEnv('CLAUDE_CODE_OAUTH_TOKEN');
 
   const raw = multi
     ? multi
@@ -107,30 +105,6 @@ function loadState(): void {
   }
 }
 
-const BUFFER_MS = 3 * 60_000;
-const DEFAULT_COOLDOWN_MS = 3_600_000;
-
-function parseRetryAfterFromError(error?: string): number | null {
-  if (!error) return null;
-  const match = error.match(
-    /(?:try again at|resets?\s+(?:at\s+)?)\s*(\w+ \d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
-  );
-  if (!match) return null;
-  try {
-    const cleaned = match[1].replace(/(\d+)(?:st|nd|rd|th)/i, '$1');
-    const ts = new Date(cleaned).getTime();
-    if (Number.isNaN(ts)) return null;
-    return ts;
-  } catch {
-    return null;
-  }
-}
-
-function computeCooldownUntil(error?: string): number {
-  const retryAt = parseRetryAfterFromError(error);
-  if (retryAt) return retryAt + BUFFER_MS;
-  return Date.now() + DEFAULT_COOLDOWN_MS;
-}
 
 /** Get the current active token. */
 export function getCurrentToken(): string | undefined {
@@ -148,24 +122,22 @@ export function rotateToken(
 ): boolean {
   if (tokens.length <= 1) return false;
 
-  const now = Date.now();
   tokens[currentIndex].rateLimitedUntil = computeCooldownUntil(errorMessage);
-  const ignoreRL = opts?.ignoreRateLimits ?? false;
 
-  // Find next available token
-  for (let i = 1; i < tokens.length; i++) {
-    const idx = (currentIndex + i) % tokens.length;
-    const state = tokens[idx];
-    if (ignoreRL || !state.rateLimitedUntil || state.rateLimitedUntil <= now) {
-      state.rateLimitedUntil = null;
-      currentIndex = idx;
-      logger.info(
-        { tokenIndex: currentIndex, totalTokens: tokens.length, ignoreRL },
-        `Rotated to token #${currentIndex + 1}/${tokens.length}`,
-      );
-      saveState();
-      return true;
-    }
+  const nextIdx = findNextAvailable(tokens, currentIndex, opts);
+  if (nextIdx !== null) {
+    tokens[nextIdx].rateLimitedUntil = null;
+    currentIndex = nextIdx;
+    logger.info(
+      {
+        tokenIndex: currentIndex,
+        totalTokens: tokens.length,
+        ignoreRL: opts?.ignoreRateLimits ?? false,
+      },
+      `Rotated to token #${currentIndex + 1}/${tokens.length}`,
+    );
+    saveState();
+    return true;
   }
 
   logger.warn(

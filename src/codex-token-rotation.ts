@@ -14,8 +14,17 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import {
+  classifyAgentError,
+  classifyCodexAuthError,
+} from './agent-error-detection.js';
 import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
+import {
+  computeCooldownUntil,
+  findNextAvailable,
+  parseRetryAfterFromError,
+} from './token-rotation-base.js';
 
 const STATE_FILE = path.join(DATA_DIR, 'codex-rotation-state.json');
 
@@ -195,35 +204,6 @@ function loadCodexState(): void {
   }
 }
 
-const BUFFER_MS = 3 * 60_000; // 3 min buffer after reset time
-const DEFAULT_COOLDOWN_MS = 3_600_000; // 1 hour fallback
-
-/**
- * Parse "try again at Mar 26th, 2026 9:00 AM" from error message.
- * Returns timestamp in ms, or null if not found.
- */
-function parseRetryAfterFromError(error?: string): number | null {
-  if (!error) return null;
-  const match = error.match(
-    /try again at\s+(\w+ \d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
-  );
-  if (!match) return null;
-  try {
-    // Remove ordinal suffixes (1st, 2nd, 3rd, 4th)
-    const cleaned = match[1].replace(/(\d+)(?:st|nd|rd|th)/i, '$1');
-    const ts = new Date(cleaned).getTime();
-    if (Number.isNaN(ts)) return null;
-    return ts;
-  } catch {
-    return null;
-  }
-}
-
-function computeCooldownUntil(error?: string): number {
-  const retryAt = parseRetryAfterFromError(error);
-  if (retryAt) return retryAt + BUFFER_MS;
-  return Date.now() + DEFAULT_COOLDOWN_MS;
-}
 
 /** Get the auth.json path for the current active account. */
 export function getActiveCodexAuthPath(): string | null {
@@ -236,43 +216,16 @@ export function detectCodexRotationTrigger(
 ): CodexRotationTriggerResult {
   if (!error) return { shouldRotate: false, reason: '' };
 
-  const lower = error.toLowerCase();
-
-  if (
-    lower.includes('429') ||
-    lower.includes('rate limit') ||
-    lower.includes('usage limit') ||
-    lower.includes('hit your limit') ||
-    lower.includes('too many requests') ||
-    lower.includes('rate_limit')
-  ) {
-    return { shouldRotate: true, reason: '429' };
+  // Common patterns (429, 503, network) — delegated to SSOT
+  const common = classifyAgentError(error);
+  if (common.category !== 'none') {
+    return { shouldRotate: true, reason: common.reason };
   }
 
-  if (lower.includes('503') || lower.includes('overloaded')) {
-    return { shouldRotate: true, reason: 'overloaded' };
-  }
-
-  if (
-    lower.includes('econnrefused') ||
-    lower.includes('econnreset') ||
-    lower.includes('etimedout') ||
-    lower.includes('enotfound') ||
-    lower.includes('fetch failed') ||
-    lower.includes('network error')
-  ) {
-    return { shouldRotate: true, reason: 'network-error' };
-  }
-
-  if (
-    lower.includes('401') ||
-    lower.includes('authentication_error') ||
-    lower.includes('failed to authenticate') ||
-    lower.includes('oauth token has expired') ||
-    lower.includes('refresh your existing token') ||
-    lower.includes('unauthorized')
-  ) {
-    return { shouldRotate: true, reason: 'auth-expired' };
+  // Codex-specific loose auth check
+  const auth = classifyCodexAuthError(error);
+  if (auth.category !== 'none') {
+    return { shouldRotate: true, reason: auth.reason };
   }
 
   return { shouldRotate: false, reason: '' };
@@ -282,36 +235,35 @@ export function detectCodexRotationTrigger(
  * Try to rotate to the next available Codex account.
  * Returns true if a fresh account was found.
  */
-export function rotateCodexToken(errorMessage?: string): boolean {
+export function rotateCodexToken(
+  errorMessage?: string,
+  opts?: { ignoreRateLimits?: boolean },
+): boolean {
   if (accounts.length <= 1) return false;
 
-  const now = Date.now();
   const acct = accounts[currentIndex];
   acct.rateLimitedUntil = computeCooldownUntil(errorMessage);
   acct.lastUsagePct = 100;
   // Extract reset time string from error for display
-  const resetMatch = errorMessage?.match(
-    /try again at\s+(\w+ \d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)/i,
-  );
-  if (resetMatch) acct.resetAt = resetMatch[1];
+  const retryAt = parseRetryAfterFromError(errorMessage);
+  if (retryAt) {
+    acct.resetAt = new Date(retryAt).toISOString();
+  }
 
-  for (let i = 1; i < accounts.length; i++) {
-    const idx = (currentIndex + i) % accounts.length;
-    const acct = accounts[idx];
-    if (!acct.rateLimitedUntil || acct.rateLimitedUntil <= now) {
-      acct.rateLimitedUntil = null;
-      currentIndex = idx;
-      logger.info(
-        {
-          accountIndex: currentIndex,
-          totalAccounts: accounts.length,
-          accountId: acct.accountId,
-        },
-        `Codex rotated to account #${currentIndex + 1}/${accounts.length}`,
-      );
-      saveCodexState();
-      return true;
-    }
+  const nextIdx = findNextAvailable(accounts, currentIndex, opts);
+  if (nextIdx !== null) {
+    accounts[nextIdx].rateLimitedUntil = null;
+    currentIndex = nextIdx;
+    logger.info(
+      {
+        accountIndex: currentIndex,
+        totalAccounts: accounts.length,
+        accountId: accounts[nextIdx].accountId,
+      },
+      `Codex rotated to account #${currentIndex + 1}/${accounts.length}`,
+    );
+    saveCodexState();
+    return true;
   }
 
   logger.warn('All Codex accounts are rate-limited');
@@ -325,15 +277,10 @@ export function rotateCodexToken(errorMessage?: string): boolean {
  */
 export function advanceCodexAccount(): void {
   if (accounts.length <= 1) return;
-  const now = Date.now();
-  for (let i = 1; i < accounts.length; i++) {
-    const idx = (currentIndex + i) % accounts.length;
-    const acct = accounts[idx];
-    if (!acct.rateLimitedUntil || acct.rateLimitedUntil <= now) {
-      currentIndex = idx;
-      saveCodexState();
-      return;
-    }
+  const nextIdx = findNextAvailable(accounts, currentIndex);
+  if (nextIdx !== null) {
+    currentIndex = nextIdx;
+    saveCodexState();
   }
   // All others rate-limited, stay on current
 }

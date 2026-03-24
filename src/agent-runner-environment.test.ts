@@ -19,6 +19,7 @@ vi.mock('./db.js', () => ({
 
 vi.mock('./env.js', () => ({
   readEnvFile: mockReadEnvFile,
+  getEnv: vi.fn((key: string) => undefined),
 }));
 
 vi.mock('./codex-token-rotation.js', () => ({

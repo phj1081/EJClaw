@@ -13,6 +13,12 @@ import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
 import {
+  isClaudeAuthError,
+  isClaudeAuthExpiredMessage,
+  isClaudeUsageExhaustedMessage,
+  shouldRotateClaudeToken,
+} from './agent-error-detection.js';
+import {
   detectFallbackTrigger,
   getActiveProvider,
   getFallbackEnvOverrides,
@@ -43,53 +49,6 @@ export interface MessageAgentExecutorDeps {
   getSessions: () => Record<string, string>;
   persistSession: (groupFolder: string, sessionId: string) => void;
   clearSession: (groupFolder: string) => void;
-}
-
-function isClaudeAuthError(text: string): boolean {
-  const lower = text.toLowerCase();
-  return (
-    lower.includes('failed to authenticate') &&
-    (lower.includes('401') || lower.includes('authentication_error'))
-  );
-}
-
-function isClaudeUsageExhaustedMessage(text: string): boolean {
-  const normalized = text
-    .trim()
-    .toLowerCase()
-    .replace(/[’‘`]/g, "'")
-    .replace(/\s+/g, ' ')
-    .replace(/^error:\s*/i, '');
-  const looksLikeBanner =
-    normalized.startsWith("you're out of extra usage") ||
-    normalized.startsWith('you are out of extra usage') ||
-    normalized.startsWith("you've hit your limit") ||
-    normalized.startsWith('you have hit your limit');
-  const hasResetHint =
-    normalized.includes('resets ') ||
-    normalized.includes('reset at ') ||
-    normalized.includes('try again');
-  return looksLikeBanner && hasResetHint && normalized.length <= 160;
-}
-
-function isClaudeAuthExpiredMessage(text: string): boolean {
-  const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
-  const looksLikeAuthFailure = normalized.startsWith('failed to authenticate');
-  const hasExpiredTokenMarker =
-    normalized.includes('oauth token has expired') ||
-    normalized.includes('authentication_error') ||
-    normalized.includes('obtain a new token') ||
-    normalized.includes('refresh your existing token') ||
-    normalized.includes('invalid authentication credentials');
-  const hasUnauthorizedMarker =
-    normalized.includes('401') || normalized.includes('authentication error');
-  const hasTerminatedMarker = normalized.includes('terminated');
-
-  return (
-    looksLikeAuthFailure &&
-    hasUnauthorizedMarker &&
-    (hasExpiredTokenMarker || hasTerminatedMarker)
-  );
 }
 
 export async function runAgentForGroup(
@@ -146,6 +105,7 @@ export async function runAgentForGroup(
     'settings.json',
   );
   const groupHasOverride = hasGroupProviderOverride(settingsPath);
+  const canRotateToken = isClaudeCodeAgent && getTokenCount() > 1;
   const canFallback =
     isClaudeCodeAgent && isFallbackEnabled() && !groupHasOverride;
 
@@ -195,7 +155,7 @@ export async function runAgentForGroup(
             resetSessionRequested = true;
           }
           if (
-            canFallback &&
+            isClaudeCodeAgent &&
             provider === 'claude' &&
             output.status === 'success' &&
             !sawOutput &&
@@ -265,7 +225,7 @@ export async function runAgentForGroup(
                   reason: trigger.reason,
                   retryAfterMs: trigger.retryAfterMs,
                 };
-                if (canFallback) {
+                if (canFallback || canRotateToken) {
                   return;
                 }
               }
@@ -412,11 +372,6 @@ export async function runAgentForGroup(
 
     return 'success';
   };
-
-  const shouldRotateClaudeToken = (reason: string): boolean =>
-    reason === '429' ||
-    reason === 'usage-exhausted' ||
-    reason === 'auth-expired';
 
   const retryCodexWithRotation = async (
     initialTrigger: { reason: string },
@@ -618,7 +573,9 @@ export async function runAgentForGroup(
         !retryAttempt.sawOutput &&
         retryAttempt.sawSuccessNullResultWithoutOutput
       ) {
-        return runFallbackAttempt('success-null-result');
+        return canFallback
+          ? runFallbackAttempt('success-null-result')
+          : 'error';
       }
 
       if (retryOutput.status === 'error') {
@@ -657,12 +614,23 @@ export async function runAgentForGroup(
       return 'success';
     }
 
-    // Usage exhausted: don't fall back to Kimi — log only, no response
-    if (trigger.reason === 'usage-exhausted') {
+    // Usage exhausted or auth-expired: don't fall back to Kimi — log only
+    if (
+      trigger.reason === 'usage-exhausted' ||
+      trigger.reason === 'auth-expired'
+    ) {
       markPrimaryCooldown(trigger.reason, trigger.retryAfterMs);
       logger.info(
-        { chatJid, group: group.name, runId },
-        'All Claude tokens usage-exhausted, silently skipping (no Kimi fallback)',
+        { chatJid, group: group.name, runId, reason: trigger.reason },
+        `All Claude tokens ${trigger.reason}, silently skipping (no Kimi fallback)`,
+      );
+      return 'error';
+    }
+
+    if (!canFallback) {
+      logger.warn(
+        { chatJid, group: group.name, runId, reason: trigger.reason },
+        'All Claude tokens exhausted and fallback disabled',
       );
       return 'error';
     }
@@ -684,7 +652,11 @@ export async function runAgentForGroup(
   const primaryAttempt = await runAttempt(provider);
 
   if (primaryAttempt.error) {
-    if (canFallback && provider === 'claude' && !primaryAttempt.sawOutput) {
+    if (
+      (canFallback || canRotateToken) &&
+      provider === 'claude' &&
+      !primaryAttempt.sawOutput
+    ) {
       const errMsg =
         primaryAttempt.error instanceof Error
           ? primaryAttempt.error.message
@@ -748,7 +720,7 @@ export async function runAgentForGroup(
   }
 
   if (
-    canFallback &&
+    (canFallback || canRotateToken) &&
     provider === 'claude' &&
     !primaryAttempt.sawOutput &&
     primaryAttempt.streamedTriggerReason &&
@@ -781,7 +753,11 @@ export async function runAgentForGroup(
   }
 
   if (output.status === 'error') {
-    if (canFallback && provider === 'claude' && !primaryAttempt.sawOutput) {
+    if (
+      (canFallback || canRotateToken) &&
+      provider === 'claude' &&
+      !primaryAttempt.sawOutput
+    ) {
       const trigger = primaryAttempt.streamedTriggerReason
         ? {
             shouldFallback: true,

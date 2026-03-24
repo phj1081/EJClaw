@@ -6,7 +6,10 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
 
 // Mock env reader (used by the factory, not needed in unit tests)
-vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
+vi.mock('../env.js', () => ({
+  readEnvFile: vi.fn(() => ({})),
+  getEnv: vi.fn(() => undefined),
+}));
 
 // Mock config
 vi.mock('../config.js', () => ({

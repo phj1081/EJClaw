@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 
-import { readEnvFile } from './env.js';
+import { getEnv } from './env.js';
 import { logger } from './logger.js';
 
 const DEFAULT_TIMEOUT_MS = 4_000;
@@ -42,9 +42,8 @@ let cachedConfig: MementoConfig | null | undefined;
 function getMementoConfig(): MementoConfig | null {
   if (cachedConfig !== undefined) return cachedConfig;
 
-  const env = readEnvFile(['MEMENTO_MCP_SSE_URL', 'MEMENTO_ACCESS_KEY']);
-  const sseUrl = process.env.MEMENTO_MCP_SSE_URL || env.MEMENTO_MCP_SSE_URL;
-  const accessKey = process.env.MEMENTO_ACCESS_KEY || env.MEMENTO_ACCESS_KEY;
+  const sseUrl = getEnv('MEMENTO_MCP_SSE_URL');
+  const accessKey = getEnv('MEMENTO_ACCESS_KEY');
 
   cachedConfig =
     sseUrl && accessKey

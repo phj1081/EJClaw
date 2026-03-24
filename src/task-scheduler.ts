@@ -32,6 +32,11 @@ import {
 import { logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import {
+  isClaudeAuthExpiredMessage,
+  isClaudeUsageExhaustedMessage,
+  shouldRotateClaudeToken,
+} from './agent-error-detection.js';
+import {
   detectFallbackTrigger,
   getActiveProvider,
   getFallbackEnvOverrides,
@@ -73,44 +78,6 @@ export {
   shouldUseTaskScopedSession,
 } from './task-watch-status.js';
 
-function isClaudeUsageExhaustedMessage(text: string): boolean {
-  const normalized = text
-    .trim()
-    .toLowerCase()
-    .replace(/[’‘`]/g, "'")
-    .replace(/\s+/g, ' ')
-    .replace(/^error:\s*/i, '');
-  const looksLikeBanner =
-    normalized.startsWith("you're out of extra usage") ||
-    normalized.startsWith('you are out of extra usage') ||
-    normalized.startsWith("you've hit your limit") ||
-    normalized.startsWith('you have hit your limit');
-  const hasResetHint =
-    normalized.includes('resets ') ||
-    normalized.includes('reset at ') ||
-    normalized.includes('try again');
-  return looksLikeBanner && hasResetHint && normalized.length <= 160;
-}
-
-function isClaudeAuthExpiredMessage(text: string): boolean {
-  const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
-  const looksLikeAuthFailure = normalized.startsWith('failed to authenticate');
-  const hasExpiredTokenMarker =
-    normalized.includes('oauth token has expired') ||
-    normalized.includes('authentication_error') ||
-    normalized.includes('obtain a new token') ||
-    normalized.includes('refresh your existing token') ||
-    normalized.includes('invalid authentication credentials');
-  const hasUnauthorizedMarker =
-    normalized.includes('401') || normalized.includes('authentication error');
-  const hasTerminatedMarker = normalized.includes('terminated');
-
-  return (
-    looksLikeAuthFailure &&
-    hasUnauthorizedMarker &&
-    (hasExpiredTokenMarker || hasTerminatedMarker)
-  );
-}
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -307,8 +274,10 @@ async function runTask(
     '.claude',
     'settings.json',
   );
+  const isClaudeAgent = context.taskAgentType === 'claude-code';
+  const canRotateToken = isClaudeAgent && getTokenCount() > 1;
   const canFallback =
-    context.taskAgentType === 'claude-code' &&
+    isClaudeAgent &&
     isFallbackEnabled() &&
     !hasGroupProviderOverride(settingsPath);
 
@@ -363,7 +332,7 @@ async function runTask(
           }
 
           if (
-            canFallback &&
+            isClaudeAgent &&
             provider === 'claude' &&
             !sawOutput &&
             streamedOutput.status === 'success' &&
@@ -433,11 +402,6 @@ async function runTask(
         attemptError,
       };
     };
-
-    const shouldRotateClaudeToken = (reason: string): boolean =>
-      reason === '429' ||
-      reason === 'usage-exhausted' ||
-      reason === 'auth-expired';
 
     const runFallbackTaskAttempt = async (
       reason: string,
