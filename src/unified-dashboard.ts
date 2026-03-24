@@ -515,7 +515,7 @@ async function buildUsageContent(): Promise<string> {
 
   const lines: string[] = ['📊 *사용량*'];
   const bar = (pct: number) => {
-    const filled = Math.round(pct / 10);
+    const filled = Math.max(0, Math.min(10, Math.round(pct / 10)));
     return '█'.repeat(filled) + '░'.repeat(10 - filled);
   };
 
@@ -591,7 +591,7 @@ async function buildUsageContent(): Promise<string> {
     const maxNameWidth =
       Math.max(8, ...rows.map((r) => visualWidth(r.name))) + 1;
     const padName = (s: string) =>
-      s + ' '.repeat(maxNameWidth - visualWidth(s));
+      s + ' '.repeat(Math.max(0, maxNameWidth - visualWidth(s)));
     lines.push('```');
     lines.push(`${' '.repeat(maxNameWidth)}5-Hour             7-Day`);
     for (const row of rows) {
