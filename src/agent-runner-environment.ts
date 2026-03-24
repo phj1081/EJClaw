@@ -20,10 +20,7 @@ import {
 } from './platform-prompts.js';
 import type { AgentType, RegisteredGroup } from './types.js';
 
-function writeCodexApiKeyAuth(
-  authPath: string,
-  openaiKey: string,
-): void {
+function writeCodexApiKeyAuth(authPath: string, openaiKey: string): void {
   fs.writeFileSync(
     authPath,
     JSON.stringify(

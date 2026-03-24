@@ -104,7 +104,9 @@ describe('provider fallback usage recovery', () => {
 
   it('treats terminated 401 auth failures as an auth-expired fallback trigger', () => {
     expect(
-      detectFallbackTrigger('Failed to authenticate. API Error: 401 terminated'),
+      detectFallbackTrigger(
+        'Failed to authenticate. API Error: 401 terminated',
+      ),
     ).toEqual({
       shouldFallback: true,
       reason: 'auth-expired',

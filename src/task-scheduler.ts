@@ -94,9 +94,7 @@ function isClaudeUsageExhaustedMessage(text: string): boolean {
 
 function isClaudeAuthExpiredMessage(text: string): boolean {
   const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
-  const looksLikeAuthFailure = normalized.startsWith(
-    'failed to authenticate',
-  );
+  const looksLikeAuthFailure = normalized.startsWith('failed to authenticate');
   const hasExpiredTokenMarker =
     normalized.includes('oauth token has expired') ||
     normalized.includes('authentication_error') ||

@@ -621,7 +621,9 @@ export class GroupQueue {
     if (graceWaitMs > 0) {
       await Promise.race([
         Promise.all(
-          activeProcesses.map(({ process }) => this.waitForProcessExit(process)),
+          activeProcesses.map(({ process }) =>
+            this.waitForProcessExit(process),
+          ),
         ),
         new Promise((resolve) => setTimeout(resolve, graceWaitMs)),
       ]);
