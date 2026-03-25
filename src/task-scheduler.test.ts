@@ -106,29 +106,33 @@ vi.mock('./logger.js', () => ({
 
 vi.mock('./github-ci.js', () => ({
   checkGitHubActionsRun: checkGitHubActionsRunMock,
-  computeGitHubWatcherDelayMs: vi.fn((task: { schedule_value: string; created_at: string }, nowMs: number) => {
-    const baseDelayMs = Number.parseInt(task.schedule_value, 10);
-    const normalizedBaseDelayMs =
-      Number.isFinite(baseDelayMs) && baseDelayMs > 0 ? baseDelayMs : 15_000;
-    const createdAtMs = new Date(task.created_at).getTime();
-    const elapsedMs = Number.isFinite(createdAtMs)
-      ? Math.max(0, nowMs - createdAtMs)
-      : 0;
+  computeGitHubWatcherDelayMs: vi.fn(
+    (task: { schedule_value: string; created_at: string }, nowMs: number) => {
+      const baseDelayMs = Number.parseInt(task.schedule_value, 10);
+      const normalizedBaseDelayMs =
+        Number.isFinite(baseDelayMs) && baseDelayMs > 0 ? baseDelayMs : 15_000;
+      const createdAtMs = new Date(task.created_at).getTime();
+      const elapsedMs = Number.isFinite(createdAtMs)
+        ? Math.max(0, nowMs - createdAtMs)
+        : 0;
 
-    if (elapsedMs >= 60 * 60 * 1000) {
-      return Math.max(normalizedBaseDelayMs, 60_000);
-    }
-    if (elapsedMs >= 10 * 60 * 1000) {
-      return Math.max(normalizedBaseDelayMs, 30_000);
-    }
-    return normalizedBaseDelayMs;
-  }),
+      if (elapsedMs >= 60 * 60 * 1000) {
+        return Math.max(normalizedBaseDelayMs, 60_000);
+      }
+      if (elapsedMs >= 10 * 60 * 1000) {
+        return Math.max(normalizedBaseDelayMs, 30_000);
+      }
+      return normalizedBaseDelayMs;
+    },
+  ),
   MAX_GITHUB_CONSECUTIVE_ERRORS: 5,
   parseGitHubCiMetadata: vi.fn((raw: string | null | undefined) => {
     if (!raw) return null;
     return JSON.parse(raw);
   }),
-  serializeGitHubCiMetadata: vi.fn((metadata: unknown) => JSON.stringify(metadata)),
+  serializeGitHubCiMetadata: vi.fn((metadata: unknown) =>
+    JSON.stringify(metadata),
+  ),
 }));
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
@@ -1088,9 +1092,9 @@ Managed by host-driven watcher.
 
     const task = getTaskById('task-github-backoff');
     expect(task).toBeDefined();
-    expect(new Date(task!.next_run!).getTime() - Date.now()).toBeGreaterThanOrEqual(
-      29_000,
-    );
+    expect(
+      new Date(task!.next_run!).getTime() - Date.now(),
+    ).toBeGreaterThanOrEqual(29_000);
     expect(task?.ci_metadata).toContain('"poll_count":10');
   });
 
