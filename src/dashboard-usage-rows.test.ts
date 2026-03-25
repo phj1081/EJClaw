@@ -3,24 +3,17 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ClaudeAccountUsage } from './claude-usage.js';
 
 vi.mock('./claude-usage.js', () => ({
-  fetchAllClaudeUsage: vi.fn(),
-  fetchAllClaudeProfiles: vi.fn(),
   getClaudeProfile: (index: number) =>
     index === 0
       ? { email: 'a@example.com', planType: 'max' }
       : { email: 'b@example.com', planType: 'pro' },
 }));
 
-vi.mock('./codex-token-rotation.js', () => ({
-  getAllCodexAccounts: () => [],
-  updateCodexAccountUsage: vi.fn(),
-}));
-
 import {
   buildClaudeUsageRows,
   extractCodexUsageRows,
   mergeClaudeDashboardAccounts,
-} from './unified-dashboard.js';
+} from './dashboard-usage-rows.js';
 import type { StatusSnapshot } from './status-dashboard.js';
 
 describe('extractCodexUsageRows staleness', () => {
@@ -95,7 +88,7 @@ describe('extractCodexUsageRows staleness', () => {
   });
 });
 
-describe('unified dashboard Claude usage rows', () => {
+describe('dashboard Claude usage rows', () => {
   it('keeps both Claude accounts visible when one account usage is unavailable', () => {
     const rows = buildClaudeUsageRows([
       {
