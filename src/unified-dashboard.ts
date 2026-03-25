@@ -535,7 +535,10 @@ export async function startUnifiedDashboard(
     // Codex service: fetch own usage and expose via status snapshot.
     // Active account every usageUpdateInterval; full scan on startup + hourly.
     // Collector returns data; we own the cache state.
-    const applyRefresh = (result: { rows: UsageRow[]; fetchedAt: string | null }) => {
+    const applyRefresh = (result: {
+      rows: UsageRow[];
+      fetchedAt: string | null;
+    }) => {
       cachedCodexUsageRows = result.rows;
       if (result.fetchedAt) codexUsageFetchedAt = result.fetchedAt;
     };
@@ -543,7 +546,10 @@ export async function startUnifiedDashboard(
       applyRefresh(r);
       return refreshActiveCodexUsage().then(applyRefresh);
     });
-    setInterval(() => void refreshActiveCodexUsage().then(applyRefresh), opts.usageUpdateInterval);
+    setInterval(
+      () => void refreshActiveCodexUsage().then(applyRefresh),
+      opts.usageUpdateInterval,
+    );
     setInterval(
       () => void refreshAllCodexAccountUsage().then(applyRefresh),
       CODEX_FULL_SCAN_INTERVAL,
