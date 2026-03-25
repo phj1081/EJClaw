@@ -332,6 +332,51 @@ describe('agent-runner timeout behavior', () => {
     );
   });
 
+  it('writes EJCLAW_HOST_IPC_DIR into task-scoped codex MCP config', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const str = String(p);
+      return (
+        str.includes('dist/index.js') ||
+        str.includes('dist/ipc-mcp-stdio.js') ||
+        str.endsWith('/.codex/config.toml')
+      );
+    });
+
+    const codexGroup: RegisteredGroup = {
+      ...testGroup,
+      agentType: 'codex',
+    };
+
+    const resultPromise = runAgentProcess(
+      codexGroup,
+      {
+        ...testInput,
+        isScheduledTask: true,
+        runtimeTaskId: 'task-codex-watch',
+        useTaskScopedSession: false,
+      },
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+
+    const tomlWrite = [...vi.mocked(fs.writeFileSync).mock.calls]
+      .reverse()
+      .find((call) => String(call[0]).endsWith('/.codex/config.toml'));
+    expect(String(tomlWrite?.[1])).toContain(
+      'EJCLAW_IPC_DIR = "/tmp/ejclaw-test-data/ipc/test-group/tasks/task-codex-watch"',
+    );
+    expect(String(tomlWrite?.[1])).toContain(
+      'EJCLAW_HOST_IPC_DIR = "/tmp/ejclaw-test-data/ipc/test-group"',
+    );
+  });
+
   it('keeps shared session history for group-context task runtimes while isolating IPC', async () => {
     vi.useRealTimers();
     fakeProc = createFakeProcess();

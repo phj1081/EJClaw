@@ -1,4 +1,5 @@
 import { getTaskById, updateTaskStatusTracking } from './db.js';
+import { logger } from './logger.js';
 import {
   isWatchCiTask,
   renderWatchCiStatusMessage,
@@ -66,7 +67,17 @@ export function createTaskStatusTracker(
         );
         persist();
         return;
-      } catch {
+      } catch (err) {
+        logger.debug(
+          {
+            taskId: task.id,
+            chatJid: task.chat_jid,
+            statusMessageId,
+            phase,
+            err,
+          },
+          'Failed to edit watcher status message, falling back to send',
+        );
         statusMessageId = null;
         persist();
       }

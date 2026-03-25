@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { runAgentProcessMock, writeTasksSnapshotMock } = vi.hoisted(() => ({
+const { runAgentProcessMock, writeTasksSnapshotMock, loggerDebugMock } =
+  vi.hoisted(() => ({
   runAgentProcessMock: vi.fn(async () => ({
     status: 'success' as const,
     result: 'done',
   })),
   writeTasksSnapshotMock: vi.fn(),
-}));
+  loggerDebugMock: vi.fn(),
+  }));
 
 vi.mock('./provider-fallback.js', () => ({
   detectFallbackTrigger: vi.fn((error?: string | null) => {
@@ -79,6 +81,15 @@ vi.mock('./agent-runner.js', async () => {
   };
 });
 
+vi.mock('./logger.js', () => ({
+  logger: {
+    debug: loggerDebugMock,
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import * as providerFallback from './provider-fallback.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
@@ -101,6 +112,7 @@ describe('task scheduler', () => {
     _resetSchedulerLoopForTests();
     runAgentProcessMock.mockClear();
     writeTasksSnapshotMock.mockClear();
+    loggerDebugMock.mockClear();
     vi.mocked(providerFallback.markPrimaryCooldown).mockClear();
     vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
     vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
@@ -1016,6 +1028,69 @@ Check the run.
     const secondState = getTaskById('task-watch-status');
     expect(secondState?.status_message_id).toBe('msg-123');
     expect(secondState?.status_started_at).toBe('2026-03-19T07:00:00.000Z');
+  });
+
+  it('logs and falls back to sending a new watcher status message when edit fails', async () => {
+    vi.setSystemTime(new Date('2026-03-19T07:00:00.000Z'));
+    createTask({
+      id: 'task-watch-status-edit-fail',
+      group_folder: 'test-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'claude-code',
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+PR #77 checks
+
+Task ID:
+task-watch-status-edit-fail
+
+Check instructions:
+Check the run.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      status_message_id: 'msg-old',
+      status_started_at: '2026-03-19T07:00:00.000Z',
+      created_at: '2026-03-19T07:00:00.000Z',
+    });
+
+    const sendTrackedMessage = vi.fn(async () => 'msg-new');
+    const editTrackedMessage = vi.fn(async () => {
+      throw new Error('discord edit failed');
+    });
+
+    const tracker = createTaskStatusTracker(
+      getTaskById('task-watch-status-edit-fail')!,
+      {
+        sendTrackedMessage,
+        editTrackedMessage,
+      },
+    );
+
+    await tracker.update('waiting', '2026-03-19T07:04:10.000Z');
+
+    expect(loggerDebugMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'task-watch-status-edit-fail',
+        chatJid: 'shared@g.us',
+        statusMessageId: 'msg-old',
+        phase: 'waiting',
+      }),
+      'Failed to edit watcher status message, falling back to send',
+    );
+    expect(sendTrackedMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      expect.stringContaining(`${TASK_STATUS_MESSAGE_PREFIX}CI 감시 중:`),
+    );
+
+    const updatedTask = getTaskById('task-watch-status-edit-fail');
+    expect(updatedTask?.status_message_id).toBe('msg-new');
+    expect(updatedTask?.status_started_at).toBe('2026-03-19T07:00:00.000Z');
   });
 
   it('computeNextRun anchors interval tasks to scheduled time to prevent drift', () => {

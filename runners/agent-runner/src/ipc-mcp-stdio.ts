@@ -15,9 +15,10 @@ import {
   DEFAULT_WATCH_CI_CONTEXT_MODE,
   normalizeWatchCiIntervalSeconds,
 } from './watch-ci.js';
+import { resolveIpcDirectories } from './ipc-paths.js';
 
-const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
-const HOST_IPC_DIR = process.env.EJCLAW_HOST_IPC_DIR || IPC_DIR;
+const { ipcDir: IPC_DIR, hostIpcDir: HOST_IPC_DIR } =
+  resolveIpcDirectories(process.env);
 const MESSAGES_DIR = path.join(HOST_IPC_DIR, 'messages');
 const TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
 
