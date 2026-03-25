@@ -142,6 +142,22 @@ function clearUsageAvailabilityCache(): void {
   usageAvailabilityCheckPromise = null;
 }
 
+function logCooldownTransition(
+  level: 'debug' | 'info' | 'warn',
+  transition: string,
+  fields: Record<string, unknown>,
+  message: string,
+): void {
+  logger[level](
+    {
+      transition,
+      provider: 'claude',
+      ...fields,
+    },
+    message,
+  );
+}
+
 async function getClaudeUsageAvailability(): Promise<
   'available' | 'exhausted' | 'unknown'
 > {
@@ -187,10 +203,12 @@ export async function getActiveProvider(): Promise<string> {
     if (cooldown.reason === 'usage-exhausted') {
       const usageAvailability = await getClaudeUsageAvailability();
       if (usageAvailability === 'available') {
-        logger.info(
+        logCooldownTransition(
+          'info',
+          'cooldown:recover',
           {
-            provider: 'claude',
             reason: cooldown.reason,
+            fallbackProvider: config.providerName,
           },
           'Claude usage recovered, retrying primary provider',
         );
@@ -204,17 +222,27 @@ export async function getActiveProvider(): Promise<string> {
           getTokenCount() > 1 &&
           rotateToken(undefined, { ignoreRateLimits: true })
         ) {
-          logger.info(
+          logCooldownTransition(
+            'info',
+            'cooldown:recover',
+            {
+              reason: cooldown.reason,
+              fallbackProvider: config.providerName,
+              recovery: 'token-rotation',
+            },
             'Claude current token exhausted, rotated to next token — retrying',
           );
           cooldown = null;
           clearUsageAvailabilityCache();
           return 'claude';
         }
-        logger.debug(
+        logCooldownTransition(
+          'debug',
+          'cooldown:stay',
           {
-            provider: config.providerName,
             reason: cooldown.reason,
+            fallbackProvider: config.providerName,
+            usageAvailability,
           },
           'All Claude tokens exhausted, keeping cooldown active',
         );
@@ -223,14 +251,26 @@ export async function getActiveProvider(): Promise<string> {
     }
 
     if (Date.now() < cooldown.expiresAt) {
+      logCooldownTransition(
+        'debug',
+        'cooldown:stay',
+        {
+          reason: cooldown.reason,
+          fallbackProvider: config.providerName,
+          remainingMs: cooldown.expiresAt - Date.now(),
+        },
+        'Claude cooldown still active, routing to fallback provider',
+      );
       return config.providerName;
     }
     // Cooldown expired — try Claude again
-    logger.info(
+    logCooldownTransition(
+      'info',
+      'cooldown:expire',
       {
-        provider: 'claude',
         cooldownDurationMs: cooldown.expiresAt - cooldown.startedAt,
         reason: cooldown.reason,
+        fallbackProvider: config.providerName,
       },
       'Claude cooldown expired, retrying primary provider',
     );
@@ -259,7 +299,9 @@ export function markPrimaryCooldown(
   };
   clearUsageAvailabilityCache();
 
-  logger.info(
+  logCooldownTransition(
+    'info',
+    'cooldown:enter',
     {
       reason,
       cooldownMs: durationMs,
@@ -274,7 +316,9 @@ export function markPrimaryCooldown(
 export function clearPrimaryCooldown(): void {
   clearUsageAvailabilityCache();
   if (cooldown) {
-    logger.info(
+    logCooldownTransition(
+      'info',
+      'cooldown:clear',
       { reason: cooldown.reason },
       'Claude cooldown cleared manually',
     );

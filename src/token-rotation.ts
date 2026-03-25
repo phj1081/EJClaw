@@ -118,7 +118,9 @@ export function rotateToken(
 ): boolean {
   if (tokens.length <= 1) return false;
 
-  tokens[currentIndex].rateLimitedUntil = computeCooldownUntil(errorMessage);
+  const previousIndex = currentIndex;
+  const cooldownUntil = computeCooldownUntil(errorMessage);
+  tokens[currentIndex].rateLimitedUntil = cooldownUntil;
 
   const nextIdx = findNextAvailable(tokens, currentIndex, opts);
   if (nextIdx !== null) {
@@ -126,9 +128,14 @@ export function rotateToken(
     currentIndex = nextIdx;
     logger.info(
       {
-        tokenIndex: currentIndex,
+        transition: 'rotation:execute',
+        fromIndex: previousIndex,
+        toIndex: currentIndex,
         totalTokens: tokens.length,
         ignoreRL: opts?.ignoreRateLimits ?? false,
+        cooldownUntil:
+          cooldownUntil != null ? new Date(cooldownUntil).toISOString() : null,
+        reason: errorMessage ?? null,
       },
       `Rotated to token #${currentIndex + 1}/${tokens.length}`,
     );
@@ -137,7 +144,15 @@ export function rotateToken(
   }
 
   logger.warn(
-    { totalTokens: tokens.length },
+    {
+      transition: 'rotation:skip',
+      fromIndex: previousIndex,
+      totalTokens: tokens.length,
+      ignoreRL: opts?.ignoreRateLimits ?? false,
+      cooldownUntil:
+        cooldownUntil != null ? new Date(cooldownUntil).toISOString() : null,
+      reason: errorMessage ?? null,
+    },
     'All tokens are rate-limited, falling through to provider fallback',
   );
   return false;
@@ -148,7 +163,16 @@ export function markTokenHealthy(): void {
   if (tokens.length === 0) return;
   const state = tokens[currentIndex];
   if (state?.rateLimitedUntil) {
+    const previousCooldownUntil = state.rateLimitedUntil;
     state.rateLimitedUntil = null;
+    logger.info(
+      {
+        transition: 'rotation:clear-rate-limit',
+        tokenIndex: currentIndex,
+        cooldownUntil: new Date(previousCooldownUntil).toISOString(),
+      },
+      'Cleared Claude token rate-limit state after successful response',
+    );
     saveState();
   }
 }

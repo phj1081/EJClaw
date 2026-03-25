@@ -56,9 +56,29 @@ export class MessageTurnController {
 
   constructor(private readonly options: MessageTurnControllerOptions) {}
 
+  private async setTyping(
+    isTyping: boolean,
+    source: string,
+    extra?: Record<string, unknown>,
+  ): Promise<void> {
+    logger.debug(
+      {
+        transition: isTyping ? 'typing:on' : 'typing:off',
+        source,
+        chatJid: this.options.chatJid,
+        group: this.options.group.name,
+        groupFolder: this.options.group.folder,
+        runId: this.options.runId,
+        ...extra,
+      },
+      'Typing indicator transition',
+    );
+    await this.options.channel.setTyping?.(this.options.chatJid, isTyping);
+  }
+
   async start(): Promise<void> {
     this.resetIdleTimer();
-    await this.options.channel.setTyping?.(this.options.chatJid, true);
+    await this.setTyping(true, 'turn:start');
   }
 
   async handleOutput(result: AgentOutput): Promise<void> {
@@ -274,7 +294,10 @@ export class MessageTurnController {
       await this.finalizeProgressMessage();
     }
 
-    await this.options.channel.setTyping?.(this.options.chatJid, false);
+    await this.setTyping(false, 'turn:handle-output', {
+      outputStatus: result.status,
+      phase,
+    });
     if (result.status === 'success' && !this.poisonedSessionDetected) {
       this.requestAgentClose('output-delivered-close');
     }
@@ -288,7 +311,7 @@ export class MessageTurnController {
     deliverySucceeded: boolean;
     visiblePhase: VisiblePhase;
   }> {
-    await this.options.channel.setTyping?.(this.options.chatJid, false);
+    await this.setTyping(false, 'turn:finish', { outputStatus });
 
     if (outputStatus === 'error') {
       this.hadError = true;

@@ -261,8 +261,10 @@ export function rotateCodexToken(
 ): boolean {
   if (accounts.length <= 1) return false;
 
+  const previousIndex = currentIndex;
   const acct = accounts[currentIndex];
-  acct.rateLimitedUntil = computeCooldownUntil(errorMessage);
+  const cooldownUntil = computeCooldownUntil(errorMessage);
+  acct.rateLimitedUntil = cooldownUntil;
   acct.lastUsagePct = 100;
   // Extract reset time string from error for display
   const retryAt = parseRetryAfterFromError(errorMessage);
@@ -276,9 +278,15 @@ export function rotateCodexToken(
     currentIndex = nextIdx;
     logger.info(
       {
-        accountIndex: currentIndex,
+        transition: 'rotation:execute',
+        fromIndex: previousIndex,
+        toIndex: currentIndex,
         totalAccounts: accounts.length,
         accountId: accounts[nextIdx].accountId,
+        ignoreRL: opts?.ignoreRateLimits ?? false,
+        cooldownUntil:
+          cooldownUntil != null ? new Date(cooldownUntil).toISOString() : null,
+        reason: errorMessage ?? null,
       },
       `Codex rotated to account #${currentIndex + 1}/${accounts.length}`,
     );
@@ -286,7 +294,18 @@ export function rotateCodexToken(
     return true;
   }
 
-  logger.warn('All Codex accounts are rate-limited');
+  logger.warn(
+    {
+      transition: 'rotation:skip',
+      fromIndex: previousIndex,
+      totalAccounts: accounts.length,
+      ignoreRL: opts?.ignoreRateLimits ?? false,
+      cooldownUntil:
+        cooldownUntil != null ? new Date(cooldownUntil).toISOString() : null,
+      reason: errorMessage ?? null,
+    },
+    'All Codex accounts are rate-limited',
+  );
   return false;
 }
 
@@ -353,7 +372,13 @@ export function updateCodexAccountUsage(
       const nextIdx = findNextCodexAvailable(idx);
       if (nextIdx !== null && nextIdx !== idx) {
         logger.info(
-          { from: idx + 1, to: nextIdx + 1, d7Pct },
+          {
+            transition: 'rotation:auto',
+            fromIndex: idx,
+            toIndex: nextIdx,
+            d7Pct,
+            accountId: acct.accountId,
+          },
           `Codex auto-rotating: account #${idx + 1} at ${d7Pct}% 7d → #${nextIdx + 1}`,
         );
         currentIndex = nextIdx;
@@ -367,7 +392,17 @@ export function markCodexTokenHealthy(): void {
   if (accounts.length === 0) return;
   const acct = accounts[currentIndex];
   if (acct?.rateLimitedUntil) {
+    const previousCooldownUntil = acct.rateLimitedUntil;
     acct.rateLimitedUntil = null;
+    logger.info(
+      {
+        transition: 'rotation:clear-rate-limit',
+        accountIndex: currentIndex,
+        accountId: acct.accountId,
+        cooldownUntil: new Date(previousCooldownUntil).toISOString(),
+      },
+      'Cleared Codex account rate-limit state after successful response',
+    );
     saveCodexState();
   }
 }

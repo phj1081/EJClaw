@@ -376,7 +376,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       } finally {
         // Safety net: always clear typing even if runAgent() or finish() throws.
         // Prevents stuck typing indicators when exceptions bypass the normal
-        // turnController.finish() → setTyping(false) path.
+        // turnController.finish() -> setTyping(false) path.
+        logger.debug(
+          {
+            transition: 'typing:off',
+            source: 'message-runtime:safety-net',
+            chatJid,
+            group: group.name,
+            groupFolder: group.folder,
+            runId,
+          },
+          'Typing indicator transition',
+        );
         await channel.setTyping?.(chatJid, false);
       }
     }
@@ -530,6 +541,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   endSeq,
                 );
               }
+              logger.debug(
+                {
+                  transition: 'typing:on',
+                  source: 'follow-up-queued',
+                  chatJid,
+                  group: group.name,
+                  groupFolder: group.folder,
+                  endSeq: endSeq ?? null,
+                },
+                'Typing indicator transition',
+              );
               await channel
                 .setTyping?.(chatJid, true)
                 ?.catch((err) =>

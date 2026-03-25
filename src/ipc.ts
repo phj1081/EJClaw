@@ -90,18 +90,31 @@ export function startIpcWatcher(deps: IpcDeps): void {
               if (msg.type === 'message' && msg.chatJid && msg.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[msg.chatJid];
+                const isMainOverride = isMain === true;
                 if (
-                  isMain ||
+                  isMainOverride ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
                   await deps.sendMessage(msg.chatJid, msg.text);
                   logger.info(
-                    { chatJid: msg.chatJid, sourceGroup },
+                    {
+                      transition: 'ipc:auth:allow',
+                      chatJid: msg.chatJid,
+                      sourceGroup,
+                      targetGroup: targetGroup?.folder ?? null,
+                      isMainOverride,
+                    },
                     'IPC message sent',
                   );
                 } else {
                   logger.warn(
-                    { chatJid: msg.chatJid, sourceGroup },
+                    {
+                      transition: 'ipc:auth:deny',
+                      chatJid: msg.chatJid,
+                      sourceGroup,
+                      targetGroup: targetGroup?.folder ?? null,
+                      isMainOverride,
+                    },
                     'Unauthorized IPC message attempt blocked',
                   );
                 }

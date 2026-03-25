@@ -507,17 +507,38 @@ export class GroupQueue {
     this.activeCount++;
     this.activeTaskCount++;
 
-    logger.debug(
-      { groupJid, taskId: task.id, activeCount: this.activeCount },
+    logger.info(
+      {
+        transition: 'queue:task:start',
+        groupJid,
+        taskId: task.id,
+        activeCount: this.activeCount,
+        activeTaskCount: this.activeTaskCount,
+      },
       'Running queued task',
     );
 
+    let outcome: 'success' | 'error' = 'success';
     try {
       await task.fn();
     } catch (err) {
+      outcome = 'error';
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
       this.clearPostCloseTimers(state);
+      const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
+      logger.info(
+        {
+          transition: 'queue:task:finish',
+          groupJid,
+          taskId: task.id,
+          outcome,
+          durationMs,
+          pendingMessages: state.pendingMessages,
+          pendingTasks: state.pendingTasks.length,
+        },
+        'Finished queued task',
+      );
       state.active = false;
       state.isTaskProcess = false;
       state.runningTaskId = null;
