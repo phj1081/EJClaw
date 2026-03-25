@@ -106,6 +106,29 @@ vi.mock('./logger.js', () => ({
 
 vi.mock('./github-ci.js', () => ({
   checkGitHubActionsRun: checkGitHubActionsRunMock,
+  computeGitHubWatcherDelayMs: vi.fn((task: { schedule_value: string; created_at: string }, nowMs: number) => {
+    const baseDelayMs = Number.parseInt(task.schedule_value, 10);
+    const normalizedBaseDelayMs =
+      Number.isFinite(baseDelayMs) && baseDelayMs > 0 ? baseDelayMs : 15_000;
+    const createdAtMs = new Date(task.created_at).getTime();
+    const elapsedMs = Number.isFinite(createdAtMs)
+      ? Math.max(0, nowMs - createdAtMs)
+      : 0;
+
+    if (elapsedMs >= 60 * 60 * 1000) {
+      return Math.max(normalizedBaseDelayMs, 60_000);
+    }
+    if (elapsedMs >= 10 * 60 * 1000) {
+      return Math.max(normalizedBaseDelayMs, 30_000);
+    }
+    return normalizedBaseDelayMs;
+  }),
+  MAX_GITHUB_CONSECUTIVE_ERRORS: 5,
+  parseGitHubCiMetadata: vi.fn((raw: string | null | undefined) => {
+    if (!raw) return null;
+    return JSON.parse(raw);
+  }),
+  serializeGitHubCiMetadata: vi.fn((metadata: unknown) => JSON.stringify(metadata)),
 }));
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
@@ -929,6 +952,8 @@ Managed by host-driven watcher.
     const task = getTaskById('task-github-running');
     expect(task).toBeDefined();
     expect(task?.next_run).not.toBe(dueAt);
+    expect(task?.ci_metadata).toContain('"poll_count":1');
+    expect(task?.ci_metadata).toContain('"consecutive_errors":0');
   });
 
   it('sends a final message and deletes terminal GitHub watcher tasks', async () => {
@@ -1001,6 +1026,146 @@ Managed by host-driven watcher.
     );
     expect(runAgentProcessMock).not.toHaveBeenCalled();
     expect(getTaskById('task-github-complete')).toBeUndefined();
+  });
+
+  it('backs off long-running GitHub watchers based on elapsed time', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-github-backoff',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      ci_provider: 'github',
+      ci_metadata: JSON.stringify({
+        repo: 'owner/repo',
+        run_id: 222222,
+        poll_count: 9,
+      }),
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 222222
+
+Task ID:
+task-github-backoff
+
+Check instructions:
+Managed by host-driven watcher.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '15000',
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: new Date(Date.now() - 11 * 60_000).toISOString(),
+    });
+
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    const task = getTaskById('task-github-backoff');
+    expect(task).toBeDefined();
+    expect(new Date(task!.next_run!).getTime() - Date.now()).toBeGreaterThanOrEqual(
+      29_000,
+    );
+    expect(task?.ci_metadata).toContain('"poll_count":10');
+  });
+
+  it('pauses GitHub watchers after repeated gh api failures', async () => {
+    checkGitHubActionsRunMock.mockRejectedValueOnce(
+      new Error('gh api failed: rate limit'),
+    );
+
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-github-pause',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      ci_provider: 'github',
+      ci_metadata: JSON.stringify({
+        repo: 'owner/repo',
+        run_id: 333333,
+        poll_count: 4,
+        consecutive_errors: 4,
+      }),
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 333333
+
+Task ID:
+task-github-pause
+
+Check instructions:
+Managed by host-driven watcher.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '15000',
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const sendMessage = vi.fn(async () => {});
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    const task = getTaskById('task-github-pause');
+    expect(task?.status).toBe('paused');
+    expect(task?.ci_metadata).toContain('"consecutive_errors":5');
+    expect(sendMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      expect.stringContaining('gh api 연속 5회 실패'),
+    );
+    expect(runAgentProcessMock).not.toHaveBeenCalled();
   });
 
   it('deletes active tasks that exceed max duration before they run', async () => {

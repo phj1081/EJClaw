@@ -69,13 +69,20 @@ import {
   type StreamedOutputState,
 } from './streamed-output-evaluator.js';
 import {
+  extractWatchCiTarget,
   getTaskQueueJid,
   getTaskRuntimeTaskId,
   isGitHubCiTask,
   shouldUseTaskScopedSession,
 } from './task-watch-status.js';
 import { AgentType, RegisteredGroup, ScheduledTask } from './types.js';
-import { checkGitHubActionsRun } from './github-ci.js';
+import {
+  checkGitHubActionsRun,
+  computeGitHubWatcherDelayMs,
+  MAX_GITHUB_CONSECUTIVE_ERRORS,
+  parseGitHubCiMetadata,
+  serializeGitHubCiMetadata,
+} from './github-ci.js';
 export {
   extractWatchCiTarget,
   getTaskQueueJid,
@@ -786,19 +793,33 @@ async function runGithubCiTask(
   deps: SchedulerDependencies,
 ): Promise<void> {
   const startTime = Date.now();
+  const runAtIso = new Date().toISOString();
   let result: string | null = null;
   let error: string | null = null;
   let completedAndDeleted = false;
+  let paused = false;
   const statusTracker = createTaskStatusTracker(task, {
     sendTrackedMessage: deps.sendTrackedMessage,
     editTrackedMessage: deps.editTrackedMessage,
   });
+  const parsedMetadata = parseGitHubCiMetadata(task.ci_metadata);
+  const metadata = parsedMetadata
+    ? {
+        ...parsedMetadata,
+        poll_count: (parsedMetadata.poll_count ?? 0) + 1,
+        last_checked_at: runAtIso,
+      }
+    : null;
 
   try {
     await statusTracker.update('checking');
 
     const check = await checkGitHubActionsRun(task);
     result = check.resultSummary;
+
+    if (metadata) {
+      metadata.consecutive_errors = 0;
+    }
 
     if (check.terminal) {
       await statusTracker.update('completed');
@@ -827,12 +848,19 @@ async function runGithubCiTask(
     }
   } catch (err) {
     error = getErrorMessage(err);
+    if (metadata) {
+      metadata.consecutive_errors = (metadata.consecutive_errors ?? 0) + 1;
+    }
     logger.error({ taskId: task.id, error }, 'GitHub CI watcher failed');
   }
 
   const durationMs = Date.now() - startTime;
   const currentTask = getTaskById(task.id);
-  const nextRun = currentTask ? computeNextRun(task) : null;
+  const nextRun = currentTask
+    ? new Date(
+        Date.now() + computeGitHubWatcherDelayMs(currentTask, Date.now()),
+      ).toISOString()
+    : null;
 
   if (!currentTask) {
     if (!completedAndDeleted) {
@@ -845,8 +873,32 @@ async function runGithubCiTask(
     return;
   }
 
-  if (error) {
+  if (metadata) {
+    updateTask(task.id, { ci_metadata: serializeGitHubCiMetadata(metadata) });
+  }
+
+  if (
+    error &&
+    metadata &&
+    (metadata.consecutive_errors ?? 0) >= MAX_GITHUB_CONSECUTIVE_ERRORS
+  ) {
+    paused = true;
+    updateTask(task.id, { status: 'paused' });
+    await deps.sendMessage(
+      task.chat_jid,
+      [
+        `CI 감시 일시정지: ${extractWatchCiTarget(task.prompt) || task.id}`,
+        `- 사유: gh api 연속 ${metadata.consecutive_errors}회 실패`,
+        `- 마지막 오류: ${error.slice(0, 200)}`,
+        `- 태스크 ID: \`${task.id}\``,
+      ].join('\n'),
+    );
+  }
+
+  if (error && !paused) {
     await statusTracker.update('retrying', nextRun);
+  } else if (paused) {
+    // Paused tasks keep their current status message state; the pause notice is sent separately.
   } else if (nextRun) {
     await statusTracker.update('waiting', nextRun);
   } else {

@@ -8,6 +8,7 @@ export interface GitHubCiMetadata {
   run_id: number;
   poll_count?: number;
   consecutive_errors?: number;
+  last_checked_at?: string;
 }
 
 interface GitHubActionsRunResponse {
@@ -33,6 +34,12 @@ export interface GitHubRunCheckResult {
   resultSummary: string;
   completionMessage?: string;
 }
+
+export const MAX_GITHUB_CONSECUTIVE_ERRORS = 5;
+export const GITHUB_WATCH_BACKOFF_STEPS = [
+  { afterMs: 60 * 60 * 1000, delayMs: 60_000 },
+  { afterMs: 10 * 60 * 1000, delayMs: 30_000 },
+] as const;
 
 function execGhApi(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -87,11 +94,38 @@ export function parseGitHubCiMetadata(
       parsed.consecutive_errors! >= 0
         ? parsed.consecutive_errors
         : undefined,
+    last_checked_at:
+      typeof parsed.last_checked_at === 'string' &&
+      parsed.last_checked_at.trim() !== ''
+        ? parsed.last_checked_at
+        : undefined,
   };
 }
 
 export function serializeGitHubCiMetadata(metadata: GitHubCiMetadata): string {
   return JSON.stringify(metadata);
+}
+
+export function computeGitHubWatcherDelayMs(
+  task: Pick<ScheduledTask, 'schedule_value' | 'created_at'>,
+  nowMs: number,
+): number {
+  const baseDelayMs = Number.parseInt(task.schedule_value, 10);
+  const normalizedBaseDelayMs =
+    Number.isFinite(baseDelayMs) && baseDelayMs > 0 ? baseDelayMs : 15_000;
+
+  const createdAtMs = new Date(task.created_at).getTime();
+  const elapsedMs = Number.isFinite(createdAtMs)
+    ? Math.max(0, nowMs - createdAtMs)
+    : 0;
+
+  for (const step of GITHUB_WATCH_BACKOFF_STEPS) {
+    if (elapsedMs >= step.afterMs) {
+      return Math.max(normalizedBaseDelayMs, step.delayMs);
+    }
+  }
+
+  return normalizedBaseDelayMs;
 }
 
 function formatConclusionLabel(conclusion: string | null | undefined): string {
