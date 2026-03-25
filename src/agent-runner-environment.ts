@@ -279,6 +279,7 @@ args = [${JSON.stringify(mcpServerPath)}]
 
 [mcp_servers.ejclaw.env]
 EJCLAW_IPC_DIR = ${JSON.stringify(args.env.EJCLAW_IPC_DIR)}
+EJCLAW_HOST_IPC_DIR = ${JSON.stringify(args.env.EJCLAW_HOST_IPC_DIR)}
 EJCLAW_CHAT_JID = ${JSON.stringify(args.chatJid)}
 EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.group.folder)}
 EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}

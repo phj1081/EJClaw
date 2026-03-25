@@ -640,6 +640,12 @@ async function runQuery(
             EJCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
             EJCLAW_AGENT_TYPE:
               process.env.EJCLAW_AGENT_TYPE || 'claude-code',
+            ...(process.env.EJCLAW_IPC_DIR && {
+              EJCLAW_IPC_DIR: process.env.EJCLAW_IPC_DIR,
+            }),
+            ...(process.env.EJCLAW_HOST_IPC_DIR && {
+              EJCLAW_HOST_IPC_DIR: process.env.EJCLAW_HOST_IPC_DIR,
+            }),
           },
         },
         ...(process.env.MEMENTO_MCP_SSE_URL
