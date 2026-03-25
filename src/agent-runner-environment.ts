@@ -20,19 +20,8 @@ import {
 } from './platform-prompts.js';
 import type { AgentType, RegisteredGroup } from './types.js';
 
-function writeCodexApiKeyAuth(authPath: string, openaiKey: string): void {
-  fs.writeFileSync(
-    authPath,
-    JSON.stringify(
-      {
-        auth_mode: 'apikey',
-        OPENAI_API_KEY: openaiKey,
-      },
-      null,
-      2,
-    ) + '\n',
-  );
-}
+// writeCodexApiKeyAuth removed — Codex uses OAuth only.
+// API key auth caused unintended billing.
 
 function syncDirectoryEntries(sources: string[], destination: string): void {
   for (const source of sources) {
@@ -184,12 +173,10 @@ function prepareCodexSessionEnvironment(args: {
   isPairedRoom: boolean;
   memoryBriefing?: string;
 }): void {
-  const openaiKey =
-    args.envVars.CODEX_OPENAI_API_KEY ||
-    process.env.CODEX_OPENAI_API_KEY ||
-    args.envVars.OPENAI_API_KEY ||
-    process.env.OPENAI_API_KEY;
-  if (openaiKey) args.env.OPENAI_API_KEY = openaiKey;
+  // API key auth intentionally removed — Codex uses OAuth only.
+  // Never pass any API key to Codex child process to prevent API billing.
+  delete args.env.OPENAI_API_KEY;
+  delete args.env.CODEX_OPENAI_API_KEY;
 
   const codexModel =
     args.group.agentConfig?.codexModel ||
@@ -208,9 +195,8 @@ function prepareCodexSessionEnvironment(args: {
   fs.mkdirSync(sessionCodexDir, { recursive: true });
 
   const authDst = path.join(sessionCodexDir, 'auth.json');
-  if (openaiKey) {
-    writeCodexApiKeyAuth(authDst, openaiKey);
-  } else {
+  // Always use OAuth auth from rotated accounts (API key auth removed)
+  {
     const rotatedAuthSrc = getActiveCodexAuthPath();
     const authSrc =
       rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
@@ -417,8 +403,6 @@ export function prepareGroupEnvironment(
     'CLAUDE_THINKING',
     'CLAUDE_THINKING_BUDGET',
     'CLAUDE_EFFORT',
-    'OPENAI_API_KEY',
-    'CODEX_OPENAI_API_KEY',
     'CODEX_MODEL',
     'CODEX_EFFORT',
     'MEMENTO_MCP_SSE_URL',

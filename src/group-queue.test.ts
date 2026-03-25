@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 
-import { GroupQueue } from './group-queue.js';
+import { GroupQueue, type GroupRunContext } from './group-queue.js';
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
@@ -119,6 +119,100 @@ describe('GroupQueue', () => {
 
     releaseRun(true);
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('force-terminates a lingering process after output was delivered', async () => {
+    class StubbornProcess extends EventEmitter {
+      exitCode: number | null = null;
+      signalCode: NodeJS.Signals | null = null;
+      kill = vi.fn(() => true);
+    }
+
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+    let releaseRun!: (value: boolean) => void;
+    let runId: string | undefined;
+    const blocker = new Promise<boolean>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    const processMessages = vi.fn(
+      async (_groupJid: string, context: GroupRunContext) => {
+        runId = context.runId;
+        return await blocker;
+      },
+    );
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runId).toEqual(expect.any(String));
+
+    const proc = new StubbornProcess();
+    queue.registerProcess(
+      'group1@g.us',
+      proc as unknown as import('child_process').ChildProcess,
+      'proc-1',
+      ipcDir,
+    );
+
+    queue.closeStdin('group1@g.us', {
+      runId,
+      reason: 'output-delivered-close',
+    });
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(proc.kill).toHaveBeenCalledWith('SIGTERM');
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(proc.kill).toHaveBeenCalledWith('SIGKILL');
+
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
+  it('clears post-close termination timers once the run exits', async () => {
+    class FakeProcess extends EventEmitter {
+      exitCode: number | null = null;
+      signalCode: NodeJS.Signals | null = null;
+      kill = vi.fn(() => true);
+    }
+
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+    let releaseRun!: (value: boolean) => void;
+    const blocker = new Promise<boolean>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    const proc = new FakeProcess();
+    const processMessages = vi.fn(
+      async (_groupJid: string, context: GroupRunContext) => {
+        queue.registerProcess(
+          'group1@g.us',
+          proc as unknown as import('child_process').ChildProcess,
+          'proc-1',
+          ipcDir,
+        );
+
+        queue.closeStdin('group1@g.us', {
+          runId: context.runId,
+          reason: 'output-delivered-close',
+        });
+
+        await blocker;
+        return true;
+      },
+    );
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
+    await vi.advanceTimersByTimeAsync(10);
+
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await vi.advanceTimersByTimeAsync(75_000);
+    expect(proc.kill).not.toHaveBeenCalled();
   });
 
   // --- Global concurrency limit ---

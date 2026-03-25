@@ -112,12 +112,13 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it('writes API-key auth when OPENAI_API_KEY is available', () => {
+  it('ignores OPENAI_API_KEY and always uses OAuth auth', () => {
     const rotatedAuthPath = path.join(tempRoot, 'rotated-auth.json');
-    fs.writeFileSync(
-      rotatedAuthPath,
-      JSON.stringify({ auth_mode: 'chatgpt', tokens: { access_token: 'x' } }),
-    );
+    const rotatedAuth = {
+      auth_mode: 'chatgpt',
+      tokens: { access_token: 'x' },
+    };
+    fs.writeFileSync(rotatedAuthPath, JSON.stringify(rotatedAuth));
     mockGetActiveCodexAuthPath.mockReturnValue(rotatedAuthPath);
     mockReadEnvFile.mockReturnValue({
       OPENAI_API_KEY: 'sk-test-api-key',
@@ -139,9 +140,10 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       tokens?: unknown;
     };
 
-    expect(auth.auth_mode).toBe('apikey');
-    expect(auth.OPENAI_API_KEY).toBe('sk-test-api-key');
-    expect(auth.tokens).toBeUndefined();
+    // API key auth is never used — always OAuth
+    expect(auth.auth_mode).toBe('chatgpt');
+    expect(auth.OPENAI_API_KEY).toBeUndefined();
+    expect(auth.tokens).toEqual({ access_token: 'x' });
   });
 
   it('falls back to rotated OAuth auth when no API key is configured', () => {

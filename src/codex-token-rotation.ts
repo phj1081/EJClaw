@@ -137,7 +137,7 @@ function saveCodexState(): void {
   }
 }
 
-function loadCodexState(): void {
+function loadCodexState(quiet = false): void {
   const state = readJsonFile<{
     currentIndex?: number;
     rateLimits?: (number | null)[];
@@ -164,6 +164,8 @@ function loadCodexState(): void {
       const until = state.rateLimits[i];
       if (typeof until === 'number' && until > now) {
         accounts[i].rateLimitedUntil = until;
+      } else {
+        accounts[i].rateLimitedUntil = null;
       }
     }
   }
@@ -173,8 +175,10 @@ function loadCodexState(): void {
       i < Math.min(state.usagePcts.length, accounts.length);
       i++
     ) {
-      if (typeof state.usagePcts[i] === 'number')
-        accounts[i].lastUsagePct = state.usagePcts[i]!;
+      accounts[i].lastUsagePct =
+        typeof state.usagePcts[i] === 'number'
+          ? state.usagePcts[i]!
+          : undefined;
     }
   }
   if (Array.isArray(state.usageD7Pcts)) {
@@ -183,13 +187,15 @@ function loadCodexState(): void {
       i < Math.min(state.usageD7Pcts.length, accounts.length);
       i++
     ) {
-      if (typeof state.usageD7Pcts[i] === 'number')
-        accounts[i].lastUsageD7Pct = state.usageD7Pcts[i]!;
+      accounts[i].lastUsageD7Pct =
+        typeof state.usageD7Pcts[i] === 'number'
+          ? state.usageD7Pcts[i]!
+          : undefined;
     }
   }
   if (Array.isArray(state.resetAts)) {
     for (let i = 0; i < Math.min(state.resetAts.length, accounts.length); i++) {
-      if (state.resetAts[i]) accounts[i].resetAt = state.resetAts[i]!;
+      accounts[i].resetAt = state.resetAts[i] ?? undefined;
     }
   }
   if (Array.isArray(state.resetD7Ats)) {
@@ -198,13 +204,25 @@ function loadCodexState(): void {
       i < Math.min(state.resetD7Ats.length, accounts.length);
       i++
     ) {
-      if (state.resetD7Ats[i]) accounts[i].resetD7At = state.resetD7Ats[i]!;
+      accounts[i].resetD7At = state.resetD7Ats[i] ?? undefined;
     }
   }
-  logger.info(
-    { currentIndex, accountCount: accounts.length },
-    'Codex rotation state restored',
-  );
+  if (!quiet) {
+    logger.info(
+      { currentIndex, accountCount: accounts.length },
+      'Codex rotation state restored',
+    );
+  }
+}
+
+/**
+ * Re-read the on-disk rotation state (written by any service).
+ * Call before dashboard renders so the renderer picks up rotations
+ * performed by the Codex service process.
+ */
+export function reloadCodexStateFromDisk(): void {
+  if (accounts.length <= 1) return;
+  loadCodexState(true);
 }
 
 /** Get the auth.json path for the current active account. */
@@ -273,18 +291,36 @@ export function rotateCodexToken(
 }
 
 /**
+ * Find the next Codex account that is neither rate-limited nor 7d-exhausted.
+ */
+function findNextCodexAvailable(fromIndex?: number): number | null {
+  const now = Date.now();
+  const start = fromIndex ?? currentIndex;
+  for (let i = 1; i < accounts.length; i++) {
+    const idx = (start + i) % accounts.length;
+    const acct = accounts[idx];
+    const rlOk = !acct.rateLimitedUntil || acct.rateLimitedUntil <= now;
+    const usageOk = acct.lastUsageD7Pct == null || acct.lastUsageD7Pct < 100;
+    if (rlOk && usageOk) return idx;
+  }
+  // All exhausted — fall back to rate-limit-only check
+  return findNextAvailable(accounts, start);
+}
+
+/**
  * Advance to the next healthy account (round-robin).
  * Called after each successful request to spread load evenly
  * and keep usage data fresh for all accounts.
+ * Skips accounts with 7d usage ≥ 100% to avoid API billing.
  */
 export function advanceCodexAccount(): void {
   if (accounts.length <= 1) return;
-  const nextIdx = findNextAvailable(accounts, currentIndex);
+  const nextIdx = findNextCodexAvailable();
   if (nextIdx !== null) {
     currentIndex = nextIdx;
     saveCodexState();
   }
-  // All others rate-limited, stay on current
+  // All others rate-limited/exhausted, stay on current
 }
 
 /**
@@ -306,6 +342,19 @@ export function updateCodexAccountUsage(
     if (resetAt) acct.resetAt = resetAt;
     if (resetD7At) acct.resetD7At = resetD7At;
     saveCodexState();
+
+    // Auto-rotate away from 7d-exhausted current account to avoid API billing
+    if (idx === currentIndex && d7Pct != null && d7Pct >= 100 && accounts.length > 1) {
+      const nextIdx = findNextCodexAvailable(idx);
+      if (nextIdx !== null && nextIdx !== idx) {
+        logger.info(
+          { from: idx + 1, to: nextIdx + 1, d7Pct },
+          `Codex auto-rotating: account #${idx + 1} at ${d7Pct}% 7d → #${nextIdx + 1}`,
+        );
+        currentIndex = nextIdx;
+        saveCodexState();
+      }
+    }
   }
 }
 

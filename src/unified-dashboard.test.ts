@@ -18,8 +18,82 @@ vi.mock('./codex-token-rotation.js', () => ({
 
 import {
   buildClaudeUsageRows,
+  extractCodexUsageRows,
   mergeClaudeDashboardAccounts,
 } from './unified-dashboard.js';
+import type { StatusSnapshot } from './status-dashboard.js';
+
+describe('extractCodexUsageRows staleness', () => {
+  const freshRows = [
+    { name: 'Codex1* pro', h5pct: 42, h5reset: '2h', d7pct: 65, d7reset: '3d' },
+  ];
+  const TEN_MIN = 600_000;
+
+  it('returns real rows when usageRowsFetchedAt is within maxAgeMs', () => {
+    const now = Date.now();
+    const snapshot: StatusSnapshot = {
+      agentType: 'codex',
+      assistantName: 'test',
+      updatedAt: new Date(now).toISOString(),
+      entries: [],
+      usageRows: freshRows,
+      usageRowsFetchedAt: new Date(now - TEN_MIN + 1000).toISOString(), // 9min59s ago
+    };
+
+    const result = extractCodexUsageRows(snapshot, TEN_MIN, now);
+    expect(result).toEqual(freshRows);
+  });
+
+  it('returns degraded row when usageRowsFetchedAt exceeds maxAgeMs', () => {
+    const now = Date.now();
+    const snapshot: StatusSnapshot = {
+      agentType: 'codex',
+      assistantName: 'test',
+      updatedAt: new Date(now).toISOString(), // heartbeat is fresh
+      entries: [],
+      usageRows: freshRows,
+      usageRowsFetchedAt: new Date(now - TEN_MIN - 1000).toISOString(), // 10min1s ago
+    };
+
+    const result = extractCodexUsageRows(snapshot, TEN_MIN, now);
+    expect(result).toEqual([
+      { name: 'Codex', h5pct: -1, h5reset: '', d7pct: -1, d7reset: '' },
+    ]);
+  });
+
+  it('returns degraded row when usageRowsFetchedAt is missing', () => {
+    const now = Date.now();
+    const snapshot: StatusSnapshot = {
+      agentType: 'codex',
+      assistantName: 'test',
+      updatedAt: new Date(now).toISOString(),
+      entries: [],
+      usageRows: freshRows,
+      // usageRowsFetchedAt intentionally omitted
+    };
+
+    const result = extractCodexUsageRows(snapshot, TEN_MIN, now);
+    expect(result).toEqual([
+      { name: 'Codex', h5pct: -1, h5reset: '', d7pct: -1, d7reset: '' },
+    ]);
+  });
+
+  it('returns empty array when snapshot is undefined', () => {
+    expect(extractCodexUsageRows(undefined, TEN_MIN)).toEqual([]);
+  });
+
+  it('returns empty array when usageRows is empty', () => {
+    const snapshot: StatusSnapshot = {
+      agentType: 'codex',
+      assistantName: 'test',
+      updatedAt: new Date().toISOString(),
+      entries: [],
+      usageRows: [],
+      usageRowsFetchedAt: new Date().toISOString(),
+    };
+    expect(extractCodexUsageRows(snapshot, TEN_MIN)).toEqual([]);
+  });
+});
 
 describe('unified dashboard Claude usage rows', () => {
   it('keeps both Claude accounts visible when one account usage is unavailable', () => {

@@ -6,6 +6,7 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';
@@ -46,7 +47,10 @@ function mapWindow(w?: {
 
 interface UsageCacheEntry {
   usage: ClaudeUsageData;
+  /** Timestamp of last *successful* API fetch (use for stale detection). */
   fetchedAt: number;
+  /** Timestamp of last API *attempt* including failures (use for throttling). */
+  lastAttemptAt?: number;
 }
 
 let usageDiskCache: Record<string, UsageCacheEntry> = {};
@@ -77,13 +81,15 @@ const MIN_FETCH_INTERVAL_MS = 300_000;
 
 async function fetchUsageForToken(
   token: string,
+  accountIndex?: number,
 ): Promise<ClaudeUsageData | null> {
   loadUsageDiskCache();
 
-  // Return cached data if fetched recently (avoid API rate-limit)
+  // Return cached data if attempted recently (avoid API rate-limit)
   const key = cacheKey(token);
   const cached = usageDiskCache[key];
-  if (cached && Date.now() - cached.fetchedAt < MIN_FETCH_INTERVAL_MS) {
+  const lastAttempt = cached?.lastAttemptAt ?? cached?.fetchedAt ?? 0;
+  if (cached && Date.now() - lastAttempt < MIN_FETCH_INTERVAL_MS) {
     return cached.usage;
   }
   const controller = new AbortController();
@@ -101,21 +107,35 @@ async function fetchUsageForToken(
     });
 
     if (res.status === 401) {
-      logger.warn('Claude usage API: token expired or invalid (401)');
+      logger.warn(
+        { account: accountIndex != null ? accountIndex + 1 : '?', tokenKey: key },
+        'Claude usage API: token expired or invalid (401)',
+      );
       return null;
     }
     if (res.status === 429) {
+      const staleMs = cached ? Date.now() - cached.fetchedAt : 0;
       logger.warn(
+        { account: accountIndex != null ? accountIndex + 1 : '?', tokenKey: key, staleMinutes: Math.round(staleMs / 60_000) },
         'Claude usage API: rate limited (429), returning cached data',
       );
-      return usageDiskCache[cacheKey(token)]?.usage ?? null;
+      // Record attempt time so we don't retry for MIN_FETCH_INTERVAL_MS
+      if (cached) {
+        cached.lastAttemptAt = Date.now();
+        saveUsageDiskCache();
+      }
+      return cached?.usage ?? null;
     }
     if (!res.ok) {
       logger.warn(
-        { status: res.status },
+        { account: accountIndex != null ? accountIndex + 1 : '?', status: res.status, tokenKey: key },
         `Claude usage API: unexpected status ${res.status}`,
       );
-      return usageDiskCache[cacheKey(token)]?.usage ?? null;
+      if (cached) {
+        cached.lastAttemptAt = Date.now();
+        saveUsageDiskCache();
+      }
+      return cached?.usage ?? null;
     }
 
     const data = (await res.json()) as UsageApiResponse;
@@ -127,18 +147,29 @@ async function fetchUsageForToken(
       seven_day_opus: mapWindow(data.seven_day_opus),
     };
 
-    // Persist to disk cache
-    usageDiskCache[cacheKey(token)] = { usage: result, fetchedAt: Date.now() };
+    // Persist to disk cache — success: update both fetchedAt and lastAttemptAt
+    const now = Date.now();
+    usageDiskCache[key] = { usage: result, fetchedAt: now, lastAttemptAt: now };
     saveUsageDiskCache();
+
+    logger.debug(
+      { tokenKey: key, h5: result.five_hour?.utilization, d7: result.seven_day?.utilization },
+      'Claude usage API: fetched successfully',
+    );
 
     return result;
   } catch (err) {
     if ((err as Error).name === 'AbortError') {
-      logger.warn('Claude usage API: request timed out');
+      logger.warn({ tokenKey: key }, 'Claude usage API: request timed out');
     } else {
-      logger.warn({ err }, 'Claude usage API: fetch failed');
+      logger.warn({ err, tokenKey: key }, 'Claude usage API: fetch failed');
     }
-    return usageDiskCache[cacheKey(token)]?.usage ?? null;
+    // Record attempt time so we back off on persistent failures
+    if (cached) {
+      cached.lastAttemptAt = Date.now();
+      saveUsageDiskCache();
+    }
+    return cached?.usage ?? null;
   } finally {
     clearTimeout(timer);
   }
@@ -154,7 +185,7 @@ export async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
     logger.debug('No Claude OAuth token available for usage check');
     return null;
   }
-  return fetchUsageForToken(token);
+  return fetchUsageForToken(token, undefined);
 }
 
 export interface ClaudeAccountProfile {
@@ -163,6 +194,32 @@ export interface ClaudeAccountProfile {
 }
 
 const profileCache = new Map<number, ClaudeAccountProfile>();
+
+/**
+ * Read planType from credentials file as fallback when profile API fails.
+ * Account 0: ~/.claude/.credentials.json
+ * Account 1+: ~/.claude-accounts/{index}/.credentials.json
+ */
+function readCredentialsPlanType(accountIndex: number): string | null {
+  try {
+    const credsPath =
+      accountIndex === 0
+        ? path.join(os.homedir(), '.claude', '.credentials.json')
+        : path.join(
+            os.homedir(),
+            '.claude-accounts',
+            String(accountIndex),
+            '.credentials.json',
+          );
+    if (!fs.existsSync(credsPath)) return null;
+    const data = readJsonFile<{
+      claudeAiOauth?: { subscriptionType?: string };
+    }>(credsPath);
+    return data?.claudeAiOauth?.subscriptionType || null;
+  } catch {
+    return null;
+  }
+}
 
 async function fetchProfileForToken(
   token: string,
@@ -192,7 +249,7 @@ async function fetchProfileForToken(
       ? 'max'
       : data.account?.has_claude_pro
         ? 'pro'
-        : orgType.replace('claude_', '') || 'free';
+        : orgType.replace('claude_', '') || '?';
     return {
       email: data.account?.email || '?',
       planType,
@@ -210,7 +267,23 @@ async function fetchProfileForToken(
 export async function fetchAllClaudeProfiles(): Promise<void> {
   const allTokens = getAllTokens();
   for (const t of allTokens) {
-    const profile = await fetchProfileForToken(t.token);
+    let profile = await fetchProfileForToken(t.token);
+
+    // Fallback: if profile API failed or returned unknown plan, use credentials file
+    if (!profile || profile.planType === '?') {
+      const credsPlan = readCredentialsPlanType(t.index);
+      if (credsPlan) {
+        profile = {
+          email: profile?.email || '?',
+          planType: credsPlan,
+        };
+        logger.info(
+          { account: t.index + 1, plan: credsPlan, source: 'credentials' },
+          `Claude account #${t.index + 1}: ${credsPlan} (from credentials)`,
+        );
+      }
+    }
+
     if (profile) {
       profileCache.set(t.index, profile);
       logger.info(
@@ -246,7 +319,7 @@ export async function fetchAllClaudeUsage(): Promise<ClaudeAccountUsage[]> {
     // Single token fallback
     const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
     if (!token) return [];
-    const usage = await fetchUsageForToken(token);
+    const usage = await fetchUsageForToken(token, 0);
     return [
       {
         index: 0,
@@ -260,7 +333,7 @@ export async function fetchAllClaudeUsage(): Promise<ClaudeAccountUsage[]> {
 
   const results: ClaudeAccountUsage[] = [];
   for (const t of allTokens) {
-    const usage = await fetchUsageForToken(t.token);
+    const usage = await fetchUsageForToken(t.token, t.index);
     results.push({
       index: t.index,
       masked: t.masked,

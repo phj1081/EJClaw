@@ -27,6 +27,7 @@ import { logger } from './logger.js';
 import {
   readStatusSnapshots,
   writeStatusSnapshot,
+  type StatusSnapshot,
 } from './status-dashboard.js';
 import type {
   AgentType,
@@ -63,6 +64,14 @@ const STATUS_ICONS: Record<string, string> = {
 
 const CHANNEL_META_REFRESH_MS = 300000;
 const STATUS_SNAPSHOT_MAX_AGE_MS = 60000;
+/** Usage data can be up to 10 min old before considered stale. */
+const USAGE_SNAPSHOT_MAX_AGE_MS = 600_000;
+/**
+ * Renderer refreshes usage cache every 30s (not 5min).
+ * Claude API calls are internally rate-limited to 5min per token,
+ * so this only affects how quickly Codex snapshot data is picked up.
+ */
+const RENDERER_USAGE_REFRESH_MS = 30_000;
 
 let statusMessageId: string | null = null;
 let cachedUsageContent = '';
@@ -70,27 +79,18 @@ let cachedClaudeAccounts: ClaudeAccountUsage[] = [];
 let usageUpdateInProgress = false;
 let channelMetaCache = new Map<string, ChannelMeta>();
 let channelMetaLastRefresh = 0;
-
-function formatResetKST(value: string | number): string {
-  try {
-    const date =
-      typeof value === 'number' ? new Date(value * 1000) : new Date(value);
-    return date.toLocaleString('ko-KR', {
-      timeZone: 'Asia/Seoul',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  } catch {
-    return String(value);
-  }
-}
+let dashboardUpdateLogged = false;
+/** Codex service only: cached usage rows written into the status snapshot. */
+let cachedCodexUsageRows: UsageRow[] = [];
+/** Codex service only: ISO timestamp of last successful usage fetch. */
+let codexUsageFetchedAt: string | null = null;
 
 function formatResetRemaining(value: string | number): string {
+  if (value === '' || value == null) return '';
   try {
     const date =
       typeof value === 'number' ? new Date(value * 1000) : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
     const diffMs = date.getTime() - Date.now();
     if (diffMs <= 0) return ' reset';
     const hours = Math.floor(diffMs / 3_600_000);
@@ -228,6 +228,8 @@ function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
       pendingMessages: boolean;
       pendingTasks: number;
     }>,
+    ...(cachedCodexUsageRows.length > 0 && { usageRows: cachedCodexUsageRows }),
+    ...(codexUsageFetchedAt && { usageRowsFetchedAt: codexUsageFetchedAt }),
   });
 }
 
@@ -421,7 +423,10 @@ async function fetchCodexUsage(
             const byId = message.result.rateLimitsByLimitId;
             finish(
               byId && typeof byId === 'object'
-                ? (Object.values(byId) as CodexRateLimit[])
+                ? Object.entries(byId).map(([id, val]) => ({
+                    ...(val as CodexRateLimit),
+                    limitId: id,
+                  }))
                 : null,
             );
           }
@@ -499,11 +504,34 @@ export function buildClaudeUsageRows(
   });
 }
 
+/**
+ * Extract Codex usage rows from a snapshot, applying staleness check.
+ * Returns real rows if usageRowsFetchedAt is within maxAgeMs, otherwise a
+ * single degraded row. Returns empty array if no usage data present.
+ * Exported for testing.
+ */
+export function extractCodexUsageRows(
+  snapshot: StatusSnapshot | undefined,
+  maxAgeMs: number,
+  now: number = Date.now(),
+): UsageRow[] {
+  if (!snapshot?.usageRows || snapshot.usageRows.length === 0) return [];
+
+  const fetchedAt = snapshot.usageRowsFetchedAt
+    ? new Date(snapshot.usageRowsFetchedAt).getTime()
+    : 0;
+  const usageAge = now - fetchedAt;
+  if (usageAge <= maxAgeMs) {
+    return [...snapshot.usageRows];
+  }
+  // Usage data is stale — return degraded indicator
+  return [{ name: 'Codex', h5pct: -1, h5reset: '', d7pct: -1, d7reset: '' }];
+}
+
 async function buildUsageContent(): Promise<string> {
   const shouldFetchClaudeUsage = USAGE_DASHBOARD_ENABLED;
   let liveClaudeAccounts: ClaudeAccountUsage[] | null = null;
 
-  const codexUsagePromise = fetchCodexUsage();
   if (shouldFetchClaudeUsage) {
     try {
       liveClaudeAccounts = await fetchAllClaudeUsage();
@@ -511,12 +539,11 @@ async function buildUsageContent(): Promise<string> {
       logger.warn({ err }, 'Failed to fetch Claude usage for dashboard');
     }
   }
-  const codexUsage = await codexUsagePromise;
 
   const lines: string[] = ['📊 *사용량*'];
   const bar = (pct: number) => {
-    const filled = Math.max(0, Math.min(10, Math.round(pct / 10)));
-    return '█'.repeat(filled) + '░'.repeat(10 - filled);
+    const filled = Math.max(0, Math.min(5, Math.round(pct / 20)));
+    return '█'.repeat(filled) + '░'.repeat(5 - filled);
   };
 
   const rows: UsageRow[] = [];
@@ -529,60 +556,11 @@ async function buildUsageContent(): Promise<string> {
     rows.push(...buildClaudeUsageRows(cachedClaudeAccounts));
   }
 
-  const codexAccounts = getAllCodexAccounts();
-  if (codexAccounts.length > 1) {
-    // Multi-account: show each account with plan + status
-    for (const acct of codexAccounts) {
-      const icon = acct.isActive ? '*' : acct.isRateLimited ? '!' : ' ';
-      const label = `Codex${acct.index + 1}${icon}`;
-      if (acct.isActive && codexUsage && Array.isArray(codexUsage)) {
-        const relevant = codexUsage.filter(
-          (limit) =>
-            limit.primary.usedPercent > 0 || limit.secondary.usedPercent > 0,
-        );
-        const display = relevant.length > 0 ? relevant : codexUsage.slice(0, 1);
-        for (const limit of display) {
-          rows.push({
-            name: `${label} ${acct.planType}`,
-            h5pct: Math.round(limit.primary.usedPercent),
-            h5reset: formatResetRemaining(limit.primary.resetsAt),
-            d7pct: Math.round(limit.secondary.usedPercent),
-            d7reset: formatResetRemaining(limit.secondary.resetsAt),
-          });
-        }
-      } else {
-        // Show cached usage from last scan
-        const pct = acct.cachedUsagePct != null ? acct.cachedUsagePct : -1;
-        const d7pct =
-          acct.cachedUsageD7Pct != null ? acct.cachedUsageD7Pct : -1;
-        const reset = acct.resetAt || '';
-        const d7reset = acct.resetD7At || '';
-        rows.push({
-          name: `${label} ${acct.planType}`,
-          h5pct: pct,
-          h5reset: reset,
-          d7pct,
-          d7reset,
-        });
-      }
-    }
-  } else if (codexUsage && Array.isArray(codexUsage)) {
-    // Single account: existing behavior
-    const relevant = codexUsage.filter(
-      (limit) =>
-        limit.primary.usedPercent > 0 || limit.secondary.usedPercent > 0,
-    );
-    const display = relevant.length > 0 ? relevant : codexUsage.slice(0, 1);
-    for (const limit of display) {
-      rows.push({
-        name: 'Codex',
-        h5pct: Math.round(limit.primary.usedPercent),
-        h5reset: formatResetKST(limit.primary.resetsAt),
-        d7pct: Math.round(limit.secondary.usedPercent),
-        d7reset: formatResetKST(limit.secondary.resetsAt),
-      });
-    }
-  }
+  // Codex usage: read from Codex service's own status snapshot.
+  // Each service owns its usage data — no cross-service auth access needed.
+  const codexSnapshot = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS)
+    .find(s => s.agentType === 'codex');
+  rows.push(...extractCodexUsageRows(codexSnapshot, USAGE_SNAPSHOT_MAX_AGE_MS));
 
   if (rows.length > 0) {
     // Emoji characters take 2 columns in monospace — count visual width
@@ -592,22 +570,34 @@ async function buildUsageContent(): Promise<string> {
       Math.max(8, ...rows.map((r) => visualWidth(r.name))) + 1;
     const padName = (s: string) =>
       s + ' '.repeat(Math.max(0, maxNameWidth - visualWidth(s)));
+    // Strip whitespace and trailing 'm' from reset strings for compact display
+    const compactReset = (s: string) =>
+      s ? s.replace(/\s+/g, '').replace(/m$/, '') : '';
+
     lines.push('```');
-    lines.push(`${' '.repeat(maxNameWidth)}5-Hour             7-Day`);
+    lines.push(`${' '.repeat(maxNameWidth)}5h        7d`);
     for (const row of rows) {
       const h5 =
         row.h5pct >= 0
-          ? `${bar(row.h5pct)} ${String(row.h5pct).padStart(3)}%`
-          : '  —  ';
+          ? `${bar(row.h5pct)}${String(row.h5pct).padStart(3)}%`
+          : ' —   ';
       const d7 =
         row.d7pct >= 0
-          ? `${bar(row.d7pct)} ${String(row.d7pct).padStart(3)}%`
-          : '  —  ';
-      const reset =
-        row.h5reset || row.d7reset
-          ? `  ${row.h5reset || ''}${row.d7reset ? ` / ${row.d7reset}` : ''}`
-          : '';
-      lines.push(`${padName(row.name)}${h5}   ${d7}${reset}`);
+          ? `${bar(row.d7pct)}${String(row.d7pct).padStart(3)}%`
+          : ' —   ';
+      lines.push(`${padName(row.name)}${h5} ${d7}`);
+      const r5 = compactReset(row.h5reset);
+      const r7 = compactReset(row.d7reset);
+      if (r5 || r7) {
+        // Align reset values under 5h / 7d columns
+        // h5 column starts at maxNameWidth; d7 column starts at maxNameWidth + 9 + 1
+        const d7ColStart = maxNameWidth + 10;
+        let resetLine = ' '.repeat(maxNameWidth);
+        if (r5) resetLine += r5;
+        resetLine = resetLine.padEnd(d7ColStart);
+        if (r7) resetLine += r7;
+        lines.push(resetLine);
+      }
     }
     lines.push('```');
   } else {
@@ -673,8 +663,95 @@ const CODEX_ACCOUNTS_DIR = path.join(os.homedir(), '.codex-accounts');
 const CODEX_FULL_SCAN_INTERVAL = 3_600_000; // 1 hour
 
 /**
+ * Extract usage percentages from the primary 'codex' rate-limit bucket
+ * and update the rotation state for a given account.
+ *
+ * Bucket selection:
+ *  1. limitId === 'codex' → use it (user confirmed bengalfox = Codex Spark, not needed)
+ *  2. No 'codex' bucket + single bucket → use it
+ *  3. No 'codex' bucket + multiple buckets → unknown (show —)
+ *
+ * All buckets are logged at info level for observability.
+ */
+function applyCodexUsageToAccount(
+  usage: CodexRateLimit[],
+  accountIndex: number,
+): void {
+  if (usage.length === 0) return;
+
+  // Log all buckets for observability
+  logger.info(
+    {
+      account: accountIndex + 1,
+      buckets: usage.map((l) => ({
+        id: l.limitId,
+        h5: l.primary.usedPercent,
+        d7: l.secondary.usedPercent,
+      })),
+    },
+    `Codex account #${accountIndex + 1}: ${usage.length} rate-limit bucket(s)`,
+  );
+
+  // Select the effective bucket
+  const primaryBucket = usage.find((l) => l.limitId === 'codex');
+  let effective: CodexRateLimit | null = null;
+
+  if (primaryBucket) {
+    effective = primaryBucket;
+  } else if (usage.length === 1) {
+    effective = usage[0];
+  } else {
+    // Multiple unknown buckets — cannot determine which is authoritative
+    logger.warn(
+      { account: accountIndex + 1 },
+      `Codex account #${accountIndex + 1}: no 'codex' bucket found among ${usage.length} buckets, showing unknown`,
+    );
+    updateCodexAccountUsage(-1, undefined, accountIndex, -1, undefined);
+    return;
+  }
+
+  const pct = Math.round(effective.primary.usedPercent);
+  const d7Pct = Math.round(effective.secondary.usedPercent);
+  const resetStr = effective.primary.resetsAt
+    ? formatResetRemaining(effective.primary.resetsAt)
+    : undefined;
+  const resetD7Str = effective.secondary.resetsAt
+    ? formatResetRemaining(effective.secondary.resetsAt)
+    : undefined;
+  updateCodexAccountUsage(pct, resetStr, accountIndex, d7Pct, resetD7Str);
+  logger.info(
+    { account: accountIndex + 1, bucket: effective.limitId, h5: pct, d7: d7Pct, reset: resetStr },
+    `Codex account #${accountIndex + 1} usage: 5h=${pct}% 7d=${d7Pct}%`,
+  );
+}
+
+/**
+ * Build display-ready usage rows from Codex rotation state.
+ * Called by the Codex service after refreshing usage data.
+ */
+function buildCodexUsageRowsFromState(): UsageRow[] {
+  const codexAccounts = getAllCodexAccounts();
+  if (codexAccounts.length === 0) return [];
+
+  const isMulti = codexAccounts.length > 1;
+  return codexAccounts.map((acct) => {
+    const icon = acct.isActive ? '*' : acct.isRateLimited ? '!' : ' ';
+    const label = isMulti
+      ? `Codex${acct.index + 1}${icon} ${acct.planType}`
+      : 'Codex';
+    return {
+      name: label,
+      h5pct: acct.cachedUsagePct != null ? acct.cachedUsagePct : -1,
+      h5reset: acct.resetAt || '',
+      d7pct: acct.cachedUsageD7Pct != null ? acct.cachedUsageD7Pct : -1,
+      d7reset: acct.resetD7At || '',
+    };
+  });
+}
+
+/**
  * Scan ALL Codex accounts by spawning app-server with each auth.
- * Called on startup and every hour to keep cached usage fresh.
+ * Codex service only — called on startup and every hour.
  */
 async function refreshAllCodexAccountUsage(): Promise<void> {
   const codexAccounts = getAllCodexAccounts();
@@ -685,47 +762,16 @@ async function refreshAllCodexAccountUsage(): Promise<void> {
     'Scanning all Codex accounts for usage data',
   );
 
+  let anySuccess = false;
   for (const acct of codexAccounts) {
     const accountDir = path.join(CODEX_ACCOUNTS_DIR, String(acct.index + 1));
     if (!fs.existsSync(accountDir)) continue;
 
     try {
       const usage = await fetchCodexUsage(accountDir);
-      if (usage && Array.isArray(usage)) {
-        const relevant = usage.filter(
-          (l) => l.primary.usedPercent > 0 || l.secondary.usedPercent > 0,
-        );
-        const display = relevant.length > 0 ? relevant : usage.slice(0, 1);
-        if (usage.length > 0) {
-          // Find max primary (5h) and secondary (7d) across all limits
-          // Always capture reset times from first limit as baseline
-          let maxH5 = 0;
-          let maxD7 = 0;
-          let h5Reset: string | number | undefined = usage[0].primary.resetsAt;
-          let d7Reset: string | number | undefined =
-            usage[0].secondary.resetsAt;
-          for (const limit of usage) {
-            if (limit.primary.usedPercent >= maxH5) {
-              maxH5 = limit.primary.usedPercent;
-              h5Reset = limit.primary.resetsAt;
-            }
-            if (limit.secondary.usedPercent >= maxD7) {
-              maxD7 = limit.secondary.usedPercent;
-              d7Reset = limit.secondary.resetsAt;
-            }
-          }
-          const pct = Math.round(maxH5);
-          const d7Pct = Math.round(maxD7);
-          const resetStr = h5Reset ? formatResetRemaining(h5Reset) : undefined;
-          const resetD7Str = d7Reset
-            ? formatResetRemaining(d7Reset)
-            : undefined;
-          updateCodexAccountUsage(pct, resetStr, acct.index, d7Pct, resetD7Str);
-          logger.info(
-            { account: acct.index + 1, h5: pct, d7: d7Pct, reset: resetStr },
-            `Codex account #${acct.index + 1} usage: 5h=${pct}% 7d=${d7Pct}%`,
-          );
-        }
+      if (usage && Array.isArray(usage) && usage.length > 0) {
+        applyCodexUsageToAccount(usage, acct.index);
+        anySuccess = true;
       }
     } catch (err) {
       logger.debug(
@@ -734,6 +780,38 @@ async function refreshAllCodexAccountUsage(): Promise<void> {
       );
     }
   }
+
+  if (anySuccess) {
+    codexUsageFetchedAt = new Date().toISOString();
+  }
+  cachedCodexUsageRows = buildCodexUsageRowsFromState();
+}
+
+/**
+ * Quick-refresh the active Codex account's usage (5-min interval).
+ * Codex service only — fetches the active account and rebuilds cached rows.
+ */
+async function refreshActiveCodexUsage(): Promise<void> {
+  const codexAccounts = getAllCodexAccounts();
+  if (codexAccounts.length === 0) return;
+
+  const active = codexAccounts.find((a) => a.isActive);
+  if (!active) return;
+
+  const accountDir = path.join(CODEX_ACCOUNTS_DIR, String(active.index + 1));
+  if (!fs.existsSync(accountDir)) return;
+
+  try {
+    const usage = await fetchCodexUsage(accountDir);
+    if (usage && Array.isArray(usage) && usage.length > 0) {
+      applyCodexUsageToAccount(usage, active.index);
+      codexUsageFetchedAt = new Date().toISOString();
+    }
+  } catch (err) {
+    logger.debug({ err }, 'Failed to fetch active Codex account usage');
+  }
+
+  cachedCodexUsageRows = buildCodexUsageRowsFromState();
 }
 
 async function refreshUsageCache(): Promise<void> {
@@ -793,6 +871,13 @@ export async function startUnifiedDashboard(
         const id = await channel.sendAndTrack(statusJid, content);
         if (id) statusMessageId = id;
       }
+      if (!dashboardUpdateLogged) {
+        logger.info(
+          { messageId: statusMessageId, contentLength: content.length },
+          'Dashboard updated successfully (first)',
+        );
+        dashboardUpdateLogged = true;
+      }
     } catch (err) {
       logger.warn({ err }, 'Dashboard update failed');
       statusMessageId = null;
@@ -803,15 +888,17 @@ export async function startUnifiedDashboard(
   await updateStatus();
 
   if (isRenderer) {
-    setInterval(refreshUsageCache, opts.usageUpdateInterval);
-    // Full scan of all Codex accounts on startup + hourly
-    // After scan, refresh dashboard so cached data is visible immediately
-    void refreshAllCodexAccountUsage().then(() => {
-      void refreshUsageCache().then(() => void updateStatus());
-    });
+    // Renderer: refresh usage cache at shorter interval so Codex snapshot
+    // data is picked up quickly. Claude API calls are internally rate-limited
+    // to 5min per token, so this only affects local reads.
+    setInterval(refreshUsageCache, RENDERER_USAGE_REFRESH_MS);
+  } else {
+    // Codex service: fetch own usage and expose via status snapshot.
+    // Active account every usageUpdateInterval; full scan on startup + hourly.
+    void refreshAllCodexAccountUsage().then(() => void refreshActiveCodexUsage());
+    setInterval(() => void refreshActiveCodexUsage(), opts.usageUpdateInterval);
     setInterval(
-      () =>
-        void refreshAllCodexAccountUsage().then(() => void refreshUsageCache()),
+      () => void refreshAllCodexAccountUsage(),
       CODEX_FULL_SCAN_INTERVAL,
     );
   }

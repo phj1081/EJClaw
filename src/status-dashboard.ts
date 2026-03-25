@@ -17,11 +17,22 @@ export interface StatusSnapshotEntry {
   pendingTasks: number;
 }
 
+export interface UsageRowSnapshot {
+  name: string;
+  h5pct: number;
+  h5reset: string;
+  d7pct: number;
+  d7reset: string;
+}
+
 export interface StatusSnapshot {
   agentType: AgentType;
   assistantName: string;
   updatedAt: string;
   entries: StatusSnapshotEntry[];
+  usageRows?: UsageRowSnapshot[];
+  /** ISO timestamp of the last successful usage data fetch (separate from updatedAt heartbeat). */
+  usageRowsFetchedAt?: string;
 }
 
 const STATUS_SNAPSHOT_DIR = path.join(CACHE_DIR, 'status-dashboard');

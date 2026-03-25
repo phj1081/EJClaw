@@ -23,6 +23,8 @@ const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 5000;
 const MAX_CONCURRENT_TASKS =
   MAX_CONCURRENT_AGENTS > 1 ? MAX_CONCURRENT_AGENTS - 1 : 1;
+const POST_CLOSE_SIGTERM_DELAY_MS = 60_000;
+const POST_CLOSE_SIGKILL_DELAY_MS = 75_000;
 
 interface GroupState {
   active: boolean;
@@ -38,6 +40,8 @@ interface GroupState {
   retryCount: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
   retryScheduledAt: number | null;
+  postCloseTermTimer: ReturnType<typeof setTimeout> | null;
+  postCloseKillTimer: ReturnType<typeof setTimeout> | null;
   startedAt: number | null;
 }
 
@@ -78,6 +82,8 @@ export class GroupQueue {
         retryCount: 0,
         retryTimer: null,
         retryScheduledAt: null,
+        postCloseTermTimer: null,
+        postCloseKillTimer: null,
         startedAt: null,
       };
       this.groups.set(groupJid, state);
@@ -293,6 +299,91 @@ export class GroupQueue {
     }
   }
 
+  private clearPostCloseTimers(state: GroupState): void {
+    if (state.postCloseTermTimer) {
+      clearTimeout(state.postCloseTermTimer);
+      state.postCloseTermTimer = null;
+    }
+    if (state.postCloseKillTimer) {
+      clearTimeout(state.postCloseKillTimer);
+      state.postCloseKillTimer = null;
+    }
+  }
+
+  private schedulePostCloseTermination(
+    groupJid: string,
+    state: GroupState,
+    runId: string | null,
+    reason: string,
+  ): void {
+    const proc = state.process;
+    if (!proc || !runId || state.isTaskProcess) {
+      return;
+    }
+
+    const processName = state.processName;
+    const isSameActiveProcess = () =>
+      state.process === proc &&
+      state.currentRunId === runId &&
+      this.isProcessAlive(proc);
+
+    this.clearPostCloseTimers(state);
+
+    state.postCloseTermTimer = setTimeout(() => {
+      state.postCloseTermTimer = null;
+      if (!isSameActiveProcess()) {
+        return;
+      }
+
+      logger.warn(
+        {
+          groupJid,
+          runId,
+          processName,
+          reason,
+          delayMs: POST_CLOSE_SIGTERM_DELAY_MS,
+        },
+        'Force-terminating lingering agent after stdin close request',
+      );
+
+      try {
+        proc.kill('SIGTERM');
+      } catch (err) {
+        logger.warn(
+          { groupJid, runId, processName, err },
+          'Failed to SIGTERM lingering agent after stdin close request',
+        );
+      }
+    }, POST_CLOSE_SIGTERM_DELAY_MS);
+
+    state.postCloseKillTimer = setTimeout(() => {
+      state.postCloseKillTimer = null;
+      if (!isSameActiveProcess()) {
+        return;
+      }
+
+      logger.error(
+        {
+          groupJid,
+          runId,
+          processName,
+          reason,
+          delayMs: POST_CLOSE_SIGKILL_DELAY_MS,
+        },
+        'Force-killing stubborn agent after stdin close request',
+      );
+
+      try {
+        proc.kill('SIGKILL');
+      } catch (err) {
+        logger.warn(
+          { groupJid, runId, processName, err },
+          'Failed to SIGKILL stubborn agent after stdin close request',
+        );
+      }
+    }, POST_CLOSE_SIGKILL_DELAY_MS);
+  }
+
   /**
    * Signal the active agent process to wind down by writing a close sentinel.
    */
@@ -325,6 +416,15 @@ export class GroupQueue {
           err,
         },
         'Failed to signal active agent to close stdin',
+      );
+    }
+
+    if (metadata?.reason === 'output-delivered-close') {
+      this.schedulePostCloseTermination(
+        groupJid,
+        state,
+        metadata.runId ?? state.currentRunId,
+        metadata.reason,
       );
     }
   }
@@ -371,6 +471,7 @@ export class GroupQueue {
       );
       this.scheduleRetry(groupJid, state, runId);
     } finally {
+      this.clearPostCloseTimers(state);
       const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
       logger.info(
         {
@@ -416,6 +517,7 @@ export class GroupQueue {
     } catch (err) {
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
+      this.clearPostCloseTimers(state);
       state.active = false;
       state.isTaskProcess = false;
       state.runningTaskId = null;
@@ -621,6 +723,7 @@ export class GroupQueue {
     }> = [];
 
     for (const [groupJid, state] of this.groups) {
+      this.clearPostCloseTimers(state);
       if (state.retryTimer) {
         clearTimeout(state.retryTimer);
         state.retryTimer = null;
