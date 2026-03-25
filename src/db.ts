@@ -206,7 +206,9 @@ function createSchema(database: Database.Database): void {
   }
 
   try {
-    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN max_duration_ms INTEGER`);
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN max_duration_ms INTEGER`,
+    );
   } catch {
     /* column already exists */
   }
