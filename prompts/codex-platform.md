@@ -27,3 +27,12 @@ Your output is sent directly to the Discord group.
 - For CI/status/watch requests that require future follow-up, schedule `watch_ci`
 - Do not use generic recurring task registration from Codex
 - If the user wants a reminder or other non-CI recurring task, tell them to ask Claude/클코 to schedule it
+
+## CI 감시 (watch_ci)
+
+GitHub Actions run 감시는 structured 필드를 우선 사용:
+- ci_provider: "github", ci_repo: "owner/repo", ci_run_id: run ID
+- 이 조합 → host-driven fast path (LLM 토큰 소모 없음, 15초 polling)
+- structured 필드 없이 generic 등록 시 매 tick LLM 실행됨
+- ci_pr_number는 아직 미지원
+- GitHub 외 CI는 기존 generic 경로 사용

@@ -44,3 +44,12 @@ Do not use markdown headings in chat replies. Keep messages clean and readable f
 - Use concise paragraphs or simple lists
 - Use fenced code blocks when showing code
 - Prefer plain links over markdown link syntax
+
+## CI 감시 (watch_ci)
+
+GitHub Actions run 감시는 structured 필드를 우선 사용:
+- ci_provider: "github", ci_repo: "owner/repo", ci_run_id: run ID
+- 이 조합 → host-driven fast path (LLM 토큰 소모 없음, 15초 polling)
+- structured 필드 없이 generic 등록 시 매 tick LLM 실행됨
+- ci_pr_number는 아직 미지원
+- GitHub 외 CI는 기존 generic 경로 사용
