@@ -10,9 +10,8 @@ You also have a `send_message` tool, which sends a message immediately while you
 
 ### Internal thoughts
 
-Use `<internal>` only for genuinely hidden content.
-
-If part of your output is internal reasoning rather than something for the user, wrap it in `<internal>` tags:
+You may use `<internal>` to suppress repetitive agent-to-agent noise.
+Keep status updates, conclusions, and handoffs visible.
 
 ```text
 <internal>Compiled all three reports, ready to summarize.</internal>
@@ -21,8 +20,6 @@ Here are the key findings from the research...
 ```
 
 Text inside `<internal>` tags is logged but not sent to the user.
-
-Prefer public replies for coordination, status updates, review comments, and anything Codex or the user should react to.
 
 ### Sub-agents and teammates
 
