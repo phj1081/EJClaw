@@ -5,6 +5,9 @@ import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import { formatElapsedKorean } from './utils.js';
 import {
+  normalizeAgentOutputPhase,
+  toVisiblePhase,
+  type AgentOutputPhase,
   type Channel,
   type RegisteredGroup,
   type VisiblePhase,
@@ -117,87 +120,108 @@ export class MessageTurnController {
       );
     }
 
-    if (result.phase === 'intermediate') {
-      if (text) {
-        if (this.progressMessageId) {
-          // Progress exists — update heading (works with or without subagents)
-          this.previousProgressText = this.latestProgressText;
-          this.latestProgressText = text;
-          this.latestProgressTextForFinal = text;
-          this.toolActivities = [];
-          void this.syncTrackedProgressMessage();
-        } else {
-          // No progress yet — buffer (creates on next event)
-          this.bufferProgress(text);
-        }
-      }
-      if (!this.poisonedSessionDetected) {
-        this.resetIdleTimer();
-      }
-      return;
-    }
+    const phase: AgentOutputPhase = normalizeAgentOutputPhase(result.phase);
 
-    if (result.phase === 'tool-activity') {
-      if (result.agentId) {
-        // Subagent tool activity
-        let track = this.subagents.get(result.agentId);
-        if (!track) {
-          track = { label: '작업 중...', activities: [] };
-          this.subagents.set(result.agentId, track);
-        }
+    switch (phase) {
+      case 'intermediate':
         if (text) {
-          const MAX = 2;
-          track.activities.push(text);
-          if (track.activities.length > MAX) {
-            track.activities = track.activities.slice(-MAX);
+          if (this.progressMessageId) {
+            // Progress exists — update heading (works with or without subagents)
+            this.previousProgressText = this.latestProgressText;
+            this.latestProgressText = text;
+            this.latestProgressTextForFinal = text;
+            this.toolActivities = [];
+            void this.syncTrackedProgressMessage();
+          } else {
+            // No progress yet — buffer (creates on next event)
+            this.bufferProgress(text);
           }
         }
-        this.ensureProgressMessageExists();
-        this.ensureProgressTicker();
         if (!this.poisonedSessionDetected) {
           this.resetIdleTimer();
         }
         return;
-      }
-      // Main agent tool activity
-      this.ensureProgressMessageExists();
-      if (text) {
-        this.addToolActivity(text);
-      }
-      if (!this.poisonedSessionDetected) {
-        this.resetIdleTimer();
-      }
-      return;
-    }
 
-    if (result.phase === 'progress') {
-      if (result.agentId) {
-        if (result.agentDone) {
-          const done = this.subagents.get(result.agentId);
-          if (done) {
-            done.label = done.label.replace('🔄', '✅');
-            done.activities = [];
+      case 'tool-activity':
+        if (result.agentId) {
+          // Subagent tool activity
+          let track = this.subagents.get(result.agentId);
+          if (!track) {
+            track = { label: '작업 중...', activities: [] };
+            this.subagents.set(result.agentId, track);
           }
-        } else {
-          const label =
-            text ||
-            (result.agentLabel ? `🔄 ${result.agentLabel}` : '작업 중...');
-          const existing = this.subagents.get(result.agentId);
-          if (existing) {
-            existing.label = label;
-            existing.activities = [];
-          } else {
-            this.subagents.set(result.agentId, { label, activities: [] });
+          if (text) {
+            const MAX = 2;
+            track.activities.push(text);
+            if (track.activities.length > MAX) {
+              track.activities = track.activities.slice(-MAX);
+            }
           }
+          this.ensureProgressMessageExists();
+          this.ensureProgressTicker();
+          if (!this.poisonedSessionDetected) {
+            this.resetIdleTimer();
+          }
+          return;
         }
-        if (!this.latestProgressText) {
-          this.latestProgressText = '작업 중...';
-          this.latestProgressTextForFinal = '작업 중...';
-        }
+        // Main agent tool activity
         this.ensureProgressMessageExists();
-        this.ensureProgressTicker();
-        if (this.progressMessageId) {
-          void this.syncTrackedProgressMessage();
+        if (text) {
+          this.addToolActivity(text);
+        }
+        if (!this.poisonedSessionDetected) {
+          this.resetIdleTimer();
+        }
+        return;
+
+      case 'progress':
+        if (result.agentId) {
+          if (result.agentDone) {
+            const done = this.subagents.get(result.agentId);
+            if (done) {
+              done.label = done.label.replace('🔄', '✅');
+              done.activities = [];
+            }
+          } else {
+            const label =
+              text ||
+              (result.agentLabel ? `🔄 ${result.agentLabel}` : '작업 중...');
+            const existing = this.subagents.get(result.agentId);
+            if (existing) {
+              existing.label = label;
+              existing.activities = [];
+            } else {
+              this.subagents.set(result.agentId, { label, activities: [] });
+            }
+          }
+          if (!this.latestProgressText) {
+            this.latestProgressText = '작업 중...';
+            this.latestProgressTextForFinal = '작업 중...';
+          }
+          this.ensureProgressMessageExists();
+          this.ensureProgressTicker();
+          if (this.progressMessageId) {
+            void this.syncTrackedProgressMessage();
+          }
+          if (!this.poisonedSessionDetected) {
+            this.resetIdleTimer();
+          }
+          if (result.status === 'error') {
+            this.hadError = true;
+          }
+          return;
+        }
+        // Main agent progress
+        if (text) {
+          if (this.progressMessageId) {
+            // Progress message already visible — update heading directly
+            this.previousProgressText = this.latestProgressText;
+            this.latestProgressText = text;
+            this.toolActivities = [];
+            void this.syncTrackedProgressMessage();
+          } else {
+            this.bufferProgress(text);
+          }
         }
         if (!this.poisonedSessionDetected) {
           this.resetIdleTimer();
@@ -206,26 +230,14 @@ export class MessageTurnController {
           this.hadError = true;
         }
         return;
+
+      case 'final':
+        break;
+
+      default: {
+        const exhaustive: never = phase;
+        throw new Error(`Unhandled message turn phase: ${exhaustive}`);
       }
-      // Main agent progress
-      if (text) {
-        if (this.progressMessageId) {
-          // Progress message already visible — update heading directly
-          this.previousProgressText = this.latestProgressText;
-          this.latestProgressText = text;
-          this.toolActivities = [];
-          void this.syncTrackedProgressMessage();
-        } else {
-          this.bufferProgress(text);
-        }
-      }
-      if (!this.poisonedSessionDetected) {
-        this.resetIdleTimer();
-      }
-      if (result.status === 'error') {
-        this.hadError = true;
-      }
-      return;
     }
 
     // Final arrived — flush any buffered progress that isn't the same text,
@@ -235,7 +247,7 @@ export class MessageTurnController {
         // Already sent as intermediate — skip duplicate, just finalize
         this.lastIntermediateText = null;
         await this.finalizeProgressMessage();
-        this.visiblePhase = 'final';
+        this.visiblePhase = toVisiblePhase(phase);
         this.latestProgressTextForFinal = null;
       } else {
         this.lastIntermediateText = null;
@@ -531,7 +543,7 @@ export class MessageTurnController {
   }
 
   private async deliverFinalText(text: string): Promise<void> {
-    this.visiblePhase = 'final';
+    this.visiblePhase = toVisiblePhase('final');
     const delivered = await this.options.deliverFinalText(text);
     if (!delivered) {
       this.producedDeliverySucceeded = false;
@@ -579,14 +591,14 @@ export class MessageTurnController {
         'Updating tracked progress message',
       );
       await this.syncTrackedProgressMessage();
-      this.visiblePhase = 'progress';
+      this.visiblePhase = toVisiblePhase('progress');
       return;
     }
 
     if (!this.options.channel.sendAndTrack) {
       this.latestProgressRendered = rendered;
       await this.options.channel.sendMessage(this.options.chatJid, rendered);
-      this.visiblePhase = 'progress';
+      this.visiblePhase = toVisiblePhase('progress');
       return;
     }
 
@@ -608,7 +620,7 @@ export class MessageTurnController {
       );
       this.latestProgressRendered = rendered;
       await this.options.channel.sendMessage(this.options.chatJid, rendered);
-      this.visiblePhase = 'progress';
+      this.visiblePhase = toVisiblePhase('progress');
       return;
     }
 
@@ -626,13 +638,13 @@ export class MessageTurnController {
       );
       this.latestProgressRendered = rendered;
       this.ensureProgressTicker();
-      this.visiblePhase = 'progress';
+      this.visiblePhase = toVisiblePhase('progress');
       return;
     }
 
     this.latestProgressRendered = rendered;
     await this.options.channel.sendMessage(this.options.chatJid, rendered);
-    this.visiblePhase = 'progress';
+    this.visiblePhase = toVisiblePhase('progress');
   }
 
   private resetIdleTimer(): void {

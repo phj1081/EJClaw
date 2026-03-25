@@ -21,6 +21,28 @@ export type AgentOutputPhase =
 /** Phase as visible in the UI (mapped from AgentOutputPhase). */
 export type VisiblePhase = 'silent' | 'progress' | 'final';
 
+export function normalizeAgentOutputPhase(
+  phase?: AgentOutputPhase,
+): AgentOutputPhase {
+  return phase ?? 'final';
+}
+
+export function toVisiblePhase(phase: AgentOutputPhase): VisiblePhase {
+  switch (phase) {
+    case 'intermediate':
+    case 'tool-activity':
+      return 'silent';
+    case 'progress':
+      return 'progress';
+    case 'final':
+      return 'final';
+    default: {
+      const exhaustive: never = phase;
+      throw new Error(`Unknown agent output phase: ${exhaustive}`);
+    }
+  }
+}
+
 export interface RegisteredGroup {
   name: string;
   folder: string;
