@@ -9,6 +9,7 @@ import {
   setRegisteredGroup,
 } from './db.js';
 import { processTaskIpc, IpcDeps } from './ipc.js';
+import { DEFAULT_WATCH_CI_MAX_DURATION_MS } from './task-watch-status.js';
 import { RegisteredGroup } from './types.js';
 
 // Set up registered groups used across tests
@@ -580,10 +581,30 @@ Check the run.
     const tasks = getAllTasks();
     expect(tasks).toHaveLength(1);
     expect(tasks[0].schedule_type).toBe('interval');
+    expect(tasks[0].max_duration_ms).toBe(DEFAULT_WATCH_CI_MAX_DURATION_MS);
     const nextRun = new Date(tasks[0].next_run!).getTime();
     expect(nextRun).toBeGreaterThanOrEqual(before - 1000);
     expect(nextRun).toBeLessThanOrEqual(Date.now() + 1000);
     expect(deps.nudgeScheduler).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not assign a max duration to regular scheduled tasks', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'regular interval task',
+        schedule_type: 'interval',
+        schedule_value: '60000',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].max_duration_ms).toBeNull();
   });
 
   it('rejects invalid interval (non-numeric)', async () => {

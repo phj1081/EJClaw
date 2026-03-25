@@ -18,6 +18,7 @@ import {
 } from './agent-runner.js';
 import {
   getAllTasks,
+  deleteTask,
   getDueTasks,
   getTaskById,
   logTaskRun,
@@ -122,6 +123,31 @@ export function computeNextRun(task: ScheduledTask): string | null {
   }
 
   return null;
+}
+
+function hasTaskExceededMaxDuration(
+  task: Pick<ScheduledTask, 'id' | 'created_at' | 'max_duration_ms'>,
+  nowMs: number,
+): boolean {
+  if (
+    task.max_duration_ms === null ||
+    task.max_duration_ms === undefined ||
+    !Number.isFinite(task.max_duration_ms) ||
+    task.max_duration_ms <= 0
+  ) {
+    return false;
+  }
+
+  const createdAtMs = new Date(task.created_at).getTime();
+  if (!Number.isFinite(createdAtMs)) {
+    logger.warn(
+      { taskId: task.id, createdAt: task.created_at },
+      'Task has invalid created_at for max duration enforcement',
+    );
+    return false;
+  }
+
+  return nowMs - createdAtMs >= task.max_duration_ms;
 }
 
 export interface SchedulerDependencies {
@@ -795,7 +821,35 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     schedulerTickInFlight = true;
 
     try {
-      const dueTasks = getDueTasks(deps.serviceAgentType || SERVICE_AGENT_TYPE);
+      const agentType = deps.serviceAgentType || SERVICE_AGENT_TYPE;
+      const nowMs = Date.now();
+      const activeTasks = getAllTasks(agentType).filter(
+        (task) => task.status === 'active',
+      );
+
+      for (const task of activeTasks) {
+        const currentTask = getTaskById(task.id);
+        if (!currentTask || currentTask.status !== 'active') {
+          continue;
+        }
+
+        if (!hasTaskExceededMaxDuration(currentTask, nowMs)) {
+          continue;
+        }
+
+        deleteTask(currentTask.id);
+        logger.warn(
+          {
+            taskId: currentTask.id,
+            groupFolder: currentTask.group_folder,
+            maxDurationMs: currentTask.max_duration_ms,
+            createdAt: currentTask.created_at,
+          },
+          'Deleted task that exceeded max duration',
+        );
+      }
+
+      const dueTasks = getDueTasks(agentType);
       if (dueTasks.length > 0) {
         logger.info({ count: dueTasks.length }, 'Found due tasks');
       }

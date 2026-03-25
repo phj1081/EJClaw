@@ -10,6 +10,7 @@ export type WatcherStatusPhase =
 
 export const WATCH_CI_PREFIX = '[BACKGROUND CI WATCH]';
 export const TASK_STATUS_MESSAGE_PREFIX = '\u2063\u2063\u2063';
+export const DEFAULT_WATCH_CI_MAX_DURATION_MS = 24 * 60 * 60 * 1000;
 
 export function isWatchCiTask(task: Pick<ScheduledTask, 'prompt'>): boolean {
   return task.prompt.startsWith(WATCH_CI_PREFIX);

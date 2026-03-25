@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
@@ -27,6 +29,10 @@ import {
   storeMessage,
   updateTask,
 } from './db.js';
+import {
+  resolveTaskRuntimeIpcPath,
+  resolveTaskSessionsPath,
+} from './group-folder.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -410,6 +416,47 @@ describe('task CRUD', () => {
 
     deleteTask('task-3');
     expect(getTaskById('task-3')).toBeUndefined();
+  });
+
+  it('deletes task-scoped IPC and session directories when removing a task', () => {
+    const taskId = 'task-cleanup';
+    const groupFolder = 'cleanup-group';
+    const runtimeIpcDir = resolveTaskRuntimeIpcPath(groupFolder, taskId);
+    const taskSessionsDir = resolveTaskSessionsPath(groupFolder, taskId);
+
+    fs.rmSync(runtimeIpcDir, { recursive: true, force: true });
+    fs.rmSync(taskSessionsDir, { recursive: true, force: true });
+    fs.mkdirSync(runtimeIpcDir, { recursive: true });
+    fs.mkdirSync(taskSessionsDir, { recursive: true });
+
+    createTask({
+      id: taskId,
+      group_folder: groupFolder,
+      chat_jid: 'group@g.us',
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+cleanup
+
+Task ID:
+task-cleanup
+
+Check instructions:
+Check the run.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'group',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    deleteTask(taskId);
+
+    expect(fs.existsSync(runtimeIpcDir)).toBe(false);
+    expect(fs.existsSync(taskSessionsDir)).toBe(false);
   });
 
   it('returns due tasks only for the requested agent type', () => {

@@ -14,7 +14,10 @@ import { AvailableGroup } from './agent-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { isWatchCiTask } from './task-watch-status.js';
+import {
+  DEFAULT_WATCH_CI_MAX_DURATION_MS,
+  isWatchCiTask,
+} from './task-watch-status.js';
 import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
@@ -313,6 +316,9 @@ export async function processTaskIpc(
           group_folder: targetFolder,
           chat_jid: resolvedTargetJid,
           agent_type: targetGroupEntry.agentType || SERVICE_AGENT_TYPE,
+          max_duration_ms: isWatchCiTask({ prompt: data.prompt })
+            ? DEFAULT_WATCH_CI_MAX_DURATION_MS
+            : null,
           prompt: data.prompt,
           schedule_type: scheduleType,
           schedule_value: data.schedule_value,

@@ -72,6 +72,7 @@ export interface ScheduledTask {
   group_folder: string;
   chat_jid: string;
   agent_type: AgentType | null;
+  max_duration_ms?: number | null;
   status_message_id: string | null;
   status_started_at: string | null;
   prompt: string;

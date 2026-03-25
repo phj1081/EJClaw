@@ -838,6 +838,58 @@ Check the run.
     );
   });
 
+  it('deletes active tasks that exceed max duration before they run', async () => {
+    const enqueueTask = vi.fn();
+    createTask({
+      id: 'task-watch-expired',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      max_duration_ms: 60_000,
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 999999
+
+Task ID:
+task-watch-expired
+
+Check instructions:
+Check the run.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'group',
+      next_run: new Date(Date.now() + 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({ 'shared-group': 'session-123' }),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(getTaskById('task-watch-expired')).toBeUndefined();
+    expect(enqueueTask).not.toHaveBeenCalled();
+    expect(runAgentProcessMock).not.toHaveBeenCalled();
+  });
+
   it('isolates both IPC and session state for isolated tasks', async () => {
     const dueAt = new Date(Date.now() - 60_000).toISOString();
     createTask({

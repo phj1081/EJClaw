@@ -9,8 +9,13 @@ import {
   SERVICE_ID,
   STORE_DIR,
 } from './config.js';
-import { isValidGroupFolder } from './group-folder.js';
+import {
+  isValidGroupFolder,
+  resolveTaskRuntimeIpcPath as resolveTaskRuntimeIpcPathFromGroup,
+  resolveTaskSessionsPath as resolveTaskSessionsPathFromGroup,
+} from './group-folder.js';
 import { logger } from './logger.js';
+import { getTaskRuntimeTaskId } from './task-watch-status.js';
 import {
   NewMessage,
   AgentType,
@@ -132,6 +137,7 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT NOT NULL,
       chat_jid TEXT NOT NULL,
       agent_type TEXT,
+      max_duration_ms INTEGER,
       status_message_id TEXT,
       status_started_at TEXT,
       prompt TEXT NOT NULL,
@@ -195,6 +201,12 @@ function createSchema(database: Database.Database): void {
 
   try {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN agent_type TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN max_duration_ms INTEGER`);
   } catch {
     /* column already exists */
   }
@@ -863,24 +875,27 @@ export function createTask(
     | 'last_run'
     | 'last_result'
     | 'agent_type'
+    | 'max_duration_ms'
     | 'status_message_id'
     | 'status_started_at'
   > & {
     agent_type?: AgentType | null;
+    max_duration_ms?: number | null;
     status_message_id?: string | null;
     status_started_at?: string | null;
   },
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_type, status_message_id, status_started_at, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_type, max_duration_ms, status_message_id, status_started_at, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
     task.group_folder,
     task.chat_jid,
     task.agent_type || SERVICE_AGENT_TYPE,
+    task.max_duration_ms ?? null,
     task.status_message_id || null,
     task.status_started_at || null,
     task.prompt,
@@ -1009,9 +1024,40 @@ export function updateTaskStatusTracking(
 }
 
 export function deleteTask(id: string): void {
+  const task = getTaskById(id);
   // Delete child records first (FK constraint)
   db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
   db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+
+  if (!task) return;
+
+  const runtimeTaskId = getTaskRuntimeTaskId(task);
+  if (!runtimeTaskId) return;
+
+  const cleanupTargets = [];
+  try {
+    cleanupTargets.push(
+      resolveTaskRuntimeIpcPathFromGroup(task.group_folder, runtimeTaskId),
+      resolveTaskSessionsPathFromGroup(task.group_folder, runtimeTaskId),
+    );
+  } catch (err) {
+    logger.warn(
+      { taskId: id, groupFolder: task.group_folder, err },
+      'Failed to resolve task-scoped cleanup paths',
+    );
+    return;
+  }
+
+  for (const cleanupPath of cleanupTargets) {
+    try {
+      fs.rmSync(cleanupPath, { recursive: true, force: true });
+    } catch (err) {
+      logger.warn(
+        { taskId: id, cleanupPath, err },
+        'Failed to remove task-scoped runtime artifacts',
+      );
+    }
+  }
 }
 
 export function getDueTasks(
