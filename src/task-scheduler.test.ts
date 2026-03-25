@@ -12,6 +12,14 @@ vi.mock('./provider-fallback.js', () => ({
   detectFallbackTrigger: vi.fn((error?: string | null) => {
     const lower = (error || '').toLowerCase();
     if (
+      lower.includes('does not have access to claude') ||
+      (lower.includes('failed to authenticate') &&
+        lower.includes('403') &&
+        lower.includes('terminated'))
+    ) {
+      return { shouldFallback: true, reason: 'org-access-denied' };
+    }
+    if (
       lower.includes('429') ||
       lower.includes('rate limit') ||
       lower.includes('hit your limit')
@@ -29,6 +37,7 @@ vi.mock('./provider-fallback.js', () => ({
   getFallbackProviderName: vi.fn(() => 'kimi'),
   hasGroupProviderOverride: vi.fn(() => false),
   isFallbackEnabled: vi.fn(() => true),
+  isPrimaryNoFallbackCooldownActive: vi.fn(() => false),
   markPrimaryCooldown: vi.fn(),
 }));
 
@@ -490,6 +499,105 @@ Check the run.
     expect(sendMessage).toHaveBeenCalledWith(
       'shared@g.us',
       'rotated scheduled task auth response',
+    );
+  });
+
+  it('suppresses Claude org access denied banners for scheduled tasks and retries with a rotated account', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-org-access-denied-banner',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'claude-code',
+      prompt: 'claude task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
+    vi.mocked(tokenRotation.rotateToken).mockReturnValueOnce(true);
+
+    (runAgentProcessMock as any)
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            phase: 'intermediate',
+            result:
+              'Your organization does not have access to Claude. Please login again or contact your administrator.',
+          });
+          await onOutput?.({
+            status: 'success',
+            result:
+              'Your organization does not have access to Claude. Please login again or contact your administrator.',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result: 'rotated scheduled task org-access response',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      );
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+    const sendMessage = vi.fn(async () => {});
+
+    startSchedulerLoop({
+      serviceAgentType: 'claude-code',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Claude',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'claude-code',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
+    expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
+    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'rotated scheduled task org-access response',
     );
   });
 

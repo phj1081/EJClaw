@@ -31,6 +31,14 @@ vi.mock('./provider-fallback.js', () => ({
   detectFallbackTrigger: vi.fn((error?: string | null) => {
     const lower = (error || '').toLowerCase();
     if (
+      lower.includes('does not have access to claude') ||
+      (lower.includes('failed to authenticate') &&
+        lower.includes('403') &&
+        lower.includes('terminated'))
+    ) {
+      return { shouldFallback: true, reason: 'org-access-denied' };
+    }
+    if (
       lower.includes('429') ||
       lower.includes('rate limit') ||
       lower.includes('hit your limit')
@@ -48,6 +56,7 @@ vi.mock('./provider-fallback.js', () => ({
   getFallbackProviderName: vi.fn(() => 'kimi'),
   hasGroupProviderOverride: vi.fn(() => false),
   isFallbackEnabled: vi.fn(() => true),
+  isPrimaryNoFallbackCooldownActive: vi.fn(() => false),
   isUsageExhausted: vi.fn(() => false),
   markPrimaryCooldown: vi.fn(),
 }));
@@ -368,6 +377,143 @@ describe('runAgentForGroup Claude rotation', () => {
       undefined,
     );
     expect(outputs).toEqual([]);
+  });
+
+  it('rotates to another Claude account when Claude streams an org access denied banner', async () => {
+    const outputs: string[] = [];
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
+    vi.mocked(tokenRotation.rotateToken).mockReturnValueOnce(true);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'Your organization does not have access to Claude. Please login again or contact your administrator.',
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result:
+            'Your organization does not have access to Claude. Please login again or contact your administrator.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'org access denied 회전 성공 응답',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-org-access-denied-claude',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
+    expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
+    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    expect(outputs).toEqual(['org access denied 회전 성공 응답']);
+  });
+
+  it('stops after all Claude accounts are org-access-denied without falling back to Kimi', async () => {
+    const outputs: string[] = [];
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
+    vi.mocked(tokenRotation.rotateToken)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result:
+            'Your organization does not have access to Claude. Please login again or contact your administrator.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'error',
+          result: null,
+          error: 'Failed to authenticate. API Error: 403 terminated',
+        });
+        return {
+          status: 'error',
+          result: null,
+          error: 'Failed to authenticate. API Error: 403 terminated',
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'Kimi 폴백 응답입니다.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-org-access-denied-no-fallback',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('error');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(2);
+    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
+      'org-access-denied',
+      undefined,
+    );
+    expect(outputs).toEqual([]);
+  });
+
+  it('skips execution entirely when Claude no-fallback cooldown is already active', async () => {
+    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('kimi');
+    vi.mocked(
+      providerFallback.isPrimaryNoFallbackCooldownActive,
+    ).mockReturnValue(true);
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-skip-primary-cooldown',
+    });
+
+    expect(result).toBe('error');
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
   });
 
   it('does not mistake a normal response quoting the banner text for a usage error', async () => {

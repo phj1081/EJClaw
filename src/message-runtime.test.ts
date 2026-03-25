@@ -131,6 +131,7 @@ vi.mock('./provider-fallback.js', () => ({
   getFallbackProviderName: vi.fn(() => 'kimi'),
   hasGroupProviderOverride: vi.fn(() => false),
   isFallbackEnabled: vi.fn(() => true),
+  isPrimaryNoFallbackCooldownActive: vi.fn(() => false),
   markPrimaryCooldown: vi.fn(),
 }));
 

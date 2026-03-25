@@ -40,6 +40,7 @@ import {
   detectFallbackTrigger,
   getActiveProvider,
   getCooldownInfo,
+  isPrimaryNoFallbackCooldownActive,
   markPrimaryCooldown,
   resetFallbackConfig,
 } from './provider-fallback.js';
@@ -131,6 +132,38 @@ describe('provider fallback usage recovery', () => {
     ).toEqual({
       shouldFallback: true,
       reason: 'auth-expired',
+    });
+  });
+
+  it('treats Claude org access denied banners as an org-access-denied fallback trigger', () => {
+    expect(
+      detectFallbackTrigger(
+        'Your organization does not have access to Claude. Please login again or contact your administrator.',
+      ),
+    ).toEqual({
+      shouldFallback: true,
+      reason: 'org-access-denied',
+    });
+  });
+
+  it('treats terminated 403 auth failures as an org-access-denied fallback trigger', () => {
+    expect(
+      detectFallbackTrigger(
+        'Failed to authenticate. API Error: 403 terminated',
+      ),
+    ).toEqual({
+      shouldFallback: true,
+      reason: 'org-access-denied',
+    });
+  });
+
+  it('marks org-access-denied as a no-fallback cooldown reason', () => {
+    markPrimaryCooldown('org-access-denied', 60_000);
+
+    expect(isPrimaryNoFallbackCooldownActive()).toBe(true);
+    expect(getCooldownInfo()).toMatchObject({
+      active: true,
+      reason: 'org-access-denied',
     });
   });
 });

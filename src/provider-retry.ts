@@ -37,7 +37,7 @@ export type RotationOutcome =
   | { type: 'success' }
   | { type: 'error'; message?: string }
   | { type: 'needs-fallback'; trigger: TriggerInfo }
-  | { type: 'no-fallback'; trigger: TriggerInfo }; // usage-exhausted/auth-expired
+  | { type: 'no-fallback'; trigger: TriggerInfo }; // usage-exhausted/auth-expired/org-access-denied
 
 // ── Shared rotation loop ─────────────────────────────────────────
 
@@ -63,7 +63,7 @@ export async function runClaudeRotationLoop(
   ) {
     logger.info(
       { ...logContext, reason: trigger.reason },
-      'Claude rate-limited, retrying with rotated account',
+      'Claude account unavailable, retrying with rotated account',
     );
 
     const attempt = await runAttempt();
@@ -162,10 +162,11 @@ export async function runClaudeRotationLoop(
 
   // ── All tokens exhausted ──
 
-  // Usage exhausted or auth-expired: don't fall back to Kimi
+  // Usage/auth/org access failures: don't fall back to Kimi
   if (
     trigger.reason === 'usage-exhausted' ||
-    trigger.reason === 'auth-expired'
+    trigger.reason === 'auth-expired' ||
+    trigger.reason === 'org-access-denied'
   ) {
     markPrimaryCooldown(trigger.reason, trigger.retryAfterMs);
     logger.info(

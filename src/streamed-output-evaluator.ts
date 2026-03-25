@@ -1,6 +1,7 @@
 import {
   isClaudeAuthError,
   isClaudeAuthExpiredMessage,
+  isClaudeOrgAccessDeniedMessage,
   isClaudeUsageExhaustedMessage,
 } from './agent-error-detection.js';
 import type { AgentOutput } from './agent-runner.js';
@@ -52,6 +53,8 @@ export function evaluateStreamedOutput(
   ) {
     const triggerReason = isClaudeUsageExhaustedMessage(output.result)
       ? 'usage-exhausted'
+      : isClaudeOrgAccessDeniedMessage(output.result)
+        ? 'org-access-denied'
       : isClaudeAuthExpiredMessage(output.result)
         ? 'auth-expired'
         : undefined;

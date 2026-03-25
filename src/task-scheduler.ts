@@ -39,7 +39,7 @@ import {
   getFallbackProviderName,
   hasGroupProviderOverride,
   isFallbackEnabled,
-  isUsageExhausted,
+  isPrimaryNoFallbackCooldownActive,
   markPrimaryCooldown,
 } from './provider-fallback.js';
 import { runClaudeRotationLoop } from './provider-retry.js';
@@ -560,13 +560,17 @@ async function runTask(
           ? await getActiveProvider()
           : 'claude';
 
-    // Already in usage-exhausted cooldown — skip task instead of running on Kimi
-    if (isClaudeAgent && provider !== 'claude' && isUsageExhausted()) {
+    // Already in no-fallback Claude cooldown — skip task instead of running on Kimi
+    if (
+      isClaudeAgent &&
+      provider !== 'claude' &&
+      isPrimaryNoFallbackCooldownActive()
+    ) {
       logger.info(
         { taskId: task.id, group: context.group.name, provider },
-        'Claude usage exhausted (cooldown active), skipping scheduled task',
+        'Claude primary cooldown active, skipping scheduled task',
       );
-      error = 'Claude usage exhausted';
+      error = 'Claude primary cooldown active';
       // Fall through to task completion handling below
     } else {
       const attempt = await runTaskAttempt(provider);

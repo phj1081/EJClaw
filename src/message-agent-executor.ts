@@ -20,7 +20,7 @@ import {
   getFallbackProviderName,
   hasGroupProviderOverride,
   isFallbackEnabled,
-  isUsageExhausted,
+  isPrimaryNoFallbackCooldownActive,
   markPrimaryCooldown,
 } from './provider-fallback.js';
 import { runClaudeRotationLoop } from './provider-retry.js';
@@ -508,11 +508,11 @@ export async function runAgentForGroup(
 
   const provider = canFallback ? await getActiveProvider() : 'claude';
 
-  // Already in usage-exhausted cooldown — log only, no response
-  if (provider !== 'claude' && isUsageExhausted()) {
+  // Already in no-fallback Claude cooldown — log only, no response
+  if (provider !== 'claude' && isPrimaryNoFallbackCooldownActive()) {
     logger.info(
       { chatJid, group: group.name, runId, provider },
-      'Claude usage exhausted (cooldown active), silently skipping',
+      'Claude primary cooldown active, silently skipping',
     );
     return 'error';
   }

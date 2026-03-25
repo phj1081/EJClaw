@@ -59,6 +59,11 @@ let lastUsageAvailabilityCheck: {
 let usageAvailabilityCheckPromise: Promise<
   'available' | 'exhausted' | 'unknown'
 > | null = null;
+const NO_FALLBACK_COOLDOWN_REASONS = new Set([
+  'usage-exhausted',
+  'auth-expired',
+  'org-access-denied',
+]);
 
 const USAGE_RECOVERY_RECHECK_MS = 30_000;
 
@@ -331,6 +336,11 @@ export function isUsageExhausted(): boolean {
   return cooldown?.reason === 'usage-exhausted';
 }
 
+/** Check whether the active primary cooldown should suppress fallback entirely. */
+export function isPrimaryNoFallbackCooldownActive(): boolean {
+  return cooldown ? NO_FALLBACK_COOLDOWN_REASONS.has(cooldown.reason) : false;
+}
+
 /** Get current cooldown info (for diagnostics / status dashboard). */
 export function getCooldownInfo(): {
   active: boolean;
@@ -379,6 +389,7 @@ export function getFallbackEnvOverrides(): Record<string, string> {
  *
  * Triggers:
  *   - 429 / rate limit / too many requests
+ *   - Claude auth/org access failures
  *   - 503 / overloaded (transient provider issue)
  *   - Network / connection errors
  *
@@ -393,7 +404,7 @@ export function detectFallbackTrigger(
   if (!error) return { shouldFallback: false, reason: '' };
 
   // Delegated to shared SSOT — original priority preserved:
-  // 429 first, then auth-expired, then 503/network
+  // 429 first, then Claude auth/org errors, then 503/network
   const common = classifyAgentError(error);
 
   // 429 rate-limit (highest priority)

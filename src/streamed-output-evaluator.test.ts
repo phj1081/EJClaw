@@ -5,6 +5,7 @@ import type { AgentOutput } from './agent-runner.js';
 // ── Mocks ──────────────────────────────────────────────────────
 vi.mock('./agent-error-detection.js', () => ({
   isClaudeUsageExhaustedMessage: vi.fn(() => false),
+  isClaudeOrgAccessDeniedMessage: vi.fn(() => false),
   isClaudeAuthExpiredMessage: vi.fn(() => false),
   isClaudeAuthError: vi.fn(() => false),
 }));
@@ -22,6 +23,7 @@ vi.mock('./codex-token-rotation.js', () => ({
 
 import {
   isClaudeUsageExhaustedMessage,
+  isClaudeOrgAccessDeniedMessage,
   isClaudeAuthExpiredMessage,
   isClaudeAuthError,
 } from './agent-error-detection.js';
@@ -60,6 +62,7 @@ function errorOutput(error: string): AgentOutput {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(isClaudeUsageExhaustedMessage).mockReturnValue(false);
+  vi.mocked(isClaudeOrgAccessDeniedMessage).mockReturnValue(false);
   vi.mocked(isClaudeAuthExpiredMessage).mockReturnValue(false);
   vi.mocked(isClaudeAuthError).mockReturnValue(false);
   vi.mocked(detectFallbackTrigger).mockReturnValue({
@@ -161,6 +164,25 @@ describe('evaluateStreamedOutput', () => {
       );
       expect(result.shouldForwardOutput).toBe(false);
       expect(result.newTrigger).toEqual({ reason: 'auth-expired' });
+    });
+  });
+
+  describe('Claude org-access-denied banner', () => {
+    it('suppresses output and returns newTrigger', () => {
+      vi.mocked(isClaudeOrgAccessDeniedMessage).mockReturnValue(true);
+
+      const result = evaluateStreamedOutput(
+        successOutput(
+          'Your organization does not have access to Claude. Please login again or contact your administrator.',
+        ),
+        freshState(),
+        claudeOpts,
+      );
+      expect(result.shouldForwardOutput).toBe(false);
+      expect(result.newTrigger).toEqual({ reason: 'org-access-denied' });
+      expect(result.state.streamedTriggerReason).toEqual({
+        reason: 'org-access-denied',
+      });
     });
   });
 

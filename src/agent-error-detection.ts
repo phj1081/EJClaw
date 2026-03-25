@@ -54,13 +54,26 @@ export function isClaudeAuthExpiredMessage(text: string): boolean {
   );
 }
 
+export function isClaudeOrgAccessDeniedMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  const hasOrgAccessDeniedMarker = normalized.includes(
+    'does not have access to claude',
+  );
+  const hasRecoveryHint =
+    normalized.includes('please login again') ||
+    normalized.includes('contact your administrator');
+
+  return hasOrgAccessDeniedMarker && hasRecoveryHint;
+}
+
 // ── Rotation decision ───────────────────────────────────────────
 
 export function shouldRotateClaudeToken(reason: string): boolean {
   return (
     reason === '429' ||
     reason === 'usage-exhausted' ||
-    reason === 'auth-expired'
+    reason === 'auth-expired' ||
+    reason === 'org-access-denied'
   );
 }
 
@@ -69,13 +82,14 @@ export function shouldRotateClaudeToken(reason: string): boolean {
 export type ErrorCategory =
   | 'rate-limit'
   | 'auth-expired'
+  | 'org-access-denied'
   | 'overloaded'
   | 'network-error'
   | 'none';
 
 export interface AgentErrorClassification {
   category: ErrorCategory;
-  reason: string; // '429' | 'auth-expired' | 'overloaded' | 'network-error' | ''
+  reason: string; // '429' | 'auth-expired' | 'org-access-denied' | 'overloaded' | 'network-error' | ''
   retryAfterMs?: number;
 }
 
@@ -141,6 +155,19 @@ export function classifyClaudeAuthError(
 ): AgentErrorClassification {
   if (!error) return NONE;
   const lower = error.toLowerCase();
+
+  const hasOrgAccessDeniedMarker =
+    lower.includes('your organization does not have access to claude') ||
+    (lower.includes('does not have access to claude') &&
+      lower.includes('contact your administrator'));
+  const hasTerminated403AuthFailure =
+    lower.includes('failed to authenticate') &&
+    lower.includes('403') &&
+    lower.includes('terminated');
+
+  if (hasOrgAccessDeniedMarker || hasTerminated403AuthFailure) {
+    return { category: 'org-access-denied', reason: 'org-access-denied' };
+  }
 
   if (
     (lower.includes('failed to authenticate') ||
