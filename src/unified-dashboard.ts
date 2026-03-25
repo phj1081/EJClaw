@@ -25,9 +25,10 @@ import {
   mergeClaudeDashboardAccounts,
   type UsageRow,
 } from './dashboard-usage-rows.js';
-import { getAllChats, updateRegisteredGroupName } from './db.js';
+import { getAllChats, getAllTasks, updateRegisteredGroupName } from './db.js';
 import type { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
+import { isWatchCiTask } from './task-watch-status.js';
 import {
   readStatusSnapshots,
   writeStatusSnapshot,
@@ -37,6 +38,7 @@ import type {
   Channel,
   ChannelMeta,
   RegisteredGroup,
+  ScheduledTask,
 } from './types.js';
 
 export interface UnifiedDashboardOptions {
@@ -80,6 +82,43 @@ let dashboardUpdateLogged = false;
 let cachedCodexUsageRows: UsageRow[] = [];
 /** Codex service only: ISO timestamp of last successful usage fetch. */
 let codexUsageFetchedAt: string | null = null;
+
+export interface WatcherTaskSummary {
+  active: number;
+  paused: number;
+}
+
+export function summarizeWatcherTasks(
+  tasks: Array<Pick<ScheduledTask, 'prompt' | 'status'>>,
+): WatcherTaskSummary {
+  let active = 0;
+  let paused = 0;
+
+  for (const task of tasks) {
+    if (!isWatchCiTask(task)) continue;
+    if (task.status === 'active') active += 1;
+    if (task.status === 'paused') paused += 1;
+  }
+
+  return { active, paused };
+}
+
+export function formatStatusHeader(args: {
+  totalActive: number;
+  totalRooms: number;
+  watchers: WatcherTaskSummary;
+}): string {
+  const parts = [
+    `**📊 에이전트 상태** — 활성 ${args.totalActive} / ${args.totalRooms}`,
+    `감시 ${args.watchers.active}`,
+  ];
+
+  if (args.watchers.paused > 0) {
+    parts.push(`일시정지 ${args.watchers.paused}`);
+  }
+
+  return parts.join(' | ');
+}
 
 function findDiscordChannel(channels: Channel[]): Channel | undefined {
   return channels.find(
@@ -212,6 +251,7 @@ function buildStatusContent(): string {
   if (!STATUS_SHOW_ROOMS) return '';
 
   const snapshots = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS);
+  const watcherSummary = summarizeWatcherTasks(getAllTasks());
   const chatNameByJid = new Map(
     getAllChats().map((chat) => [chat.jid, chat.name]),
   );
@@ -313,7 +353,11 @@ function buildStatusContent(): string {
     }
   }
 
-  const header = `**📊 에이전트 상태** — 활성 ${totalActive} / ${totalRooms}`;
+  const header = formatStatusHeader({
+    totalActive,
+    totalRooms,
+    watchers: watcherSummary,
+  });
   const sections = renderCategorizedRoomSections({
     lines: roomLines,
     showCategoryHeaders: channelMetaCache.size > 0,
