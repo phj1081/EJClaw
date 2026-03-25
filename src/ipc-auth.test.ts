@@ -588,6 +588,43 @@ Check the run.
     expect(deps.nudgeScheduler).toHaveBeenCalledTimes(1);
   });
 
+  it('persists structured GitHub watch metadata for host-driven watchers', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 654321
+
+Task ID:
+task-watch-github
+
+Check instructions:
+Managed by host-driven watcher.
+        `.trim(),
+        schedule_type: 'interval',
+        schedule_value: '15000',
+        ci_provider: 'github',
+        ci_metadata: JSON.stringify({
+          repo: 'owner/repo',
+          run_id: 654321,
+        }),
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].ci_provider).toBe('github');
+    expect(tasks[0].ci_metadata).toContain('owner/repo');
+    expect(tasks[0].max_duration_ms).toBe(DEFAULT_WATCH_CI_MAX_DURATION_MS);
+  });
+
   it('does not assign a max duration to regular scheduled tasks', async () => {
     await processTaskIpc(
       {

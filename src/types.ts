@@ -72,6 +72,8 @@ export interface ScheduledTask {
   group_folder: string;
   chat_jid: string;
   agent_type: AgentType | null;
+  ci_provider?: 'github' | null;
+  ci_metadata?: string | null;
   max_duration_ms?: number | null;
   status_message_id: string | null;
   status_started_at: string | null;

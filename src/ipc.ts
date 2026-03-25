@@ -286,6 +286,8 @@ export async function processTaskIpc(
     schedule_type?: string;
     schedule_value?: string;
     context_mode?: string;
+    ci_provider?: 'github';
+    ci_metadata?: string;
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
@@ -404,6 +406,8 @@ export async function processTaskIpc(
           group_folder: targetFolder,
           chat_jid: resolvedTargetJid,
           agent_type: targetGroupEntry.agentType || SERVICE_AGENT_TYPE,
+          ci_provider: data.ci_provider ?? null,
+          ci_metadata: data.ci_metadata ?? null,
           max_duration_ms: isWatchCiTask({ prompt: data.prompt })
             ? DEFAULT_WATCH_CI_MAX_DURATION_MS
             : null,

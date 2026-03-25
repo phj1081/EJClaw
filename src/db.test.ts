@@ -400,6 +400,36 @@ describe('task CRUD', () => {
     expect(getTaskById('task-2')!.status).toBe('paused');
   });
 
+  it('stores and updates GitHub CI task metadata', () => {
+    createTask({
+      id: 'task-github',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      ci_provider: 'github',
+      ci_metadata: JSON.stringify({ repo: 'owner/repo', run_id: 123456 }),
+      prompt: 'github watcher',
+      schedule_type: 'interval',
+      schedule_value: '15000',
+      context_mode: 'isolated',
+      next_run: '2024-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    expect(getTaskById('task-github')?.ci_provider).toBe('github');
+    expect(getTaskById('task-github')?.ci_metadata).toContain('owner/repo');
+
+    updateTask('task-github', {
+      ci_metadata: JSON.stringify({
+        repo: 'owner/repo',
+        run_id: 123456,
+        poll_count: 2,
+      }),
+    });
+
+    expect(getTaskById('task-github')?.ci_metadata).toContain('"poll_count":2');
+  });
+
   it('deletes a task and its run logs', () => {
     createTask({
       id: 'task-3',

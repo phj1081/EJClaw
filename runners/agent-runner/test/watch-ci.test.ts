@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCiWatchPrompt,
   DEFAULT_WATCH_CI_CONTEXT_MODE,
+  DEFAULT_GITHUB_WATCH_CI_INTERVAL_SECONDS,
   normalizeWatchCiIntervalSeconds,
 } from '../src/watch-ci.js';
 
@@ -35,6 +36,12 @@ describe('watch-ci helpers', () => {
     expect(normalizeWatchCiIntervalSeconds()).toBe(60);
     expect(normalizeWatchCiIntervalSeconds(30)).toBe(30);
     expect(normalizeWatchCiIntervalSeconds(600)).toBe(600);
+    expect(
+      normalizeWatchCiIntervalSeconds(undefined, { ciProvider: 'github' }),
+    ).toBe(DEFAULT_GITHUB_WATCH_CI_INTERVAL_SECONDS);
+    expect(normalizeWatchCiIntervalSeconds(10, { ciProvider: 'github' })).toBe(
+      10,
+    );
   });
 
   it('rejects invalid poll intervals', () => {
@@ -45,5 +52,8 @@ describe('watch-ci helpers', () => {
       /between 30 and 3600/i,
     );
     expect(() => normalizeWatchCiIntervalSeconds(30.5)).toThrow(/integer/i);
+    expect(() =>
+      normalizeWatchCiIntervalSeconds(9, { ciProvider: 'github' }),
+    ).toThrow(/between 10 and 3600/i);
   });
 });

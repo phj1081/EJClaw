@@ -16,6 +16,12 @@ export function isWatchCiTask(task: Pick<ScheduledTask, 'prompt'>): boolean {
   return task.prompt.startsWith(WATCH_CI_PREFIX);
 }
 
+export function isGitHubCiTask(
+  task: Pick<ScheduledTask, 'ci_provider'>,
+): boolean {
+  return task.ci_provider === 'github';
+}
+
 export function isTaskStatusControlMessage(content: string): boolean {
   return content.startsWith(TASK_STATUS_MESSAGE_PREFIX);
 }

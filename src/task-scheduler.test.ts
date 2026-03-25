@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { runAgentProcessMock, writeTasksSnapshotMock, loggerDebugMock } =
+const {
+  runAgentProcessMock,
+  writeTasksSnapshotMock,
+  loggerDebugMock,
+  checkGitHubActionsRunMock,
+} =
   vi.hoisted(() => ({
     runAgentProcessMock: vi.fn(async () => ({
       status: 'success' as const,
@@ -8,6 +13,16 @@ const { runAgentProcessMock, writeTasksSnapshotMock, loggerDebugMock } =
     })),
     writeTasksSnapshotMock: vi.fn(),
     loggerDebugMock: vi.fn(),
+    checkGitHubActionsRunMock: vi.fn(
+      async (): Promise<{
+        terminal: boolean;
+        resultSummary: string;
+        completionMessage?: string;
+      }> => ({
+        terminal: false,
+        resultSummary: 'GitHub Actions run 123 is in_progress',
+      }),
+    ),
   }));
 
 vi.mock('./provider-fallback.js', () => ({
@@ -90,6 +105,10 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
+vi.mock('./github-ci.js', () => ({
+  checkGitHubActionsRun: checkGitHubActionsRunMock,
+}));
+
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import * as providerFallback from './provider-fallback.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
@@ -113,6 +132,11 @@ describe('task scheduler', () => {
     runAgentProcessMock.mockClear();
     writeTasksSnapshotMock.mockClear();
     loggerDebugMock.mockClear();
+    checkGitHubActionsRunMock.mockClear();
+    checkGitHubActionsRunMock.mockResolvedValue({
+      terminal: false,
+      resultSummary: 'GitHub Actions run 123 is in_progress',
+    });
     vi.mocked(providerFallback.markPrimaryCooldown).mockClear();
     vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
     vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
@@ -836,6 +860,148 @@ Check the run.
       expect.any(Array),
       'task-watch-runtime',
     );
+  });
+
+  it('uses the host-driven GitHub watcher path without spawning an agent', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-github-running',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      ci_provider: 'github',
+      ci_metadata: JSON.stringify({
+        repo: 'owner/repo',
+        run_id: 123456,
+      }),
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 123456
+
+Task ID:
+task-github-running
+
+Check instructions:
+Managed by host-driven watcher.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '15000',
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(checkGitHubActionsRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'task-github-running',
+        ci_provider: 'github',
+      }),
+    );
+    expect(runAgentProcessMock).not.toHaveBeenCalled();
+
+    const task = getTaskById('task-github-running');
+    expect(task).toBeDefined();
+    expect(task?.next_run).not.toBe(dueAt);
+  });
+
+  it('sends a final message and deletes terminal GitHub watcher tasks', async () => {
+    checkGitHubActionsRunMock.mockResolvedValueOnce({
+      terminal: true,
+      resultSummary: '성공: owner/repo run 654321',
+      completionMessage: 'CI 완료: GitHub Actions run 654321\n판정: 성공',
+    });
+
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-github-complete',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      ci_provider: 'github',
+      ci_metadata: JSON.stringify({
+        repo: 'owner/repo',
+        run_id: 654321,
+      }),
+      prompt: `
+[BACKGROUND CI WATCH]
+
+Watch target:
+GitHub Actions run 654321
+
+Task ID:
+task-github-complete
+
+Check instructions:
+Managed by host-driven watcher.
+      `.trim(),
+      schedule_type: 'interval',
+      schedule_value: '15000',
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const sendMessage = vi.fn(async () => {});
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+
+    startSchedulerLoop({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'CI 완료: GitHub Actions run 654321\n판정: 성공',
+    );
+    expect(runAgentProcessMock).not.toHaveBeenCalled();
+    expect(getTaskById('task-github-complete')).toBeUndefined();
   });
 
   it('deletes active tasks that exceed max duration before they run', async () => {

@@ -137,6 +137,8 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT NOT NULL,
       chat_jid TEXT NOT NULL,
       agent_type TEXT,
+      ci_provider TEXT,
+      ci_metadata TEXT,
       max_duration_ms INTEGER,
       status_message_id TEXT,
       status_started_at TEXT,
@@ -201,6 +203,18 @@ function createSchema(database: Database.Database): void {
 
   try {
     database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN agent_type TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN ci_provider TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN ci_metadata TEXT`);
   } catch {
     /* column already exists */
   }
@@ -877,11 +891,15 @@ export function createTask(
     | 'last_run'
     | 'last_result'
     | 'agent_type'
+    | 'ci_provider'
+    | 'ci_metadata'
     | 'max_duration_ms'
     | 'status_message_id'
     | 'status_started_at'
   > & {
     agent_type?: AgentType | null;
+    ci_provider?: ScheduledTask['ci_provider'];
+    ci_metadata?: string | null;
     max_duration_ms?: number | null;
     status_message_id?: string | null;
     status_started_at?: string | null;
@@ -889,14 +907,16 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_type, max_duration_ms, status_message_id, status_started_at, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_type, ci_provider, ci_metadata, max_duration_ms, status_message_id, status_started_at, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
     task.group_folder,
     task.chat_jid,
     task.agent_type || SERVICE_AGENT_TYPE,
+    task.ci_provider ?? null,
+    task.ci_metadata ?? null,
     task.max_duration_ms ?? null,
     task.status_message_id || null,
     task.status_started_at || null,
@@ -960,6 +980,7 @@ export function updateTask(
       | 'next_run'
       | 'status'
       | 'suspended_until'
+      | 'ci_metadata'
     >
   >,
 ): void {
@@ -989,6 +1010,10 @@ export function updateTask(
   if (updates.suspended_until !== undefined) {
     fields.push('suspended_until = ?');
     values.push(updates.suspended_until);
+  }
+  if (updates.ci_metadata !== undefined) {
+    fields.push('ci_metadata = ?');
+    values.push(updates.ci_metadata);
   }
 
   if (fields.length === 0) return;

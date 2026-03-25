@@ -71,9 +71,11 @@ import {
 import {
   getTaskQueueJid,
   getTaskRuntimeTaskId,
+  isGitHubCiTask,
   shouldUseTaskScopedSession,
 } from './task-watch-status.js';
 import { AgentType, RegisteredGroup, ScheduledTask } from './types.js';
+import { checkGitHubActionsRun } from './github-ci.js';
 export {
   extractWatchCiTarget,
   getTaskQueueJid,
@@ -779,6 +781,94 @@ async function runTask(
   updateTaskAfterRun(task.id, nextRun, resultSummary);
 }
 
+async function runGithubCiTask(
+  task: ScheduledTask,
+  deps: SchedulerDependencies,
+): Promise<void> {
+  const startTime = Date.now();
+  let result: string | null = null;
+  let error: string | null = null;
+  let completedAndDeleted = false;
+  const statusTracker = createTaskStatusTracker(task, {
+    sendTrackedMessage: deps.sendTrackedMessage,
+    editTrackedMessage: deps.editTrackedMessage,
+  });
+
+  try {
+    await statusTracker.update('checking');
+
+    const check = await checkGitHubActionsRun(task);
+    result = check.resultSummary;
+
+    if (check.terminal) {
+      await statusTracker.update('completed');
+      if (check.completionMessage) {
+        await deps.sendMessage(task.chat_jid, check.completionMessage);
+      }
+      deleteTask(task.id);
+      completedAndDeleted = true;
+      logger.info(
+        {
+          taskId: task.id,
+          groupFolder: task.group_folder,
+          durationMs: Date.now() - startTime,
+        },
+        'GitHub CI watcher completed and deleted',
+      );
+    } else {
+      logger.info(
+        {
+          taskId: task.id,
+          groupFolder: task.group_folder,
+          result,
+        },
+        'GitHub CI watcher checked non-terminal run',
+      );
+    }
+  } catch (err) {
+    error = getErrorMessage(err);
+    logger.error({ taskId: task.id, error }, 'GitHub CI watcher failed');
+  }
+
+  const durationMs = Date.now() - startTime;
+  const currentTask = getTaskById(task.id);
+  const nextRun = currentTask ? computeNextRun(task) : null;
+
+  if (!currentTask) {
+    if (!completedAndDeleted) {
+      await statusTracker.update('completed');
+    }
+    logger.debug(
+      { taskId: task.id },
+      'GitHub CI watcher deleted during execution, skipping persistence',
+    );
+    return;
+  }
+
+  if (error) {
+    await statusTracker.update('retrying', nextRun);
+  } else if (nextRun) {
+    await statusTracker.update('waiting', nextRun);
+  } else {
+    await statusTracker.update('completed');
+  }
+
+  logTaskRun({
+    task_id: task.id,
+    run_at: new Date().toISOString(),
+    duration_ms: durationMs,
+    status: error ? 'error' : 'success',
+    result,
+    error,
+  });
+
+  updateTaskAfterRun(
+    task.id,
+    nextRun,
+    error ? `Error: ${error}` : result || 'Completed',
+  );
+}
+
 let schedulerRunning = false;
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
 let schedulerLoopFn: (() => Promise<void>) | null = null;
@@ -864,7 +954,10 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         deps.queue.enqueueTask(
           getTaskQueueJid(currentTask),
           currentTask.id,
-          () => runTask(currentTask, deps),
+          () =>
+            isGitHubCiTask(currentTask)
+              ? runGithubCiTask(currentTask, deps)
+              : runTask(currentTask, deps),
         );
       }
     } catch (err) {

@@ -169,21 +169,53 @@ server.tool(
   {
     target: z
       .string()
+      .optional()
       .describe(
         'What to watch, for example "PR #123 checks" or "GitHub Actions run 987654321".',
       ),
     check_instructions: z
       .string()
+      .optional()
       .describe(
         'Exact steps or commands to check status and what details matter when it finishes.',
+      ),
+    ci_provider: z
+      .enum(['github'])
+      .optional()
+      .describe(
+        'Optional structured CI provider selector. When set to "github", the watcher can use a host-driven fast path.',
+      ),
+    ci_repo: z
+      .string()
+      .optional()
+      .describe(
+        'Optional GitHub repository in "owner/repo" format for host-driven GitHub watchers.',
+      ),
+    ci_run_id: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        'Optional GitHub Actions run ID for host-driven GitHub watchers.',
+      ),
+    ci_pr_number: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        'Optional PR number reserved for future GitHub PR-check watchers.',
       ),
     poll_interval_seconds: z
       .number()
       .int()
-      .min(30)
+      .min(10)
       .max(3600)
-      .default(60)
-      .describe('How often to poll in seconds. Default 60, minimum 30.'),
+      .optional()
+      .describe(
+        'How often to poll in seconds. Defaults to 60 for generic watchers and 15 for GitHub host-driven watchers. Generic watchers require 30+, GitHub host-driven watchers allow 10+.',
+      ),
     context_mode: z
       .enum(['group', 'isolated'])
       .default(DEFAULT_WATCH_CI_CONTEXT_MODE)
@@ -198,9 +230,59 @@ server.tool(
       ),
   },
   async (args) => {
+    const isGitHubWatcher = args.ci_provider === 'github';
+    const target =
+      args.target ||
+      (isGitHubWatcher && args.ci_run_id
+        ? `GitHub Actions run ${args.ci_run_id}`
+        : undefined);
+    const checkInstructions =
+      args.check_instructions ||
+      (isGitHubWatcher
+        ? 'This watcher is handled by the host-driven GitHub Actions path. Do not rely on the prompt for execution.'
+        : undefined);
+
+    if (!target) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'target is required unless structured GitHub watcher fields are provided.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    if (!checkInstructions) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'check_instructions is required for generic CI watchers.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    if (isGitHubWatcher && (!args.ci_repo || !args.ci_run_id)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'GitHub host-driven watchers require both ci_repo and ci_run_id.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
     let pollSeconds: number;
     try {
-      pollSeconds = normalizeWatchCiIntervalSeconds(args.poll_interval_seconds);
+      pollSeconds = normalizeWatchCiIntervalSeconds(args.poll_interval_seconds, {
+        ciProvider: args.ci_provider,
+      });
     } catch (error) {
       return {
         content: [
@@ -218,8 +300,8 @@ server.tool(
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const prompt = buildCiWatchPrompt({
       taskId,
-      target: args.target,
-      checkInstructions: args.check_instructions,
+      target,
+      checkInstructions,
     });
 
     const data = {
@@ -229,6 +311,13 @@ server.tool(
       schedule_type: 'interval' as const,
       schedule_value: String(pollSeconds * 1000),
       context_mode: args.context_mode || DEFAULT_WATCH_CI_CONTEXT_MODE,
+      ci_provider: args.ci_provider,
+      ci_metadata: isGitHubWatcher
+        ? JSON.stringify({
+            repo: args.ci_repo,
+            run_id: args.ci_run_id,
+          })
+        : undefined,
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),

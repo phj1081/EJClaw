@@ -1,7 +1,13 @@
 export const DEFAULT_WATCH_CI_INTERVAL_SECONDS = 60;
 export const MIN_WATCH_CI_INTERVAL_SECONDS = 30;
+export const DEFAULT_GITHUB_WATCH_CI_INTERVAL_SECONDS = 15;
+export const MIN_GITHUB_WATCH_CI_INTERVAL_SECONDS = 10;
 export const MAX_WATCH_CI_INTERVAL_SECONDS = 3600;
 export const DEFAULT_WATCH_CI_CONTEXT_MODE = 'isolated';
+
+export interface NormalizeWatchCiIntervalOptions {
+  ciProvider?: 'github';
+}
 
 export interface BuildCiWatchPromptArgs {
   taskId: string;
@@ -9,9 +15,20 @@ export interface BuildCiWatchPromptArgs {
   checkInstructions: string;
 }
 
-export function normalizeWatchCiIntervalSeconds(seconds?: number): number {
+export function normalizeWatchCiIntervalSeconds(
+  seconds?: number,
+  options?: NormalizeWatchCiIntervalOptions,
+): number {
+  const isGitHub = options?.ciProvider === 'github';
+  const defaultSeconds = isGitHub
+    ? DEFAULT_GITHUB_WATCH_CI_INTERVAL_SECONDS
+    : DEFAULT_WATCH_CI_INTERVAL_SECONDS;
+  const minSeconds = isGitHub
+    ? MIN_GITHUB_WATCH_CI_INTERVAL_SECONDS
+    : MIN_WATCH_CI_INTERVAL_SECONDS;
+
   if (seconds === undefined) {
-    return DEFAULT_WATCH_CI_INTERVAL_SECONDS;
+    return defaultSeconds;
   }
 
   if (!Number.isInteger(seconds)) {
@@ -19,11 +36,11 @@ export function normalizeWatchCiIntervalSeconds(seconds?: number): number {
   }
 
   if (
-    seconds < MIN_WATCH_CI_INTERVAL_SECONDS ||
+    seconds < minSeconds ||
     seconds > MAX_WATCH_CI_INTERVAL_SECONDS
   ) {
     throw new Error(
-      `poll_interval_seconds must be between ${MIN_WATCH_CI_INTERVAL_SECONDS} and ${MAX_WATCH_CI_INTERVAL_SECONDS}.`,
+      `poll_interval_seconds must be between ${minSeconds} and ${MAX_WATCH_CI_INTERVAL_SECONDS}.`,
     );
   }
 
