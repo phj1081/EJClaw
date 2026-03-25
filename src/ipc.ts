@@ -75,9 +75,9 @@ export function quarantineClaimedIpcFiles(
   }
 
   const movedPaths: string[] = [];
-  for (const file of fs.readdirSync(processingDir).filter((f) =>
-    f.endsWith('.json'),
-  )) {
+  for (const file of fs
+    .readdirSync(processingDir)
+    .filter((f) => f.endsWith('.json'))) {
     const claimedPath = path.join(processingDir, file);
     const errorPath = buildIpcErrorPath(errorDir, prefix, file);
     fs.renameSync(claimedPath, errorPath);
