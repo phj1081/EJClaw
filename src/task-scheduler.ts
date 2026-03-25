@@ -327,11 +327,15 @@ async function runTask(
           if (streamedOutput.phase === 'progress') {
             return;
           }
-          const evaluation = evaluateStreamedOutput(streamedOutput, streamedState, {
-            agentType: isClaudeAgent ? 'claude' : 'codex',
-            provider,
-            shortCircuitTriggeredErrors: true,
-          });
+          const evaluation = evaluateStreamedOutput(
+            streamedOutput,
+            streamedState,
+            {
+              agentType: isClaudeAgent ? 'claude' : 'codex',
+              provider,
+              shortCircuitTriggeredErrors: true,
+            },
+          );
           streamedState = evaluation.state;
 
           if (
@@ -535,7 +539,9 @@ async function runTask(
           if (retryTrigger.shouldRotate) {
             trigger = { reason: retryTrigger.reason };
             lastRotationMessage =
-              retryAttempt.attemptError || retryAttempt.output.error || undefined;
+              retryAttempt.attemptError ||
+              retryAttempt.output.error ||
+              undefined;
             continue;
           }
           return;
