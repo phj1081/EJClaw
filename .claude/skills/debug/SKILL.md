@@ -1,11 +1,11 @@
 ---
 name: debug
-description: Debug NanoClaw runtime issues on the current Discord-only, host-process architecture.
+description: Debug EJClaw runtime issues on the current Discord-only, host-process architecture.
 ---
 
-# NanoClaw Debugging
+# EJClaw Debugging
 
-현재 기준 NanoClaw는 디스코드 전용이고, 에이전트는 컨테이너가 아니라 호스트 프로세스로 실행됩니다. 디버깅은 `채널`, `서비스`, `러너`, `DB 등록`, `자격 증명` 순서로 좁혀갑니다.
+현재 기준 EJClaw는 디스코드 전용이고, 에이전트는 컨테이너가 아니라 호스트 프로세스로 실행됩니다. 디버깅은 `채널`, `서비스`, `러너`, `DB 등록`, `자격 증명` 순서로 좁혀갑니다.
 
 ## 빠른 점검 순서
 
@@ -20,8 +20,8 @@ description: Debug NanoClaw runtime issues on the current Discord-only, host-pro
    ```
 3. 런타임 로그 확인
    ```bash
-   tail -f logs/nanoclaw.log
-   tail -f logs/nanoclaw.error.log
+   tail -f logs/ejclaw.log
+   tail -f logs/ejclaw.error.log
    ls -t groups/*/logs/agent-*.log | head
    ```
 4. 러너 빌드 확인
@@ -68,7 +68,7 @@ ls -t groups/*/logs/agent-*.log | head -3
 
 ```bash
 grep -nE '^(GROQ_API_KEY|OPENAI_API_KEY)=' .env
-tail -f logs/nanoclaw.log | grep -iE 'transcri|audio|whisper|groq'
+tail -f logs/ejclaw.log | grep -iE 'transcri|audio|whisper|groq'
 ```
 
 - 기본 우선순위는 Groq Whisper, 없으면 OpenAI Whisper fallback입니다.

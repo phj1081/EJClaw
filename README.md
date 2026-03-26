@@ -2,7 +2,7 @@
 
 ![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.81-blueviolet)
 ![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.115.0-green)
-![Node](https://img.shields.io/badge/Node-24+-339933?logo=nodedotjs&logoColor=white)
+![Node](https://img.shields.io/badge/Node-20+-339933?logo=nodedotjs&logoColor=white)
 ![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
 
 Dual-agent AI assistant (Claude Code + Codex) over Discord.
@@ -55,7 +55,7 @@ Each agent has access to:
 ### Prerequisites
 
 - Linux (Ubuntu 22.04+) or macOS
-- Node.js 24+ (fnm recommended)
+- Node.js 20+ (24 recommended, fnm for version management)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
 - Bun 1.0+ (for browser automation)
@@ -88,6 +88,17 @@ FALLBACK_BASE_URL=           # e.g. https://api.kimi.com/coding
 FALLBACK_AUTH_TOKEN=         # Fallback provider API key
 FALLBACK_MODEL=              # e.g. kimi-k2.5
 ```
+
+### Codex Service (optional)
+
+To run the Codex agent alongside Claude, create `.env.codex`:
+
+```bash
+# .env.codex
+DISCORD_BOT_TOKEN=               # Separate Discord bot token for Codex
+```
+
+The setup step (`npm run setup -- --step service`) auto-detects `.env.codex` and installs `ejclaw-codex` alongside `ejclaw`. Additional Codex settings (`CODEX_MODEL`, `CODEX_EFFORT`, etc.) can be added to `.env.codex` or as `Environment=` lines in the systemd unit.
 
 ### Authentication
 

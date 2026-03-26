@@ -43,7 +43,7 @@ PARALLEL_API_KEY=...
 - 빠른 사실 조회나 최신 정보 확인은 `parallel-search`
 - 긴 조사나 깊은 분석은 `parallel-task`
 - `parallel-task`는 항상 먼저 사용자 허가를 받을 것
-- 오래 걸리는 작업은 답변을 붙잡고 있지 말고 `mcp__nanoclaw__schedule_task`로 후속 체크를 맡길 것
+- 오래 걸리는 작업은 답변을 붙잡고 있지 말고 `mcp__ejclaw__schedule_task`로 후속 체크를 맡길 것
 
 ## 5. 빌드와 검증
 

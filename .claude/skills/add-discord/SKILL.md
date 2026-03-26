@@ -1,6 +1,6 @@
 ---
 name: add-discord
-description: Finish Discord bot setup and registration for NanoClaw.
+description: Finish Discord bot setup and registration for EJClaw.
 ---
 
 # Add Discord Channel
@@ -78,7 +78,7 @@ npm run setup -- --step verify
 필요하면 로그 확인:
 
 ```bash
-tail -f logs/nanoclaw.log
+tail -f logs/ejclaw.log
 ```
 
 메인 채널이면 일반 메시지, 보조 채널이면 멘션 또는 트리거 메시지로 테스트합니다.
