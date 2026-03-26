@@ -1,4 +1,5 @@
 import {
+  detectClaudeProviderFailureMessage,
   isClaudeAuthError,
   isClaudeAuthExpiredMessage,
   isClaudeOrgAccessDeniedMessage,
@@ -59,7 +60,7 @@ export function evaluateStreamedOutput(
           ? 'org-access-denied'
           : isClaudeAuthExpiredMessage(output.result)
             ? 'auth-expired'
-            : undefined;
+            : detectClaudeProviderFailureMessage(output.result) || undefined;
 
     if (triggerReason) {
       const newTrigger = nextState.streamedTriggerReason

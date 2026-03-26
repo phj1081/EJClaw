@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  classifyAgentError,
   classifyClaudeAuthError,
+  detectClaudeProviderFailureMessage,
   isClaudeOrgAccessDeniedMessage,
   isNoFallbackCooldownReason,
   shouldRotateClaudeToken,
@@ -36,6 +38,22 @@ describe('agent-error-detection', () => {
       category: 'org-access-denied',
       reason: 'org-access-denied',
     });
+  });
+
+  it('classifies Cloudflare 502 HTML as overloaded', () => {
+    const message = `API Error: 502 <html>
+<head><title>502 Bad Gateway</title></head>
+<body>
+<center><h1>502 Bad Gateway</h1></center>
+<hr><center>cloudflare</center>
+</body>
+</html>`;
+
+    expect(classifyAgentError(message)).toEqual({
+      category: 'overloaded',
+      reason: 'overloaded',
+    });
+    expect(detectClaudeProviderFailureMessage(message)).toBe('overloaded');
   });
 
   it('marks only Claude quota/auth reasons as Claude rotation reasons', () => {

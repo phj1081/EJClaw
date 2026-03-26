@@ -315,6 +315,60 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(outputs).toEqual(['새 Claude 토큰 응답입니다.']);
   });
 
+  it('suppresses Claude 502 HTML and falls back without forwarding it', async () => {
+    const outputs: string[] = [];
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result:
+            'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'Kimi 폴백 응답입니다.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-claude-502-fallback',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).not.toHaveBeenCalled();
+    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
+      'overloaded',
+      undefined,
+    );
+    expect(outputs).toEqual(['Kimi 폴백 응답입니다.']);
+  });
+
   it('stops after all Claude accounts are usage-exhausted without falling back to Kimi', async () => {
     const outputs: string[] = [];
 

@@ -54,6 +54,32 @@ export function isClaudeAuthExpiredMessage(text: string): boolean {
   );
 }
 
+export function detectClaudeProviderFailureMessage(
+  text: string,
+): Extract<AgentTriggerReason, '429' | 'overloaded' | 'network-error'> | '' {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  const looksLikeProviderError =
+    normalized.startsWith('api error:') ||
+    normalized.startsWith('error: api error:') ||
+    normalized.startsWith('network error') ||
+    normalized.startsWith('fetch failed');
+
+  if (!looksLikeProviderError) {
+    return '';
+  }
+
+  const classification = classifyAgentError(text);
+  if (
+    classification.category === 'rate-limit' ||
+    classification.category === 'overloaded' ||
+    classification.category === 'network-error'
+  ) {
+    return classification.reason;
+  }
+
+  return '';
+}
+
 export function isClaudeOrgAccessDeniedMessage(text: string): boolean {
   const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
   const hasOrgAccessDeniedMarker = normalized.includes(
@@ -192,7 +218,14 @@ export function classifyAgentError(
   }
 
   // 503 / Overloaded
-  if (lower.includes('503') || lower.includes('overloaded')) {
+  if (
+    lower.includes('503') ||
+    lower.includes('overloaded') ||
+    ((lower.includes('502') || lower.includes('bad gateway')) &&
+      (lower.includes('cloudflare') ||
+        lower.includes('<html') ||
+        lower.includes('api error')))
+  ) {
     return { category: 'overloaded', reason: 'overloaded' };
   }
 

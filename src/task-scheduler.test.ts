@@ -564,6 +564,104 @@ Check the run.
     );
   });
 
+  it('suppresses Claude 502 HTML for scheduled tasks and falls back without forwarding it', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-claude-502-fallback',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'claude-code',
+      prompt: 'claude task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    (runAgentProcessMock as any)
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            phase: 'intermediate',
+            result:
+              'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
+          });
+          await onOutput?.({
+            status: 'success',
+            result:
+              'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (
+          _group: unknown,
+          _input: unknown,
+          _onProcess: unknown,
+          onOutput?: (output: Record<string, unknown>) => Promise<void>,
+        ) => {
+          await onOutput?.({
+            status: 'success',
+            result: 'scheduled fallback response',
+          });
+          return {
+            status: 'success',
+            result: null,
+          };
+        },
+      );
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+    const sendMessage = vi.fn(async () => {});
+
+    startSchedulerLoop({
+      serviceAgentType: 'claude-code',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Claude',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'claude-code',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).not.toHaveBeenCalled();
+    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
+      'overloaded',
+      undefined,
+    );
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'scheduled fallback response',
+    );
+  });
+
   it('suppresses Claude org access denied banners for scheduled tasks and retries with a rotated account', async () => {
     const dueAt = new Date(Date.now() - 60_000).toISOString();
     createTask({

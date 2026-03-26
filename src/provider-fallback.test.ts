@@ -135,6 +135,17 @@ describe('provider fallback usage recovery', () => {
     });
   });
 
+  it('treats Cloudflare 502 HTML as an overloaded fallback trigger', () => {
+    expect(
+      detectFallbackTrigger(
+        'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
+      ),
+    ).toEqual({
+      shouldFallback: true,
+      reason: 'overloaded',
+    });
+  });
+
   it('treats Claude org access denied banners as an org-access-denied fallback trigger', () => {
     expect(
       detectFallbackTrigger(

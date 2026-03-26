@@ -4,6 +4,7 @@ import type { AgentOutput } from './agent-runner.js';
 
 // ── Mocks ──────────────────────────────────────────────────────
 vi.mock('./agent-error-detection.js', () => ({
+  detectClaudeProviderFailureMessage: vi.fn(() => ''),
   isClaudeUsageExhaustedMessage: vi.fn(() => false),
   isClaudeOrgAccessDeniedMessage: vi.fn(() => false),
   isClaudeAuthExpiredMessage: vi.fn(() => false),
@@ -22,6 +23,7 @@ vi.mock('./codex-token-rotation.js', () => ({
 }));
 
 import {
+  detectClaudeProviderFailureMessage,
   isClaudeUsageExhaustedMessage,
   isClaudeOrgAccessDeniedMessage,
   isClaudeAuthExpiredMessage,
@@ -61,6 +63,7 @@ function errorOutput(error: string): AgentOutput {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(detectClaudeProviderFailureMessage).mockReturnValue('');
   vi.mocked(isClaudeUsageExhaustedMessage).mockReturnValue(false);
   vi.mocked(isClaudeOrgAccessDeniedMessage).mockReturnValue(false);
   vi.mocked(isClaudeAuthExpiredMessage).mockReturnValue(false);
@@ -164,6 +167,25 @@ describe('evaluateStreamedOutput', () => {
       );
       expect(result.shouldForwardOutput).toBe(false);
       expect(result.newTrigger).toEqual({ reason: 'auth-expired' });
+    });
+  });
+
+  describe('Claude provider failure banner', () => {
+    it('suppresses Cloudflare 502 HTML and returns newTrigger', () => {
+      vi.mocked(detectClaudeProviderFailureMessage).mockReturnValue(
+        'overloaded',
+      );
+
+      const result = evaluateStreamedOutput(
+        successOutput('API Error: 502 <html><center>cloudflare</center></html>'),
+        freshState(),
+        claudeOpts,
+      );
+      expect(result.shouldForwardOutput).toBe(false);
+      expect(result.newTrigger).toEqual({ reason: 'overloaded' });
+      expect(result.state.streamedTriggerReason).toEqual({
+        reason: 'overloaded',
+      });
     });
   });
 
