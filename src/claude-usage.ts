@@ -133,7 +133,12 @@ async function fetchUsageForToken(
     cached = entry;
     break;
   }
-  if (cached && cachedKey && cachedKey !== writeKey && !usageDiskCache[writeKey]) {
+  if (
+    cached &&
+    cachedKey &&
+    cachedKey !== writeKey &&
+    !usageDiskCache[writeKey]
+  ) {
     usageDiskCache[writeKey] = { ...cached };
     cached = usageDiskCache[writeKey];
     saveUsageDiskCache();
