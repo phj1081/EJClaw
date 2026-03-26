@@ -14,7 +14,7 @@ Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw
 Two AI agents running as parallel systemd services on a single host:
 
 - **Claude Code** (`@claude`) — Anthropic Agent SDK, adaptive thinking, Opus/Sonnet
-- **Codex** (`@codex`) — OpenAI Codex app-server (JSON-RPC), GPT-5.4, xhigh reasoning
+- **Codex** (`@codex`) — OpenAI Codex SDK (`codex exec`), GPT-5.4, xhigh reasoning
 
 Both share the same codebase (`dist/index.js`), differentiated by environment variables. No containers — direct host processes for zero overhead.
 
@@ -24,7 +24,10 @@ Both share the same codebase (`dist/index.js`), differentiated by environment va
 - **Browser automation** — [gstack browse](https://github.com/garrytan/gstack) skill, headless Chromium daemon, ~100ms/command
 - **Voice transcription** — Groq Whisper (primary) / OpenAI Whisper (fallback), shared file cache with dedup
 - **Bidirectional images** — receive Discord attachments as multimodal input, send screenshots back
-- **MCP integration** — Memento (persistent cross-session memory)
+- **Provider fallback** — Claude 429 → configurable fallback provider (e.g. Kimi K2.5) with cooldown
+- **CI monitoring** — `watch_ci` MCP tool for GitHub Actions run polling (structured fast path, no LLM token cost)
+- **Usage dashboard** — real-time token usage and service status overview
+- **MCP integration** — Memento (persistent memory) + EJClaw host tools (send_message, schedule_task, watch_ci, etc.)
 - **Skill sync** — single source of truth, auto-synced to all agent sessions
 - **Priority queue** — per-group serialization, global concurrency limit
 - **Session persistence** — resume conversations across restarts
@@ -35,7 +38,7 @@ Both share the same codebase (`dist/index.js`), differentiated by environment va
 
 ```
 Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Claude Code (Agent SDK, MessageStream)
-                                          └──► Codex (App-Server, JSON-RPC)
+                                          └──► Codex (Codex SDK, codex exec)
                                           │
                                      IPC polling ◄── follow-up messages (mid-turn steering)
                                           │
@@ -74,10 +77,23 @@ npm run build
 # .env
 DISCORD_BOT_TOKEN=           # Discord bot token
 ASSISTANT_NAME=claude        # Bot trigger name (@claude)
-CLAUDE_CODE_OAUTH_TOKEN=     # Claude Code OAuth token
+CLAUDE_CODE_OAUTH_TOKEN=     # Claude Code OAuth token (primary)
+CLAUDE_CODE_OAUTH_TOKENS=    # Comma-separated tokens for multi-account rotation
 OPENAI_API_KEY=              # For Codex
 GROQ_API_KEY=                # Voice transcription (Groq Whisper)
+
+# Provider fallback (optional)
+FALLBACK_PROVIDER_NAME=      # e.g. kimi
+FALLBACK_BASE_URL=           # e.g. https://api.kimi.com/coding
+FALLBACK_AUTH_TOKEN=         # Fallback provider API key
+FALLBACK_MODEL=              # e.g. kimi-k2.5
 ```
+
+### Authentication
+
+Multi-account OAuth token rotation is supported via `CLAUDE_CODE_OAUTH_TOKENS` (comma-separated). When one account hits a rate limit, the system automatically rotates to the next.
+
+Token auto-refresh runs on the Claude service only, refreshing access tokens 30 minutes before expiry using rotating refresh tokens from `~/.claude/.credentials.json` (account 0) and `~/.claude-accounts/{n}/.credentials.json` (account 1+). Generate tokens with `claude setup-token` (account 0) or `CLAUDE_CONFIG_DIR=~/.claude-accounts/{n} claude setup-token` (account 1+).
 
 ### Systemd Services (Linux)
 
