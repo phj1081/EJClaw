@@ -269,7 +269,7 @@ export async function runAgentProcess(
       }
     });
 
-    proc.on('close', (code) => {
+    proc.on('close', (code, signal) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
 
@@ -286,6 +286,7 @@ export async function runAgentProcess(
             `Process: ${processName}`,
             `Duration: ${duration}ms`,
             `Exit Code: ${code}`,
+            `Signal: ${signal}`,
             `Had Streaming Output: ${hadStreamingOutput}`,
           ].join('\n'),
         );
@@ -299,6 +300,7 @@ export async function runAgentProcess(
               processName,
               duration,
               code,
+              signal,
             },
             'Agent timed out after output (idle cleanup)',
           );
@@ -312,6 +314,49 @@ export async function runAgentProcess(
           status: 'error',
           result: null,
           error: `Agent timed out after ${configTimeout}ms`,
+        });
+        return;
+      }
+
+      // Signal kill (SIGTERM/SIGKILL) from post-close cleanup or service
+      // restart.  When the agent already delivered streaming output this is
+      // normal lifecycle — not an error.
+      if (code === null && signal) {
+        if (hadStreamingOutput) {
+          logger.info(
+            {
+              group: group.name,
+              chatJid: input.chatJid,
+              runId: input.runId,
+              processName,
+              duration,
+              signal,
+            },
+            'Agent terminated by signal after output delivery (normal cleanup)',
+          );
+          outputChain.then(() => {
+            resolve({ status: 'success', result: null, newSessionId });
+          });
+          return;
+        }
+        // No output delivered before signal kill — genuine error
+        logger.error(
+          {
+            group: group.name,
+            chatJid: input.chatJid,
+            runId: input.runId,
+            processName,
+            duration,
+            signal,
+          },
+          'Agent killed by signal before producing output',
+        );
+        outputChain.then(() => {
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Agent killed by ${signal} before producing output`,
+          });
         });
         return;
       }
@@ -335,6 +380,7 @@ export async function runAgentProcess(
         `AgentType: ${group.agentType || 'claude-code'}`,
         `Duration: ${duration}ms`,
         `Exit Code: ${code}`,
+        `Signal: ${signal}`,
         ``,
       ];
 

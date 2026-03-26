@@ -140,15 +140,19 @@ export async function runAgentForGroup(
 
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
-          if (persistSessionIds && output.newSessionId) {
-            deps.persistSession(group.folder, output.newSessionId);
-          }
           if (
             persistSessionIds &&
             isClaudeCodeAgent &&
             shouldResetSessionOnAgentFailure(output)
           ) {
             resetSessionRequested = true;
+          }
+          if (
+            persistSessionIds &&
+            output.newSessionId &&
+            !resetSessionRequested
+          ) {
+            deps.persistSession(group.folder, output.newSessionId);
           }
           const evaluation = evaluateStreamedOutput(output, streamedState, {
             agentType: isClaudeCodeAgent ? 'claude-code' : 'codex',
