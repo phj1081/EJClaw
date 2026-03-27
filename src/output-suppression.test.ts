@@ -51,6 +51,21 @@ describe('classifySuppressTokenOutput', () => {
       ),
     ).toBe('exact');
   });
+
+  it('treats a truncated structured silent envelope as mixed', () => {
+    expect(
+      classifySuppressTokenOutput('{"ejclaw":{"visibility":"silent"', undefined),
+    ).toBe('mixed');
+  });
+
+  it('treats a structured silent envelope mixed with extra text as mixed', () => {
+    expect(
+      classifySuppressTokenOutput(
+        '{"ejclaw":{"visibility":"silent"}} extra',
+        undefined,
+      ),
+    ).toBe('mixed');
+  });
 });
 
 describe('parseStructuredOutputEnvelope', () => {

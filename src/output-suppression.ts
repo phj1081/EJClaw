@@ -9,6 +9,8 @@ import type { StructuredAgentOutput } from './types.js';
 
 const ANY_SUPPRESS_TOKEN_PATTERN = /__EJ_SUPPRESS_[a-f0-9]{24,}(?:__)?/g;
 const EXACT_ANY_SUPPRESS_TOKEN_PATTERN = /^__EJ_SUPPRESS_[a-f0-9]{24,}(?:__)?$/;
+const STRUCTURED_SILENT_OUTPUT_PREFIX_PATTERN =
+  /^\s*\{\s*"ejclaw"\s*:\s*\{\s*"visibility"\s*:\s*"silent"/;
 export const STRUCTURED_SILENT_OUTPUT_ENVELOPE =
   '{"ejclaw":{"visibility":"silent"}}';
 
@@ -43,7 +45,12 @@ export function classifySuppressTokenOutput(
     return 'mixed';
   }
   ANY_SUPPRESS_TOKEN_PATTERN.lastIndex = 0;
-  return ANY_SUPPRESS_TOKEN_PATTERN.test(rawText) ? 'mixed' : 'none';
+  if (ANY_SUPPRESS_TOKEN_PATTERN.test(rawText)) {
+    return 'mixed';
+  }
+  return STRUCTURED_SILENT_OUTPUT_PREFIX_PATTERN.test(trimmed)
+    ? 'mixed'
+    : 'none';
 }
 
 export function parseStructuredOutputEnvelope(

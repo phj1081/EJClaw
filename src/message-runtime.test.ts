@@ -1791,6 +1791,65 @@ describe('createMessageRuntime', () => {
     expect(channel.sendAndTrack).not.toHaveBeenCalled();
   });
 
+  it('suppresses a malformed structured silent envelope without sending a visible message', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(true);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: '{"ejclaw":{"visibility":"silent"}} extra',
+      newSessionId: 'session-malformed-structured-silent',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-malformed-structured-silent',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+  });
+
   it('resets tracked progress after a final output that becomes empty after formatting', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
