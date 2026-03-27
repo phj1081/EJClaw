@@ -5,7 +5,6 @@ import {
   classifyClaudeAuthError,
   detectClaudeProviderFailureMessage,
   isClaudeOrgAccessDeniedMessage,
-
   shouldRotateClaudeToken,
 } from './agent-error-detection.js';
 
@@ -64,5 +63,4 @@ describe('agent-error-detection', () => {
     expect(shouldRotateClaudeToken('overloaded')).toBe(false);
     expect(shouldRotateClaudeToken('success-null-result')).toBe(false);
   });
-
 });

@@ -85,7 +85,9 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
   return {
     chat_jid: chatJid,
     owner_service_id:
-      SERVICE_AGENT_TYPE === 'codex' ? CODEX_MAIN_SERVICE_ID : CLAUDE_SERVICE_ID,
+      SERVICE_AGENT_TYPE === 'codex'
+        ? CODEX_MAIN_SERVICE_ID
+        : CLAUDE_SERVICE_ID,
     reviewer_service_id: null,
     activated_at: null,
     reason: null,
@@ -106,7 +108,9 @@ export function refreshChannelOwnerCache(force = false): void {
   lastLeaseRefreshAt = now;
 }
 
-export function getEffectiveChannelLease(chatJid: string): EffectiveChannelLease {
+export function getEffectiveChannelLease(
+  chatJid: string,
+): EffectiveChannelLease {
   refreshChannelOwnerCache();
   const row = leaseCache.get(chatJid);
   if (row) {
@@ -180,7 +184,10 @@ export function getActiveCodexFailoverLeases(): ActiveFailoverLease[] {
         normalizeServiceId(row.reviewer_service_id || '') ===
           CODEX_MAIN_SERVICE_ID,
     )
-    .map((row) => ({ chatJid: row.chat_jid, activatedAt: row.activated_at ?? null }));
+    .map((row) => ({
+      chatJid: row.chat_jid,
+      activatedAt: row.activated_at ?? null,
+    }));
 }
 
 /** @deprecated Use getActiveCodexFailoverLeases() instead */

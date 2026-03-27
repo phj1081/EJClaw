@@ -99,8 +99,5 @@ export function findChannel(
  * - Collapse consecutive whitespace/newlines into single space
  */
 export function normalizeMessageForDedupe(text: string): string {
-  return text
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
+  return text.trim().replace(/\s+/g, ' ').toLowerCase();
 }

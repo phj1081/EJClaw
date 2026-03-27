@@ -71,7 +71,10 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
-import { hasAvailableClaudeToken, initTokenRotation } from './token-rotation.js';
+import {
+  hasAvailableClaudeToken,
+  initTokenRotation,
+} from './token-rotation.js';
 import {
   shouldStartTokenRefreshLoop,
   startTokenRefreshLoop,
@@ -442,7 +445,10 @@ async function main(): Promise<void> {
         editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
     });
   } else {
-    logger.info({ serviceId: SERVICE_ID }, 'Skipping scheduler for review service');
+    logger.info(
+      { serviceId: SERVICE_ID },
+      'Skipping scheduler for review service',
+    );
   }
   startIpcWatcher({
     sendMessage: (jid, text) => {
@@ -536,7 +542,11 @@ async function main(): Promise<void> {
         }
         restoreDefaultChannelLease(lease.chatJid);
         logger.info(
-          { chatJid: lease.chatJid, serviceId: SERVICE_ID, elapsedMin: Math.round(elapsed / 60_000) },
+          {
+            chatJid: lease.chatJid,
+            serviceId: SERVICE_ID,
+            elapsedMin: Math.round(elapsed / 60_000),
+          },
           'Claude token available and failover hold period elapsed, restored default channel lease',
         );
       }

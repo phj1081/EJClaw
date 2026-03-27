@@ -361,7 +361,9 @@ function createSchema(database: Database.Database): void {
   }
 
   try {
-    database.exec(`ALTER TABLE work_items ADD COLUMN service_id TEXT DEFAULT ''`);
+    database.exec(
+      `ALTER TABLE work_items ADD COLUMN service_id TEXT DEFAULT ''`,
+    );
   } catch {
     /* column already exists */
   }
@@ -884,9 +886,7 @@ export function getRecentChatMessages(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  const rows = db
-    .prepare(sql)
-    .all(chatJid, limit) as Array<
+  const rows = db.prepare(sql).all(chatJid, limit) as Array<
     NewMessage & {
       is_from_me?: boolean | number;
       is_bot_message?: boolean | number;
@@ -1834,7 +1834,9 @@ function parseLastAgentSeqState(
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`Invalid last_agent_seq JSON for ${serviceId}: not an object`);
+    throw new Error(
+      `Invalid last_agent_seq JSON for ${serviceId}: not an object`,
+    );
   }
 
   const cursors: Record<string, string> = {};

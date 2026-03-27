@@ -19,8 +19,7 @@ export function shouldEnableSuppressOutputForService(
   if (!serviceId) return false;
   const normalized = normalizeServiceId(serviceId);
   return (
-    normalized === CLAUDE_SERVICE_ID ||
-    normalized === CODEX_REVIEW_SERVICE_ID
+    normalized === CLAUDE_SERVICE_ID || normalized === CODEX_REVIEW_SERVICE_ID
   );
 }
 
@@ -29,7 +28,10 @@ export function classifySuppressTokenOutput(
   suppressToken: string | undefined,
 ): 'exact' | 'mixed' | 'none' {
   const trimmed = rawText.trim();
-  if ((suppressToken && trimmed === suppressToken) || EXACT_ANY_SUPPRESS_TOKEN_PATTERN.test(trimmed)) {
+  if (
+    (suppressToken && trimmed === suppressToken) ||
+    EXACT_ANY_SUPPRESS_TOKEN_PATTERN.test(trimmed)
+  ) {
     return 'exact';
   }
   if (suppressToken && rawText.includes(suppressToken)) {

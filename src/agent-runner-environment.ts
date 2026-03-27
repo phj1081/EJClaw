@@ -273,7 +273,10 @@ function prepareCodexSessionEnvironment(args: {
       : [
           readPlatformPrompt('codex', args.projectRoot),
           isReviewService(SERVICE_ID)
-            ? readOptionalPromptFile(args.projectRoot, 'codex-review-platform.md')
+            ? readOptionalPromptFile(
+                args.projectRoot,
+                'codex-review-platform.md',
+              )
             : undefined,
           args.isPairedRoom
             ? readPairedRoomPrompt('codex', args.projectRoot)

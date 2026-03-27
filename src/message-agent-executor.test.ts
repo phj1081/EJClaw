@@ -44,7 +44,8 @@ vi.mock('./logger.js', () => ({
 }));
 
 vi.mock('./agent-error-detection.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./agent-error-detection.js')>();
+  const actual =
+    await importOriginal<typeof import('./agent-error-detection.js')>();
   return {
     ...actual,
     classifyRotationTrigger: vi.fn((error?: string | null) => {
@@ -528,7 +529,8 @@ describe('runAgentForGroup Claude rotation', () => {
         await onOutput?.({
           status: 'success',
           phase: 'final',
-          result: 'You\u2019re out of extra usage \u00b7 resets 4am (Asia/Seoul)',
+          result:
+            'You\u2019re out of extra usage \u00b7 resets 4am (Asia/Seoul)',
         });
         return {
           status: 'success',

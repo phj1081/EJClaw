@@ -137,12 +137,10 @@ export function isSessionCommandSenderAllowed(sender: string): boolean {
 }
 
 // Delta handoff: cross-provider session continuity with probe + fallback
-export const DELTA_HANDOFF_ENABLED =
-  getEnv('DELTA_HANDOFF_ENABLED') === 'true';
+export const DELTA_HANDOFF_ENABLED = getEnv('DELTA_HANDOFF_ENABLED') === 'true';
 
 // Comma-separated list of group folders for canary testing
-const rawDeltaHandoffCanaryGroups =
-  getEnv('DELTA_HANDOFF_CANARY_GROUPS') || '';
+const rawDeltaHandoffCanaryGroups = getEnv('DELTA_HANDOFF_CANARY_GROUPS') || '';
 export const DELTA_HANDOFF_CANARY_GROUPS = new Set(
   rawDeltaHandoffCanaryGroups
     .split(',')

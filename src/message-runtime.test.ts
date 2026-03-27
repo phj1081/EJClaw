@@ -12,7 +12,8 @@ vi.mock('./agent-runner.js', () => ({
 }));
 
 vi.mock('./output-suppression.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./output-suppression.js')>();
+  const actual =
+    await importOriginal<typeof import('./output-suppression.js')>();
   return {
     ...actual,
     createSuppressToken: vi.fn(() => '__TEST_SUPPRESS__'),

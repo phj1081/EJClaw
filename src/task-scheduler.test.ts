@@ -25,7 +25,8 @@ const {
 }));
 
 vi.mock('./agent-error-detection.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./agent-error-detection.js')>();
+  const actual =
+    await importOriginal<typeof import('./agent-error-detection.js')>();
   return {
     ...actual,
     classifyRotationTrigger: vi.fn((error?: string | null) => {
@@ -566,31 +567,30 @@ Check the run.
       created_at: '2026-02-22T00:00:00.000Z',
     });
 
-    (runAgentProcessMock as any)
-      .mockImplementationOnce(
-        async (
-          _group: unknown,
-          _input: unknown,
-          _onProcess: unknown,
-          onOutput?: (output: Record<string, unknown>) => Promise<void>,
-        ) => {
-          await onOutput?.({
-            status: 'success',
-            phase: 'intermediate',
-            result:
-              'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
-          });
-          await onOutput?.({
-            status: 'success',
-            result:
-              'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
-          });
-          return {
-            status: 'success',
-            result: null,
-          };
-        },
-      );
+    (runAgentProcessMock as any).mockImplementationOnce(
+      async (
+        _group: unknown,
+        _input: unknown,
+        _onProcess: unknown,
+        onOutput?: (output: Record<string, unknown>) => Promise<void>,
+      ) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
+        });
+        await onOutput?.({
+          status: 'success',
+          result:
+            'API Error: 502 <html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>cloudflare</center></body></html>',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
 
     const enqueueTask = vi.fn(
       (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {

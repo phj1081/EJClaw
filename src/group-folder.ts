@@ -75,7 +75,12 @@ export function resolveServiceGroupSessionsPath(
   assertValidGroupFolder(folder);
   assertValidRuntimeSegment(serviceId, 'service ID');
   const sessionsBaseDir = path.resolve(DATA_DIR, 'sessions');
-  const sessionsPath = path.resolve(sessionsBaseDir, folder, 'services', serviceId);
+  const sessionsPath = path.resolve(
+    sessionsBaseDir,
+    folder,
+    'services',
+    serviceId,
+  );
   ensureWithinBase(sessionsBaseDir, sessionsPath);
   return sessionsPath;
 }

@@ -535,8 +535,7 @@ async function runTask(
       }
     };
 
-    const provider =
-      context.taskAgentType === 'codex' ? 'codex' : 'claude';
+    const provider = context.taskAgentType === 'codex' ? 'codex' : 'claude';
 
     {
       const attempt = await runTaskAttempt(provider);

@@ -24,7 +24,11 @@ import {
   SERVICE_ID,
 } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
-import { findChannel, formatMessages, normalizeMessageForDedupe } from './router.js';
+import {
+  findChannel,
+  formatMessages,
+  normalizeMessageForDedupe,
+} from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   advanceLastAgentCursor,
@@ -52,7 +56,10 @@ import { shouldServiceProcessChat } from './service-routing.js';
  * Check if a message is a duplicate of the last bot final message in a paired room.
  * Exported for testing purposes.
  */
-export function isDuplicateOfLastBotFinal(chatJid: string, text: string): boolean {
+export function isDuplicateOfLastBotFinal(
+  chatJid: string,
+  text: string,
+): boolean {
   // Only check in paired rooms (both claude and codex registered)
   if (!isPairedRoomJid(chatJid)) {
     return false;
@@ -115,7 +122,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
    * Check if a message is a duplicate of the last bot final message in a paired room.
    * Returns true if duplicate (should be suppressed).
    */
-  const checkDuplicateOfLastBotFinal = (chatJid: string, text: string): boolean => {
+  const checkDuplicateOfLastBotFinal = (
+    chatJid: string,
+    text: string,
+  ): boolean => {
     return isDuplicateOfLastBotFinal(chatJid, text);
   };
 
@@ -129,7 +139,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const replaceMessageId = options?.replaceMessageId ?? null;
 
     // Check for duplicate in paired rooms before attempting delivery
-    const isDuplicate = checkDuplicateOfLastBotFinal(item.chat_jid, item.result_payload);
+    const isDuplicate = checkDuplicateOfLastBotFinal(
+      item.chat_jid,
+      item.result_payload,
+    );
 
     if (isDuplicate) {
       // Mark as delivered without sending, and don't open continuation
@@ -263,7 +276,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const isClaudeCodeAgent =
       (group.agentType || 'claude-code') === 'claude-code';
     const suppressToken =
-      isClaudeService() || isReviewService() ? createSuppressToken() : undefined;
+      isClaudeService() || isReviewService()
+        ? createSuppressToken()
+        : undefined;
     const deferTypingUntilVisible = Boolean(suppressToken) && isClaudeService();
 
     const turnController = new MessageTurnController({
@@ -277,7 +292,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       deferTypingUntilVisible,
       suppressToken,
       clearSession: () => deps.clearSession(group.folder),
-      requestClose: (reason) => deps.queue.closeStdin(chatJid, { runId, reason }),
+      requestClose: (reason) =>
+        deps.queue.closeStdin(chatJid, { runId, reason }),
       deliverFinalText: async (text) => {
         try {
           const workItem = createProducedWorkItem({
@@ -352,7 +368,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
   };
 
-  const processClaimedHandoff = async (handoff: ServiceHandoff): Promise<void> => {
+  const processClaimedHandoff = async (
+    handoff: ServiceHandoff,
+  ): Promise<void> => {
     const group = deps.getRegisteredGroups()[handoff.chat_jid];
     if (!group) {
       failServiceHandoff(handoff.id, 'Group not registered on target service');

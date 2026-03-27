@@ -63,7 +63,8 @@ vi.mock('./group-folder.js', () => ({
     folder: string,
     serviceId: string,
     taskId: string,
-  ) => `${process.env.EJ_TEST_ROOT}/task-sessions/${folder}/${serviceId}/${taskId}`,
+  ) =>
+    `${process.env.EJ_TEST_ROOT}/task-sessions/${folder}/${serviceId}/${taskId}`,
 }));
 
 vi.mock('os', async () => {

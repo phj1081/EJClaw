@@ -20,12 +20,19 @@ import {
   shouldResetSessionOnAgentFailure,
   shouldRetryFreshSessionOnAgentFailure,
 } from './session-recovery.js';
-import { CODEX_MAIN_SERVICE_ID, CODEX_REVIEW_SERVICE_ID, SERVICE_SESSION_SCOPE } from './config.js';
+import {
+  CODEX_MAIN_SERVICE_ID,
+  CODEX_REVIEW_SERVICE_ID,
+  SERVICE_SESSION_SCOPE,
+} from './config.js';
 import {
   buildSuppressTokenPrompt,
   classifySuppressTokenOutput,
 } from './output-suppression.js';
-import { activateCodexFailover, getEffectiveChannelLease } from './service-routing.js';
+import {
+  activateCodexFailover,
+  getEffectiveChannelLease,
+} from './service-routing.js';
 import {
   evaluateStreamedOutput,
   type StreamedOutputState,
@@ -111,7 +118,8 @@ export async function runAgentForGroup(
 
   const canRotateToken = isClaudeCodeAgent && getTokenCount() > 1;
   const currentLease = getEffectiveChannelLease(chatJid);
-  const reviewerMode = currentLease.reviewer_service_id === SERVICE_SESSION_SCOPE;
+  const reviewerMode =
+    currentLease.reviewer_service_id === SERVICE_SESSION_SCOPE;
   const effectivePrompt = buildSuppressTokenPrompt(prompt, suppressToken, {
     reviewerMode,
   });
@@ -569,11 +577,7 @@ export async function runAgentForGroup(
   }
 
   if (primaryAttempt.error) {
-    if (
-      canRotateToken &&
-      provider === 'claude' &&
-      !primaryAttempt.sawOutput
-    ) {
+    if (canRotateToken && provider === 'claude' && !primaryAttempt.sawOutput) {
       const errMsg = getErrorMessage(primaryAttempt.error);
       const trigger = primaryAttempt.streamedTriggerReason
         ? {
@@ -666,11 +670,7 @@ export async function runAgentForGroup(
   }
 
   if (output.status === 'error') {
-    if (
-      canRotateToken &&
-      provider === 'claude' &&
-      !primaryAttempt.sawOutput
-    ) {
+    if (canRotateToken && provider === 'claude' && !primaryAttempt.sawOutput) {
       const trigger = primaryAttempt.streamedTriggerReason
         ? {
             shouldRetry: true,

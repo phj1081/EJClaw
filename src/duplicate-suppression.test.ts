@@ -19,16 +19,18 @@ beforeEach(() => {
 });
 
 // Helper to create a message
-const createMessage = (overrides: Partial<{
-  id: string;
-  chat_jid: string;
-  sender: string;
-  sender_name: string;
-  content: string;
-  timestamp: string;
-  is_from_me: boolean;
-  is_bot_message: boolean;
-}> = {}) => ({
+const createMessage = (
+  overrides: Partial<{
+    id: string;
+    chat_jid: string;
+    sender: string;
+    sender_name: string;
+    content: string;
+    timestamp: string;
+    is_from_me: boolean;
+    is_bot_message: boolean;
+  }> = {},
+) => ({
   id: overrides.id ?? 'msg-1',
   chat_jid: overrides.chat_jid ?? 'dc:test-room',
   sender: overrides.sender ?? 'user1',
@@ -41,7 +43,13 @@ const createMessage = (overrides: Partial<{
 
 // Helper to setup chat metadata
 const setupChat = (jid: string) => {
-  storeChatMetadata(jid, new Date().toISOString(), 'Test Chat', 'discord', true);
+  storeChatMetadata(
+    jid,
+    new Date().toISOString(),
+    'Test Chat',
+    'discord',
+    true,
+  );
 };
 
 describe('isPairedRoomJid', () => {
@@ -103,34 +111,40 @@ describe('getLastBotFinalMessage', () => {
     setupChat(jid);
 
     // Store older bot message (from any bot)
-    storeMessage(createMessage({
-      id: 'msg-1',
-      chat_jid: jid,
-      content: 'First bot message',
-      timestamp: new Date(now.getTime() - 1000).toISOString(),
-      is_from_me: true,
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-1',
+        chat_jid: jid,
+        content: 'First bot message',
+        timestamp: new Date(now.getTime() - 1000).toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      }),
+    );
 
     // Store newer bot message (from different bot - is_from_me=0 but is_bot_message=1)
-    storeMessage(createMessage({
-      id: 'msg-2',
-      chat_jid: jid,
-      content: 'Second bot message',
-      timestamp: now.toISOString(),
-      is_from_me: false, // Different bot
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-2',
+        chat_jid: jid,
+        content: 'Second bot message',
+        timestamp: now.toISOString(),
+        is_from_me: false, // Different bot
+        is_bot_message: true,
+      }),
+    );
 
     // Store human message (should not be returned)
-    storeMessage(createMessage({
-      id: 'msg-3',
-      chat_jid: jid,
-      content: 'Human message',
-      timestamp: new Date(now.getTime() + 1000).toISOString(),
-      is_from_me: false,
-      is_bot_message: false,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-3',
+        chat_jid: jid,
+        content: 'Human message',
+        timestamp: new Date(now.getTime() + 1000).toISOString(),
+        is_from_me: false,
+        is_bot_message: false,
+      }),
+    );
 
     const lastMessages = getLastBotFinalMessage(jid, 'claude-code', 1);
     expect(lastMessages).toHaveLength(1);
@@ -183,21 +197,27 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     });
 
     // Store a bot message (from any bot)
-    storeMessage(createMessage({
-      id: 'msg-1',
-      chat_jid: jid,
-      content: 'DONE — Task completed successfully',
-      timestamp: new Date().toISOString(),
-      is_from_me: false, // Different bot
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-1',
+        chat_jid: jid,
+        content: 'DONE — Task completed successfully',
+        timestamp: new Date().toISOString(),
+        is_from_me: false, // Different bot
+        is_bot_message: true,
+      }),
+    );
 
     // Verify it's a paired room
     expect(isPairedRoomJid(jid)).toBe(true);
 
     // Verify duplicate detection works via the actual runtime function
-    expect(isDuplicateOfLastBotFinal(jid, 'DONE — Task completed successfully')).toBe(true);
-    expect(isDuplicateOfLastBotFinal(jid, 'done — task completed successfully')).toBe(true); // Normalized match
+    expect(
+      isDuplicateOfLastBotFinal(jid, 'DONE — Task completed successfully'),
+    ).toBe(true);
+    expect(
+      isDuplicateOfLastBotFinal(jid, 'done — task completed successfully'),
+    ).toBe(true); // Normalized match
   });
 
   it('non-paired room: duplicate check is bypassed', () => {
@@ -214,14 +234,16 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     });
 
     // Store a bot message
-    storeMessage(createMessage({
-      id: 'msg-1',
-      chat_jid: jid,
-      content: 'DONE — Task completed',
-      timestamp: new Date().toISOString(),
-      is_from_me: true,
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-1',
+        chat_jid: jid,
+        content: 'DONE — Task completed',
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      }),
+    );
 
     // Verify it's NOT a paired room
     expect(isPairedRoomJid(jid)).toBe(false);
@@ -252,17 +274,21 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     });
 
     // Store a bot message
-    storeMessage(createMessage({
-      id: 'msg-1',
-      chat_jid: jid,
-      content: 'First message content',
-      timestamp: new Date().toISOString(),
-      is_from_me: true,
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-1',
+        chat_jid: jid,
+        content: 'First message content',
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      }),
+    );
 
     // Verify different content is not a duplicate
-    expect(isDuplicateOfLastBotFinal(jid, 'Different message content')).toBe(false);
+    expect(isDuplicateOfLastBotFinal(jid, 'Different message content')).toBe(
+      false,
+    );
     expect(isDuplicateOfLastBotFinal(jid, 'First message content')).toBe(true);
   });
 
@@ -288,17 +314,21 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     });
 
     // Store a bot message from "codex" (is_from_me=0)
-    storeMessage(createMessage({
-      id: 'msg-1',
-      chat_jid: jid,
-      content: 'DONE — Analysis complete',
-      timestamp: new Date().toISOString(),
-      is_from_me: false, // Other bot
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-1',
+        chat_jid: jid,
+        content: 'DONE — Analysis complete',
+        timestamp: new Date().toISOString(),
+        is_from_me: false, // Other bot
+        is_bot_message: true,
+      }),
+    );
 
     // Verify claude service detects this as duplicate (cross-bot detection)
-    expect(isDuplicateOfLastBotFinal(jid, 'DONE — Analysis complete')).toBe(true);
+    expect(isDuplicateOfLastBotFinal(jid, 'DONE — Analysis complete')).toBe(
+      true,
+    );
   });
 
   it('normalization handles whitespace and case differences', () => {
@@ -323,18 +353,27 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     });
 
     // Store a bot message with specific formatting
-    storeMessage(createMessage({
-      id: 'msg-1',
-      chat_jid: jid,
-      content: 'DONE — Task completed\n\nSuccessfully',
-      timestamp: new Date().toISOString(),
-      is_from_me: true,
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-1',
+        chat_jid: jid,
+        content: 'DONE — Task completed\n\nSuccessfully',
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      }),
+    );
 
     // Same content with different whitespace should be detected as duplicate
-    expect(isDuplicateOfLastBotFinal(jid, 'done — task completed successfully')).toBe(true);
-    expect(isDuplicateOfLastBotFinal(jid, '  DONE  —  Task  completed  Successfully  ')).toBe(true);
+    expect(
+      isDuplicateOfLastBotFinal(jid, 'done — task completed successfully'),
+    ).toBe(true);
+    expect(
+      isDuplicateOfLastBotFinal(
+        jid,
+        '  DONE  —  Task  completed  Successfully  ',
+      ),
+    ).toBe(true);
 
     // Different content should not be duplicate
     expect(isDuplicateOfLastBotFinal(jid, 'FAILED — Task failed')).toBe(false);
@@ -362,14 +401,16 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     });
 
     // Store a bot message (simulating previous delivery)
-    storeMessage(createMessage({
-      id: 'msg-1',
-      chat_jid: jid,
-      content: 'DONE — Task completed successfully',
-      timestamp: new Date().toISOString(),
-      is_from_me: true,
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-1',
+        chat_jid: jid,
+        content: 'DONE — Task completed successfully',
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      }),
+    );
 
     // Create a work item with the same content (duplicate)
     const workItem = createProducedWorkItem({
@@ -416,14 +457,16 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     });
 
     // Store a bot message
-    storeMessage(createMessage({
-      id: 'msg-1',
-      chat_jid: jid,
-      content: 'First message',
-      timestamp: new Date().toISOString(),
-      is_from_me: true,
-      is_bot_message: true,
-    }));
+    storeMessage(
+      createMessage({
+        id: 'msg-1',
+        chat_jid: jid,
+        content: 'First message',
+        timestamp: new Date().toISOString(),
+        is_from_me: true,
+        is_bot_message: true,
+      }),
+    );
 
     // Create a work item with DIFFERENT content (non-duplicate)
     const workItem = createProducedWorkItem({
