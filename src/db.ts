@@ -4,14 +4,20 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  CLAUDE_SERVICE_ID,
+  CODEX_MAIN_SERVICE_ID,
+  CODEX_REVIEW_SERVICE_ID,
   DATA_DIR,
+  normalizeServiceId,
   SERVICE_AGENT_TYPE,
   SERVICE_ID,
+  SERVICE_SESSION_SCOPE,
   STORE_DIR,
 } from './config.js';
 import {
   isValidGroupFolder,
   resolveTaskRuntimeIpcPath as resolveTaskRuntimeIpcPathFromGroup,
+  resolveServiceTaskSessionsPath as resolveServiceTaskSessionsPathFromGroup,
   resolveTaskSessionsPath as resolveTaskSessionsPathFromGroup,
 } from './group-folder.js';
 import { logger } from './logger.js';
@@ -32,6 +38,7 @@ export interface WorkItem {
   group_folder: string;
   chat_jid: string;
   agent_type: AgentType;
+  service_id: string;
   status: 'produced' | 'delivery_retry' | 'delivered';
   start_seq: number | null;
   end_seq: number | null;
@@ -42,6 +49,32 @@ export interface WorkItem {
   created_at: string;
   updated_at: string;
   delivered_at: string | null;
+}
+
+export interface ChannelOwnerLeaseRow {
+  chat_jid: string;
+  owner_service_id: string;
+  reviewer_service_id: string | null;
+  activated_at: string | null;
+  reason: string | null;
+}
+
+export interface ServiceHandoff {
+  id: number;
+  chat_jid: string;
+  group_folder: string;
+  source_service_id: string;
+  target_service_id: string;
+  target_agent_type: AgentType;
+  prompt: string;
+  status: 'pending' | 'claimed' | 'completed' | 'failed';
+  start_seq: number | null;
+  end_seq: number | null;
+  reason: string | null;
+  created_at: string;
+  claimed_at: string | null;
+  completed_at: string | null;
+  last_error: string | null;
 }
 
 function backfillMessageSeq(database: Database.Database): void {
@@ -114,6 +147,7 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT NOT NULL,
       chat_jid TEXT NOT NULL,
       agent_type TEXT NOT NULL,
+      service_id TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'produced',
       start_seq INTEGER,
       end_seq INTEGER,
@@ -127,9 +161,9 @@ function createSchema(database: Database.Database): void {
       CHECK (status IN ('produced', 'delivery_retry', 'delivered'))
     );
     CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_work_items_group_agent ON work_items(chat_jid, agent_type, status);
+    CREATE INDEX IF NOT EXISTS idx_work_items_group_agent ON work_items(chat_jid, agent_type, service_id, status);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_open
-      ON work_items(chat_jid, agent_type)
+      ON work_items(chat_jid, agent_type, service_id)
       WHERE status IN ('produced', 'delivery_retry');
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -176,6 +210,12 @@ function createSchema(database: Database.Database): void {
       session_id TEXT NOT NULL,
       PRIMARY KEY (group_folder, agent_type)
     );
+    CREATE TABLE IF NOT EXISTS service_sessions (
+      group_folder TEXT NOT NULL,
+      service_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      PRIMARY KEY (group_folder, service_id)
+    );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT NOT NULL,
       name TEXT NOT NULL,
@@ -190,6 +230,33 @@ function createSchema(database: Database.Database): void {
       PRIMARY KEY (jid, agent_type),
       UNIQUE (folder, agent_type)
     );
+    CREATE TABLE IF NOT EXISTS channel_owner (
+      chat_jid TEXT PRIMARY KEY,
+      owner_service_id TEXT NOT NULL,
+      reviewer_service_id TEXT,
+      activated_at TEXT,
+      reason TEXT
+    );
+    CREATE TABLE IF NOT EXISTS service_handoffs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_jid TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      source_service_id TEXT NOT NULL,
+      target_service_id TEXT NOT NULL,
+      target_agent_type TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      start_seq INTEGER,
+      end_seq INTEGER,
+      reason TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      claimed_at TEXT,
+      completed_at TEXT,
+      last_error TEXT,
+      CHECK (status IN ('pending', 'claimed', 'completed', 'failed'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_service_handoffs_target
+      ON service_handoffs(target_service_id, status, created_at);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -293,11 +360,40 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  try {
+    database.exec(`ALTER TABLE work_items ADD COLUMN service_id TEXT DEFAULT ''`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database
+      .prepare(
+        `UPDATE work_items
+         SET service_id = CASE
+           WHEN agent_type = 'codex' THEN ?
+           ELSE ?
+         END
+         WHERE COALESCE(service_id, '') = ''`,
+      )
+      .run(CODEX_MAIN_SERVICE_ID, CLAUDE_SERVICE_ID);
+  } catch {
+    /* best effort */
+  }
+
   backfillMessageSeq(database);
 
   database.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_seq ON messages(seq);
     CREATE INDEX IF NOT EXISTS idx_messages_chat_jid_seq ON messages(chat_jid, seq);
+  `);
+  database.exec(`DROP INDEX IF EXISTS idx_work_items_group_agent;`);
+  database.exec(`DROP INDEX IF EXISTS idx_work_items_open;`);
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_work_items_group_agent
+      ON work_items(chat_jid, agent_type, service_id, status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_open
+      ON work_items(chat_jid, agent_type, service_id)
+      WHERE status IN ('produced', 'delivery_retry');
   `);
 
   // Migrate registered_groups to composite keys so Claude/Codex can share a jid/folder.
@@ -769,6 +865,36 @@ export function getMessagesSinceSeq(
   return rows.map(normalizeMessageRow);
 }
 
+/**
+ * Get the N most recent messages for a chat, ordered chronologically.
+ * Includes both human and bot messages for full conversation context.
+ * Used for conversation context retrieval.
+ */
+export function getRecentChatMessages(
+  chatJid: string,
+  limit: number = 20,
+): NewMessage[] {
+  const sql = `
+    SELECT * FROM (
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
+      FROM messages
+      WHERE chat_jid = ?
+        AND content != '' AND content IS NOT NULL
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ) ORDER BY timestamp
+  `;
+  const rows = db
+    .prepare(sql)
+    .all(chatJid, limit) as Array<
+    NewMessage & {
+      is_from_me?: boolean | number;
+      is_bot_message?: boolean | number;
+    }
+  >;
+  return rows.map(normalizeMessageRow);
+}
+
 export function getLastHumanMessageTimestamp(chatJid: string): string | null {
   const row = db
     .prepare(
@@ -805,34 +931,39 @@ export function hasRecentRestartAnnouncement(
 export function getOpenWorkItem(
   chatJid: string,
   agentType: AgentType = SERVICE_AGENT_TYPE,
+  serviceId: string = SERVICE_SESSION_SCOPE,
 ): WorkItem | undefined {
   return db
     .prepare(
       `SELECT *
        FROM work_items
-       WHERE chat_jid = ? AND agent_type = ? AND status IN ('produced', 'delivery_retry')
+       WHERE chat_jid = ? AND agent_type = ? AND service_id = ?
+         AND status IN ('produced', 'delivery_retry')
        ORDER BY id ASC
        LIMIT 1`,
     )
-    .get(chatJid, agentType) as WorkItem | undefined;
+    .get(chatJid, agentType, serviceId) as WorkItem | undefined;
 }
 
 export function createProducedWorkItem(input: {
   group_folder: string;
   chat_jid: string;
   agent_type?: AgentType;
+  service_id?: string;
   start_seq: number | null;
   end_seq: number | null;
   result_payload: string;
 }): WorkItem {
   const now = new Date().toISOString();
   const agentType = input.agent_type || SERVICE_AGENT_TYPE;
+  const serviceId = input.service_id || SERVICE_SESSION_SCOPE;
   const result = db
     .prepare(
       `INSERT INTO work_items (
          group_folder,
          chat_jid,
          agent_type,
+         service_id,
          status,
          start_seq,
          end_seq,
@@ -840,12 +971,13 @@ export function createProducedWorkItem(input: {
          delivery_attempts,
          created_at,
          updated_at
-       ) VALUES (?, ?, ?, 'produced', ?, ?, ?, 0, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, 'produced', ?, ?, ?, 0, ?, ?)`,
     )
     .run(
       input.group_folder,
       input.chat_jid,
       agentType,
+      serviceId,
       input.start_seq,
       input.end_seq,
       input.result_payload,
@@ -1085,6 +1217,21 @@ export function deleteTask(id: string): void {
     cleanupTargets.push(
       resolveTaskRuntimeIpcPathFromGroup(task.group_folder, runtimeTaskId),
       resolveTaskSessionsPathFromGroup(task.group_folder, runtimeTaskId),
+      resolveServiceTaskSessionsPathFromGroup(
+        task.group_folder,
+        CLAUDE_SERVICE_ID,
+        runtimeTaskId,
+      ),
+      resolveServiceTaskSessionsPathFromGroup(
+        task.group_folder,
+        CODEX_MAIN_SERVICE_ID,
+        runtimeTaskId,
+      ),
+      resolveServiceTaskSessionsPathFromGroup(
+        task.group_folder,
+        CODEX_REVIEW_SERVICE_ID,
+        runtimeTaskId,
+      ),
     );
   } catch (err) {
     logger.warn(
@@ -1175,7 +1322,14 @@ export function getRecentConsecutiveErrors(
 // --- Router state accessors ---
 
 export function getRouterState(key: string): string | undefined {
-  const prefixedKey = `${SERVICE_ID}:${key}`;
+  return getRouterStateForService(key, SERVICE_ID);
+}
+
+export function getRouterStateForService(
+  key: string,
+  serviceId: string,
+): string | undefined {
+  const prefixedKey = `${normalizeServiceId(serviceId)}:${key}`;
   const row = db
     .prepare('SELECT value FROM router_state WHERE key = ?')
     .get(prefixedKey) as { value: string } | undefined;
@@ -1196,7 +1350,15 @@ export function getRouterState(key: string): string | undefined {
 }
 
 export function setRouterState(key: string, value: string): void {
-  const prefixedKey = `${SERVICE_ID}:${key}`;
+  setRouterStateForService(key, value, SERVICE_ID);
+}
+
+export function setRouterStateForService(
+  key: string,
+  value: string,
+  serviceId: string,
+): void {
+  const prefixedKey = `${normalizeServiceId(serviceId)}:${key}`;
   db.prepare(
     'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
   ).run(prefixedKey, value);
@@ -1205,6 +1367,17 @@ export function setRouterState(key: string, value: string): void {
 // --- Session accessors ---
 
 export function getSession(groupFolder: string): string | undefined {
+  const serviceScopedRow = db
+    .prepare(
+      'SELECT session_id FROM service_sessions WHERE group_folder = ? AND service_id = ?',
+    )
+    .get(groupFolder, SERVICE_SESSION_SCOPE) as
+    | { session_id: string }
+    | undefined;
+  if (serviceScopedRow?.session_id) {
+    return serviceScopedRow.session_id;
+  }
+
   const row = db
     .prepare(
       'SELECT session_id FROM sessions WHERE group_folder = ? AND agent_type = ?',
@@ -1215,17 +1388,39 @@ export function getSession(groupFolder: string): string | undefined {
 
 export function setSession(groupFolder: string, sessionId: string): void {
   db.prepare(
+    'INSERT OR REPLACE INTO service_sessions (group_folder, service_id, session_id) VALUES (?, ?, ?)',
+  ).run(groupFolder, SERVICE_SESSION_SCOPE, sessionId);
+  db.prepare(
     'INSERT OR REPLACE INTO sessions (group_folder, agent_type, session_id) VALUES (?, ?, ?)',
   ).run(groupFolder, SERVICE_AGENT_TYPE, sessionId);
 }
 
 export function deleteSession(groupFolder: string): void {
   db.prepare(
+    'DELETE FROM service_sessions WHERE group_folder = ? AND service_id = ?',
+  ).run(groupFolder, SERVICE_SESSION_SCOPE);
+  db.prepare(
     'DELETE FROM sessions WHERE group_folder = ? AND agent_type = ?',
   ).run(groupFolder, SERVICE_AGENT_TYPE);
 }
 
 export function getAllSessions(): Record<string, string> {
+  const serviceRows = db
+    .prepare(
+      'SELECT group_folder, session_id FROM service_sessions WHERE service_id = ?',
+    )
+    .all(SERVICE_SESSION_SCOPE) as Array<{
+    group_folder: string;
+    session_id: string;
+  }>;
+  const result: Record<string, string> = {};
+  for (const row of serviceRows) {
+    result[row.group_folder] = row.session_id;
+  }
+  if (serviceRows.length > 0) {
+    return result;
+  }
+
   const rows = db
     .prepare(
       'SELECT group_folder, session_id FROM sessions WHERE agent_type = ?',
@@ -1234,11 +1429,66 @@ export function getAllSessions(): Record<string, string> {
     group_folder: string;
     session_id: string;
   }>;
-  const result: Record<string, string> = {};
+  const legacyResult: Record<string, string> = {};
   for (const row of rows) {
-    result[row.group_folder] = row.session_id;
+    legacyResult[row.group_folder] = row.session_id;
   }
-  return result;
+  return legacyResult;
+}
+
+/**
+ * Get session for a specific agent type (cross-provider access).
+ * Used for provider switch probe attempts.
+ */
+export function getSessionForAgentType(
+  groupFolder: string,
+  agentType: string,
+): string | undefined {
+  const row = db
+    .prepare(
+      'SELECT session_id FROM sessions WHERE group_folder = ? AND agent_type = ?',
+    )
+    .get(groupFolder, agentType) as { session_id: string } | undefined;
+  return row?.session_id;
+}
+
+/**
+ * Save session for a specific agent type without affecting current service's session.
+ * Used when probe succeeds and we want to save to target provider's slot only.
+ */
+export function setSessionForAgentType(
+  groupFolder: string,
+  agentType: string,
+  sessionId: string,
+): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO sessions (group_folder, agent_type, session_id) VALUES (?, ?, ?)',
+  ).run(groupFolder, agentType, sessionId);
+}
+
+/**
+ * Get the agent type of the most recent bot response in a chat.
+ * Used to detect provider switches for delta handoff.
+ */
+export function getLastRespondingAgentType(
+  chatJid: string,
+): AgentType | undefined {
+  const row = db
+    .prepare(
+      `SELECT sender FROM messages
+       WHERE chat_jid = ? AND is_bot_message = 1
+       ORDER BY timestamp DESC, seq DESC
+       LIMIT 1`,
+    )
+    .get(chatJid) as { sender: string } | undefined;
+
+  if (!row) return undefined;
+
+  // Map sender to agent type (sender contains the bot identifier)
+  const sender = row.sender.toLowerCase();
+  if (sender.includes('claude')) return 'claude-code';
+  if (sender.includes('codex')) return 'codex';
+  return undefined;
 }
 
 // --- Registered group accessors ---
@@ -1386,6 +1636,255 @@ export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
 export function isPairedRoomJid(jid: string): boolean {
   const types = getRegisteredAgentTypesForJid(jid);
   return types.includes('claude-code') && types.includes('codex');
+}
+
+/**
+ * Get the most recent bot message (is_bot_message=1) in a chat, regardless of which bot sent it.
+ * Used for duplicate detection in pair rooms.
+ */
+export function getLastBotFinalMessage(
+  chatJid: string,
+  _agentType: AgentType = SERVICE_AGENT_TYPE,
+  limit: number = 1,
+): Array<{ content: string; timestamp: string }> {
+  const rows = db
+    .prepare(
+      `SELECT content, timestamp
+       FROM messages
+       WHERE chat_jid = ? AND is_bot_message = 1
+       ORDER BY timestamp DESC, seq DESC
+       LIMIT ?`,
+    )
+    .all(chatJid, limit) as Array<{ content: string; timestamp: string }>;
+  return rows;
+}
+
+// --- Channel owner lease accessors ---
+
+export function getChannelOwnerLease(
+  chatJid: string,
+): ChannelOwnerLeaseRow | undefined {
+  return db
+    .prepare(
+      `SELECT chat_jid, owner_service_id, reviewer_service_id, activated_at, reason
+       FROM channel_owner
+       WHERE chat_jid = ?`,
+    )
+    .get(chatJid) as ChannelOwnerLeaseRow | undefined;
+}
+
+export function getAllChannelOwnerLeases(): ChannelOwnerLeaseRow[] {
+  return db
+    .prepare(
+      `SELECT chat_jid, owner_service_id, reviewer_service_id, activated_at, reason
+       FROM channel_owner`,
+    )
+    .all() as ChannelOwnerLeaseRow[];
+}
+
+export function setChannelOwnerLease(input: {
+  chat_jid: string;
+  owner_service_id: string;
+  reviewer_service_id?: string | null;
+  activated_at?: string | null;
+  reason?: string | null;
+}): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO channel_owner (
+      chat_jid,
+      owner_service_id,
+      reviewer_service_id,
+      activated_at,
+      reason
+    ) VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    input.chat_jid,
+    input.owner_service_id,
+    input.reviewer_service_id ?? null,
+    input.activated_at ?? new Date().toISOString(),
+    input.reason ?? null,
+  );
+}
+
+export function clearChannelOwnerLease(chatJid: string): void {
+  db.prepare('DELETE FROM channel_owner WHERE chat_jid = ?').run(chatJid);
+}
+
+// --- Cross-service handoff accessors ---
+
+export function createServiceHandoff(input: {
+  chat_jid: string;
+  group_folder: string;
+  source_service_id: string;
+  target_service_id: string;
+  target_agent_type: AgentType;
+  prompt: string;
+  start_seq?: number | null;
+  end_seq?: number | null;
+  reason?: string | null;
+}): ServiceHandoff {
+  const result = db
+    .prepare(
+      `INSERT INTO service_handoffs (
+        chat_jid,
+        group_folder,
+        source_service_id,
+        target_service_id,
+        target_agent_type,
+        prompt,
+        start_seq,
+        end_seq,
+        reason
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      input.chat_jid,
+      input.group_folder,
+      input.source_service_id,
+      input.target_service_id,
+      input.target_agent_type,
+      input.prompt,
+      input.start_seq ?? null,
+      input.end_seq ?? null,
+      input.reason ?? null,
+    );
+
+  return db
+    .prepare('SELECT * FROM service_handoffs WHERE id = ?')
+    .get(result.lastInsertRowid) as ServiceHandoff;
+}
+
+export function getPendingServiceHandoffs(
+  targetServiceId: string = SERVICE_SESSION_SCOPE,
+): ServiceHandoff[] {
+  return db
+    .prepare(
+      `SELECT *
+       FROM service_handoffs
+       WHERE target_service_id = ?
+         AND status = 'pending'
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(targetServiceId) as ServiceHandoff[];
+}
+
+export function claimServiceHandoff(id: number): boolean {
+  const result = db
+    .prepare(
+      `UPDATE service_handoffs
+       SET status = 'claimed',
+           claimed_at = datetime('now')
+       WHERE id = ?
+         AND status = 'pending'`,
+    )
+    .run(id);
+  return result.changes > 0;
+}
+
+export function completeServiceHandoff(id: number): void {
+  db.prepare(
+    `UPDATE service_handoffs
+     SET status = 'completed',
+         completed_at = datetime('now'),
+         last_error = NULL
+     WHERE id = ?`,
+  ).run(id);
+}
+
+export function failServiceHandoff(id: number, error: string): void {
+  db.prepare(
+    `UPDATE service_handoffs
+     SET status = 'failed',
+         completed_at = datetime('now'),
+         last_error = ?
+     WHERE id = ?`,
+  ).run(error, id);
+}
+
+function normalizeStoredLastAgentSeqCursor(
+  cursor: string | number | null | undefined,
+  chatJid: string,
+): number {
+  if (typeof cursor === 'number') {
+    return Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
+  }
+  if (!cursor) return 0;
+  const trimmed = cursor.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return normalizeSeqCursor(trimmed);
+  }
+  return getLatestMessageSeqAtOrBefore(trimmed, chatJid);
+}
+
+function parseLastAgentSeqState(
+  raw: string | undefined,
+  serviceId: string,
+): Record<string, string> {
+  if (!raw) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `Invalid last_agent_seq JSON for ${serviceId}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Invalid last_agent_seq JSON for ${serviceId}: not an object`);
+  }
+
+  const cursors: Record<string, string> = {};
+  for (const [chatJid, cursor] of Object.entries(parsed)) {
+    if (typeof cursor === 'string' || typeof cursor === 'number') {
+      cursors[chatJid] = String(cursor);
+    }
+  }
+  return cursors;
+}
+
+export function completeServiceHandoffAndAdvanceTargetCursor(input: {
+  id: number;
+  target_service_id: string;
+  chat_jid: string;
+  end_seq?: number | null;
+}): string | null {
+  return db.transaction(() => {
+    let appliedCursor: string | null = null;
+
+    if (input.end_seq != null) {
+      const currentState = parseLastAgentSeqState(
+        getRouterStateForService('last_agent_seq', input.target_service_id),
+        input.target_service_id,
+      );
+      const existingSeq = normalizeStoredLastAgentSeqCursor(
+        currentState[input.chat_jid],
+        input.chat_jid,
+      );
+      currentState[input.chat_jid] = String(
+        Math.max(existingSeq, input.end_seq),
+      );
+      setRouterStateForService(
+        'last_agent_seq',
+        JSON.stringify(currentState),
+        input.target_service_id,
+      );
+      appliedCursor = currentState[input.chat_jid];
+    }
+
+    db.prepare(
+      `UPDATE service_handoffs
+       SET status = 'completed',
+           completed_at = datetime('now'),
+           last_error = NULL
+       WHERE id = ?`,
+    ).run(input.id);
+
+    return appliedCursor;
+  })();
 }
 
 // --- JSON migration ---

@@ -25,7 +25,7 @@ Both share the same codebase (`dist/index.js`), differentiated by environment va
 - **Browser automation** — [gstack browse](https://github.com/garrytan/gstack) skill, headless Chromium daemon, ~100ms/command
 - **Voice transcription** — Groq Whisper (primary) / OpenAI Whisper (fallback), shared file cache with dedup
 - **Bidirectional images** — receive Discord attachments as multimodal input, send screenshots back
-- **Provider fallback** — Claude 429 → configurable fallback provider (e.g. Kimi K2.5) with cooldown
+- **Token rotation** — Claude 429 / usage exhaustion → automatic multi-account rotation
 - **CI monitoring** — `watch_ci` MCP tool for GitHub Actions run polling (structured fast path, no LLM token cost)
 - **Usage dashboard** — real-time token usage and service status overview
 - **MCP integration** — Memento (persistent memory) + EJClaw host tools (send_message, schedule_task, watch_ci, etc.)
@@ -82,12 +82,6 @@ CLAUDE_CODE_OAUTH_TOKEN=     # Claude Code OAuth token (primary)
 CLAUDE_CODE_OAUTH_TOKENS=    # Comma-separated tokens for multi-account rotation
 OPENAI_API_KEY=              # For Codex
 GROQ_API_KEY=                # Voice transcription (Groq Whisper)
-
-# Provider fallback (optional)
-FALLBACK_PROVIDER_NAME=      # e.g. kimi
-FALLBACK_BASE_URL=           # e.g. https://api.kimi.com/coding
-FALLBACK_AUTH_TOKEN=         # Fallback provider API key
-FALLBACK_MODEL=              # e.g. kimi-k2.5
 ```
 
 ### Codex Service (optional)

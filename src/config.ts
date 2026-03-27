@@ -10,14 +10,43 @@ export const ASSISTANT_HAS_OWN_NUMBER =
 const ASSISTANT_SLUG = ASSISTANT_NAME.trim().toLowerCase();
 const rawServiceAgentType = getEnv('SERVICE_AGENT_TYPE');
 export const SERVICE_ID = getEnv('SERVICE_ID') || ASSISTANT_SLUG;
+export const CLAUDE_SERVICE_ID = getEnv('CLAUDE_SERVICE_ID') || 'claude';
+export const CODEX_MAIN_SERVICE_ID =
+  getEnv('CODEX_MAIN_SERVICE_ID') || 'codex-main';
+export const CODEX_REVIEW_SERVICE_ID =
+  getEnv('CODEX_REVIEW_SERVICE_ID') || 'codex-review';
 export const SERVICE_AGENT_TYPE: AgentType =
   rawServiceAgentType === 'codex' || rawServiceAgentType === 'claude-code'
     ? rawServiceAgentType
     : ASSISTANT_SLUG === 'codex'
       ? 'codex'
       : 'claude-code';
+
+export function normalizeServiceId(serviceId: string): string {
+  if (serviceId === 'codex') {
+    return CODEX_MAIN_SERVICE_ID;
+  }
+  return serviceId;
+}
+
+export const SERVICE_SESSION_SCOPE = normalizeServiceId(SERVICE_ID);
+
+export function isClaudeService(serviceId: string = SERVICE_ID): boolean {
+  return normalizeServiceId(serviceId) === CLAUDE_SERVICE_ID;
+}
+
+export function isCodexMainService(serviceId: string = SERVICE_ID): boolean {
+  return normalizeServiceId(serviceId) === CODEX_MAIN_SERVICE_ID;
+}
+
+export function isReviewService(serviceId: string = SERVICE_ID): boolean {
+  return normalizeServiceId(serviceId) === CODEX_REVIEW_SERVICE_ID;
+}
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
+
+/** Minimum time (ms) a failover lease stays active before Claude can reclaim it. */
+export const FAILOVER_MIN_DURATION_MS = 3 * 60 * 60 * 1000; // 3 hours
 
 const PROJECT_ROOT = process.cwd();
 const HOME_DIR = process.env.HOME || os.homedir();
@@ -105,4 +134,27 @@ const SESSION_COMMAND_ALLOWED_SENDERS = new Set(
 
 export function isSessionCommandSenderAllowed(sender: string): boolean {
   return SESSION_COMMAND_ALLOWED_SENDERS.has(sender);
+}
+
+// Delta handoff: cross-provider session continuity with probe + fallback
+export const DELTA_HANDOFF_ENABLED =
+  getEnv('DELTA_HANDOFF_ENABLED') === 'true';
+
+// Comma-separated list of group folders for canary testing
+const rawDeltaHandoffCanaryGroups =
+  getEnv('DELTA_HANDOFF_CANARY_GROUPS') || '';
+export const DELTA_HANDOFF_CANARY_GROUPS = new Set(
+  rawDeltaHandoffCanaryGroups
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean),
+);
+
+export function isDeltaHandoffEnabledForGroup(groupFolder: string): boolean {
+  if (!DELTA_HANDOFF_ENABLED) return false;
+  // If canary groups are specified, only enable for those groups
+  if (DELTA_HANDOFF_CANARY_GROUPS.size > 0) {
+    return DELTA_HANDOFF_CANARY_GROUPS.has(groupFolder);
+  }
+  return true;
 }

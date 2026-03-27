@@ -25,6 +25,7 @@ describe('extractCodexUsageRows staleness', () => {
   it('returns real rows when usageRowsFetchedAt is within maxAgeMs', () => {
     const now = Date.now();
     const snapshot: StatusSnapshot = {
+      serviceId: 'codex-main',
       agentType: 'codex',
       assistantName: 'test',
       updatedAt: new Date(now).toISOString(),
@@ -40,6 +41,7 @@ describe('extractCodexUsageRows staleness', () => {
   it('returns degraded row when usageRowsFetchedAt exceeds maxAgeMs', () => {
     const now = Date.now();
     const snapshot: StatusSnapshot = {
+      serviceId: 'codex-main',
       agentType: 'codex',
       assistantName: 'test',
       updatedAt: new Date(now).toISOString(), // heartbeat is fresh
@@ -57,6 +59,7 @@ describe('extractCodexUsageRows staleness', () => {
   it('returns degraded row when usageRowsFetchedAt is missing', () => {
     const now = Date.now();
     const snapshot: StatusSnapshot = {
+      serviceId: 'codex-main',
       agentType: 'codex',
       assistantName: 'test',
       updatedAt: new Date(now).toISOString(),
@@ -77,6 +80,7 @@ describe('extractCodexUsageRows staleness', () => {
 
   it('returns empty array when usageRows is empty', () => {
     const snapshot: StatusSnapshot = {
+      serviceId: 'codex-main',
       agentType: 'codex',
       assistantName: 'test',
       updatedAt: new Date().toISOString(),

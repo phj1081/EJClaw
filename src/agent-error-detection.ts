@@ -103,21 +103,14 @@ export type AgentTriggerReason =
   | 'network-error'
   | 'success-null-result';
 
-export type FallbackTriggerReason = Exclude<
-  AgentTriggerReason,
-  'usage-exhausted' | 'success-null-result'
->;
-
 export type ClaudeRotationReason = Extract<
   AgentTriggerReason,
   '429' | 'usage-exhausted' | 'auth-expired' | 'org-access-denied'
 >;
 
-export type CodexRotationReason = FallbackTriggerReason;
-
-export type NoFallbackCooldownReason = Extract<
+export type CodexRotationReason = Extract<
   AgentTriggerReason,
-  'usage-exhausted' | 'auth-expired' | 'org-access-denied'
+  '429' | 'auth-expired' | 'org-access-denied' | 'overloaded' | 'network-error'
 >;
 
 export function shouldRotateClaudeToken(
@@ -131,14 +124,50 @@ export function shouldRotateClaudeToken(
   );
 }
 
-export function isNoFallbackCooldownReason(
-  reason: AgentTriggerReason,
-): reason is NoFallbackCooldownReason {
-  return (
-    reason === 'usage-exhausted' ||
-    reason === 'auth-expired' ||
-    reason === 'org-access-denied'
-  );
+// ── Rotation trigger classification ─────────────────────────────
+
+export type RotationTriggerResult =
+  | { shouldRetry: false; reason: '' }
+  | {
+      shouldRetry: true;
+      reason: AgentTriggerReason;
+      retryAfterMs?: number;
+    };
+
+/**
+ * Classify an error string to determine if Claude token rotation
+ * should be attempted.
+ *
+ * Priority: 429 > auth/org errors > 503/network.
+ */
+export function classifyRotationTrigger(
+  error?: string | null,
+): RotationTriggerResult {
+  if (!error) return { shouldRetry: false, reason: '' };
+
+  const common = classifyAgentError(error);
+
+  // 429 rate-limit (highest priority)
+  if (common.category === 'rate-limit') {
+    return {
+      shouldRetry: true,
+      reason: common.reason,
+      retryAfterMs: common.retryAfterMs,
+    };
+  }
+
+  // Claude-specific auth checks (before 503/network)
+  const auth = classifyClaudeAuthError(error);
+  if (auth.category !== 'none') {
+    return { shouldRetry: true, reason: auth.reason };
+  }
+
+  // 503 overloaded, network errors
+  if (common.category !== 'none') {
+    return { shouldRetry: true, reason: common.reason };
+  }
+
+  return { shouldRetry: false, reason: '' };
 }
 
 // ── Unified error classification ────────────────────────────────

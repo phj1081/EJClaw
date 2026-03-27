@@ -1,4 +1,6 @@
 import {
+  classifyClaudeAuthError,
+  classifyRotationTrigger,
   detectClaudeProviderFailureMessage,
   isClaudeAuthError,
   isClaudeAuthExpiredMessage,
@@ -8,7 +10,7 @@ import {
 } from './agent-error-detection.js';
 import type { AgentOutput } from './agent-runner.js';
 import { detectCodexRotationTrigger } from './codex-token-rotation.js';
-import { detectFallbackTrigger } from './provider-fallback.js';
+import { shouldRetryFreshSessionOnAgentFailure } from './session-recovery.js';
 
 export interface StreamedTriggerReason {
   reason: AgentTriggerReason;
@@ -17,8 +19,10 @@ export interface StreamedTriggerReason {
 
 export interface StreamedOutputState {
   sawOutput: boolean;
+  sawVisibleOutput: boolean;
   sawSuccessNullResultWithoutOutput: boolean;
   streamedTriggerReason?: StreamedTriggerReason;
+  retryableSessionFailureDetected?: boolean;
 }
 
 export interface EvaluateStreamedOutputOptions {
@@ -34,6 +38,7 @@ export interface EvaluateStreamedOutputResult {
   shouldForwardOutput: boolean;
   newTrigger?: StreamedTriggerReason;
   suppressedAuthError?: boolean;
+  suppressedRetryableSessionFailure?: boolean;
 }
 
 export function evaluateStreamedOutput(
@@ -46,6 +51,21 @@ export function evaluateStreamedOutput(
     options.agentType === 'claude-code' && options.provider === 'claude';
   const isPrimaryCodex =
     options.agentType === 'codex' && options.provider === 'codex';
+  const countsAsFinalOutput =
+    output.phase === undefined || output.phase === 'final';
+
+  if (
+    isPrimaryClaude &&
+    !state.sawOutput &&
+    shouldRetryFreshSessionOnAgentFailure(output)
+  ) {
+    nextState.retryableSessionFailureDetected = true;
+    return {
+      state: nextState,
+      shouldForwardOutput: false,
+      suppressedRetryableSessionFailure: true,
+    };
+  }
 
   if (
     isPrimaryClaude &&
@@ -53,12 +73,15 @@ export function evaluateStreamedOutput(
     !state.sawOutput &&
     typeof output.result === 'string'
   ) {
+    const authClassification = classifyClaudeAuthError(output.result);
     const triggerReason: AgentTriggerReason | undefined =
       isClaudeUsageExhaustedMessage(output.result)
         ? 'usage-exhausted'
-        : isClaudeOrgAccessDeniedMessage(output.result)
+        : isClaudeOrgAccessDeniedMessage(output.result) ||
+            authClassification.category === 'org-access-denied'
           ? 'org-access-denied'
-          : isClaudeAuthExpiredMessage(output.result)
+          : isClaudeAuthExpiredMessage(output.result) ||
+              authClassification.category === 'auth-expired'
             ? 'auth-expired'
             : detectClaudeProviderFailureMessage(output.result) || undefined;
 
@@ -87,7 +110,11 @@ export function evaluateStreamedOutput(
     }
   }
 
-  if (output.result !== null && output.result !== undefined) {
+  if (
+    countsAsFinalOutput &&
+    output.result !== null &&
+    output.result !== undefined
+  ) {
     nextState.sawOutput = true;
   } else if (
     options.trackSuccessNullResult &&
@@ -106,8 +133,8 @@ export function evaluateStreamedOutput(
     let newTrigger: StreamedTriggerReason | undefined;
 
     if (isPrimaryClaude) {
-      const trigger = detectFallbackTrigger(output.error);
-      if (trigger.shouldFallback) {
+      const trigger = classifyRotationTrigger(output.error);
+      if (trigger.shouldRetry) {
         newTrigger = {
           reason: trigger.reason,
           retryAfterMs: trigger.retryAfterMs,

@@ -9,8 +9,12 @@ const { mockReadEnvFile, mockGetActiveCodexAuthPath } = vi.hoisted(() => ({
 }));
 
 vi.mock('./config.js', () => ({
+  CODEX_REVIEW_SERVICE_ID: 'codex-review',
   GROUPS_DIR: '/tmp/ejclaw-test-groups',
+  SERVICE_ID: 'codex-main',
+  SERVICE_SESSION_SCOPE: 'codex-main',
   TIMEZONE: 'Asia/Seoul',
+  isReviewService: vi.fn(() => false),
 }));
 
 vi.mock('./db.js', () => ({
@@ -35,17 +39,31 @@ vi.mock('./platform-prompts.js', () => ({
   readPairedRoomPrompt: vi.fn(() => 'paired room prompt'),
 }));
 
+vi.mock('./service-routing.js', () => ({
+  getEffectiveChannelLease: vi.fn(() => ({
+    chat_jid: 'dc:test',
+    owner_service_id: 'claude',
+    reviewer_service_id: 'codex-main',
+    activated_at: null,
+    reason: null,
+    explicit: false,
+  })),
+}));
+
 vi.mock('./group-folder.js', () => ({
   resolveGroupFolderPath: (folder: string) =>
     `${process.env.EJ_TEST_ROOT}/groups/${folder}`,
   resolveGroupIpcPath: (folder: string) =>
     `${process.env.EJ_TEST_ROOT}/ipc/${folder}`,
-  resolveGroupSessionsPath: (folder: string) =>
-    `${process.env.EJ_TEST_ROOT}/sessions/${folder}`,
+  resolveServiceGroupSessionsPath: (folder: string, serviceId: string) =>
+    `${process.env.EJ_TEST_ROOT}/sessions/${folder}/services/${serviceId}`,
   resolveTaskRuntimeIpcPath: (folder: string, taskId: string) =>
     `${process.env.EJ_TEST_ROOT}/task-ipc/${folder}/${taskId}`,
-  resolveTaskSessionsPath: (folder: string, taskId: string) =>
-    `${process.env.EJ_TEST_ROOT}/task-sessions/${folder}/${taskId}`,
+  resolveServiceTaskSessionsPath: (
+    folder: string,
+    serviceId: string,
+    taskId: string,
+  ) => `${process.env.EJ_TEST_ROOT}/task-sessions/${folder}/${serviceId}/${taskId}`,
 }));
 
 vi.mock('os', async () => {
@@ -61,6 +79,9 @@ vi.mock('os', async () => {
 });
 
 import { prepareGroupEnvironment } from './agent-runner-environment.js';
+import * as config from './config.js';
+import * as db from './db.js';
+import * as serviceRouting from './service-routing.js';
 import type { RegisteredGroup } from './types.js';
 
 const group: RegisteredGroup = {
@@ -131,6 +152,8 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       tempRoot,
       'sessions',
       group.folder,
+      'services',
+      'codex-main',
       '.codex',
       'auth.json',
     );
@@ -165,11 +188,127 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       tempRoot,
       'sessions',
       group.folder,
+      'services',
+      'codex-main',
       '.codex',
       'auth.json',
     );
     const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
 
     expect(auth).toEqual(rotatedAuth);
+  });
+
+  it('uses the failover prompt pack for codex-review when it owns an explicit failover lease', () => {
+    vi.mocked(config.isReviewService).mockReturnValue(true);
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'dc:test',
+      owner_service_id: 'codex-review',
+      reviewer_service_id: 'codex-main',
+      activated_at: '2026-03-28T00:00:00.000Z',
+      reason: 'claude-429',
+      explicit: true,
+    });
+    mockReadEnvFile.mockReturnValue({});
+
+    const promptsDir = path.join(tempRoot, 'prompts');
+    fs.mkdirSync(promptsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(promptsDir, 'codex-review-platform.md'),
+      'review platform prompt\n',
+    );
+    fs.writeFileSync(
+      path.join(promptsDir, 'codex-review-paired-room.md'),
+      'review paired prompt\n',
+    );
+    fs.writeFileSync(
+      path.join(promptsDir, 'codex-review-failover-platform.md'),
+      'failover platform prompt\n',
+    );
+    fs.writeFileSync(
+      path.join(promptsDir, 'codex-review-failover-paired-room.md'),
+      'failover paired prompt\n',
+    );
+
+    prepareGroupEnvironment(
+      { ...group, workDir: path.join(tempRoot, 'workdir') },
+      false,
+      'dc:test',
+      {
+        memoryBriefing: 'memory briefing',
+      },
+    );
+
+    const agentsPath = path.join(
+      tempRoot,
+      'sessions',
+      group.folder,
+      'services',
+      'codex-main',
+      '.codex',
+      'AGENTS.md',
+    );
+    const agents = fs.readFileSync(agentsPath, 'utf-8');
+    const segments = agents.trim().split('\n\n---\n\n');
+
+    expect(segments).toEqual([
+      'failover platform prompt',
+      'failover paired prompt',
+      'memory briefing',
+    ]);
+  });
+
+  it('returns to the normal review prompt stack after failover is cleared', () => {
+    vi.mocked(config.isReviewService).mockReturnValue(true);
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'dc:test',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    mockReadEnvFile.mockReturnValue({});
+
+    const promptsDir = path.join(tempRoot, 'prompts');
+    fs.mkdirSync(promptsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(promptsDir, 'codex-review-platform.md'),
+      'review platform prompt\n',
+    );
+    fs.writeFileSync(
+      path.join(promptsDir, 'codex-review-paired-room.md'),
+      'review paired prompt\n',
+    );
+    fs.writeFileSync(
+      path.join(promptsDir, 'codex-review-failover-platform.md'),
+      'failover platform prompt\n',
+    );
+    fs.writeFileSync(
+      path.join(promptsDir, 'codex-review-failover-paired-room.md'),
+      'failover paired prompt\n',
+    );
+
+    prepareGroupEnvironment(group, false, 'dc:test');
+
+    const agentsPath = path.join(
+      tempRoot,
+      'sessions',
+      group.folder,
+      'services',
+      'codex-main',
+      '.codex',
+      'AGENTS.md',
+    );
+    const agents = fs.readFileSync(agentsPath, 'utf-8');
+    const segments = agents.trim().split('\n\n---\n\n');
+
+    expect(segments).toEqual([
+      'platform prompt',
+      'review platform prompt',
+      'paired room prompt',
+      'review paired prompt',
+    ]);
   });
 });

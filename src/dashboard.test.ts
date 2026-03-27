@@ -45,9 +45,8 @@ describe('buildStatusContent', () => {
   ): Promise<(opts: DashboardOptions) => string> {
     vi.resetModules();
     process.env.STATUS_SHOW_ROOMS = options.statusShowRooms ?? 'true';
-    if (options.statusShowRoomDetails !== undefined) {
-      process.env.STATUS_SHOW_ROOM_DETAILS = options.statusShowRoomDetails;
-    }
+    process.env.STATUS_SHOW_ROOM_DETAILS =
+      options.statusShowRoomDetails ?? 'true';
     const mod = await import('./dashboard-status-content.js');
     return mod.buildStatusContent;
   }

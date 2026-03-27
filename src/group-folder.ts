@@ -68,6 +68,18 @@ export function resolveGroupSessionsPath(folder: string): string {
   return sessionsPath;
 }
 
+export function resolveServiceGroupSessionsPath(
+  folder: string,
+  serviceId: string,
+): string {
+  assertValidGroupFolder(folder);
+  assertValidRuntimeSegment(serviceId, 'service ID');
+  const sessionsBaseDir = path.resolve(DATA_DIR, 'sessions');
+  const sessionsPath = path.resolve(sessionsBaseDir, folder, 'services', serviceId);
+  ensureWithinBase(sessionsBaseDir, sessionsPath);
+  return sessionsPath;
+}
+
 export function resolveTaskRuntimeIpcPath(
   folder: string,
   taskId: string,
@@ -88,6 +100,27 @@ export function resolveTaskSessionsPath(
   assertValidRuntimeSegment(taskId, 'task ID');
   const sessionsBaseDir = path.resolve(DATA_DIR, 'sessions');
   const sessionsPath = path.resolve(sessionsBaseDir, folder, 'tasks', taskId);
+  ensureWithinBase(sessionsBaseDir, sessionsPath);
+  return sessionsPath;
+}
+
+export function resolveServiceTaskSessionsPath(
+  folder: string,
+  serviceId: string,
+  taskId: string,
+): string {
+  assertValidGroupFolder(folder);
+  assertValidRuntimeSegment(serviceId, 'service ID');
+  assertValidRuntimeSegment(taskId, 'task ID');
+  const sessionsBaseDir = path.resolve(DATA_DIR, 'sessions');
+  const sessionsPath = path.resolve(
+    sessionsBaseDir,
+    folder,
+    'services',
+    serviceId,
+    'tasks',
+    taskId,
+  );
   ensureWithinBase(sessionsBaseDir, sessionsPath);
   return sessionsPath;
 }

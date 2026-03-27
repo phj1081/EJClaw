@@ -13,7 +13,10 @@ vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/ejclaw-test-data',
   GROUPS_DIR: '/tmp/ejclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
+  SERVICE_ID: 'claude',
+  SERVICE_SESSION_SCOPE: 'claude',
   TIMEZONE: 'America/Los_Angeles',
+  isReviewService: vi.fn(() => false),
 }));
 
 // Mock logger
@@ -53,6 +56,17 @@ vi.mock('fs', async () => {
 vi.mock('./env.js', () => ({
   readEnvFile: vi.fn(() => ({})),
   getEnv: vi.fn(() => undefined),
+}));
+
+vi.mock('./service-routing.js', () => ({
+  getEffectiveChannelLease: vi.fn(() => ({
+    chat_jid: 'test@g.us',
+    owner_service_id: 'claude',
+    reviewer_service_id: 'codex-main',
+    activated_at: null,
+    reason: null,
+    explicit: false,
+  })),
 }));
 
 // Create a controllable fake ChildProcess
@@ -328,7 +342,7 @@ describe('agent-runner timeout behavior', () => {
       '/tmp/ejclaw-test-data/ipc/test-group',
     );
     expect(spawnEnv?.CLAUDE_CONFIG_DIR).toBe(
-      '/tmp/ejclaw-test-data/sessions/test-group/tasks/task-123/.claude',
+      '/tmp/ejclaw-test-data/sessions/test-group/services/claude/tasks/task-123/.claude',
     );
   });
 
@@ -407,7 +421,7 @@ describe('agent-runner timeout behavior', () => {
       '/tmp/ejclaw-test-data/ipc/test-group',
     );
     expect(spawnEnv?.CLAUDE_CONFIG_DIR).toBe(
-      '/tmp/ejclaw-test-data/sessions/test-group/.claude',
+      '/tmp/ejclaw-test-data/sessions/test-group/services/claude/.claude',
     );
   });
 
@@ -416,7 +430,7 @@ describe('agent-runner timeout behavior', () => {
     fakeProc = createFakeProcess();
     const overlayPath = '/tmp/ejclaw-test-groups/test-group/.codex/config.toml';
     const sessionConfigPath =
-      '/tmp/ejclaw-test-data/sessions/test-group/.codex/config.toml';
+      '/tmp/ejclaw-test-data/sessions/test-group/services/claude/.codex/config.toml';
     let sessionToml = `model = "gpt-5.4"\n`;
 
     vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {

@@ -1,5 +1,6 @@
 import { type AgentOutput } from './agent-runner.js';
 import { logger } from './logger.js';
+import { classifySuppressTokenOutput } from './output-suppression.js';
 import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
@@ -28,6 +29,8 @@ interface MessageTurnControllerOptions {
   idleTimeout: number;
   failureFinalText: string;
   isClaudeCodeAgent: boolean;
+  deferTypingUntilVisible?: boolean;
+  suppressToken?: string;
   clearSession: () => void;
   requestClose: (reason: string) => void;
   deliverFinalText: (text: string) => Promise<boolean>;
@@ -53,6 +56,7 @@ export class MessageTurnController {
   private lastIntermediateText: string | null = null;
   private poisonedSessionDetected = false;
   private closeRequested = false;
+  private typingActive = false;
 
   constructor(private readonly options: MessageTurnControllerOptions) {}
 
@@ -78,7 +82,10 @@ export class MessageTurnController {
 
   async start(): Promise<void> {
     this.resetIdleTimer();
-    await this.setTyping(true, 'turn:start');
+    if (this.options.deferTypingUntilVisible) {
+      return;
+    }
+    await this.activateTyping('turn:start');
   }
 
   async handleOutput(result: AgentOutput): Promise<void> {
@@ -123,7 +130,11 @@ export class MessageTurnController {
         : typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-    const text = raw ? formatOutbound(raw) : null;
+    const suppressState =
+      raw && this.options.suppressToken
+        ? classifySuppressTokenOutput(raw, this.options.suppressToken)
+        : 'none';
+    const text = raw && suppressState === 'none' ? formatOutbound(raw) : null;
 
     if (raw) {
       logger.info(
@@ -138,6 +149,31 @@ export class MessageTurnController {
         },
         `Agent output: ${raw.slice(0, 200)}`,
       );
+      if (suppressState === 'exact') {
+        logger.info(
+          {
+            chatJid: this.options.chatJid,
+            group: this.options.group.name,
+            groupFolder: this.options.group.folder,
+            runId: this.options.runId,
+            resultStatus: result.status,
+            resultPhase: result.phase,
+          },
+          'Suppressed exact-match silent output token',
+        );
+      } else if (suppressState === 'mixed') {
+        logger.warn(
+          {
+            chatJid: this.options.chatJid,
+            group: this.options.group.name,
+            groupFolder: this.options.group.folder,
+            runId: this.options.runId,
+            resultStatus: result.status,
+            resultPhase: result.phase,
+          },
+          'Blocked malformed output that mixed the silent output token with visible text',
+        );
+      }
     }
 
     const phase: AgentOutputPhase = normalizeAgentOutputPhase(result.phase);
@@ -275,6 +311,9 @@ export class MessageTurnController {
         await this.finalizeProgressMessage();
         await this.deliverFinalText(text);
       }
+    } else if (suppressState !== 'none') {
+      await this.finalizeProgressMessage();
+      this.latestProgressTextForFinal = null;
     } else if (raw) {
       logger.info(
         {
@@ -294,7 +333,7 @@ export class MessageTurnController {
       await this.finalizeProgressMessage();
     }
 
-    await this.setTyping(false, 'turn:handle-output', {
+    await this.deactivateTyping('turn:handle-output', {
       outputStatus: result.status,
       phase,
     });
@@ -311,7 +350,7 @@ export class MessageTurnController {
     deliverySucceeded: boolean;
     visiblePhase: VisiblePhase;
   }> {
-    await this.setTyping(false, 'turn:finish', { outputStatus });
+    await this.deactivateTyping('turn:finish', { outputStatus });
 
     if (outputStatus === 'error') {
       this.hadError = true;
@@ -566,6 +605,7 @@ export class MessageTurnController {
   }
 
   private async deliverFinalText(text: string): Promise<void> {
+    await this.activateTyping('turn:deliver-final');
     this.visiblePhase = toVisiblePhase('final');
     const delivered = await this.options.deliverFinalText(text);
     if (!delivered) {
@@ -592,6 +632,8 @@ export class MessageTurnController {
     if (!text || (text === this.latestProgressText && this.progressMessageId)) {
       return;
     }
+
+    await this.activateTyping('turn:send-progress');
 
     if (this.progressStartedAt === null) {
       this.progressStartedAt = Date.now();
@@ -668,6 +710,28 @@ export class MessageTurnController {
     this.latestProgressRendered = rendered;
     await this.options.channel.sendMessage(this.options.chatJid, rendered);
     this.visiblePhase = toVisiblePhase('progress');
+  }
+
+  private async activateTyping(
+    source: string,
+    extra?: Record<string, unknown>,
+  ): Promise<void> {
+    if (this.typingActive) return;
+    await this.setTyping(true, source, extra);
+    this.typingActive = true;
+  }
+
+  private async deactivateTyping(
+    source: string,
+    extra?: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.typingActive) return;
+    await this.setTyping(false, source, extra);
+    this.typingActive = false;
+  }
+
+  cancelPendingTypingDelay(): void {
+    // No-op: typing delay removed. Kept for call-site compatibility.
   }
 
   private resetIdleTimer(): void {

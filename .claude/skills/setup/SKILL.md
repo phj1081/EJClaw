@@ -71,12 +71,6 @@ OPENAI_API_KEY=...
 ### 선택 환경 변수
 
 ```bash
-# Provider fallback (Claude 429 시 대체)
-FALLBACK_PROVIDER_NAME=kimi
-FALLBACK_BASE_URL=https://api.kimi.com/coding
-FALLBACK_AUTH_TOKEN=...
-FALLBACK_MODEL=kimi-k2.5
-
 # 사용량 대시보드
 STATUS_CHANNEL_ID=...                # 상태 업데이트 디스코드 채널
 USAGE_DASHBOARD=true

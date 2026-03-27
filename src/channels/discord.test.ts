@@ -870,6 +870,31 @@ describe('DiscordChannel', () => {
       expect(currentClient().channels.fetch).not.toHaveBeenCalled();
     });
 
+    it('does not send stale typing after typing was disabled mid-flight', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      let resolveFetch!: (value: unknown) => void;
+      const fetchPromise = new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
+      const mockChannel = {
+        send: vi.fn(),
+        sendTyping: vi.fn().mockResolvedValue(undefined),
+      };
+
+      currentClient().channels.fetch.mockImplementationOnce(() => fetchPromise);
+
+      const typingPromise = channel.setTyping('dc:1234567890123456', true);
+      await Promise.resolve();
+      await channel.setTyping('dc:1234567890123456', false);
+      resolveFetch(mockChannel);
+      await typingPromise;
+
+      expect(mockChannel.sendTyping).not.toHaveBeenCalled();
+    });
+
     it('does nothing when client is not initialized', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);

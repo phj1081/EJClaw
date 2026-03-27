@@ -1,4 +1,3 @@
-import path from 'path';
 import { getErrorMessage } from './utils.js';
 
 import {
@@ -8,23 +7,25 @@ import {
   writeTasksSnapshot,
 } from './agent-runner.js';
 import { listAvailableGroups } from './available-groups.js';
-import { DATA_DIR } from './config.js';
-import { getAllTasks } from './db.js';
+import { createServiceHandoff, getAllTasks } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
 import {
-  detectFallbackTrigger,
-  getActiveProvider,
-  getFallbackEnvOverrides,
-  getFallbackProviderName,
-  hasGroupProviderOverride,
-  isFallbackEnabled,
-  isPrimaryNoFallbackCooldownActive,
-  markPrimaryCooldown,
-} from './provider-fallback.js';
+  classifyRotationTrigger,
+  type AgentTriggerReason,
+} from './agent-error-detection.js';
 import { runClaudeRotationLoop } from './provider-retry.js';
-import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import {
+  shouldResetSessionOnAgentFailure,
+  shouldRetryFreshSessionOnAgentFailure,
+} from './session-recovery.js';
+import { CODEX_MAIN_SERVICE_ID, CODEX_REVIEW_SERVICE_ID, SERVICE_SESSION_SCOPE } from './config.js';
+import {
+  buildSuppressTokenPrompt,
+  classifySuppressTokenOutput,
+} from './output-suppression.js';
+import { activateCodexFailover, getEffectiveChannelLease } from './service-routing.js';
 import {
   evaluateStreamedOutput,
   type StreamedOutputState,
@@ -35,12 +36,11 @@ import {
   getCodexAccountCount,
   markCodexTokenHealthy,
 } from './codex-token-rotation.js';
-import type {
-  AgentTriggerReason,
-  CodexRotationReason,
-} from './agent-error-detection.js';
+import type { CodexRotationReason } from './agent-error-detection.js';
 import { getTokenCount } from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
+
+// ── Main executor ─────────────────────────────────────────────────
 
 export interface MessageAgentExecutorDeps {
   assistantName: string;
@@ -58,10 +58,22 @@ export async function runAgentForGroup(
     prompt: string;
     chatJid: string;
     runId: string;
+    suppressToken?: string;
+    startSeq?: number | null;
+    endSeq?: number | null;
     onOutput?: (output: AgentOutput) => Promise<void>;
   },
 ): Promise<'success' | 'error'> {
-  const { group, prompt, chatJid, runId, onOutput } = args;
+  const {
+    group,
+    prompt,
+    chatJid,
+    runId,
+    suppressToken,
+    startSeq,
+    endSeq,
+    onOutput,
+  } = args;
   const isMain = group.isMain === true;
   const isClaudeCodeAgent =
     (group.agentType || 'claude-code') === 'claude-code';
@@ -97,20 +109,61 @@ export async function runAgentForGroup(
 
   let resetSessionRequested = false;
 
-  const settingsPath = path.join(
-    DATA_DIR,
-    'sessions',
-    group.folder,
-    '.claude',
-    'settings.json',
-  );
-  const groupHasOverride = hasGroupProviderOverride(settingsPath);
   const canRotateToken = isClaudeCodeAgent && getTokenCount() > 1;
-  const canFallback =
-    isClaudeCodeAgent && isFallbackEnabled() && !groupHasOverride;
+  const currentLease = getEffectiveChannelLease(chatJid);
+  const reviewerMode = currentLease.reviewer_service_id === SERVICE_SESSION_SCOPE;
+  const effectivePrompt = buildSuppressTokenPrompt(prompt, suppressToken, {
+    reviewerMode,
+  });
+
+  const shouldHandoffToCodex = (
+    reason: AgentTriggerReason,
+    sawVisibleOutput: boolean,
+  ): boolean => {
+    if (sawVisibleOutput) {
+      return false;
+    }
+    return (
+      reason === '429' ||
+      reason === 'usage-exhausted' ||
+      reason === 'auth-expired' ||
+      reason === 'org-access-denied'
+    );
+  };
+
+  const maybeHandoffToCodex = (
+    reason: AgentTriggerReason,
+    sawVisibleOutput: boolean,
+  ): boolean => {
+    if (!isClaudeCodeAgent) return false;
+    if (!shouldHandoffToCodex(reason, sawVisibleOutput)) {
+      return false;
+    }
+    if (currentLease.reviewer_service_id === null) {
+      return false;
+    }
+
+    activateCodexFailover(chatJid, `claude-${reason}`);
+    createServiceHandoff({
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      source_service_id: SERVICE_SESSION_SCOPE,
+      target_service_id: CODEX_REVIEW_SERVICE_ID,
+      target_agent_type: 'codex',
+      prompt,
+      start_seq: startSeq ?? null,
+      end_seq: endSeq ?? null,
+      reason: `claude-${reason}`,
+    });
+    logger.warn(
+      { chatJid, group: group.name, runId, reason },
+      'Claude unavailable, handed off current turn to codex-review',
+    );
+    return true;
+  };
 
   const agentInput = {
-    prompt,
+    prompt: effectivePrompt,
     sessionId,
     memoryBriefing,
     groupFolder: group.folder,
@@ -126,29 +179,31 @@ export async function runAgentForGroup(
     output?: AgentOutput;
     error?: unknown;
     sawOutput: boolean;
+    sawVisibleOutput: boolean;
     sawSuccessNullResultWithoutOutput: boolean;
+    retryableSessionFailureDetected: boolean;
     streamedTriggerReason?: {
       reason: AgentTriggerReason;
       retryAfterMs?: number;
     };
   }> => {
-    const persistSessionIds = provider === 'claude';
     let streamedState: StreamedOutputState = {
       sawOutput: false,
+      sawVisibleOutput: false,
       sawSuccessNullResultWithoutOutput: false,
     };
 
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
           if (
-            persistSessionIds &&
             isClaudeCodeAgent &&
+            provider === 'claude' &&
             shouldResetSessionOnAgentFailure(output)
           ) {
             resetSessionRequested = true;
           }
           if (
-            persistSessionIds &&
+            provider === 'claude' &&
             output.newSessionId &&
             !resetSessionRequested
           ) {
@@ -161,7 +216,7 @@ export async function runAgentForGroup(
             trackSuccessNullResult: true,
             shortCircuitTriggeredErrors:
               provider === 'claude'
-                ? canFallback || canRotateToken
+                ? canRotateToken
                 : getCodexAccountCount() > 1,
           });
           streamedState = evaluation.state;
@@ -179,7 +234,7 @@ export async function runAgentForGroup(
                 reason: evaluation.newTrigger.reason,
                 resultPreview: output.result.slice(0, 120),
               },
-              'Detected Claude fallback trigger in successful output',
+              'Detected Claude rotation trigger in successful output',
             );
           } else if (
             evaluation.newTrigger &&
@@ -194,7 +249,7 @@ export async function runAgentForGroup(
                 errorPreview: output.error.slice(0, 120),
               },
               provider === 'claude'
-                ? 'Detected Claude fallback trigger in streamed error output'
+                ? 'Detected Claude rotation trigger in streamed error output'
                 : 'Detected Codex rotation trigger in streamed error output',
             );
           }
@@ -215,39 +270,53 @@ export async function runAgentForGroup(
             return;
           }
 
+          if (evaluation.suppressedRetryableSessionFailure) {
+            logger.warn(
+              {
+                chatJid,
+                group: group.name,
+                runId,
+                resultPreview:
+                  typeof output.result === 'string'
+                    ? output.result.slice(0, 160)
+                    : output.error?.slice(0, 160),
+              },
+              'Suppressed retryable Claude session failure from chat output',
+            );
+            return;
+          }
+
           if (!evaluation.shouldForwardOutput) {
             return;
+          }
+          const suppressState =
+            typeof output.result === 'string'
+              ? classifySuppressTokenOutput(output.result, suppressToken)
+              : 'none';
+          if (
+            typeof output.result === 'string' &&
+            output.result.length > 0 &&
+            suppressState === 'none'
+          ) {
+            streamedState = {
+              ...evaluation.state,
+              sawVisibleOutput: true,
+            };
           }
           await onOutput(output);
         }
       : undefined;
 
-    if (provider !== 'claude') {
-      logger.info(
-        {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
-          provider,
-        },
-        `Claude provider in cooldown, routing request to ${provider}`,
-      );
-    }
-
     const agentType = group.agentType || 'claude-code';
-    const providerLabel = canFallback ? provider : agentType;
     logger.info(
       {
         chatJid,
         group: group.name,
         groupFolder: group.folder,
         runId,
-        provider: providerLabel,
-        canFallback,
-        groupHasOverride,
+        provider: agentType,
       },
-      `Using provider: ${providerLabel}`,
+      `Using provider: ${agentType}`,
     );
 
     try {
@@ -255,17 +324,14 @@ export async function runAgentForGroup(
         group,
         {
           ...agentInput,
-          sessionId: persistSessionIds ? sessionId : undefined,
+          sessionId: provider === 'claude' ? sessionId : undefined,
         },
         (proc, processName, ipcDir) =>
           deps.queue.registerProcess(chatJid, proc, processName, ipcDir),
         wrappedOnOutput,
-        isClaudeCodeAgent && provider !== 'claude'
-          ? getFallbackEnvOverrides()
-          : undefined,
       );
 
-      if (persistSessionIds && output.newSessionId) {
+      if (provider === 'claude' && output.newSessionId) {
         deps.persistSession(group.folder, output.newSessionId);
       }
 
@@ -285,73 +351,25 @@ export async function runAgentForGroup(
       return {
         output,
         sawOutput: streamedState.sawOutput,
+        sawVisibleOutput: streamedState.sawVisibleOutput,
         sawSuccessNullResultWithoutOutput:
           streamedState.sawSuccessNullResultWithoutOutput,
+        retryableSessionFailureDetected:
+          streamedState.retryableSessionFailureDetected === true,
         streamedTriggerReason: streamedState.streamedTriggerReason,
       };
     } catch (error) {
       return {
         error,
         sawOutput: streamedState.sawOutput,
+        sawVisibleOutput: streamedState.sawVisibleOutput,
         sawSuccessNullResultWithoutOutput:
           streamedState.sawSuccessNullResultWithoutOutput,
+        retryableSessionFailureDetected:
+          streamedState.retryableSessionFailureDetected === true,
         streamedTriggerReason: streamedState.streamedTriggerReason,
       };
     }
-  };
-
-  const runFallbackAttempt = async (
-    reason: AgentTriggerReason,
-    retryAfterMs?: number,
-  ): Promise<'success' | 'error'> => {
-    const fallbackName = getFallbackProviderName();
-    markPrimaryCooldown(reason, retryAfterMs);
-
-    logger.info(
-      {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        runId,
-        reason,
-        retryAfterMs,
-        fallbackProvider: fallbackName,
-      },
-      `Falling back to provider: ${fallbackName} (reason: ${reason})`,
-    );
-
-    const fallbackAttempt = await runAttempt(fallbackName);
-    if (fallbackAttempt.error) {
-      logger.error(
-        {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
-          provider: fallbackName,
-          err: fallbackAttempt.error,
-        },
-        'Fallback provider also threw',
-      );
-      return 'error';
-    }
-
-    if (fallbackAttempt.output?.status === 'error') {
-      logger.error(
-        {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
-          provider: fallbackName,
-          error: fallbackAttempt.output.error,
-        },
-        `Fallback provider (${fallbackName}) also failed`,
-      );
-      return 'error';
-    }
-
-    return 'success';
   };
 
   const retryCodexWithRotation = async (
@@ -496,63 +514,86 @@ export async function runAgentForGroup(
         return 'success';
       case 'error':
         return 'error';
-      case 'no-fallback':
-        return 'error';
-      case 'needs-fallback':
-        if (outcome.trigger.reason === 'success-null-result') {
-          return canFallback
-            ? runFallbackAttempt('success-null-result')
-            : 'error';
-        }
-        if (!canFallback) {
-          logger.warn(
-            { ...logCtx, reason: outcome.trigger.reason },
-            'All Claude tokens exhausted and fallback disabled',
-          );
-          return 'error';
-        }
-        return runFallbackAttempt(
-          outcome.trigger.reason,
-          outcome.trigger.retryAfterMs,
-        );
     }
   };
 
-  const provider = canFallback ? await getActiveProvider() : 'claude';
-
-  // Already in no-fallback Claude cooldown — log only, no response
-  if (provider !== 'claude' && isPrimaryNoFallbackCooldownActive()) {
-    logger.info(
-      { chatJid, group: group.name, runId, provider },
-      'Claude primary cooldown active, silently skipping',
-    );
+  const maybeHandoffAfterError = (
+    reason: AgentTriggerReason,
+    attempt: Awaited<ReturnType<typeof runAttempt>>,
+  ): 'success' | 'error' => {
+    if (maybeHandoffToCodex(reason, attempt.sawVisibleOutput)) {
+      return 'success';
+    }
     return 'error';
-  }
+  };
 
-  const primaryAttempt = await runAttempt(provider);
+  const provider = 'claude';
+
+  let primaryAttempt = await runAttempt(provider);
+
+  const isRetryableClaudeSessionFailure = (
+    attempt: Awaited<ReturnType<typeof runAttempt>>,
+  ): boolean =>
+    isClaudeCodeAgent &&
+    provider === 'claude' &&
+    !attempt.sawOutput &&
+    (attempt.retryableSessionFailureDetected === true ||
+      (attempt.error != null &&
+        shouldRetryFreshSessionOnAgentFailure({
+          result: null,
+          error: getErrorMessage(attempt.error),
+        })));
+
+  if (isRetryableClaudeSessionFailure(primaryAttempt)) {
+    deps.clearSession(group.folder);
+    logger.warn(
+      { group: group.name, chatJid, runId },
+      'Cleared poisoned Claude session before visible output, retrying fresh session',
+    );
+
+    primaryAttempt = await runAttempt('claude');
+
+    if (isRetryableClaudeSessionFailure(primaryAttempt)) {
+      deps.clearSession(group.folder);
+      logger.warn(
+        { group: group.name, chatJid, runId },
+        'Fresh Claude retry also hit a retryable session failure',
+      );
+
+      logger.error(
+        { group: group.name, chatJid, runId },
+        'Retryable Claude session failure persisted after fresh retry',
+      );
+      return 'error';
+    }
+  }
 
   if (primaryAttempt.error) {
     if (
-      (canFallback || canRotateToken) &&
+      canRotateToken &&
       provider === 'claude' &&
       !primaryAttempt.sawOutput
     ) {
       const errMsg = getErrorMessage(primaryAttempt.error);
       const trigger = primaryAttempt.streamedTriggerReason
         ? {
-            shouldFallback: true,
+            shouldRetry: true,
             reason: primaryAttempt.streamedTriggerReason.reason,
             retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
           }
-        : detectFallbackTrigger(errMsg);
-      if (trigger.shouldFallback) {
-        return retryClaudeWithRotation(
+        : classifyRotationTrigger(errMsg);
+      if (trigger.shouldRetry) {
+        const result = await retryClaudeWithRotation(
           {
             reason: trigger.reason,
             retryAfterMs: trigger.retryAfterMs,
           },
           errMsg,
         );
+        if (result === 'error') {
+          return maybeHandoffAfterError(trigger.reason, primaryAttempt);
+        }
+        return result;
       }
     }
 
@@ -594,25 +635,23 @@ export async function runAgentForGroup(
   }
 
   if (
-    (canFallback || canRotateToken) &&
+    canRotateToken &&
     provider === 'claude' &&
     !primaryAttempt.sawOutput &&
     primaryAttempt.streamedTriggerReason &&
     output.status !== 'error'
   ) {
-    return retryClaudeWithRotation({
+    const result = await retryClaudeWithRotation({
       reason: primaryAttempt.streamedTriggerReason.reason,
       retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
     });
-  }
-
-  if (
-    canFallback &&
-    provider === 'claude' &&
-    !primaryAttempt.sawOutput &&
-    primaryAttempt.sawSuccessNullResultWithoutOutput
-  ) {
-    return runFallbackAttempt('success-null-result');
+    if (result === 'error') {
+      return maybeHandoffAfterError(
+        primaryAttempt.streamedTriggerReason.reason,
+        primaryAttempt,
+      );
+    }
+    return result;
   }
 
   if (
@@ -628,25 +667,29 @@ export async function runAgentForGroup(
 
   if (output.status === 'error') {
     if (
-      (canFallback || canRotateToken) &&
+      canRotateToken &&
       provider === 'claude' &&
       !primaryAttempt.sawOutput
     ) {
       const trigger = primaryAttempt.streamedTriggerReason
         ? {
-            shouldFallback: true,
+            shouldRetry: true,
             reason: primaryAttempt.streamedTriggerReason.reason,
             retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
           }
-        : detectFallbackTrigger(output.error);
-      if (trigger.shouldFallback) {
-        return retryClaudeWithRotation(
+        : classifyRotationTrigger(output.error);
+      if (trigger.shouldRetry) {
+        const result = await retryClaudeWithRotation(
           {
             reason: trigger.reason,
             retryAfterMs: trigger.retryAfterMs,
           },
           output.error ?? undefined,
         );
+        if (result === 'error') {
+          return maybeHandoffAfterError(trigger.reason, primaryAttempt);
+        }
+        return result;
       }
     }
 
@@ -685,6 +728,39 @@ export async function runAgentForGroup(
       },
       output.error ?? output.result ?? undefined,
     );
+  }
+
+  // Unresolved streamed trigger — rotation was unavailable or output was
+  // already forwarded.  Surfaces as an error since there is no alternative provider.
+  if (primaryAttempt.streamedTriggerReason) {
+    if (
+      isClaudeCodeAgent &&
+      maybeHandoffToCodex(
+        primaryAttempt.streamedTriggerReason.reason,
+        primaryAttempt.sawVisibleOutput,
+      )
+    ) {
+      return 'success';
+    }
+    logger.error(
+      {
+        group: group.name,
+        chatJid,
+        runId,
+        reason: primaryAttempt.streamedTriggerReason.reason,
+      },
+      'Agent trigger detected but could not be resolved',
+    );
+    return 'error';
+  }
+
+  // success-null-result with no visible output — agent returned nothing useful
+  if (primaryAttempt.sawSuccessNullResultWithoutOutput) {
+    logger.error(
+      { group: group.name, chatJid, runId },
+      'Agent returned success with null result and no visible output',
+    );
+    return 'error';
   }
 
   return 'success';

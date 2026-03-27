@@ -6,16 +6,12 @@
  */
 
 import {
-  isNoFallbackCooldownReason,
+  classifyRotationTrigger,
   shouldRotateClaudeToken,
   type AgentTriggerReason,
 } from './agent-error-detection.js';
 import { logger } from './logger.js';
 import { getErrorMessage } from './utils.js';
-import {
-  detectFallbackTrigger,
-  markPrimaryCooldown,
-} from './provider-fallback.js';
 import {
   rotateToken,
   getTokenCount,
@@ -39,17 +35,15 @@ export interface RotationAttemptResult {
 
 export type RotationOutcome =
   | { type: 'success' }
-  | { type: 'error'; message?: string }
-  | { type: 'needs-fallback'; trigger: TriggerInfo }
-  | { type: 'no-fallback'; trigger: TriggerInfo }; // usage-exhausted/auth-expired/org-access-denied
+  | { type: 'error'; trigger?: TriggerInfo };
 
 // ── Shared rotation loop ─────────────────────────────────────────
 
 /**
  * Retry a Claude request by rotating through available tokens.
  *
- * Returns a discriminated outcome — the caller decides what to do
- * with 'needs-fallback' (e.g. run Kimi fallback) or 'no-fallback'.
+ * Returns 'success' if a rotated token worked, or 'error' if all
+ * tokens are exhausted or the error is non-retryable.
  */
 export async function runClaudeRotationLoop(
   initialTrigger: TriggerInfo,
@@ -63,7 +57,9 @@ export async function runClaudeRotationLoop(
   while (
     shouldRotateClaudeToken(trigger.reason) &&
     getTokenCount() > 1 &&
-    rotateToken(lastRotationMessage, { ignoreRateLimits: true })
+    // Respect per-token cooldowns so exhausted auth/quota failures can
+    // terminate instead of cycling forever.
+    rotateToken(lastRotationMessage)
   ) {
     logger.info(
       { ...logContext, reason: trigger.reason },
@@ -78,12 +74,12 @@ export async function runClaudeRotationLoop(
         const errMsg = getErrorMessage(attempt.thrownError);
         const retryTrigger = attempt.streamedTriggerReason
           ? {
-              shouldFallback: true,
+              shouldRetry: true,
               reason: attempt.streamedTriggerReason.reason,
               retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
             }
-          : detectFallbackTrigger(errMsg);
-        if (retryTrigger.shouldFallback) {
+          : classifyRotationTrigger(errMsg);
+        if (retryTrigger.shouldRetry) {
           trigger = {
             reason: retryTrigger.reason,
             retryAfterMs: retryTrigger.retryAfterMs,
@@ -124,12 +120,13 @@ export async function runClaudeRotationLoop(
       continue;
     }
 
-    // ── Success with null result (MAE-specific, TaskScheduler ignores) ──
+    // ── Success with null result ──
     if (!attempt.sawOutput && attempt.sawSuccessNullResult) {
-      return {
-        type: 'needs-fallback',
-        trigger: { reason: 'success-null-result' },
-      };
+      logger.warn(
+        { ...logContext, provider: 'claude' },
+        'All rotated tokens returned success with null result',
+      );
+      return { type: 'error', trigger: { reason: 'success-null-result' } };
     }
 
     // ── Error status ──
@@ -137,12 +134,12 @@ export async function runClaudeRotationLoop(
       if (!attempt.sawOutput) {
         const retryTrigger = attempt.streamedTriggerReason
           ? {
-              shouldFallback: true,
+              shouldRetry: true,
               reason: attempt.streamedTriggerReason.reason,
               retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
             }
-          : detectFallbackTrigger(output.error);
-        if (retryTrigger.shouldFallback) {
+          : classifyRotationTrigger(output.error);
+        if (retryTrigger.shouldRetry) {
           trigger = {
             reason: retryTrigger.reason,
             retryAfterMs: retryTrigger.retryAfterMs,
@@ -165,16 +162,9 @@ export async function runClaudeRotationLoop(
   }
 
   // ── All tokens exhausted ──
-
-  // Usage/auth/org access failures: don't fall back to Kimi
-  if (isNoFallbackCooldownReason(trigger.reason)) {
-    markPrimaryCooldown(trigger.reason, trigger.retryAfterMs);
-    logger.info(
-      { ...logContext, reason: trigger.reason },
-      `All Claude tokens ${trigger.reason}, silently skipping (no Kimi fallback)`,
-    );
-    return { type: 'no-fallback', trigger };
-  }
-
-  return { type: 'needs-fallback', trigger };
+  logger.warn(
+    { ...logContext, reason: trigger.reason },
+    `All Claude tokens exhausted (${trigger.reason})`,
+  );
+  return { type: 'error', trigger };
 }

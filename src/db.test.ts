@@ -4,7 +4,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  claimServiceHandoff,
+  completeServiceHandoffAndAdvanceTargetCursor,
   createTask,
+  createServiceHandoff,
   createProducedWorkItem,
   deleteSession,
   deleteTask,
@@ -15,9 +18,11 @@ import {
   getMessagesSinceSeq,
   getNewMessagesBySeq,
   getOpenWorkItem,
+  getPendingServiceHandoffs,
   getRegisteredAgentTypesForJid,
   getMessagesSince,
   getNewMessages,
+  getRouterStateForService,
   isPairedRoomJid,
   getSession,
   getTaskById,
@@ -25,6 +30,7 @@ import {
   markWorkItemDeliveryRetry,
   setSession,
   setRegisteredGroup,
+  setRouterStateForService,
   storeChatMetadata,
   storeMessage,
   updateTask,
@@ -675,6 +681,84 @@ describe('paired room registration', () => {
 
     expect(getRegisteredAgentTypesForJid('dc:solo')).toEqual(['claude-code']);
     expect(isPairedRoomJid('dc:solo')).toBe(false);
+  });
+});
+
+describe('service handoff completion', () => {
+  it('atomically completes the handoff and advances the target cursor', () => {
+    storeChatMetadata('dc:handoff', '2024-01-01T00:00:00.000Z');
+    store({
+      id: 'handoff-msg-1',
+      chat_jid: 'dc:handoff',
+      sender: 'user',
+      sender_name: 'User',
+      content: 'hello',
+      timestamp: '2024-01-01T00:00:01.000Z',
+    });
+    const handoff = createServiceHandoff({
+      chat_jid: 'dc:handoff',
+      group_folder: 'test-group',
+      source_service_id: 'claude',
+      target_service_id: 'codex-review',
+      target_agent_type: 'codex',
+      prompt: 'hello',
+      end_seq: 1,
+    });
+
+    expect(claimServiceHandoff(handoff.id)).toBe(true);
+
+    const appliedCursor = completeServiceHandoffAndAdvanceTargetCursor({
+      id: handoff.id,
+      target_service_id: 'codex-review',
+      chat_jid: 'dc:handoff',
+      end_seq: 1,
+    });
+
+    expect(appliedCursor).toBe('1');
+    expect(getPendingServiceHandoffs('codex-review')).toEqual([]);
+    expect(
+      JSON.parse(
+        getRouterStateForService('last_agent_seq', 'codex-review') || '{}',
+      ),
+    ).toMatchObject({
+      'dc:handoff': '1',
+    });
+  });
+
+  it('does not move the target cursor backwards when a newer cursor already exists', () => {
+    storeChatMetadata('dc:handoff', '2024-01-01T00:00:00.000Z');
+    setRouterStateForService(
+      'last_agent_seq',
+      JSON.stringify({ 'dc:handoff': '5' }),
+      'codex-review',
+    );
+    const handoff = createServiceHandoff({
+      chat_jid: 'dc:handoff',
+      group_folder: 'test-group',
+      source_service_id: 'claude',
+      target_service_id: 'codex-review',
+      target_agent_type: 'codex',
+      prompt: 'hello',
+      end_seq: 3,
+    });
+
+    expect(claimServiceHandoff(handoff.id)).toBe(true);
+
+    const appliedCursor = completeServiceHandoffAndAdvanceTargetCursor({
+      id: handoff.id,
+      target_service_id: 'codex-review',
+      chat_jid: 'dc:handoff',
+      end_seq: 3,
+    });
+
+    expect(appliedCursor).toBe('5');
+    expect(
+      JSON.parse(
+        getRouterStateForService('last_agent_seq', 'codex-review') || '{}',
+      ),
+    ).toMatchObject({
+      'dc:handoff': '5',
+    });
   });
 });
 

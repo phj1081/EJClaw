@@ -6,7 +6,10 @@ import {
   DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  SERVICE_ID,
   SERVICE_AGENT_TYPE,
+  isClaudeService,
+  isReviewService,
   isSessionCommandSenderAllowed,
   STATUS_CHANNEL_ID,
   STATUS_UPDATE_INTERVAL,
@@ -41,7 +44,11 @@ import { composeDashboardContent } from './dashboard-render.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatOutbound } from './router.js';
+import {
+  findChannel,
+  formatOutbound,
+  normalizeMessageForDedupe,
+} from './router.js';
 import {
   buildRestartAnnouncement,
   buildInterruptedRestartAnnouncement,
@@ -64,12 +71,17 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
-import { initTokenRotation } from './token-rotation.js';
+import { hasAvailableClaudeToken, initTokenRotation } from './token-rotation.js';
 import {
   shouldStartTokenRefreshLoop,
   startTokenRefreshLoop,
   stopTokenRefreshLoop,
 } from './token-refresh.js';
+import {
+  getActiveCodexFailoverLeases,
+  restoreDefaultChannelLease,
+} from './service-routing.js';
+import { FAILOVER_MIN_DURATION_MS } from './config.js';
 
 // Token rotation is initialized lazily on first use or at startup below
 
@@ -315,9 +327,14 @@ async function main(): Promise<void> {
   loadState();
 
   // Graceful shutdown handlers
+  let leaseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     stopTokenRefreshLoop();
+    if (leaseRecoveryTimer) {
+      clearInterval(leaseRecoveryTimer);
+      leaseRecoveryTimer = null;
+    }
     const interruptedGroups = queue
       .getStatuses(Object.keys(registeredGroups))
       .filter(
@@ -410,19 +427,23 @@ async function main(): Promise<void> {
   }
 
   // Start subsystems (independently of connection handler)
-  startSchedulerLoop({
-    registeredGroups: () => registeredGroups,
-    getSessions: () => sessions,
-    queue,
-    onProcess: (groupJid, proc, processName, ipcDir) =>
-      queue.registerProcess(groupJid, proc, processName, ipcDir),
-    sendMessage: (jid, rawText) =>
-      sendFormattedChannelMessage(channels, jid, rawText),
-    sendTrackedMessage: (jid, rawText) =>
-      sendFormattedTrackedChannelMessage(channels, jid, rawText),
-    editTrackedMessage: (jid, messageId, rawText) =>
-      editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
-  });
+  if (!isReviewService()) {
+    startSchedulerLoop({
+      registeredGroups: () => registeredGroups,
+      getSessions: () => sessions,
+      queue,
+      onProcess: (groupJid, proc, processName, ipcDir) =>
+        queue.registerProcess(groupJid, proc, processName, ipcDir),
+      sendMessage: (jid, rawText) =>
+        sendFormattedChannelMessage(channels, jid, rawText),
+      sendTrackedMessage: (jid, rawText) =>
+        sendFormattedTrackedChannelMessage(channels, jid, rawText),
+      editTrackedMessage: (jid, messageId, rawText) =>
+        editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
+    });
+  } else {
+    logger.info({ serviceId: SERVICE_ID }, 'Skipping scheduler for review service');
+  }
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
@@ -467,6 +488,7 @@ async function main(): Promise<void> {
   }
   await startUnifiedDashboard({
     assistantName: ASSISTANT_NAME,
+    serviceId: SERVICE_ID,
     serviceAgentType: SERVICE_AGENT_TYPE,
     statusChannelId: STATUS_CHANNEL_ID,
     statusUpdateInterval: STATUS_UPDATE_INTERVAL,
@@ -482,6 +504,44 @@ async function main(): Promise<void> {
     },
     purgeOnStart: true,
   });
+
+  if (isClaudeService()) {
+    leaseRecoveryTimer = setInterval(() => {
+      if (!hasAvailableClaudeToken()) {
+        return;
+      }
+      const now = Date.now();
+      for (const lease of getActiveCodexFailoverLeases()) {
+        const activatedMs = lease.activatedAt
+          ? new Date(lease.activatedAt).getTime()
+          : NaN;
+        if (Number.isNaN(activatedMs)) {
+          logger.warn(
+            { chatJid: lease.chatJid, activatedAt: lease.activatedAt },
+            'Failover lease has unparseable activated_at, skipping auto-restore',
+          );
+          continue;
+        }
+        const elapsed = now - activatedMs;
+        if (elapsed < FAILOVER_MIN_DURATION_MS) {
+          logger.debug(
+            {
+              chatJid: lease.chatJid,
+              elapsedMin: Math.round(elapsed / 60_000),
+              minDurationMin: Math.round(FAILOVER_MIN_DURATION_MS / 60_000),
+            },
+            'Failover lease still within minimum hold period, skipping restore',
+          );
+          continue;
+        }
+        restoreDefaultChannelLease(lease.chatJid);
+        logger.info(
+          { chatJid: lease.chatJid, serviceId: SERVICE_ID, elapsedMin: Math.round(elapsed / 60_000) },
+          'Claude token available and failover hold period elapsed, restored default channel lease',
+        );
+      }
+    }, 5_000);
+  }
   runtime.startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

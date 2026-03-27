@@ -1,17 +1,30 @@
 import { AgentOutput } from './agent-runner.js';
 import { getErrorMessage } from './utils.js';
 import {
+  claimServiceHandoff,
+  completeServiceHandoffAndAdvanceTargetCursor,
+  createProducedWorkItem,
+  failServiceHandoff,
+  getOpenWorkItem,
+  getPendingServiceHandoffs,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
-  getOpenWorkItem,
-  createProducedWorkItem,
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,
+  getLastBotFinalMessage,
+  isPairedRoomJid,
+  type ServiceHandoff,
   type WorkItem,
 } from './db.js';
-import { isSessionCommandSenderAllowed } from './config.js';
+import {
+  isClaudeService,
+  isReviewService,
+  isSessionCommandSenderAllowed,
+  SERVICE_AGENT_TYPE,
+  SERVICE_ID,
+} from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
-import { findChannel, formatMessages } from './router.js';
+import { findChannel, formatMessages, normalizeMessageForDedupe } from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   advanceLastAgentCursor,
@@ -23,6 +36,7 @@ import {
 } from './message-runtime-rules.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
+import { createSuppressToken } from './output-suppression.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
@@ -32,6 +46,30 @@ import {
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
+import { shouldServiceProcessChat } from './service-routing.js';
+
+/**
+ * Check if a message is a duplicate of the last bot final message in a paired room.
+ * Exported for testing purposes.
+ */
+export function isDuplicateOfLastBotFinal(chatJid: string, text: string): boolean {
+  // Only check in paired rooms (both claude and codex registered)
+  if (!isPairedRoomJid(chatJid)) {
+    return false;
+  }
+
+  // Get the last bot final message from DB (any bot, not just this service)
+  const lastMessages = getLastBotFinalMessage(chatJid, SERVICE_AGENT_TYPE, 1);
+  if (lastMessages.length === 0) {
+    return false;
+  }
+
+  const lastMessage = lastMessages[0];
+  const normalizedLast = normalizeMessageForDedupe(lastMessage.content);
+  const normalizedCurrent = normalizeMessageForDedupe(text);
+
+  return normalizedLast === normalizedCurrent && normalizedLast.length > 0;
+}
 
 export interface MessageRuntimeDeps {
   assistantName: string;
@@ -64,6 +102,22 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const continuationTracker = createImplicitContinuationTracker(
     deps.idleTimeout,
   );
+  const isBotOnlyPairedRoomTurn = (
+    chatJid: string,
+    messages: NewMessage[],
+  ): boolean =>
+    isPairedRoomJid(chatJid) &&
+    messages.every(
+      (message) => message.is_from_me === true || !!message.is_bot_message,
+    );
+
+  /**
+   * Check if a message is a duplicate of the last bot final message in a paired room.
+   * Returns true if duplicate (should be suppressed).
+   */
+  const checkDuplicateOfLastBotFinal = (chatJid: string, text: string): boolean => {
+    return isDuplicateOfLastBotFinal(chatJid, text);
+  };
 
   const deliverOpenWorkItem = async (
     channel: Channel,
@@ -73,6 +127,24 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     },
   ): Promise<boolean> => {
     const replaceMessageId = options?.replaceMessageId ?? null;
+
+    // Check for duplicate in paired rooms before attempting delivery
+    const isDuplicate = checkDuplicateOfLastBotFinal(item.chat_jid, item.result_payload);
+
+    if (isDuplicate) {
+      // Mark as delivered without sending, and don't open continuation
+      markWorkItemDelivered(item.id, null);
+      logger.info(
+        {
+          chatJid: item.chat_jid,
+          workItemId: item.id,
+          preview: item.result_payload.slice(0, 100),
+        },
+        'Suppressed duplicate final message in paired room (marked as delivered)',
+      );
+      return true;
+    }
+
     try {
       if (replaceMessageId && channel.editMessage) {
         await channel.editMessage(
@@ -141,6 +213,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     chatJid: string,
     runId: string,
     onOutput?: (output: AgentOutput) => Promise<void>,
+    options?: {
+      suppressToken?: string;
+      startSeq?: number | null;
+      endSeq?: number | null;
+    },
   ): Promise<'success' | 'error'> =>
     runAgentForGroup(
       {
@@ -156,9 +233,184 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         prompt,
         chatJid,
         runId,
+        suppressToken: options?.suppressToken,
+        startSeq: options?.startSeq,
+        endSeq: options?.endSeq,
         onOutput,
       },
     );
+
+  const executeTurn = async (args: {
+    group: RegisteredGroup;
+    prompt: string;
+    chatJid: string;
+    runId: string;
+    channel: Channel;
+    startSeq: number | null;
+    endSeq: number | null;
+  }): Promise<{
+    outputStatus: 'success' | 'error';
+    deliverySucceeded: boolean;
+    visiblePhase: ReturnType<MessageTurnController['finish']> extends Promise<
+      infer T
+    >
+      ? T extends { visiblePhase: infer V }
+        ? V
+        : never
+      : never;
+  }> => {
+    const { group, prompt, chatJid, runId, channel, startSeq, endSeq } = args;
+    const isClaudeCodeAgent =
+      (group.agentType || 'claude-code') === 'claude-code';
+    const suppressToken =
+      isClaudeService() || isReviewService() ? createSuppressToken() : undefined;
+    const deferTypingUntilVisible = Boolean(suppressToken) && isClaudeService();
+
+    const turnController = new MessageTurnController({
+      chatJid,
+      group,
+      runId,
+      channel,
+      idleTimeout: deps.idleTimeout,
+      failureFinalText: FAILURE_FINAL_TEXT,
+      isClaudeCodeAgent,
+      deferTypingUntilVisible,
+      suppressToken,
+      clearSession: () => deps.clearSession(group.folder),
+      requestClose: (reason) => deps.queue.closeStdin(chatJid, { runId, reason }),
+      deliverFinalText: async (text) => {
+        try {
+          const workItem = createProducedWorkItem({
+            group_folder: group.folder,
+            chat_jid: chatJid,
+            agent_type: group.agentType || 'claude-code',
+            start_seq: startSeq,
+            end_seq: endSeq,
+            result_payload: text,
+          });
+          return deliverOpenWorkItem(channel, workItem);
+        } catch (err) {
+          logger.warn(
+            { group: group.name, chatJid, runId, err },
+            'Failed to persist produced output for delivery',
+          );
+          return false;
+        }
+      },
+    });
+
+    await turnController.start();
+
+    try {
+      const outputStatus = await runAgent(
+        group,
+        prompt,
+        chatJid,
+        runId,
+        (result) => turnController.handleOutput(result),
+        { suppressToken, startSeq, endSeq },
+      );
+
+      const { deliverySucceeded, visiblePhase } =
+        await turnController.finish(outputStatus);
+
+      return {
+        outputStatus,
+        deliverySucceeded,
+        visiblePhase,
+      };
+    } finally {
+      turnController.cancelPendingTypingDelay();
+      logger.debug(
+        {
+          transition: 'typing:off',
+          source: 'message-runtime:safety-net',
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+        },
+        'Typing indicator transition',
+      );
+      await channel.setTyping?.(chatJid, false);
+    }
+  };
+
+  const enqueuePendingHandoffs = (): void => {
+    for (const handoff of getPendingServiceHandoffs(SERVICE_ID)) {
+      if (!claimServiceHandoff(handoff.id)) {
+        continue;
+      }
+
+      deps.queue.enqueueTask(
+        handoff.chat_jid,
+        `handoff:${handoff.id}`,
+        async () => {
+          await processClaimedHandoff(handoff);
+        },
+      );
+    }
+  };
+
+  const processClaimedHandoff = async (handoff: ServiceHandoff): Promise<void> => {
+    const group = deps.getRegisteredGroups()[handoff.chat_jid];
+    if (!group) {
+      failServiceHandoff(handoff.id, 'Group not registered on target service');
+      return;
+    }
+
+    const channel = findChannel(deps.channels, handoff.chat_jid);
+    if (!channel) {
+      failServiceHandoff(handoff.id, 'No channel owns handoff jid');
+      return;
+    }
+
+    const runId = `handoff-${handoff.id}`;
+    try {
+      const result = await executeTurn({
+        group,
+        prompt: handoff.prompt,
+        chatJid: handoff.chat_jid,
+        runId,
+        channel,
+        startSeq: handoff.start_seq,
+        endSeq: handoff.end_seq,
+      });
+
+      if (!result.deliverySucceeded) {
+        failServiceHandoff(handoff.id, 'Handoff delivery failed');
+        return;
+      }
+
+      const appliedCursor = completeServiceHandoffAndAdvanceTargetCursor({
+        id: handoff.id,
+        target_service_id: handoff.target_service_id,
+        chat_jid: handoff.chat_jid,
+        end_seq: handoff.end_seq,
+      });
+      if (appliedCursor) {
+        deps.getLastAgentTimestamps()[handoff.chat_jid] = appliedCursor;
+      }
+      logger.info(
+        {
+          chatJid: handoff.chat_jid,
+          handoffId: handoff.id,
+          runId,
+          outputStatus: result.outputStatus,
+          visiblePhase: result.visiblePhase,
+          appliedCursor,
+        },
+        'Completed claimed service handoff',
+      );
+    } catch (err) {
+      const errorMessage = getErrorMessage(err);
+      failServiceHandoff(handoff.id, errorMessage);
+      logger.error(
+        { chatJid: handoff.chat_jid, handoffId: handoff.id, err },
+        'Claimed service handoff failed',
+      );
+    }
+  };
 
   const processGroupMessages = async (
     chatJid: string,
@@ -183,9 +435,29 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (!delivered) return false;
     }
 
+    if (!shouldServiceProcessChat(chatJid, SERVICE_ID)) {
+      const rawMissedMessages = getMessagesSinceSeq(
+        chatJid,
+        deps.getLastAgentTimestamps()[chatJid] || '0',
+        deps.assistantName,
+      );
+      const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
+      if (lastIgnored?.seq != null) {
+        advanceLastAgentCursor(
+          deps.getLastAgentTimestamps(),
+          deps.saveState,
+          chatJid,
+          lastIgnored.seq,
+        );
+      }
+      logger.debug(
+        { chatJid, serviceId: SERVICE_ID },
+        'Skipping message processing for unassigned service',
+      );
+      return true;
+    }
+
     const isMainGroup = group.isMain === true;
-    const isClaudeCodeAgent =
-      (group.agentType || 'claude-code') === 'claude-code';
     while (true) {
       const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
       const rawMissedMessages = getMessagesSinceSeq(
@@ -311,85 +583,36 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         },
         'Dispatching queued messages to agent',
       );
-      const turnController = new MessageTurnController({
-        chatJid,
+      const { deliverySucceeded, visiblePhase } = await executeTurn({
         group,
+        prompt,
+        chatJid,
         runId,
         channel,
-        idleTimeout: deps.idleTimeout,
-        failureFinalText: FAILURE_FINAL_TEXT,
-        isClaudeCodeAgent,
-        clearSession: () => deps.clearSession(group.folder),
-        requestClose: (reason) =>
-          deps.queue.closeStdin(chatJid, { runId, reason }),
-        deliverFinalText: async (text) => {
-          try {
-            const workItem = createProducedWorkItem({
-              group_folder: group.folder,
-              chat_jid: chatJid,
-              agent_type: group.agentType || 'claude-code',
-              start_seq: startSeq,
-              end_seq: endSeq,
-              result_payload: text,
-            });
-            return deliverOpenWorkItem(channel, workItem);
-          } catch (err) {
-            logger.warn(
-              { group: group.name, chatJid, runId, err },
-              'Failed to persist produced output for delivery',
-            );
-            return false;
-          }
-        },
+        startSeq,
+        endSeq,
       });
 
-      await turnController.start();
-
-      try {
-        const output = await runAgent(group, prompt, chatJid, runId, (result) =>
-          turnController.handleOutput(result),
+      if (!deliverySucceeded) {
+        logger.warn(
+          { chatJid, group: group.name, groupFolder: group.folder, runId },
+          'Persisted produced output for delivery retry without rerunning agent',
         );
-
-        const { deliverySucceeded, visiblePhase } =
-          await turnController.finish(output);
-
-        if (!deliverySucceeded) {
-          logger.warn(
-            { chatJid, group: group.name, groupFolder: group.folder, runId },
-            'Persisted produced output for delivery retry without rerunning agent',
-          );
-          return false;
-        }
-
-        logger.info(
-          {
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-            visiblePhase,
-          },
-          'Queued run completed successfully',
-        );
-
-        return true;
-      } finally {
-        // Safety net: always clear typing even if runAgent() or finish() throws.
-        // Prevents stuck typing indicators when exceptions bypass the normal
-        // turnController.finish() -> setTyping(false) path.
-        logger.debug(
-          {
-            transition: 'typing:off',
-            source: 'message-runtime:safety-net',
-            chatJid,
-            group: group.name,
-            groupFolder: group.folder,
-            runId,
-          },
-          'Typing indicator transition',
-        );
-        await channel.setTyping?.(chatJid, false);
+        return false;
       }
+
+      logger.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          visiblePhase,
+        },
+        'Queued run completed successfully',
+      );
+
+      return true;
     }
   };
 
@@ -404,6 +627,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     while (true) {
       try {
+        enqueuePendingHandoffs();
         const registeredGroups = deps.getRegisteredGroups();
         const jids = Object.keys(registeredGroups);
         const { messages, newSeqCursor } = getNewMessagesBySeq(
@@ -450,6 +674,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
             if (processableGroupMessages.length === 0) {
               const lastIgnored = groupMessages[groupMessages.length - 1];
+              if (lastIgnored?.seq != null) {
+                advanceLastAgentCursor(
+                  deps.getLastAgentTimestamps(),
+                  deps.saveState,
+                  chatJid,
+                  lastIgnored.seq,
+                );
+              }
+              continue;
+            }
+
+            if (!shouldServiceProcessChat(chatJid, SERVICE_ID)) {
+              const lastIgnored =
+                processableGroupMessages[processableGroupMessages.length - 1];
               if (lastIgnored?.seq != null) {
                 advanceLastAgentCursor(
                   deps.getLastAgentTimestamps(),
@@ -530,6 +768,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 ? pendingMessages
                 : processableGroupMessages;
             const formatted = formatMessages(messagesToSend, deps.timezone);
+            const isBotOnlyPairedFollowUp = isBotOnlyPairedRoomTurn(
+              chatJid,
+              messagesToSend,
+            );
 
             if (deps.queue.sendMessage(chatJid, formatted)) {
               const endSeq = messagesToSend[messagesToSend.length - 1]?.seq;
@@ -549,17 +791,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   group: group.name,
                   groupFolder: group.folder,
                   endSeq: endSeq ?? null,
+                  suppressed: isBotOnlyPairedFollowUp,
                 },
                 'Typing indicator transition',
               );
-              await channel
-                .setTyping?.(chatJid, true)
-                ?.catch((err) =>
-                  logger.warn(
-                    { chatJid, err },
-                    'Failed to set typing indicator',
-                  ),
-                );
+              if (!isBotOnlyPairedFollowUp) {
+                await channel
+                  .setTyping?.(chatJid, true)
+                  ?.catch((err) =>
+                    logger.warn(
+                      { chatJid, err },
+                      'Failed to set typing indicator',
+                    ),
+                  );
+              }
               continue;
             }
 
@@ -592,6 +837,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           chatJid,
           resolveGroupIpcPath(group.folder),
         );
+        continue;
+      }
+
+      if (!shouldServiceProcessChat(chatJid, SERVICE_ID)) {
         continue;
       }
 

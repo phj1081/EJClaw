@@ -2,7 +2,14 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { GROUPS_DIR, TIMEZONE } from './config.js';
+import {
+  CODEX_REVIEW_SERVICE_ID,
+  GROUPS_DIR,
+  SERVICE_ID,
+  SERVICE_SESSION_SCOPE,
+  TIMEZONE,
+  isReviewService,
+} from './config.js';
 import { isPairedRoomJid } from './db.js';
 import { readEnvFile } from './env.js';
 import { getActiveCodexAuthPath } from './codex-token-rotation.js';
@@ -10,14 +17,15 @@ import { getCurrentToken } from './token-rotation.js';
 import {
   resolveGroupFolderPath,
   resolveGroupIpcPath,
-  resolveGroupSessionsPath,
+  resolveServiceGroupSessionsPath,
   resolveTaskRuntimeIpcPath,
-  resolveTaskSessionsPath,
+  resolveServiceTaskSessionsPath,
 } from './group-folder.js';
 import {
   readPairedRoomPrompt,
   readPlatformPrompt,
 } from './platform-prompts.js';
+import { getEffectiveChannelLease } from './service-routing.js';
 import type { AgentType, RegisteredGroup } from './types.js';
 
 // writeCodexApiKeyAuth removed — Codex uses OAuth only.
@@ -37,6 +45,16 @@ function syncDirectoryEntries(sources: string[], destination: string): void {
       }
     }
   }
+}
+
+function readOptionalPromptFile(
+  projectRoot: string,
+  filename: string,
+): string | undefined {
+  const promptPath = path.join(projectRoot, 'prompts', filename);
+  if (!fs.existsSync(promptPath)) return undefined;
+  const prompt = fs.readFileSync(promptPath, 'utf-8').trim();
+  return prompt || undefined;
 }
 
 function ensureClaudeSessionSettings(groupSessionsDir: string): void {
@@ -175,6 +193,7 @@ function prepareCodexSessionEnvironment(args: {
   chatJid: string;
   isMain: boolean;
   isPairedRoom: boolean;
+  useFailoverPromptPack: boolean;
   memoryBriefing?: string;
 }): void {
   // API key auth intentionally removed — Codex uses OAuth only.
@@ -236,13 +255,38 @@ function prepareCodexSessionEnvironment(args: {
   }
 
   const sessionAgentsPath = path.join(sessionCodexDir, 'AGENTS.md');
-  const sessionAgents = [
-    readPlatformPrompt('codex', args.projectRoot),
-    args.isPairedRoom
-      ? readPairedRoomPrompt('codex', args.projectRoot)
-      : undefined,
-    args.memoryBriefing,
-  ]
+  const sessionAgents = (
+    args.useFailoverPromptPack
+      ? [
+          readOptionalPromptFile(
+            args.projectRoot,
+            'codex-review-failover-platform.md',
+          ),
+          args.isPairedRoom
+            ? readOptionalPromptFile(
+                args.projectRoot,
+                'codex-review-failover-paired-room.md',
+              )
+            : undefined,
+          args.memoryBriefing,
+        ]
+      : [
+          readPlatformPrompt('codex', args.projectRoot),
+          isReviewService(SERVICE_ID)
+            ? readOptionalPromptFile(args.projectRoot, 'codex-review-platform.md')
+            : undefined,
+          args.isPairedRoom
+            ? readPairedRoomPrompt('codex', args.projectRoot)
+            : undefined,
+          args.isPairedRoom && isReviewService(SERVICE_ID)
+            ? readOptionalPromptFile(
+                args.projectRoot,
+                'codex-review-paired-room.md',
+              )
+            : undefined,
+          args.memoryBriefing,
+        ]
+  )
     .filter((value): value is string => Boolean(value))
     .join('\n\n---\n\n')
     .trim();
@@ -342,8 +386,12 @@ export function prepareGroupEnvironment(
     options?.useTaskScopedSession === true && Boolean(runtimeTaskId);
   const sessionRootDir =
     runtimeTaskId && useTaskScopedSession
-      ? resolveTaskSessionsPath(group.folder, runtimeTaskId)
-      : resolveGroupSessionsPath(group.folder);
+      ? resolveServiceTaskSessionsPath(
+          group.folder,
+          SERVICE_SESSION_SCOPE,
+          runtimeTaskId,
+        )
+      : resolveServiceGroupSessionsPath(group.folder, SERVICE_SESSION_SCOPE);
 
   const groupSessionsDir = path.join(sessionRootDir, '.claude');
   fs.mkdirSync(groupSessionsDir, { recursive: true });
@@ -370,6 +418,11 @@ export function prepareGroupEnvironment(
   const globalDir = path.join(GROUPS_DIR, 'global');
   const globalClaudeMdPath = path.join(globalDir, 'CLAUDE.md');
   const isPairedRoom = isPairedRoomJid(chatJid);
+  const effectiveLease = getEffectiveChannelLease(chatJid);
+  const useCodexReviewFailoverPromptPack =
+    isReviewService(SERVICE_ID) &&
+    effectiveLease.explicit &&
+    effectiveLease.owner_service_id === CODEX_REVIEW_SERVICE_ID;
 
   const claudePlatformPrompt = readPlatformPrompt('claude-code', projectRoot);
   const claudePairedRoomPrompt = isPairedRoom
@@ -440,6 +493,7 @@ export function prepareGroupEnvironment(
       chatJid,
       isMain,
       isPairedRoom,
+      useFailoverPromptPack: useCodexReviewFailoverPromptPack,
       memoryBriefing: options?.memoryBriefing,
     });
   } else {

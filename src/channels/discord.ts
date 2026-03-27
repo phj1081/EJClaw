@@ -177,6 +177,7 @@ export class DiscordChannel implements Channel {
   private opts: DiscordChannelOpts;
   private botToken: string;
   private typingIntervals = new Map<string, NodeJS.Timeout>();
+  private typingGenerations = new Map<string, number>();
   private agentTypeFilter?: AgentType;
 
   constructor(
@@ -539,6 +540,9 @@ export class DiscordChannel implements Channel {
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
     if (!this.client) return;
 
+    const generation = (this.typingGenerations.get(jid) ?? 0) + 1;
+    this.typingGenerations.set(jid, generation);
+
     // Clear any existing interval for this channel
     const existing = this.typingIntervals.get(jid);
     if (existing) {
@@ -548,10 +552,15 @@ export class DiscordChannel implements Channel {
 
     if (!isTyping) return;
 
+    const isCurrentGeneration = () =>
+      this.typingGenerations.get(jid) === generation;
+
     const sendOnce = async () => {
+      if (!isCurrentGeneration()) return;
       try {
         const channelId = jid.replace(/^dc:/, '');
         const channel = await this.client!.channels.fetch(channelId);
+        if (!isCurrentGeneration()) return;
         if (channel && 'sendTyping' in channel) {
           await (channel as TextChannel).sendTyping();
         }
@@ -562,7 +571,13 @@ export class DiscordChannel implements Channel {
 
     // Send immediately, then refresh every 8 seconds (Discord expires at ~10s)
     await sendOnce();
-    this.typingIntervals.set(jid, setInterval(sendOnce, 8000));
+    if (!isCurrentGeneration()) return;
+    this.typingIntervals.set(
+      jid,
+      setInterval(() => {
+        void sendOnce();
+      }, 8000),
+    );
   }
 
   async sendAndTrack(jid: string, text: string): Promise<string | null> {

@@ -1,0 +1,189 @@
+import {
+  CLAUDE_SERVICE_ID,
+  CODEX_MAIN_SERVICE_ID,
+  CODEX_REVIEW_SERVICE_ID,
+  SERVICE_AGENT_TYPE,
+  SERVICE_ID,
+  normalizeServiceId,
+} from './config.js';
+import {
+  clearChannelOwnerLease,
+  getAllChannelOwnerLeases,
+  getRegisteredAgentTypesForJid,
+  setChannelOwnerLease,
+  type ChannelOwnerLeaseRow,
+} from './db.js';
+
+export interface EffectiveChannelLease {
+  chat_jid: string;
+  owner_service_id: string;
+  reviewer_service_id: string | null;
+  activated_at: string | null;
+  reason: string | null;
+  explicit: boolean;
+}
+
+const LEASE_CACHE_REFRESH_MS = 2_000;
+
+let lastLeaseRefreshAt = 0;
+const leaseCache = new Map<string, ChannelOwnerLeaseRow>();
+
+function normalizeLeaseRow(
+  row: ChannelOwnerLeaseRow,
+  explicit: boolean,
+): EffectiveChannelLease {
+  return {
+    chat_jid: row.chat_jid,
+    owner_service_id: normalizeServiceId(row.owner_service_id),
+    reviewer_service_id: row.reviewer_service_id
+      ? normalizeServiceId(row.reviewer_service_id)
+      : null,
+    activated_at: row.activated_at,
+    reason: row.reason,
+    explicit,
+  };
+}
+
+function getDefaultLease(chatJid: string): EffectiveChannelLease {
+  const types = getRegisteredAgentTypesForJid(chatJid);
+  const hasClaude = types.includes('claude-code');
+  const hasCodex = types.includes('codex');
+
+  if (hasClaude && hasCodex) {
+    return {
+      chat_jid: chatJid,
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: CODEX_MAIN_SERVICE_ID,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    };
+  }
+
+  if (hasCodex) {
+    return {
+      chat_jid: chatJid,
+      owner_service_id: CODEX_MAIN_SERVICE_ID,
+      reviewer_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    };
+  }
+
+  if (hasClaude) {
+    return {
+      chat_jid: chatJid,
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    };
+  }
+
+  return {
+    chat_jid: chatJid,
+    owner_service_id:
+      SERVICE_AGENT_TYPE === 'codex' ? CODEX_MAIN_SERVICE_ID : CLAUDE_SERVICE_ID,
+    reviewer_service_id: null,
+    activated_at: null,
+    reason: null,
+    explicit: false,
+  };
+}
+
+export function refreshChannelOwnerCache(force = false): void {
+  const now = Date.now();
+  if (!force && now - lastLeaseRefreshAt < LEASE_CACHE_REFRESH_MS) {
+    return;
+  }
+
+  leaseCache.clear();
+  for (const row of getAllChannelOwnerLeases()) {
+    leaseCache.set(row.chat_jid, row);
+  }
+  lastLeaseRefreshAt = now;
+}
+
+export function getEffectiveChannelLease(chatJid: string): EffectiveChannelLease {
+  refreshChannelOwnerCache();
+  const row = leaseCache.get(chatJid);
+  if (row) {
+    return normalizeLeaseRow(row, true);
+  }
+  return getDefaultLease(chatJid);
+}
+
+export function isOwnerServiceForChat(
+  chatJid: string,
+  serviceId: string = SERVICE_ID,
+): boolean {
+  const lease = getEffectiveChannelLease(chatJid);
+  return normalizeServiceId(serviceId) === lease.owner_service_id;
+}
+
+export function isReviewerServiceForChat(
+  chatJid: string,
+  serviceId: string = SERVICE_ID,
+): boolean {
+  const lease = getEffectiveChannelLease(chatJid);
+  return (
+    lease.reviewer_service_id !== null &&
+    normalizeServiceId(serviceId) === lease.reviewer_service_id
+  );
+}
+
+export function shouldServiceProcessChat(
+  chatJid: string,
+  serviceId: string = SERVICE_ID,
+): boolean {
+  const normalizedServiceId = normalizeServiceId(serviceId);
+  const lease = getEffectiveChannelLease(chatJid);
+  return (
+    normalizedServiceId === lease.owner_service_id ||
+    normalizedServiceId === lease.reviewer_service_id
+  );
+}
+
+export function activateCodexFailover(chatJid: string, reason: string): void {
+  const now = new Date().toISOString();
+  const row: ChannelOwnerLeaseRow = {
+    chat_jid: chatJid,
+    owner_service_id: CODEX_REVIEW_SERVICE_ID,
+    reviewer_service_id: CODEX_MAIN_SERVICE_ID,
+    activated_at: now,
+    reason,
+  };
+  setChannelOwnerLease(row);
+  leaseCache.set(chatJid, row);
+  lastLeaseRefreshAt = Date.now();
+}
+
+export function restoreDefaultChannelLease(chatJid: string): void {
+  clearChannelOwnerLease(chatJid);
+  leaseCache.delete(chatJid);
+  lastLeaseRefreshAt = Date.now();
+}
+
+export interface ActiveFailoverLease {
+  chatJid: string;
+  activatedAt: string | null;
+}
+
+export function getActiveCodexFailoverLeases(): ActiveFailoverLease[] {
+  refreshChannelOwnerCache(true);
+  return [...leaseCache.values()]
+    .filter(
+      (row) =>
+        normalizeServiceId(row.owner_service_id) === CODEX_REVIEW_SERVICE_ID &&
+        normalizeServiceId(row.reviewer_service_id || '') ===
+          CODEX_MAIN_SERVICE_ID,
+    )
+    .map((row) => ({ chatJid: row.chat_jid, activatedAt: row.activated_at ?? null }));
+}
+
+/** @deprecated Use getActiveCodexFailoverLeases() instead */
+export function getActiveCodexFailoverChatJids(): string[] {
+  return getActiveCodexFailoverLeases().map((l) => l.chatJid);
+}

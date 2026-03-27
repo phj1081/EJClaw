@@ -11,11 +11,27 @@ vi.mock('./available-groups.js', () => ({
 }));
 
 vi.mock('./config.js', () => ({
+  CODEX_MAIN_SERVICE_ID: 'codex-main',
+  CODEX_REVIEW_SERVICE_ID: 'codex-review',
   DATA_DIR: '/tmp/ejclaw-test-data',
+  SERVICE_SESSION_SCOPE: 'claude',
 }));
 
 vi.mock('./db.js', () => ({
+  createServiceHandoff: vi.fn(),
   getAllTasks: vi.fn(() => []),
+}));
+
+vi.mock('./service-routing.js', () => ({
+  activateCodexFailover: vi.fn(),
+  getEffectiveChannelLease: vi.fn(() => ({
+    chat_jid: 'group@test',
+    owner_service_id: 'claude',
+    reviewer_service_id: 'codex-main',
+    activated_at: null,
+    reason: null,
+    explicit: false,
+  })),
 }));
 
 vi.mock('./logger.js', () => ({
@@ -27,41 +43,35 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-vi.mock('./provider-fallback.js', () => ({
-  detectFallbackTrigger: vi.fn((error?: string | null) => {
-    const lower = (error || '').toLowerCase();
-    if (
-      lower.includes('does not have access to claude') ||
-      (lower.includes('failed to authenticate') &&
-        lower.includes('403') &&
-        lower.includes('terminated'))
-    ) {
-      return { shouldFallback: true, reason: 'org-access-denied' };
-    }
-    if (
-      lower.includes('429') ||
-      lower.includes('rate limit') ||
-      lower.includes('hit your limit')
-    ) {
-      return { shouldFallback: true, reason: '429' };
-    }
-    return { shouldFallback: false, reason: '' };
-  }),
-  getActiveProvider: vi.fn(async () => 'claude'),
-  getFallbackEnvOverrides: vi.fn(() => ({
-    ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
-    ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
-    ANTHROPIC_MODEL: 'kimi-k2.5',
-  })),
-  getFallbackProviderName: vi.fn(() => 'kimi'),
-  hasGroupProviderOverride: vi.fn(() => false),
-  isFallbackEnabled: vi.fn(() => true),
-  isPrimaryNoFallbackCooldownActive: vi.fn(() => false),
-  markPrimaryCooldown: vi.fn(),
-}));
+vi.mock('./agent-error-detection.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./agent-error-detection.js')>();
+  return {
+    ...actual,
+    classifyRotationTrigger: vi.fn((error?: string | null) => {
+      const lower = (error || '').toLowerCase();
+      if (
+        lower.includes('does not have access to claude') ||
+        (lower.includes('failed to authenticate') &&
+          lower.includes('403') &&
+          lower.includes('terminated'))
+      ) {
+        return { shouldRetry: true, reason: 'org-access-denied' };
+      }
+      if (
+        lower.includes('429') ||
+        lower.includes('rate limit') ||
+        lower.includes('hit your limit')
+      ) {
+        return { shouldRetry: true, reason: '429' };
+      }
+      return { shouldRetry: false, reason: '' };
+    }),
+  };
+});
 
 vi.mock('./session-recovery.js', () => ({
   shouldResetSessionOnAgentFailure: vi.fn(() => false),
+  shouldRetryFreshSessionOnAgentFailure: vi.fn(() => false),
 }));
 
 vi.mock('./token-rotation.js', () => ({
@@ -96,9 +106,11 @@ vi.mock('./memento-client.js', () => ({
 
 import * as agentRunner from './agent-runner.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
+import * as db from './db.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
 import { runAgentForGroup } from './message-agent-executor.js';
-import * as providerFallback from './provider-fallback.js';
+import * as sessionRecovery from './session-recovery.js';
+import * as serviceRouting from './service-routing.js';
 import * as tokenRotation from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -129,9 +141,6 @@ function makeDeps() {
 describe('runAgentForGroup room memory', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
-    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(false);
-    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
     vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
       status: 'success',
       result: 'ok',
@@ -167,7 +176,6 @@ describe('runAgentForGroup room memory', () => {
       }),
       expect.any(Function),
       undefined,
-      undefined,
     );
   });
 
@@ -196,6 +204,59 @@ describe('runAgentForGroup room memory', () => {
       }),
       expect.any(Function),
       undefined,
+    );
+  });
+
+  it('injects suppress token instructions into the agent prompt', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-suppress',
+      suppressToken: '__TEST_SUPPRESS__',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          'If you have no user-visible content to send for this turn, output exactly this token and nothing else: __TEST_SUPPRESS__',
+        ),
+      }),
+      expect.any(Function),
+      undefined,
+    );
+  });
+
+  it('adds reviewer silence guidance when the current service is the reviewer for the chat', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-review-suppress',
+      suppressToken: '__TEST_SUPPRESS__',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          'If you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the token.',
+        ),
+      }),
+      expect.any(Function),
       undefined,
     );
   });
@@ -205,14 +266,11 @@ describe('runAgentForGroup Claude rotation', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(buildRoomMemoryBriefing).mockResolvedValue(undefined);
-    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
-    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
-    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
     vi.mocked(tokenRotation.rotateToken).mockReturnValue(false);
   });
 
-  it('rotates to another Claude account before falling back to Kimi', async () => {
+  it('rotates to another Claude account on usage exhaustion', async () => {
     const outputs: string[] = [];
 
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
@@ -223,7 +281,7 @@ describe('runAgentForGroup Claude rotation', () => {
         await onOutput?.({
           status: 'success',
           phase: 'final',
-          result: 'You’re out of extra usage · resets 4am (Asia/Seoul)',
+          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
         });
         return {
           status: 'success',
@@ -256,7 +314,7 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
     expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
     expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
-    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    // No fallback provider — rotation is the only recovery mechanism
     expect(outputs).toEqual(['회전된 Claude 응답입니다.']);
   });
 
@@ -311,15 +369,15 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
     expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
     expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
-    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    // No fallback provider — rotation is the only recovery mechanism
     expect(outputs).toEqual(['새 Claude 토큰 응답입니다.']);
   });
 
-  it('suppresses Claude 502 HTML and falls back without forwarding it', async () => {
+  it('suppresses Claude 502 HTML and returns error when no rotation is available', async () => {
     const outputs: string[] = [];
 
-    vi.mocked(agentRunner.runAgentProcess)
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, _input, _onProcess, onOutput) => {
         await onOutput?.({
           status: 'success',
           phase: 'intermediate',
@@ -336,24 +394,64 @@ describe('runAgentForGroup Claude rotation', () => {
           status: 'success',
           result: null,
         };
-      })
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: 'Kimi 폴백 응답입니다.',
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      });
+      },
+    );
 
     const result = await runAgentForGroup(makeDeps(), {
       group: makeGroup(),
       prompt: 'hello',
       chatJid: 'group@test',
-      runId: 'run-claude-502-fallback',
+      runId: 'run-claude-502-error',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('error');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(outputs).toEqual([]);
+    expect(db.createServiceHandoff).not.toHaveBeenCalled();
+  });
+
+  it('clears the Claude session and retries fresh when a retryable thinking 400 is surfaced as text', async () => {
+    const outputs: string[] = [];
+    const deps = makeDeps();
+
+    vi.mocked(sessionRecovery.shouldRetryFreshSessionOnAgentFailure)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.11.content.0: Invalid `signature` in `thinking` block"}}',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'fresh Claude retry success',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'claude-session-fresh',
+        };
+      });
+
+    const result = await runAgentForGroup(deps, {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-retryable-thinking-400-retry',
       onOutput: async (output) => {
         if (typeof output.result === 'string') outputs.push(output.result);
       },
@@ -361,15 +459,63 @@ describe('runAgentForGroup Claude rotation', () => {
 
     expect(result).toBe('success');
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
-    expect(tokenRotation.rotateToken).not.toHaveBeenCalled();
-    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
-      'overloaded',
-      undefined,
-    );
-    expect(outputs).toEqual(['Kimi 폴백 응답입니다.']);
+    expect(deps.clearSession).toHaveBeenCalledTimes(1);
+    expect(deps.clearSession).toHaveBeenCalledWith('test-claude');
+    // No fallback provider — rotation is the only recovery mechanism
+    expect(outputs).toEqual(['fresh Claude retry success']);
   });
 
-  it('stops after all Claude accounts are usage-exhausted without falling back to Kimi', async () => {
+  it('returns error when the fresh Claude retry also hits the same retryable thinking 400', async () => {
+    const outputs: string[] = [];
+    const deps = makeDeps();
+
+    vi.mocked(sessionRecovery.shouldRetryFreshSessionOnAgentFailure)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.11.content.0: Invalid `signature` in `thinking` block"}}',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.11.content.0: Invalid `signature` in `thinking` block"}}',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const result = await runAgentForGroup(deps, {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-retryable-thinking-400-error',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('error');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(deps.clearSession).toHaveBeenCalledTimes(2);
+    expect(outputs).toEqual([]);
+  });
+
+  it('returns error after all Claude accounts are usage-exhausted', async () => {
     const outputs: string[] = [];
 
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
@@ -382,7 +528,7 @@ describe('runAgentForGroup Claude rotation', () => {
         await onOutput?.({
           status: 'success',
           phase: 'final',
-          result: 'You’re out of extra usage · resets 4am (Asia/Seoul)',
+          result: 'You\u2019re out of extra usage \u00b7 resets 4am (Asia/Seoul)',
         });
         return {
           status: 'success',
@@ -393,18 +539,7 @@ describe('runAgentForGroup Claude rotation', () => {
         await onOutput?.({
           status: 'success',
           phase: 'final',
-          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      })
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: 'Kimi 폴백 응답입니다.',
+          result: "You're out of extra usage \u00b7 resets 4am (Asia/Seoul)",
         });
         return {
           status: 'success',
@@ -416,20 +551,71 @@ describe('runAgentForGroup Claude rotation', () => {
       group: makeGroup(),
       prompt: 'hello',
       chatJid: 'group@test',
-      runId: 'run-fallback-after-rotation',
+      runId: 'run-all-exhausted-error',
+      startSeq: 10,
+      endSeq: 12,
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(2);
+    expect(outputs).toEqual([]);
+    expect(serviceRouting.activateCodexFailover).toHaveBeenCalledWith(
+      'group@test',
+      'claude-usage-exhausted',
+    );
+    expect(db.createServiceHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_jid: 'group@test',
+        target_service_id: 'codex-review',
+        target_agent_type: 'codex',
+        start_seq: 10,
+        end_seq: 12,
+        reason: 'claude-usage-exhausted',
+      }),
+    );
+  });
+
+  it('suppresses a usage-exhausted banner even when Claude already emitted progress text', async () => {
+    const outputs: string[] = [];
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '대화 요약 중...',
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: "You've hit your limit · resets 2am (Asia/Seoul)",
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-progress-before-usage-banner',
       onOutput: async (output) => {
         if (typeof output.result === 'string') outputs.push(output.result);
       },
     });
 
     expect(result).toBe('error');
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
-    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(2);
-    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
-      'usage-exhausted',
-      undefined,
-    );
-    expect(outputs).toEqual([]);
+    expect(outputs).toEqual(['대화 요약 중...']);
+    expect(db.createServiceHandoff).not.toHaveBeenCalled();
   });
 
   it('rotates to another Claude account when Claude streams an org access denied banner', async () => {
@@ -483,11 +669,57 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
     expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
     expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
-    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    // No fallback provider — rotation is the only recovery mechanism
     expect(outputs).toEqual(['org access denied 회전 성공 응답']);
   });
 
-  it('stops after all Claude accounts are org-access-denied without falling back to Kimi', async () => {
+  it('rotates when Claude surfaces 403 terminated as a success result', async () => {
+    const outputs: string[] = [];
+
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
+    vi.mocked(tokenRotation.rotateToken).mockReturnValueOnce(true);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'Failed to authenticate. API Error: 403 terminated',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '403 회전 성공 응답',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-403-success-rotation',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
+    expect(outputs).toEqual(['403 회전 성공 응답']);
+  });
+
+  it('returns error after all Claude accounts are org-access-denied', async () => {
     const outputs: string[] = [];
 
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
@@ -519,54 +751,34 @@ describe('runAgentForGroup Claude rotation', () => {
           result: null,
           error: 'Failed to authenticate. API Error: 403 terminated',
         };
-      })
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: 'Kimi 폴백 응답입니다.',
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
       });
 
     const result = await runAgentForGroup(makeDeps(), {
       group: makeGroup(),
       prompt: 'hello',
       chatJid: 'group@test',
-      runId: 'run-org-access-denied-no-fallback',
+      runId: 'run-org-access-denied-error',
       onOutput: async (output) => {
         if (typeof output.result === 'string') outputs.push(output.result);
       },
     });
 
-    expect(result).toBe('error');
+    expect(result).toBe('success');
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
     expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(2);
-    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
-      'org-access-denied',
-      undefined,
-    );
     expect(outputs).toEqual([]);
-  });
-
-  it('skips execution entirely when Claude no-fallback cooldown is already active', async () => {
-    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('kimi');
-    vi.mocked(
-      providerFallback.isPrimaryNoFallbackCooldownActive,
-    ).mockReturnValue(true);
-
-    const result = await runAgentForGroup(makeDeps(), {
-      group: makeGroup(),
-      prompt: 'hello',
-      chatJid: 'group@test',
-      runId: 'run-skip-primary-cooldown',
-    });
-
-    expect(result).toBe('error');
-    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(serviceRouting.activateCodexFailover).toHaveBeenCalledWith(
+      'group@test',
+      'claude-org-access-denied',
+    );
+    expect(db.createServiceHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_jid: 'group@test',
+        target_service_id: 'codex-review',
+        target_agent_type: 'codex',
+        reason: 'claude-org-access-denied',
+      }),
+    );
   });
 
   it('does not mistake a normal response quoting the banner text for a usage error', async () => {
@@ -601,7 +813,6 @@ describe('runAgentForGroup Claude rotation', () => {
 
     expect(result).toBe('success');
     expect(tokenRotation.rotateToken).not.toHaveBeenCalled();
-    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
     expect(outputs).toEqual([
       "상태 문구 예시: You're out of extra usage · resets 4am (Asia/Seoul) 라는 배너가 뜰 수 있습니다.",
     ]);
@@ -612,9 +823,6 @@ describe('runAgentForGroup Codex rotation', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(buildRoomMemoryBriefing).mockResolvedValue(undefined);
-    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
-    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(false);
-    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
     vi.mocked(codexTokenRotation.getCodexAccountCount).mockReturnValue(2);
     vi.mocked(codexTokenRotation.rotateCodexToken).mockReturnValueOnce(true);
   });

@@ -11,8 +11,21 @@ vi.mock('./agent-runner.js', () => ({
   writeTasksSnapshot: vi.fn(),
 }));
 
+vi.mock('./output-suppression.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./output-suppression.js')>();
+  return {
+    ...actual,
+    createSuppressToken: vi.fn(() => '__TEST_SUPPRESS__'),
+  };
+});
+
 vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/ejclaw-test-data',
+  SERVICE_ID: 'claude',
+  SERVICE_AGENT_TYPE: 'claude-code',
+  SERVICE_SESSION_SCOPE: 'claude',
+  isClaudeService: vi.fn(() => true),
+  isReviewService: vi.fn(() => false),
   isSessionCommandSenderAllowed: vi.fn(() => false),
 }));
 
@@ -40,6 +53,10 @@ vi.mock('./db.js', () => {
     }));
 
   return {
+    claimServiceHandoff: vi.fn(() => true),
+    completeServiceHandoff: vi.fn(),
+    completeServiceHandoffAndAdvanceTargetCursor: vi.fn(),
+    failServiceHandoff: vi.fn(),
     getAllChats: vi.fn(() => []),
     getAllTasks: vi.fn(() => []),
     getLastHumanMessageTimestamp: vi.fn(() => null),
@@ -89,11 +106,13 @@ vi.mock('./db.js', () => {
       },
     ),
     getOpenWorkItem: vi.fn(() => undefined),
+    getPendingServiceHandoffs: vi.fn(() => []),
     createProducedWorkItem: vi.fn((input) => ({
       id: 1,
       group_folder: input.group_folder,
       chat_jid: input.chat_jid,
       agent_type: input.agent_type || 'claude-code',
+      service_id: 'claude',
       status: 'produced',
       start_seq: input.start_seq,
       end_seq: input.end_seq,
@@ -108,8 +127,21 @@ vi.mock('./db.js', () => {
     markWorkItemDelivered: vi.fn(),
     markWorkItemDeliveryRetry: vi.fn(),
     isPairedRoomJid: vi.fn(() => false),
+    getLastBotFinalMessage: vi.fn(() => []),
   };
 });
+
+vi.mock('./service-routing.js', () => ({
+  getEffectiveChannelLease: vi.fn((chatJid: string) => ({
+    chat_jid: chatJid,
+    owner_service_id: 'claude',
+    reviewer_service_id: 'codex-main',
+    activated_at: null,
+    reason: null,
+    explicit: false,
+  })),
+  shouldServiceProcessChat: vi.fn(() => true),
+}));
 
 vi.mock('./logger.js', () => ({
   logger: {
@@ -118,21 +150,6 @@ vi.mock('./logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
-}));
-
-vi.mock('./provider-fallback.js', () => ({
-  detectFallbackTrigger: vi.fn(() => ({ shouldFallback: false, reason: '' })),
-  getActiveProvider: vi.fn(async () => 'claude'),
-  getFallbackEnvOverrides: vi.fn(() => ({
-    ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
-    ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
-    ANTHROPIC_MODEL: 'kimi-k2.5',
-  })),
-  getFallbackProviderName: vi.fn(() => 'kimi'),
-  hasGroupProviderOverride: vi.fn(() => false),
-  isFallbackEnabled: vi.fn(() => true),
-  isPrimaryNoFallbackCooldownActive: vi.fn(() => false),
-  markPrimaryCooldown: vi.fn(),
 }));
 
 vi.mock('./sender-allowlist.js', () => ({
@@ -151,7 +168,8 @@ import * as agentRunner from './agent-runner.js';
 import * as db from './db.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { createMessageRuntime } from './message-runtime.js';
-import * as providerFallback from './provider-fallback.js';
+import * as outputSuppression from './output-suppression.js';
+import * as config from './config.js';
 import type { Channel, RegisteredGroup } from './types.js';
 
 function makeGroup(agentType: 'claude-code' | 'codex'): RegisteredGroup {
@@ -182,19 +200,10 @@ function makeChannel(chatJid: string): Channel {
 describe('createMessageRuntime', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
-    vi.mocked(providerFallback.getFallbackProviderName).mockReturnValue('kimi');
-    vi.mocked(providerFallback.getFallbackEnvOverrides).mockReturnValue({
-      ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
-      ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
-      ANTHROPIC_MODEL: 'kimi-k2.5',
-    });
-    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
-    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
-    vi.mocked(providerFallback.detectFallbackTrigger).mockReturnValue({
-      shouldFallback: false,
-      reason: '',
-    });
+    vi.mocked(db.getLastBotFinalMessage).mockReturnValue([]);
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(false);
+    vi.mocked(config.isClaudeService).mockReturnValue(true);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
   });
 
   it('ignores generic failure bot messages in paired rooms', async () => {
@@ -257,6 +266,8 @@ describe('createMessageRuntime', () => {
     const saveState = vi.fn();
     const lastAgentTimestamps: Record<string, string> = {};
 
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
     vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
@@ -317,8 +328,80 @@ describe('createMessageRuntime', () => {
       chatJid,
       '그 방향이 맞습니다.',
     );
+    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
+    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
     expect(lastAgentTimestamps[chatJid]).toBe('1');
     expect(saveState).toHaveBeenCalled();
+  });
+
+  it('does not defer typing-on for suppress-capable review turns', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(true);
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'other-bot@test',
+        sender_name: 'Other Bot',
+        content: '이어서 확인해줘.',
+        timestamp: '2026-03-18T09:00:00.000Z',
+        is_bot_message: true,
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, _input, _onProcess, onOutput) => {
+        expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '리뷰 확인 완료입니다.',
+          newSessionId: 'session-review-follow-up-immediate',
+        });
+        return {
+          status: 'success',
+          result: '리뷰 확인 완료입니다.',
+          newSessionId: 'session-review-follow-up-immediate',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-review-follow-up-immediate-typing',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
+    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
   });
 
   it('ignores watcher status control messages in paired rooms', async () => {
@@ -1280,6 +1363,374 @@ describe('createMessageRuntime', () => {
     expect(channel.sendAndTrack).not.toHaveBeenCalled();
   });
 
+  it('does not emit a visible message when the final output is the suppress token only', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: '__TEST_SUPPRESS__',
+      newSessionId: 'session-suppress-run',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-suppress-only',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(saveState).toHaveBeenCalled();
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+    expect(channel.setTyping).not.toHaveBeenCalledWith(chatJid, true);
+  });
+
+  it('defers typing-on until the first visible output for suppress-capable turns', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'visible suppress-capable reply',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'session-visible-suppress-capable',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-visible-suppress-capable',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'visible suppress-capable reply',
+    );
+    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
+    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
+  });
+
+  it('does not grant suppress-token silence authority to codex-main', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: 'visible codex reply',
+      newSessionId: 'session-codex-main',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-codex-main-no-suppress',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(outputSuppression.createSuppressToken).not.toHaveBeenCalled();
+  });
+
+  it('blocks malformed output when the suppress token is mixed with visible text', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: '동의합니다 __TEST_SUPPRESS__',
+      newSessionId: 'session-suppress-mixed',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-suppress-mixed',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(saveState).toHaveBeenCalled();
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+  });
+
+  it('suppresses a leaked foreign suppress token even when it differs from the current turn token', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(true);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: '__EJ_SUPPRESS_deadbeefdeadbeefdeadbeef__',
+      newSessionId: 'session-foreign-suppress-token',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-foreign-suppress-token',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(saveState).toHaveBeenCalled();
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+  });
+
+  it('suppresses a malformed leaked foreign suppress token without the closing suffix', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(true);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+        seq: 1,
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: '__EJ_SUPPRESS_deadbeefdeadbeefdeadbeef',
+      newSessionId: 'session-malformed-foreign-suppress-token',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-malformed-foreign-suppress-token',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(saveState).toHaveBeenCalled();
+    expect(lastAgentTimestamps[chatJid]).toBe('1');
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+  });
+
   it('resets tracked progress after a final output that becomes empty after formatting', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
@@ -1417,7 +1868,7 @@ describe('createMessageRuntime', () => {
     }
   });
 
-  it('promotes the last progress output to a final message when the agent completes without a final phase', async () => {
+  it('promotes the last flushed progress output to a final message when the agent completes without a final phase', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -1508,24 +1959,24 @@ describe('createMessageRuntime', () => {
         chatJid,
         P('검증 중입니다.\n\n0초'),
       );
-      // Ticker fires after advanceTimersByTime — edits tracked message with latest heading
+      // Ticker fires after advanceTimersByTime — edits tracked message with the last flushed heading
       expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
         'progress-1',
-        P('테스트도 통과했습니다.\n\n5초'),
+        P('커밋은 정상 들어갔고 pre-commit도 통과했습니다.\n\n5초'),
       );
       // finish() promotes the last flushed progress text to a final message
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
         chatJid,
-        '검증 중입니다.',
+        '커밋은 정상 들어갔고 pre-commit도 통과했습니다.',
       );
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('retries editing progress message instead of creating a duplicate when edit fails', async () => {
+  it('keeps going after a tracked progress edit fails and still emits the last flushed final message', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -1614,8 +2065,7 @@ describe('createMessageRuntime', () => {
       });
 
       expect(result).toBe(true);
-      // Only one progress message created via sendAndTrack — no duplicate
-      expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+      // The first flushed progress is still tracked
       expect(channel.sendAndTrack).toHaveBeenCalledWith(
         chatJid,
         P('진행 중입니다.\n\n0초'),
@@ -1630,7 +2080,7 @@ describe('createMessageRuntime', () => {
       expect(channel.sendMessage).toHaveBeenCalledTimes(1);
       expect(channel.sendMessage).toHaveBeenCalledWith(
         chatJid,
-        '진행 중입니다.',
+        '아직 진행 중.',
       );
     } finally {
       vi.useRealTimers();
@@ -1868,331 +2318,6 @@ describe('createMessageRuntime', () => {
     expect(saveState).toHaveBeenCalled();
   });
 
-  it('retries with the fallback provider when Claude returns a 429 error before any output', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('claude-code');
-    const channel = makeChannel(chatJid);
-
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-19T00:00:00.000Z',
-      },
-    ]);
-
-    vi.mocked(providerFallback.detectFallbackTrigger).mockReturnValue({
-      shouldFallback: true,
-      reason: '429',
-      retryAfterMs: 60_000,
-    });
-
-    vi.mocked(agentRunner.runAgentProcess)
-      .mockResolvedValueOnce({
-        status: 'error',
-        result: null,
-        error: '429 rate limited retry after 60',
-      })
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: 'fallback 응답입니다.',
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
-      saveState: vi.fn(),
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-fallback-429',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
-    expect(agentRunner.runAgentProcess).toHaveBeenNthCalledWith(
-      2,
-      expect.anything(),
-      expect.objectContaining({ sessionId: undefined }),
-      expect.any(Function),
-      expect.any(Function),
-      expect.objectContaining({
-        ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
-        ANTHROPIC_MODEL: 'kimi-k2.5',
-      }),
-    );
-    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
-      '429',
-      60_000,
-    );
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      chatJid,
-      'fallback 응답입니다.',
-    );
-  });
-
-  it('silently suppresses a usage exhaustion banner without falling back', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('claude-code');
-    const channel = makeChannel(chatJid);
-
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-24T00:00:00.000Z',
-      },
-    ]);
-
-    vi.mocked(agentRunner.runAgentProcess)
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      })
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: 'usage fallback 응답입니다.',
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
-      saveState: vi.fn(),
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-fallback-usage-exhausted',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
-    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
-      'usage-exhausted',
-      undefined,
-    );
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('suppresses duplicate streamed usage banners without emitting a visible reply', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('claude-code');
-    const channel = makeChannel(chatJid);
-
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-24T00:00:00.000Z',
-      },
-    ]);
-
-    vi.mocked(agentRunner.runAgentProcess)
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'intermediate',
-          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
-        });
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: "You're out of extra usage · resets 4am (Asia/Seoul)",
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      })
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: 'duplicate banner fallback 응답입니다.',
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
-      saveState: vi.fn(),
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-fallback-usage-exhausted-duplicate',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
-    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
-      'usage-exhausted',
-      undefined,
-    );
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('retries with the fallback provider when Claude ends with success-null-result before any output', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('claude-code');
-    const channel = makeChannel(chatJid);
-
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-19T00:00:00.000Z',
-      },
-    ]);
-
-    vi.mocked(agentRunner.runAgentProcess)
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          result: null,
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      })
-      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
-        await onOutput?.({
-          status: 'success',
-          phase: 'final',
-          result: 'success-null-result 폴백 응답입니다.',
-        });
-        return {
-          status: 'success',
-          result: null,
-        };
-      });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
-      saveState: vi.fn(),
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-fallback-success-null',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
-    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
-      'success-null-result',
-      undefined,
-    );
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      chatJid,
-      'success-null-result 폴백 응답입니다.',
-    );
-  });
-
   it('treats missing streamed phase as final output', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
@@ -2266,6 +2391,7 @@ describe('createMessageRuntime', () => {
       group_folder: group.folder,
       chat_jid: chatJid,
       agent_type: 'claude-code',
+      service_id: 'claude',
       status: 'produced',
       start_seq: 1,
       end_seq: 1,

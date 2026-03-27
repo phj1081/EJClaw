@@ -71,7 +71,7 @@ export async function runAgentProcess(
     },
   );
 
-  // Apply provider fallback overrides (e.g. Kimi env vars when Claude is in cooldown)
+  // Apply env overrides (caller-provided)
   if (envOverrides) {
     for (const [key, value] of Object.entries(envOverrides)) {
       if (value) env[key] = value;

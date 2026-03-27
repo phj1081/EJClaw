@@ -8,18 +8,12 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-vi.mock('./provider-fallback.js', () => ({
-  detectFallbackTrigger: vi.fn(() => ({ shouldFallback: false, reason: '' })),
-  markPrimaryCooldown: vi.fn(),
-}));
-
 vi.mock('./token-rotation.js', () => ({
   rotateToken: vi.fn(() => false),
   getTokenCount: vi.fn(() => 1),
   markTokenHealthy: vi.fn(),
 }));
 
-import { markPrimaryCooldown } from './provider-fallback.js';
 import { runClaudeRotationLoop } from './provider-retry.js';
 import {
   getTokenCount,
@@ -50,10 +44,9 @@ describe('runClaudeRotationLoop', () => {
     expect(outcome).toEqual({ type: 'success' });
     expect(rotateToken).toHaveBeenCalledTimes(1);
     expect(markTokenHealthy).toHaveBeenCalledTimes(1);
-    expect(markPrimaryCooldown).not.toHaveBeenCalled();
   });
 
-  it('marks no-fallback cooldown when all Claude tokens are org-access-denied', async () => {
+  it('returns error when all Claude tokens are exhausted', async () => {
     vi.mocked(getTokenCount).mockReturnValue(2);
 
     const outcome = await runClaudeRotationLoop(
@@ -66,16 +59,12 @@ describe('runClaudeRotationLoop', () => {
     );
 
     expect(outcome).toEqual({
-      type: 'no-fallback',
+      type: 'error',
       trigger: { reason: 'org-access-denied' },
     });
-    expect(markPrimaryCooldown).toHaveBeenCalledWith(
-      'org-access-denied',
-      undefined,
-    );
   });
 
-  it('returns success-null-result as a fallback trigger after rotation', async () => {
+  it('returns error with success-null-result trigger after rotation', async () => {
     vi.mocked(getTokenCount).mockReturnValue(2);
     vi.mocked(rotateToken).mockReturnValueOnce(true);
 
@@ -90,9 +79,8 @@ describe('runClaudeRotationLoop', () => {
     );
 
     expect(outcome).toEqual({
-      type: 'needs-fallback',
+      type: 'error',
       trigger: { reason: 'success-null-result' },
     });
-    expect(markPrimaryCooldown).not.toHaveBeenCalled();
   });
 });

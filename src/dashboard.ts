@@ -15,6 +15,7 @@ export async function startStatusDashboard(
 ): Promise<void> {
   await startUnifiedDashboard({
     assistantName: opts.assistantName,
+    serviceId: opts.serviceAgentType === 'codex' ? 'codex-main' : 'claude',
     serviceAgentType: opts.serviceAgentType || 'claude-code',
     statusChannelId: opts.statusChannelId,
     statusUpdateInterval: opts.statusUpdateInterval,

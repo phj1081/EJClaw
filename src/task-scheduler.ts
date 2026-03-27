@@ -1,12 +1,10 @@
 import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
-import path from 'path';
 import { getErrorMessage } from './utils.js';
 
 import {
   ASSISTANT_NAME,
-  DATA_DIR,
   SCHEDULER_POLL_INTERVAL,
   SERVICE_AGENT_TYPE,
   TIMEZONE,
@@ -33,16 +31,6 @@ import {
 } from './group-folder.js';
 import { logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
-import {
-  detectFallbackTrigger,
-  getActiveProvider,
-  getFallbackEnvOverrides,
-  getFallbackProviderName,
-  hasGroupProviderOverride,
-  isFallbackEnabled,
-  isPrimaryNoFallbackCooldownActive,
-  markPrimaryCooldown,
-} from './provider-fallback.js';
 import { runClaudeRotationLoop } from './provider-retry.js';
 import {
   detectCodexRotationTrigger,
@@ -50,9 +38,10 @@ import {
   getCodexAccountCount,
   markCodexTokenHealthy,
 } from './codex-token-rotation.js';
-import type {
-  AgentTriggerReason,
-  CodexRotationReason,
+import {
+  classifyRotationTrigger,
+  type AgentTriggerReason,
+  type CodexRotationReason,
 } from './agent-error-detection.js';
 import {
   getTokenCount,
@@ -306,19 +295,8 @@ async function runTask(
     sendTrackedMessage: deps.sendTrackedMessage,
     editTrackedMessage: deps.editTrackedMessage,
   });
-  const settingsPath = path.join(
-    DATA_DIR,
-    'sessions',
-    task.group_folder,
-    '.claude',
-    'settings.json',
-  );
   const isClaudeAgent = context.taskAgentType === 'claude-code';
   const canRotateToken = isClaudeAgent && getTokenCount() > 1;
-  const canFallback =
-    isClaudeAgent &&
-    isFallbackEnabled() &&
-    !hasGroupProviderOverride(settingsPath);
 
   try {
     await statusTracker.update('checking');
@@ -337,6 +315,7 @@ async function runTask(
     }> => {
       let streamedState: StreamedOutputState = {
         sawOutput: false,
+        sawVisibleOutput: false,
         sawSuccessNullResultWithoutOutput: false,
       };
       let attemptResult: string | null = null;
@@ -391,7 +370,7 @@ async function runTask(
                 reason: evaluation.newTrigger.reason,
                 resultPreview: streamedOutput.result.slice(0, 120),
               },
-              'Detected Claude fallback trigger during scheduled task output',
+              'Detected Claude rotation trigger during scheduled task output',
             );
           } else if (
             evaluation.newTrigger &&
@@ -407,7 +386,7 @@ async function runTask(
                 errorPreview: streamedOutput.error.slice(0, 120),
               },
               provider === 'claude'
-                ? 'Detected Claude fallback trigger during scheduled task error output'
+                ? 'Detected Claude rotation trigger during scheduled task error output'
                 : 'Detected Codex rotation trigger during scheduled task error output',
             );
           }
@@ -428,9 +407,7 @@ async function runTask(
             attemptError = streamedOutput.error || 'Unknown error';
           }
         },
-        isClaudeAgent && provider !== 'claude'
-          ? getFallbackEnvOverrides()
-          : undefined,
+        undefined,
       );
 
       if (output.status === 'error' && !attemptError) {
@@ -446,38 +423,6 @@ async function runTask(
         attemptResult,
         attemptError,
       };
-    };
-
-    const runFallbackTaskAttempt = async (
-      reason: AgentTriggerReason,
-      retryAfterMs?: number,
-    ): Promise<void> => {
-      if (!canFallback) {
-        error = reason;
-        return;
-      }
-
-      const fallbackName = getFallbackProviderName();
-      markPrimaryCooldown(reason, retryAfterMs);
-
-      logger.info(
-        {
-          taskId: task.id,
-          group: context.group.name,
-          groupFolder: task.group_folder,
-          reason,
-          retryAfterMs,
-          fallbackProvider: fallbackName,
-        },
-        `Falling back to provider: ${fallbackName} for scheduled task (reason: ${reason})`,
-      );
-
-      const fallbackAttempt = await runTaskAttempt(fallbackName);
-      result = fallbackAttempt.attemptResult;
-      error =
-        fallbackAttempt.output.status === 'error'
-          ? fallbackAttempt.attemptError || 'Unknown error'
-          : null;
     };
 
     const retryClaudeTaskWithRotation = async (
@@ -514,15 +459,9 @@ async function runTask(
           error = null;
           return;
         case 'error':
-          return;
-        case 'no-fallback':
-          error = `Claude ${outcome.trigger.reason}`;
-          return;
-        case 'needs-fallback':
-          await runFallbackTaskAttempt(
-            outcome.trigger.reason,
-            outcome.trigger.retryAfterMs,
-          );
+          if (outcome.trigger) {
+            error = `Claude ${outcome.trigger.reason}`;
+          }
           return;
       }
     };
@@ -597,25 +536,9 @@ async function runTask(
     };
 
     const provider =
-      context.taskAgentType === 'codex'
-        ? 'codex'
-        : canFallback
-          ? await getActiveProvider()
-          : 'claude';
+      context.taskAgentType === 'codex' ? 'codex' : 'claude';
 
-    // Already in no-fallback Claude cooldown — skip task instead of running on Kimi
-    if (
-      isClaudeAgent &&
-      provider !== 'claude' &&
-      isPrimaryNoFallbackCooldownActive()
-    ) {
-      logger.info(
-        { taskId: task.id, group: context.group.name, provider },
-        'Claude primary cooldown active, skipping scheduled task',
-      );
-      error = 'Claude primary cooldown active';
-      // Fall through to task completion handling below
-    } else {
+    {
       const attempt = await runTaskAttempt(provider);
       result = attempt.attemptResult;
       error = attempt.attemptError;
@@ -642,12 +565,12 @@ async function runTask(
       } else if (attempt.output.status === 'error' && provider === 'claude') {
         const trigger = attempt.streamedTriggerReason
           ? {
-              shouldFallback: true,
+              shouldRetry: true,
               reason: attempt.streamedTriggerReason.reason,
               retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
             }
-          : detectFallbackTrigger(error);
-        if (trigger.shouldFallback) {
+          : classifyRotationTrigger(error);
+        if (trigger.shouldRetry) {
           await retryClaudeTaskWithRotation({
             reason: trigger.reason,
             retryAfterMs: trigger.retryAfterMs,
@@ -725,8 +648,8 @@ async function runTask(
         }
       }
     } else {
-      const trigger = detectFallbackTrigger(error);
-      if (trigger.shouldFallback) {
+      const trigger = classifyRotationTrigger(error);
+      if (trigger.shouldRetry) {
         const rotated = getTokenCount() > 1 && rotateToken(error);
         if (rotated) {
           logger.info(

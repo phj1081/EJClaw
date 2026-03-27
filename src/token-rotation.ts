@@ -7,7 +7,7 @@
  * CLAUDE_CODE_OAUTH_TOKEN if multi-token is not configured.
  *
  * On rate-limit:  rotate to next token
- * All exhausted:  fall through to provider fallback (Kimi etc.)
+ * All exhausted:  surface error to caller
  */
 
 import fs from 'fs';
@@ -153,7 +153,7 @@ export function rotateToken(
         cooldownUntil != null ? new Date(cooldownUntil).toISOString() : null,
       reason: errorMessage ?? null,
     },
-    'All tokens are rate-limited, falling through to provider fallback',
+    'All tokens are rate-limited, no available tokens',
   );
   return false;
 }
@@ -233,4 +233,14 @@ export function getTokenRotationInfo(): {
       (t) => t.rateLimitedUntil && t.rateLimitedUntil > now,
     ).length,
   };
+}
+
+export function hasAvailableClaudeToken(): boolean {
+  if (tokens.length === 0) {
+    return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+  }
+  const now = Date.now();
+  return tokens.some(
+    (token) => !token.rateLimitedUntil || token.rateLimitedUntil <= now,
+  );
 }

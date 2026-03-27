@@ -92,3 +92,15 @@ export function findChannel(
 ): Channel | undefined {
   return channels.find((c) => c.ownsJid(jid));
 }
+
+/**
+ * Normalize message text for deduplication comparison.
+ * - Trim leading/trailing whitespace
+ * - Collapse consecutive whitespace/newlines into single space
+ */
+export function normalizeMessageForDedupe(text: string): string {
+  return text
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}

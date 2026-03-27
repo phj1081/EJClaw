@@ -47,6 +47,7 @@ import type {
 
 export interface UnifiedDashboardOptions {
   assistantName: string;
+  serviceId: string;
   serviceAgentType: AgentType;
   statusChannelId: string;
   statusUpdateInterval: number;
@@ -189,8 +190,12 @@ async function refreshChannelMeta(
   }
 }
 
-function getAgentDisplayName(agentType: 'claude-code' | 'codex'): string {
-  return agentType === 'codex' ? '코덱스' : '클코';
+function getAgentDisplayName(
+  agentType: 'claude-code' | 'codex',
+  serviceId: string,
+): string {
+  if (agentType === 'claude-code') return '클코';
+  return serviceId === 'codex-review' ? '코리뷰' : '코덱스';
 }
 
 function formatRoomName(
@@ -216,6 +221,7 @@ function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
   const statuses = opts.queue.getStatuses(Object.keys(groups));
 
   writeStatusSnapshot({
+    serviceId: opts.serviceId,
     agentType: opts.serviceAgentType,
     assistantName: opts.assistantName,
     updatedAt: new Date().toISOString(),
@@ -261,6 +267,7 @@ function buildStatusContent(): string {
   );
 
   interface RoomEntry {
+    serviceId: string;
     agentType: 'claude-code' | 'codex';
     status: 'processing' | 'waiting' | 'inactive';
     elapsedMs: number | null;
@@ -277,6 +284,7 @@ function buildStatusContent(): string {
     for (const entry of snapshot.entries) {
       const existing = byJid.get(entry.jid) || [];
       existing.push({
+        serviceId: snapshot.serviceId,
         agentType,
         status: entry.status,
         elapsedMs: entry.elapsedMs,
@@ -345,7 +353,7 @@ function buildStatusContent(): string {
           elapsedMs: agent.elapsedMs,
           pendingTasks: agent.pendingTasks,
         });
-        const tag = getAgentDisplayName(agent.agentType);
+        const tag = getAgentDisplayName(agent.agentType, agent.serviceId);
         return `${tag} ${icon} ${label}`;
       });
       roomLines.push({
@@ -373,6 +381,76 @@ function buildStatusContent(): string {
   return `${header}\n\n${sections}`;
 }
 
+/**
+ * Render usage table lines from two row groups (Claude and Codex).
+ * Returns rendered lines including code block markers.
+ * Ordering: Claude rows → separator → Codex rows.
+ * Exported for testing.
+ */
+export function renderUsageTable(
+  claudeBotRows: UsageRow[],
+  codexBotRows: UsageRow[],
+): string[] {
+  const allRows = [...claudeBotRows, ...codexBotRows];
+  if (allRows.length === 0) return ['_조회 불가_'];
+
+  const bar = (pct: number) => {
+    const filled = Math.max(0, Math.min(5, Math.round(pct / 20)));
+    return '█'.repeat(filled) + '░'.repeat(5 - filled);
+  };
+
+  const visualWidth = (s: string) =>
+    [...s].reduce((w, c) => w + (c.codePointAt(0)! > 0x7f ? 2 : 1), 0);
+  const maxNameWidth =
+    Math.max(8, ...allRows.map((r) => visualWidth(r.name))) + 1;
+  const padName = (s: string) =>
+    s + ' '.repeat(Math.max(0, maxNameWidth - visualWidth(s)));
+  const compactReset = (s: string) =>
+    s ? s.replace(/\s+/g, '').replace(/m$/, '') : '';
+
+  const lines: string[] = [];
+
+  const renderRows = (rows: UsageRow[]) => {
+    for (const row of rows) {
+      const h5 =
+        row.h5pct >= 0
+          ? `${bar(row.h5pct)}${String(row.h5pct).padStart(3)}%`
+          : ' —   ';
+      const d7 =
+        row.d7pct >= 0
+          ? `${bar(row.d7pct)}${String(row.d7pct).padStart(3)}%`
+          : ' —   ';
+      lines.push(`${padName(row.name)}${h5} ${d7}`);
+      const r5 = compactReset(row.h5reset);
+      const r7 = compactReset(row.d7reset);
+      if (r5 || r7) {
+        const d7ColStart = maxNameWidth + 10;
+        let resetLine = ' '.repeat(maxNameWidth);
+        if (r5) resetLine += r5;
+        resetLine = resetLine.padEnd(d7ColStart);
+        if (r7) resetLine += r7;
+        lines.push(resetLine);
+      }
+    }
+  };
+
+  lines.push('```');
+  lines.push(`${' '.repeat(maxNameWidth)}5h        7d`);
+
+  renderRows(claudeBotRows);
+
+  if (claudeBotRows.length > 0 && codexBotRows.length > 0) {
+    const separatorWidth = maxNameWidth + 20;
+    lines.push('─'.repeat(separatorWidth));
+  }
+
+  renderRows(codexBotRows);
+
+  lines.push('```');
+
+  return lines;
+}
+
 async function buildUsageContent(): Promise<string> {
   const shouldFetchClaudeUsage = USAGE_DASHBOARD_ENABLED;
   let liveClaudeAccounts: ClaudeAccountUsage[] | null = null;
@@ -391,64 +469,27 @@ async function buildUsageContent(): Promise<string> {
     return '█'.repeat(filled) + '░'.repeat(5 - filled);
   };
 
-  const rows: UsageRow[] = [];
+  // Group 1: Claude bot
+  const claudeBotRows: UsageRow[] = [];
 
   if (shouldFetchClaudeUsage) {
     cachedClaudeAccounts = mergeClaudeDashboardAccounts(
       liveClaudeAccounts,
       cachedClaudeAccounts,
     );
-    rows.push(...buildClaudeUsageRows(cachedClaudeAccounts));
+    claudeBotRows.push(...buildClaudeUsageRows(cachedClaudeAccounts));
   }
 
-  // Codex usage: read from Codex service's own status snapshot.
-  // Each service owns its usage data — no cross-service auth access needed.
+  // Group 2: Codex bot (separate service)
+  const codexBotRows: UsageRow[] = [];
   const codexSnapshot = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS).find(
-    (s) => s.agentType === 'codex',
+    (s) => s.serviceId === 'codex-main' || s.serviceId === 'codex',
   );
-  rows.push(...extractCodexUsageRows(codexSnapshot, USAGE_SNAPSHOT_MAX_AGE_MS));
+  codexBotRows.push(
+    ...extractCodexUsageRows(codexSnapshot, USAGE_SNAPSHOT_MAX_AGE_MS),
+  );
 
-  if (rows.length > 0) {
-    // Emoji characters take 2 columns in monospace — count visual width
-    const visualWidth = (s: string) =>
-      [...s].reduce((w, c) => w + (c.codePointAt(0)! > 0x7f ? 2 : 1), 0);
-    const maxNameWidth =
-      Math.max(8, ...rows.map((r) => visualWidth(r.name))) + 1;
-    const padName = (s: string) =>
-      s + ' '.repeat(Math.max(0, maxNameWidth - visualWidth(s)));
-    // Strip whitespace and trailing 'm' from reset strings for compact display
-    const compactReset = (s: string) =>
-      s ? s.replace(/\s+/g, '').replace(/m$/, '') : '';
-
-    lines.push('```');
-    lines.push(`${' '.repeat(maxNameWidth)}5h        7d`);
-    for (const row of rows) {
-      const h5 =
-        row.h5pct >= 0
-          ? `${bar(row.h5pct)}${String(row.h5pct).padStart(3)}%`
-          : ' —   ';
-      const d7 =
-        row.d7pct >= 0
-          ? `${bar(row.d7pct)}${String(row.d7pct).padStart(3)}%`
-          : ' —   ';
-      lines.push(`${padName(row.name)}${h5} ${d7}`);
-      const r5 = compactReset(row.h5reset);
-      const r7 = compactReset(row.d7reset);
-      if (r5 || r7) {
-        // Align reset values under 5h / 7d columns
-        // h5 column starts at maxNameWidth; d7 column starts at maxNameWidth + 9 + 1
-        const d7ColStart = maxNameWidth + 10;
-        let resetLine = ' '.repeat(maxNameWidth);
-        if (r5) resetLine += r5;
-        resetLine = resetLine.padEnd(d7ColStart);
-        if (r7) resetLine += r7;
-        lines.push(resetLine);
-      }
-    }
-    lines.push('```');
-  } else {
-    lines.push('_조회 불가_');
-  }
+  lines.push(...renderUsageTable(claudeBotRows, codexBotRows));
 
   lines.push('');
   lines.push('🖥️ *서버*');

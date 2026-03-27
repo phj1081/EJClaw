@@ -26,6 +26,7 @@ export interface UsageRowSnapshot {
 }
 
 export interface StatusSnapshot {
+  serviceId: string;
   agentType: AgentType;
   assistantName: string;
   updatedAt: string;
@@ -41,7 +42,7 @@ export function writeStatusSnapshot(snapshot: StatusSnapshot): void {
   fs.mkdirSync(STATUS_SNAPSHOT_DIR, { recursive: true });
   const targetPath = path.join(
     STATUS_SNAPSHOT_DIR,
-    `${snapshot.agentType}.json`,
+    `${snapshot.serviceId}.json`,
   );
   const tempPath = `${targetPath}.tmp`;
   writeJsonFile(tempPath, snapshot, true);
@@ -63,6 +64,7 @@ export function readStatusSnapshots(maxAgeMs: number): StatusSnapshot[] {
       const parsed = JSON.parse(raw) as StatusSnapshot;
       if (
         !parsed.updatedAt ||
+        !parsed.serviceId ||
         !parsed.agentType ||
         !Array.isArray(parsed.entries)
       )

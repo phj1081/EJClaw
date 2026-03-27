@@ -5,7 +5,7 @@ import {
   classifyClaudeAuthError,
   detectClaudeProviderFailureMessage,
   isClaudeOrgAccessDeniedMessage,
-  isNoFallbackCooldownReason,
+
   shouldRotateClaudeToken,
 } from './agent-error-detection.js';
 
@@ -65,11 +65,4 @@ describe('agent-error-detection', () => {
     expect(shouldRotateClaudeToken('success-null-result')).toBe(false);
   });
 
-  it('marks only no-fallback cooldown reasons as skip-worthy', () => {
-    expect(isNoFallbackCooldownReason('usage-exhausted')).toBe(true);
-    expect(isNoFallbackCooldownReason('auth-expired')).toBe(true);
-    expect(isNoFallbackCooldownReason('org-access-denied')).toBe(true);
-    expect(isNoFallbackCooldownReason('429')).toBe(false);
-    expect(isNoFallbackCooldownReason('success-null-result')).toBe(false);
-  });
 });

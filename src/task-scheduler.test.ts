@@ -24,38 +24,31 @@ const {
   ),
 }));
 
-vi.mock('./provider-fallback.js', () => ({
-  detectFallbackTrigger: vi.fn((error?: string | null) => {
-    const lower = (error || '').toLowerCase();
-    if (
-      lower.includes('does not have access to claude') ||
-      (lower.includes('failed to authenticate') &&
-        lower.includes('403') &&
-        lower.includes('terminated'))
-    ) {
-      return { shouldFallback: true, reason: 'org-access-denied' };
-    }
-    if (
-      lower.includes('429') ||
-      lower.includes('rate limit') ||
-      lower.includes('hit your limit')
-    ) {
-      return { shouldFallback: true, reason: '429' };
-    }
-    return { shouldFallback: false, reason: '' };
-  }),
-  getActiveProvider: vi.fn(async () => 'claude'),
-  getFallbackEnvOverrides: vi.fn(() => ({
-    ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding/',
-    ANTHROPIC_AUTH_TOKEN: 'test-kimi-key',
-    ANTHROPIC_MODEL: 'kimi-k2.5',
-  })),
-  getFallbackProviderName: vi.fn(() => 'kimi'),
-  hasGroupProviderOverride: vi.fn(() => false),
-  isFallbackEnabled: vi.fn(() => true),
-  isPrimaryNoFallbackCooldownActive: vi.fn(() => false),
-  markPrimaryCooldown: vi.fn(),
-}));
+vi.mock('./agent-error-detection.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./agent-error-detection.js')>();
+  return {
+    ...actual,
+    classifyRotationTrigger: vi.fn((error?: string | null) => {
+      const lower = (error || '').toLowerCase();
+      if (
+        lower.includes('does not have access to claude') ||
+        (lower.includes('failed to authenticate') &&
+          lower.includes('403') &&
+          lower.includes('terminated'))
+      ) {
+        return { shouldRetry: true, reason: 'org-access-denied' };
+      }
+      if (
+        lower.includes('429') ||
+        lower.includes('rate limit') ||
+        lower.includes('hit your limit')
+      ) {
+        return { shouldRetry: true, reason: '429' };
+      }
+      return { shouldRetry: false, reason: '' };
+    }),
+  };
+});
 
 vi.mock('./token-rotation.js', () => ({
   rotateToken: vi.fn(() => false),
@@ -136,7 +129,6 @@ vi.mock('./github-ci.js', () => ({
 }));
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
-import * as providerFallback from './provider-fallback.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
@@ -163,10 +155,7 @@ describe('task scheduler', () => {
       terminal: false,
       resultSummary: 'GitHub Actions run 123 is in_progress',
     });
-    vi.mocked(providerFallback.markPrimaryCooldown).mockClear();
-    vi.mocked(providerFallback.getActiveProvider).mockResolvedValue('claude');
-    vi.mocked(providerFallback.isFallbackEnabled).mockReturnValue(true);
-    vi.mocked(providerFallback.hasGroupProviderOverride).mockReturnValue(false);
+    // No fallback provider setup needed
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
     vi.mocked(tokenRotation.markTokenHealthy).mockClear();
     vi.mocked(tokenRotation.rotateToken).mockClear();
@@ -454,7 +443,7 @@ Check the run.
     expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
     expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
     expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
-    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    // No fallback cooldown to check
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       'shared@g.us',
@@ -553,7 +542,7 @@ Check the run.
     expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
     expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
     expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
-    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    // No fallback cooldown to check
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       'shared@g.us',
@@ -601,23 +590,6 @@ Check the run.
             result: null,
           };
         },
-      )
-      .mockImplementationOnce(
-        async (
-          _group: unknown,
-          _input: unknown,
-          _onProcess: unknown,
-          onOutput?: (output: Record<string, unknown>) => Promise<void>,
-        ) => {
-          await onOutput?.({
-            status: 'success',
-            result: 'scheduled fallback response',
-          });
-          return {
-            status: 'success',
-            result: null,
-          };
-        },
       );
 
     const enqueueTask = vi.fn(
@@ -646,17 +618,9 @@ Check the run.
 
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(1);
     expect(tokenRotation.rotateToken).not.toHaveBeenCalled();
-    expect(providerFallback.markPrimaryCooldown).toHaveBeenCalledWith(
-      'overloaded',
-      undefined,
-    );
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      'shared@g.us',
-      'scheduled fallback response',
-    );
+    // No fallback — 502 results in error without retrying on another provider
   });
 
   it('suppresses Claude org access denied banners for scheduled tasks and retries with a rotated account', async () => {
@@ -750,7 +714,7 @@ Check the run.
     expect(runAgentProcessMock).toHaveBeenCalledTimes(2);
     expect(tokenRotation.rotateToken).toHaveBeenCalledTimes(1);
     expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
-    expect(providerFallback.markPrimaryCooldown).not.toHaveBeenCalled();
+    // No fallback cooldown to check
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       'shared@g.us',

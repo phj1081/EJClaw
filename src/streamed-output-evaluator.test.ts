@@ -4,15 +4,13 @@ import type { AgentOutput } from './agent-runner.js';
 
 // ── Mocks ──────────────────────────────────────────────────────
 vi.mock('./agent-error-detection.js', () => ({
+  classifyClaudeAuthError: vi.fn(() => ({ category: 'none', reason: '' })),
+  classifyRotationTrigger: vi.fn(() => ({ shouldRetry: false, reason: '' })),
   detectClaudeProviderFailureMessage: vi.fn(() => ''),
   isClaudeUsageExhaustedMessage: vi.fn(() => false),
   isClaudeOrgAccessDeniedMessage: vi.fn(() => false),
   isClaudeAuthExpiredMessage: vi.fn(() => false),
   isClaudeAuthError: vi.fn(() => false),
-}));
-
-vi.mock('./provider-fallback.js', () => ({
-  detectFallbackTrigger: vi.fn(() => ({ shouldFallback: false, reason: '' })),
 }));
 
 vi.mock('./codex-token-rotation.js', () => ({
@@ -22,15 +20,21 @@ vi.mock('./codex-token-rotation.js', () => ({
   })),
 }));
 
+vi.mock('./session-recovery.js', () => ({
+  shouldRetryFreshSessionOnAgentFailure: vi.fn(() => false),
+}));
+
 import {
+  classifyClaudeAuthError,
+  classifyRotationTrigger,
   detectClaudeProviderFailureMessage,
   isClaudeUsageExhaustedMessage,
   isClaudeOrgAccessDeniedMessage,
   isClaudeAuthExpiredMessage,
   isClaudeAuthError,
 } from './agent-error-detection.js';
-import { detectFallbackTrigger } from './provider-fallback.js';
 import { detectCodexRotationTrigger } from './codex-token-rotation.js';
+import { shouldRetryFreshSessionOnAgentFailure } from './session-recovery.js';
 
 import {
   evaluateStreamedOutput,
@@ -40,7 +44,11 @@ import {
 
 // ── Helpers ────────────────────────────────────────────────────
 function freshState(): StreamedOutputState {
-  return { sawOutput: false, sawSuccessNullResultWithoutOutput: false };
+  return {
+    sawOutput: false,
+    sawVisibleOutput: false,
+    sawSuccessNullResultWithoutOutput: false,
+  };
 }
 
 const claudeOpts: EvaluateStreamedOutputOptions = {
@@ -53,8 +61,11 @@ const codexOpts: EvaluateStreamedOutputOptions = {
   provider: 'codex',
 };
 
-function successOutput(result: string | null): AgentOutput {
-  return { status: 'success', result };
+function successOutput(
+  result: string | null,
+  phase?: AgentOutput['phase'],
+): AgentOutput {
+  return { status: 'success', result, ...(phase ? { phase } : {}) };
 }
 
 function errorOutput(error: string): AgentOutput {
@@ -63,19 +74,24 @@ function errorOutput(error: string): AgentOutput {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(classifyClaudeAuthError).mockReturnValue({
+    category: 'none',
+    reason: '',
+  });
+  vi.mocked(classifyRotationTrigger).mockReturnValue({
+    shouldRetry: false,
+    reason: '',
+  });
   vi.mocked(detectClaudeProviderFailureMessage).mockReturnValue('');
   vi.mocked(isClaudeUsageExhaustedMessage).mockReturnValue(false);
   vi.mocked(isClaudeOrgAccessDeniedMessage).mockReturnValue(false);
   vi.mocked(isClaudeAuthExpiredMessage).mockReturnValue(false);
   vi.mocked(isClaudeAuthError).mockReturnValue(false);
-  vi.mocked(detectFallbackTrigger).mockReturnValue({
-    shouldFallback: false,
-    reason: '',
-  });
   vi.mocked(detectCodexRotationTrigger).mockReturnValue({
     shouldRotate: false,
     reason: '',
   });
+  vi.mocked(shouldRetryFreshSessionOnAgentFailure).mockReturnValue(false);
 });
 
 // ── Tests ──────────────────────────────────────────────────────
@@ -106,6 +122,16 @@ describe('evaluateStreamedOutput', () => {
     it('does not set sawOutput for null result', () => {
       const result = evaluateStreamedOutput(
         successOutput(null),
+        freshState(),
+        claudeOpts,
+      );
+      expect(result.shouldForwardOutput).toBe(true);
+      expect(result.state.sawOutput).toBe(false);
+    });
+
+    it('does not set sawOutput for progress output', () => {
+      const result = evaluateStreamedOutput(
+        successOutput('대화 요약 중...', 'progress'),
         freshState(),
         claudeOpts,
       );
@@ -156,6 +182,39 @@ describe('evaluateStreamedOutput', () => {
     });
   });
 
+  describe('Claude retryable session failure suppression', () => {
+    it('suppresses retryable session failures before any visible output', () => {
+      vi.mocked(shouldRetryFreshSessionOnAgentFailure).mockReturnValue(true);
+
+      const result = evaluateStreamedOutput(
+        successOutput(
+          'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.11.content.0: Invalid `signature` in `thinking` block"}}',
+          'intermediate',
+        ),
+        freshState(),
+        claudeOpts,
+      );
+
+      expect(result.shouldForwardOutput).toBe(false);
+      expect(result.suppressedRetryableSessionFailure).toBe(true);
+      expect(result.state.retryableSessionFailureDetected).toBe(true);
+      expect(result.state.sawOutput).toBe(false);
+    });
+
+    it('does not suppress retryable session failures after visible output', () => {
+      vi.mocked(shouldRetryFreshSessionOnAgentFailure).mockReturnValue(true);
+
+      const result = evaluateStreamedOutput(
+        successOutput('API Error: 400 invalid thinking block', 'final'),
+        { ...freshState(), sawOutput: true },
+        claudeOpts,
+      );
+
+      expect(result.shouldForwardOutput).toBe(true);
+      expect(result.suppressedRetryableSessionFailure).toBeUndefined();
+    });
+  });
+
   describe('Claude auth-expired banner', () => {
     it('suppresses output and returns newTrigger', () => {
       vi.mocked(isClaudeAuthExpiredMessage).mockReturnValue(true);
@@ -199,6 +258,24 @@ describe('evaluateStreamedOutput', () => {
         successOutput(
           'Your organization does not have access to Claude. Please login again or contact your administrator.',
         ),
+        freshState(),
+        claudeOpts,
+      );
+      expect(result.shouldForwardOutput).toBe(false);
+      expect(result.newTrigger).toEqual({ reason: 'org-access-denied' });
+      expect(result.state.streamedTriggerReason).toEqual({
+        reason: 'org-access-denied',
+      });
+    });
+
+    it('suppresses a 403 terminated auth banner surfaced as success text', () => {
+      vi.mocked(classifyClaudeAuthError).mockReturnValue({
+        category: 'org-access-denied',
+        reason: 'org-access-denied',
+      });
+
+      const result = evaluateStreamedOutput(
+        successOutput('Failed to authenticate. API Error: 403 terminated'),
         freshState(),
         claudeOpts,
       );
@@ -298,10 +375,10 @@ describe('evaluateStreamedOutput', () => {
     });
   });
 
-  describe('error → Claude fallback trigger', () => {
-    it('returns fallback trigger with retryAfterMs', () => {
-      vi.mocked(detectFallbackTrigger).mockReturnValue({
-        shouldFallback: true,
+  describe('error → Claude rotation trigger', () => {
+    it('returns rotation trigger with retryAfterMs', () => {
+      vi.mocked(classifyRotationTrigger).mockReturnValue({
+        shouldRetry: true,
         reason: '429',
         retryAfterMs: 30000,
       });
@@ -324,8 +401,8 @@ describe('evaluateStreamedOutput', () => {
     });
 
     it('suppresses error forward when shortCircuitTriggeredErrors is set', () => {
-      vi.mocked(detectFallbackTrigger).mockReturnValue({
-        shouldFallback: true,
+      vi.mocked(classifyRotationTrigger).mockReturnValue({
+        shouldRetry: true,
         reason: '429',
       });
 
@@ -337,9 +414,9 @@ describe('evaluateStreamedOutput', () => {
       expect(result.newTrigger).toEqual({ reason: '429' });
     });
 
-    it('skips fallback check when output was already seen', () => {
-      vi.mocked(detectFallbackTrigger).mockReturnValue({
-        shouldFallback: true,
+    it('skips rotation check when output was already seen', () => {
+      vi.mocked(classifyRotationTrigger).mockReturnValue({
+        shouldRetry: true,
         reason: '429',
       });
 
@@ -352,9 +429,9 @@ describe('evaluateStreamedOutput', () => {
       expect(result.shouldForwardOutput).toBe(true);
     });
 
-    it('skips fallback check when already triggered', () => {
-      vi.mocked(detectFallbackTrigger).mockReturnValue({
-        shouldFallback: true,
+    it('skips rotation check when already triggered', () => {
+      vi.mocked(classifyRotationTrigger).mockReturnValue({
+        shouldRetry: true,
         reason: '429',
       });
 
@@ -397,7 +474,7 @@ describe('evaluateStreamedOutput', () => {
         freshState(),
         claudeOpts,
       );
-      // Claude uses detectFallbackTrigger, not detectCodexRotationTrigger
+      // Claude uses classifyRotationTrigger, not detectCodexRotationTrigger
       expect(detectCodexRotationTrigger).not.toHaveBeenCalled();
     });
   });
