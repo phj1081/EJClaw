@@ -45,7 +45,10 @@ describe('classifySuppressTokenOutput', () => {
 
   it('treats the exact structured silent envelope as exact silent output', () => {
     expect(
-      classifySuppressTokenOutput('{"ejclaw":{"visibility":"silent"}}', undefined),
+      classifySuppressTokenOutput(
+        '{"ejclaw":{"visibility":"silent"}}',
+        undefined,
+      ),
     ).toBe('exact');
   });
 });

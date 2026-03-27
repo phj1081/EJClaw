@@ -13,12 +13,10 @@ export function stringifyLegacyAgentResult(
   }
 }
 
-export function getAgentOutputText(
-  output: {
-    output?: StructuredAgentOutput;
-    result?: string | object | null;
-  },
-): string | null {
+export function getAgentOutputText(output: {
+  output?: StructuredAgentOutput;
+  result?: string | object | null;
+}): string | null {
   if (output.output?.visibility === 'silent') {
     return null;
   }
@@ -28,10 +26,8 @@ export function getAgentOutputText(
   return stringifyLegacyAgentResult(output.result);
 }
 
-export function isSilentAgentOutput(
-  output: {
-    output?: StructuredAgentOutput;
-  },
-): boolean {
+export function isSilentAgentOutput(output: {
+  output?: StructuredAgentOutput;
+}): boolean {
   return output.output?.visibility === 'silent';
 }

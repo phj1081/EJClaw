@@ -132,7 +132,7 @@ export class MessageTurnController {
         ? classifySuppressTokenOutput(raw, this.options.suppressToken)
         : raw
           ? classifySuppressTokenOutput(raw, undefined)
-        : 'none';
+          : 'none';
     const text = raw && suppressState === 'none' ? formatOutbound(raw) : null;
 
     if (raw) {
