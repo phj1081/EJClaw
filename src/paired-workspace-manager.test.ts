@@ -833,4 +833,54 @@ describe('paired workspace manager', () => {
       db.getPairedTaskById('paired-task-6')?.review_requested_at,
     ).toBeTruthy();
   });
+  it('blocks reviewer execution for a high-risk task until the plan is approved', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    runGit(['init'], canonicalDir);
+    runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
+    runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'base\n');
+    runGit(['add', 'README.md'], canonicalDir);
+    runGit(['commit', '-m', 'initial'], canonicalDir);
+
+    const now = '2026-03-28T00:00:00.000Z';
+    db.upsertPairedProject({
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      canonical_work_dir: canonicalDir,
+      workspace_topology: 'shadow-snapshot',
+      created_at: now,
+      updated_at: now,
+    });
+    db.createPairedTask({
+      id: 'paired-task-plan-gate',
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'pending',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: now,
+      updated_at: now,
+    });
+
+    const result = manager.prepareReviewerWorkspaceForExecution(
+      db.getPairedTaskById('paired-task-plan-gate')!,
+    );
+
+    expect(result).toEqual({
+      workspace: null,
+      autoRefreshed: false,
+      blockMessage:
+        'Plan review is required before formal review for this high-risk task.',
+    });
+  });
 });

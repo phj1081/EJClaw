@@ -42,8 +42,12 @@ import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
 import { createSuppressToken } from './output-suppression.js';
 import {
+  approveRoomPlan,
   formatRoomReviewReadyMessage,
   markRoomReviewReady,
+  recordRoomPlan,
+  requestRoomPlanChanges,
+  setRoomTaskRiskLevel,
 } from './paired-execution-context.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import {
@@ -565,6 +569,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
             );
           },
+          // Session commands are explicit control events, so owner-only and
+          // reviewer-only commands resolve against the target role rather than
+          // whichever service happened to pick up the slash command first.
           markReviewReady: async () => {
             const lease = getEffectiveChannelLease(chatJid);
             const roomRoleContext = buildRoomRoleContext(
@@ -577,6 +584,57 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               roomRoleContext,
             });
             return formatRoomReviewReadyMessage(result);
+          },
+          setTaskRiskLevel: async (riskLevel) => {
+            const lease = getEffectiveChannelLease(chatJid);
+            const roomRoleContext = buildRoomRoleContext(
+              lease,
+              lease.owner_service_id,
+            );
+            return setRoomTaskRiskLevel({
+              group,
+              chatJid,
+              roomRoleContext,
+              riskLevel,
+            });
+          },
+          recordPlan: async (plan) => {
+            const lease = getEffectiveChannelLease(chatJid);
+            const roomRoleContext = buildRoomRoleContext(
+              lease,
+              lease.owner_service_id,
+            );
+            return recordRoomPlan({
+              group,
+              chatJid,
+              roomRoleContext,
+              ...plan,
+            });
+          },
+          approvePlan: async () => {
+            const lease = getEffectiveChannelLease(chatJid);
+            const roomRoleContext = buildRoomRoleContext(
+              lease,
+              lease.reviewer_service_id ?? lease.owner_service_id,
+            );
+            return approveRoomPlan({
+              group,
+              chatJid,
+              roomRoleContext,
+            });
+          },
+          requestPlanChanges: async (note) => {
+            const lease = getEffectiveChannelLease(chatJid);
+            const roomRoleContext = buildRoomRoleContext(
+              lease,
+              lease.reviewer_service_id ?? lease.owner_service_id,
+            );
+            return requestRoomPlanChanges({
+              group,
+              chatJid,
+              roomRoleContext,
+              note,
+            });
           },
         },
       });

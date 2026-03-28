@@ -31,6 +31,28 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/review-ready', trigger)).toBe('/review');
   });
 
+  it('detects /risk with an argument payload', () => {
+    expect(extractSessionCommand('/risk high', trigger)).toBe('/risk');
+  });
+
+  it('detects /plan with structured payload', () => {
+    expect(
+      extractSessionCommand('/plan brief || criteria || risk', trigger),
+    ).toBe('/plan');
+  });
+
+  it('detects /approve-plan', () => {
+    expect(extractSessionCommand('/approve-plan', trigger)).toBe(
+      '/approve-plan',
+    );
+  });
+
+  it('detects /request-plan-changes with an optional note', () => {
+    expect(
+      extractSessionCommand('/request-plan-changes tighten scope', trigger),
+    ).toBe('/request-plan-changes');
+  });
+
   it('rejects /compact with extra text', () => {
     expect(extractSessionCommand('/compact now please', trigger)).toBeNull();
   });
@@ -110,6 +132,20 @@ describe('isSessionCommandControlMessage', () => {
     ).toBe(true);
   });
 
+  it('matches plan-gate control output', () => {
+    expect(
+      isSessionCommandControlMessage(
+        'Plan review is required before formal review for this high-risk task.\n- Task: task-1',
+      ),
+    ).toBe(true);
+  });
+
+  it('matches plan artifact control output', () => {
+    expect(isSessionCommandControlMessage('Plan recorded.\n- Task: task-1')).toBe(
+      true,
+    );
+  });
+
   it('does not match regular bot conversation', () => {
     expect(
       isSessionCommandControlMessage(
@@ -148,6 +184,10 @@ function makeDeps(
     isAdminSender: vi.fn().mockReturnValue(false),
     canSenderInteract: vi.fn().mockReturnValue(true),
     markReviewReady: vi.fn().mockResolvedValue('Review snapshot updated.'),
+    setTaskRiskLevel: vi.fn().mockResolvedValue('Task risk updated.'),
+    recordPlan: vi.fn().mockResolvedValue('Plan recorded.'),
+    approvePlan: vi.fn().mockResolvedValue('Plan approved.'),
+    requestPlanChanges: vi.fn().mockResolvedValue('Plan changes requested.'),
     ...overrides,
   };
 }
@@ -286,6 +326,124 @@ describe('handleSessionCommand', () => {
         '- Task: paired-task-1',
         'The task stays review_pending until the owner workspace is prepared.',
       ].join('\n'),
+    );
+  });
+
+  it('handles authorized /risk without invoking the agent', async () => {
+    const deps = makeDeps({
+      setTaskRiskLevel: vi
+        .fn()
+        .mockResolvedValue('Task risk updated.\n- Task: paired-task-1'),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/risk high')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.setTaskRiskLevel).toHaveBeenCalledWith('high');
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Task risk updated.\n- Task: paired-task-1',
+    );
+  });
+
+  it('handles authorized /plan without invoking the agent', async () => {
+    const deps = makeDeps({
+      recordPlan: vi
+        .fn()
+        .mockResolvedValue('Plan recorded.\n- Task: paired-task-1'),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [
+        makeMsg('/plan brief || acceptance criteria || rollout risk'),
+      ],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.recordPlan).toHaveBeenCalledWith({
+      planBrief: 'brief',
+      acceptanceCriteria: 'acceptance criteria',
+      riskSummary: 'rollout risk',
+    });
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Plan recorded.\n- Task: paired-task-1',
+    );
+  });
+
+  it('sends /plan usage when structured payload is incomplete', async () => {
+    const deps = makeDeps();
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/plan only brief')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.recordPlan).not.toHaveBeenCalled();
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Usage: /plan <plan brief> || <acceptance criteria> || <risk summary>',
+    );
+  });
+
+  it('handles /approve-plan without invoking the agent', async () => {
+    const deps = makeDeps({
+      approvePlan: vi
+        .fn()
+        .mockResolvedValue('Plan approved.\n- Task: paired-task-1'),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/approve-plan')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.approvePlan).toHaveBeenCalledTimes(1);
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Plan approved.\n- Task: paired-task-1',
+    );
+  });
+
+  it('handles /request-plan-changes without invoking the agent', async () => {
+    const deps = makeDeps({
+      requestPlanChanges: vi
+        .fn()
+        .mockResolvedValue('Plan changes requested.\n- Task: paired-task-1'),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/request-plan-changes tighten scope')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.requestPlanChanges).toHaveBeenCalledWith('tighten scope');
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Plan changes requested.\n- Task: paired-task-1',
     );
   });
 

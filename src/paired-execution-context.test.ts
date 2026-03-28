@@ -1,18 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./db.js', () => ({
+  createPairedArtifact: vi.fn(),
   createPairedExecution: vi.fn(),
   createPairedTask: vi.fn(),
   getLatestOpenPairedTaskForChat: vi.fn(),
   getPairedExecutionById: vi.fn(),
   getPairedTaskById: vi.fn(),
   getPairedWorkspace: vi.fn(),
+  listPairedArtifactsForTask: vi.fn(),
   updatePairedExecution: vi.fn(),
   updatePairedTask: vi.fn(),
   upsertPairedProject: vi.fn(),
 }));
 
 vi.mock('./paired-workspace-manager.js', () => ({
+  PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE:
+    'Plan review is required before formal review for this high-risk task.',
   markPairedTaskReviewReady: vi.fn(),
   prepareReviewerWorkspaceForExecution: vi.fn(),
   provisionOwnerWorkspaceForPairedTask: vi.fn(),
@@ -29,9 +33,13 @@ vi.mock('./logger.js', () => ({
 
 import * as db from './db.js';
 import {
+  approveRoomPlan,
   formatRoomReviewReadyMessage,
   markRoomReviewReady,
   preparePairedExecutionContext,
+  recordRoomPlan,
+  requestRoomPlanChanges,
+  setRoomTaskRiskLevel,
 } from './paired-execution-context.js';
 import * as pairedWorkspaceManager from './paired-workspace-manager.js';
 import type { RegisteredGroup, RoomRoleContext } from './types.js';
@@ -68,6 +76,7 @@ describe('paired execution context', () => {
     vi.mocked(db.getPairedExecutionById).mockReturnValue(undefined);
     vi.mocked(db.getPairedTaskById).mockReturnValue(undefined);
     vi.mocked(db.getPairedWorkspace).mockReturnValue(undefined);
+    vi.mocked(db.listPairedArtifactsForTask).mockReturnValue([]);
     vi.mocked(
       pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
     ).mockReturnValue({
@@ -405,6 +414,323 @@ describe('paired execution context', () => {
         'Review request recorded, but the owner workspace is not ready yet.',
         '- Task: task-1',
         'The task stays review_pending until the owner workspace is prepared.',
+      ].join('\n'),
+    );
+  });
+
+  it('blocks /review for high-risk tasks until the plan is approved', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'pending',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    const result = markRoomReviewReady({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: 'blocked',
+      task: expect.objectContaining({
+        id: 'task-1',
+        risk_level: 'high',
+        plan_status: 'pending',
+      }),
+      blockedReason: 'plan-review-required',
+    });
+    expect(formatRoomReviewReadyMessage(result)).toBe(
+      [
+        'Plan review is required before formal review for this high-risk task.',
+        '- Task: task-1',
+        '- Plan status: pending',
+        'Ask the owner to record a plan and have the reviewer approve it before /review.',
+      ].join('\n'),
+    );
+  });
+
+  it('raises a task to high risk and moves it into plan_review_pending', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    const message = setRoomTaskRiskLevel({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+      riskLevel: 'high',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        risk_level: 'high',
+        plan_status: 'not_requested',
+        status: 'plan_review_pending',
+      }),
+    );
+    expect(message).toBe(
+      [
+        'Task risk updated.',
+        '- Task: task-1',
+        '- Risk: high',
+        '- Status: plan_review_pending',
+      ].join('\n'),
+    );
+  });
+
+  it('records plan artifacts for a high-risk task and keeps it pending review', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'pending',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    const message = recordRoomPlan({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+      planBrief: 'ship governance gate',
+      acceptanceCriteria: 'high risk blocks /review',
+      riskSummary: 'runtime state drift',
+    });
+
+    expect(db.createPairedArtifact).toHaveBeenCalledTimes(3);
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        plan_status: 'pending',
+        status: 'plan_review_pending',
+      }),
+    );
+    expect(message).toBe(
+      [
+        'Plan recorded.',
+        '- Task: task-1',
+        '- Plan status: pending',
+        '- Status: plan_review_pending',
+      ].join('\n'),
+    );
+  });
+
+  it('approves a high-risk plan from the reviewer side once plan artifacts exist', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'pending',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.listPairedArtifactsForTask).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-1',
+        execution_id: null,
+        service_id: 'codex-main',
+        artifact_type: 'plan_brief',
+        title: null,
+        content: 'brief',
+        file_path: null,
+        created_at: '2026-03-29T00:00:00.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-1',
+        execution_id: null,
+        service_id: 'codex-main',
+        artifact_type: 'acceptance_criteria',
+        title: null,
+        content: 'criteria',
+        file_path: null,
+        created_at: '2026-03-29T00:00:01.000Z',
+      },
+      {
+        id: 3,
+        task_id: 'task-1',
+        execution_id: null,
+        service_id: 'codex-main',
+        artifact_type: 'risk_summary',
+        title: null,
+        content: 'risk',
+        file_path: null,
+        created_at: '2026-03-29T00:00:02.000Z',
+      },
+    ]);
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'approved',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    const message = approveRoomPlan({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: reviewerContext,
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        plan_status: 'approved',
+        status: 'active',
+      }),
+    );
+    expect(message).toBe(
+      ['Plan approved.', '- Task: task-1', '- Status: active'].join('\n'),
+    );
+  });
+
+  it('requests plan changes from the reviewer side and keeps the task pending', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'pending',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'changes_requested',
+      review_requested_at: null,
+      status: 'plan_review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    const message = requestRoomPlanChanges({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: reviewerContext,
+      note: 'tighten acceptance criteria',
+    });
+
+    expect(db.createPairedArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_id: 'task-1',
+        service_id: 'codex-review',
+        artifact_type: 'comment',
+        content: 'tighten acceptance criteria',
+      }),
+    );
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        plan_status: 'changes_requested',
+        status: 'plan_review_pending',
+      }),
+    );
+    expect(message).toBe(
+      [
+        'Plan changes requested.',
+        '- Task: task-1',
+        '- Plan status: changes_requested',
+        '- Status: plan_review_pending',
       ].join('\n'),
     );
   });

@@ -199,4 +199,62 @@ describe('paired /review command path', () => {
     expect(task?.review_requested_at).toBeTruthy();
     expect(fs.existsSync(reviewerLocalOwnerDir)).toBe(false);
   });
+
+  it('blocks /review when a high-risk task plan is not approved yet', async () => {
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    runGit(['init'], canonicalDir);
+    runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
+    runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'original\n');
+    runGit(['add', 'README.md'], canonicalDir);
+    runGit(['commit', '-m', 'initial'], canonicalDir);
+
+    const group: RegisteredGroup = {
+      name: 'Paired Room',
+      folder: 'paired-room',
+      trigger: '@codex',
+      added_at: '2026-03-28T00:00:00.000Z',
+      agentType: 'codex',
+      workDir: canonicalDir,
+    };
+
+    process.env.EJCLAW_DATA_DIR = path.join(tempRoot, 'data-owner');
+    process.env.SERVICE_ID = 'codex-main';
+    vi.resetModules();
+    const { db, executionContext } = await loadModules();
+    db.initDatabase();
+
+    const task = executionContext.preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-owner',
+      roomRoleContext: ownerContext,
+    })?.task;
+
+    expect(task).toBeTruthy();
+    db.updatePairedTask(task!.id, {
+      risk_level: 'high',
+      plan_status: 'pending',
+      status: 'plan_review_pending',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    const result = executionContext.markRoomReviewReady({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(result).toEqual({
+      status: 'blocked',
+      task: expect.objectContaining({
+        id: task!.id,
+        risk_level: 'high',
+        plan_status: 'pending',
+        status: 'plan_review_pending',
+      }),
+      blockedReason: 'plan-review-required',
+    });
+  });
 });

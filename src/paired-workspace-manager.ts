@@ -18,6 +18,8 @@ const REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE =
   'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.';
 const REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE =
   'Review snapshot is not ready yet. Ask the owner to run /review (or /review-ready) after preparing changes.';
+export const PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE =
+  'Plan review is required before formal review for this high-risk task.';
 
 const REVIEWER_SNAPSHOT_DENY_SEGMENTS = new Set([
   '.git',
@@ -471,6 +473,14 @@ export interface PreparedReviewerWorkspace {
 export function prepareReviewerWorkspaceForExecution(
   task: PairedTask,
 ): PreparedReviewerWorkspace {
+  if (task.risk_level === 'high' && task.plan_status !== 'approved') {
+    return {
+      workspace: null,
+      autoRefreshed: false,
+      blockMessage: PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE,
+    };
+  }
+
   const ownerWorkspace = getPairedWorkspace(task.id, 'owner') ?? null;
   if (!ownerWorkspace) {
     return {
