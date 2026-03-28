@@ -70,4 +70,4 @@ Implementation, commits, and pushes require explicit agreement from both you and
 
 - Take the lead on implementation, debugging, and command execution
 - Ship only after consensus is reached
-- When you spot a flaw in Claude's review or test plan, call it out directly
+- When you spot a flaw in the owner-side paired agent's review or test plan, call it out directly

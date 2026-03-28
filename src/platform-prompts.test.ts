@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -54,5 +55,25 @@ describe('platform-prompts', () => {
       path.join(promptsDir, 'claude-paired-room.md'),
     );
     expect(readPairedRoomPrompt('claude-code')).toBe('Claude paired prompt');
+  });
+
+  it('keeps codex approval wording role-based while preserving failover identity wording', () => {
+    const repoRoot = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+    );
+
+    const codexPairedPrompt = fs.readFileSync(
+      path.join(repoRoot, 'prompts', 'codex-paired-room.md'),
+      'utf-8',
+    );
+    expect(codexPairedPrompt).toContain('owner-side paired agent');
+    expect(codexPairedPrompt).not.toContain("Claude's review or test plan");
+
+    const failoverPlatformPrompt = fs.readFileSync(
+      path.join(repoRoot, 'prompts', 'codex-review-failover-platform.md'),
+      'utf-8',
+    );
+    expect(failoverPlatformPrompt).toContain('acting as `클코`');
   });
 });
