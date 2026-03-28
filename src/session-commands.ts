@@ -198,14 +198,17 @@ export async function handleSessionCommand(opts: {
   }
 
   if (command === '/risk') {
-    const riskArg = normalizedCommandText.slice('/risk'.length).trim().toLowerCase();
+    const riskArg = normalizedCommandText
+      .slice('/risk'.length)
+      .trim()
+      .toLowerCase();
     const riskLevel =
       riskArg === 'high' ? 'high' : riskArg === 'low' ? 'low' : null;
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       riskLevel
-        ? (await deps.setTaskRiskLevel(riskLevel)) ??
-            'Risk is unavailable for this room.'
+        ? ((await deps.setTaskRiskLevel(riskLevel)) ??
+            'Risk is unavailable for this room.')
         : 'Usage: /risk <low|high>',
     );
     return { handled: true, success: true };
@@ -234,7 +237,8 @@ export async function handleSessionCommand(opts: {
   if (command === '/approve-plan') {
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
-      (await deps.approvePlan()) ?? 'Plan approval is unavailable for this room.',
+      (await deps.approvePlan()) ??
+        'Plan approval is unavailable for this room.',
     );
     return { handled: true, success: true };
   }

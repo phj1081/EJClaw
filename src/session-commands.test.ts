@@ -141,9 +141,9 @@ describe('isSessionCommandControlMessage', () => {
   });
 
   it('matches plan artifact control output', () => {
-    expect(isSessionCommandControlMessage('Plan recorded.\n- Task: task-1')).toBe(
-      true,
-    );
+    expect(
+      isSessionCommandControlMessage('Plan recorded.\n- Task: task-1'),
+    ).toBe(true);
   });
 
   it('does not match regular bot conversation', () => {

@@ -442,7 +442,9 @@ describe('paired execution context', () => {
       roomRoleContext: ownerContext,
     });
 
-    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).not.toHaveBeenCalled();
     expect(result).toEqual({
       status: 'blocked',
       task: expect.objectContaining({

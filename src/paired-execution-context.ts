@@ -407,7 +407,9 @@ export function setRoomTaskRiskLevel(args: {
   if (riskLevel === 'high') {
     updatePairedTask(task.id, {
       risk_level: 'high',
-      plan_status: hasCompletePlanArtifacts(task.id) ? 'pending' : 'not_requested',
+      plan_status: hasCompletePlanArtifacts(task.id)
+        ? 'pending'
+        : 'not_requested',
       status: 'plan_review_pending',
       updated_at: now,
     });
