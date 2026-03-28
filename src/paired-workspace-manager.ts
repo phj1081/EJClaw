@@ -93,7 +93,10 @@ function runGit(args: string[], cwd?: string): string {
 }
 
 function ensureGitRepository(repoDir: string): void {
-  const insideWorkTree = runGit(['rev-parse', '--is-inside-work-tree'], repoDir);
+  const insideWorkTree = runGit(
+    ['rev-parse', '--is-inside-work-tree'],
+    repoDir,
+  );
   if (insideWorkTree !== 'true') {
     throw new Error(`Not a git repository: ${repoDir}`);
   }
@@ -125,7 +128,9 @@ function listGitPaths(repoDir: string, args: string[]): string[] {
 
 function isReviewerSnapshotDeniedPath(relativePath: string): boolean {
   const segments = relativePath.split(/[\\/]+/).filter(Boolean);
-  if (segments.some((segment) => REVIEWER_SNAPSHOT_DENY_SEGMENTS.has(segment))) {
+  if (
+    segments.some((segment) => REVIEWER_SNAPSHOT_DENY_SEGMENTS.has(segment))
+  ) {
     return true;
   }
 
@@ -237,7 +242,8 @@ function makeWorkspaceRecord(args: {
     task_id: args.taskId,
     role: args.role,
     workspace_dir: args.workspaceDir,
-    snapshot_source_dir: args.snapshotSourceDir ?? existing?.snapshot_source_dir ?? null,
+    snapshot_source_dir:
+      args.snapshotSourceDir ?? existing?.snapshot_source_dir ?? null,
     status: 'ready',
     snapshot_refreshed_at:
       args.snapshotRefreshedAt ?? existing?.snapshot_refreshed_at ?? null,
@@ -263,7 +269,10 @@ export function provisionOwnerWorkspaceForPairedTask(
 
   if (!fs.existsSync(path.join(workspaceDir, '.git'))) {
     ensureCleanDirectory(parentDir);
-    runGit(['worktree', 'add', '--detach', workspaceDir, sourceRef], canonicalWorkDir);
+    runGit(
+      ['worktree', 'add', '--detach', workspaceDir, sourceRef],
+      canonicalWorkDir,
+    );
     logger.info(
       { taskId, workspaceDir, sourceRef },
       'Provisioned owner workspace for paired task',

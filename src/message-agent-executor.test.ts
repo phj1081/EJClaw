@@ -310,52 +310,52 @@ describe('runAgentForGroup room memory', () => {
       workDir: '/repo/canonical',
     };
 
-    vi.mocked(pairedExecutionContext.preparePairedExecutionContext).mockReturnValue(
-      {
-        task: {
-          id: 'paired-task-1',
-          chat_jid: 'group@test',
-          group_folder: 'test-group',
-          owner_service_id: 'claude',
-          reviewer_service_id: 'codex-main',
-          title: null,
-          source_ref: 'HEAD',
-          review_requested_at: null,
-          status: 'draft',
-          created_at: '2026-03-28T00:00:00.000Z',
-          updated_at: '2026-03-28T00:00:00.000Z',
-        },
-        execution: {
-          id: 'run-room-role:claude',
-          task_id: 'paired-task-1',
-          service_id: 'claude',
-          role: 'owner',
-          workspace_id: 'paired-task-1:owner',
-          status: 'running',
-          summary: null,
-          created_at: '2026-03-28T00:00:00.000Z',
-          started_at: '2026-03-28T00:00:00.000Z',
-          completed_at: null,
-        },
-        workspace: {
-          id: 'paired-task-1:owner',
-          task_id: 'paired-task-1',
-          role: 'owner',
-          workspace_dir: '/tmp/paired/owner',
-          snapshot_source_dir: null,
-          status: 'ready',
-          snapshot_refreshed_at: null,
-          created_at: '2026-03-28T00:00:00.000Z',
-          updated_at: '2026-03-28T00:00:00.000Z',
-        },
-        envOverrides: {
-          EJCLAW_WORK_DIR: '/tmp/paired/owner',
-          EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
-          EJCLAW_PAIRED_EXECUTION_ID: 'run-room-role:claude',
-          EJCLAW_PAIRED_ROLE: 'owner',
-        },
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-1',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-main',
+        title: null,
+        source_ref: 'HEAD',
+        review_requested_at: null,
+        status: 'draft',
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:00.000Z',
       },
-    );
+      execution: {
+        id: 'run-room-role:claude',
+        task_id: 'paired-task-1',
+        service_id: 'claude',
+        role: 'owner',
+        workspace_id: 'paired-task-1:owner',
+        status: 'running',
+        summary: null,
+        created_at: '2026-03-28T00:00:00.000Z',
+        started_at: '2026-03-28T00:00:00.000Z',
+        completed_at: null,
+      },
+      workspace: {
+        id: 'paired-task-1:owner',
+        task_id: 'paired-task-1',
+        role: 'owner',
+        workspace_dir: '/tmp/paired/owner',
+        snapshot_source_dir: null,
+        status: 'ready',
+        snapshot_refreshed_at: null,
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:00.000Z',
+      },
+      envOverrides: {
+        EJCLAW_WORK_DIR: '/tmp/paired/owner',
+        EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
+        EJCLAW_PAIRED_EXECUTION_ID: 'run-room-role:claude',
+        EJCLAW_PAIRED_ROLE: 'owner',
+      },
+    });
 
     await runAgentForGroup(makeDeps(), {
       group,
@@ -403,44 +403,44 @@ describe('runAgentForGroup room memory', () => {
       reason: null,
       explicit: false,
     });
-    vi.mocked(pairedExecutionContext.preparePairedExecutionContext).mockReturnValue(
-      {
-        task: {
-          id: 'paired-task-1',
-          chat_jid: 'group@test',
-          group_folder: 'test-group',
-          owner_service_id: 'codex-main',
-          reviewer_service_id: 'claude',
-          title: null,
-          source_ref: 'HEAD',
-          review_requested_at: null,
-          status: 'draft',
-          created_at: '2026-03-28T00:00:00.000Z',
-          updated_at: '2026-03-28T00:00:00.000Z',
-        },
-        execution: {
-          id: 'run-blocked-reviewer:claude',
-          task_id: 'paired-task-1',
-          service_id: 'claude',
-          role: 'reviewer',
-          workspace_id: null,
-          status: 'running',
-          summary: null,
-          created_at: '2026-03-28T00:00:00.000Z',
-          started_at: '2026-03-28T00:00:00.000Z',
-          completed_at: null,
-        },
-        workspace: null,
-        envOverrides: {
-          EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
-          EJCLAW_PAIRED_EXECUTION_ID: 'run-blocked-reviewer:claude',
-          EJCLAW_PAIRED_ROLE: 'reviewer',
-          EJCLAW_REVIEWER_RUNTIME: '1',
-        },
-        blockMessage:
-          'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.',
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-1',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        review_requested_at: null,
+        status: 'draft',
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:00.000Z',
       },
-    );
+      execution: {
+        id: 'run-blocked-reviewer:claude',
+        task_id: 'paired-task-1',
+        service_id: 'claude',
+        role: 'reviewer',
+        workspace_id: null,
+        status: 'running',
+        summary: null,
+        created_at: '2026-03-28T00:00:00.000Z',
+        started_at: '2026-03-28T00:00:00.000Z',
+        completed_at: null,
+      },
+      workspace: null,
+      envOverrides: {
+        EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
+        EJCLAW_PAIRED_EXECUTION_ID: 'run-blocked-reviewer:claude',
+        EJCLAW_PAIRED_ROLE: 'reviewer',
+        EJCLAW_REVIEWER_RUNTIME: '1',
+      },
+      blockMessage:
+        'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.',
+    });
 
     const result = await runAgentForGroup(makeDeps(), {
       group,
@@ -449,7 +449,10 @@ describe('runAgentForGroup room memory', () => {
       runId: 'run-blocked-reviewer',
       onOutput: async (output) => {
         outputs.push({
-          text: output.output && 'text' in output.output ? output.output.text : undefined,
+          text:
+            output.output && 'text' in output.output
+              ? output.output.text
+              : undefined,
           result: output.result,
         });
       },

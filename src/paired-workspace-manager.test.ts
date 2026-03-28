@@ -100,7 +100,10 @@ describe('paired workspace manager', () => {
       manager.markPairedTaskReviewReady('paired-task-1');
 
     expect(
-      fs.readFileSync(path.join(reviewerWorkspace.workspace_dir, 'README.md'), 'utf-8'),
+      fs.readFileSync(
+        path.join(reviewerWorkspace.workspace_dir, 'README.md'),
+        'utf-8',
+      ),
     ).toBe('owner modified\n');
     expect(
       fs.readFileSync(
@@ -109,14 +112,15 @@ describe('paired workspace manager', () => {
       ),
     ).toBe('review me\n');
     expect(
-      runGit(['config', '--local', '--get', 'remote.origin.pushurl'], reviewerWorkspace.workspace_dir),
+      runGit(
+        ['config', '--local', '--get', 'remote.origin.pushurl'],
+        reviewerWorkspace.workspace_dir,
+      ),
     ).toBe('DISABLED_BY_EJCLAW');
     expect(
       runGit(['status', '--short'], reviewerWorkspace.workspace_dir),
     ).toContain('M README.md');
-    expect(
-      db.getPairedTaskById('paired-task-1')?.status,
-    ).toBe('review_ready');
+    expect(db.getPairedTaskById('paired-task-1')?.status).toBe('review_ready');
     expect(
       db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_refreshed_at,
     ).toBeTruthy();
@@ -164,7 +168,10 @@ describe('paired workspace manager', () => {
     manager.refreshReviewerSnapshotForPairedTask('paired-task-2');
 
     fs.rmSync(path.join(ownerWorkspace.workspace_dir, 'remove.txt'));
-    fs.writeFileSync(path.join(ownerWorkspace.workspace_dir, 'keep.txt'), 'updated\n');
+    fs.writeFileSync(
+      path.join(ownerWorkspace.workspace_dir, 'keep.txt'),
+      'updated\n',
+    );
 
     const reviewerWorkspace =
       manager.refreshReviewerSnapshotForPairedTask('paired-task-2');
@@ -173,7 +180,10 @@ describe('paired workspace manager', () => {
       fs.existsSync(path.join(reviewerWorkspace.workspace_dir, 'remove.txt')),
     ).toBe(false);
     expect(
-      fs.readFileSync(path.join(reviewerWorkspace.workspace_dir, 'keep.txt'), 'utf-8'),
+      fs.readFileSync(
+        path.join(reviewerWorkspace.workspace_dir, 'keep.txt'),
+        'utf-8',
+      ),
     ).toBe('updated\n');
     expect(
       runGit(['status', '--short'], reviewerWorkspace.workspace_dir),
@@ -189,10 +199,19 @@ describe('paired workspace manager', () => {
     runGit(['init'], canonicalDir);
     runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
     runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
-    fs.writeFileSync(path.join(canonicalDir, 'tracked.ts'), 'export const ok = 1;\n');
-    fs.writeFileSync(path.join(canonicalDir, '.env.production'), 'TRACKED_SECRET=1\n');
+    fs.writeFileSync(
+      path.join(canonicalDir, 'tracked.ts'),
+      'export const ok = 1;\n',
+    );
+    fs.writeFileSync(
+      path.join(canonicalDir, '.env.production'),
+      'TRACKED_SECRET=1\n',
+    );
     fs.writeFileSync(path.join(canonicalDir, '.env.example'), 'EXAMPLE=1\n');
-    runGit(['add', 'tracked.ts', '.env.production', '.env.example'], canonicalDir);
+    runGit(
+      ['add', 'tracked.ts', '.env.production', '.env.example'],
+      canonicalDir,
+    );
     runGit(['commit', '-m', 'initial'], canonicalDir);
 
     const now = '2026-03-28T00:00:00.000Z';
@@ -223,20 +242,38 @@ describe('paired workspace manager', () => {
     fs.mkdirSync(path.join(ownerWorkspace.workspace_dir, 'src'), {
       recursive: true,
     });
-    fs.mkdirSync(path.join(ownerWorkspace.workspace_dir, 'node_modules', '.cache'), {
-      recursive: true,
-    });
+    fs.mkdirSync(
+      path.join(ownerWorkspace.workspace_dir, 'node_modules', '.cache'),
+      {
+        recursive: true,
+      },
+    );
     fs.mkdirSync(path.join(ownerWorkspace.workspace_dir, 'dist'), {
       recursive: true,
     });
     fs.mkdirSync(path.join(ownerWorkspace.workspace_dir, 'logs'), {
       recursive: true,
     });
-    fs.writeFileSync(path.join(ownerWorkspace.workspace_dir, 'src', 'draft.ts'), 'export const draft = true;\n');
-    fs.writeFileSync(path.join(ownerWorkspace.workspace_dir, '.env.local'), 'SECRET=1\n');
-    fs.writeFileSync(path.join(ownerWorkspace.workspace_dir, 'node_modules', '.cache', 'x'), 'cache\n');
-    fs.writeFileSync(path.join(ownerWorkspace.workspace_dir, 'dist', 'bundle.js'), 'dist\n');
-    fs.writeFileSync(path.join(ownerWorkspace.workspace_dir, 'logs', 'debug.log'), 'log\n');
+    fs.writeFileSync(
+      path.join(ownerWorkspace.workspace_dir, 'src', 'draft.ts'),
+      'export const draft = true;\n',
+    );
+    fs.writeFileSync(
+      path.join(ownerWorkspace.workspace_dir, '.env.local'),
+      'SECRET=1\n',
+    );
+    fs.writeFileSync(
+      path.join(ownerWorkspace.workspace_dir, 'node_modules', '.cache', 'x'),
+      'cache\n',
+    );
+    fs.writeFileSync(
+      path.join(ownerWorkspace.workspace_dir, 'dist', 'bundle.js'),
+      'dist\n',
+    );
+    fs.writeFileSync(
+      path.join(ownerWorkspace.workspace_dir, 'logs', 'debug.log'),
+      'log\n',
+    );
 
     const reviewerWorkspace =
       manager.refreshReviewerSnapshotForPairedTask('paired-task-3');
@@ -248,7 +285,9 @@ describe('paired workspace manager', () => {
       ),
     ).toBe('export const draft = true;\n');
     expect(
-      fs.existsSync(path.join(reviewerWorkspace.workspace_dir, '.env.production')),
+      fs.existsSync(
+        path.join(reviewerWorkspace.workspace_dir, '.env.production'),
+      ),
     ).toBe(false);
     expect(
       fs.readFileSync(
@@ -261,14 +300,23 @@ describe('paired workspace manager', () => {
     ).toBe(false);
     expect(
       fs.existsSync(
-        path.join(reviewerWorkspace.workspace_dir, 'node_modules', '.cache', 'x'),
+        path.join(
+          reviewerWorkspace.workspace_dir,
+          'node_modules',
+          '.cache',
+          'x',
+        ),
       ),
     ).toBe(false);
     expect(
-      fs.existsSync(path.join(reviewerWorkspace.workspace_dir, 'dist', 'bundle.js')),
+      fs.existsSync(
+        path.join(reviewerWorkspace.workspace_dir, 'dist', 'bundle.js'),
+      ),
     ).toBe(false);
     expect(
-      fs.existsSync(path.join(reviewerWorkspace.workspace_dir, 'logs', 'debug.log')),
+      fs.existsSync(
+        path.join(reviewerWorkspace.workspace_dir, 'logs', 'debug.log'),
+      ),
     ).toBe(false);
   });
 });

@@ -1808,9 +1808,9 @@ export function createPairedTask(task: PairedTask): void {
 }
 
 export function getPairedTaskById(id: string): PairedTask | undefined {
-  return db
-    .prepare('SELECT * FROM paired_tasks WHERE id = ?')
-    .get(id) as PairedTask | undefined;
+  return db.prepare('SELECT * FROM paired_tasks WHERE id = ?').get(id) as
+    | PairedTask
+    | undefined;
 }
 
 export function getLatestOpenPairedTaskForChat(
@@ -1905,9 +1905,9 @@ export function createPairedExecution(execution: PairedExecution): void {
 export function getPairedExecutionById(
   id: string,
 ): PairedExecution | undefined {
-  return db
-    .prepare('SELECT * FROM paired_executions WHERE id = ?')
-    .get(id) as PairedExecution | undefined;
+  return db.prepare('SELECT * FROM paired_executions WHERE id = ?').get(id) as
+    | PairedExecution
+    | undefined;
 }
 
 export function updatePairedExecution(

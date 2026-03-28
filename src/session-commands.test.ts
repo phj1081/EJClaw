@@ -187,9 +187,9 @@ describe('handleSessionCommand', () => {
 
   it('handles authorized /review-ready without invoking the agent', async () => {
     const deps = makeDeps({
-      markReviewReady: vi.fn().mockResolvedValue(
-        'Review snapshot updated.\n- Task: paired-task-1',
-      ),
+      markReviewReady: vi
+        .fn()
+        .mockResolvedValue('Review snapshot updated.\n- Task: paired-task-1'),
     });
 
     const result = await handleSessionCommand({

@@ -689,7 +689,9 @@ describe('paired task state', () => {
     expect(getPairedTaskById('paired-task-2')?.status).toBe('review_ready');
     expect(getPairedExecutionById('paired-exec-2')?.status).toBe('running');
     expect(
-      listPairedWorkspacesForTask('paired-task-2').map((workspace) => workspace.workspace_dir),
+      listPairedWorkspacesForTask('paired-task-2').map(
+        (workspace) => workspace.workspace_dir,
+      ),
     ).toEqual(['/tmp/reviewer-v2']);
   });
 });

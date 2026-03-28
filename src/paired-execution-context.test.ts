@@ -236,9 +236,9 @@ describe('paired execution context', () => {
       roomRoleContext: ownerContext,
     });
 
-    expect(pairedWorkspaceManager.markPairedTaskReviewReady).toHaveBeenCalledWith(
-      'task-1',
-    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
     expect(result?.task.status).toBe('review_ready');
   });
 });

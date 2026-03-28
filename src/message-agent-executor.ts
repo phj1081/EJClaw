@@ -281,7 +281,10 @@ export async function runAgentForGroup(
           const outputText = getAgentOutputText(output);
           if (typeof outputText === 'string' && outputText.length > 0) {
             pairedExecutionSummary = outputText.slice(0, 500);
-          } else if (typeof output.error === 'string' && output.error.length > 0) {
+          } else if (
+            typeof output.error === 'string' &&
+            output.error.length > 0
+          ) {
             pairedExecutionSummary = output.error.slice(0, 500);
           }
           if (
@@ -596,261 +599,269 @@ export async function runAgentForGroup(
   try {
     let primaryAttempt = await runAttempt(provider);
 
-  const isRetryableClaudeSessionFailure = (
-    attempt: Awaited<ReturnType<typeof runAttempt>>,
-  ): boolean =>
-    isClaudeCodeAgent &&
-    provider === 'claude' &&
-    !attempt.sawOutput &&
-    (attempt.retryableSessionFailureDetected === true ||
-      (attempt.error != null &&
-        shouldRetryFreshSessionOnAgentFailure({
-          result: null,
-          error: getErrorMessage(attempt.error),
-        })));
-
-  if (isRetryableClaudeSessionFailure(primaryAttempt)) {
-    deps.clearSession(group.folder);
-    logger.warn(
-      { group: group.name, chatJid, runId },
-      'Cleared poisoned Claude session before visible output, retrying fresh session',
-    );
-
-    primaryAttempt = await runAttempt('claude');
+    const isRetryableClaudeSessionFailure = (
+      attempt: Awaited<ReturnType<typeof runAttempt>>,
+    ): boolean =>
+      isClaudeCodeAgent &&
+      provider === 'claude' &&
+      !attempt.sawOutput &&
+      (attempt.retryableSessionFailureDetected === true ||
+        (attempt.error != null &&
+          shouldRetryFreshSessionOnAgentFailure({
+            result: null,
+            error: getErrorMessage(attempt.error),
+          })));
 
     if (isRetryableClaudeSessionFailure(primaryAttempt)) {
       deps.clearSession(group.folder);
       logger.warn(
         { group: group.name, chatJid, runId },
-        'Fresh Claude retry also hit a retryable session failure',
+        'Cleared poisoned Claude session before visible output, retrying fresh session',
       );
 
+      primaryAttempt = await runAttempt('claude');
+
+      if (isRetryableClaudeSessionFailure(primaryAttempt)) {
+        deps.clearSession(group.folder);
+        logger.warn(
+          { group: group.name, chatJid, runId },
+          'Fresh Claude retry also hit a retryable session failure',
+        );
+
+        logger.error(
+          { group: group.name, chatJid, runId },
+          'Retryable Claude session failure persisted after fresh retry',
+        );
+        return 'error';
+      }
+    }
+
+    if (primaryAttempt.error) {
+      if (
+        canRotateToken &&
+        provider === 'claude' &&
+        !primaryAttempt.sawOutput
+      ) {
+        const errMsg = getErrorMessage(primaryAttempt.error);
+        const trigger = primaryAttempt.streamedTriggerReason
+          ? {
+              shouldRetry: true,
+              reason: primaryAttempt.streamedTriggerReason.reason,
+              retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
+            }
+          : classifyRotationTrigger(errMsg);
+        if (trigger.shouldRetry) {
+          const result = await retryClaudeWithRotation(
+            {
+              reason: trigger.reason,
+              retryAfterMs: trigger.retryAfterMs,
+            },
+            errMsg,
+          );
+          if (result === 'error') {
+            return maybeHandoffAfterError(trigger.reason, primaryAttempt);
+          }
+          if (result === 'success') {
+            pairedExecutionStatus = 'succeeded';
+          }
+          return result;
+        }
+      }
+
+      if (!isClaudeCodeAgent) {
+        const errMsg = getErrorMessage(primaryAttempt.error);
+        const trigger = detectCodexRotationTrigger(errMsg);
+        if (trigger.shouldRotate && getCodexAccountCount() > 1) {
+          const result = await retryCodexWithRotation(
+            { reason: trigger.reason },
+            errMsg,
+          );
+          if (result === 'success') {
+            pairedExecutionStatus = 'succeeded';
+          }
+          return result;
+        }
+      }
+
       logger.error(
-        { group: group.name, chatJid, runId },
-        'Retryable Claude session failure persisted after fresh retry',
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          provider,
+          err: primaryAttempt.error,
+        },
+        'Agent error',
       );
       return 'error';
     }
-  }
 
-  if (primaryAttempt.error) {
-    if (canRotateToken && provider === 'claude' && !primaryAttempt.sawOutput) {
-      const errMsg = getErrorMessage(primaryAttempt.error);
-      const trigger = primaryAttempt.streamedTriggerReason
-        ? {
-            shouldRetry: true,
-            reason: primaryAttempt.streamedTriggerReason.reason,
-            retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
-          }
-        : classifyRotationTrigger(errMsg);
-      if (trigger.shouldRetry) {
-        const result = await retryClaudeWithRotation(
-          {
-            reason: trigger.reason,
-            retryAfterMs: trigger.retryAfterMs,
-          },
-          errMsg,
-        );
-        if (result === 'error') {
-          return maybeHandoffAfterError(trigger.reason, primaryAttempt);
-        }
-        if (result === 'success') {
-          pairedExecutionStatus = 'succeeded';
-        }
-        return result;
-      }
-    }
-
-    if (!isClaudeCodeAgent) {
-      const errMsg = getErrorMessage(primaryAttempt.error);
-      const trigger = detectCodexRotationTrigger(errMsg);
-      if (trigger.shouldRotate && getCodexAccountCount() > 1) {
-        const result = await retryCodexWithRotation(
-          { reason: trigger.reason },
-          errMsg,
-        );
-        if (result === 'success') {
-          pairedExecutionStatus = 'succeeded';
-        }
-        return result;
-      }
-    }
-
-    logger.error(
-      {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        runId,
-        provider,
-        err: primaryAttempt.error,
-      },
-      'Agent error',
-    );
-    return 'error';
-  }
-
-  const output = primaryAttempt.output;
-  if (!output) {
-    logger.error(
-      {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        runId,
-        provider,
-      },
-      'Agent produced no output object',
-    );
-    return 'error';
-  }
-
-  if (!pairedExecutionSummary) {
-    const finalOutputText = getAgentOutputText(output);
-    pairedExecutionSummary =
-      (typeof finalOutputText === 'string' && finalOutputText.length > 0
-        ? finalOutputText.slice(0, 500)
-        : null) ??
-      (typeof output.error === 'string' && output.error.length > 0
-        ? output.error.slice(0, 500)
-        : null);
-  }
-
-  if (
-    canRotateToken &&
-    provider === 'claude' &&
-    !primaryAttempt.sawOutput &&
-    primaryAttempt.streamedTriggerReason &&
-    output.status !== 'error'
-  ) {
-    const result = await retryClaudeWithRotation({
-      reason: primaryAttempt.streamedTriggerReason.reason,
-      retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
-    });
-    if (result === 'error') {
-      return maybeHandoffAfterError(
-        primaryAttempt.streamedTriggerReason.reason,
-        primaryAttempt,
+    const output = primaryAttempt.output;
+    if (!output) {
+      logger.error(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          runId,
+          provider,
+        },
+        'Agent produced no output object',
       );
+      return 'error';
     }
-    return result;
-  }
 
-  if (
-    isClaudeCodeAgent &&
-    (resetSessionRequested || shouldResetSessionOnAgentFailure(output))
-  ) {
-    deps.clearSession(group.folder);
-    logger.warn(
-      { group: group.name, chatJid, runId },
-      'Cleared poisoned agent session after unrecoverable error',
-    );
-  }
+    if (!pairedExecutionSummary) {
+      const finalOutputText = getAgentOutputText(output);
+      pairedExecutionSummary =
+        (typeof finalOutputText === 'string' && finalOutputText.length > 0
+          ? finalOutputText.slice(0, 500)
+          : null) ??
+        (typeof output.error === 'string' && output.error.length > 0
+          ? output.error.slice(0, 500)
+          : null);
+    }
 
-  if (output.status === 'error') {
-    if (canRotateToken && provider === 'claude' && !primaryAttempt.sawOutput) {
-      const trigger = primaryAttempt.streamedTriggerReason
-        ? {
-            shouldRetry: true,
-            reason: primaryAttempt.streamedTriggerReason.reason,
-            retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
-          }
-        : classifyRotationTrigger(output.error);
-      if (trigger.shouldRetry) {
-        const result = await retryClaudeWithRotation(
-          {
-            reason: trigger.reason,
-            retryAfterMs: trigger.retryAfterMs,
-          },
-          output.error ?? undefined,
+    if (
+      canRotateToken &&
+      provider === 'claude' &&
+      !primaryAttempt.sawOutput &&
+      primaryAttempt.streamedTriggerReason &&
+      output.status !== 'error'
+    ) {
+      const result = await retryClaudeWithRotation({
+        reason: primaryAttempt.streamedTriggerReason.reason,
+        retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
+      });
+      if (result === 'error') {
+        return maybeHandoffAfterError(
+          primaryAttempt.streamedTriggerReason.reason,
+          primaryAttempt,
         );
-        if (result === 'error') {
-          return maybeHandoffAfterError(trigger.reason, primaryAttempt);
-        }
-        if (result === 'success') {
-          pairedExecutionStatus = 'succeeded';
-        }
-        return result;
       }
+      return result;
     }
 
-    if (!isClaudeCodeAgent && getCodexAccountCount() > 1) {
-      const trigger = detectCodexRotationTrigger(output.error);
-      if (trigger.shouldRotate) {
-        const result = await retryCodexWithRotation(
-          { reason: trigger.reason },
-          output.error ?? undefined,
-        );
-        if (result === 'success') {
-          pairedExecutionStatus = 'succeeded';
-        }
-        return result;
-      }
-    }
-
-    logger.error(
-      {
-        group: group.name,
-        chatJid,
-        runId,
-        provider,
-        error: output.error,
-      },
-      'Agent process error',
-    );
-    return 'error';
-  }
-
-  if (
-    !isClaudeCodeAgent &&
-    primaryAttempt.streamedTriggerReason &&
-    getCodexAccountCount() > 1
-  ) {
-    const result = await retryCodexWithRotation(
-      {
-        reason: primaryAttempt.streamedTriggerReason
-          .reason as CodexRotationReason,
-      },
-      output.error ?? output.result ?? undefined,
-    );
-    if (result === 'success') {
-      pairedExecutionStatus = 'succeeded';
-    }
-    return result;
-  }
-
-  // Unresolved streamed trigger — rotation was unavailable or output was
-  // already forwarded.  Surfaces as an error since there is no alternative provider.
-  if (primaryAttempt.streamedTriggerReason) {
     if (
       isClaudeCodeAgent &&
-      maybeHandoffToCodex(
-        primaryAttempt.streamedTriggerReason.reason,
-        primaryAttempt.sawVisibleOutput,
-      )
+      (resetSessionRequested || shouldResetSessionOnAgentFailure(output))
     ) {
-      return 'success';
+      deps.clearSession(group.folder);
+      logger.warn(
+        { group: group.name, chatJid, runId },
+        'Cleared poisoned agent session after unrecoverable error',
+      );
     }
-    logger.error(
-      {
-        group: group.name,
-        chatJid,
-        runId,
-        reason: primaryAttempt.streamedTriggerReason.reason,
-      },
-      'Agent trigger detected but could not be resolved',
-    );
-    return 'error';
-  }
 
-  // success-null-result with no visible output — agent returned nothing useful
-  if (primaryAttempt.sawSuccessNullResultWithoutOutput) {
-    logger.error(
-      { group: group.name, chatJid, runId },
-      'Agent returned success with null result and no visible output',
-    );
-    return 'error';
-  }
+    if (output.status === 'error') {
+      if (
+        canRotateToken &&
+        provider === 'claude' &&
+        !primaryAttempt.sawOutput
+      ) {
+        const trigger = primaryAttempt.streamedTriggerReason
+          ? {
+              shouldRetry: true,
+              reason: primaryAttempt.streamedTriggerReason.reason,
+              retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
+            }
+          : classifyRotationTrigger(output.error);
+        if (trigger.shouldRetry) {
+          const result = await retryClaudeWithRotation(
+            {
+              reason: trigger.reason,
+              retryAfterMs: trigger.retryAfterMs,
+            },
+            output.error ?? undefined,
+          );
+          if (result === 'error') {
+            return maybeHandoffAfterError(trigger.reason, primaryAttempt);
+          }
+          if (result === 'success') {
+            pairedExecutionStatus = 'succeeded';
+          }
+          return result;
+        }
+      }
+
+      if (!isClaudeCodeAgent && getCodexAccountCount() > 1) {
+        const trigger = detectCodexRotationTrigger(output.error);
+        if (trigger.shouldRotate) {
+          const result = await retryCodexWithRotation(
+            { reason: trigger.reason },
+            output.error ?? undefined,
+          );
+          if (result === 'success') {
+            pairedExecutionStatus = 'succeeded';
+          }
+          return result;
+        }
+      }
+
+      logger.error(
+        {
+          group: group.name,
+          chatJid,
+          runId,
+          provider,
+          error: output.error,
+        },
+        'Agent process error',
+      );
+      return 'error';
+    }
+
+    if (
+      !isClaudeCodeAgent &&
+      primaryAttempt.streamedTriggerReason &&
+      getCodexAccountCount() > 1
+    ) {
+      const result = await retryCodexWithRotation(
+        {
+          reason: primaryAttempt.streamedTriggerReason
+            .reason as CodexRotationReason,
+        },
+        output.error ?? output.result ?? undefined,
+      );
+      if (result === 'success') {
+        pairedExecutionStatus = 'succeeded';
+      }
+      return result;
+    }
+
+    // Unresolved streamed trigger — rotation was unavailable or output was
+    // already forwarded.  Surfaces as an error since there is no alternative provider.
+    if (primaryAttempt.streamedTriggerReason) {
+      if (
+        isClaudeCodeAgent &&
+        maybeHandoffToCodex(
+          primaryAttempt.streamedTriggerReason.reason,
+          primaryAttempt.sawVisibleOutput,
+        )
+      ) {
+        return 'success';
+      }
+      logger.error(
+        {
+          group: group.name,
+          chatJid,
+          runId,
+          reason: primaryAttempt.streamedTriggerReason.reason,
+        },
+        'Agent trigger detected but could not be resolved',
+      );
+      return 'error';
+    }
+
+    // success-null-result with no visible output — agent returned nothing useful
+    if (primaryAttempt.sawSuccessNullResultWithoutOutput) {
+      logger.error(
+        { group: group.name, chatJid, runId },
+        'Agent returned success with null result and no visible output',
+      );
+      return 'error';
+    }
 
     pairedExecutionStatus = 'succeeded';
     return 'success';
