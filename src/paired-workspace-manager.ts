@@ -1,4 +1,5 @@
 import { execFileSync } from 'child_process';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
@@ -12,6 +13,11 @@ import {
 import { resolvePairedTaskWorkspacePath } from './group-folder.js';
 import { logger } from './logger.js';
 import type { PairedTask, PairedWorkspace } from './types.js';
+
+const REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE =
+  'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.';
+const REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE =
+  'Review snapshot is not ready yet. Ask the owner to run /review (or /review-ready) after preparing changes.';
 
 const REVIEWER_SNAPSHOT_DENY_SEGMENTS = new Set([
   '.git',
@@ -115,14 +121,6 @@ function ensureCleanDirectory(targetDir: string): void {
   fs.mkdirSync(targetDir, { recursive: true });
 }
 
-function resetDirectoryExceptGit(targetDir: string): void {
-  if (!fs.existsSync(targetDir)) return;
-  for (const entry of fs.readdirSync(targetDir)) {
-    if (entry === '.git') continue;
-    fs.rmSync(path.join(targetDir, entry), { recursive: true, force: true });
-  }
-}
-
 function listGitPaths(repoDir: string, args: string[]): string[] {
   const output = execFileSync('git', args, {
     cwd: repoDir,
@@ -221,6 +219,34 @@ function removeSnapshotPaths(targetDir: string, relativePaths: string[]): void {
   }
 }
 
+function buildReviewerSnapshotFingerprint(args: {
+  sourceDir: string;
+  allowedTrackedFiles: string[];
+  deletedTrackedFiles: string[];
+  allowedUntrackedFiles: string[];
+}): string {
+  const hash = crypto.createHash('sha256');
+  const appendFile = (kind: 'tracked' | 'untracked', relativePath: string) => {
+    const sourcePath = path.join(args.sourceDir, relativePath);
+    if (!fs.existsSync(sourcePath)) return;
+    hash.update(`${kind}\0${relativePath}\0`);
+    hash.update(fs.readFileSync(sourcePath));
+    hash.update('\0');
+  };
+
+  for (const relativePath of [...new Set(args.allowedTrackedFiles)].sort()) {
+    appendFile('tracked', relativePath);
+  }
+  for (const relativePath of [...new Set(args.deletedTrackedFiles)].sort()) {
+    hash.update(`deleted\0${relativePath}\0`);
+  }
+  for (const relativePath of [...new Set(args.allowedUntrackedFiles)].sort()) {
+    appendFile('untracked', relativePath);
+  }
+
+  return hash.digest('hex');
+}
+
 function applyReviewerSparseCheckout(
   reviewerDir: string,
   allowedTrackedFiles: string[],
@@ -275,7 +301,9 @@ function makeWorkspaceRecord(args: {
   role: PairedWorkspace['role'];
   workspaceDir: string;
   snapshotSourceDir?: string | null;
+  snapshotSourceFingerprint?: string | null;
   snapshotRefreshedAt?: string | null;
+  status?: PairedWorkspace['status'];
   createdAt?: string;
 }): PairedWorkspace {
   const existing = getPairedWorkspace(args.taskId, args.role);
@@ -287,7 +315,11 @@ function makeWorkspaceRecord(args: {
     workspace_dir: args.workspaceDir,
     snapshot_source_dir:
       args.snapshotSourceDir ?? existing?.snapshot_source_dir ?? null,
-    status: 'ready',
+    snapshot_source_fingerprint:
+      args.snapshotSourceFingerprint ??
+      existing?.snapshot_source_fingerprint ??
+      null,
+    status: args.status ?? 'ready',
     snapshot_refreshed_at:
       args.snapshotRefreshedAt ?? existing?.snapshot_refreshed_at ?? null,
     created_at: existing?.created_at || args.createdAt || now,
@@ -334,7 +366,12 @@ export function provisionOwnerWorkspaceForPairedTask(
 export function refreshReviewerSnapshotForPairedTask(
   taskId: string,
 ): PairedWorkspace {
-  const ownerWorkspace = provisionOwnerWorkspaceForPairedTask(taskId);
+  const ownerWorkspace = getPairedWorkspace(taskId, 'owner');
+  if (!ownerWorkspace) {
+    throw new Error(
+      `Owner workspace is not available for paired task ${taskId}.`,
+    );
+  }
   ensureGitRepository(ownerWorkspace.workspace_dir);
 
   const { task } = getTaskAndProject(taskId);
@@ -359,6 +396,12 @@ export function refreshReviewerSnapshotForPairedTask(
   const allowedUntrackedFiles = listAllowedUntrackedFiles(
     ownerWorkspace.workspace_dir,
   );
+  const snapshotFingerprint = buildReviewerSnapshotFingerprint({
+    sourceDir: ownerWorkspace.workspace_dir,
+    allowedTrackedFiles,
+    deletedTrackedFiles,
+    allowedUntrackedFiles,
+  });
 
   runGit(['reset', '--hard', 'HEAD'], reviewerDir);
   runGit(['clean', '-fdx'], reviewerDir);
@@ -382,6 +425,7 @@ export function refreshReviewerSnapshotForPairedTask(
     role: 'reviewer',
     workspaceDir: reviewerDir,
     snapshotSourceDir: ownerWorkspace.workspace_dir,
+    snapshotSourceFingerprint: snapshotFingerprint,
     snapshotRefreshedAt: refreshedAt,
   });
   upsertPairedWorkspace(workspace);
@@ -395,16 +439,122 @@ export function refreshReviewerSnapshotForPairedTask(
 export function markPairedTaskReviewReady(taskId: string): {
   ownerWorkspace: PairedWorkspace;
   reviewerWorkspace: PairedWorkspace;
-} {
-  const ownerWorkspace = provisionOwnerWorkspaceForPairedTask(taskId);
+} | null {
+  const requestedAt = new Date().toISOString();
+  updatePairedTask(taskId, {
+    status: 'review_pending',
+    review_requested_at: requestedAt,
+    updated_at: requestedAt,
+  });
+
+  const ownerWorkspace = getPairedWorkspace(taskId, 'owner');
+  if (!ownerWorkspace) {
+    return null;
+  }
   const reviewerWorkspace = refreshReviewerSnapshotForPairedTask(taskId);
   const now = new Date().toISOString();
 
   updatePairedTask(taskId, {
     status: 'review_ready',
-    review_requested_at: now,
     updated_at: now,
   });
 
   return { ownerWorkspace, reviewerWorkspace };
+}
+
+export interface PreparedReviewerWorkspace {
+  workspace: PairedWorkspace | null;
+  blockMessage?: string;
+  autoRefreshed: boolean;
+}
+
+export function prepareReviewerWorkspaceForExecution(
+  task: PairedTask,
+): PreparedReviewerWorkspace {
+  const ownerWorkspace = getPairedWorkspace(task.id, 'owner') ?? null;
+  if (!ownerWorkspace) {
+    return {
+      workspace: null,
+      autoRefreshed: false,
+      blockMessage: REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE,
+    };
+  }
+  const reviewerWorkspace = getPairedWorkspace(task.id, 'reviewer') ?? null;
+  const allowedTrackedFiles = listAllowedTrackedFiles(
+    ownerWorkspace.workspace_dir,
+  );
+  const deletedTrackedFiles = listDeletedTrackedFiles(
+    ownerWorkspace.workspace_dir,
+  );
+  const allowedUntrackedFiles = listAllowedUntrackedFiles(
+    ownerWorkspace.workspace_dir,
+  );
+  const currentFingerprint = buildReviewerSnapshotFingerprint({
+    sourceDir: ownerWorkspace.workspace_dir,
+    allowedTrackedFiles,
+    deletedTrackedFiles,
+    allowedUntrackedFiles,
+  });
+  const snapshotMissing =
+    !reviewerWorkspace?.snapshot_refreshed_at || !reviewerWorkspace;
+  const snapshotStale =
+    !!reviewerWorkspace &&
+    (reviewerWorkspace.status === 'stale' ||
+      reviewerWorkspace.snapshot_source_fingerprint !== currentFingerprint);
+  const now = new Date().toISOString();
+
+  if (snapshotMissing || snapshotStale) {
+    if (
+      task.status === 'review_pending' ||
+      task.status === 'review_ready'
+    ) {
+      const refreshedWorkspace = refreshReviewerSnapshotForPairedTask(task.id);
+      updatePairedTask(task.id, {
+        status: 'review_ready',
+        updated_at: now,
+      });
+      return {
+        workspace: refreshedWorkspace,
+        autoRefreshed: true,
+      };
+    }
+
+    if (snapshotMissing) {
+      return {
+        workspace: null,
+        autoRefreshed: false,
+        blockMessage: REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE,
+      };
+    }
+
+    if (reviewerWorkspace) {
+      upsertPairedWorkspace(
+        makeWorkspaceRecord({
+          taskId: task.id,
+          role: 'reviewer',
+          workspaceDir: reviewerWorkspace.workspace_dir,
+          snapshotSourceDir: reviewerWorkspace.snapshot_source_dir,
+          snapshotSourceFingerprint:
+            reviewerWorkspace.snapshot_source_fingerprint,
+          snapshotRefreshedAt: reviewerWorkspace.snapshot_refreshed_at,
+          status: 'stale',
+          createdAt: reviewerWorkspace.created_at,
+        }),
+      );
+    }
+    updatePairedTask(task.id, {
+      status: 'review_pending',
+      updated_at: now,
+    });
+    return {
+      workspace: null,
+      autoRefreshed: false,
+      blockMessage: REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE,
+    };
+  }
+
+  return {
+    workspace: reviewerWorkspace,
+    autoRefreshed: false,
+  };
 }

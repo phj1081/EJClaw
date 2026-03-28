@@ -260,6 +260,7 @@ function createSchema(database: Database.Database): void {
       CHECK (
         status IN (
           'draft',
+          'review_pending',
           'review_ready',
           'in_review',
           'changes_requested',
@@ -294,6 +295,7 @@ function createSchema(database: Database.Database): void {
       role TEXT NOT NULL,
       workspace_dir TEXT NOT NULL,
       snapshot_source_dir TEXT,
+      snapshot_source_fingerprint TEXT,
       status TEXT NOT NULL DEFAULT 'provisioning',
       snapshot_refreshed_at TEXT,
       created_at TEXT NOT NULL,
@@ -413,6 +415,14 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(
       `ALTER TABLE scheduled_tasks ADD COLUMN suspended_until TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE paired_workspaces ADD COLUMN snapshot_source_fingerprint TEXT`,
     );
   } catch {
     /* column already exists */
@@ -606,6 +616,79 @@ function createSchema(database: Database.Database): void {
        SET agent_config = COALESCE(agent_config, container_config)
        WHERE container_config IS NOT NULL`,
     );
+  }
+
+  const pairedTasksSqlRow = database
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_tasks'`,
+    )
+    .get() as { sql?: string } | undefined;
+  const pairedTasksSql = pairedTasksSqlRow?.sql || '';
+  if (pairedTasksSql && !pairedTasksSql.includes("'review_pending'")) {
+    database.exec(`
+      CREATE TABLE paired_tasks_new (
+        id TEXT PRIMARY KEY,
+        chat_jid TEXT NOT NULL,
+        group_folder TEXT NOT NULL,
+        owner_service_id TEXT NOT NULL,
+        reviewer_service_id TEXT NOT NULL,
+        title TEXT,
+        source_ref TEXT,
+        review_requested_at TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (
+          status IN (
+            'draft',
+            'review_pending',
+            'review_ready',
+            'in_review',
+            'changes_requested',
+            'merge_ready',
+            'merged',
+            'discarded',
+            'failed'
+          )
+        )
+      );
+    `);
+    database.exec(`
+      INSERT INTO paired_tasks_new (
+        id,
+        chat_jid,
+        group_folder,
+        owner_service_id,
+        reviewer_service_id,
+        title,
+        source_ref,
+        review_requested_at,
+        status,
+        created_at,
+        updated_at
+      )
+      SELECT
+        id,
+        chat_jid,
+        group_folder,
+        owner_service_id,
+        reviewer_service_id,
+        title,
+        source_ref,
+        review_requested_at,
+        status,
+        created_at,
+        updated_at
+      FROM paired_tasks;
+    `);
+    database.exec(`
+      DROP TABLE paired_tasks;
+      ALTER TABLE paired_tasks_new RENAME TO paired_tasks;
+    `);
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
+        ON paired_tasks(chat_jid, status, updated_at);
+    `);
   }
 
   // Migrate sessions table to composite PK (group_folder, agent_type)
@@ -1960,15 +2043,17 @@ export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
         role,
         workspace_dir,
         snapshot_source_dir,
+        snapshot_source_fingerprint,
         status,
         snapshot_refreshed_at,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         workspace_dir = excluded.workspace_dir,
         snapshot_source_dir = excluded.snapshot_source_dir,
+        snapshot_source_fingerprint = excluded.snapshot_source_fingerprint,
         status = excluded.status,
         snapshot_refreshed_at = excluded.snapshot_refreshed_at,
         updated_at = excluded.updated_at
@@ -1979,6 +2064,7 @@ export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
     workspace.role,
     workspace.workspace_dir,
     workspace.snapshot_source_dir,
+    workspace.snapshot_source_fingerprint,
     workspace.status,
     workspace.snapshot_refreshed_at,
     workspace.created_at,

@@ -344,6 +344,7 @@ describe('runAgentForGroup room memory', () => {
         role: 'owner',
         workspace_dir: '/tmp/paired/owner',
         snapshot_source_dir: null,
+        snapshot_source_fingerprint: null,
         status: 'ready',
         snapshot_refreshed_at: null,
         created_at: '2026-03-28T00:00:00.000Z',
@@ -387,7 +388,7 @@ describe('runAgentForGroup room memory', () => {
     });
   });
 
-  it('blocks reviewer execution before review-ready and does not spawn the runner', async () => {
+  it('blocks reviewer execution when an in-review snapshot became stale and does not spawn the runner', async () => {
     const group = {
       ...makeGroup(),
       folder: 'test-group',
@@ -439,7 +440,7 @@ describe('runAgentForGroup room memory', () => {
         EJCLAW_REVIEWER_RUNTIME: '1',
       },
       blockMessage:
-        'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.',
+        'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
     });
 
     const result = await runAgentForGroup(makeDeps(), {
@@ -462,7 +463,7 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
     expect(outputs).toEqual([
       {
-        text: 'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.',
+        text: 'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
         result: null,
       },
     ]);
@@ -472,7 +473,7 @@ describe('runAgentForGroup room memory', () => {
       executionId: 'run-blocked-reviewer:claude',
       status: 'failed',
       summary:
-        'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.',
+        'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
     });
   });
 });

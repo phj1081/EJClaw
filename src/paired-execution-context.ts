@@ -2,12 +2,15 @@ import { execFileSync } from 'child_process';
 import crypto from 'crypto';
 
 import {
+  SERVICE_ID,
+  normalizeServiceId,
+} from './config.js';
+import {
   createPairedExecution,
   createPairedTask,
   getLatestOpenPairedTaskForChat,
   getPairedExecutionById,
   getPairedTaskById,
-  getPairedWorkspace,
   updatePairedExecution,
   updatePairedTask,
   upsertPairedProject,
@@ -15,6 +18,7 @@ import {
 import { logger } from './logger.js';
 import {
   markPairedTaskReviewReady,
+  prepareReviewerWorkspaceForExecution,
   provisionOwnerWorkspaceForPairedTask,
 } from './paired-workspace-manager.js';
 import type {
@@ -170,22 +174,17 @@ export function preparePairedExecutionContext(args: {
 
   if (roomRoleContext.role === 'owner') {
     workspace = provisionOwnerWorkspaceForPairedTask(task.id);
-  } else if (
-    task.status === 'review_ready' ||
-    task.status === 'in_review' ||
-    task.status === 'merge_ready' ||
-    task.status === 'changes_requested'
-  ) {
-    workspace = getPairedWorkspace(task.id, 'reviewer') ?? null;
-    if (workspace && task.status === 'review_ready') {
+  } else {
+    const reviewerWorkspace = prepareReviewerWorkspaceForExecution(task);
+    workspace = reviewerWorkspace.workspace;
+    blockMessage = reviewerWorkspace.blockMessage;
+    const latestTask = getPairedTaskById(task.id) ?? task;
+    if (workspace && latestTask.status === 'review_ready') {
       updatePairedTask(task.id, {
         status: 'in_review',
         updated_at: now,
       });
     }
-  } else {
-    blockMessage =
-      'Review snapshot is not ready yet. Ask the owner to run /review-ready after preparing changes.';
   }
 
   const execution = ensureExecutionRecord({
@@ -247,9 +246,18 @@ export function markRoomReviewReady(args: {
     return null;
   }
 
-  const { ownerWorkspace, reviewerWorkspace } = markPairedTaskReviewReady(
-    task.id,
-  );
+  const isOwnerService =
+    normalizeServiceId(SERVICE_ID) === task.owner_service_id;
+  if (isOwnerService) {
+    provisionOwnerWorkspaceForPairedTask(task.id);
+  }
+
+  const reviewReady = markPairedTaskReviewReady(task.id);
+  if (!reviewReady) {
+    return null;
+  }
+
+  const { ownerWorkspace, reviewerWorkspace } = reviewReady;
   return {
     task: getPairedTaskById(task.id) ?? task,
     ownerWorkspace,

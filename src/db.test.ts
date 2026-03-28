@@ -588,6 +588,7 @@ describe('paired task state', () => {
       role: 'owner',
       workspace_dir: '/tmp/paired-room/owner',
       snapshot_source_dir: null,
+      snapshot_source_fingerprint: null,
       status: 'ready',
       snapshot_refreshed_at: null,
       created_at: '2026-03-28T00:00:00.000Z',
@@ -654,7 +655,7 @@ describe('paired task state', () => {
     });
 
     updatePairedTask('paired-task-2', {
-      status: 'review_ready',
+      status: 'review_pending',
       review_requested_at: '2026-03-28T00:10:00.000Z',
       updated_at: '2026-03-28T00:10:00.000Z',
     });
@@ -669,6 +670,7 @@ describe('paired task state', () => {
       role: 'reviewer',
       workspace_dir: '/tmp/reviewer-v1',
       snapshot_source_dir: '/tmp/owner',
+      snapshot_source_fingerprint: 'fingerprint-v1',
       status: 'ready',
       snapshot_refreshed_at: '2026-03-28T00:10:00.000Z',
       created_at: '2026-03-28T00:10:00.000Z',
@@ -680,13 +682,14 @@ describe('paired task state', () => {
       role: 'reviewer',
       workspace_dir: '/tmp/reviewer-v2',
       snapshot_source_dir: '/tmp/owner',
+      snapshot_source_fingerprint: 'fingerprint-v2',
       status: 'ready',
       snapshot_refreshed_at: '2026-03-28T00:12:00.000Z',
       created_at: '2026-03-28T00:10:00.000Z',
       updated_at: '2026-03-28T00:12:00.000Z',
     });
 
-    expect(getPairedTaskById('paired-task-2')?.status).toBe('review_ready');
+    expect(getPairedTaskById('paired-task-2')?.status).toBe('review_pending');
     expect(getPairedExecutionById('paired-exec-2')?.status).toBe('running');
     expect(
       listPairedWorkspacesForTask('paired-task-2').map(

@@ -11,7 +11,7 @@ const SESSION_COMMAND_CONTROL_PATTERNS = [
   /^\/compact failed\. The session is unchanged\.$/,
   /^Conversation compacted\.$/,
   /^Review snapshot updated\.$/,
-  /^Review-ready is unavailable for this room\./,
+  /^Review is unavailable for this room\./,
 ];
 
 /**
@@ -26,7 +26,7 @@ export function extractSessionCommand(
   text = text.replace(triggerPattern, '').trim();
   if (text === '/compact') return '/compact';
   if (text === '/clear') return '/clear';
-  if (text === '/review-ready') return '/review-ready';
+  if (text === '/review' || text === '/review-ready') return '/review';
   return null;
 }
 
@@ -153,12 +153,12 @@ export async function handleSessionCommand(opts: {
     return { handled: true, success: true };
   }
 
-  if (command === '/review-ready') {
+  if (command === '/review') {
     const result = await deps.markReviewReady();
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       result ??
-        'Review-ready is unavailable for this room. Paired workspaces require a configured project workDir.',
+        'Review is unavailable for this room. Paired workspaces require a configured project workDir.',
     );
     return { handled: true, success: true };
   }

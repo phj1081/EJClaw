@@ -23,10 +23,12 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/clear', trigger)).toBe('/clear');
   });
 
-  it('detects bare /review-ready', () => {
-    expect(extractSessionCommand('/review-ready', trigger)).toBe(
-      '/review-ready',
-    );
+  it('detects bare /review', () => {
+    expect(extractSessionCommand('/review', trigger)).toBe('/review');
+  });
+
+  it('normalizes /review-ready to /review', () => {
+    expect(extractSessionCommand('/review-ready', trigger)).toBe('/review');
   });
 
   it('rejects /compact with extra text', () => {
@@ -185,7 +187,32 @@ describe('handleSessionCommand', () => {
     );
   });
 
-  it('handles authorized /review-ready without invoking the agent', async () => {
+  it('handles authorized /review without invoking the agent', async () => {
+    const deps = makeDeps({
+      markReviewReady: vi
+        .fn()
+        .mockResolvedValue('Review snapshot updated.\n- Task: paired-task-1'),
+    });
+
+    const result = await handleSessionCommand({
+      missedMessages: [makeMsg('/review')],
+      isMainGroup: true,
+      groupName: 'test',
+      triggerPattern: trigger,
+      timezone: 'UTC',
+      deps,
+    });
+
+    expect(result).toEqual({ handled: true, success: true });
+    expect(deps.markReviewReady).toHaveBeenCalledTimes(1);
+    expect(deps.runAgent).not.toHaveBeenCalled();
+    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      'Review snapshot updated.\n- Task: paired-task-1',
+    );
+  });
+
+  it('handles authorized /review-ready as an alias without invoking the agent', async () => {
     const deps = makeDeps({
       markReviewReady: vi
         .fn()

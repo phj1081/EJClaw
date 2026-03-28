@@ -29,6 +29,7 @@ export type PairedWorkspaceTopology = 'shadow-snapshot' | 'reviewer-cow';
 
 export type PairedTaskStatus =
   | 'draft'
+  | 'review_pending'
   | 'review_ready'
   | 'in_review'
   | 'changes_requested'
@@ -107,6 +108,7 @@ export interface PairedWorkspace {
   role: PairedWorkspaceRole;
   workspace_dir: string;
   snapshot_source_dir: string | null;
+  snapshot_source_fingerprint: string | null;
   status: PairedWorkspaceStatus;
   snapshot_refreshed_at: string | null;
   created_at: string;
