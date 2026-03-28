@@ -8,6 +8,7 @@ import {
   _initTestDatabase,
   _initTestDatabaseFromFile,
   applyPairedEvent,
+  cancelSupersededPairedExecutions,
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
   createPairedApproval,
@@ -42,6 +43,7 @@ import {
   listPairedApprovalsForTask,
   listPairedArtifactsForTask,
   listPairedEventsForTask,
+  listPairedExecutionsForTask,
   listPairedWorkspacesForTask,
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,
@@ -1002,6 +1004,71 @@ describe('paired task state', () => {
         (workspace) => workspace.workspace_dir,
       ),
     ).toEqual(['/tmp/reviewer-v2']);
+  });
+
+  it('persists execution checkpoints and cancels only superseded running executions', () => {
+    createPairedTask({
+      id: 'paired-task-3',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'approved',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-29T01:00:00.000Z',
+      updated_at: '2026-03-29T01:00:00.000Z',
+    });
+    createPairedExecution({
+      id: 'paired-exec-3a',
+      task_id: 'paired-task-3',
+      service_id: 'codex-review',
+      role: 'reviewer',
+      workspace_id: 'paired-task-3:reviewer',
+      checkpoint_fingerprint: 'fingerprint-v1',
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-29T01:01:00.000Z',
+      started_at: '2026-03-29T01:01:00.000Z',
+      completed_at: null,
+    });
+    createPairedExecution({
+      id: 'paired-exec-3b',
+      task_id: 'paired-task-3',
+      service_id: 'codex-review',
+      role: 'reviewer',
+      workspace_id: 'paired-task-3:reviewer',
+      checkpoint_fingerprint: 'fingerprint-v2',
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-29T01:02:00.000Z',
+      started_at: '2026-03-29T01:02:00.000Z',
+      completed_at: null,
+    });
+
+    const cancelled = cancelSupersededPairedExecutions({
+      taskId: 'paired-task-3',
+      role: 'reviewer',
+      exceptExecutionId: 'paired-exec-3b',
+      note: 'Superseded by a newer review checkpoint.',
+    });
+
+    expect(cancelled).toBe(1);
+    expect(getPairedExecutionById('paired-exec-3a')).toMatchObject({
+      status: 'cancelled',
+      checkpoint_fingerprint: 'fingerprint-v1',
+    });
+    expect(getPairedExecutionById('paired-exec-3b')).toMatchObject({
+      status: 'running',
+      checkpoint_fingerprint: 'fingerprint-v2',
+    });
+    expect(
+      listPairedExecutionsForTask('paired-task-3').map((execution) => execution.id),
+    ).toEqual(['paired-exec-3a', 'paired-exec-3b']);
   });
 });
 

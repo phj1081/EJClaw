@@ -125,6 +125,7 @@ export interface PairedExecution {
   service_id: string;
   role: PairedWorkspaceRole;
   workspace_id: string | null;
+  checkpoint_fingerprint?: string | null;
   status: PairedExecutionStatus;
   summary: string | null;
   created_at: string;

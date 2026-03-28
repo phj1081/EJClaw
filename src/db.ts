@@ -295,6 +295,7 @@ function createSchema(database: Database.Database): void {
       service_id TEXT NOT NULL,
       role TEXT NOT NULL,
       workspace_id TEXT,
+      checkpoint_fingerprint TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
       summary TEXT,
       created_at TEXT NOT NULL,
@@ -473,6 +474,14 @@ function createSchema(database: Database.Database): void {
   try {
     database.exec(
       `ALTER TABLE paired_workspaces ADD COLUMN snapshot_source_fingerprint TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE paired_executions ADD COLUMN checkpoint_fingerprint TEXT`,
     );
   } catch {
     /* column already exists */
@@ -2149,13 +2158,14 @@ export function createPairedExecution(execution: PairedExecution): void {
         service_id,
         role,
         workspace_id,
+        checkpoint_fingerprint,
         status,
         summary,
         created_at,
         started_at,
         completed_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     execution.id,
@@ -2163,6 +2173,7 @@ export function createPairedExecution(execution: PairedExecution): void {
     execution.service_id,
     execution.role,
     execution.workspace_id,
+    execution.checkpoint_fingerprint ?? null,
     execution.status,
     execution.summary,
     execution.created_at,
@@ -2184,7 +2195,12 @@ export function updatePairedExecution(
   updates: Partial<
     Pick<
       PairedExecution,
-      'workspace_id' | 'status' | 'summary' | 'started_at' | 'completed_at'
+      | 'workspace_id'
+      | 'checkpoint_fingerprint'
+      | 'status'
+      | 'summary'
+      | 'started_at'
+      | 'completed_at'
     >
   >,
 ): void {
@@ -2194,6 +2210,10 @@ export function updatePairedExecution(
   if (updates.workspace_id !== undefined) {
     fields.push('workspace_id = ?');
     values.push(updates.workspace_id);
+  }
+  if (updates.checkpoint_fingerprint !== undefined) {
+    fields.push('checkpoint_fingerprint = ?');
+    values.push(updates.checkpoint_fingerprint);
   }
   if (updates.status !== undefined) {
     fields.push('status = ?');
@@ -2273,6 +2293,45 @@ export function listPairedWorkspacesForTask(taskId: string): PairedWorkspace[] {
       'SELECT * FROM paired_workspaces WHERE task_id = ? ORDER BY created_at',
     )
     .all(taskId) as PairedWorkspace[];
+}
+
+export function listPairedExecutionsForTask(taskId: string): PairedExecution[] {
+  return db
+    .prepare(
+      'SELECT * FROM paired_executions WHERE task_id = ? ORDER BY created_at, id',
+    )
+    .all(taskId) as PairedExecution[];
+}
+
+export function cancelSupersededPairedExecutions(args: {
+  taskId: string;
+  role: PairedExecution['role'];
+  exceptExecutionId?: string;
+  note?: string | null;
+}): number {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `
+        UPDATE paired_executions
+           SET status = 'cancelled',
+               summary = COALESCE(summary, ?),
+               completed_at = COALESCE(completed_at, ?)
+         WHERE task_id = ?
+           AND role = ?
+           AND status = 'running'
+           AND (? IS NULL OR id <> ?)
+      `,
+    )
+    .run(
+      args.note ?? null,
+      now,
+      args.taskId,
+      args.role,
+      args.exceptExecutionId ?? null,
+      args.exceptExecutionId ?? null,
+    );
+  return result.changes;
 }
 
 export function createPairedApproval(

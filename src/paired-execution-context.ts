@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { SERVICE_ID, normalizeServiceId } from './config.js';
 import {
   applyPairedEvent,
+  cancelSupersededPairedExecutions,
   createPairedArtifact,
   createPairedExecution,
   createPairedTask,
@@ -13,6 +14,7 @@ import {
   getPairedWorkspace,
   listPairedArtifactsForTask,
   listPairedEventsForTask,
+  listPairedExecutionsForTask,
   updatePairedExecution,
   updatePairedTask,
   upsertPairedProject,
@@ -119,20 +121,32 @@ function ensureExecutionRecord(args: {
   roomRoleContext: RoomRoleContext;
   task: PairedTask;
   workspace?: PairedWorkspace;
+  checkpointFingerprint?: string | null;
 }): PairedExecution {
   const executionId = `${args.runId}:${args.roomRoleContext.serviceId}`;
   const existing = getPairedExecutionById(executionId);
   const now = new Date().toISOString();
 
+  cancelSupersededPairedExecutions({
+    taskId: args.task.id,
+    role: args.roomRoleContext.role,
+    exceptExecutionId: executionId,
+    note: 'Superseded by a newer execution for the same task and role.',
+  });
+
   if (existing) {
     updatePairedExecution(existing.id, {
       workspace_id: args.workspace?.id ?? existing.workspace_id,
+      checkpoint_fingerprint:
+        args.checkpointFingerprint ?? existing.checkpoint_fingerprint ?? null,
       status: 'running',
       started_at: existing.started_at ?? now,
     });
     return {
       ...existing,
       workspace_id: args.workspace?.id ?? existing.workspace_id,
+      checkpoint_fingerprint:
+        args.checkpointFingerprint ?? existing.checkpoint_fingerprint ?? null,
       status: 'running',
       started_at: existing.started_at ?? now,
     };
@@ -144,6 +158,7 @@ function ensureExecutionRecord(args: {
     service_id: args.roomRoleContext.serviceId,
     role: args.roomRoleContext.role,
     workspace_id: args.workspace?.id ?? null,
+    checkpoint_fingerprint: args.checkpointFingerprint ?? null,
     status: 'running',
     summary: null,
     created_at: now,
@@ -152,6 +167,90 @@ function ensureExecutionRecord(args: {
   };
   createPairedExecution(execution);
   return execution;
+}
+
+function getLatestReviewCheckpointFingerprint(taskId: string): string | null {
+  const events = listPairedEventsForTask(taskId);
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (
+      event?.event_type === 'request_review' &&
+      event.source_fingerprint?.trim()
+    ) {
+      return event.source_fingerprint.trim();
+    }
+  }
+  return getPairedWorkspace(taskId, 'reviewer')?.snapshot_source_fingerprint ?? null;
+}
+
+function resolveExecutionCheckpointFingerprint(args: {
+  taskId: string;
+  role: RoomRoleContext['role'];
+  workspace: PairedWorkspace | null;
+}): string | null {
+  if (args.role === 'reviewer') {
+    return (
+      args.workspace?.snapshot_source_fingerprint ??
+      getLatestReviewCheckpointFingerprint(args.taskId)
+    );
+  }
+  return resolvePairedTaskSourceFingerprint(args.taskId);
+}
+
+function isExecutionFreshForTaskStateWrite(args: {
+  execution: PairedExecution;
+}): boolean {
+  if (args.execution.status === 'cancelled') {
+    return false;
+  }
+
+  if (args.execution.role === 'owner') {
+    const executionOrderKey = [
+      args.execution.started_at ?? args.execution.created_at,
+      args.execution.created_at,
+      args.execution.id,
+    ] as const;
+    const hasNewerOwnerExecution = listPairedExecutionsForTask(
+      args.execution.task_id,
+    ).some((candidate) => {
+      if (candidate.role !== 'owner' || candidate.id === args.execution.id) {
+        return false;
+      }
+      const candidateOrderKey = [
+        candidate.started_at ?? candidate.created_at,
+        candidate.created_at,
+        candidate.id,
+      ] as const;
+      if (candidateOrderKey[0] > executionOrderKey[0]) {
+        return true;
+      }
+      if (candidateOrderKey[0] < executionOrderKey[0]) {
+        return false;
+      }
+      if (candidateOrderKey[1] > executionOrderKey[1]) {
+        return true;
+      }
+      if (candidateOrderKey[1] < executionOrderKey[1]) {
+        return false;
+      }
+      return candidateOrderKey[2] > executionOrderKey[2];
+    });
+    return !hasNewerOwnerExecution;
+  }
+
+  const executionCheckpoint = args.execution.checkpoint_fingerprint ?? null;
+  if (!executionCheckpoint) {
+    return true;
+  }
+
+  const latestCheckpoint = getLatestReviewCheckpointFingerprint(
+    args.execution.task_id,
+  );
+  if (!latestCheckpoint) {
+    return true;
+  }
+
+  return executionCheckpoint === latestCheckpoint;
 }
 
 export interface PreparedPairedExecutionContext {
@@ -202,6 +301,11 @@ export function preparePairedExecutionContext(args: {
     roomRoleContext,
     task,
     workspace: workspace ?? undefined,
+    checkpointFingerprint: resolveExecutionCheckpointFingerprint({
+      taskId: task.id,
+      role: roomRoleContext.role,
+      workspace,
+    }),
   });
   const envOverrides: Record<string, string> = {
     EJCLAW_PAIRED_TASK_ID: task.id,
@@ -394,19 +498,18 @@ function markTaskReviewPendingWithoutSnapshot(taskId: string): void {
 }
 
 function maybeAutoRequestReviewForCompletedExecution(args: {
-  executionId: string;
+  execution: PairedExecution;
   status: 'succeeded' | 'failed';
 }): void {
   if (args.status !== 'succeeded') {
     return;
   }
 
-  const execution = getPairedExecutionById(args.executionId);
-  if (!execution || execution.role !== 'owner') {
+  if (args.execution.role !== 'owner') {
     return;
   }
 
-  const task = getPairedTaskById(execution.task_id);
+  const task = getPairedTaskById(args.execution.task_id);
   if (!task) {
     return;
   }
@@ -446,7 +549,7 @@ function maybeAutoRequestReviewForCompletedExecution(args: {
 
   const roomRoleContext = buildRoomRoleContextFromExecution({
     task,
-    execution,
+    execution: args.execution,
   });
   const reviewIntent = applyRoomIntent({
     task,
@@ -460,10 +563,15 @@ function maybeAutoRequestReviewForCompletedExecution(args: {
   });
 
   if (reviewIntent.applied) {
+    cancelSupersededPairedExecutions({
+      taskId: task.id,
+      role: 'reviewer',
+      note: 'Superseded by a newer review checkpoint.',
+    });
     logger.info(
       {
         taskId: task.id,
-        executionId: execution.id,
+        executionId: args.execution.id,
         sourceFingerprint,
       },
       'Automatically requested review for low-risk owner checkpoint',
@@ -476,13 +584,43 @@ export function completePairedExecutionContext(args: {
   status: 'succeeded' | 'failed';
   summary?: string | null;
 }): void {
+  const execution = getPairedExecutionById(args.executionId);
+  if (!execution) {
+    return;
+  }
+
+  const completedAt = new Date().toISOString();
+  const preservedStatus =
+    execution.status === 'cancelled' ? execution.status : args.status;
+
   updatePairedExecution(args.executionId, {
-    status: args.status,
+    status: preservedStatus,
     summary: args.summary ?? null,
-    completed_at: new Date().toISOString(),
+    completed_at: completedAt,
   });
+
+  const completedExecution: PairedExecution = {
+    ...execution,
+    status: preservedStatus,
+    summary: args.summary ?? null,
+    completed_at: completedAt,
+  };
+
+  if (!isExecutionFreshForTaskStateWrite({ execution: completedExecution })) {
+    logger.info(
+      {
+        taskId: completedExecution.task_id,
+        executionId: completedExecution.id,
+        role: completedExecution.role,
+        checkpointFingerprint: completedExecution.checkpoint_fingerprint,
+      },
+      'Skipped task state write from stale paired execution',
+    );
+    return;
+  }
+
   maybeAutoRequestReviewForCompletedExecution({
-    executionId: args.executionId,
+    execution: completedExecution,
     status: args.status,
   });
 }
@@ -534,6 +672,14 @@ export function markRoomReviewReady(args: {
     dedupeKey,
     onApply: () => markPairedTaskReviewReady(task.id),
   });
+
+  if (reviewIntent.applied) {
+    cancelSupersededPairedExecutions({
+      taskId: task.id,
+      role: 'reviewer',
+      note: 'Superseded by a newer review checkpoint.',
+    });
+  }
 
   const latestTask = getPairedTaskById(task.id) ?? task;
   const { ownerWorkspace: persistedOwnerWorkspace, reviewerWorkspace } =
