@@ -45,19 +45,21 @@ npm run dev                                # Dev mode with hot reload
 
 Service management (Linux):
 ```bash
-systemctl --user restart ejclaw ejclaw-codex      # Restart both
+npm run restart:stack                             # Restart the configured stack and verify it
+systemctl --user restart ejclaw ejclaw-codex ejclaw-review
 systemctl --user status ejclaw                    # Check status
 journalctl --user -u ejclaw -f                    # Follow logs
 ```
 
 Deploy to server: `scp dist/*.js clone-ej@100.64.185.108:~/EJClaw/dist/`
 
-## Dual-Service Architecture
+## Service Stack Architecture
 
 - `ejclaw.service` — Claude Code bot (`@claude`), `SERVICE_ID=claude`, `SERVICE_AGENT_TYPE=claude-code`
-- `ejclaw-codex.service` — Codex bot (`@codex`), `SERVICE_ID=codex`, `SERVICE_AGENT_TYPE=codex`
-- Both share the same codebase (`dist/index.js`), differentiated by env vars
-- Unified dirs (`store/`, `groups/`, `data/` shared by both services):
+- `ejclaw-codex.service` — Codex bot (`@codex`), `SERVICE_ID=codex-main`, `SERVICE_AGENT_TYPE=codex`
+- `ejclaw-review.service` — Codex reviewer bot (`@codex-review`), `SERVICE_ID=codex-review`, `SERVICE_AGENT_TYPE=codex`
+- All services share the same codebase (`dist/index.js`), differentiated by env vars
+- Unified dirs (`store/`, `groups/`, `data/` shared by all services):
   - `router_state`: keys prefixed with `{SERVICE_ID}:` (e.g., `claude:last_timestamp`)
   - `sessions`: composite PK `(group_folder, agent_type)`
   - `registered_groups`: filtered by `agent_type` on load
@@ -72,6 +74,7 @@ Unified DB + directories (both services share `store/`, `groups/`, `data/`):
 | **DB** | `store/messages.db` (공유, WAL 모드) |
 | 서비스 로그 (Claude) | `journalctl --user -u ejclaw -f` 또는 `logs/ejclaw.log` |
 | 서비스 로그 (Codex) | `journalctl --user -u ejclaw-codex -f` 또는 `logs/ejclaw-codex.log` |
+| 서비스 로그 (Review) | `journalctl --user -u ejclaw-review -f` 또는 `logs/ejclaw-review.log` |
 | 그룹별 로그 | `groups/{name}/logs/` (공유 채널은 양쪽 봇 로그가 같은 폴더) |
 | Claude 세션 | `data/sessions/{name}/.claude/` |
 | Codex 세션 | `data/sessions/{name}/.codex/` |

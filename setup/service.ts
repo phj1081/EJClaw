@@ -2,9 +2,10 @@
  * Step: service — Generate and load service manager config.
  * Replaces 08-setup-service.sh
  *
- * Supports dual-service architecture:
+ * Supports the EJClaw service stack:
  *   - ejclaw (Claude Code) — always installed
  *   - ejclaw-codex (Codex) — installed when .env.codex exists
+ *   - ejclaw-review (Codex Review) — installed when .env.codex-review exists
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
@@ -16,60 +17,10 @@ import {
   getPlatform,
   getNodePath,
   getServiceManager,
-  hasSystemd,
   isRoot,
-  isWSL,
 } from './platform.js';
+import { getServiceDefs, type ServiceDef } from './service-defs.js';
 import { emitStatus } from './status.js';
-
-/* ------------------------------------------------------------------ */
-/*  Service definition                                                 */
-/* ------------------------------------------------------------------ */
-
-interface ServiceDef {
-  /** systemd unit name / nohup script name */
-  name: string;
-  /** launchd label */
-  launchdLabel: string;
-  /** Human-readable description for systemd/launchd */
-  description: string;
-  /** Log file prefix (e.g. "ejclaw" → logs/ejclaw.log) */
-  logName: string;
-  /** Absolute path to EnvironmentFile (systemd) — loaded before Environment= */
-  environmentFile?: string;
-  /** Extra Environment= lines for systemd / env dict entries for launchd */
-  extraEnv?: Record<string, string>;
-}
-
-function getServiceDefs(projectRoot: string): ServiceDef[] {
-  const defs: ServiceDef[] = [
-    {
-      name: 'ejclaw',
-      launchdLabel: 'com.ejclaw',
-      description: 'EJClaw Personal Assistant (Claude Code)',
-      logName: 'ejclaw',
-    },
-  ];
-
-  const codexEnvPath = path.join(projectRoot, '.env.codex');
-  if (fs.existsSync(codexEnvPath)) {
-    defs.push({
-      name: 'ejclaw-codex',
-      launchdLabel: 'com.ejclaw-codex',
-      description: 'EJClaw Codex Assistant',
-      logName: 'ejclaw-codex',
-      environmentFile: codexEnvPath,
-      extraEnv: {
-        ASSISTANT_NAME: 'codex',
-      },
-    });
-    logger.info(
-      'Detected .env.codex — will also install ejclaw-codex service',
-    );
-  }
-
-  return defs;
-}
 
 /* ------------------------------------------------------------------ */
 /*  Entry point                                                        */
@@ -107,6 +58,16 @@ export async function run(_args: string[]): Promise<void> {
   fs.mkdirSync(path.join(projectRoot, 'logs'), { recursive: true });
 
   const serviceDefs = getServiceDefs(projectRoot);
+  if (serviceDefs.some((def) => def.name === 'ejclaw-codex')) {
+    logger.info(
+      'Detected .env.codex — will also install ejclaw-codex service',
+    );
+  }
+  if (serviceDefs.some((def) => def.name === 'ejclaw-review')) {
+    logger.info(
+      'Detected .env.codex-review — will also install ejclaw-review service',
+    );
+  }
 
   if (platform === 'macos') {
     for (const def of serviceDefs) {

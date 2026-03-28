@@ -1,5 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { getServiceDefs } from './service-defs.js';
 
 /**
  * Tests for service configuration generation.
@@ -172,5 +176,30 @@ echo $! > ${JSON.stringify(pidFile)}`;
     expect(wrapper).toContain('nohup');
     expect(wrapper).toContain(nodePath);
     expect(wrapper).toContain('ejclaw.pid');
+  });
+});
+
+describe('service definitions', () => {
+  const tempRoots: string[] = [];
+
+  afterEach(() => {
+    for (const root of tempRoots.splice(0)) {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('includes the review service when .env.codex-review exists', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-stack-'));
+    tempRoots.push(tempRoot);
+    fs.writeFileSync(path.join(tempRoot, '.env.codex'), 'A=1\n');
+    fs.writeFileSync(path.join(tempRoot, '.env.codex-review'), 'B=1\n');
+
+    const defs = getServiceDefs(tempRoot);
+
+    expect(defs.map((def) => def.name)).toEqual([
+      'ejclaw',
+      'ejclaw-codex',
+      'ejclaw-review',
+    ]);
   });
 });

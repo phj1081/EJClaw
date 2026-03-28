@@ -2,9 +2,10 @@
  * Step: verify — End-to-end health check of the full installation.
  * Replaces 09-verify.sh
  *
- * Supports dual-service architecture:
+ * Supports the EJClaw service stack:
  *   - ejclaw (Claude Code) — always checked
  *   - ejclaw-codex (Codex) — checked when .env.codex exists
+ *   - ejclaw-review (Codex Review) — checked when .env.codex-review exists
  *
  * Uses better-sqlite3 directly (no sqlite3 CLI), platform-aware service checks.
  */
@@ -18,6 +19,7 @@ import { STORE_DIR } from '../src/config.js';
 import { readEnvFile } from '../src/env.js';
 import { logger } from '../src/logger.js';
 import { getPlatform, getServiceManager, isRoot } from './platform.js';
+import { getServiceDefs } from './service-defs.js';
 import { emitStatus } from './status.js';
 
 /* ------------------------------------------------------------------ */
@@ -113,28 +115,11 @@ export async function run(_args: string[]): Promise<void> {
   logger.info('Starting verification');
 
   // 1. Check service statuses
-  const services: ServiceCheck[] = [];
-
-  // Primary service (always checked)
-  services.push({
-    name: 'ejclaw',
-    status: checkService(projectRoot, mgr, 'ejclaw', 'com.ejclaw'),
-  });
-
-  // Codex service (checked when .env.codex exists)
-  const codexEnvPath = path.join(projectRoot, '.env.codex');
-  const codexConfigured = fs.existsSync(codexEnvPath);
-  if (codexConfigured) {
-    services.push({
-      name: 'ejclaw-codex',
-      status: checkService(
-        projectRoot,
-        mgr,
-        'ejclaw-codex',
-        'com.ejclaw-codex',
-      ),
-    });
-  }
+  const serviceDefs = getServiceDefs(projectRoot);
+  const services: ServiceCheck[] = serviceDefs.map((def) => ({
+    name: def.name,
+    status: checkService(projectRoot, mgr, def.name, def.launchdLabel),
+  }));
 
   for (const svc of services) {
     logger.info({ service: svc.name, status: svc.status }, 'Service status');
@@ -195,12 +180,18 @@ export async function run(_args: string[]): Promise<void> {
   }
 
   // Determine overall status
-  const primaryRunning = services[0].status === 'running';
-  const codexOk = !codexConfigured || services[1]?.status === 'running';
+  const allConfiguredServicesRunning = services.every(
+    (service) => service.status === 'running',
+  );
+  const codexConfigured = serviceDefs.some(
+    (service) => service.name === 'ejclaw-codex',
+  );
+  const reviewConfigured = serviceDefs.some(
+    (service) => service.name === 'ejclaw-review',
+  );
 
   const status =
-    primaryRunning &&
-    codexOk &&
+    allConfiguredServicesRunning &&
     credentials !== 'missing' &&
     anyChannelConfigured &&
     registeredGroups > 0
@@ -225,6 +216,7 @@ export async function run(_args: string[]): Promise<void> {
     REGISTERED_GROUPS: registeredGroups,
     GROUPS_BY_AGENT: JSON.stringify(groupsByAgent),
     CODEX_CONFIGURED: codexConfigured,
+    REVIEW_CONFIGURED: reviewConfigured,
     STATUS: status,
     LOG: 'logs/setup.log',
   });

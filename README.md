@@ -91,9 +91,12 @@ To run the Codex agent alongside Claude, create `.env.codex`:
 ```bash
 # .env.codex
 DISCORD_BOT_TOKEN=               # Separate Discord bot token for Codex
+
+# .env.codex-review
+DISCORD_BOT_TOKEN=               # Separate Discord bot token for Codex Review
 ```
 
-The setup step (`npm run setup -- --step service`) auto-detects `.env.codex` and installs `ejclaw-codex` alongside `ejclaw`. Additional Codex settings (`CODEX_MODEL`, `CODEX_EFFORT`, etc.) can be added to `.env.codex` or as `Environment=` lines in the systemd unit.
+The setup step (`npm run setup -- --step service`) auto-detects `.env.codex` and `.env.codex-review`, then installs `ejclaw-codex` and `ejclaw-review` alongside `ejclaw`. Additional Codex settings (`CODEX_MODEL`, `CODEX_EFFORT`, etc.) can be added to `.env.codex`, `.env.codex-review`, or as `Environment=` lines in the systemd units.
 
 ### Authentication
 
@@ -104,12 +107,14 @@ Token auto-refresh runs on the Claude service only, refreshing access tokens 30 
 ### Systemd Services (Linux)
 
 ```bash
-systemctl --user enable ejclaw ejclaw-codex
-systemctl --user start ejclaw ejclaw-codex
+npm run restart:stack
+systemctl --user enable ejclaw ejclaw-codex ejclaw-review
+systemctl --user start ejclaw ejclaw-codex ejclaw-review
 
 # Logs
 journalctl --user -u ejclaw -f
 journalctl --user -u ejclaw-codex -f
+journalctl --user -u ejclaw-review -f
 ```
 
 ## Development
