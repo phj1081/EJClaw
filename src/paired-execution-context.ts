@@ -32,11 +32,50 @@ import type {
   PairedArtifactType,
   PairedEventType,
   PairedExecution,
+  PairedGateTurnKind,
+  PairedReviewerVerdict,
   PairedTask,
   PairedWorkspace,
   RegisteredGroup,
   RoomRoleContext,
 } from './types.js';
+
+const APPROVED_REVIEWER_GATE_VERDICTS = new Set<PairedReviewerVerdict>([
+  'done',
+  'done_with_concerns',
+]);
+const VISIBLE_REVIEWER_GATE_VERDICTS = new Set<PairedReviewerVerdict>([
+  'done',
+  'done_with_concerns',
+  'blocked',
+]);
+const REVIEWER_GATE_REQUIRED_MESSAGE =
+  'A visible reviewer verdict is required before the owner can proceed with this gate.';
+
+function getGateTurnKind(task: PairedTask): PairedGateTurnKind | null {
+  return task.gate_turn_kind ?? null;
+}
+
+function hasVisibleReviewerGateVerdict(
+  verdict: PairedReviewerVerdict | null | undefined,
+): boolean {
+  return verdict ? VISIBLE_REVIEWER_GATE_VERDICTS.has(verdict) : false;
+}
+
+function allowsOwnerToProceedForGate(
+  verdict: PairedReviewerVerdict | null | undefined,
+): boolean {
+  return verdict ? APPROVED_REVIEWER_GATE_VERDICTS.has(verdict) : false;
+}
+
+function formatOwnerGateBlockedMessage(task: PairedTask): string {
+  return [
+    REVIEWER_GATE_REQUIRED_MESSAGE,
+    `- Task: ${task.id}`,
+    `- Gate: ${task.gate_turn_kind ?? 'implementation_start'}`,
+    `- Reviewer verdict: ${task.reviewer_verdict ?? 'missing'}`,
+  ].join('\n');
+}
 
 function resolveCanonicalSourceRef(workDir: string): string {
   try {
@@ -99,6 +138,10 @@ function ensureActiveTask(
     risk_level: 'low',
     plan_status: 'not_requested',
     review_requested_at: null,
+    gate_turn_kind: null,
+    reviewer_verdict: null,
+    reviewer_verdict_at: null,
+    reviewer_verdict_note: null,
     status: 'active',
     created_at: now,
     updated_at: now,
@@ -258,6 +301,8 @@ export interface PreparedPairedExecutionContext {
   execution: PairedExecution;
   workspace: PairedWorkspace | null;
   envOverrides: Record<string, string>;
+  gateTurnKind?: PairedGateTurnKind | null;
+  requiresVisibleVerdict?: boolean;
   blockMessage?: string;
 }
 
@@ -285,19 +330,31 @@ export function preparePairedExecutionContext(args: {
     return undefined;
   }
 
+  const latestTask = getPairedTaskById(task.id) ?? task;
+  const gateTurnKind = getGateTurnKind(latestTask);
+  const requiresVisibleVerdict =
+    roomRoleContext.role === 'reviewer' &&
+    !!gateTurnKind &&
+    !hasVisibleReviewerGateVerdict(latestTask.reviewer_verdict);
   let workspace: PairedWorkspace | null = null;
   let blockMessage: string | undefined;
   const now = new Date().toISOString();
 
-  if (roomRoleContext.role === 'owner') {
-    workspace = provisionOwnerWorkspaceForPairedTask(task.id);
+  if (
+    roomRoleContext.role === 'owner' &&
+    gateTurnKind &&
+    !allowsOwnerToProceedForGate(latestTask.reviewer_verdict)
+  ) {
+    blockMessage = formatOwnerGateBlockedMessage(latestTask);
+  } else if (roomRoleContext.role === 'owner') {
+    workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
   } else {
-    const reviewerWorkspace = prepareReviewerWorkspaceForExecution(task);
+    const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
     workspace = reviewerWorkspace.workspace;
     blockMessage = reviewerWorkspace.blockMessage;
-    const latestTask = getPairedTaskById(task.id) ?? task;
-    if (workspace && latestTask.status === 'review_ready') {
-      updatePairedTask(task.id, {
+    const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
+    if (workspace && refreshedTask.status === 'review_ready') {
+      updatePairedTask(latestTask.id, {
         status: 'in_review',
         updated_at: now,
       });
@@ -307,16 +364,16 @@ export function preparePairedExecutionContext(args: {
   const execution = ensureExecutionRecord({
     runId,
     roomRoleContext,
-    task,
+    task: latestTask,
     workspace: workspace ?? undefined,
     checkpointFingerprint: resolveExecutionCheckpointFingerprint({
-      taskId: task.id,
+      taskId: latestTask.id,
       role: roomRoleContext.role,
       workspace,
     }),
   });
   const envOverrides: Record<string, string> = {
-    EJCLAW_PAIRED_TASK_ID: task.id,
+    EJCLAW_PAIRED_TASK_ID: latestTask.id,
     EJCLAW_PAIRED_EXECUTION_ID: execution.id,
     EJCLAW_PAIRED_ROLE: roomRoleContext.role,
   };
@@ -326,13 +383,18 @@ export function preparePairedExecutionContext(args: {
   }
   if (roomRoleContext.role === 'reviewer') {
     envOverrides.EJCLAW_REVIEWER_RUNTIME = '1';
+    if (requiresVisibleVerdict && gateTurnKind) {
+      envOverrides.EJCLAW_PAIRED_GATE_TURN_KIND = gateTurnKind;
+    }
   }
 
   return {
-    task: getPairedTaskById(task.id) ?? task,
+    task: getPairedTaskById(latestTask.id) ?? latestTask,
     execution,
     workspace,
     envOverrides,
+    gateTurnKind,
+    requiresVisibleVerdict,
     blockMessage,
   };
 }
@@ -728,6 +790,8 @@ export function completePairedExecutionContext(args: {
   executionId: string;
   status: 'succeeded' | 'failed';
   summary?: string | null;
+  reviewerVerdict?: PairedReviewerVerdict | null;
+  reviewerVerdictNote?: string | null;
 }): void {
   const execution = getPairedExecutionById(args.executionId);
   if (!execution) {
@@ -762,6 +826,21 @@ export function completePairedExecutionContext(args: {
       'Skipped task state write from stale paired execution',
     );
     return;
+  }
+
+  const task = getPairedTaskById(completedExecution.task_id);
+  if (
+    task &&
+    completedExecution.role === 'reviewer' &&
+    task.gate_turn_kind &&
+    args.reviewerVerdict
+  ) {
+    updatePairedTask(task.id, {
+      reviewer_verdict: args.reviewerVerdict,
+      reviewer_verdict_at: completedAt,
+      reviewer_verdict_note: args.reviewerVerdictNote ?? null,
+      updated_at: completedAt,
+    });
   }
 
   maybeAutoRequestReviewForCompletedExecution({

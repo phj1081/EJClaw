@@ -50,6 +50,14 @@ export type PairedPlanStatus =
   | 'approved'
   | 'changes_requested';
 
+export type PairedGateTurnKind = 'implementation_start' | 'commit' | 'push';
+
+export type PairedReviewerVerdict =
+  | 'done'
+  | 'done_with_concerns'
+  | 'blocked'
+  | 'silent';
+
 export type PairedExecutionStatus =
   | 'pending'
   | 'running'
@@ -114,6 +122,10 @@ export interface PairedTask {
   risk_level: PairedRiskLevel;
   plan_status: PairedPlanStatus;
   review_requested_at: string | null;
+  gate_turn_kind?: PairedGateTurnKind | null;
+  reviewer_verdict?: PairedReviewerVerdict | null;
+  reviewer_verdict_at?: string | null;
+  reviewer_verdict_note?: string | null;
   status: PairedTaskStatus;
   created_at: string;
   updated_at: string;
@@ -184,9 +196,11 @@ export type StructuredAgentOutput =
   | {
       visibility: 'public';
       text: string;
+      verdict?: Exclude<PairedReviewerVerdict, 'silent'>;
     }
   | {
       visibility: 'silent';
+      verdict?: 'silent';
     };
 
 export function normalizeAgentOutputPhase(

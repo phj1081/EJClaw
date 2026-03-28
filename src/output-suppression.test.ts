@@ -85,6 +85,18 @@ describe('parseStructuredOutputEnvelope', () => {
       ),
     ).toEqual({ visibility: 'public', text: 'hello' });
   });
+
+  it('parses a public envelope with a reviewer verdict', () => {
+    expect(
+      parseStructuredOutputEnvelope(
+        '{"ejclaw":{"visibility":"public","verdict":"done_with_concerns","text":"**DONE_WITH_CONCERNS**"}}',
+      ),
+    ).toEqual({
+      visibility: 'public',
+      verdict: 'done_with_concerns',
+      text: '**DONE_WITH_CONCERNS**',
+    });
+  });
 });
 
 describe('buildStructuredOutputPrompt', () => {
@@ -102,6 +114,27 @@ describe('buildStructuredOutputPrompt', () => {
       buildStructuredOutputPrompt('hello', { reviewerMode: true }),
     ).toContain(
       'If you have not already emitted any visible progress, status update, or partial answer in this turn and you are only agreeing, mirroring, or restating without adding a concrete correction, risk, missing prerequisite, test gap, or code change, output only the JSON object.',
+    );
+  });
+
+  it('requires a visible structured verdict on reviewer gate turns', () => {
+    expect(
+      buildStructuredOutputPrompt('hello', {
+        reviewerMode: true,
+        gateTurnKind: 'implementation_start',
+        requiresVisibleVerdict: true,
+      }),
+    ).toContain(
+      'This turn is a paired-room gate turn for implementation_start. Silent output is forbidden.',
+    );
+    expect(
+      buildStructuredOutputPrompt('hello', {
+        reviewerMode: true,
+        gateTurnKind: 'implementation_start',
+        requiresVisibleVerdict: true,
+      }),
+    ).toContain(
+      'Allowed verdict values are: "done", "done_with_concerns", "blocked".',
     );
   });
 });

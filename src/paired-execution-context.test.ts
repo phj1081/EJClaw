@@ -248,6 +248,79 @@ describe('paired execution context', () => {
     });
   });
 
+  it('blocks owner execution when a gate turn lacks a visible reviewer verdict', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      gate_turn_kind: 'implementation_start',
+      reviewer_verdict: null,
+      reviewer_verdict_at: null,
+      reviewer_verdict_note: null,
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    const result = preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-gate-block',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(result?.blockMessage).toContain(
+      'A visible reviewer verdict is required before the owner can proceed with this gate.',
+    );
+    expect(result?.blockMessage).toContain('- Gate: implementation_start');
+    expect(
+      pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('allows owner execution when the current gate has an approved reviewer verdict', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      gate_turn_kind: 'implementation_start',
+      reviewer_verdict: 'done_with_concerns',
+      reviewer_verdict_at: '2026-03-28T00:01:00.000Z',
+      reviewer_verdict_note: '**DONE_WITH_CONCERNS** gate okay',
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:01:00.000Z',
+    });
+
+    const result = preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-gate-allowed',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(result?.blockMessage).toBeUndefined();
+    expect(
+      pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
+    ).toHaveBeenCalledWith('task-1');
+  });
+
   it('does not self-cancel when the same execution resumes', () => {
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
       id: 'task-1',
@@ -292,6 +365,57 @@ describe('paired execution context', () => {
       exceptExecutionId: 'run-1:codex-main',
       note: 'Superseded by a newer execution for the same task and role.',
     });
+  });
+
+  it('records the latest structured reviewer verdict on a fresh gate turn completion', () => {
+    vi.mocked(db.getPairedExecutionById).mockReturnValue({
+      id: 'run-review:codex-review',
+      task_id: 'task-1',
+      service_id: 'codex-review',
+      role: 'reviewer',
+      workspace_id: 'task-1:reviewer',
+      checkpoint_fingerprint: null,
+      status: 'running',
+      summary: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      started_at: '2026-03-28T00:00:00.000Z',
+      completed_at: null,
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      gate_turn_kind: 'implementation_start',
+      reviewer_verdict: null,
+      reviewer_verdict_at: null,
+      reviewer_verdict_note: null,
+      status: 'active',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    completePairedExecutionContext({
+      executionId: 'run-review:codex-review',
+      status: 'succeeded',
+      reviewerVerdict: 'done_with_concerns',
+      reviewerVerdictNote: '**DONE_WITH_CONCERNS** gate okay',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        reviewer_verdict: 'done_with_concerns',
+        reviewer_verdict_note: '**DONE_WITH_CONCERNS** gate okay',
+      }),
+    );
   });
 
   it('plans reviewer recovery from the latest review checkpoint', () => {

@@ -258,6 +258,10 @@ function createSchema(database: Database.Database): void {
       risk_level TEXT NOT NULL DEFAULT 'low',
       plan_status TEXT NOT NULL DEFAULT 'not_requested',
       review_requested_at TEXT,
+      gate_turn_kind TEXT,
+      reviewer_verdict TEXT,
+      reviewer_verdict_at TEXT,
+      reviewer_verdict_note TEXT,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -270,6 +274,14 @@ function createSchema(database: Database.Database): void {
           'approved',
           'changes_requested'
         )
+      ),
+      CHECK (
+        gate_turn_kind IS NULL OR
+        gate_turn_kind IN ('implementation_start', 'commit', 'push')
+      ),
+      CHECK (
+        reviewer_verdict IS NULL OR
+        reviewer_verdict IN ('done', 'done_with_concerns', 'blocked', 'silent')
       ),
       CHECK (
         status IN (
@@ -690,7 +702,9 @@ function createSchema(database: Database.Database): void {
       !pairedTasksSql.includes("'plan_review_pending'") ||
       !pairedTasksSql.includes('task_policy TEXT') ||
       !pairedTasksSql.includes('risk_level TEXT') ||
-      !pairedTasksSql.includes('plan_status TEXT'));
+      !pairedTasksSql.includes('plan_status TEXT') ||
+      !pairedTasksSql.includes('gate_turn_kind TEXT') ||
+      !pairedTasksSql.includes('reviewer_verdict TEXT'));
   if (pairedTasksNeedsMigration) {
     database.exec(`
       CREATE TABLE paired_tasks_new (
@@ -705,6 +719,10 @@ function createSchema(database: Database.Database): void {
         risk_level TEXT NOT NULL DEFAULT 'low',
         plan_status TEXT NOT NULL DEFAULT 'not_requested',
         review_requested_at TEXT,
+        gate_turn_kind TEXT,
+        reviewer_verdict TEXT,
+        reviewer_verdict_at TEXT,
+        reviewer_verdict_note TEXT,
         status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -717,6 +735,14 @@ function createSchema(database: Database.Database): void {
             'approved',
             'changes_requested'
           )
+        ),
+        CHECK (
+          gate_turn_kind IS NULL OR
+          gate_turn_kind IN ('implementation_start', 'commit', 'push')
+        ),
+        CHECK (
+          reviewer_verdict IS NULL OR
+          reviewer_verdict IN ('done', 'done_with_concerns', 'blocked', 'silent')
         ),
         CHECK (
           status IN (
@@ -748,6 +774,10 @@ function createSchema(database: Database.Database): void {
         risk_level,
         plan_status,
         review_requested_at,
+        gate_turn_kind,
+        reviewer_verdict,
+        reviewer_verdict_at,
+        reviewer_verdict_note,
         status,
         created_at,
         updated_at
@@ -774,6 +804,10 @@ function createSchema(database: Database.Database): void {
           ELSE 'not_requested'
         END,
         review_requested_at,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
         status,
         created_at,
         updated_at
@@ -2042,11 +2076,15 @@ export function createPairedTask(task: PairedTask): void {
         risk_level,
         plan_status,
         review_requested_at,
+        gate_turn_kind,
+        reviewer_verdict,
+        reviewer_verdict_at,
+        reviewer_verdict_note,
         status,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
@@ -2060,6 +2098,10 @@ export function createPairedTask(task: PairedTask): void {
     task.risk_level,
     task.plan_status,
     task.review_requested_at,
+    task.gate_turn_kind ?? null,
+    task.reviewer_verdict ?? null,
+    task.reviewer_verdict_at ?? null,
+    task.reviewer_verdict_note ?? null,
     task.status,
     task.created_at,
     task.updated_at,
@@ -2100,6 +2142,10 @@ export function updatePairedTask(
       | 'risk_level'
       | 'plan_status'
       | 'review_requested_at'
+      | 'gate_turn_kind'
+      | 'reviewer_verdict'
+      | 'reviewer_verdict_at'
+      | 'reviewer_verdict_note'
       | 'status'
       | 'updated_at'
     >
@@ -2131,6 +2177,22 @@ export function updatePairedTask(
   if (updates.review_requested_at !== undefined) {
     fields.push('review_requested_at = ?');
     values.push(updates.review_requested_at);
+  }
+  if (updates.gate_turn_kind !== undefined) {
+    fields.push('gate_turn_kind = ?');
+    values.push(updates.gate_turn_kind);
+  }
+  if (updates.reviewer_verdict !== undefined) {
+    fields.push('reviewer_verdict = ?');
+    values.push(updates.reviewer_verdict);
+  }
+  if (updates.reviewer_verdict_at !== undefined) {
+    fields.push('reviewer_verdict_at = ?');
+    values.push(updates.reviewer_verdict_at);
+  }
+  if (updates.reviewer_verdict_note !== undefined) {
+    fields.push('reviewer_verdict_note = ?');
+    values.push(updates.reviewer_verdict_note);
   }
   if (updates.status !== undefined) {
     fields.push('status = ?');

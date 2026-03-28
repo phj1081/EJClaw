@@ -115,6 +115,7 @@ vi.mock('./paired-execution-context.js', () => ({
 }));
 
 import * as agentRunner from './agent-runner.js';
+import type { AgentOutput } from './agent-runner.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import * as db from './db.js';
 import { buildRoomMemoryBriefing } from './memento-client.js';
@@ -303,6 +304,344 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
+  it('requires a visible structured verdict in reviewer gate turns', async () => {
+    const group = { ...makeGroup(), folder: 'test-group', workDir: '/repo' };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-gate',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        task_policy: 'autonomous',
+        risk_level: 'low',
+        plan_status: 'not_requested',
+        review_requested_at: null,
+        gate_turn_kind: 'implementation_start',
+        reviewer_verdict: null,
+        reviewer_verdict_at: null,
+        reviewer_verdict_note: null,
+        status: 'active',
+        created_at: '2026-03-29T00:00:00.000Z',
+        updated_at: '2026-03-29T00:00:00.000Z',
+      },
+      execution: {
+        id: 'run-gate:claude',
+        task_id: 'paired-task-gate',
+        service_id: 'claude',
+        role: 'reviewer',
+        workspace_id: null,
+        status: 'running',
+        summary: null,
+        created_at: '2026-03-29T00:00:00.000Z',
+        started_at: '2026-03-29T00:00:00.000Z',
+        completed_at: null,
+      },
+      workspace: null,
+      envOverrides: {},
+      gateTurnKind: 'implementation_start',
+      requiresVisibleVerdict: true,
+    });
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-review-gate-prompt',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        prompt: expect.stringContaining(
+          'This turn is a paired-room gate turn for implementation_start. Silent output is forbidden.',
+        ),
+      }),
+      expect.any(Function),
+      undefined,
+      {},
+    );
+  });
+
+  it('blocks silent reviewer output on gate turns and records a silent verdict', async () => {
+    const group = { ...makeGroup(), folder: 'test-group', workDir: '/repo' };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-gate',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        task_policy: 'autonomous',
+        risk_level: 'low',
+        plan_status: 'not_requested',
+        review_requested_at: null,
+        gate_turn_kind: 'implementation_start',
+        reviewer_verdict: null,
+        reviewer_verdict_at: null,
+        reviewer_verdict_note: null,
+        status: 'active',
+        created_at: '2026-03-29T00:00:00.000Z',
+        updated_at: '2026-03-29T00:00:00.000Z',
+      },
+      execution: {
+        id: 'run-gate:claude',
+        task_id: 'paired-task-gate',
+        service_id: 'claude',
+        role: 'reviewer',
+        workspace_id: null,
+        status: 'running',
+        summary: null,
+        created_at: '2026-03-29T00:00:00.000Z',
+        started_at: '2026-03-29T00:00:00.000Z',
+        completed_at: null,
+      },
+      workspace: null,
+      envOverrides: {},
+      gateTurnKind: 'implementation_start',
+      requiresVisibleVerdict: true,
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: null,
+          output: { visibility: 'silent', verdict: 'silent' },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+    const outputs: AgentOutput[] = [];
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-review-gate-silent',
+      onOutput: async (output) => {
+        outputs.push(output);
+      },
+    });
+
+    expect(result).toBe('error');
+    expect(outputs.at(-1)?.output).toEqual({
+      visibility: 'public',
+      text: expect.stringContaining(
+        'Reviewer gate turn requires a visible structured verdict.',
+      ),
+    });
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionId: 'run-gate:claude',
+        status: 'failed',
+        reviewerVerdict: 'silent',
+      }),
+    );
+  });
+
+  it('allows structured reviewer verdicts on gate turns', async () => {
+    const group = { ...makeGroup(), folder: 'test-group', workDir: '/repo' };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-gate',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        task_policy: 'autonomous',
+        risk_level: 'low',
+        plan_status: 'not_requested',
+        review_requested_at: null,
+        gate_turn_kind: 'implementation_start',
+        reviewer_verdict: null,
+        reviewer_verdict_at: null,
+        reviewer_verdict_note: null,
+        status: 'active',
+        created_at: '2026-03-29T00:00:00.000Z',
+        updated_at: '2026-03-29T00:00:00.000Z',
+      },
+      execution: {
+        id: 'run-gate:claude',
+        task_id: 'paired-task-gate',
+        service_id: 'claude',
+        role: 'reviewer',
+        workspace_id: null,
+        status: 'running',
+        summary: null,
+        created_at: '2026-03-29T00:00:00.000Z',
+        started_at: '2026-03-29T00:00:00.000Z',
+        completed_at: null,
+      },
+      workspace: null,
+      envOverrides: {},
+      gateTurnKind: 'implementation_start',
+      requiresVisibleVerdict: true,
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: null,
+          output: {
+            visibility: 'public',
+            verdict: 'done_with_concerns',
+            text: '**DONE_WITH_CONCERNS**\n문제는 없지만 확인 포인트는 있습니다.',
+          },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-review-gate-done',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionId: 'run-gate:claude',
+        status: 'succeeded',
+        reviewerVerdict: 'done_with_concerns',
+      }),
+    );
+  });
+
+  it('still allows silent reviewer outputs on non-gate turns', async () => {
+    const group = { ...makeGroup(), folder: 'test-group', workDir: '/repo' };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-gate',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        task_policy: 'autonomous',
+        risk_level: 'low',
+        plan_status: 'not_requested',
+        review_requested_at: null,
+        gate_turn_kind: null,
+        reviewer_verdict: null,
+        reviewer_verdict_at: null,
+        reviewer_verdict_note: null,
+        status: 'active',
+        created_at: '2026-03-29T00:00:00.000Z',
+        updated_at: '2026-03-29T00:00:00.000Z',
+      },
+      execution: {
+        id: 'run-gate:claude',
+        task_id: 'paired-task-gate',
+        service_id: 'claude',
+        role: 'reviewer',
+        workspace_id: null,
+        status: 'running',
+        summary: null,
+        created_at: '2026-03-29T00:00:00.000Z',
+        started_at: '2026-03-29T00:00:00.000Z',
+        completed_at: null,
+      },
+      workspace: null,
+      envOverrides: {},
+      gateTurnKind: null,
+      requiresVisibleVerdict: false,
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: null,
+          output: { visibility: 'silent', verdict: 'silent' },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+    const outputs: AgentOutput[] = [];
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-review-non-gate-silent',
+      onOutput: async (output) => {
+        outputs.push(output);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(outputs).toEqual([
+      expect.objectContaining({
+        output: { visibility: 'silent', verdict: 'silent' },
+      }),
+    ]);
+  });
+
   it('passes paired workspace env overrides into the runner when execution metadata exists', async () => {
     const group = {
       ...makeGroup(),
@@ -384,11 +723,13 @@ describe('runAgentForGroup room memory', () => {
     );
     expect(
       pairedExecutionContext.completePairedExecutionContext,
-    ).toHaveBeenCalledWith({
-      executionId: 'run-room-role:claude',
-      status: 'succeeded',
-      summary: 'ok',
-    });
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionId: 'run-room-role:claude',
+        status: 'succeeded',
+        summary: 'ok',
+      }),
+    );
   });
 
   it('blocks reviewer execution when an in-review snapshot became stale and does not spawn the runner', async () => {

@@ -635,6 +635,12 @@ describe('paired task state', () => {
     expect(getPairedTaskById('paired-task-1')?.plan_status).toBe(
       'not_requested',
     );
+    expect(getPairedTaskById('paired-task-1')?.gate_turn_kind ?? null).toBe(
+      null,
+    );
+    expect(getPairedTaskById('paired-task-1')?.reviewer_verdict ?? null).toBe(
+      null,
+    );
     expect(getPairedExecutionById('paired-exec-1')?.status).toBe('pending');
     expect(getPairedWorkspace('paired-task-1', 'owner')?.workspace_dir).toBe(
       '/tmp/paired-room/owner',
@@ -960,6 +966,10 @@ describe('paired task state', () => {
       task_policy: 'autonomous',
       risk_level: 'low',
       plan_status: 'approved',
+      gate_turn_kind: 'implementation_start',
+      reviewer_verdict: 'done_with_concerns',
+      reviewer_verdict_at: '2026-03-28T00:09:00.000Z',
+      reviewer_verdict_note: '**DONE_WITH_CONCERNS** okay to proceed',
       status: 'review_pending',
       review_requested_at: '2026-03-28T00:10:00.000Z',
       updated_at: '2026-03-28T00:10:00.000Z',
@@ -968,6 +978,13 @@ describe('paired task state', () => {
       status: 'running',
       started_at: '2026-03-28T00:11:00.000Z',
     });
+
+    expect(getPairedTaskById('paired-task-2')?.gate_turn_kind).toBe(
+      'implementation_start',
+    );
+    expect(getPairedTaskById('paired-task-2')?.reviewer_verdict).toBe(
+      'done_with_concerns',
+    );
 
     upsertPairedWorkspace({
       id: 'paired-task-2:reviewer',

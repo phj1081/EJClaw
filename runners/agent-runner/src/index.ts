@@ -54,6 +54,7 @@ interface ContainerOutput {
   output?: {
     visibility: 'public' | 'silent';
     text?: string;
+    verdict?: 'done' | 'done_with_concerns' | 'blocked' | 'silent';
   };
   newSessionId?: string;
   error?: string;
@@ -217,14 +218,27 @@ function normalizeStructuredOutput(result: string | null): {
   const trimmed = result.trim();
   try {
     const parsed = JSON.parse(trimmed) as {
-      ejclaw?: { visibility?: unknown; text?: unknown };
+      ejclaw?: { visibility?: unknown; text?: unknown; verdict?: unknown };
     };
     const envelope = parsed?.ejclaw;
     if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
       if (envelope.visibility === 'silent') {
+        if (
+          envelope.verdict !== undefined &&
+          envelope.verdict !== 'silent'
+        ) {
+          return {
+            result,
+            output: { visibility: 'public', text: result },
+          };
+        }
         return {
           result: null,
-          output: { visibility: 'silent' },
+          output: {
+            visibility: 'silent',
+            verdict:
+              envelope.verdict === 'silent' ? ('silent' as const) : undefined,
+          },
         };
       }
       if (
@@ -232,9 +246,30 @@ function normalizeStructuredOutput(result: string | null): {
         typeof envelope.text === 'string' &&
         envelope.text.length > 0
       ) {
+        if (
+          envelope.verdict !== undefined &&
+          envelope.verdict !== 'done' &&
+          envelope.verdict !== 'done_with_concerns' &&
+          envelope.verdict !== 'blocked'
+        ) {
+          return {
+            result,
+            output: { visibility: 'public', text: result },
+          };
+        }
         return {
           result: envelope.text,
-          output: { visibility: 'public', text: envelope.text },
+          output: {
+            visibility: 'public',
+            text: envelope.text,
+            verdict:
+              typeof envelope.verdict === 'string'
+                ? (envelope.verdict as
+                    | 'done'
+                    | 'done_with_concerns'
+                    | 'blocked')
+                : undefined,
+          },
         };
       }
     }

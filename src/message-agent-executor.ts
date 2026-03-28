@@ -1,6 +1,6 @@
 import { getErrorMessage } from './utils.js';
 
-import { getAgentOutputText } from './agent-output.js';
+import { getAgentOutputText, getStructuredAgentOutput } from './agent-output.js';
 import {
   AgentOutput,
   runAgentProcess,
@@ -51,7 +51,7 @@ import {
 } from './codex-token-rotation.js';
 import type { CodexRotationReason } from './agent-error-detection.js';
 import { getTokenCount } from './token-rotation.js';
-import type { RegisteredGroup } from './types.js';
+import type { PairedReviewerVerdict, RegisteredGroup } from './types.js';
 
 // ── Main executor ─────────────────────────────────────────────────
 
@@ -138,9 +138,26 @@ export async function runAgentForGroup(
   });
   const effectivePrompt = buildStructuredOutputPrompt(prompt, {
     reviewerMode,
+    gateTurnKind: pairedExecutionContext?.gateTurnKind,
+    requiresVisibleVerdict: pairedExecutionContext?.requiresVisibleVerdict,
   });
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
+  let pairedReviewerVerdict: PairedReviewerVerdict | null = null;
+  let pairedReviewerVerdictNote: string | null = null;
+  let reviewerGateValidationFailed = false;
+
+  const formatReviewerGateFailureMessage = (): string => {
+    const taskId = pairedExecutionContext?.task.id ?? 'unknown-task';
+    const gateTurnKind =
+      pairedExecutionContext?.gateTurnKind ?? 'implementation_start';
+    return [
+      'Reviewer gate turn requires a visible structured verdict.',
+      `- Task: ${taskId}`,
+      `- Gate: ${gateTurnKind}`,
+      '- Allowed verdicts: done, done_with_concerns, blocked',
+    ].join('\n');
+  };
 
   const shouldHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -368,6 +385,41 @@ export async function runAgentForGroup(
               ...evaluation.state,
               sawVisibleOutput: true,
             };
+          }
+          if (
+            pairedExecutionContext?.requiresVisibleVerdict &&
+            (output.phase === undefined || output.phase === 'final')
+          ) {
+            const structuredOutput = getStructuredAgentOutput(output);
+            const reviewerVerdict = structuredOutput?.verdict ?? null;
+            if (
+              structuredOutput?.visibility === 'silent' ||
+              reviewerVerdict === null
+            ) {
+              reviewerGateValidationFailed = true;
+              pairedReviewerVerdict =
+                structuredOutput?.visibility === 'silent' ? 'silent' : null;
+              pairedReviewerVerdictNote = null;
+              const failureMessage = formatReviewerGateFailureMessage();
+              pairedExecutionSummary = failureMessage.slice(0, 500);
+              await onOutput({
+                status: 'success',
+                result: null,
+                output: {
+                  visibility: 'public',
+                  text: failureMessage,
+                },
+                phase: 'final',
+              });
+              return;
+            }
+            if (structuredOutput) {
+              pairedReviewerVerdict = reviewerVerdict;
+              pairedReviewerVerdictNote =
+                structuredOutput.visibility === 'public'
+                  ? structuredOutput.text
+                  : null;
+            }
           }
           await onOutput(output);
         }
@@ -863,6 +915,26 @@ export async function runAgentForGroup(
       return 'error';
     }
 
+    if (
+      pairedExecutionContext?.requiresVisibleVerdict &&
+      (reviewerGateValidationFailed || pairedReviewerVerdict === null)
+    ) {
+      if (!reviewerGateValidationFailed && onOutput) {
+        const failureMessage = formatReviewerGateFailureMessage();
+        pairedExecutionSummary = failureMessage.slice(0, 500);
+        await onOutput({
+          status: 'success',
+          result: null,
+          output: {
+            visibility: 'public',
+            text: failureMessage,
+          },
+          phase: 'final',
+        });
+      }
+      return 'error';
+    }
+
     pairedExecutionStatus = 'succeeded';
     return 'success';
   } finally {
@@ -871,6 +943,8 @@ export async function runAgentForGroup(
         executionId: pairedExecutionContext.execution.id,
         status: pairedExecutionStatus,
         summary: pairedExecutionSummary,
+        reviewerVerdict: pairedReviewerVerdict,
+        reviewerVerdictNote: pairedReviewerVerdictNote,
       });
     }
   }
