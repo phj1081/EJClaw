@@ -263,7 +263,7 @@ describe('handleSessionCommand', () => {
     });
 
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.markReviewReady).toHaveBeenCalledTimes(1);
+    expect(deps.markReviewReady).toHaveBeenCalledWith('msg-1');
     expect(deps.runAgent).not.toHaveBeenCalled();
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
     expect(deps.sendMessage).toHaveBeenCalledWith(
@@ -288,7 +288,7 @@ describe('handleSessionCommand', () => {
     });
 
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.markReviewReady).toHaveBeenCalledTimes(1);
+    expect(deps.markReviewReady).toHaveBeenCalledWith('msg-1');
     expect(deps.runAgent).not.toHaveBeenCalled();
     expect(deps.advanceCursor).toHaveBeenCalledWith('100');
     expect(deps.sendMessage).toHaveBeenCalledWith(
@@ -319,7 +319,7 @@ describe('handleSessionCommand', () => {
     });
 
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.markReviewReady).toHaveBeenCalledTimes(1);
+    expect(deps.markReviewReady).toHaveBeenCalledWith('msg-1');
     expect(deps.sendMessage).toHaveBeenCalledWith(
       [
         'Review request recorded, but the owner workspace is not ready yet.',
@@ -346,7 +346,7 @@ describe('handleSessionCommand', () => {
     });
 
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.setTaskRiskLevel).toHaveBeenCalledWith('high');
+    expect(deps.setTaskRiskLevel).toHaveBeenCalledWith('high', 'msg-1');
     expect(deps.runAgent).not.toHaveBeenCalled();
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Task risk updated.\n- Task: paired-task-1',
@@ -376,7 +376,7 @@ describe('handleSessionCommand', () => {
       planBrief: 'brief',
       acceptanceCriteria: 'acceptance criteria',
       riskSummary: 'rollout risk',
-    });
+    }, 'msg-1');
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Plan recorded.\n- Task: paired-task-1',
     );
@@ -418,7 +418,7 @@ describe('handleSessionCommand', () => {
     });
 
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.approvePlan).toHaveBeenCalledTimes(1);
+    expect(deps.approvePlan).toHaveBeenCalledWith('msg-1');
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Plan approved.\n- Task: paired-task-1',
     );
@@ -441,7 +441,10 @@ describe('handleSessionCommand', () => {
     });
 
     expect(result).toEqual({ handled: true, success: true });
-    expect(deps.requestPlanChanges).toHaveBeenCalledWith('tighten scope');
+    expect(deps.requestPlanChanges).toHaveBeenCalledWith(
+      'tighten scope',
+      'msg-1',
+    );
     expect(deps.sendMessage).toHaveBeenCalledWith(
       'Plan changes requested.\n- Task: paired-task-1',
     );

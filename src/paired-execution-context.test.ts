@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./db.js', () => ({
+  applyPairedEvent: vi.fn(),
   createPairedArtifact: vi.fn(),
   createPairedExecution: vi.fn(),
   createPairedTask: vi.fn(),
@@ -20,6 +21,7 @@ vi.mock('./paired-workspace-manager.js', () => ({
   markPairedTaskReviewReady: vi.fn(),
   prepareReviewerWorkspaceForExecution: vi.fn(),
   provisionOwnerWorkspaceForPairedTask: vi.fn(),
+  resolvePairedTaskSourceFingerprint: vi.fn(),
 }));
 
 vi.mock('./logger.js', () => ({
@@ -69,9 +71,101 @@ const reviewerContext: RoomRoleContext = {
   failoverOwner: false,
 };
 
+async function importExecutionContextForService(serviceId: string) {
+  vi.resetModules();
+
+  const dbModule = {
+    applyPairedEvent: vi.fn(),
+    createPairedArtifact: vi.fn(),
+    createPairedExecution: vi.fn(),
+    createPairedTask: vi.fn(),
+    getLatestOpenPairedTaskForChat: vi.fn(),
+    getPairedExecutionById: vi.fn(),
+    getPairedTaskById: vi.fn(),
+    getPairedWorkspace: vi.fn(),
+    listPairedArtifactsForTask: vi.fn(),
+    updatePairedExecution: vi.fn(),
+    updatePairedTask: vi.fn(),
+    upsertPairedProject: vi.fn(),
+  };
+  dbModule.applyPairedEvent.mockImplementation(({ event, onApply }) => ({
+    applied: true,
+    event: { id: 1, ...event },
+    result: onApply ? onApply() : null,
+  }));
+  dbModule.getLatestOpenPairedTaskForChat.mockReturnValue(undefined);
+  dbModule.getPairedExecutionById.mockReturnValue(undefined);
+  dbModule.getPairedTaskById.mockReturnValue(undefined);
+  dbModule.getPairedWorkspace.mockReturnValue(undefined);
+  dbModule.listPairedArtifactsForTask.mockReturnValue([]);
+
+  const pairedWorkspaceManagerModule = {
+    PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE:
+      'Plan review is required before formal review for this high-risk task.',
+    markPairedTaskReviewReady: vi.fn(),
+    prepareReviewerWorkspaceForExecution: vi.fn(),
+    provisionOwnerWorkspaceForPairedTask: vi.fn(),
+    resolvePairedTaskSourceFingerprint: vi.fn(),
+  };
+  pairedWorkspaceManagerModule.provisionOwnerWorkspaceForPairedTask.mockReturnValue(
+    {
+      id: 'task-1:owner',
+      task_id: 'task-1',
+      role: 'owner',
+      workspace_dir: '/tmp/paired/task-1/owner',
+      snapshot_source_dir: null,
+      snapshot_source_fingerprint: null,
+      status: 'ready',
+      snapshot_refreshed_at: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    },
+  );
+  pairedWorkspaceManagerModule.prepareReviewerWorkspaceForExecution.mockReturnValue(
+    {
+      workspace: null,
+      autoRefreshed: false,
+    },
+  );
+  pairedWorkspaceManagerModule.resolvePairedTaskSourceFingerprint.mockReturnValue(
+    'fingerprint-1',
+  );
+
+  vi.doMock('./db.js', () => dbModule);
+  vi.doMock('./paired-workspace-manager.js', () => pairedWorkspaceManagerModule);
+  vi.doMock('./logger.js', () => ({
+    logger: {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    },
+  }));
+  vi.doMock('./config.js', async () => {
+    const actual =
+      await vi.importActual<typeof import('./config.js')>('./config.js');
+    return {
+      ...actual,
+      SERVICE_ID: serviceId,
+    };
+  });
+
+  const module = await import('./paired-execution-context.js');
+  return {
+    dbModule,
+    pairedWorkspaceManagerModule,
+    markRoomReviewReady: module.markRoomReviewReady,
+  };
+}
+
 describe('paired execution context', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.mocked(db.applyPairedEvent).mockImplementation(({ event, onApply }) => ({
+      applied: true,
+      event: { id: 1, ...event },
+      result: onApply ? onApply() : null,
+    }));
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
     vi.mocked(db.getPairedExecutionById).mockReturnValue(undefined);
     vi.mocked(db.getPairedTaskById).mockReturnValue(undefined);
@@ -97,6 +191,9 @@ describe('paired execution context', () => {
       workspace: null,
       autoRefreshed: false,
     });
+    vi.mocked(
+      pairedWorkspaceManager.resolvePairedTaskSourceFingerprint,
+    ).mockReturnValue('fingerprint-1');
   });
 
   it('creates an owner execution with a worktree override', () => {
@@ -280,8 +377,14 @@ describe('paired execution context', () => {
     expect(result?.envOverrides.EJCLAW_WORK_DIR).toBeUndefined();
   });
 
-  it('marks the active room task review-ready through the workspace manager', () => {
-    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+  it('returns ready for /review on the owner service', async () => {
+    const {
+      dbModule,
+      pairedWorkspaceManagerModule,
+      markRoomReviewReady: isolatedMarkRoomReviewReady,
+    } = await importExecutionContextForService('codex-main');
+
+    dbModule.getLatestOpenPairedTaskForChat.mockReturnValue({
       id: 'task-1',
       chat_jid: 'dc:test',
       group_folder: group.folder,
@@ -297,7 +400,7 @@ describe('paired execution context', () => {
       created_at: '2026-03-28T00:00:00.000Z',
       updated_at: '2026-03-28T00:00:00.000Z',
     });
-    vi.mocked(db.getPairedTaskById).mockReturnValue({
+    dbModule.getPairedTaskById.mockReturnValue({
       id: 'task-1',
       chat_jid: 'dc:test',
       group_folder: group.folder,
@@ -313,49 +416,114 @@ describe('paired execution context', () => {
       created_at: '2026-03-28T00:00:00.000Z',
       updated_at: '2026-03-28T00:00:00.000Z',
     });
-    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
-      {
-        ownerWorkspace: {
-          id: 'task-1:owner',
-          task_id: 'task-1',
-          role: 'owner',
-          workspace_dir: '/tmp/paired/task-1/owner',
-          snapshot_source_dir: null,
-          snapshot_source_fingerprint: null,
-          status: 'ready',
-          snapshot_refreshed_at: null,
-          created_at: '2026-03-28T00:00:00.000Z',
-          updated_at: '2026-03-28T00:00:00.000Z',
-        },
-        reviewerWorkspace: {
-          id: 'task-1:reviewer',
-          task_id: 'task-1',
-          role: 'reviewer',
-          workspace_dir: '/tmp/paired/task-1/reviewer',
-          snapshot_source_dir: '/tmp/paired/task-1/owner',
-          snapshot_source_fingerprint: 'fingerprint-1',
-          status: 'ready',
-          snapshot_refreshed_at: '2026-03-28T00:00:00.000Z',
-          created_at: '2026-03-28T00:00:00.000Z',
-          updated_at: '2026-03-28T00:00:00.000Z',
-        },
+    pairedWorkspaceManagerModule.markPairedTaskReviewReady.mockReturnValue({
+      ownerWorkspace: {
+        id: 'task-1:owner',
+        task_id: 'task-1',
+        role: 'owner',
+        workspace_dir: '/tmp/paired/task-1/owner',
+        snapshot_source_dir: null,
+        snapshot_source_fingerprint: null,
+        status: 'ready',
+        snapshot_refreshed_at: null,
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:00.000Z',
       },
-    );
+      reviewerWorkspace: {
+        id: 'task-1:reviewer',
+        task_id: 'task-1',
+        role: 'reviewer',
+        workspace_dir: '/tmp/paired/task-1/reviewer',
+        snapshot_source_dir: '/tmp/paired/task-1/owner',
+        snapshot_source_fingerprint: 'fingerprint-1',
+        status: 'ready',
+        snapshot_refreshed_at: '2026-03-28T00:00:00.000Z',
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:00.000Z',
+      },
+    });
 
-    const result = markRoomReviewReady({
+    const result = isolatedMarkRoomReviewReady({
       group,
       chatJid: 'dc:test',
       roomRoleContext: ownerContext,
     });
 
     expect(
-      pairedWorkspaceManager.markPairedTaskReviewReady,
+      pairedWorkspaceManagerModule.provisionOwnerWorkspaceForPairedTask,
+    ).toHaveBeenCalledWith('task-1');
+    expect(
+      pairedWorkspaceManagerModule.markPairedTaskReviewReady,
     ).toHaveBeenCalledWith('task-1');
     expect(result?.status).toBe('ready');
     if (!result || result.status !== 'ready') {
       throw new Error('expected ready review result');
     }
     expect(result.task.status).toBe('review_ready');
+  });
+
+  it('returns pending for /review on the reviewer service before the owner workspace is visible', async () => {
+    const {
+      dbModule,
+      pairedWorkspaceManagerModule,
+      markRoomReviewReady: isolatedMarkRoomReviewReady,
+    } = await importExecutionContextForService('codex-review');
+
+    dbModule.getLatestOpenPairedTaskForChat.mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'draft',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    dbModule.getPairedTaskById.mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: '2026-03-28T00:00:00.000Z',
+      status: 'review_pending',
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+    pairedWorkspaceManagerModule.markPairedTaskReviewReady.mockReturnValue(null);
+
+    const result = isolatedMarkRoomReviewReady({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+    });
+
+    expect(
+      pairedWorkspaceManagerModule.provisionOwnerWorkspaceForPairedTask,
+    ).not.toHaveBeenCalled();
+    expect(dbModule.getPairedWorkspace).toHaveBeenCalledWith('task-1', 'owner');
+    expect(
+      pairedWorkspaceManagerModule.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
+    expect(result).toEqual({
+      status: 'pending',
+      task: expect.objectContaining({
+        id: 'task-1',
+        status: 'review_pending',
+      }),
+      pendingReason: 'owner-workspace-not-ready',
+    });
   });
 
   it('keeps review_pending and returns a pending result when owner workspace is not ready', () => {

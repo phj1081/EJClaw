@@ -572,7 +572,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           // Session commands are explicit control events, so owner-only and
           // reviewer-only commands resolve against the target role rather than
           // whichever service happened to pick up the slash command first.
-          markReviewReady: async () => {
+          markReviewReady: async (dedupeKey) => {
             const lease = getEffectiveChannelLease(chatJid);
             const roomRoleContext = buildRoomRoleContext(
               lease,
@@ -582,10 +582,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               group,
               chatJid,
               roomRoleContext,
+              dedupeKey,
             });
             return formatRoomReviewReadyMessage(result);
           },
-          setTaskRiskLevel: async (riskLevel) => {
+          setTaskRiskLevel: async (riskLevel, dedupeKey) => {
             const lease = getEffectiveChannelLease(chatJid);
             const roomRoleContext = buildRoomRoleContext(
               lease,
@@ -596,9 +597,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               chatJid,
               roomRoleContext,
               riskLevel,
+              dedupeKey,
             });
           },
-          recordPlan: async (plan) => {
+          recordPlan: async (plan, dedupeKey) => {
             const lease = getEffectiveChannelLease(chatJid);
             const roomRoleContext = buildRoomRoleContext(
               lease,
@@ -608,10 +610,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               group,
               chatJid,
               roomRoleContext,
+              dedupeKey,
               ...plan,
             });
           },
-          approvePlan: async () => {
+          approvePlan: async (dedupeKey) => {
             const lease = getEffectiveChannelLease(chatJid);
             const roomRoleContext = buildRoomRoleContext(
               lease,
@@ -621,9 +624,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               group,
               chatJid,
               roomRoleContext,
+              dedupeKey,
             });
           },
-          requestPlanChanges: async (note) => {
+          requestPlanChanges: async (note, dedupeKey) => {
             const lease = getEffectiveChannelLease(chatJid);
             const roomRoleContext = buildRoomRoleContext(
               lease,
@@ -634,6 +638,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               chatJid,
               roomRoleContext,
               note,
+              dedupeKey,
             });
           },
         },

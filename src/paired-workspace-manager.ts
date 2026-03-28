@@ -329,6 +329,24 @@ function makeWorkspaceRecord(args: {
   };
 }
 
+export function resolvePairedTaskSourceFingerprint(taskId: string): string | null {
+  const { task } = getTaskAndProject(taskId);
+  const ownerWorkspace = getPairedWorkspace(taskId, 'owner');
+  if (!ownerWorkspace) {
+    return task.source_ref || null;
+  }
+
+  ensureGitRepository(ownerWorkspace.workspace_dir);
+  return buildReviewerSnapshotFingerprint({
+    sourceDir: ownerWorkspace.workspace_dir,
+    allowedTrackedFiles: listAllowedTrackedFiles(ownerWorkspace.workspace_dir),
+    deletedTrackedFiles: listDeletedTrackedFiles(ownerWorkspace.workspace_dir),
+    allowedUntrackedFiles: listAllowedUntrackedFiles(
+      ownerWorkspace.workspace_dir,
+    ),
+  });
+}
+
 export function provisionOwnerWorkspaceForPairedTask(
   taskId: string,
 ): PairedWorkspace {

@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   _initTestDatabaseFromFile,
+  applyPairedEvent,
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
   createPairedApproval,
@@ -30,6 +31,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getPairedExecutionById,
+  getPairedEventByDedupeKey,
   getPairedProject,
   getPairedTaskById,
   getPairedWorkspace,
@@ -39,6 +41,7 @@ import {
   getTaskById,
   listPairedApprovalsForTask,
   listPairedArtifactsForTask,
+  listPairedEventsForTask,
   listPairedWorkspacesForTask,
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,
@@ -636,6 +639,181 @@ describe('paired task state', () => {
     );
     expect(listPairedApprovalsForTask('paired-task-1')[0]?.id).toBe(approvalId);
     expect(listPairedArtifactsForTask('paired-task-1')[0]?.id).toBe(artifactId);
+  });
+
+  it('dedupes paired events and keeps request_review replay-safe', () => {
+    createPairedTask({
+      id: 'paired-task-events-1',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    const first = applyPairedEvent({
+      event: {
+        task_id: 'paired-task-events-1',
+        event_type: 'request_review',
+        actor_role: 'owner',
+        source_service_id: 'codex-main',
+        source_fingerprint: 'fingerprint-v1',
+        dedupe_key: 'msg-review-1',
+        payload_json: '{"request":"review"}',
+        created_at: '2026-03-29T00:01:00.000Z',
+      },
+      onApply: () => {
+        updatePairedTask('paired-task-events-1', {
+          status: 'review_pending',
+          review_requested_at: '2026-03-29T00:01:00.000Z',
+          updated_at: '2026-03-29T00:01:00.000Z',
+        });
+      },
+    });
+
+    const second = applyPairedEvent({
+      event: {
+        task_id: 'paired-task-events-1',
+        event_type: 'request_review',
+        actor_role: 'owner',
+        source_service_id: 'codex-main',
+        source_fingerprint: 'fingerprint-v2',
+        dedupe_key: 'msg-review-1',
+        payload_json: '{"request":"review-again"}',
+        created_at: '2026-03-29T00:02:00.000Z',
+      },
+      onApply: () => {
+        updatePairedTask('paired-task-events-1', {
+          status: 'review_ready',
+          review_requested_at: '2026-03-29T00:02:00.000Z',
+          updated_at: '2026-03-29T00:02:00.000Z',
+        });
+      },
+    });
+
+    expect(first.applied).toBe(true);
+    expect(second.applied).toBe(false);
+    expect(listPairedEventsForTask('paired-task-events-1')).toHaveLength(1);
+    expect(
+      getPairedEventByDedupeKey({
+        taskId: 'paired-task-events-1',
+        eventType: 'request_review',
+        dedupeKey: 'msg-review-1',
+      })?.source_fingerprint,
+    ).toBe('fingerprint-v1');
+    expect(getPairedTaskById('paired-task-events-1')?.status).toBe(
+      'review_pending',
+    );
+    expect(getPairedTaskById('paired-task-events-1')?.review_requested_at).toBe(
+      '2026-03-29T00:01:00.000Z',
+    );
+  });
+
+  it('rolls back paired event insert when the coupled state update fails', () => {
+    createPairedTask({
+      id: 'paired-task-events-2',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    expect(() =>
+      applyPairedEvent({
+        event: {
+          task_id: 'paired-task-events-2',
+          event_type: 'set_risk',
+          actor_role: 'owner',
+          source_service_id: 'codex-main',
+          source_fingerprint: 'fingerprint-v1',
+          dedupe_key: 'msg-risk-1',
+          payload_json: '{"riskLevel":"high"}',
+          created_at: '2026-03-29T00:01:00.000Z',
+        },
+        onApply: () => {
+          updatePairedTask('paired-task-events-2', {
+            risk_level: 'high',
+            updated_at: '2026-03-29T00:01:00.000Z',
+          });
+          throw new Error('boom');
+        },
+      }),
+    ).toThrow('boom');
+
+    expect(listPairedEventsForTask('paired-task-events-2')).toHaveLength(0);
+    expect(getPairedTaskById('paired-task-events-2')?.risk_level).toBe('low');
+  });
+
+  it('keeps paired event audit history after reopening the database', () => {
+    const tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-db-events-'));
+    const dbPath = path.join(tempRoot, 'messages.db');
+
+    _initTestDatabaseFromFile(dbPath);
+    createPairedTask({
+      id: 'paired-task-events-3',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: null,
+      status: 'active',
+      created_at: '2026-03-29T00:00:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
+    });
+
+    applyPairedEvent({
+      event: {
+        task_id: 'paired-task-events-3',
+        event_type: 'request_review',
+        actor_role: 'owner',
+        source_service_id: 'codex-main',
+        source_fingerprint: 'fingerprint-v1',
+        dedupe_key: 'msg-review-3',
+        payload_json: '{"request":"review"}',
+        created_at: '2026-03-29T00:01:00.000Z',
+      },
+      onApply: () => {
+        updatePairedTask('paired-task-events-3', {
+          status: 'review_pending',
+          review_requested_at: '2026-03-29T00:01:00.000Z',
+          updated_at: '2026-03-29T00:01:00.000Z',
+        });
+      },
+    });
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(listPairedEventsForTask('paired-task-events-3')).toHaveLength(1);
+    expect(listPairedEventsForTask('paired-task-events-3')[0]?.dedupe_key).toBe(
+      'msg-review-3',
+    );
+    expect(
+      listPairedEventsForTask('paired-task-events-3')[0]?.source_fingerprint,
+    ).toBe('fingerprint-v1');
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
   it('backfills governance plan_status by legacy task status during migration', () => {

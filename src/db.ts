@@ -27,6 +27,7 @@ import {
   AgentType,
   PairedApproval,
   PairedArtifact,
+  PairedEvent,
   PairedExecution,
   PairedProject,
   PairedTask,
@@ -356,6 +357,31 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_paired_artifacts_task
       ON paired_artifacts(task_id, created_at);
+    CREATE TABLE IF NOT EXISTS paired_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      actor_role TEXT NOT NULL,
+      source_service_id TEXT NOT NULL,
+      source_fingerprint TEXT,
+      dedupe_key TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT NOT NULL,
+      CHECK (
+        event_type IN (
+          'set_risk',
+          'submit_plan',
+          'approve_plan',
+          'request_plan_changes',
+          'request_review'
+        )
+      ),
+      CHECK (actor_role IN ('owner', 'reviewer', 'system'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_events_task
+      ON paired_events(task_id, created_at, id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_paired_events_dedupe
+      ON paired_events(task_id, event_type, dedupe_key);
     CREATE TABLE IF NOT EXISTS channel_owner (
       chat_jid TEXT PRIMARY KEY,
       owner_service_id TEXT NOT NULL,
@@ -2323,6 +2349,109 @@ export function listPairedArtifactsForTask(taskId: string): PairedArtifact[] {
       'SELECT * FROM paired_artifacts WHERE task_id = ? ORDER BY created_at, id',
     )
     .all(taskId) as PairedArtifact[];
+}
+
+export function getPairedEventById(id: number): PairedEvent | undefined {
+  return db.prepare('SELECT * FROM paired_events WHERE id = ?').get(id) as
+    | PairedEvent
+    | undefined;
+}
+
+export function getPairedEventByDedupeKey(args: {
+  taskId: string;
+  eventType: PairedEvent['event_type'];
+  dedupeKey: string;
+}): PairedEvent | undefined {
+  return db
+    .prepare(
+      `
+        SELECT *
+          FROM paired_events
+         WHERE task_id = ?
+           AND event_type = ?
+           AND dedupe_key = ?
+      `,
+    )
+    .get(args.taskId, args.eventType, args.dedupeKey) as
+    | PairedEvent
+    | undefined;
+}
+
+export function listPairedEventsForTask(taskId: string): PairedEvent[] {
+  return db
+    .prepare(
+      'SELECT * FROM paired_events WHERE task_id = ? ORDER BY created_at, id',
+    )
+    .all(taskId) as PairedEvent[];
+}
+
+export function applyPairedEvent<T>(args: {
+  event: Omit<PairedEvent, 'id'>;
+  onApply?: () => T;
+}): {
+  applied: boolean;
+  event: PairedEvent;
+  result: T | null;
+} {
+  return db.transaction(() => {
+    const insertResult = db
+      .prepare(
+        `
+          INSERT OR IGNORE INTO paired_events (
+            task_id,
+            event_type,
+            actor_role,
+            source_service_id,
+            source_fingerprint,
+            dedupe_key,
+            payload_json,
+            created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        args.event.task_id,
+        args.event.event_type,
+        args.event.actor_role,
+        args.event.source_service_id,
+        args.event.source_fingerprint,
+        args.event.dedupe_key,
+        args.event.payload_json,
+        args.event.created_at,
+      );
+
+    if (insertResult.changes === 0) {
+      const existing = getPairedEventByDedupeKey({
+        taskId: args.event.task_id,
+        eventType: args.event.event_type,
+        dedupeKey: args.event.dedupe_key,
+      });
+      if (!existing) {
+        throw new Error(
+          `Paired event dedupe lookup failed for ${args.event.task_id}:${args.event.event_type}:${args.event.dedupe_key}`,
+        );
+      }
+      return {
+        applied: false,
+        event: existing,
+        result: null as T | null,
+      };
+    }
+
+    const inserted = getPairedEventById(Number(insertResult.lastInsertRowid));
+    if (!inserted) {
+      throw new Error(
+        `Paired event insert lookup failed for row ${insertResult.lastInsertRowid}`,
+      );
+    }
+
+    return {
+      applied: true,
+      event: inserted,
+      result: args.onApply ? args.onApply() : (null as T | null),
+    };
+  })();
 }
 
 /**

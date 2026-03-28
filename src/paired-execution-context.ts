@@ -3,12 +3,14 @@ import crypto from 'crypto';
 
 import { SERVICE_ID, normalizeServiceId } from './config.js';
 import {
+  applyPairedEvent,
   createPairedArtifact,
   createPairedExecution,
   createPairedTask,
   getLatestOpenPairedTaskForChat,
   getPairedExecutionById,
   getPairedTaskById,
+  getPairedWorkspace,
   listPairedArtifactsForTask,
   updatePairedExecution,
   updatePairedTask,
@@ -20,9 +22,11 @@ import {
   markPairedTaskReviewReady,
   prepareReviewerWorkspaceForExecution,
   provisionOwnerWorkspaceForPairedTask,
+  resolvePairedTaskSourceFingerprint,
 } from './paired-workspace-manager.js';
 import type {
   PairedArtifactType,
+  PairedEventType,
   PairedExecution,
   PairedTask,
   PairedWorkspace,
@@ -249,6 +253,51 @@ const PLAN_REQUIRES_HIGH_RISK_MESSAGE =
 const PLAN_INCOMPLETE_MESSAGE =
   'Plan artifacts are incomplete. Record /plan <plan brief> || <acceptance criteria> || <risk summary> before approval.';
 
+function normalizeIntentDedupeKey(dedupeKey?: string): string {
+  return dedupeKey?.trim() || crypto.randomUUID();
+}
+
+function serializeIntentPayload(
+  payload?: Record<string, unknown>,
+): string | null {
+  if (!payload || Object.keys(payload).length === 0) {
+    return null;
+  }
+  return JSON.stringify(payload);
+}
+
+function applyRoomIntent<T>(args: {
+  task: PairedTask;
+  roomRoleContext: RoomRoleContext;
+  eventType: PairedEventType;
+  dedupeKey?: string;
+  payload?: Record<string, unknown>;
+  onApply?: () => T;
+}): {
+  applied: boolean;
+  result: T | null;
+} {
+  const createdAt = new Date().toISOString();
+  const sourceFingerprint = resolvePairedTaskSourceFingerprint(args.task.id);
+  const result = applyPairedEvent({
+    event: {
+      task_id: args.task.id,
+      event_type: args.eventType,
+      actor_role: args.roomRoleContext.role,
+      source_service_id: args.roomRoleContext.serviceId,
+      source_fingerprint: sourceFingerprint,
+      dedupe_key: normalizeIntentDedupeKey(args.dedupeKey),
+      payload_json: serializeIntentPayload(args.payload),
+      created_at: createdAt,
+    },
+    onApply: args.onApply,
+  });
+  return {
+    applied: result.applied,
+    result: result.result,
+  };
+}
+
 function isPlanReviewRequired(task: PairedTask): boolean {
   return task.risk_level === 'high' && task.plan_status !== 'approved';
 }
@@ -289,6 +338,16 @@ function createTaskArtifact(args: {
   });
 }
 
+function getPersistedReviewReadyState(taskId: string): {
+  ownerWorkspace: PairedWorkspace | null;
+  reviewerWorkspace: PairedWorkspace | null;
+} {
+  return {
+    ownerWorkspace: getPairedWorkspace(taskId, 'owner') ?? null,
+    reviewerWorkspace: getPairedWorkspace(taskId, 'reviewer') ?? null,
+  };
+}
+
 function formatPlanReviewRequiredMessage(task: PairedTask): string {
   return [
     PLAN_REVIEW_REQUIRED_BLOCK_MESSAGE,
@@ -314,8 +373,9 @@ export function markRoomReviewReady(args: {
   group: RegisteredGroup;
   chatJid: string;
   roomRoleContext?: RoomRoleContext;
+  dedupeKey?: string;
 }): MarkRoomReviewReadyResult {
-  const { group, chatJid, roomRoleContext } = args;
+  const { group, chatJid, roomRoleContext, dedupeKey } = args;
   if (!roomRoleContext || !group.workDir) {
     return null;
   }
@@ -335,12 +395,13 @@ export function markRoomReviewReady(args: {
 
   const isOwnerService =
     normalizeServiceId(SERVICE_ID) === task.owner_service_id;
-  if (isOwnerService) {
-    provisionOwnerWorkspaceForPairedTask(task.id);
-  }
+  const ownerWorkspace =
+    (isOwnerService
+      ? provisionOwnerWorkspaceForPairedTask(task.id)
+      : getPairedWorkspace(task.id, 'owner')) ?? null;
 
-  const reviewReady = markPairedTaskReviewReady(task.id);
-  if (!reviewReady) {
+  if (!ownerWorkspace) {
+    markPairedTaskReviewReady(task.id);
     return {
       status: 'pending',
       task: getPairedTaskById(task.id) ?? task,
@@ -348,11 +409,40 @@ export function markRoomReviewReady(args: {
     };
   }
 
-  const { ownerWorkspace, reviewerWorkspace } = reviewReady;
+  const reviewIntent = applyRoomIntent({
+    task,
+    roomRoleContext,
+    eventType: 'request_review',
+    dedupeKey,
+    onApply: () => markPairedTaskReviewReady(task.id),
+  });
+
+  const latestTask = getPairedTaskById(task.id) ?? task;
+  const { ownerWorkspace: persistedOwnerWorkspace, reviewerWorkspace } =
+    getPersistedReviewReadyState(
+    task.id,
+    );
+
+  if (reviewIntent.result) {
+    return {
+      status: 'ready',
+      task: latestTask,
+      ownerWorkspace: reviewIntent.result.ownerWorkspace,
+      reviewerWorkspace: reviewIntent.result.reviewerWorkspace,
+    };
+  }
+
+  if (!ownerWorkspace || !reviewerWorkspace) {
+    return {
+      status: 'pending',
+      task: latestTask,
+      pendingReason: 'owner-workspace-not-ready',
+    };
+  }
   return {
     status: 'ready',
-    task: getPairedTaskById(task.id) ?? task,
-    ownerWorkspace,
+    task: latestTask,
+    ownerWorkspace: persistedOwnerWorkspace ?? ownerWorkspace,
     reviewerWorkspace,
   };
 }
@@ -389,8 +479,9 @@ export function setRoomTaskRiskLevel(args: {
   chatJid: string;
   roomRoleContext?: RoomRoleContext;
   riskLevel: 'low' | 'high';
+  dedupeKey?: string;
 }): string | null {
-  const { group, chatJid, roomRoleContext, riskLevel } = args;
+  const { group, chatJid, roomRoleContext, riskLevel, dedupeKey } = args;
   if (!roomRoleContext || !group.workDir) {
     return null;
   }
@@ -403,23 +494,33 @@ export function setRoomTaskRiskLevel(args: {
     return null;
   }
 
-  const now = new Date().toISOString();
-  if (riskLevel === 'high') {
-    updatePairedTask(task.id, {
-      risk_level: 'high',
-      plan_status: hasCompletePlanArtifacts(task.id)
-        ? 'pending'
-        : 'not_requested',
-      status: 'plan_review_pending',
-      updated_at: now,
-    });
-  } else {
-    updatePairedTask(task.id, {
-      risk_level: 'low',
-      status: task.status === 'plan_review_pending' ? 'active' : task.status,
-      updated_at: now,
-    });
-  }
+  applyRoomIntent({
+    task,
+    roomRoleContext,
+    eventType: 'set_risk',
+    dedupeKey,
+    payload: { riskLevel },
+    onApply: () => {
+      const now = new Date().toISOString();
+      if (riskLevel === 'high') {
+        updatePairedTask(task.id, {
+          risk_level: 'high',
+          plan_status: hasCompletePlanArtifacts(task.id)
+            ? 'pending'
+            : 'not_requested',
+          status: 'plan_review_pending',
+          updated_at: now,
+        });
+        return;
+      }
+
+      updatePairedTask(task.id, {
+        risk_level: 'low',
+        status: task.status === 'plan_review_pending' ? 'active' : task.status,
+        updated_at: now,
+      });
+    },
+  });
 
   const latestTask = getPairedTaskById(task.id) ?? task;
   return [
@@ -437,6 +538,7 @@ export function recordRoomPlan(args: {
   planBrief: string;
   acceptanceCriteria: string;
   riskSummary: string;
+  dedupeKey?: string;
 }): string | null {
   const {
     group,
@@ -445,6 +547,7 @@ export function recordRoomPlan(args: {
     planBrief,
     acceptanceCriteria,
     riskSummary,
+    dedupeKey,
   } = args;
   if (!roomRoleContext || !group.workDir) {
     return null;
@@ -461,29 +564,42 @@ export function recordRoomPlan(args: {
     return PLAN_REQUIRES_HIGH_RISK_MESSAGE;
   }
 
-  createTaskArtifact({
-    taskId: task.id,
-    serviceId: roomRoleContext.serviceId,
-    artifactType: 'plan_brief',
-    content: planBrief,
-  });
-  createTaskArtifact({
-    taskId: task.id,
-    serviceId: roomRoleContext.serviceId,
-    artifactType: 'acceptance_criteria',
-    content: acceptanceCriteria,
-  });
-  createTaskArtifact({
-    taskId: task.id,
-    serviceId: roomRoleContext.serviceId,
-    artifactType: 'risk_summary',
-    content: riskSummary,
-  });
+  applyRoomIntent({
+    task,
+    roomRoleContext,
+    eventType: 'submit_plan',
+    dedupeKey,
+    payload: {
+      planBrief,
+      acceptanceCriteria,
+      riskSummary,
+    },
+    onApply: () => {
+      createTaskArtifact({
+        taskId: task.id,
+        serviceId: roomRoleContext.serviceId,
+        artifactType: 'plan_brief',
+        content: planBrief,
+      });
+      createTaskArtifact({
+        taskId: task.id,
+        serviceId: roomRoleContext.serviceId,
+        artifactType: 'acceptance_criteria',
+        content: acceptanceCriteria,
+      });
+      createTaskArtifact({
+        taskId: task.id,
+        serviceId: roomRoleContext.serviceId,
+        artifactType: 'risk_summary',
+        content: riskSummary,
+      });
 
-  updatePairedTask(task.id, {
-    plan_status: 'pending',
-    status: 'plan_review_pending',
-    updated_at: new Date().toISOString(),
+      updatePairedTask(task.id, {
+        plan_status: 'pending',
+        status: 'plan_review_pending',
+        updated_at: new Date().toISOString(),
+      });
+    },
   });
 
   const latestTask = getPairedTaskById(task.id) ?? task;
@@ -499,8 +615,9 @@ export function approveRoomPlan(args: {
   group: RegisteredGroup;
   chatJid: string;
   roomRoleContext?: RoomRoleContext;
+  dedupeKey?: string;
 }): string | null {
-  const { group, chatJid, roomRoleContext } = args;
+  const { group, chatJid, roomRoleContext, dedupeKey } = args;
   if (!roomRoleContext || !group.workDir) {
     return null;
   }
@@ -519,10 +636,18 @@ export function approveRoomPlan(args: {
     return PLAN_INCOMPLETE_MESSAGE;
   }
 
-  updatePairedTask(task.id, {
-    plan_status: 'approved',
-    status: 'active',
-    updated_at: new Date().toISOString(),
+  applyRoomIntent({
+    task,
+    roomRoleContext,
+    eventType: 'approve_plan',
+    dedupeKey,
+    onApply: () => {
+      updatePairedTask(task.id, {
+        plan_status: 'approved',
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      });
+    },
   });
 
   const latestTask = getPairedTaskById(task.id) ?? task;
@@ -538,8 +663,9 @@ export function requestRoomPlanChanges(args: {
   chatJid: string;
   roomRoleContext?: RoomRoleContext;
   note?: string;
+  dedupeKey?: string;
 }): string | null {
-  const { group, chatJid, roomRoleContext, note } = args;
+  const { group, chatJid, roomRoleContext, note, dedupeKey } = args;
   if (!roomRoleContext || !group.workDir) {
     return null;
   }
@@ -555,19 +681,28 @@ export function requestRoomPlanChanges(args: {
     return PLAN_REQUIRES_HIGH_RISK_MESSAGE;
   }
 
-  if (note?.trim()) {
-    createTaskArtifact({
-      taskId: task.id,
-      serviceId: roomRoleContext.serviceId,
-      artifactType: 'comment',
-      content: note.trim(),
-    });
-  }
+  applyRoomIntent({
+    task,
+    roomRoleContext,
+    eventType: 'request_plan_changes',
+    dedupeKey,
+    payload: note?.trim() ? { note: note.trim() } : undefined,
+    onApply: () => {
+      if (note?.trim()) {
+        createTaskArtifact({
+          taskId: task.id,
+          serviceId: roomRoleContext.serviceId,
+          artifactType: 'comment',
+          content: note.trim(),
+        });
+      }
 
-  updatePairedTask(task.id, {
-    plan_status: 'changes_requested',
-    status: 'plan_review_pending',
-    updated_at: new Date().toISOString(),
+      updatePairedTask(task.id, {
+        plan_status: 'changes_requested',
+        status: 'plan_review_pending',
+        updated_at: new Date().toISOString(),
+      });
+    },
   });
 
   const latestTask = getPairedTaskById(task.id) ?? task;

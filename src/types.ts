@@ -76,6 +76,15 @@ export type PairedArtifactType =
   | 'acceptance_criteria'
   | 'risk_summary';
 
+export type PairedEventActorRole = PairedRoomRole | 'system';
+
+export type PairedEventType =
+  | 'set_risk'
+  | 'submit_plan'
+  | 'approve_plan'
+  | 'request_plan_changes'
+  | 'request_review';
+
 export interface RoomRoleContext {
   serviceId: string;
   role: PairedRoomRole;
@@ -155,6 +164,18 @@ export interface PairedArtifact {
   title: string | null;
   content: string | null;
   file_path: string | null;
+  created_at: string;
+}
+
+export interface PairedEvent {
+  id: number;
+  task_id: string;
+  event_type: PairedEventType;
+  actor_role: PairedEventActorRole;
+  source_service_id: string;
+  source_fingerprint: string | null;
+  dedupe_key: string;
+  payload_json: string | null;
   created_at: string;
 }
 

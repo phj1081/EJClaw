@@ -94,15 +94,21 @@ export interface SessionCommandDeps {
   isAdminSender: (msg: NewMessage) => boolean;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
-  markReviewReady: () => Promise<string | null>;
-  setTaskRiskLevel: (riskLevel: 'low' | 'high') => Promise<string | null>;
+  markReviewReady: (dedupeKey: string) => Promise<string | null>;
+  setTaskRiskLevel: (
+    riskLevel: 'low' | 'high',
+    dedupeKey: string,
+  ) => Promise<string | null>;
   recordPlan: (plan: {
     planBrief: string;
     acceptanceCriteria: string;
     riskSummary: string;
-  }) => Promise<string | null>;
-  approvePlan: () => Promise<string | null>;
-  requestPlanChanges: (note?: string) => Promise<string | null>;
+  }, dedupeKey: string) => Promise<string | null>;
+  approvePlan: (dedupeKey: string) => Promise<string | null>;
+  requestPlanChanges: (
+    note: string | undefined,
+    dedupeKey: string,
+  ) => Promise<string | null>;
 }
 
 function resultToText(result: string | object | null | undefined): string {
@@ -188,7 +194,7 @@ export async function handleSessionCommand(opts: {
   }
 
   if (command === '/review') {
-    const result = await deps.markReviewReady();
+    const result = await deps.markReviewReady(cmdMsg.id);
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       result ??
@@ -207,7 +213,7 @@ export async function handleSessionCommand(opts: {
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       riskLevel
-        ? ((await deps.setTaskRiskLevel(riskLevel)) ??
+        ? ((await deps.setTaskRiskLevel(riskLevel, cmdMsg.id)) ??
             'Risk is unavailable for this room.')
         : 'Usage: /risk <low|high>',
     );
@@ -229,7 +235,7 @@ export async function handleSessionCommand(opts: {
         planBrief: parts[0],
         acceptanceCriteria: parts[1],
         riskSummary: parts[2],
-      })) ?? 'Plan recording is unavailable for this room.',
+      }, cmdMsg.id)) ?? 'Plan recording is unavailable for this room.',
     );
     return { handled: true, success: true };
   }
@@ -237,7 +243,7 @@ export async function handleSessionCommand(opts: {
   if (command === '/approve-plan') {
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
-      (await deps.approvePlan()) ??
+      (await deps.approvePlan(cmdMsg.id)) ??
         'Plan approval is unavailable for this room.',
     );
     return { handled: true, success: true };
@@ -249,7 +255,7 @@ export async function handleSessionCommand(opts: {
       .trim();
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
-      (await deps.requestPlanChanges(note || undefined)) ??
+      (await deps.requestPlanChanges(note || undefined, cmdMsg.id)) ??
         'Plan change requests are unavailable for this room.',
     );
     return { handled: true, success: true };

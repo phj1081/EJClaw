@@ -66,6 +66,55 @@ describe('paired /review command path', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  it('records the first owner /review event with the provisioned owner workspace fingerprint', async () => {
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    runGit(['init'], canonicalDir);
+    runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
+    runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'original\n');
+    runGit(['add', 'README.md'], canonicalDir);
+    runGit(['commit', '-m', 'initial'], canonicalDir);
+
+    const group: RegisteredGroup = {
+      name: 'Paired Room',
+      folder: 'paired-room',
+      trigger: '@codex',
+      added_at: '2026-03-28T00:00:00.000Z',
+      agentType: 'codex',
+      workDir: canonicalDir,
+    };
+
+    process.env.EJCLAW_DATA_DIR = path.join(tempRoot, 'data-owner');
+    process.env.SERVICE_ID = 'codex-main';
+    vi.resetModules();
+    const { db, executionContext } = await loadModules();
+    db.initDatabase();
+
+    const result = executionContext.markRoomReviewReady({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+      dedupeKey: 'msg-review-owner-1',
+    });
+
+    const task = db.getLatestOpenPairedTaskForChat('dc:test');
+    const events = db.listPairedEventsForTask(task!.id);
+
+    expect(result?.status).toBe('ready');
+    expect(events).toHaveLength(1);
+    expect(events[0]?.event_type).toBe('request_review');
+    expect(events[0]?.dedupe_key).toBe('msg-review-owner-1');
+    expect(events[0]?.source_fingerprint).toBeTruthy();
+    expect(events[0]?.source_fingerprint).not.toBe(task?.source_ref);
+    if (!result || result.status !== 'ready') {
+      throw new Error('expected owner /review to prepare a ready snapshot');
+    }
+    expect(events[0]?.source_fingerprint).toBe(
+      result.reviewerWorkspace.snapshot_source_fingerprint,
+    );
+  });
+
   it('reuses the db owner workspace when reviewer service handles /review', async () => {
     const canonicalDir = path.join(tempRoot, 'canonical');
     fs.mkdirSync(canonicalDir, { recursive: true });
@@ -197,7 +246,71 @@ describe('paired /review command path', () => {
     });
     expect(task?.status).toBe('review_pending');
     expect(task?.review_requested_at).toBeTruthy();
+    expect(db.listPairedEventsForTask(task!.id)).toEqual([]);
     expect(fs.existsSync(reviewerLocalOwnerDir)).toBe(false);
+  });
+
+  it('creates the first checkpointed request_review event only after owner workspace exists', async () => {
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    runGit(['init'], canonicalDir);
+    runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
+    runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'original\n');
+    runGit(['add', 'README.md'], canonicalDir);
+    runGit(['commit', '-m', 'initial'], canonicalDir);
+
+    const group: RegisteredGroup = {
+      name: 'Paired Room',
+      folder: 'paired-room',
+      trigger: '@codex',
+      added_at: '2026-03-28T00:00:00.000Z',
+      agentType: 'codex',
+      workDir: canonicalDir,
+    };
+
+    process.env.EJCLAW_DATA_DIR = path.join(tempRoot, 'data-review');
+    process.env.SERVICE_ID = 'codex-review';
+    vi.resetModules();
+    let { db, executionContext } = await loadModules();
+    db.initDatabase();
+
+    const firstResult = executionContext.markRoomReviewReady({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: reviewerContext,
+      dedupeKey: 'msg-review-pending-1',
+    });
+
+    const task = db.getLatestOpenPairedTaskForChat('dc:test');
+    expect(firstResult?.status).toBe('pending');
+    expect(db.listPairedEventsForTask(task!.id)).toEqual([]);
+
+    process.env.EJCLAW_DATA_DIR = path.join(tempRoot, 'data-owner');
+    process.env.SERVICE_ID = 'codex-main';
+    vi.resetModules();
+    ({ db, executionContext } = await loadModules());
+    db.initDatabase();
+
+    executionContext.preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-owner',
+      roomRoleContext: ownerContext,
+    });
+
+    const secondResult = executionContext.markRoomReviewReady({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+      dedupeKey: 'msg-review-owner-2',
+    });
+
+    const events = db.listPairedEventsForTask(task!.id);
+    expect(secondResult?.status).toBe('ready');
+    expect(events).toHaveLength(1);
+    expect(events[0]?.event_type).toBe('request_review');
+    expect(events[0]?.dedupe_key).toBe('msg-review-owner-2');
   });
 
   it('blocks /review when a high-risk task plan is not approved yet', async () => {
