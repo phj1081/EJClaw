@@ -100,6 +100,14 @@ describe('paired execution context', () => {
 
     expect(db.upsertPairedProject).toHaveBeenCalled();
     expect(db.createPairedTask).toHaveBeenCalledTimes(1);
+    expect(db.createPairedTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_policy: 'autonomous',
+        risk_level: 'low',
+        plan_status: 'not_requested',
+        status: 'active',
+      }),
+    );
     expect(db.createPairedExecution).toHaveBeenCalledWith(
       expect.objectContaining({
         id: 'run-1:codex-main',
@@ -122,6 +130,9 @@ describe('paired execution context', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
       review_requested_at: '2026-03-28T00:00:00.000Z',
       status: 'review_ready',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -152,6 +163,9 @@ describe('paired execution context', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'approved',
       review_requested_at: '2026-03-28T00:00:00.000Z',
       status: 'review_ready',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -185,6 +199,9 @@ describe('paired execution context', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
       review_requested_at: null,
       status: 'draft',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -224,6 +241,9 @@ describe('paired execution context', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'high',
+      plan_status: 'approved',
       review_requested_at: '2026-03-28T00:00:00.000Z',
       status: 'in_review',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -260,6 +280,9 @@ describe('paired execution context', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
       review_requested_at: null,
       status: 'draft',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -273,6 +296,9 @@ describe('paired execution context', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'approved',
       review_requested_at: '2026-03-28T00:00:00.000Z',
       status: 'review_ready',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -317,13 +343,11 @@ describe('paired execution context', () => {
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).toHaveBeenCalledWith('task-1');
     expect(result?.status).toBe('ready');
-    if (result?.status !== 'ready') {
-      throw new Error('expected ready review result');
-    }
     expect(result.task.status).toBe('review_ready');
+    expect(result?.task.status).toBe('review_ready');
   });
 
-  it('returns pending when review-ready setup cannot resolve an owner workspace', () => {
+  it('keeps review_pending and returns a pending result when owner workspace is not ready', () => {
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
       id: 'task-1',
       chat_jid: 'dc:test',
@@ -332,6 +356,9 @@ describe('paired execution context', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
       review_requested_at: null,
       status: 'draft',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -345,10 +372,13 @@ describe('paired execution context', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: 'HEAD',
-      review_requested_at: '2026-03-28T00:01:00.000Z',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
+      review_requested_at: '2026-03-29T00:00:00.000Z',
       status: 'review_pending',
       created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-28T00:01:00.000Z',
+      updated_at: '2026-03-29T00:00:00.000Z',
     });
     vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
       null,
@@ -360,39 +390,20 @@ describe('paired execution context', () => {
       roomRoleContext: ownerContext,
     });
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        status: 'pending',
-        pendingReason: 'owner-workspace-not-ready',
-        task: expect.objectContaining({
-          id: 'task-1',
-          status: 'review_pending',
-        }),
-      }),
-    );
-  });
-
-  it('formats a pending review-ready result into a user-facing pending message', () => {
-    const message = formatRoomReviewReadyMessage({
+    expect(result).toEqual({
       status: 'pending',
-      pendingReason: 'owner-workspace-not-ready',
-      task: {
+      task: expect.objectContaining({
         id: 'task-1',
-        chat_jid: 'dc:test',
-        group_folder: group.folder,
-        owner_service_id: 'codex-main',
-        reviewer_service_id: 'codex-review',
-        title: null,
-        source_ref: 'HEAD',
-        review_requested_at: '2026-03-28T00:01:00.000Z',
         status: 'review_pending',
-        created_at: '2026-03-28T00:00:00.000Z',
-        updated_at: '2026-03-28T00:01:00.000Z',
-      },
+      }),
+      pendingReason: 'owner-workspace-not-ready',
     });
-
-    expect(message).toBe(
-      'Review request recorded, but the owner workspace is not ready yet.\n- Task: task-1\nThe task stays review_pending until the owner workspace is prepared.',
+    expect(formatRoomReviewReadyMessage(result)).toBe(
+      [
+        'Review request recorded, but the owner workspace is not ready yet.',
+        '- Task: task-1',
+        'The task stays review_pending until the owner workspace is prepared.',
+      ].join('\n'),
     );
   });
 });

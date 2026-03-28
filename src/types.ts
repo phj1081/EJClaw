@@ -28,7 +28,9 @@ export type PairedRoomRole = 'owner' | 'reviewer';
 export type PairedWorkspaceTopology = 'shadow-snapshot' | 'reviewer-cow';
 
 export type PairedTaskStatus =
+  | 'active'
   | 'draft'
+  | 'plan_review_pending'
   | 'review_pending'
   | 'review_ready'
   | 'in_review'
@@ -37,6 +39,16 @@ export type PairedTaskStatus =
   | 'merged'
   | 'discarded'
   | 'failed';
+
+export type PairedTaskPolicy = 'autonomous' | 'user_signoff_required';
+
+export type PairedRiskLevel = 'low' | 'high';
+
+export type PairedPlanStatus =
+  | 'not_requested'
+  | 'pending'
+  | 'approved'
+  | 'changes_requested';
 
 export type PairedExecutionStatus =
   | 'pending'
@@ -56,7 +68,13 @@ export type PairedWorkspaceStatus =
 
 export type PairedApprovalStatus = 'pending' | 'approved' | 'rejected';
 
-export type PairedArtifactType = 'comment' | 'report' | 'patch';
+export type PairedArtifactType =
+  | 'comment'
+  | 'report'
+  | 'patch'
+  | 'plan_brief'
+  | 'acceptance_criteria'
+  | 'risk_summary';
 
 export interface RoomRoleContext {
   serviceId: string;
@@ -83,6 +101,9 @@ export interface PairedTask {
   reviewer_service_id: string;
   title: string | null;
   source_ref: string | null;
+  task_policy: PairedTaskPolicy;
+  risk_level: PairedRiskLevel;
+  plan_status: PairedPlanStatus;
   review_requested_at: string | null;
   status: PairedTaskStatus;
   created_at: string;

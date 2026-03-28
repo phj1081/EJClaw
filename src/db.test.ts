@@ -1,9 +1,12 @@
+import Database from 'better-sqlite3';
 import fs from 'fs';
+import path from 'path';
 
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  _initTestDatabaseFromFile,
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
   createPairedApproval,
@@ -563,6 +566,9 @@ describe('paired task state', () => {
       reviewer_service_id: 'codex-review',
       title: 'wire up workspaces',
       source_ref: 'HEAD',
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'not_requested',
       review_requested_at: null,
       status: 'draft',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -608,7 +614,7 @@ describe('paired task state', () => {
       task_id: 'paired-task-1',
       execution_id: 'paired-exec-1',
       service_id: 'codex-review',
-      artifact_type: 'report',
+      artifact_type: 'plan_brief',
       title: 'review notes',
       content: 'looks fine',
       file_path: null,
@@ -619,12 +625,127 @@ describe('paired task state', () => {
       '/tmp/paired-room',
     );
     expect(getPairedTaskById('paired-task-1')?.status).toBe('draft');
+    expect(getPairedTaskById('paired-task-1')?.task_policy).toBe('autonomous');
+    expect(getPairedTaskById('paired-task-1')?.risk_level).toBe('low');
+    expect(getPairedTaskById('paired-task-1')?.plan_status).toBe(
+      'not_requested',
+    );
     expect(getPairedExecutionById('paired-exec-1')?.status).toBe('pending');
     expect(getPairedWorkspace('paired-task-1', 'owner')?.workspace_dir).toBe(
       '/tmp/paired-room/owner',
     );
     expect(listPairedApprovalsForTask('paired-task-1')[0]?.id).toBe(approvalId);
     expect(listPairedArtifactsForTask('paired-task-1')[0]?.id).toBe(artifactId);
+  });
+
+  it('backfills governance plan_status by legacy task status during migration', () => {
+    const tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-db-migration-'));
+    const dbPath = path.join(tempRoot, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE paired_tasks (
+        id TEXT PRIMARY KEY,
+        chat_jid TEXT NOT NULL,
+        group_folder TEXT NOT NULL,
+        owner_service_id TEXT NOT NULL,
+        reviewer_service_id TEXT NOT NULL,
+        title TEXT,
+        source_ref TEXT,
+        review_requested_at TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+
+    const insertLegacyTask = legacyDb.prepare(`
+      INSERT INTO paired_tasks (
+        id,
+        chat_jid,
+        group_folder,
+        owner_service_id,
+        reviewer_service_id,
+        title,
+        source_ref,
+        review_requested_at,
+        status,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    insertLegacyTask.run(
+      'paired-active',
+      'dc:paired',
+      'paired-room',
+      'codex-main',
+      'codex-review',
+      null,
+      'HEAD',
+      null,
+      'active',
+      '2026-03-29T00:00:00.000Z',
+      '2026-03-29T00:00:00.000Z',
+    );
+    insertLegacyTask.run(
+      'paired-draft',
+      'dc:paired',
+      'paired-room',
+      'codex-main',
+      'codex-review',
+      null,
+      'HEAD',
+      null,
+      'draft',
+      '2026-03-29T00:00:00.000Z',
+      '2026-03-29T00:00:00.000Z',
+    );
+    insertLegacyTask.run(
+      'paired-in-review',
+      'dc:paired',
+      'paired-room',
+      'codex-main',
+      'codex-review',
+      null,
+      'HEAD',
+      '2026-03-29T00:01:00.000Z',
+      'in_review',
+      '2026-03-29T00:00:00.000Z',
+      '2026-03-29T00:01:00.000Z',
+    );
+    insertLegacyTask.run(
+      'paired-merge-ready',
+      'dc:paired',
+      'paired-room',
+      'codex-main',
+      'codex-review',
+      null,
+      'HEAD',
+      '2026-03-29T00:02:00.000Z',
+      'merge_ready',
+      '2026-03-29T00:00:00.000Z',
+      '2026-03-29T00:02:00.000Z',
+    );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(getPairedTaskById('paired-in-review')?.plan_status).toBe(
+      'approved',
+    );
+    expect(getPairedTaskById('paired-merge-ready')?.plan_status).toBe(
+      'approved',
+    );
+    expect(getPairedTaskById('paired-active')?.plan_status).toBe(
+      'not_requested',
+    );
+    expect(getPairedTaskById('paired-draft')?.plan_status).toBe(
+      'not_requested',
+    );
+
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
   it('updates task and execution state and keeps one workspace per role', () => {
@@ -636,6 +757,9 @@ describe('paired task state', () => {
       reviewer_service_id: 'codex-review',
       title: null,
       source_ref: null,
+      task_policy: 'user_signoff_required',
+      risk_level: 'high',
+      plan_status: 'pending',
       review_requested_at: null,
       status: 'draft',
       created_at: '2026-03-28T00:00:00.000Z',
@@ -655,6 +779,9 @@ describe('paired task state', () => {
     });
 
     updatePairedTask('paired-task-2', {
+      task_policy: 'autonomous',
+      risk_level: 'low',
+      plan_status: 'approved',
       status: 'review_pending',
       review_requested_at: '2026-03-28T00:10:00.000Z',
       updated_at: '2026-03-28T00:10:00.000Z',
@@ -690,6 +817,9 @@ describe('paired task state', () => {
     });
 
     expect(getPairedTaskById('paired-task-2')?.status).toBe('review_pending');
+    expect(getPairedTaskById('paired-task-2')?.task_policy).toBe('autonomous');
+    expect(getPairedTaskById('paired-task-2')?.risk_level).toBe('low');
+    expect(getPairedTaskById('paired-task-2')?.plan_status).toBe('approved');
     expect(getPairedExecutionById('paired-exec-2')?.status).toBe('running');
     expect(
       listPairedWorkspacesForTask('paired-task-2').map(

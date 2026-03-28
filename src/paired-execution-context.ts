@@ -86,8 +86,11 @@ function ensureActiveTask(
     reviewer_service_id: roomRoleContext.reviewerServiceId,
     title: null,
     source_ref: resolveCanonicalSourceRef(canonicalWorkDir),
+    task_policy: 'autonomous',
+    risk_level: 'low',
+    plan_status: 'not_requested',
     review_requested_at: null,
-    status: 'draft',
+    status: 'active',
     created_at: now,
     updated_at: now,
   };

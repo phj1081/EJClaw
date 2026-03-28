@@ -253,13 +253,28 @@ function createSchema(database: Database.Database): void {
       reviewer_service_id TEXT NOT NULL,
       title TEXT,
       source_ref TEXT,
+      task_policy TEXT NOT NULL DEFAULT 'autonomous',
+      risk_level TEXT NOT NULL DEFAULT 'low',
+      plan_status TEXT NOT NULL DEFAULT 'not_requested',
       review_requested_at TEXT,
-      status TEXT NOT NULL DEFAULT 'draft',
+      status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      CHECK (task_policy IN ('autonomous', 'user_signoff_required')),
+      CHECK (risk_level IN ('low', 'high')),
+      CHECK (
+        plan_status IN (
+          'not_requested',
+          'pending',
+          'approved',
+          'changes_requested'
+        )
+      ),
       CHECK (
         status IN (
+          'active',
           'draft',
+          'plan_review_pending',
           'review_pending',
           'review_ready',
           'in_review',
@@ -328,7 +343,16 @@ function createSchema(database: Database.Database): void {
       content TEXT,
       file_path TEXT,
       created_at TEXT NOT NULL,
-      CHECK (artifact_type IN ('comment', 'report', 'patch'))
+      CHECK (
+        artifact_type IN (
+          'comment',
+          'report',
+          'patch',
+          'plan_brief',
+          'acceptance_criteria',
+          'risk_summary'
+        )
+      )
     );
     CREATE INDEX IF NOT EXISTS idx_paired_artifacts_task
       ON paired_artifacts(task_id, created_at);
@@ -624,7 +648,15 @@ function createSchema(database: Database.Database): void {
     )
     .get() as { sql?: string } | undefined;
   const pairedTasksSql = pairedTasksSqlRow?.sql || '';
-  if (pairedTasksSql && !pairedTasksSql.includes("'review_pending'")) {
+  const pairedTasksNeedsMigration =
+    pairedTasksSql &&
+    (!pairedTasksSql.includes("'review_pending'") ||
+      !pairedTasksSql.includes("'active'") ||
+      !pairedTasksSql.includes("'plan_review_pending'") ||
+      !pairedTasksSql.includes('task_policy TEXT') ||
+      !pairedTasksSql.includes('risk_level TEXT') ||
+      !pairedTasksSql.includes('plan_status TEXT'));
+  if (pairedTasksNeedsMigration) {
     database.exec(`
       CREATE TABLE paired_tasks_new (
         id TEXT PRIMARY KEY,
@@ -634,13 +666,28 @@ function createSchema(database: Database.Database): void {
         reviewer_service_id TEXT NOT NULL,
         title TEXT,
         source_ref TEXT,
+        task_policy TEXT NOT NULL DEFAULT 'autonomous',
+        risk_level TEXT NOT NULL DEFAULT 'low',
+        plan_status TEXT NOT NULL DEFAULT 'not_requested',
         review_requested_at TEXT,
-        status TEXT NOT NULL DEFAULT 'draft',
+        status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
+        CHECK (task_policy IN ('autonomous', 'user_signoff_required')),
+        CHECK (risk_level IN ('low', 'high')),
+        CHECK (
+          plan_status IN (
+            'not_requested',
+            'pending',
+            'approved',
+            'changes_requested'
+          )
+        ),
         CHECK (
           status IN (
+            'active',
             'draft',
+            'plan_review_pending',
             'review_pending',
             'review_ready',
             'in_review',
@@ -662,6 +709,9 @@ function createSchema(database: Database.Database): void {
         reviewer_service_id,
         title,
         source_ref,
+        task_policy,
+        risk_level,
+        plan_status,
         review_requested_at,
         status,
         created_at,
@@ -675,6 +725,19 @@ function createSchema(database: Database.Database): void {
         reviewer_service_id,
         title,
         source_ref,
+        'autonomous',
+        'low',
+        CASE
+          WHEN status IN (
+            'review_pending',
+            'review_ready',
+            'in_review',
+            'changes_requested',
+            'merge_ready',
+            'merged'
+          ) THEN 'approved'
+          ELSE 'not_requested'
+        END,
         review_requested_at,
         status,
         created_at,
@@ -688,6 +751,73 @@ function createSchema(database: Database.Database): void {
     database.exec(`
       CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
         ON paired_tasks(chat_jid, status, updated_at);
+    `);
+  }
+
+  const pairedArtifactsSqlRow = database
+    .prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_artifacts'`,
+    )
+    .get() as { sql?: string } | undefined;
+  const pairedArtifactsSql = pairedArtifactsSqlRow?.sql || '';
+  const pairedArtifactsNeedsMigration =
+    pairedArtifactsSql &&
+    !pairedArtifactsSql.includes("'plan_brief'");
+  if (pairedArtifactsNeedsMigration) {
+    database.exec(`
+      CREATE TABLE paired_artifacts_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL,
+        execution_id TEXT,
+        service_id TEXT NOT NULL,
+        artifact_type TEXT NOT NULL,
+        title TEXT,
+        content TEXT,
+        file_path TEXT,
+        created_at TEXT NOT NULL,
+        CHECK (
+          artifact_type IN (
+            'comment',
+            'report',
+            'patch',
+            'plan_brief',
+            'acceptance_criteria',
+            'risk_summary'
+          )
+        )
+      );
+    `);
+    database.exec(`
+      INSERT INTO paired_artifacts_new (
+        id,
+        task_id,
+        execution_id,
+        service_id,
+        artifact_type,
+        title,
+        content,
+        file_path,
+        created_at
+      )
+      SELECT
+        id,
+        task_id,
+        execution_id,
+        service_id,
+        artifact_type,
+        title,
+        content,
+        file_path,
+        created_at
+      FROM paired_artifacts;
+    `);
+    database.exec(`
+      DROP TABLE paired_artifacts;
+      ALTER TABLE paired_artifacts_new RENAME TO paired_artifacts;
+    `);
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_paired_artifacts_task
+        ON paired_artifacts(task_id, created_at);
     `);
   }
 
@@ -754,6 +884,12 @@ export function initDatabase(): void {
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
+  createSchema(db);
+}
+
+/** @internal - for tests only. Opens an existing database file and runs schema/migrations. */
+export function _initTestDatabaseFromFile(dbPath: string): void {
+  db = new Database(dbPath);
   createSchema(db);
 }
 
@@ -1868,12 +2004,15 @@ export function createPairedTask(task: PairedTask): void {
         reviewer_service_id,
         title,
         source_ref,
+        task_policy,
+        risk_level,
+        plan_status,
         review_requested_at,
         status,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
@@ -1883,6 +2022,9 @@ export function createPairedTask(task: PairedTask): void {
     task.reviewer_service_id,
     task.title,
     task.source_ref,
+    task.task_policy,
+    task.risk_level,
+    task.plan_status,
     task.review_requested_at,
     task.status,
     task.created_at,
@@ -1918,7 +2060,14 @@ export function updatePairedTask(
   updates: Partial<
     Pick<
       PairedTask,
-      'title' | 'source_ref' | 'review_requested_at' | 'status' | 'updated_at'
+      | 'title'
+      | 'source_ref'
+      | 'task_policy'
+      | 'risk_level'
+      | 'plan_status'
+      | 'review_requested_at'
+      | 'status'
+      | 'updated_at'
     >
   >,
 ): void {
@@ -1932,6 +2081,18 @@ export function updatePairedTask(
   if (updates.source_ref !== undefined) {
     fields.push('source_ref = ?');
     values.push(updates.source_ref);
+  }
+  if (updates.task_policy !== undefined) {
+    fields.push('task_policy = ?');
+    values.push(updates.task_policy);
+  }
+  if (updates.risk_level !== undefined) {
+    fields.push('risk_level = ?');
+    values.push(updates.risk_level);
+  }
+  if (updates.plan_status !== undefined) {
+    fields.push('plan_status = ?');
+    values.push(updates.plan_status);
   }
   if (updates.review_requested_at !== undefined) {
     fields.push('review_requested_at = ?');

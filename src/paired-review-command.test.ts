@@ -124,9 +124,10 @@ describe('paired /review command path', () => {
       'owner',
     );
 
+    expect(result).not.toBeNull();
     expect(result?.status).toBe('ready');
-    if (result?.status !== 'ready') {
-      throw new Error('expected ready review result');
+    if (!result || result.status !== 'ready') {
+      throw new Error('expected reviewer /review to prepare a ready snapshot');
     }
     expect(result.ownerWorkspace.workspace_dir).toBe(ownerWorkspaceDir);
     expect(result.reviewerWorkspace.snapshot_source_dir).toBe(
@@ -141,7 +142,7 @@ describe('paired /review command path', () => {
     expect(fs.existsSync(reviewerLocalOwnerDir)).toBe(false);
   });
 
-  it('returns pending and keeps review_pending when reviewer handles /review before any owner workspace exists', async () => {
+  it('keeps review_pending when reviewer service handles /review before owner workspace exists', async () => {
     const canonicalDir = path.join(tempRoot, 'canonical');
     fs.mkdirSync(canonicalDir, { recursive: true });
     runGit(['init'], canonicalDir);
@@ -172,26 +173,27 @@ describe('paired /review command path', () => {
       roomRoleContext: reviewerContext,
     });
 
+    const task = db.getLatestOpenPairedTaskForChat('dc:test');
     const reviewerLocalOwnerDir = path.join(
       tempRoot,
       'data-review',
       'workspaces',
       'paired-room',
       'tasks',
-      result?.task.id ?? 'missing-task',
+      task!.id,
       'owner',
     );
 
-    expect(result).toEqual(
-      expect.objectContaining({
-        status: 'pending',
-        pendingReason: 'owner-workspace-not-ready',
-        task: expect.objectContaining({
-          status: 'review_pending',
-        }),
+    expect(result).toEqual({
+      status: 'pending',
+      task: expect.objectContaining({
+        id: task!.id,
+        status: 'review_pending',
       }),
-    );
-    expect(result?.task.review_requested_at).toBeTruthy();
+      pendingReason: 'owner-workspace-not-ready',
+    });
+    expect(task?.status).toBe('review_pending');
+    expect(task?.review_requested_at).toBeTruthy();
     expect(fs.existsSync(reviewerLocalOwnerDir)).toBe(false);
   });
 });

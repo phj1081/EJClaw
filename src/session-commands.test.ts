@@ -91,18 +91,19 @@ describe('isSessionCommandControlMessage', () => {
     ).toBe(true);
   });
 
-  it('matches multiline review-updated output', () => {
+  it('matches multiline review snapshot output', () => {
     expect(
-      isSessionCommandControlMessage(
-        'Review snapshot updated.\n- Task: paired-task-1',
-      ),
+      isSessionCommandControlMessage('Review snapshot updated.\n- Task: task-1'),
     ).toBe(true);
   });
 
-  it('matches pending review output', () => {
+  it('matches pending review request output', () => {
     expect(
       isSessionCommandControlMessage(
-        'Review request recorded, but the owner workspace is not ready yet.\n- Task: paired-task-1\nThe task stays review_pending until the owner workspace is prepared.',
+        [
+          'Review request recorded, but the owner workspace is not ready yet.',
+          '- Task: task-1',
+        ].join('\n'),
       ),
     ).toBe(true);
   });
@@ -253,12 +254,16 @@ describe('handleSessionCommand', () => {
     );
   });
 
-  it('sends a pending review message when owner workspace is not ready yet', async () => {
+  it('sends the pending review message when owner workspace is not ready yet', async () => {
     const deps = makeDeps({
       markReviewReady: vi
         .fn()
         .mockResolvedValue(
-          'Review request recorded, but the owner workspace is not ready yet.\n- Task: paired-task-1\nThe task stays review_pending until the owner workspace is prepared.',
+          [
+            'Review request recorded, but the owner workspace is not ready yet.',
+            '- Task: paired-task-1',
+            'The task stays review_pending until the owner workspace is prepared.',
+          ].join('\n'),
         ),
     });
 
@@ -274,7 +279,11 @@ describe('handleSessionCommand', () => {
     expect(result).toEqual({ handled: true, success: true });
     expect(deps.markReviewReady).toHaveBeenCalledTimes(1);
     expect(deps.sendMessage).toHaveBeenCalledWith(
-      'Review request recorded, but the owner workspace is not ready yet.\n- Task: paired-task-1\nThe task stays review_pending until the owner workspace is prepared.',
+      [
+        'Review request recorded, but the owner workspace is not ready yet.',
+        '- Task: paired-task-1',
+        'The task stays review_pending until the owner workspace is prepared.',
+      ].join('\n'),
     );
   });
 
