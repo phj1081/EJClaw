@@ -329,7 +329,10 @@ describe('paired workspace manager', () => {
     runGit(['init'], canonicalDir);
     runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
     runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
-    fs.writeFileSync(path.join(canonicalDir, 'tracked.ts'), 'export const ok = 1;\n');
+    fs.writeFileSync(
+      path.join(canonicalDir, 'tracked.ts'),
+      'export const ok = 1;\n',
+    );
     fs.writeFileSync(
       path.join(canonicalDir, '.claude', 'settings.json'),
       '{"secret":true}\n',
@@ -340,7 +343,13 @@ describe('paired workspace manager', () => {
     );
     fs.writeFileSync(path.join(canonicalDir, '.env.example'), 'EXAMPLE=1\n');
     runGit(
-      ['add', 'tracked.ts', '.claude/settings.json', '.env.production', '.env.example'],
+      [
+        'add',
+        'tracked.ts',
+        '.claude/settings.json',
+        '.env.production',
+        '.env.example',
+      ],
       canonicalDir,
     );
     runGit(['commit', '-m', 'initial'], canonicalDir);
@@ -371,9 +380,9 @@ describe('paired workspace manager', () => {
     const reviewerWorkspace =
       manager.refreshReviewerSnapshotForPairedTask('paired-task-4');
 
-    expect(
-      runGit(['status', '--short'], reviewerWorkspace.workspace_dir),
-    ).toBe('');
+    expect(runGit(['status', '--short'], reviewerWorkspace.workspace_dir)).toBe(
+      '',
+    );
     expect(
       fs.existsSync(
         path.join(reviewerWorkspace.workspace_dir, '.claude', 'settings.json'),

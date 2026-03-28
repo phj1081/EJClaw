@@ -92,11 +92,7 @@ function runGit(args: string[], cwd?: string): string {
   }).trim();
 }
 
-function runGitWithInput(
-  args: string[],
-  cwd: string,
-  input: string,
-): string {
+function runGitWithInput(args: string[], cwd: string, input: string): string {
   return execFileSync('git', args, {
     cwd,
     input,
@@ -181,11 +177,9 @@ function shouldIncludeUntrackedReviewerPath(relativePath: string): boolean {
 }
 
 function listAllowedTrackedFiles(sourceDir: string): string[] {
-  return listGitPaths(sourceDir, [
-    'ls-files',
-    '--cached',
-    '-z',
-  ]).filter((relativePath) => !isReviewerSnapshotDeniedPath(relativePath));
+  return listGitPaths(sourceDir, ['ls-files', '--cached', '-z']).filter(
+    (relativePath) => !isReviewerSnapshotDeniedPath(relativePath),
+  );
 }
 
 function listDeletedTrackedFiles(sourceDir: string): string[] {
@@ -356,8 +350,12 @@ export function refreshReviewerSnapshotForPairedTask(
     runGit(['clone', '--shared', ownerWorkspace.workspace_dir, reviewerDir]);
   }
 
-  const allowedTrackedFiles = listAllowedTrackedFiles(ownerWorkspace.workspace_dir);
-  const deletedTrackedFiles = listDeletedTrackedFiles(ownerWorkspace.workspace_dir);
+  const allowedTrackedFiles = listAllowedTrackedFiles(
+    ownerWorkspace.workspace_dir,
+  );
+  const deletedTrackedFiles = listDeletedTrackedFiles(
+    ownerWorkspace.workspace_dir,
+  );
   const allowedUntrackedFiles = listAllowedUntrackedFiles(
     ownerWorkspace.workspace_dir,
   );
