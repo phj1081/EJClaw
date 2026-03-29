@@ -482,6 +482,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         openWorkItem,
       );
       if (!delivered) return false;
+      // Keep stale final delivery isolated from the next conversational turn.
+      // A follow-up run will pick up any queued user messages or paired-room
+      // auto-review/finalize transitions after this retry succeeds.
+      deps.queue.enqueueMessageCheck(chatJid);
+      return true;
     }
 
     const isMainGroup = group.isMain === true;
@@ -508,32 +513,28 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           (pendingReviewTask.status === 'review_ready' ||
             pendingReviewTask.status === 'in_review')
         ) {
-          // Build review prompt with user's original request + owner's response
+          // No processable messages remain. Review workspace state using the
+          // user's request as context, but don't re-inject filtered raw bot
+          // output from older turns into the next review prompt.
           const userMessage = getLastHumanMessageContent(chatJid);
-          const ownerContent = rawMissedMessages
-            .filter((m) => m.is_bot_message)
-            .map((m) => m.content)
-            .join('\n\n');
           const parts: string[] = [];
           if (userMessage) {
             parts.push(`User request:\n---\n${userMessage}\n---`);
           }
-          if (ownerContent) {
-            parts.push(`Owner response:\n---\n${ownerContent}\n---`);
-          }
           const reviewPrompt =
             parts.length > 0
-              ? `${parts.join('\n\n')}\n\nReview the owner's response above.`
+              ? `${parts.join('\n\n')}\n\nReview the latest owner changes in the workspace.`
               : 'Review the latest owner changes in the workspace.';
 
-          // Advance cursor past the owner's messages so they aren't re-processed
+          // Advance cursor past filtered bot messages so they aren't re-processed
           const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
-          if (lastRaw?.seq != null) {
+          const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
+          if (cursor != null) {
             advanceLastAgentCursor(
               deps.getLastAgentTimestamps(),
               deps.saveState,
               chatJid,
-              lastRaw.seq,
+              cursor,
             );
           }
 
@@ -552,12 +553,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         // merge_ready: reviewer approved, owner gets final turn to finalize
         if (pendingReviewTask && pendingReviewTask.status === 'merge_ready') {
           const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
-          if (lastRaw?.seq != null) {
+          const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
+          if (cursor != null) {
             advanceLastAgentCursor(
               deps.getLastAgentTimestamps(),
               deps.saveState,
               chatJid,
-              lastRaw.seq,
+              cursor,
             );
           }
           const finalizePrompt =

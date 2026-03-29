@@ -61,6 +61,7 @@ vi.mock('./db.js', () => {
     getAllChats: vi.fn(() => []),
     getAllTasks: vi.fn(() => []),
     getLastHumanMessageTimestamp: vi.fn(() => null),
+    getLastHumanMessageContent: vi.fn(() => null),
     getMessagesSince,
     getNewMessages,
     getLatestMessageSeqAtOrBefore: vi.fn(() => 0),
@@ -456,6 +457,180 @@ describe('createMessageRuntime', () => {
     expect(channel.setTyping).not.toHaveBeenCalled();
     expect(lastAgentTimestamps[chatJid]).toBe('0');
     expect(saveState).toHaveBeenCalled();
+  });
+
+  it('delivers a stale work item in a separate run before processing new messages', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const enqueueMessageCheck = vi.fn();
+
+    vi.mocked(db.getOpenWorkItem).mockReturnValue({
+      id: 99,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'claude',
+      status: 'delivery_retry',
+      start_seq: 1,
+      end_seq: 1,
+      result_payload: '이전 final입니다.',
+      delivery_attempts: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'discord send failed',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '새 작업입니다.',
+        timestamp: '2026-03-30T00:00:00.000Z',
+      },
+    ]);
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-open-work-item-first',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      '이전 final입니다.',
+    );
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+  });
+
+  it('does not inject filtered raw bot finals into workspace-based review prompts', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+    const channel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'owner-bot@test'),
+    };
+
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 0,
+      status: 'review_ready',
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getLastHumanMessageContent).mockReturnValue(
+      '버전 올리고 dev 머지까지 해줘',
+    );
+    vi.mocked(db.getLatestMessageSeqAtOrBefore).mockReturnValue(41);
+    vi.mocked(db.getMessagesSinceSeq).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'owner-bot@test',
+        sender_name: 'Owner Bot',
+        content: 'DONE 이전 final이 여기 붙으면 안 됩니다.',
+        timestamp: '2026-03-30T00:00:05.000Z',
+        is_bot_message: true,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain(
+          'User request:\n---\n버전 올리고 dev 머지까지 해줘\n---',
+        );
+        expect(input.prompt).toContain(
+          'Review the latest owner changes in the workspace.',
+        );
+        expect(input.prompt).not.toContain(
+          'DONE 이전 final이 여기 붙으면 안 됩니다.',
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '리뷰 확인 완료',
+          newSessionId: 'session-review-sanitized',
+        });
+        return {
+          status: 'success',
+          result: '리뷰 확인 완료',
+          newSessionId: 'session-review-sanitized',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-review-prompt-sanitized',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(lastAgentTimestamps[chatJid]).toBe('41');
+    expect(saveState).toHaveBeenCalled();
+    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '리뷰 확인 완료');
   });
 
   it('allows follow-up messages without a trigger after a visible reply in non-main groups', async () => {
