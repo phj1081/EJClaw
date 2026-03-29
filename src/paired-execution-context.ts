@@ -32,9 +32,16 @@ import type {
 // Reviewer verdict detection
 // ---------------------------------------------------------------------------
 
-type ReviewerVerdict = 'done' | 'done_with_concerns' | 'blocked' | 'needs_context' | 'continue';
+type ReviewerVerdict =
+  | 'done'
+  | 'done_with_concerns'
+  | 'blocked'
+  | 'needs_context'
+  | 'continue';
 
-function classifyReviewerVerdict(summary: string | null | undefined): ReviewerVerdict {
+function classifyReviewerVerdict(
+  summary: string | null | undefined,
+): ReviewerVerdict {
   if (!summary) return 'continue';
   const firstLine = summary.trimStart().split('\n')[0].trim();
   if (/\bBLOCKED\b/.test(firstLine)) return 'blocked';

@@ -80,6 +80,8 @@ export interface SessionCommandDeps {
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
   markReviewReady: () => Promise<string | null>;
+  /** Reset/complete the active paired task so ping-pong stops. */
+  resetPairedTask?: () => void;
   /** Kill the currently running agent process for this group. Returns true if a process was killed. */
   killProcess: () => boolean;
 }
@@ -159,6 +161,7 @@ export async function handleSessionCommand(opts: {
   if (command === '/clear') {
     deps.closeStdin();
     deps.clearSession({ allRoles: true });
+    deps.resetPairedTask?.();
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       'Current session cleared. The next message will start a new conversation.',

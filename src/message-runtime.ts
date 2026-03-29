@@ -15,6 +15,7 @@ import {
   getLastHumanMessageContent,
   isPairedRoomJid,
   getLatestOpenPairedTaskForChat,
+  updatePairedTask,
   type ServiceHandoff,
   type WorkItem,
 } from './db.js';
@@ -672,6 +673,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               roomRoleContext,
             });
             return formatRoomReviewReadyMessage(result);
+          },
+          resetPairedTask: () => {
+            if (isPairedRoomJid(chatJid)) {
+              const task = getLatestOpenPairedTaskForChat(chatJid);
+              if (task) {
+                updatePairedTask(task.id, {
+                  status: 'completed',
+                  updated_at: new Date().toISOString(),
+                });
+              }
+            }
           },
           killProcess: () => deps.queue.killProcess(chatJid),
         },
