@@ -5,41 +5,65 @@
 ![Node](https://img.shields.io/badge/Node-20+-339933?logo=nodedotjs&logoColor=white)
 ![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
 
-Dual-agent AI assistant (Claude Code + Codex) over Discord.
+Dual-agent AI assistant (Claude Code + Codex) over Discord with autonomous paired review.
 
 Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now maintained as EJClaw for personal production use.
 Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros), adapted for EJClaw's Discord and dual-service workflow.
 
 ## Overview
 
-Two AI agents running as parallel systemd services on a single host:
+A single unified service (`ejclaw`) manages three Discord bots in one process:
 
-- **Claude Code** (`@claude`) — Anthropic Agent SDK, adaptive thinking, Opus/Sonnet
-- **Codex** (`@codex`) — OpenAI Codex SDK (`codex exec`), GPT-5.4, xhigh reasoning
+- **Codex-main** (`@codex`) — Owner agent. Handles user requests, writes code.
+- **Claude** (`@claude`) — Reviewer agent. Critically reviews owner's work, verifies design direction.
+- **Codex-review** (`@codex-review`) — Fallback reviewer. Takes over when Claude hits rate limits (429).
 
-Both share the same codebase (`dist/index.js`), differentiated by environment variables. No containers — direct host processes for zero overhead.
+Owner and reviewer agent types are configurable via `OWNER_AGENT_TYPE` and `REVIEWER_AGENT_TYPE` in `.env`.
+
+## Paired Review
+
+The core workflow is an autonomous owner-reviewer ping-pong:
+
+```
+User message
+  → Owner responds (implementation, answer, etc.)
+    → Reviewer auto-triggered (critical review, design check)
+      → Verdict:
+          DONE              → Owner gets final turn to finalize → Task completed
+          DONE_WITH_CONCERNS → Owner addresses feedback → Reviewer re-reviews
+          BLOCKED            → Escalate to user (needs decision)
+          NEEDS_CONTEXT      → Escalate to user (missing information)
+```
+
+The system stops autonomously when the reviewer approves or escalates. No manual intervention needed for the happy path.
 
 ## Features
 
-- **Dual-agent architecture** — Claude Code + Codex as parallel services, shared SQLite (WAL mode)
-- **Browser automation** — [gstack browse](https://github.com/garrytan/gstack) skill, headless Chromium daemon, ~100ms/command
+- **Paired review** — Autonomous owner/reviewer ping-pong with verdict-based control
+- **Configurable agent types** — Owner and reviewer roles independently set to `claude-code` or `codex`
+- **Reviewer fallback** — Claude 429/exhaustion → automatic handoff to codex-review
 - **Voice transcription** — Groq Whisper (primary) / OpenAI Whisper (fallback), shared file cache with dedup
-- **Bidirectional images** — receive Discord attachments as multimodal input, send screenshots back
+- **Bidirectional images** — Receive Discord attachments as multimodal input, send screenshots back
 - **Token rotation** — Claude 429 / usage exhaustion → automatic multi-account rotation
-- **CI monitoring** — `watch_ci` MCP tool for GitHub Actions run polling (structured fast path, no LLM token cost)
-- **Usage dashboard** — real-time token usage and service status overview
 - **MCP integration** — Memento (persistent memory) + EJClaw host tools (send_message, schedule_task, watch_ci, etc.)
-- **Skill sync** — single source of truth, auto-synced to all agent sessions
-- **Priority queue** — per-group serialization, global concurrency limit
-- **Session persistence** — resume conversations across restarts
-- **Scheduled tasks** — cron/interval/once via MCP tool
-- **Mid-turn steering** — inject follow-up messages while agent is working (both agents)
+- **Browser automation** — [gstack browse](https://github.com/garrytan/gstack) skill, headless Chromium daemon
+- **Priority queue** — Per-group serialization, global concurrency limit
+- **Session persistence** — Resume conversations across restarts
+- **Scheduled tasks** — Cron/interval/once via MCP tool
+- **Mid-turn steering** — Inject follow-up messages while agent is working
 
 ## Architecture
 
 ```
-Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Claude Code (Agent SDK, MessageStream)
-                                          └──► Codex (Codex SDK, codex exec)
+Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (Codex/Claude Code)
+                                          │       │
+                                          │       ▼ (auto-trigger)
+                                          └──► Reviewer (Claude Code/Codex)
+                                          │       │
+                                          │   Verdict routing
+                                          │       ├─ DONE → merge_ready → Owner finalizes
+                                          │       ├─ BLOCKED/NEEDS_CONTEXT → User
+                                          │       └─ Feedback → Owner (loop)
                                           │
                                      IPC polling ◄── follow-up messages (mid-turn steering)
                                           │
@@ -59,8 +83,7 @@ Each agent has access to:
 - Node.js 20+ (24 recommended, fnm for version management)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
-- Bun 1.0+ (for browser automation)
-- Discord bot token
+- Discord bot tokens (3: Claude, Codex-main, Codex-review)
 
 ### Install
 
@@ -74,29 +97,28 @@ npm run build
 
 ### Environment
 
-```bash
-# .env
-DISCORD_BOT_TOKEN=           # Discord bot token
-ASSISTANT_NAME=claude        # Bot trigger name (@claude)
-CLAUDE_CODE_OAUTH_TOKEN=     # Claude Code OAuth token (primary)
-CLAUDE_CODE_OAUTH_TOKENS=    # Comma-separated tokens for multi-account rotation
-OPENAI_API_KEY=              # For Codex
-GROQ_API_KEY=                # Voice transcription (Groq Whisper)
-```
-
-### Codex Service (optional)
-
-To run the Codex agent alongside Claude, create `.env.codex`:
+All configuration in a single `.env` file:
 
 ```bash
-# .env.codex
-DISCORD_BOT_TOKEN=               # Separate Discord bot token for Codex
+# Discord bots (3 tokens for 3 bots)
+DISCORD_BOT_TOKEN=               # Claude bot
+DISCORD_CODEX_BOT_TOKEN=         # Codex-main bot (owner)
+DISCORD_REVIEW_BOT_TOKEN=        # Codex-review bot (fallback reviewer)
 
-# .env.codex-review
-DISCORD_BOT_TOKEN=               # Separate Discord bot token for Codex Review
+# Agent type configuration
+OWNER_AGENT_TYPE=codex            # codex | claude-code
+REVIEWER_AGENT_TYPE=claude-code   # claude-code | codex
+
+# API keys
+CLAUDE_CODE_OAUTH_TOKEN=          # Claude Code OAuth token
+CLAUDE_CODE_OAUTH_TOKENS=         # Comma-separated tokens for multi-account rotation
+OPENAI_API_KEY=                   # For Codex
+GROQ_API_KEY=                     # Voice transcription (Groq Whisper)
+
+# Bot names
+ASSISTANT_NAME=claude             # Claude bot trigger name
+CODEX_ASSISTANT_NAME=codex        # Codex bot trigger name
 ```
-
-The setup step (`npm run setup -- --step service`) auto-detects `.env.codex` and `.env.codex-review`, then installs `ejclaw-codex` and `ejclaw-review` alongside `ejclaw`. Additional Codex settings (`CODEX_MODEL`, `CODEX_EFFORT`, etc.) can be added to `.env.codex`, `.env.codex-review`, or as `Environment=` lines in the systemd units.
 
 ### Authentication
 
@@ -104,21 +126,24 @@ Multi-account OAuth token rotation is supported via `CLAUDE_CODE_OAUTH_TOKENS` (
 
 Token auto-refresh runs on the Claude service only, refreshing access tokens 30 minutes before expiry using rotating refresh tokens from `~/.claude/.credentials.json` (account 0) and `~/.claude-accounts/{n}/.credentials.json` (account 1+). Generate tokens with `claude setup-token` (account 0) or `CLAUDE_CONFIG_DIR=~/.claude-accounts/{n} claude setup-token` (account 1+).
 
-### Systemd Services (Linux)
+### Systemd Service (Linux)
+
+Single unified service:
 
 ```bash
-npm run restart:stack
-systemctl --user enable ejclaw ejclaw-codex ejclaw-review
-systemctl --user start ejclaw ejclaw-codex ejclaw-review
-
-# Logs
-journalctl --user -u ejclaw -f
-journalctl --user -u ejclaw-codex -f
-journalctl --user -u ejclaw-review -f
+systemctl --user restart ejclaw    # Restart
+systemctl --user status ejclaw     # Check status
+systemctl --user enable ejclaw     # Enable on boot
+journalctl --user -u ejclaw -f     # Follow logs
 ```
 
-Use `npm run restart:stack` from an external shell or deploy wrapper, not from inside one of the managed EJClaw services.
-On existing installs, run `npm run setup -- --step service` once after pulling this slice so the `ejclaw-stack-restart.service` unit is installed.
+### Deploy
+
+Build on server, not locally:
+
+```bash
+ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && npm run build && npm run build:runners && systemctl --user restart ejclaw'
+```
 
 ## Development
 

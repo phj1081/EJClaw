@@ -58,7 +58,7 @@ ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && npm run build && npm run
 ## Service Stack Architecture
 
 Single unified service manages all three Discord bots in one process:
-- `ejclaw.service` — Unified process, `UNIFIED_MODE=true` (default)
+- `ejclaw.service` — Single unified process
 - Discord bots: `DISCORD_BOT_TOKEN` (Claude), `DISCORD_CODEX_BOT_TOKEN` (Codex-main), `DISCORD_REVIEW_BOT_TOKEN` (Codex-review)
 - Paired review: owner (`OWNER_AGENT_TYPE`, default: codex) ↔ reviewer (`REVIEWER_AGENT_TYPE`, default: claude-code)
 - Reviewer fallback: Claude 429/한도초과 시 codex-review로 자동 핸드오프

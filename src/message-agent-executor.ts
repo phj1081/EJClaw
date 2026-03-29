@@ -128,10 +128,11 @@ export async function runAgentForGroup(
   const isClaudeCodeAgent = effectiveAgentType === 'claude-code';
 
   // When the reviewer uses a different agent type than the group default,
-  // the stored session belongs to the other agent. Don't reuse it.
-  const sessionId = reviewerAgentTypeOverride
-    ? undefined
-    : sessions[group.folder];
+  // use a separate session key so owner and reviewer sessions don't collide.
+  const sessionFolder = reviewerAgentTypeOverride
+    ? `${group.folder}:reviewer`
+    : group.folder;
+  const sessionId = sessions[sessionFolder];
   const memoryBriefing = sessionId
     ? undefined
     : await buildRoomMemoryBriefing({
@@ -307,7 +308,7 @@ export async function runAgentForGroup(
             output.newSessionId &&
             !resetSessionRequested
           ) {
-            deps.persistSession(group.folder, output.newSessionId);
+            deps.persistSession(sessionFolder, output.newSessionId);
           }
           const evaluation = evaluateStreamedOutput(output, streamedState, {
             agentType: isClaudeCodeAgent ? 'claude-code' : 'codex',
@@ -443,7 +444,7 @@ export async function runAgentForGroup(
       );
 
       if (provider === 'claude' && output.newSessionId) {
-        deps.persistSession(group.folder, output.newSessionId);
+        deps.persistSession(sessionFolder, output.newSessionId);
       }
 
       logger.info(
@@ -657,7 +658,7 @@ export async function runAgentForGroup(
           })));
 
     if (isRetryableClaudeSessionFailure(primaryAttempt)) {
-      deps.clearSession(group.folder);
+      deps.clearSession(sessionFolder);
       logger.warn(
         { group: group.name, chatJid, runId },
         'Cleared poisoned Claude session before visible output, retrying fresh session',
@@ -666,7 +667,7 @@ export async function runAgentForGroup(
       primaryAttempt = await runAttempt('claude');
 
       if (isRetryableClaudeSessionFailure(primaryAttempt)) {
-        deps.clearSession(group.folder);
+        deps.clearSession(sessionFolder);
         logger.warn(
           { group: group.name, chatJid, runId },
           'Fresh Claude retry also hit a retryable session failure',
@@ -791,9 +792,9 @@ export async function runAgentForGroup(
       isClaudeCodeAgent &&
       (resetSessionRequested || shouldResetSessionOnAgentFailure(output))
     ) {
-      deps.clearSession(group.folder);
+      deps.clearSession(sessionFolder);
       logger.warn(
-        { group: group.name, chatJid, runId },
+        { group: group.name, chatJid, runId, sessionFolder },
         'Cleared poisoned agent session after unrecoverable error',
       );
     }
