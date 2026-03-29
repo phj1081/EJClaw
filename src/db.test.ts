@@ -531,10 +531,9 @@ Check the run.
       created_at: '2024-01-01T00:00:01.000Z',
     });
 
-    expect(getDueTasks('claude-code').map((task) => task.id)).toEqual([
-      'task-claude',
-    ]);
-    expect(getDueTasks('codex').map((task) => task.id)).toEqual(['task-codex']);
+    const dueIds = getDueTasks().map((task) => task.id);
+    expect(dueIds).toContain('task-claude');
+    expect(dueIds).toContain('task-codex');
   });
 });
 

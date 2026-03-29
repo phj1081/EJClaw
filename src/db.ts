@@ -1411,20 +1411,18 @@ export function deleteTask(id: string): void {
   }
 }
 
-export function getDueTasks(
-  agentType: AgentType = SERVICE_AGENT_TYPE,
-): ScheduledTask[] {
+export function getDueTasks(): ScheduledTask[] {
   const now = new Date().toISOString();
   return db
     .prepare(
       `
     SELECT * FROM scheduled_tasks
-    WHERE status = 'active' AND agent_type = ? AND next_run IS NOT NULL AND next_run <= ?
+    WHERE status = 'active' AND next_run IS NOT NULL AND next_run <= ?
       AND (suspended_until IS NULL OR suspended_until <= ?)
     ORDER BY next_run
   `,
     )
-    .all(agentType, now, now) as ScheduledTask[];
+    .all(now, now) as ScheduledTask[];
 }
 
 export function updateTaskAfterRun(

@@ -899,9 +899,9 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     schedulerTickInFlight = true;
 
     try {
-      const agentType = deps.serviceAgentType || SERVICE_AGENT_TYPE;
+      // Unified service: process all agent types, not just the service default.
       const nowMs = Date.now();
-      const activeTasks = getAllTasks(agentType).filter(
+      const activeTasks = getAllTasks().filter(
         (task) => task.status === 'active',
       );
 
@@ -927,7 +927,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         );
       }
 
-      const dueTasks = getDueTasks(agentType);
+      const dueTasks = getDueTasks();
       if (dueTasks.length > 0) {
         logger.info({ count: dueTasks.length }, 'Found due tasks');
       }
