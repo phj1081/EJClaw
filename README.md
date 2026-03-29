@@ -40,28 +40,31 @@ The system stops autonomously when the reviewer approves or escalates. No manual
 ## Features
 
 - **Paired review** — Autonomous owner/reviewer ping-pong with verdict-based control
+- **Container-isolated reviewer** — Reviewer runs in persistent Docker container with read-only source mount (kernel-level write protection)
+- **Post-approval change detection** — Re-triggers review if owner modifies code after reviewer DONE (git tree hash comparison)
 - **Configurable agent types** — Owner and reviewer roles independently set to `claude-code` or `codex`
 - **Reviewer fallback** — Claude 429/exhaustion → automatic handoff to codex-review
+- **Credential proxy** — API keys never exposed to containers, injected via HTTP proxy
 - **Voice transcription** — Groq Whisper (primary) / OpenAI Whisper (fallback), shared file cache with dedup
 - **Bidirectional images** — Receive Discord attachments as multimodal input, send screenshots back
 - **Token rotation** — Claude 429 / usage exhaustion → automatic multi-account rotation
 - **MCP integration** — Memento (persistent memory) + EJClaw host tools (send_message, schedule_task, watch_ci, etc.)
 - **Browser automation** — [gstack browse](https://github.com/garrytan/gstack) skill, headless Chromium daemon
 - **Priority queue** — Per-group serialization, global concurrency limit
-- **Session persistence** — Resume conversations across restarts
+- **Session persistence** — Resume conversations across restarts (separate sessions per role)
 - **Scheduled tasks** — Cron/interval/once via MCP tool
 - **Mid-turn steering** — Inject follow-up messages while agent is working
 
 ## Architecture
 
 ```
-Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (Codex/Claude Code)
+Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (host process)
                                           │       │
                                           │       ▼ (auto-trigger)
-                                          └──► Reviewer (Claude Code/Codex)
+                                          └──► Reviewer (Docker container, :ro mount)
                                           │       │
                                           │   Verdict routing
-                                          │       ├─ DONE → merge_ready → Owner finalizes
+                                          │       ├─ DONE → change detection → Owner finalizes or re-review
                                           │       ├─ BLOCKED/NEEDS_CONTEXT → User
                                           │       └─ Feedback → Owner (loop)
                                           │
@@ -69,10 +72,16 @@ Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (Co
                                           │
                                      Router ──► Discord (text, images, files)
 
-Each agent has access to:
-  ├── MCP tools (send_message, schedule_task, watch_ci, ...)
-  ├── Bash skills (agent-browser → gstack browse, persistent Chromium)
-  └── Per-group memory (CLAUDE.md / AGENTS.md)
+Owner (host process):
+  ├── Stable per-channel worktree (session persists across tasks)
+  ├── MCP tools, Bash skills, per-group memory
+  └── Full read-write access
+
+Reviewer (persistent Docker container):
+  ├── Owner workspace mounted read-only (kernel-level protection)
+  ├── Credential proxy (API keys never in container)
+  ├── pnpm store mounted read-only (if applicable)
+  └── tmpfs for test caches (vitest, jest, npm)
 ```
 
 ## Setup
@@ -81,6 +90,7 @@ Each agent has access to:
 
 - Linux (Ubuntu 22.04+) or macOS
 - Node.js 20+ (24 recommended, fnm for version management)
+- Docker (required for reviewer container isolation)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
 - Discord bot tokens (3: Claude, Codex-main, Codex-review)
