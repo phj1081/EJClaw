@@ -234,6 +234,15 @@ function buildContainerArgs(
         key === 'CLAUDE_CODE_OAUTH_TOKEN'
       )
         continue;
+      // Remap host paths to container mount points
+      if (key === 'EJCLAW_WORK_DIR') {
+        args.push('-e', 'EJCLAW_WORK_DIR=/workspace/project');
+        continue;
+      }
+      if (key === 'CLAUDE_CONFIG_DIR') {
+        args.push('-e', 'CLAUDE_CONFIG_DIR=/home/node/.claude');
+        continue;
+      }
       args.push('-e', `${key}=${value}`);
     }
   }
