@@ -285,7 +285,14 @@ export async function runAgentProcess(
         if (
           line.includes('Turn in progress') ||
           line.includes('Subagent') ||
-          line.includes('Intermediate assistant')
+          line.includes('Intermediate assistant') ||
+          line.includes('Promoting') ||
+          line.includes('Flushing') ||
+          line.includes('Result #') ||
+          line.includes('Query done') ||
+          line.includes('Terminal') ||
+          line.includes('Assistant: stop=') ||
+          line.includes('Close sentinel')
         ) {
           logger.info(
             { group: group.name, chatJid: input.chatJid, runId: input.runId },
