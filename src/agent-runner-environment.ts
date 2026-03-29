@@ -10,6 +10,7 @@ import {
   TIMEZONE,
   isReviewService,
 } from './config.js';
+import { logger } from './logger.js';
 import { isPairedRoomJid } from './db.js';
 import { readEnvFile } from './env.js';
 import { getActiveCodexAuthPath } from './codex-token-rotation.js';
@@ -565,6 +566,17 @@ export function prepareContainerSessionEnvironment(args: {
   const sessionClaudeMdPath = path.join(sessionDir, 'CLAUDE.md');
   if (sessionClaudeMd) {
     fs.writeFileSync(sessionClaudeMdPath, sessionClaudeMd + '\n');
+    logger.info(
+      {
+        sessionDir,
+        claudeMdSize: sessionClaudeMd.length,
+        hasPlatform: !!claudePlatformPrompt,
+        hasPairedRoom: !!claudePairedRoomPrompt,
+        hasGlobalMemory: !!globalClaudeMemory,
+        hasMemoryBriefing: !!memoryBriefing,
+      },
+      'Container session CLAUDE.md written',
+    );
   } else if (fs.existsSync(sessionClaudeMdPath)) {
     fs.unlinkSync(sessionClaudeMdPath);
   }
