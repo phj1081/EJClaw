@@ -218,6 +218,14 @@ function copySnapshotPaths(
     if (!fs.existsSync(sourcePath)) continue;
 
     const targetPath = path.join(targetDir, relativePath);
+    const srcStat = fs.statSync(sourcePath);
+    // When source is a directory (e.g. nested git repo listed by git ls-files),
+    // remove any conflicting non-directory at the target before copying.
+    if (srcStat.isDirectory()) {
+      if (fs.existsSync(targetPath) && !fs.statSync(targetPath).isDirectory()) {
+        fs.rmSync(targetPath, { force: true });
+      }
+    }
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
     fs.cpSync(sourcePath, targetPath, { force: true, recursive: true });
   }
