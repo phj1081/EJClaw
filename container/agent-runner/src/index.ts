@@ -8,7 +8,7 @@
  * The project directory is mounted read-only — the reviewer
  * can read/test code but cannot modify it.
  */
-import { claude } from '@anthropic-ai/claude-code';
+import { query } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'fs';
 import path from 'path';
 
@@ -79,10 +79,12 @@ async function main(): Promise<void> {
   const systemPrompt = systemPromptParts.join('\n\n');
 
   try {
-    const result = await claude({
+    let lastAssistantText = '';
+
+    for await (const message of query({
       prompt: input.prompt,
-      systemPrompt,
       options: {
+        systemPrompt,
         allowedTools: [
           'Read',
           'Bash',
@@ -95,25 +97,25 @@ async function main(): Promise<void> {
         ],
         maxTurns: 30,
         cwd: '/workspace/project',
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
       },
-    });
-
-    // Extract text from result
-    const text =
-      typeof result === 'string'
-        ? result
-        : Array.isArray(result)
-          ? result
-              .filter(
-                (b: { type: string; text?: string }) => b.type === 'text',
-              )
-              .map((b: { text?: string }) => b.text || '')
-              .join('\n')
-          : String(result);
+    })) {
+      if (message.type === 'assistant') {
+        const content = (message as { message?: { content?: Array<{ type: string; text?: string }> } }).message?.content;
+        if (content) {
+          for (const block of content) {
+            if (block.type === 'text' && block.text) {
+              lastAssistantText = block.text;
+            }
+          }
+        }
+      }
+    }
 
     emitOutput({
       status: 'success',
-      result: text,
+      result: lastAssistantText || null,
       phase: 'final',
     });
   } catch (err) {
