@@ -43,14 +43,18 @@ function classifyReviewerVerdict(
   summary: string | null | undefined,
 ): ReviewerVerdict {
   if (!summary) return 'continue';
-  const firstLine = summary.trimStart().split('\n')[0].trim();
-  // Match only at the START of the first line to avoid false positives
-  // from quoted/referenced status markers in the body text.
-  if (/^\*{0,2}BLOCKED\*{0,2}\b/.test(firstLine)) return 'blocked';
-  if (/^\*{0,2}NEEDS_CONTEXT\*{0,2}\b/.test(firstLine)) return 'needs_context';
-  if (/^\*{0,2}DONE_WITH_CONCERNS\*{0,2}\b/.test(firstLine))
+  // Strip <internal>...</internal> tags — these are internal reasoning, not the verdict
+  const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  if (!cleaned) return 'continue';
+  const firstLine = cleaned.split('\n')[0].trim();
+  // Match verdict markers at the start of the first visible line
+  if (/^\*{0,2}BLOCKED\*{0,2}\b/i.test(firstLine)) return 'blocked';
+  if (/^\*{0,2}NEEDS_CONTEXT\*{0,2}\b/i.test(firstLine)) return 'needs_context';
+  if (/^\*{0,2}DONE_WITH_CONCERNS\*{0,2}\b/i.test(firstLine))
     return 'done_with_concerns';
-  if (/^\*{0,2}DONE\*{0,2}\b/.test(firstLine)) return 'done';
+  if (/^\*{0,2}DONE\*{0,2}\b/i.test(firstLine)) return 'done';
+  if (/^\*{0,2}Approved\.?\*{0,2}/i.test(firstLine)) return 'done';
+  if (/^\*{0,2}LGTM\*{0,2}/i.test(firstLine)) return 'done';
   return 'continue';
 }
 
