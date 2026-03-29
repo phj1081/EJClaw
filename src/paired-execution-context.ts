@@ -260,7 +260,6 @@ export function preparePairedExecutionContext(args: {
       DATA_DIR,
       'sessions',
       `${group.folder}-reviewer`,
-      '.claude',
     );
     fs.mkdirSync(reviewerSessionDir, { recursive: true });
     envOverrides.CLAUDE_CONFIG_DIR = reviewerSessionDir;
