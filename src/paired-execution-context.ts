@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process';
 import crypto from 'crypto';
 
-import { SERVICE_ID, normalizeServiceId } from './config.js';
+import { SERVICE_ID, normalizeServiceId, PAIRED_MAX_ROUND_TRIPS } from './config.js';
 import {
   createPairedTask,
   getLatestPairedTaskForChat,
@@ -103,6 +103,7 @@ function ensureActiveTask(
     source_ref: resolveCanonicalSourceRef(canonicalWorkDir),
     plan_notes: null,
     review_requested_at: null,
+    round_trip_count: 0,
     status: 'active',
     created_at: now,
     updated_at: now,
@@ -203,17 +204,63 @@ export function preparePairedExecutionContext(args: {
 
 export function completePairedExecutionContext(args: {
   taskId: string;
+  role: 'owner' | 'reviewer';
   status: 'succeeded' | 'failed';
   summary?: string | null;
 }): void {
+  const { taskId, role, status } = args;
   logger.info(
     {
-      taskId: args.taskId,
-      status: args.status,
+      taskId,
+      role,
+      status,
       summary: args.summary?.slice(0, 200),
     },
     'Paired execution completed',
   );
+
+  if (status !== 'succeeded') return;
+
+  const task = getPairedTaskById(taskId);
+  if (!task) return;
+
+  // Owner finished → auto-trigger reviewer (if within round trip limit)
+  if (role === 'owner') {
+    if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
+      logger.info(
+        { taskId, roundTrips: task.round_trip_count, max: PAIRED_MAX_ROUND_TRIPS },
+        'Round trip limit reached, skipping auto-review',
+      );
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const result = markPairedTaskReviewReady(taskId);
+    if (result) {
+      updatePairedTask(taskId, {
+        round_trip_count: task.round_trip_count + 1,
+        review_requested_at: now,
+        updated_at: now,
+      });
+      logger.info(
+        { taskId, roundTrip: task.round_trip_count + 1 },
+        'Auto-triggered reviewer after owner completion',
+      );
+    }
+  }
+
+  // Reviewer finished → set task back to active so owner can respond
+  if (role === 'reviewer') {
+    const now = new Date().toISOString();
+    updatePairedTask(taskId, {
+      status: 'active',
+      updated_at: now,
+    });
+    logger.info(
+      { taskId },
+      'Reviewer completed, task set back to active for owner',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

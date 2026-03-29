@@ -250,11 +250,7 @@ function createSchema(database: Database.Database): void {
       source_ref TEXT,
       plan_notes TEXT,
       review_requested_at TEXT,
-      last_finalized_checkpoint TEXT,
-      gate_turn_kind TEXT,
-      reviewer_verdict TEXT,
-      reviewer_verdict_at TEXT,
-      reviewer_verdict_note TEXT,
+      round_trip_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -566,7 +562,9 @@ function createSchema(database: Database.Database): void {
     .get() as { sql?: string } | undefined;
   const pairedTasksSql = pairedTasksSqlRow?.sql || '';
   const pairedTasksNeedsRebuild =
-    pairedTasksSql && pairedTasksSql.includes('task_policy');
+    pairedTasksSql &&
+    (pairedTasksSql.includes('task_policy') ||
+      !pairedTasksSql.includes('round_trip_count'));
   if (pairedTasksNeedsRebuild) {
     database.exec(`DROP TABLE IF EXISTS paired_tasks`);
     database.exec(`
@@ -580,11 +578,7 @@ function createSchema(database: Database.Database): void {
         source_ref TEXT,
         plan_notes TEXT,
         review_requested_at TEXT,
-        last_finalized_checkpoint TEXT,
-        gate_turn_kind TEXT,
-        reviewer_verdict TEXT,
-        reviewer_verdict_at TEXT,
-        reviewer_verdict_note TEXT,
+        round_trip_count INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -1847,11 +1841,12 @@ export function createPairedTask(task: PairedTask): void {
         source_ref,
         plan_notes,
         review_requested_at,
+        round_trip_count,
         status,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
@@ -1863,6 +1858,7 @@ export function createPairedTask(task: PairedTask): void {
     task.source_ref,
     task.plan_notes,
     task.review_requested_at,
+    task.round_trip_count,
     task.status,
     task.created_at,
     task.updated_at,
@@ -1917,6 +1913,7 @@ export function updatePairedTask(
       | 'source_ref'
       | 'plan_notes'
       | 'review_requested_at'
+      | 'round_trip_count'
       | 'status'
       | 'updated_at'
     >
@@ -1940,6 +1937,10 @@ export function updatePairedTask(
   if (updates.review_requested_at !== undefined) {
     fields.push('review_requested_at = ?');
     values.push(updates.review_requested_at);
+  }
+  if (updates.round_trip_count !== undefined) {
+    fields.push('round_trip_count = ?');
+    values.push(updates.round_trip_count);
   }
   if (updates.status !== undefined) {
     fields.push('status = ?');

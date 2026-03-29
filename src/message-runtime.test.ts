@@ -262,7 +262,7 @@ describe('createMessageRuntime', () => {
         reviewer_service_id: 'codex-main',
         title: null,
         source_ref: 'HEAD',
-        plan_notes: null,
+        plan_notes: null, round_trip_count: 0,
         review_requested_at: '2026-03-29T00:00:00.000Z',
         status: 'review_ready',
         created_at: '2026-03-29T00:00:00.000Z',
@@ -354,7 +354,7 @@ describe('createMessageRuntime', () => {
         reviewer_service_id: 'codex-main',
         title: null,
         source_ref: 'HEAD',
-        plan_notes: null,
+        plan_notes: null, round_trip_count: 0,
         review_requested_at: null,
         status: 'active',
         created_at: '2026-03-29T00:00:00.000Z',
@@ -2841,5 +2841,4 @@ describe('createMessageRuntime', () => {
     expect(enqueueTask).not.toHaveBeenCalled();
     expect(db.getMessagesSinceSeq).not.toHaveBeenCalled();
   });
-
 });

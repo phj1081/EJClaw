@@ -62,6 +62,7 @@ export interface PairedTask {
   source_ref: string | null;
   plan_notes: string | null;
   review_requested_at: string | null;
+  round_trip_count: number;
   status: PairedTaskStatus;
   created_at: string;
   updated_at: string;

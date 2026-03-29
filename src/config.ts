@@ -91,6 +91,12 @@ export const RECOVERY_CONCURRENT_AGENTS = parseInt(
   10,
 );
 
+// ── Paired review ─────────────────────────────────────────────────
+// Max owner↔reviewer round trips per task. 0 = unlimited.
+const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '10';
+export const PAIRED_MAX_ROUND_TRIPS =
+  rawMaxRoundTrips === '0' ? Infinity : parseInt(rawMaxRoundTrips, 10) || 10;
+
 // ── Container isolation ───────────────────────────────────────────
 export const REVIEWER_CONTAINER_IMAGE =
   getEnv('REVIEWER_CONTAINER_IMAGE') || 'ejclaw-reviewer:latest';

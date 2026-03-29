@@ -1,6 +1,9 @@
 import { getErrorMessage } from './utils.js';
 
-import { getAgentOutputText, getStructuredAgentOutput } from './agent-output.js';
+import {
+  getAgentOutputText,
+  getStructuredAgentOutput,
+} from './agent-output.js';
 import {
   AgentOutput,
   runAgentProcess,
@@ -226,6 +229,7 @@ export async function runAgentForGroup(
     });
     completePairedExecutionContext({
       taskId: pairedExecutionContext.task.id,
+      role: roomRoleContext?.role ?? 'owner',
       status: pairedExecutionStatus,
       summary: pairedExecutionSummary,
     });
@@ -871,6 +875,7 @@ export async function runAgentForGroup(
     if (pairedExecutionContext) {
       completePairedExecutionContext({
         taskId: pairedExecutionContext.task.id,
+        role: roomRoleContext?.role ?? 'owner',
         status: pairedExecutionStatus,
         summary: pairedExecutionSummary,
       });
