@@ -1550,6 +1550,13 @@ export function deleteSession(groupFolder: string): void {
   ).run(groupFolder, SERVICE_AGENT_TYPE);
 }
 
+export function deleteAllSessionsForGroup(groupFolder: string): void {
+  db.prepare('DELETE FROM service_sessions WHERE group_folder = ?').run(
+    groupFolder,
+  );
+  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+}
+
 export function getAllSessions(): Record<string, string> {
   const serviceRows = db
     .prepare(

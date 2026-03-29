@@ -101,7 +101,7 @@ export interface MessageRuntimeDeps {
   getLastAgentTimestamps: () => Record<string, string>;
   saveState: () => void;
   persistSession: (groupFolder: string, sessionId: string) => void;
-  clearSession: (groupFolder: string) => void;
+  clearSession: (groupFolder: string, opts?: { allRoles?: boolean }) => void;
 }
 
 export function createMessageRuntime(deps: MessageRuntimeDeps): {
@@ -542,7 +542,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             deps.queue.closeStdin(chatJid, {
               reason: 'session-command',
             }),
-          clearSession: () => deps.clearSession(group.folder),
+          clearSession: (opts) => deps.clearSession(group.folder, opts),
           advanceCursor: (cursorOrTimestamp) => {
             advanceLastAgentCursor(
               deps.getLastAgentTimestamps(),

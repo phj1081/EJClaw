@@ -1,7 +1,11 @@
 import { execFileSync } from 'child_process';
 import crypto from 'crypto';
 
-import { SERVICE_ID, normalizeServiceId, PAIRED_MAX_ROUND_TRIPS } from './config.js';
+import {
+  SERVICE_ID,
+  normalizeServiceId,
+  PAIRED_MAX_ROUND_TRIPS,
+} from './config.js';
 import {
   createPairedTask,
   getLatestPairedTaskForChat,
@@ -228,7 +232,11 @@ export function completePairedExecutionContext(args: {
   if (role === 'owner') {
     if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
       logger.info(
-        { taskId, roundTrips: task.round_trip_count, max: PAIRED_MAX_ROUND_TRIPS },
+        {
+          taskId,
+          roundTrips: task.round_trip_count,
+          max: PAIRED_MAX_ROUND_TRIPS,
+        },
         'Round trip limit reached, skipping auto-review',
       );
       return;

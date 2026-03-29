@@ -73,7 +73,7 @@ export interface SessionCommandDeps {
     onOutput: (result: AgentResult) => Promise<void>,
   ) => Promise<'success' | 'error'>;
   closeStdin: () => void;
-  clearSession: () => void;
+  clearSession: (opts?: { allRoles?: boolean }) => void;
   advanceCursor: (timestamp: string) => void;
   formatMessages: (msgs: NewMessage[], timezone: string) => string;
   isAdminSender: (msg: NewMessage) => boolean;
@@ -158,7 +158,7 @@ export async function handleSessionCommand(opts: {
 
   if (command === '/clear') {
     deps.closeStdin();
-    deps.clearSession();
+    deps.clearSession({ allRoles: true });
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       'Current session cleared. The next message will start a new conversation.',

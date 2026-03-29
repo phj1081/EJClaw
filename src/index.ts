@@ -37,6 +37,7 @@ import {
   initDatabase,
   setRegisteredGroup,
   setRouterState,
+  deleteAllSessionsForGroup,
   deleteSession,
   setSession,
   storeChatMetadata,
@@ -208,9 +209,16 @@ function saveState(): void {
   setRouterState('last_agent_seq', JSON.stringify(lastAgentTimestamp));
 }
 
-function clearSession(groupFolder: string): void {
+function clearSession(
+  groupFolder: string,
+  opts?: { allRoles?: boolean },
+): void {
   delete sessions[groupFolder];
-  deleteSession(groupFolder);
+  if (opts?.allRoles) {
+    deleteAllSessionsForGroup(groupFolder);
+  } else {
+    deleteSession(groupFolder);
+  }
 }
 
 function registerGroup(jid: string, group: RegisteredGroup): void {
