@@ -199,7 +199,7 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     expect(auth).toEqual(rotatedAuth);
   });
 
-  it('uses the failover prompt pack for codex-review when it owns an explicit failover lease', () => {
+  it('uses the failover owner prompt pack for codex-review when it owns an explicit failover lease', () => {
     vi.mocked(config.isReviewService).mockReturnValue(true);
     vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
@@ -219,10 +219,6 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       'review platform prompt\n',
     );
     fs.writeFileSync(
-      path.join(promptsDir, 'codex-review-paired-room.md'),
-      'review paired prompt\n',
-    );
-    fs.writeFileSync(
       path.join(promptsDir, 'owner-common-platform.md'),
       'owner common platform prompt\n',
     );
@@ -234,11 +230,6 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       path.join(promptsDir, 'codex-review-failover-platform.md'),
       'failover platform prompt\n',
     );
-    fs.writeFileSync(
-      path.join(promptsDir, 'codex-review-failover-paired-room.md'),
-      'failover paired prompt\n',
-    );
-
     prepareGroupEnvironment(
       { ...group, workDir: path.join(tempRoot, 'workdir') },
       false,
@@ -264,12 +255,11 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       'owner common platform prompt',
       'failover platform prompt',
       'owner common paired prompt',
-      'failover paired prompt',
       'memory briefing',
     ]);
   });
 
-  it('adds the shared owner prompt fragments to Claude session prompts', () => {
+  it('adds only the shared owner prompt fragments to Claude session prompts', () => {
     vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
     mockReadEnvFile.mockReturnValue({});
 
@@ -309,12 +299,11 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       'owner common platform prompt',
       'platform prompt',
       'owner common paired prompt',
-      'paired room prompt',
       'memory briefing',
     ]);
   });
 
-  it('returns to the normal review prompt stack after failover is cleared', () => {
+  it('returns to the normal owner prompt stack after failover is cleared', () => {
     vi.mocked(config.isReviewService).mockReturnValue(true);
     vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
@@ -329,23 +318,6 @@ describe('prepareGroupEnvironment codex auth handling', () => {
 
     const promptsDir = path.join(tempRoot, 'prompts');
     fs.mkdirSync(promptsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(promptsDir, 'codex-review-platform.md'),
-      'review platform prompt\n',
-    );
-    fs.writeFileSync(
-      path.join(promptsDir, 'codex-review-paired-room.md'),
-      'review paired prompt\n',
-    );
-    fs.writeFileSync(
-      path.join(promptsDir, 'codex-review-failover-platform.md'),
-      'failover platform prompt\n',
-    );
-    fs.writeFileSync(
-      path.join(promptsDir, 'codex-review-failover-paired-room.md'),
-      'failover paired prompt\n',
-    );
-
     prepareGroupEnvironment(group, false, 'dc:test');
 
     const agentsPath = path.join(
@@ -360,11 +332,6 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     const agents = fs.readFileSync(agentsPath, 'utf-8');
     const segments = agents.trim().split('\n\n---\n\n');
 
-    expect(segments).toEqual([
-      'platform prompt',
-      'review platform prompt',
-      'paired room prompt',
-      'review paired prompt',
-    ]);
+    expect(segments).toEqual(['platform prompt']);
   });
 });

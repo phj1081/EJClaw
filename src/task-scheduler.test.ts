@@ -131,6 +131,7 @@ vi.mock('./github-ci.js', () => ({
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
+import { TIMEZONE } from './config.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import * as tokenRotation from './token-rotation.js';
@@ -143,6 +144,19 @@ import {
   renderWatchCiStatusMessage,
   startSchedulerLoop,
 } from './task-scheduler.js';
+
+function formatExpectedTimeLabel(timestampIso: string): string {
+  return new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: TIMEZONE,
+  })
+    .format(new Date(timestampIso))
+    .replace(/:/g, '시 ')
+    .replace(/시 (\d{2})$/, '분 $1초');
+}
 
 describe('task scheduler', () => {
   beforeEach(() => {
@@ -206,7 +220,7 @@ describe('task scheduler', () => {
     expect(task?.status).toBe('paused');
   });
 
-  it('only enqueues tasks owned by the current service agent type', async () => {
+  it('enqueues due tasks across agent types in unified service mode', async () => {
     const dueAt = new Date(Date.now() - 60_000).toISOString();
     createTask({
       id: 'task-claude',
@@ -256,9 +270,17 @@ describe('task scheduler', () => {
 
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(enqueueTask).toHaveBeenCalledTimes(1);
-    expect(enqueueTask.mock.calls[0][0]).toBe('shared@g.us::task:task-codex');
-    expect(enqueueTask.mock.calls[0][1]).toBe('task-codex');
+    expect(enqueueTask).toHaveBeenCalledTimes(2);
+    expect(
+      enqueueTask.mock.calls
+        .map(([queueJid, taskId]) => `${queueJid}|${taskId}`)
+        .sort(),
+    ).toEqual(
+      [
+        'shared@g.us::task:task-claude|task-claude',
+        'shared@g.us::task:task-codex|task-codex',
+      ].sort(),
+    );
   });
 
   it('keeps group-context tasks on the chat queue key', async () => {
@@ -1348,12 +1370,19 @@ Check the run.
       nextRun: '2026-03-19T07:04:10.000Z',
     });
 
+    const expectedCheckedLabel = formatExpectedTimeLabel(
+      '2026-03-19T07:02:10.000Z',
+    );
+    const expectedNextLabel = formatExpectedTimeLabel(
+      '2026-03-19T07:04:10.000Z',
+    );
+
     expect(rendered).toContain('CI 감시 중: GitHub Actions run 123456');
     expect(rendered).toContain('- 상태: 대기 중');
-    expect(rendered).toContain('- 마지막 확인: 16시 02분 10초');
+    expect(rendered).toContain(`- 마지막 확인: ${expectedCheckedLabel}`);
     expect(rendered).toContain('- 경과 시간: 2분 10초');
     expect(rendered).toContain('- 확인 간격: 1분');
-    expect(rendered).toContain('- 다음 확인: 16시 04분 10초');
+    expect(rendered).toContain(`- 다음 확인: ${expectedNextLabel}`);
     expect(rendered).not.toContain('16:02:10');
     expect(rendered).not.toContain('16:04:10');
   });
@@ -1429,6 +1458,10 @@ Check the run.
     vi.setSystemTime(new Date('2026-03-19T07:02:10.000Z'));
     await tracker.update('waiting', '2026-03-19T07:04:10.000Z');
 
+    const expectedNextLabel = formatExpectedTimeLabel(
+      '2026-03-19T07:04:10.000Z',
+    );
+
     expect(editTrackedMessage).toHaveBeenCalledWith(
       'shared@g.us',
       'msg-123',
@@ -1437,7 +1470,7 @@ Check the run.
     expect(editTrackedMessage).toHaveBeenCalledWith(
       'shared@g.us',
       'msg-123',
-      expect.stringContaining('- 다음 확인: 16시 04분 10초'),
+      expect.stringContaining(`- 다음 확인: ${expectedNextLabel}`),
     );
 
     const secondState = getTaskById('task-watch-status');

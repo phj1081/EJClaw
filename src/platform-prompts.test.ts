@@ -57,18 +57,19 @@ describe('platform-prompts', () => {
     expect(readPairedRoomPrompt('claude-code')).toBe('Claude paired prompt');
   });
 
-  it('keeps codex approval wording role-based while preserving failover identity wording', () => {
+  it('maps Codex paired-room prompts to the shared reviewer prompt while preserving failover identity wording', () => {
     const repoRoot = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
       '..',
     );
 
-    const codexPairedPrompt = fs.readFileSync(
-      path.join(repoRoot, 'prompts', 'codex-paired-room.md'),
-      'utf-8',
+    expect(getPairedRoomPromptPath('codex', repoRoot)).toBe(
+      path.join(repoRoot, 'prompts', 'claude-paired-room.md'),
     );
-    expect(codexPairedPrompt).toContain('owner-side paired agent');
-    expect(codexPairedPrompt).not.toContain("Claude's review or test plan");
+
+    const codexPairedPrompt = readPairedRoomPrompt('codex', repoRoot);
+    expect(codexPairedPrompt).toContain('reviewer');
+    expect(codexPairedPrompt).not.toContain('owner-side paired agent');
 
     const failoverPlatformPrompt = fs.readFileSync(
       path.join(repoRoot, 'prompts', 'codex-review-failover-platform.md'),
