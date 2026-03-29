@@ -707,12 +707,24 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         },
         'Dispatching queued messages to agent',
       );
+      // Use reviewer channel when the agent will run in reviewer mode.
+      // This is determined by the paired task status — if review_ready
+      // or in_review, the executor switches to reviewer mode.
+      const pendingTaskForChannel = isPairedRoomJid(chatJid)
+        ? getLatestOpenPairedTaskForChat(chatJid)
+        : null;
+      const useReviewerChannel =
+        pendingTaskForChannel &&
+        (pendingTaskForChannel.status === 'review_ready' ||
+          pendingTaskForChannel.status === 'in_review');
+      const turnChannel = useReviewerChannel ? reviewerChannel : channel;
+
       const { deliverySucceeded, visiblePhase } = await executeTurn({
         group,
         prompt,
         chatJid,
         runId,
-        channel,
+        channel: turnChannel,
         startSeq,
         endSeq,
       });
