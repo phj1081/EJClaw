@@ -223,10 +223,21 @@ export function completePairedExecutionContext(args: {
     'Paired execution completed',
   );
 
-  if (status !== 'succeeded') return;
-
   const task = getPairedTaskById(taskId);
   if (!task) return;
+
+  // On failure, reset task to active so the flow isn't stuck
+  if (status !== 'succeeded') {
+    if (task.status !== 'active') {
+      const now = new Date().toISOString();
+      updatePairedTask(taskId, { status: 'active', updated_at: now });
+      logger.info(
+        { taskId, role, previousStatus: task.status },
+        'Reset task to active after failed execution',
+      );
+    }
+    return;
+  }
 
   // Owner finished → auto-trigger reviewer (if within round trip limit)
   if (role === 'owner') {
