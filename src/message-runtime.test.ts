@@ -1580,10 +1580,7 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
-    expect(channel.sendMessage).toHaveBeenCalledWith(
-      chatJid,
-      'visible reply',
-    );
+    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, 'visible reply');
     expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
     expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
   });

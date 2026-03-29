@@ -3,10 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-import {
-  DATA_DIR,
-  PAIRED_MAX_ROUND_TRIPS,
-} from './config.js';
+import { DATA_DIR, PAIRED_MAX_ROUND_TRIPS } from './config.js';
 import {
   createPairedTask,
   getLatestPairedTaskForChat,

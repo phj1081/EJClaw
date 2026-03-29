@@ -124,9 +124,9 @@ describe('paired workspace manager', () => {
     expect(
       db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_refreshed_at,
     ).toBeTruthy();
-    expect(db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_ref).toBe(
-      null,
-    );
+    expect(
+      db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_ref,
+    ).toBe(null);
   });
 
   it('uses the shared DB owner workspace across service-local data dirs', async () => {

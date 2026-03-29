@@ -456,5 +456,4 @@ describe('paired execution context', () => {
       }),
     );
   });
-
 });

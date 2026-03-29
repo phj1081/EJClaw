@@ -81,15 +81,7 @@ export async function runAgentForGroup(
     onOutput?: (output: AgentOutput) => Promise<void>;
   },
 ): Promise<'success' | 'error'> {
-  const {
-    group,
-    prompt,
-    chatJid,
-    runId,
-    startSeq,
-    endSeq,
-    onOutput,
-  } = args;
+  const { group, prompt, chatJid, runId, startSeq, endSeq, onOutput } = args;
   const isMain = group.isMain === true;
   const sessions = deps.getSessions();
 
@@ -388,10 +380,7 @@ export async function runAgentForGroup(
           if (!evaluation.shouldForwardOutput) {
             return;
           }
-          if (
-            typeof outputText === 'string' &&
-            outputText.length > 0
-          ) {
+          if (typeof outputText === 'string' && outputText.length > 0) {
             streamedState = {
               ...evaluation.state,
               sawVisibleOutput: true,
