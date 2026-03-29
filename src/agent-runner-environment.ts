@@ -306,12 +306,16 @@ function prepareCodexSessionEnvironment(args: {
     fs.unlinkSync(sessionAgentsPath);
   }
 
+  // Codex reads skills from ~/.agents/skills/ (user-level) and
+  // {workDir}/.agents/skills/ (project-level), NOT from .codex/skills/.
+  // Sync to the user-level path so all Codex sessions can discover them.
+  const codexSkillsDir = path.join(os.homedir(), '.agents', 'skills');
   syncDirectoryEntries(
     [
       path.join(os.homedir(), '.claude', 'skills'),
       path.join(args.projectRoot, 'runners', 'skills'),
     ],
-    path.join(sessionCodexDir, 'skills'),
+    codexSkillsDir,
   );
 
   const mcpServerPath = path.join(
