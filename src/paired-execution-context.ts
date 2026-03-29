@@ -44,10 +44,12 @@ function classifyReviewerVerdict(
 ): ReviewerVerdict {
   if (!summary) return 'continue';
   const firstLine = summary.trimStart().split('\n')[0].trim();
-  if (/\bBLOCKED\b/.test(firstLine)) return 'blocked';
-  if (/\bNEEDS_CONTEXT\b/.test(firstLine)) return 'needs_context';
-  if (/\bDONE_WITH_CONCERNS\b/.test(firstLine)) return 'done_with_concerns';
-  if (/\bDONE\b/.test(firstLine)) return 'done';
+  // Match only at the START of the first line to avoid false positives
+  // from quoted/referenced status markers in the body text.
+  if (/^\*{0,2}BLOCKED\*{0,2}\b/.test(firstLine)) return 'blocked';
+  if (/^\*{0,2}NEEDS_CONTEXT\*{0,2}\b/.test(firstLine)) return 'needs_context';
+  if (/^\*{0,2}DONE_WITH_CONCERNS\*{0,2}\b/.test(firstLine)) return 'done_with_concerns';
+  if (/^\*{0,2}DONE\*{0,2}\b/.test(firstLine)) return 'done';
   return 'continue';
 }
 
@@ -263,9 +265,16 @@ export function completePairedExecutionContext(args: {
   if (status !== 'succeeded') {
     if (role === 'reviewer' && args.summary) {
       const verdict = classifyReviewerVerdict(args.summary);
-      if (verdict === 'done' || verdict === 'blocked' || verdict === 'needs_context') {
+      if (
+        verdict === 'done' ||
+        verdict === 'blocked' ||
+        verdict === 'needs_context'
+      ) {
         const now = new Date().toISOString();
-        updatePairedTask(taskId, { status: verdict === 'done' ? 'merge_ready' : 'completed', updated_at: now });
+        updatePairedTask(taskId, {
+          status: verdict === 'done' ? 'merge_ready' : 'completed',
+          updated_at: now,
+        });
         logger.info(
           { taskId, verdict, summary: args.summary?.slice(0, 100) },
           'Reviewer verdict detected from failed execution — stopping ping-pong',
