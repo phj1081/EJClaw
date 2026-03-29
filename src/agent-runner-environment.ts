@@ -269,29 +269,14 @@ function prepareCodexSessionEnvironment(args: {
                 'owner-common-paired-room.md',
               )
             : undefined,
-          args.isPairedRoom
-            ? readOptionalPromptFile(
-                args.projectRoot,
-                'codex-review-failover-paired-room.md',
-              )
-            : undefined,
           args.memoryBriefing,
         ]
       : [
           readPlatformPrompt('codex', args.projectRoot),
-          isReviewService(SERVICE_ID)
-            ? readOptionalPromptFile(
-                args.projectRoot,
-                'codex-review-platform.md',
-              )
-            : undefined,
           args.isPairedRoom
-            ? readPairedRoomPrompt('codex', args.projectRoot)
-            : undefined,
-          args.isPairedRoom && isReviewService(SERVICE_ID)
             ? readOptionalPromptFile(
                 args.projectRoot,
-                'codex-review-paired-room.md',
+                'owner-common-paired-room.md',
               )
             : undefined,
           args.memoryBriefing,

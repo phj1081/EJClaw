@@ -8,9 +8,11 @@ const PLATFORM_PROMPT_FILES: Record<AgentType, string> = {
   codex: 'codex-platform.md',
 };
 
+// SSOT: both agent types use the same paired room prompts.
+// Role-specific rules (owner vs reviewer) are selected by the caller.
 const PAIRED_ROOM_PROMPT_FILES: Record<AgentType, string> = {
   'claude-code': 'claude-paired-room.md',
-  codex: 'codex-paired-room.md',
+  codex: 'claude-paired-room.md',
 };
 
 export function getPlatformPromptsDir(projectRoot = process.cwd()): string {
