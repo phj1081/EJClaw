@@ -20,8 +20,6 @@ import {
   type WorkItem,
 } from './db.js';
 import {
-  isClaudeService,
-  isReviewService,
   isSessionCommandSenderAllowed,
   REVIEWER_AGENT_TYPE,
   SERVICE_AGENT_TYPE,
@@ -45,7 +43,6 @@ import {
 } from './message-runtime-rules.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
-import { createSuppressToken } from './output-suppression.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
@@ -232,7 +229,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     runId: string,
     onOutput?: (output: AgentOutput) => Promise<void>,
     options?: {
-      suppressToken?: string;
       startSeq?: number | null;
       endSeq?: number | null;
     },
@@ -251,7 +247,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         prompt,
         chatJid,
         runId,
-        suppressToken: options?.suppressToken,
         startSeq: options?.startSeq,
         endSeq: options?.endSeq,
         onOutput,
@@ -280,10 +275,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const { group, prompt, chatJid, runId, channel, startSeq, endSeq } = args;
     const isClaudeCodeAgent =
       (group.agentType || 'claude-code') === 'claude-code';
-    const suppressToken =
-      isClaudeService() || isReviewService()
-        ? createSuppressToken()
-        : undefined;
 
     const turnController = new MessageTurnController({
       chatJid,
@@ -293,7 +284,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       idleTimeout: deps.idleTimeout,
       failureFinalText: FAILURE_FINAL_TEXT,
       isClaudeCodeAgent,
-      suppressToken,
       clearSession: () => deps.clearSession(group.folder),
       requestClose: (reason) =>
         deps.queue.closeStdin(chatJid, { runId, reason }),
@@ -327,7 +317,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         chatJid,
         runId,
         (result) => turnController.handleOutput(result),
-        { suppressToken, startSeq, endSeq },
+        { startSeq, endSeq },
       );
 
       const { deliverySucceeded, visiblePhase } =

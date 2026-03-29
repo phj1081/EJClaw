@@ -45,7 +45,7 @@ describe('paired workspace manager', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it('provisions an owner worktree and refreshes a reviewer shadow snapshot', async () => {
+  it('registers the owner workspace for reviewer execution when review is requested', async () => {
     const { db, manager } = await loadModules();
     db._initTestDatabase();
 
@@ -113,15 +113,10 @@ describe('paired workspace manager', () => {
         'utf-8',
       ),
     ).toBe('review me\n');
-    expect(
-      runGit(
-        ['config', '--local', '--get', 'remote.origin.pushurl'],
-        reviewerWorkspace.workspace_dir,
-      ),
-    ).toBe('DISABLED_BY_EJCLAW');
-    expect(
-      runGit(['status', '--short'], reviewerWorkspace.workspace_dir),
-    ).toContain('M README.md');
+    expect(reviewerWorkspace.workspace_dir).toBe(ownerWorkspace.workspace_dir);
+    expect(reviewerWorkspace.snapshot_source_dir).toBe(
+      ownerWorkspace.workspace_dir,
+    );
     expect(db.getPairedTaskById('paired-task-1')?.status).toBe('review_ready');
     expect(
       db.getPairedTaskById('paired-task-1')?.review_requested_at,
@@ -129,9 +124,9 @@ describe('paired workspace manager', () => {
     expect(
       db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_refreshed_at,
     ).toBeTruthy();
-    expect(
-      db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_ref,
-    ).toBeTruthy();
+    expect(db.getPairedWorkspace('paired-task-1', 'reviewer')?.snapshot_ref).toBe(
+      null,
+    );
   });
 
   it('uses the shared DB owner workspace across service-local data dirs', async () => {
@@ -493,7 +488,7 @@ describe('paired workspace manager', () => {
     ).toBe('EXAMPLE=1\n');
   });
 
-  it('auto-refreshes a missing reviewer snapshot after an explicit review request', async () => {
+  it('registers a reviewer workspace when an explicit review request already exists', async () => {
     const { db, manager } = await loadModules();
     db._initTestDatabase();
 
@@ -541,8 +536,12 @@ describe('paired workspace manager', () => {
       db.getPairedTaskById('paired-task-5b')!,
     );
 
-    expect(result.autoRefreshed).toBe(true);
+    expect(result.autoRefreshed).toBe(false);
     expect(result.blockMessage).toBeUndefined();
+    expect(result.workspace?.workspace_dir).toBe(ownerWorkspace.workspace_dir);
+    expect(result.workspace?.snapshot_source_dir).toBe(
+      ownerWorkspace.workspace_dir,
+    );
     expect(
       fs.readFileSync(
         path.join(result.workspace!.workspace_dir, 'README.md'),
@@ -555,7 +554,7 @@ describe('paired workspace manager', () => {
     );
   });
 
-  it('blocks once when an in-review snapshot becomes stale, then refreshes on retry', async () => {
+  it('reuses the live owner workspace during in-review turns', async () => {
     const { db, manager } = await loadModules();
     db._initTestDatabase();
 
@@ -609,37 +608,22 @@ describe('paired workspace manager', () => {
       'owner changed again\n',
     );
 
-    const blocked = manager.prepareReviewerWorkspaceForExecution(
+    const result = manager.prepareReviewerWorkspaceForExecution(
       db.getPairedTaskById('paired-task-6')!,
     );
 
-    expect(blocked.workspace).toBeNull();
-    expect(blocked.autoRefreshed).toBe(false);
-    expect(blocked.blockMessage).toBe(
-      'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
-    );
-    expect(db.getPairedTaskById('paired-task-6')?.status).toBe('review_ready');
+    expect(result.workspace?.workspace_dir).toBe(ownerWorkspace.workspace_dir);
+    expect(result.autoRefreshed).toBe(false);
+    expect(result.blockMessage).toBeUndefined();
+    expect(db.getPairedTaskById('paired-task-6')?.status).toBe('in_review');
     expect(
       db.getPairedTaskById('paired-task-6')?.review_requested_at,
     ).toBeTruthy();
-    expect(db.getPairedWorkspace('paired-task-6', 'reviewer')?.status).toBe(
-      'stale',
-    );
-
-    const refreshed = manager.prepareReviewerWorkspaceForExecution(
-      db.getPairedTaskById('paired-task-6')!,
-    );
-
-    expect(refreshed.autoRefreshed).toBe(true);
-    expect(refreshed.blockMessage).toBeUndefined();
     expect(
       fs.readFileSync(
-        path.join(refreshed.workspace!.workspace_dir, 'README.md'),
+        path.join(result.workspace!.workspace_dir, 'README.md'),
         'utf-8',
       ),
     ).toBe('owner changed again\n');
-    expect(
-      db.getPairedTaskById('paired-task-6')?.review_requested_at,
-    ).toBeTruthy();
   });
 });

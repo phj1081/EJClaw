@@ -224,7 +224,7 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
-  it('injects structured silent-output instructions into the agent prompt', async () => {
+  it('passes the prompt through unchanged', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
 
     await runAgentForGroup(makeDeps(), {
@@ -232,7 +232,6 @@ describe('runAgentForGroup room memory', () => {
       prompt: 'hello',
       chatJid: 'group@test',
       runId: 'run-suppress',
-      suppressToken: '__TEST_SUPPRESS__',
     });
 
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
@@ -273,7 +272,7 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
-  it('adds reviewer silence guidance when the current service is the reviewer for the chat', async () => {
+  it('keeps the reviewer prompt unchanged when the current service is the reviewer for the chat', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
@@ -289,7 +288,6 @@ describe('runAgentForGroup room memory', () => {
       prompt: 'hello',
       chatJid: 'group@test',
       runId: 'run-review-suppress',
-      suppressToken: '__TEST_SUPPRESS__',
     });
 
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(

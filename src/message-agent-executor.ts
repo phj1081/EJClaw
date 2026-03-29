@@ -41,10 +41,6 @@ import {
   isClaudeService,
 } from './config.js';
 import {
-  buildStructuredOutputPrompt,
-  classifySuppressTokenOutput,
-} from './output-suppression.js';
-import {
   activateCodexFailover,
   getEffectiveChannelLease,
 } from './service-routing.js';
@@ -80,7 +76,6 @@ export async function runAgentForGroup(
     prompt: string;
     chatJid: string;
     runId: string;
-    suppressToken?: string;
     startSeq?: number | null;
     endSeq?: number | null;
     onOutput?: (output: AgentOutput) => Promise<void>;
@@ -91,7 +86,6 @@ export async function runAgentForGroup(
     prompt,
     chatJid,
     runId,
-    suppressToken,
     startSeq,
     endSeq,
     onOutput,
@@ -174,12 +168,7 @@ export async function runAgentForGroup(
     runId,
     roomRoleContext,
   });
-  const effectivePrompt = buildStructuredOutputPrompt(prompt, {
-    reviewerMode,
-    pairedRoom: !!pairedExecutionContext,
-    gateTurnKind: pairedExecutionContext?.gateTurnKind,
-    requiresVisibleVerdict: pairedExecutionContext?.requiresVisibleVerdict,
-  });
+  const effectivePrompt = prompt;
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
   let pairedExecutionCompleted = false;
@@ -399,14 +388,9 @@ export async function runAgentForGroup(
           if (!evaluation.shouldForwardOutput) {
             return;
           }
-          const suppressState =
-            typeof outputText === 'string'
-              ? classifySuppressTokenOutput(outputText, suppressToken)
-              : 'none';
           if (
             typeof outputText === 'string' &&
-            outputText.length > 0 &&
-            suppressState === 'none'
+            outputText.length > 0
           ) {
             streamedState = {
               ...evaluation.state,

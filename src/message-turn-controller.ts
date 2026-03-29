@@ -1,7 +1,6 @@
 import { type AgentOutput } from './agent-runner.js';
-import { getAgentOutputText, isSilentAgentOutput } from './agent-output.js';
+import { getAgentOutputText } from './agent-output.js';
 import { logger } from './logger.js';
-import { classifySuppressTokenOutput } from './output-suppression.js';
 import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
@@ -30,7 +29,6 @@ interface MessageTurnControllerOptions {
   idleTimeout: number;
   failureFinalText: string;
   isClaudeCodeAgent: boolean;
-  suppressToken?: string;
   clearSession: () => void;
   requestClose: (reason: string) => void;
   deliverFinalText: (text: string) => Promise<boolean>;
@@ -122,8 +120,6 @@ export class MessageTurnController {
     }
 
     const raw = getAgentOutputText(result);
-    const silentOutput = false;
-    const suppressState = 'none' as const;
     const text = raw ? formatOutbound(raw) : null;
 
     if (raw) {
@@ -267,14 +263,6 @@ export class MessageTurnController {
       await this.flushPendingProgress(text);
       await this.finalizeProgressMessage();
       await this.deliverFinalText(text);
-    } else if (silentOutput || suppressState !== 'none') {
-      const shouldPromoteVisibleProgressToFinal =
-        this.visiblePhase === 'progress' &&
-        typeof this.latestProgressTextForFinal === 'string';
-      await this.finalizeProgressMessage();
-      if (!shouldPromoteVisibleProgressToFinal) {
-        this.latestProgressTextForFinal = null;
-      }
     } else if (raw) {
       logger.info(
         {

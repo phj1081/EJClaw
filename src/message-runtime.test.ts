@@ -11,15 +11,6 @@ vi.mock('./agent-runner.js', () => ({
   writeTasksSnapshot: vi.fn(),
 }));
 
-vi.mock('./output-suppression.js', async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import('./output-suppression.js')>();
-  return {
-    ...actual,
-    createSuppressToken: vi.fn(() => '__TEST_SUPPRESS__'),
-  };
-});
-
 vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/ejclaw-test-data',
   SERVICE_ID: 'claude',
@@ -179,7 +170,6 @@ import * as agentRunner from './agent-runner.js';
 import * as db from './db.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { createMessageRuntime } from './message-runtime.js';
-import * as outputSuppression from './output-suppression.js';
 import * as config from './config.js';
 import type { Channel, RegisteredGroup } from './types.js';
 
@@ -345,7 +335,7 @@ describe('createMessageRuntime', () => {
     expect(saveState).toHaveBeenCalled();
   });
 
-  it('does not defer typing-on for suppress-capable review turns', async () => {
+  it('does not defer typing-on for review turns', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
@@ -1374,65 +1364,6 @@ describe('createMessageRuntime', () => {
     expect(channel.sendAndTrack).not.toHaveBeenCalled();
   });
 
-  it('does not emit a visible message when the final output is the suppress token only', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
-    const lastAgentTimestamps: Record<string, string> = {};
-    const saveState = vi.fn();
-
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-19T00:00:00.000Z',
-        seq: 1,
-      },
-    ]);
-
-    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
-      status: 'success',
-      result: '__TEST_SUPPRESS__',
-      newSessionId: 'session-suppress-run',
-    });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-suppress-only',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(saveState).toHaveBeenCalled();
-    expect(lastAgentTimestamps[chatJid]).toBe('1');
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-    expect(channel.sendAndTrack).not.toHaveBeenCalled();
-  });
-
   it('does not emit a visible message when the final output is structured silent output', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
@@ -1587,7 +1518,7 @@ describe('createMessageRuntime', () => {
     }
   });
 
-  it('starts typing immediately for suppress-capable turns with visible output', async () => {
+  it('starts typing immediately for turns with visible output', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const channel = makeChannel(chatJid);
@@ -1611,12 +1542,12 @@ describe('createMessageRuntime', () => {
         await onOutput?.({
           status: 'success',
           phase: 'final',
-          result: 'visible suppress-capable reply',
+          result: 'visible reply',
         });
         return {
           status: 'success',
           result: null,
-          newSessionId: 'session-visible-suppress-capable',
+          newSessionId: 'session-visible-reply',
         };
       },
     );
@@ -1644,314 +1575,17 @@ describe('createMessageRuntime', () => {
     });
 
     const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-visible-suppress-capable',
+      runId: 'run-visible-reply',
       reason: 'messages',
     });
 
     expect(result).toBe(true);
     expect(channel.sendMessage).toHaveBeenCalledWith(
       chatJid,
-      'visible suppress-capable reply',
+      'visible reply',
     );
     expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
     expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
-  });
-
-  it('does not grant suppress-token silence authority to codex-main', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
-    const lastAgentTimestamps: Record<string, string> = {};
-    const saveState = vi.fn();
-
-    vi.mocked(config.isClaudeService).mockReturnValue(false);
-    vi.mocked(config.isReviewService).mockReturnValue(false);
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-19T00:00:00.000Z',
-        seq: 1,
-      },
-    ]);
-    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
-      status: 'success',
-      result: 'visible codex reply',
-      newSessionId: 'session-codex-main',
-    });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-codex-main-no-suppress',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(outputSuppression.createSuppressToken).not.toHaveBeenCalled();
-  });
-
-  it('blocks malformed output when the suppress token is mixed with visible text', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
-    const lastAgentTimestamps: Record<string, string> = {};
-    const saveState = vi.fn();
-
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-19T00:00:00.000Z',
-        seq: 1,
-      },
-    ]);
-
-    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
-      status: 'success',
-      result: '동의합니다 __TEST_SUPPRESS__',
-      newSessionId: 'session-suppress-mixed',
-    });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-suppress-mixed',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(saveState).toHaveBeenCalled();
-    expect(lastAgentTimestamps[chatJid]).toBe('1');
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-    expect(channel.sendAndTrack).not.toHaveBeenCalled();
-  });
-
-  it('suppresses a leaked foreign suppress token even when it differs from the current turn token', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
-    const lastAgentTimestamps: Record<string, string> = {};
-    const saveState = vi.fn();
-
-    vi.mocked(config.isClaudeService).mockReturnValue(false);
-    vi.mocked(config.isReviewService).mockReturnValue(true);
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-19T00:00:00.000Z',
-        seq: 1,
-      },
-    ]);
-
-    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
-      status: 'success',
-      result: '__EJ_SUPPRESS_deadbeefdeadbeefdeadbeef__',
-      newSessionId: 'session-foreign-suppress-token',
-    });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-foreign-suppress-token',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(saveState).toHaveBeenCalled();
-    expect(lastAgentTimestamps[chatJid]).toBe('1');
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-    expect(channel.sendAndTrack).not.toHaveBeenCalled();
-  });
-
-  it('suppresses a malformed leaked foreign suppress token without the closing suffix', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
-    const lastAgentTimestamps: Record<string, string> = {};
-    const saveState = vi.fn();
-
-    vi.mocked(config.isClaudeService).mockReturnValue(false);
-    vi.mocked(config.isReviewService).mockReturnValue(true);
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-19T00:00:00.000Z',
-        seq: 1,
-      },
-    ]);
-
-    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
-      status: 'success',
-      result: '__EJ_SUPPRESS_deadbeefdeadbeefdeadbeef',
-      newSessionId: 'session-malformed-foreign-suppress-token',
-    });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-malformed-foreign-suppress-token',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(saveState).toHaveBeenCalled();
-    expect(lastAgentTimestamps[chatJid]).toBe('1');
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-    expect(channel.sendAndTrack).not.toHaveBeenCalled();
-  });
-
-  it('suppresses a malformed structured silent envelope without sending a visible message', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
-    const lastAgentTimestamps: Record<string, string> = {};
-    const saveState = vi.fn();
-
-    vi.mocked(config.isClaudeService).mockReturnValue(false);
-    vi.mocked(config.isReviewService).mockReturnValue(true);
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: 'hello',
-        timestamp: '2026-03-19T00:00:00.000Z',
-        seq: 1,
-      },
-    ]);
-
-    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
-      status: 'success',
-      result: '{"ejclaw":{"visibility":"silent"}} extra',
-      newSessionId: 'session-malformed-structured-silent',
-    });
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRegisteredGroups: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-malformed-structured-silent',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(channel.sendMessage).not.toHaveBeenCalled();
-    expect(channel.sendAndTrack).not.toHaveBeenCalled();
   });
 
   it('resets tracked progress after a final output that becomes empty after formatting', async () => {
