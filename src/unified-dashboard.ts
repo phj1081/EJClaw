@@ -580,7 +580,17 @@ export async function startUnifiedDashboard(
     if (!isRenderer) return;
 
     const channel = findDiscordChannel(opts.channels);
-    if (!channel) return;
+    if (!channel) {
+      logger.warn(
+        {
+          channelCount: opts.channels.length,
+          names: opts.channels.map((c) => c.name),
+          connected: opts.channels.map((c) => c.isConnected()),
+        },
+        'Dashboard: no connected Discord channel found',
+      );
+      return;
+    }
 
     try {
       await refreshChannelMeta(opts);
