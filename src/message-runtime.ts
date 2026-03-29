@@ -13,6 +13,7 @@ import {
   markWorkItemDeliveryRetry,
   getLastBotFinalMessage,
   isPairedRoomJid,
+  getLatestOpenPairedTaskForChat,
   type ServiceHandoff,
   type WorkItem,
 } from './db.js';
@@ -496,6 +497,30 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       );
 
       if (missedMessages.length === 0) {
+        // Check if a paired review is pending — run reviewer even without new messages
+        const pendingReviewTask = isPairedRoomJid(chatJid)
+          ? getLatestOpenPairedTaskForChat(chatJid)
+          : null;
+        if (
+          pendingReviewTask &&
+          (pendingReviewTask.status === 'review_ready' ||
+            pendingReviewTask.status === 'in_review')
+        ) {
+          // Synthesize a prompt for the reviewer turn
+          const reviewPrompt =
+            'Review the latest owner changes. Provide feedback or approve.';
+          const { deliverySucceeded } = await executeTurn({
+            group,
+            prompt: reviewPrompt,
+            chatJid,
+            runId,
+            channel,
+            startSeq: null,
+            endSeq: null,
+          });
+          return deliverySucceeded;
+        }
+
         const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
         if (lastIgnored) {
           advanceLastAgentCursor(
