@@ -48,7 +48,8 @@ function classifyReviewerVerdict(
   // from quoted/referenced status markers in the body text.
   if (/^\*{0,2}BLOCKED\*{0,2}\b/.test(firstLine)) return 'blocked';
   if (/^\*{0,2}NEEDS_CONTEXT\*{0,2}\b/.test(firstLine)) return 'needs_context';
-  if (/^\*{0,2}DONE_WITH_CONCERNS\*{0,2}\b/.test(firstLine)) return 'done_with_concerns';
+  if (/^\*{0,2}DONE_WITH_CONCERNS\*{0,2}\b/.test(firstLine))
+    return 'done_with_concerns';
   if (/^\*{0,2}DONE\*{0,2}\b/.test(firstLine)) return 'done';
   return 'continue';
 }

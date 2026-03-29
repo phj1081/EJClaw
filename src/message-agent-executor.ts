@@ -898,8 +898,9 @@ export async function runAgentForGroup(
       return 'error';
     }
 
-    // success-null-result with no visible output — agent returned nothing useful
-    if (primaryAttempt.sawSuccessNullResultWithoutOutput) {
+    // success-null-result with no visible output — agent returned nothing useful.
+    // But if output was already delivered to Discord (sawOutput), treat as success.
+    if (primaryAttempt.sawSuccessNullResultWithoutOutput && !primaryAttempt.sawOutput) {
       logger.error(
         { group: group.name, chatJid, runId },
         'Agent returned success with null result and no visible output',
