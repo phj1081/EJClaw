@@ -175,7 +175,6 @@ function makeDeps(
     formatMessages: vi.fn().mockReturnValue('<formatted>'),
     isAdminSender: vi.fn().mockReturnValue(false),
     canSenderInteract: vi.fn().mockReturnValue(true),
-    markReviewReady: vi.fn().mockResolvedValue('Review snapshot updated.'),
     killProcess: vi.fn().mockReturnValue(false),
     ...overrides,
   };
@@ -235,88 +234,7 @@ describe('handleSessionCommand', () => {
     );
   });
 
-  it('handles authorized /review without invoking the agent', async () => {
-    const deps = makeDeps({
-      markReviewReady: vi
-        .fn()
-        .mockResolvedValue('Review snapshot updated.\n- Task: paired-task-1'),
-    });
 
-    const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/review')],
-      isMainGroup: true,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.markReviewReady).toHaveBeenCalledWith('msg-1');
-    expect(deps.runAgent).not.toHaveBeenCalled();
-    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      'Review snapshot updated.\n- Task: paired-task-1',
-    );
-  });
-
-  it('handles authorized /review-ready as an alias without invoking the agent', async () => {
-    const deps = makeDeps({
-      markReviewReady: vi
-        .fn()
-        .mockResolvedValue('Review snapshot updated.\n- Task: paired-task-1'),
-    });
-
-    const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/review-ready')],
-      isMainGroup: true,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.markReviewReady).toHaveBeenCalledWith('msg-1');
-    expect(deps.runAgent).not.toHaveBeenCalled();
-    expect(deps.advanceCursor).toHaveBeenCalledWith('100');
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      'Review snapshot updated.\n- Task: paired-task-1',
-    );
-  });
-
-  it('sends the pending review message when owner workspace is not ready yet', async () => {
-    const deps = makeDeps({
-      markReviewReady: vi
-        .fn()
-        .mockResolvedValue(
-          [
-            'Review request recorded, but the owner workspace is not ready yet.',
-            '- Task: paired-task-1',
-            'The task stays review_pending until the owner workspace is prepared.',
-          ].join('\n'),
-        ),
-    });
-
-    const result = await handleSessionCommand({
-      missedMessages: [makeMsg('/review')],
-      isMainGroup: true,
-      groupName: 'test',
-      triggerPattern: trigger,
-      timezone: 'UTC',
-      deps,
-    });
-
-    expect(result).toEqual({ handled: true, success: true });
-    expect(deps.markReviewReady).toHaveBeenCalledWith('msg-1');
-    expect(deps.sendMessage).toHaveBeenCalledWith(
-      [
-        'Review request recorded, but the owner workspace is not ready yet.',
-        '- Task: paired-task-1',
-        'The task stays review_pending until the owner workspace is prepared.',
-      ].join('\n'),
-    );
-  });
 
   it('sends denial to interactable sender in non-main group', async () => {
     const deps = makeDeps();

@@ -47,11 +47,6 @@ import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
 import { createSuppressToken } from './output-suppression.js';
 import {
-  formatRoomReviewReadyMessage,
-  markRoomReviewReady,
-} from './paired-execution-context.js';
-import { buildRoomRoleContext } from './room-role-context.js';
-import {
   extractSessionCommand,
   handleSessionCommand,
   isSessionCommandAllowed,
@@ -657,22 +652,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 (msg.is_from_me ||
                   isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
             );
-          },
-          // Session commands are explicit control events, so owner-only and
-          // reviewer-only commands resolve against the target role rather than
-          // whichever service happened to pick up the slash command first.
-          markReviewReady: async () => {
-            const lease = getEffectiveChannelLease(chatJid);
-            const roomRoleContext = buildRoomRoleContext(
-              lease,
-              lease.owner_service_id,
-            );
-            const result = markRoomReviewReady({
-              group,
-              chatJid,
-              roomRoleContext,
-            });
-            return formatRoomReviewReadyMessage(result);
           },
           resetPairedTask: () => {
             if (isPairedRoomJid(chatJid)) {

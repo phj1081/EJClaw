@@ -33,7 +33,6 @@ export function extractSessionCommand(
   const text = normalizeSessionCommandText(content, triggerPattern);
   if (text === '/compact') return '/compact';
   if (text === '/clear') return '/clear';
-  if (text === '/review' || text === '/review-ready') return '/review';
   if (text === '/stop') return '/stop';
   return null;
 }
@@ -79,7 +78,6 @@ export interface SessionCommandDeps {
   isAdminSender: (msg: NewMessage) => boolean;
   /** Whether the denied sender would normally be allowed to interact (for denial messages). */
   canSenderInteract: (msg: NewMessage) => boolean;
-  markReviewReady: () => Promise<string | null>;
   /** Reset/complete the active paired task so ping-pong stops. */
   resetPairedTask?: () => void;
   /** Kill the currently running agent process for this group. Returns true if a process was killed. */
@@ -165,16 +163,6 @@ export async function handleSessionCommand(opts: {
     deps.advanceCursor(cmdMsg.timestamp);
     await deps.sendMessage(
       'Current session cleared. The next message will start a new conversation.',
-    );
-    return { handled: true, success: true };
-  }
-
-  if (command === '/review') {
-    const result = await deps.markReviewReady();
-    deps.advanceCursor(cmdMsg.timestamp);
-    await deps.sendMessage(
-      result ??
-        'Review is unavailable for this room. Paired workspaces require a configured project workDir.',
     );
     return { handled: true, success: true };
   }
