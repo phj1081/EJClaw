@@ -1,7 +1,10 @@
 /**
  * Container runner for EJClaw reviewer agents.
  *
- * Spawns reviewer execution inside a Docker container with:
+ * Uses persistent Docker containers per channel. The container is created
+ * once on first reviewer call and reused across turns. Each turn runs via
+ * `docker exec` inside the warm container — no startup overhead.
+ *
  *   - Source code mounted read-only (kernel-level write protection)
  *   - tmpfs overlays for test runner caches (vitest, coverage)
  *   - IPC via filesystem (input/ directory for follow-up messages)
@@ -27,7 +30,6 @@ import {
   ensureContainerRuntimeRunning,
   hostGatewayArgs,
   readonlyMountArgs,
-  stopContainer,
   tmpfsMountArgs,
   writableMountArgs,
 } from './container-runtime.js';
@@ -70,11 +72,12 @@ function detectPnpmStorePath(workspaceDir: string): string | null {
   if (!fs.existsSync(path.join(workspaceDir, 'pnpm-lock.yaml'))) {
     return null;
   }
-  // Check env override first
-  if (process.env.PNPM_STORE_DIR && fs.existsSync(process.env.PNPM_STORE_DIR)) {
+  if (
+    process.env.PNPM_STORE_DIR &&
+    fs.existsSync(process.env.PNPM_STORE_DIR)
+  ) {
     return process.env.PNPM_STORE_DIR;
   }
-  // Try `pnpm store path`
   try {
     const storePath = execFileSync('pnpm', ['store', 'path'], {
       cwd: workspaceDir,
@@ -86,7 +89,6 @@ function detectPnpmStorePath(workspaceDir: string): string | null {
   } catch {
     /* pnpm not available */
   }
-  // Fallback to default location
   const defaultStore = path.join(
     os.homedir(),
     '.local',
@@ -105,18 +107,94 @@ let containerRuntimeChecked = false;
 function ensureContainerReady(): void {
   if (containerRuntimeChecked) return;
   ensureContainerRuntimeRunning();
-  // Check image exists
   try {
-    execFileSync(CONTAINER_RUNTIME_BIN, ['image', 'inspect', CONTAINER_IMAGE], {
-      stdio: 'pipe',
-      timeout: 10000,
-    });
+    execFileSync(
+      CONTAINER_RUNTIME_BIN,
+      ['image', 'inspect', CONTAINER_IMAGE],
+      { stdio: 'pipe', timeout: 10000 },
+    );
   } catch {
     throw new Error(
       `Container image '${CONTAINER_IMAGE}' not found. Build it with: ./container/build.sh`,
     );
   }
   containerRuntimeChecked = true;
+}
+
+// ── Persistent container management ──────────────────────────────
+
+function getContainerName(groupFolder: string): string {
+  return `ejclaw-reviewer-${groupFolder.replace(/[^a-zA-Z0-9-]/g, '-')}`;
+}
+
+function isContainerRunning(name: string): boolean {
+  try {
+    const state = execFileSync(
+      CONTAINER_RUNTIME_BIN,
+      ['inspect', '--format', '{{.State.Running}}', name],
+      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000 },
+    ).trim();
+    return state === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function ensurePersistentContainer(
+  group: RegisteredGroup,
+  ownerWorkspaceDir: string,
+  envOverrides?: Record<string, string>,
+): string {
+  const containerName = getContainerName(group.folder);
+
+  if (isContainerRunning(containerName)) {
+    return containerName;
+  }
+
+  // Remove stale stopped container with same name
+  try {
+    execFileSync(CONTAINER_RUNTIME_BIN, ['rm', '-f', containerName], {
+      stdio: 'pipe',
+      timeout: 10000,
+    });
+  } catch {
+    /* doesn't exist */
+  }
+
+  const mounts = buildReviewerMounts(group, ownerWorkspaceDir);
+  const args = buildCreateArgs(mounts, containerName, envOverrides);
+
+  logger.info(
+    {
+      containerName,
+      group: group.name,
+      groupFolder: group.folder,
+      image: CONTAINER_IMAGE,
+      mountCount: mounts.length,
+    },
+    'Creating persistent reviewer container',
+  );
+
+  execFileSync(CONTAINER_RUNTIME_BIN, args, {
+    stdio: 'pipe',
+    timeout: 30000,
+  });
+
+  return containerName;
+}
+
+/** Stop and remove a persistent reviewer container for a channel. */
+export function stopReviewerContainer(groupFolder: string): void {
+  const name = getContainerName(groupFolder);
+  try {
+    execFileSync(CONTAINER_RUNTIME_BIN, ['rm', '-f', name], {
+      stdio: 'pipe',
+      timeout: 10000,
+    });
+    logger.info({ containerName: name }, 'Stopped persistent reviewer container');
+  } catch {
+    /* already gone */
+  }
 }
 
 // ── Mount builder ─────────────────────────────────────────────────
@@ -130,7 +208,6 @@ export function buildReviewerMounts(
   const groupIpcDir = resolveGroupIpcPath(group.folder);
 
   // Source code: READ-ONLY (kernel-level protection)
-  // Includes node_modules if present (npm/yarn/bun are self-contained)
   mounts.push({
     hostPath: ownerWorkspaceDir,
     containerPath: '/workspace/project',
@@ -138,7 +215,6 @@ export function buildReviewerMounts(
   });
 
   // pnpm global store: mount at the same host path so hardlinks resolve.
-  // Only needed for pnpm — npm/yarn/bun have self-contained node_modules.
   const pnpmStore = detectPnpmStorePath(ownerWorkspaceDir);
   if (pnpmStore) {
     mounts.push({
@@ -197,14 +273,23 @@ export function buildReviewerMounts(
   return mounts;
 }
 
-// ── Container args builder ────────────────────────────────────────
+// ── Container args builders ──────────────────────────────────────
 
-function buildContainerArgs(
+/** Build args for `docker run -d` (create persistent container). */
+function buildCreateArgs(
   mounts: VolumeMount[],
   containerName: string,
   envOverrides?: Record<string, string>,
 ): string[] {
-  const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+  // Start detached with sleep infinity — turns run via docker exec
+  const args: string[] = [
+    'run',
+    '-d',
+    '--name',
+    containerName,
+    '--entrypoint',
+    'sleep',
+  ];
 
   // Timezone
   args.push('-e', `TZ=${TIMEZONE}`);
@@ -234,7 +319,6 @@ function buildContainerArgs(
         key === 'CLAUDE_CODE_OAUTH_TOKEN'
       )
         continue;
-      // Remap host paths to container mount points
       if (key === 'EJCLAW_WORK_DIR') {
         args.push('-e', 'EJCLAW_WORK_DIR=/workspace/project');
         continue;
@@ -267,14 +351,14 @@ function buildContainerArgs(
     }
   }
 
-  // Writable tmpfs for test runners and temp files.
-  // Cannot mount tmpfs inside :ro mount, so redirect caches via env vars.
+  // Writable tmpfs for test runners and temp files
   args.push(...tmpfsMountArgs('/tmp'));
   args.push('-e', 'VITEST_CACHE_DIR=/tmp/.vitest');
   args.push('-e', 'JEST_CACHE_DIR=/tmp/.jest');
   args.push('-e', 'npm_config_cache=/tmp/.npm');
 
   args.push(CONTAINER_IMAGE);
+  args.push('infinity'); // argument to sleep
 
   return args;
 }
@@ -292,13 +376,16 @@ export async function runReviewerContainer(args: {
   const { group, input, ownerWorkspaceDir, envOverrides, onOutput, onProcess } =
     args;
   const startTime = Date.now();
-  const containerName = `ejclaw-reviewer-${group.folder}-${Date.now()}`;
 
   // Pre-flight: Docker running + image exists (cached after first check)
   ensureContainerReady();
 
-  const mounts = buildReviewerMounts(group, ownerWorkspaceDir);
-  const containerArgs = buildContainerArgs(mounts, containerName, envOverrides);
+  // Ensure persistent container is running for this channel
+  const containerName = ensurePersistentContainer(
+    group,
+    ownerWorkspaceDir,
+    envOverrides,
+  );
 
   logger.info(
     {
@@ -307,22 +394,22 @@ export async function runReviewerContainer(args: {
       groupFolder: group.folder,
       chatJid: input.chatJid,
       runId: input.runId,
-      image: CONTAINER_IMAGE,
-      mountCount: mounts.length,
     },
-    'Spawning reviewer container',
+    'Executing reviewer turn in persistent container',
   );
 
+  // Run a turn inside the persistent container via docker exec
   return new Promise<AgentOutput>((resolve) => {
-    const proc = spawn(CONTAINER_RUNTIME_BIN, containerArgs, {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const proc = spawn(
+      CONTAINER_RUNTIME_BIN,
+      ['exec', '-i', containerName, 'node', '/app/dist/index.js'],
+      { stdio: ['pipe', 'pipe', 'pipe'] },
+    );
 
     onProcess?.(proc, containerName);
 
     // Send input via stdin
-    const stdinPayload = JSON.stringify(input);
-    proc.stdin.write(stdinPayload);
+    proc.stdin.write(JSON.stringify(input));
     proc.stdin.end();
 
     let stdout = '';
@@ -330,10 +417,6 @@ export async function runReviewerContainer(args: {
     let lastOutput: AgentOutput | null = null;
     let totalOutputSize = 0;
     let parseBuffer = '';
-    // Chain onOutput calls so all async work (message delivery, DB writes)
-    // completes before the container exit handler runs. Without this,
-    // work items are still 'produced' when the drain loop checks, causing
-    // duplicate deliveries through different channels.
     let outputChain = Promise.resolve();
 
     // Streaming output: parse OUTPUT_START/END marker pairs
@@ -344,7 +427,7 @@ export async function runReviewerContainer(args: {
       if (totalOutputSize > AGENT_MAX_OUTPUT_SIZE) {
         logger.warn(
           { containerName, size: totalOutputSize },
-          'Container output exceeds max size, killing',
+          'Container output exceeds max size, killing exec',
         );
         try {
           proc.kill('SIGKILL');
@@ -358,7 +441,6 @@ export async function runReviewerContainer(args: {
       parseBuffer += text;
       resetTimeout();
 
-      // Parse streamed output markers
       let startIdx: number;
       while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
         const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
@@ -386,16 +468,15 @@ export async function runReviewerContainer(args: {
 
     proc.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString();
-      // Stderr activity means agent is alive — reset idle timeout
       resetTimeout();
     });
 
-    // Activity-based timeout: reset on stdout/stderr data
+    // Activity-based timeout
     const timeoutMs = Math.max(AGENT_TIMEOUT, IDLE_TIMEOUT + 30_000);
     const killOnTimeout = () => {
       logger.warn(
         { containerName, timeoutMs },
-        'Reviewer container timed out, stopping',
+        'Reviewer exec timed out, killing',
       );
       try {
         proc.kill('SIGTERM');
@@ -424,23 +505,21 @@ export async function runReviewerContainer(args: {
           stdoutLen: stdout.length,
           stderrLen: stderr.length,
         },
-        'Reviewer container exited',
+        'Reviewer exec completed',
       );
 
       if (lastOutput) {
-        // Wait for all queued onOutput handlers to finish so work items
-        // are marked delivered before the caller proceeds to drain.
         outputChain.then(() => resolve(lastOutput!));
         return;
       }
 
       // Fallback: try to parse from full stdout
-      const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
-      const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
-      if (startIdx !== -1 && endIdx !== -1) {
+      const sIdx = stdout.indexOf(OUTPUT_START_MARKER);
+      const eIdx = stdout.indexOf(OUTPUT_END_MARKER);
+      if (sIdx !== -1 && eIdx !== -1) {
         try {
           const json = stdout
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
+            .slice(sIdx + OUTPUT_START_MARKER.length, eIdx)
             .trim();
           resolve(JSON.parse(json) as AgentOutput);
           return;
@@ -449,8 +528,7 @@ export async function runReviewerContainer(args: {
         }
       }
 
-      // No valid output
-      const errorMsg = stderr.trim() || `Container exited with code ${code}`;
+      const errorMsg = stderr.trim() || `Exec exited with code ${code}`;
       resolve({
         status: code === 0 ? 'success' : 'error',
         result: null,
@@ -461,14 +539,11 @@ export async function runReviewerContainer(args: {
 
     proc.on('error', (err) => {
       clearTimeout(timeout);
-      logger.error(
-        { containerName, err },
-        'Failed to spawn reviewer container',
-      );
+      logger.error({ containerName, err }, 'Failed to exec in container');
       resolve({
         status: 'error',
         result: null,
-        error: `Container spawn error: ${err.message}`,
+        error: `Container exec error: ${err.message}`,
         phase: 'final',
       });
     });
