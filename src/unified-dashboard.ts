@@ -480,14 +480,19 @@ async function buildUsageContent(): Promise<string> {
     claudeBotRows.push(...buildClaudeUsageRows(cachedClaudeAccounts));
   }
 
-  // Group 2: Codex bot (separate service)
+  // Group 2: Codex bot — use in-process cache (unified service)
+  // or fall back to snapshot from separate Codex service.
   const codexBotRows: UsageRow[] = [];
-  const codexSnapshot = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS).find(
-    (s) => s.serviceId === 'codex-main' || s.serviceId === 'codex',
-  );
-  codexBotRows.push(
-    ...extractCodexUsageRows(codexSnapshot, USAGE_SNAPSHOT_MAX_AGE_MS),
-  );
+  if (cachedCodexUsageRows.length > 0) {
+    codexBotRows.push(...cachedCodexUsageRows);
+  } else {
+    const codexSnapshot = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS).find(
+      (s) => s.serviceId === 'codex-main' || s.serviceId === 'codex',
+    );
+    codexBotRows.push(
+      ...extractCodexUsageRows(codexSnapshot, USAGE_SNAPSHOT_MAX_AGE_MS),
+    );
+  }
 
   lines.push(...renderUsageTable(claudeBotRows, codexBotRows));
 
