@@ -630,34 +630,29 @@ export async function startUnifiedDashboard(
   await updateStatus();
 
   if (isRenderer) {
-    // Renderer: refresh usage cache at shorter interval so Codex snapshot
-    // data is picked up quickly. Claude API calls are internally rate-limited
-    // to 5min per token, so this only affects local reads.
     setInterval(refreshUsageCache, RENDERER_USAGE_REFRESH_MS);
-  } else {
-    // Codex service: fetch own usage and expose via status snapshot.
-    // Active account every usageUpdateInterval; full scan on startup + hourly.
-    // Collector returns data; we own the cache state.
-    const applyRefresh = (result: {
-      rows: UsageRow[];
-      fetchedAt: string | null;
-    }) => {
-      cachedCodexUsageRows = result.rows;
-      if (result.fetchedAt) codexUsageFetchedAt = result.fetchedAt;
-    };
-    void refreshAllCodexAccountUsage().then((r) => {
-      applyRefresh(r);
-      return refreshActiveCodexUsage().then(applyRefresh);
-    });
-    setInterval(
-      () => void refreshActiveCodexUsage().then(applyRefresh),
-      opts.usageUpdateInterval,
-    );
-    setInterval(
-      () => void refreshAllCodexAccountUsage().then(applyRefresh),
-      CODEX_FULL_SCAN_INTERVAL,
-    );
   }
+
+  // Codex usage collection — runs in unified service regardless of renderer role.
+  const applyCodexRefresh = (result: {
+    rows: UsageRow[];
+    fetchedAt: string | null;
+  }) => {
+    cachedCodexUsageRows = result.rows;
+    if (result.fetchedAt) codexUsageFetchedAt = result.fetchedAt;
+  };
+  void refreshAllCodexAccountUsage().then((r) => {
+    applyCodexRefresh(r);
+    return refreshActiveCodexUsage().then(applyCodexRefresh);
+  });
+  setInterval(
+    () => void refreshActiveCodexUsage().then(applyCodexRefresh),
+    opts.usageUpdateInterval,
+  );
+  setInterval(
+    () => void refreshAllCodexAccountUsage().then(applyCodexRefresh),
+    CODEX_FULL_SCAN_INTERVAL,
+  );
 
   logger.info(
     {
