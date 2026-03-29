@@ -126,10 +126,12 @@ function buildWorkspace(
     task_id: 'task-1',
     role,
     workspace_dir: workspaceDir,
-    snapshot_source_dir: role === 'reviewer' ? '/tmp/paired/task-1/owner' : null,
+    snapshot_source_dir:
+      role === 'reviewer' ? '/tmp/paired/task-1/owner' : null,
     snapshot_ref: role === 'reviewer' ? 'fingerprint-1' : null,
     status: 'ready',
-    snapshot_refreshed_at: role === 'reviewer' ? '2026-03-28T00:00:00.000Z' : null,
+    snapshot_refreshed_at:
+      role === 'reviewer' ? '2026-03-28T00:00:00.000Z' : null,
     created_at: '2026-03-28T00:00:00.000Z',
     updated_at: '2026-03-28T00:00:00.000Z',
   };
@@ -442,14 +444,19 @@ describe('paired execution context', () => {
       'task-1',
       expect.objectContaining({ status: 'completed' }),
     );
-    expect(pairedWorkspaceManager.markPairedTaskReviewReady).not.toHaveBeenCalled();
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).not.toHaveBeenCalled();
   });
 
   it('re-triggers review when owner changed code after approval', () => {
     const repoDir = createCanonicalRepoWithCommit('reviewed');
     const approvedSourceRef = resolveTreeRef(repoDir);
     fs.writeFileSync(path.join(repoDir, 'README.md'), 'changed\n');
-    execFileSync('git', ['add', 'README.md'], { cwd: repoDir, stdio: 'ignore' });
+    execFileSync('git', ['add', 'README.md'], {
+      cwd: repoDir,
+      stdio: 'ignore',
+    });
     execFileSync('git', ['commit', '-m', 'code change'], {
       cwd: repoDir,
       stdio: 'ignore',
@@ -465,10 +472,15 @@ describe('paired execution context', () => {
     vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
       role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
     );
-    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue({
-      ownerWorkspace: buildWorkspace('owner', repoDir),
-      reviewerWorkspace: buildWorkspace('reviewer', '/tmp/paired/task-1/reviewer'),
-    });
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', repoDir),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
+    );
 
     completePairedExecutionContext({
       taskId: 'task-1',
@@ -477,9 +489,9 @@ describe('paired execution context', () => {
       summary: 'DONE',
     });
 
-    expect(pairedWorkspaceManager.markPairedTaskReviewReady).toHaveBeenCalledWith(
-      'task-1',
-    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({

@@ -267,8 +267,7 @@ export class MessageTurnController {
       // If the progress message already shows the same text as the final
       // result, finalize it in-place instead of sending a duplicate message.
       const alreadyVisible =
-        this.progressMessageId &&
-        this.latestProgressText === text;
+        this.progressMessageId && this.latestProgressText === text;
       if (alreadyVisible) {
         await this.finalizeProgressMessage();
         this.visiblePhase = toVisiblePhase(phase);

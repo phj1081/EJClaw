@@ -72,10 +72,7 @@ function detectPnpmStorePath(workspaceDir: string): string | null {
   if (!fs.existsSync(path.join(workspaceDir, 'pnpm-lock.yaml'))) {
     return null;
   }
-  if (
-    process.env.PNPM_STORE_DIR &&
-    fs.existsSync(process.env.PNPM_STORE_DIR)
-  ) {
+  if (process.env.PNPM_STORE_DIR && fs.existsSync(process.env.PNPM_STORE_DIR)) {
     return process.env.PNPM_STORE_DIR;
   }
   try {
@@ -108,11 +105,10 @@ function ensureContainerReady(): void {
   if (containerRuntimeChecked) return;
   ensureContainerRuntimeRunning();
   try {
-    execFileSync(
-      CONTAINER_RUNTIME_BIN,
-      ['image', 'inspect', CONTAINER_IMAGE],
-      { stdio: 'pipe', timeout: 10000 },
-    );
+    execFileSync(CONTAINER_RUNTIME_BIN, ['image', 'inspect', CONTAINER_IMAGE], {
+      stdio: 'pipe',
+      timeout: 10000,
+    });
   } catch {
     throw new Error(
       `Container image '${CONTAINER_IMAGE}' not found. Build it with: ./container/build.sh`,
@@ -191,7 +187,10 @@ export function stopReviewerContainer(groupFolder: string): void {
       stdio: 'pipe',
       timeout: 10000,
     });
-    logger.info({ containerName: name }, 'Stopped persistent reviewer container');
+    logger.info(
+      { containerName: name },
+      'Stopped persistent reviewer container',
+    );
   } catch {
     /* already gone */
   }
