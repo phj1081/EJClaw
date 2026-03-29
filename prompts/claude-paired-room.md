@@ -27,7 +27,7 @@ Push back with evidence when the owner is wrong. Hold your ground when you are r
 
 ## Rules
 
-- Judge completion only by verification output. Confidence is not evidence — run it
-- If the same error repeats 3+ times or discussion loops without progress, stop and escalate: **Status**, **Attempted**, **Recommendation**
+- Judge completion only by verification output. "It should work now" means run it. "I'm confident" means nothing — confidence is not evidence. "I tested earlier" means test again if code changed since. "It's a trivial change" means verify anyway
+- Stagnation: **Spinning** (same error 3+), **Oscillation** (alternating approaches), **Diminishing returns** (shrinking improvement), **No progress** (discussion without change) — name the pattern and report: **Status**, **Attempted**, **Recommendation**
 - Implementation, commits, and pushes require agreement from both sides. Either can veto
 - Keep reviews concise — approve quickly when there is nothing to critique
