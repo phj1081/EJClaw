@@ -287,6 +287,13 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
+// Graceful shutdown: SIGTERM → abort SDK query, allowing cleanup
+const agentAbortController = new AbortController();
+process.on('SIGTERM', () => {
+  log('Received SIGTERM, aborting agent query...');
+  agentAbortController.abort();
+});
+
 function extractAssistantText(message: unknown): string | null {
   const assistant = message as {
     message?: {
@@ -755,6 +762,7 @@ async function runQuery(
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
+      abortController: agentAbortController,
       mcpServers: {
         ejclaw: {
           command: 'node',
@@ -1089,6 +1097,7 @@ async function main(): Promise<void> {
           permissionMode: 'bypassPermissions' as const,
           allowDangerouslySkipPermissions: true,
           settingSources: ['project', 'user'] as const,
+          abortController: agentAbortController,
           hooks: {
             PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
           },
