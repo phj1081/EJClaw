@@ -242,6 +242,12 @@ function buildReviewerSnapshotFingerprint(args: {
   const appendFile = (kind: 'tracked' | 'untracked', relativePath: string) => {
     const sourcePath = path.join(args.sourceDir, relativePath);
     if (!fs.existsSync(sourcePath)) return;
+    // Skip directories (e.g. submodules listed by git ls-files)
+    try {
+      if (fs.statSync(sourcePath).isDirectory()) return;
+    } catch {
+      return;
+    }
     hash.update(`${kind}\0${relativePath}\0`);
     hash.update(fs.readFileSync(sourcePath));
     hash.update('\0');
@@ -413,10 +419,7 @@ export function provisionOwnerWorkspaceForPairedTask(
   fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
 
   if (!fs.existsSync(path.join(workspaceDir, '.git'))) {
-    runGit(
-      ['worktree', 'add', workspaceDir, 'HEAD'],
-      canonicalWorkDir,
-    );
+    runGit(['worktree', 'add', workspaceDir, 'HEAD'], canonicalWorkDir);
     logger.info(
       { taskId, workspaceDir },
       'Provisioned stable owner workspace for channel',
