@@ -1,4 +1,3 @@
-import { parseStructuredOutputEnvelope } from './output-suppression.js';
 import type { StructuredAgentOutput } from './types.js';
 
 export function stringifyLegacyAgentResult(
@@ -21,10 +20,7 @@ export function getStructuredAgentOutput(output: {
   if (output.output) {
     return output.output;
   }
-  if (typeof output.result !== 'string') {
-    return null;
-  }
-  return parseStructuredOutputEnvelope(output.result.trim());
+  return null;
 }
 
 export function getAgentOutputText(output: {
@@ -32,9 +28,6 @@ export function getAgentOutputText(output: {
   result?: string | object | null;
 }): string | null {
   const structured = getStructuredAgentOutput(output);
-  if (structured?.visibility === 'silent') {
-    return null;
-  }
   if (structured?.visibility === 'public') {
     return structured.text;
   }
@@ -51,9 +44,9 @@ export function hasAgentOutputPayload(output: {
   return output.result !== null && output.result !== undefined;
 }
 
-export function isSilentAgentOutput(output: {
+export function isSilentAgentOutput(_output: {
   output?: StructuredAgentOutput;
   result?: string | object | null;
 }): boolean {
-  return getStructuredAgentOutput(output)?.visibility === 'silent';
+  return false;
 }

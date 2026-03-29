@@ -12,6 +12,7 @@ import {
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,
   getLastBotFinalMessage,
+  getLastHumanMessageContent,
   isPairedRoomJid,
   getLatestOpenPairedTaskForChat,
   type ServiceHandoff,
@@ -21,12 +22,14 @@ import {
   isClaudeService,
   isReviewService,
   isSessionCommandSenderAllowed,
+  REVIEWER_AGENT_TYPE,
   SERVICE_AGENT_TYPE,
   SERVICE_ID,
 } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
 import {
   findChannel,
+  findChannelByName,
   formatMessages,
   normalizeMessageForDedupe,
 } from './router.js';
@@ -56,10 +59,7 @@ import {
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
-import {
-  getEffectiveChannelLease,
-  shouldServiceProcessChat,
-} from './service-routing.js';
+import { getEffectiveChannelLease } from './service-routing.js';
 
 /**
  * Check if a message is a duplicate of the last bot final message in a paired room.
@@ -451,35 +451,48 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return true;
     }
 
+    // For paired rooms, determine the reviewer channel for correct bot routing.
+    // This is used whenever the reviewer needs to send output.
+    const reviewerChannelName =
+      isPairedRoomJid(chatJid) && REVIEWER_AGENT_TYPE === 'claude-code'
+        ? 'discord'
+        : 'discord-review';
+    const foundReviewerChannel = findChannelByName(
+      deps.channels,
+      reviewerChannelName,
+    );
+    const reviewerChannel = foundReviewerChannel || channel;
+    if (isPairedRoomJid(chatJid)) {
+      logger.info(
+        {
+          chatJid,
+          reviewerChannelName,
+          foundChannel: foundReviewerChannel?.name ?? null,
+          usingChannel: reviewerChannel.name,
+          availableChannels: deps.channels.map((c) => c.name),
+        },
+        'Paired room reviewer channel resolution',
+      );
+    }
+
+    // Deliver pending work items through the correct channel.
+    // For paired rooms, check if the work item was from a reviewer turn.
     const openWorkItem = getOpenWorkItem(
       chatJid,
       (group.agentType || 'claude-code') as 'claude-code' | 'codex',
     );
     if (openWorkItem) {
-      const delivered = await deliverOpenWorkItem(channel, openWorkItem);
+      // Use reviewer channel if the pending task is in review state
+      const pendingTask = isPairedRoomJid(chatJid)
+        ? getLatestOpenPairedTaskForChat(chatJid)
+        : null;
+      const isReviewerWorkItem =
+        pendingTask &&
+        (pendingTask.status === 'review_ready' ||
+          pendingTask.status === 'in_review');
+      const deliveryChannel = isReviewerWorkItem ? reviewerChannel : channel;
+      const delivered = await deliverOpenWorkItem(deliveryChannel, openWorkItem);
       if (!delivered) return false;
-    }
-
-    if (!shouldServiceProcessChat(chatJid, SERVICE_ID)) {
-      const rawMissedMessages = getMessagesSinceSeq(
-        chatJid,
-        deps.getLastAgentTimestamps()[chatJid] || '0',
-        deps.assistantName,
-      );
-      const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
-      if (lastIgnored?.seq != null) {
-        advanceLastAgentCursor(
-          deps.getLastAgentTimestamps(),
-          deps.saveState,
-          chatJid,
-          lastIgnored.seq,
-        );
-      }
-      logger.debug(
-        { chatJid, serviceId: SERVICE_ID },
-        'Skipping message processing for unassigned service',
-      );
-      return true;
     }
 
     const isMainGroup = group.isMain === true;
@@ -506,15 +519,40 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           (pendingReviewTask.status === 'review_ready' ||
             pendingReviewTask.status === 'in_review')
         ) {
-          // Synthesize a prompt for the reviewer turn
-          const reviewPrompt =
-            'Review the latest owner changes. Provide feedback or approve.';
+          // Build review prompt with user's original request + owner's response
+          const userMessage = getLastHumanMessageContent(chatJid);
+          const ownerContent = rawMissedMessages
+            .filter((m) => m.is_bot_message)
+            .map((m) => m.content)
+            .join('\n\n');
+          const parts: string[] = [];
+          if (userMessage) {
+            parts.push(`User request:\n---\n${userMessage}\n---`);
+          }
+          if (ownerContent) {
+            parts.push(`Owner response:\n---\n${ownerContent}\n---`);
+          }
+          const reviewPrompt = parts.length > 0
+            ? `${parts.join('\n\n')}\n\nReview the owner's response above. Provide feedback or approve.`
+            : 'Review the latest owner changes in the workspace. Provide feedback or approve.';
+
+          // Advance cursor past the owner's messages so they aren't re-processed
+          const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
+          if (lastRaw?.seq != null) {
+            advanceLastAgentCursor(
+              deps.getLastAgentTimestamps(),
+              deps.saveState,
+              chatJid,
+              lastRaw.seq,
+            );
+          }
+
           const { deliverySucceeded } = await executeTurn({
             group,
             prompt: reviewPrompt,
             chatJid,
             runId,
-            channel,
+            channel: reviewerChannel,
             startSeq: null,
             endSeq: null,
           });
@@ -751,20 +789,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               continue;
             }
 
-            if (!shouldServiceProcessChat(chatJid, SERVICE_ID)) {
-              const lastIgnored =
-                processableGroupMessages[processableGroupMessages.length - 1];
-              if (lastIgnored?.seq != null) {
-                advanceLastAgentCursor(
-                  deps.getLastAgentTimestamps(),
-                  deps.saveState,
-                  chatJid,
-                  lastIgnored.seq,
-                );
-              }
-              continue;
-            }
-
             if (
               shouldSkipBotOnlyCollaboration(chatJid, processableGroupMessages)
             ) {
@@ -903,10 +927,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           chatJid,
           resolveGroupIpcPath(group.folder),
         );
-        continue;
-      }
-
-      if (!shouldServiceProcessChat(chatJid, SERVICE_ID)) {
         continue;
       }
 

@@ -142,6 +142,7 @@ function makeDeps() {
     assistantName: 'Andy',
     queue: {
       registerProcess: vi.fn(),
+      enqueueMessageCheck: vi.fn(),
     },
     getRegisteredGroups: () => ({}),
     getSessions: () => ({}),

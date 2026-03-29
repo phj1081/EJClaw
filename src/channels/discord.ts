@@ -184,11 +184,14 @@ export class DiscordChannel implements Channel {
     botToken: string,
     opts: DiscordChannelOpts,
     agentTypeFilter?: AgentType,
+    channelName?: string,
   ) {
     this.botToken = botToken;
     this.opts = opts;
     this.agentTypeFilter = agentTypeFilter;
-    if (agentTypeFilter) {
+    if (channelName) {
+      this.name = channelName;
+    } else if (agentTypeFilter) {
       this.name = `discord-${agentTypeFilter}`;
     }
   }
@@ -723,21 +726,20 @@ registerChannel('discord', (opts: ChannelOpts) => {
     token,
     opts,
     hasCodexBot ? 'claude-code' : undefined,
+    'discord',
   );
 });
 
 // Register the secondary Codex bot channel.
-// In unified mode all bots register unconditionally; in legacy per-service mode
-// the codex service uses its own DISCORD_BOT_TOKEN via systemd EnvironmentFile override.
 registerChannel('discord-codex', (opts: ChannelOpts) => {
   const token = getEnv('DISCORD_CODEX_BOT_TOKEN') || '';
-  if (!token) return null; // Codex Discord bot is optional
-  return new DiscordChannel(token, opts, 'codex');
+  if (!token) return null;
+  return new DiscordChannel(token, opts, 'codex', 'discord-codex');
 });
 
 // Register the review bot channel (codex agent type, separate token).
 registerChannel('discord-review', (opts: ChannelOpts) => {
   const token = getEnv('DISCORD_REVIEW_BOT_TOKEN') || '';
-  if (!token) return null; // Review Discord bot is optional
-  return new DiscordChannel(token, opts, 'codex');
+  if (!token) return null;
+  return new DiscordChannel(token, opts, 'codex', 'discord-review');
 });

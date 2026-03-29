@@ -13,6 +13,7 @@ import {
   IDLE_TIMEOUT,
 } from './config.js';
 import { prepareGroupEnvironment } from './agent-runner-environment.js';
+import { getEnv } from './env.js';
 export {
   type AvailableGroup,
   writeGroupsSnapshot,
@@ -74,7 +75,7 @@ export async function runAgentProcess(
   // as a host process. This provides kernel-level write protection.
   const isReviewerContainer =
     envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1' &&
-    process.env.REVIEWER_CONTAINER_ENABLED !== '0';
+    getEnv('REVIEWER_CONTAINER_ENABLED') !== '0';
   if (isReviewerContainer) {
     const ownerWorkspaceDir =
       envOverrides?.EJCLAW_WORK_DIR || group.workDir || process.cwd();

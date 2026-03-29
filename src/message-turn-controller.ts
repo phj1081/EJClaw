@@ -122,14 +122,9 @@ export class MessageTurnController {
     }
 
     const raw = getAgentOutputText(result);
-    const silentOutput = isSilentAgentOutput(result);
-    const suppressState =
-      raw && this.options.suppressToken
-        ? classifySuppressTokenOutput(raw, this.options.suppressToken)
-        : raw
-          ? classifySuppressTokenOutput(raw, undefined)
-          : 'none';
-    const text = raw && suppressState === 'none' ? formatOutbound(raw) : null;
+    const silentOutput = false;
+    const suppressState = 'none' as const;
+    const text = raw ? formatOutbound(raw) : null;
 
     if (raw) {
       logger.info(
@@ -144,31 +139,6 @@ export class MessageTurnController {
         },
         `Agent output: ${raw.slice(0, 200)}`,
       );
-      if (suppressState === 'exact') {
-        logger.info(
-          {
-            chatJid: this.options.chatJid,
-            group: this.options.group.name,
-            groupFolder: this.options.group.folder,
-            runId: this.options.runId,
-            resultStatus: result.status,
-            resultPhase: result.phase,
-          },
-          'Suppressed exact-match silent output token',
-        );
-      } else if (suppressState === 'mixed') {
-        logger.warn(
-          {
-            chatJid: this.options.chatJid,
-            group: this.options.group.name,
-            groupFolder: this.options.group.folder,
-            runId: this.options.runId,
-            resultStatus: result.status,
-            resultPhase: result.phase,
-          },
-          'Blocked malformed output that mixed the silent output token with visible text',
-        );
-      }
     }
 
     const phase: AgentOutputPhase = normalizeAgentOutputPhase(result.phase);

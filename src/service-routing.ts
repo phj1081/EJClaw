@@ -2,9 +2,10 @@ import {
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
+  OWNER_AGENT_TYPE,
+  REVIEWER_SERVICE_ID_FOR_TYPE,
   SERVICE_AGENT_TYPE,
   SERVICE_ID,
-  UNIFIED_MODE,
   normalizeServiceId,
 } from './config.js';
 import {
@@ -51,10 +52,13 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
   const hasCodex = types.includes('codex');
 
   if (hasClaude && hasCodex) {
+    // Owner/reviewer service IDs derived from OWNER_AGENT_TYPE / REVIEWER_AGENT_TYPE env vars
+    const ownerServiceId =
+      OWNER_AGENT_TYPE === 'codex' ? CODEX_MAIN_SERVICE_ID : CLAUDE_SERVICE_ID;
     return {
       chat_jid: chatJid,
-      owner_service_id: CLAUDE_SERVICE_ID,
-      reviewer_service_id: CODEX_MAIN_SERVICE_ID,
+      owner_service_id: ownerServiceId,
+      reviewer_service_id: REVIEWER_SERVICE_ID_FOR_TYPE,
       activated_at: null,
       reason: null,
       explicit: false,
@@ -140,16 +144,10 @@ export function isReviewerServiceForChat(
 }
 
 export function shouldServiceProcessChat(
-  chatJid: string,
-  serviceId: string = SERVICE_ID,
+  _chatJid: string,
+  _serviceId: string = SERVICE_ID,
 ): boolean {
-  if (UNIFIED_MODE) return true;
-  const normalizedServiceId = normalizeServiceId(serviceId);
-  const lease = getEffectiveChannelLease(chatJid);
-  return (
-    normalizedServiceId === lease.owner_service_id ||
-    normalizedServiceId === lease.reviewer_service_id
-  );
+  return true;
 }
 
 export function activateCodexFailover(chatJid: string, reason: string): void {

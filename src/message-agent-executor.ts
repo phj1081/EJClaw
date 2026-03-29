@@ -37,6 +37,8 @@ import {
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
   SERVICE_SESSION_SCOPE,
+  REVIEWER_AGENT_TYPE,
+  isClaudeService,
 } from './config.js';
 import {
   buildStructuredOutputPrompt,
@@ -95,10 +97,41 @@ export async function runAgentForGroup(
     onOutput,
   } = args;
   const isMain = group.isMain === true;
-  const isClaudeCodeAgent =
-    (group.agentType || 'claude-code') === 'claude-code';
   const sessions = deps.getSessions();
-  const sessionId = sessions[group.folder];
+
+  const currentLease = getEffectiveChannelLease(chatJid);
+
+  // In unified mode, determine role from the lease directly.
+  // Default to owner; the auto-review trigger in completePairedExecutionContext
+  // will switch to reviewer when the task is in review_ready state.
+  const pairedTask = currentLease.reviewer_service_id
+    ? getLatestOpenPairedTaskForChat(chatJid)
+    : null;
+  const effectiveServiceId =
+    pairedTask &&
+    (pairedTask.status === 'review_ready' || pairedTask.status === 'in_review')
+      ? currentLease.reviewer_service_id!
+      : currentLease.owner_service_id;
+  const reviewerMode = effectiveServiceId === currentLease.reviewer_service_id;
+
+  // Override agent type based on role config (OWNER_AGENT_TYPE / REVIEWER_AGENT_TYPE).
+  // When the reviewer uses a different agent type than the group default,
+  // swap in the configured type for the duration of this execution.
+  const reviewerAgentTypeOverride =
+    reviewerMode && REVIEWER_AGENT_TYPE !== (group.agentType || 'claude-code');
+  const effectiveAgentType = reviewerAgentTypeOverride
+    ? REVIEWER_AGENT_TYPE
+    : group.agentType || 'claude-code';
+  const effectiveGroup = reviewerAgentTypeOverride
+    ? { ...group, agentType: REVIEWER_AGENT_TYPE }
+    : group;
+  const isClaudeCodeAgent = effectiveAgentType === 'claude-code';
+
+  // When the reviewer uses a different agent type than the group default,
+  // the stored session belongs to the other agent. Don't reuse it.
+  const sessionId = reviewerAgentTypeOverride
+    ? undefined
+    : sessions[group.folder];
   const memoryBriefing = sessionId
     ? undefined
     : await buildRoomMemoryBriefing({
@@ -130,20 +163,6 @@ export async function runAgentForGroup(
   let resetSessionRequested = false;
 
   const canRotateToken = isClaudeCodeAgent && getTokenCount() > 1;
-  const currentLease = getEffectiveChannelLease(chatJid);
-
-  // In unified mode, determine role from the lease directly.
-  // Default to owner; the auto-review trigger in completePairedExecutionContext
-  // will switch to reviewer when the task is in review_ready state.
-  const pairedTask = currentLease.reviewer_service_id
-    ? getLatestOpenPairedTaskForChat(chatJid)
-    : null;
-  const effectiveServiceId =
-    pairedTask &&
-    (pairedTask.status === 'review_ready' || pairedTask.status === 'in_review')
-      ? currentLease.reviewer_service_id!
-      : currentLease.owner_service_id;
-  const reviewerMode = effectiveServiceId === currentLease.reviewer_service_id;
   const roomRoleContext = buildRoomRoleContext(
     currentLease,
     effectiveServiceId,
@@ -156,11 +175,13 @@ export async function runAgentForGroup(
   });
   const effectivePrompt = buildStructuredOutputPrompt(prompt, {
     reviewerMode,
+    pairedRoom: !!pairedExecutionContext,
     gateTurnKind: pairedExecutionContext?.gateTurnKind,
     requiresVisibleVerdict: pairedExecutionContext?.requiresVisibleVerdict,
   });
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
+  let pairedExecutionCompleted = false;
 
   const shouldHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -248,6 +269,7 @@ export async function runAgentForGroup(
       status: pairedExecutionStatus,
       summary: pairedExecutionSummary,
     });
+    pairedExecutionCompleted = true;
     return 'success';
   }
 
@@ -394,21 +416,22 @@ export async function runAgentForGroup(
         }
       : undefined;
 
-    const agentType = group.agentType || 'claude-code';
     logger.info(
       {
         chatJid,
         group: group.name,
         groupFolder: group.folder,
         runId,
-        provider: agentType,
+        provider: effectiveAgentType,
+        reviewerMode,
+        reviewerAgentTypeOverride,
       },
-      `Using provider: ${agentType}`,
+      `Using provider: ${effectiveAgentType}`,
     );
 
     try {
       const output = await runAgentProcess(
-        group,
+        effectiveGroup,
         {
           ...agentInput,
           sessionId: provider === 'claude' ? sessionId : undefined,
@@ -887,7 +910,7 @@ export async function runAgentForGroup(
     pairedExecutionStatus = 'succeeded';
     return 'success';
   } finally {
-    if (pairedExecutionContext) {
+    if (pairedExecutionContext && !pairedExecutionCompleted) {
       const completedRole = roomRoleContext?.role ?? 'owner';
       completePairedExecutionContext({
         taskId: pairedExecutionContext.task.id,
@@ -895,12 +918,12 @@ export async function runAgentForGroup(
         status: pairedExecutionStatus,
         summary: pairedExecutionSummary,
       });
+    }
 
-      // After owner/reviewer completes, enqueue the next turn so
-      // the message loop picks it up without waiting for a new message.
-      if (pairedExecutionStatus === 'succeeded') {
-        deps.queue.enqueueMessageCheck(chatJid);
-      }
+    // After owner/reviewer completes, enqueue the next turn so
+    // the message loop picks it up without waiting for a new message.
+    if (pairedExecutionContext && pairedExecutionStatus === 'succeeded') {
+      deps.queue.enqueueMessageCheck(chatJid);
     }
   }
 }

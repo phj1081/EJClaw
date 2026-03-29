@@ -89,6 +89,12 @@ export function hasAllowedTrigger(opts: {
     return true;
   }
 
+  // Paired rooms: bot-to-bot ping-pong doesn't need trigger patterns.
+  // Peer bot messages (from reviewer/owner) are always allowed.
+  if (isPairedRoomJid(chatJid)) {
+    return true;
+  }
+
   const allowlistCfg = loadSenderAllowlist();
   const hasTrigger = messages.some(
     (message) =>
@@ -104,14 +110,10 @@ export function getProcessableMessages(
   messages: Parameters<typeof filterProcessableMessages>[0],
   channel?: Channel,
 ) {
-  const isPaired = isPairedRoomJid(chatJid);
   return filterProcessableMessages(
     messages,
-    isPaired,
-    // In paired rooms (unified mode), don't filter by isOwnMessage —
-    // both bots need to see each other's messages for the ping-pong flow.
-    // Loop prevention is handled by filterLoopingPairedBotMessages + round_trip_count.
-    isPaired ? undefined : channel?.isOwnMessage?.bind(channel),
+    isPairedRoomJid(chatJid),
+    channel?.isOwnMessage?.bind(channel),
   ).filter((message) => !isTaskStatusControlMessage(message.content));
 }
 

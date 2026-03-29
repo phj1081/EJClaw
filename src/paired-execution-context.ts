@@ -29,6 +29,20 @@ import type {
 } from './types.js';
 
 // ---------------------------------------------------------------------------
+// Reviewer approval detection
+// ---------------------------------------------------------------------------
+
+// Only check the first line for explicit status markers from the prompt's
+// completion status protocol (DONE, DONE_WITH_CONCERNS, BLOCKED, NEEDS_CONTEXT).
+// DONE = approved → stop ping-pong. Everything else = continue.
+function isReviewerApproval(summary: string | null | undefined): boolean {
+  if (!summary) return false;
+  const firstLine = summary.trimStart().split('\n')[0].trim();
+  // Match DONE but not DONE_WITH_CONCERNS
+  return /\bDONE\b/.test(firstLine) && !/\bDONE_WITH_CONCERNS\b/.test(firstLine);
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -168,6 +182,14 @@ export function preparePairedExecutionContext(args: {
   const now = new Date().toISOString();
 
   if (roomRoleContext.role === 'owner') {
+    // New human message → new ping-pong cycle. Reset the round trip counter
+    // so previous interactions don't block the auto-review trigger.
+    if (latestTask.round_trip_count > 0) {
+      updatePairedTask(latestTask.id, {
+        round_trip_count: 0,
+        updated_at: now,
+      });
+    }
     workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
   } else {
     const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
@@ -268,17 +290,29 @@ export function completePairedExecutionContext(args: {
     }
   }
 
-  // Reviewer finished → set task back to active so owner can respond
+  // Reviewer finished → check if approved or needs more work
   if (role === 'reviewer') {
     const now = new Date().toISOString();
-    updatePairedTask(taskId, {
-      status: 'active',
-      updated_at: now,
-    });
-    logger.info(
-      { taskId },
-      'Reviewer completed, task set back to active for owner',
-    );
+    const approved = isReviewerApproval(args.summary);
+    if (approved) {
+      updatePairedTask(taskId, {
+        status: 'completed',
+        updated_at: now,
+      });
+      logger.info(
+        { taskId, summary: args.summary?.slice(0, 100) },
+        'Reviewer approved, task completed — ping-pong stopped',
+      );
+    } else {
+      updatePairedTask(taskId, {
+        status: 'active',
+        updated_at: now,
+      });
+      logger.info(
+        { taskId },
+        'Reviewer requested changes, task set back to active for owner',
+      );
+    }
   }
 }
 

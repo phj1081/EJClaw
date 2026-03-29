@@ -9,9 +9,6 @@ import {
   POLL_INTERVAL,
   SERVICE_ID,
   SERVICE_AGENT_TYPE,
-  UNIFIED_MODE,
-  isClaudeService,
-  isReviewService,
   isSessionCommandSenderAllowed,
   STATUS_CHANNEL_ID,
   STATUS_UPDATE_INTERVAL,
@@ -79,7 +76,6 @@ import {
   initTokenRotation,
 } from './token-rotation.js';
 import {
-  shouldStartTokenRefreshLoop,
   startTokenRefreshLoop,
   stopTokenRefreshLoop,
 } from './token-refresh.js';
@@ -189,16 +185,11 @@ function loadState(): void {
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
-  // In unified mode, load ALL groups (duplicates resolved by preferring codex).
-  // In legacy per-service mode, load only this service's registrations.
-  registeredGroups = UNIFIED_MODE
-    ? getAllRegisteredGroups()
-    : getAllRegisteredGroups(SERVICE_AGENT_TYPE);
+  registeredGroups = getAllRegisteredGroups();
   logger.info(
     {
       groupCount: Object.keys(registeredGroups).length,
       agentType: SERVICE_AGENT_TYPE,
-      unifiedMode: UNIFIED_MODE,
     },
     'State loaded',
   );
@@ -331,27 +322,16 @@ async function main(): Promise<void> {
   initTokenRotation();
   initCodexTokenRotation();
 
-  // Unified mode: start credential proxy for container isolation and clean up orphaned containers
-  if (UNIFIED_MODE) {
-    startCredentialProxy(CREDENTIAL_PROXY_PORT).catch((err) =>
-      logger.warn(
-        { err },
-        'Failed to start credential proxy (may already be running)',
-      ),
-    );
-    cleanupOrphans();
-  }
+  // Start credential proxy for container isolation and clean up orphaned containers
+  startCredentialProxy(CREDENTIAL_PROXY_PORT).catch((err) =>
+    logger.warn(
+      { err },
+      'Failed to start credential proxy (may already be running)',
+    ),
+  );
+  cleanupOrphans();
 
-  // In unified mode, always start the Claude OAuth refresh loop.
-  // In per-service mode, only the Claude service owns refresh to avoid races.
-  if (UNIFIED_MODE || shouldStartTokenRefreshLoop(SERVICE_AGENT_TYPE)) {
-    startTokenRefreshLoop();
-  } else {
-    logger.info(
-      { serviceAgentType: SERVICE_AGENT_TYPE },
-      'Skipping Claude OAuth token auto-refresh for non-Claude service',
-    );
-  }
+  startTokenRefreshLoop();
 
   loadState();
 
@@ -456,27 +436,19 @@ async function main(): Promise<void> {
   }
 
   // Start subsystems (independently of connection handler)
-  // In unified mode always run the scheduler. In per-service mode, skip for review-only service.
-  if (UNIFIED_MODE || !isReviewService()) {
-    startSchedulerLoop({
-      registeredGroups: () => registeredGroups,
-      getSessions: () => sessions,
-      queue,
-      onProcess: (groupJid, proc, processName, ipcDir) =>
-        queue.registerProcess(groupJid, proc, processName, ipcDir),
-      sendMessage: (jid, rawText) =>
-        sendFormattedChannelMessage(channels, jid, rawText),
-      sendTrackedMessage: (jid, rawText) =>
-        sendFormattedTrackedChannelMessage(channels, jid, rawText),
-      editTrackedMessage: (jid, messageId, rawText) =>
-        editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
-    });
-  } else {
-    logger.info(
-      { serviceId: SERVICE_ID },
-      'Skipping scheduler for review service',
-    );
-  }
+  startSchedulerLoop({
+    registeredGroups: () => registeredGroups,
+    getSessions: () => sessions,
+    queue,
+    onProcess: (groupJid, proc, processName, ipcDir) =>
+      queue.registerProcess(groupJid, proc, processName, ipcDir),
+    sendMessage: (jid, rawText) =>
+      sendFormattedChannelMessage(channels, jid, rawText),
+    sendTrackedMessage: (jid, rawText) =>
+      sendFormattedTrackedChannelMessage(channels, jid, rawText),
+    editTrackedMessage: (jid, messageId, rawText) =>
+      editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
+  });
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
@@ -538,8 +510,7 @@ async function main(): Promise<void> {
     purgeOnStart: true,
   });
 
-  if (UNIFIED_MODE || isClaudeService()) {
-    leaseRecoveryTimer = setInterval(() => {
+  leaseRecoveryTimer = setInterval(() => {
       if (!hasAvailableClaudeToken()) {
         return;
       }
@@ -578,7 +549,6 @@ async function main(): Promise<void> {
         );
       }
     }, 5_000);
-  }
   runtime.startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

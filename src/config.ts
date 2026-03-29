@@ -22,9 +22,6 @@ export const SERVICE_AGENT_TYPE: AgentType =
       ? 'codex'
       : 'claude-code';
 
-/** Unified mode: single process manages all bots. Disable with UNIFIED_MODE=0. */
-export const UNIFIED_MODE = getEnv('UNIFIED_MODE') !== '0';
-
 export function normalizeServiceId(serviceId: string): string {
   if (serviceId === 'codex') {
     return CODEX_MAIN_SERVICE_ID;
@@ -92,6 +89,25 @@ export const RECOVERY_CONCURRENT_AGENTS = parseInt(
 );
 
 // ── Paired review ─────────────────────────────────────────────────
+
+/** Owner agent type. Default: codex. Set OWNER_AGENT_TYPE=claude-code to use Claude as owner. */
+const rawOwnerAgentType = getEnv('OWNER_AGENT_TYPE');
+export const OWNER_AGENT_TYPE: AgentType =
+  rawOwnerAgentType === 'codex' || rawOwnerAgentType === 'claude-code'
+    ? rawOwnerAgentType
+    : 'codex';
+
+/** Reviewer agent type. Default: claude-code. Set REVIEWER_AGENT_TYPE=codex to use Codex as reviewer. */
+const rawReviewerAgentType = getEnv('REVIEWER_AGENT_TYPE');
+export const REVIEWER_AGENT_TYPE: AgentType =
+  rawReviewerAgentType === 'codex' || rawReviewerAgentType === 'claude-code'
+    ? rawReviewerAgentType
+    : 'claude-code';
+
+/** Service ID for the reviewer based on agent type. */
+export const REVIEWER_SERVICE_ID_FOR_TYPE =
+  REVIEWER_AGENT_TYPE === 'claude-code' ? CLAUDE_SERVICE_ID : CODEX_REVIEW_SERVICE_ID;
+
 // Max owner↔reviewer round trips per task. 0 = unlimited.
 const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '10';
 export const PAIRED_MAX_ROUND_TRIPS =

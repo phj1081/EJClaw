@@ -4,7 +4,7 @@ Dual-agent AI assistant (Claude Code + Codex) over Discord. Originally derived f
 
 ## Quick Context
 
-Two systemd services (`ejclaw`, `ejclaw-codex`) share the same codebase but run with separate stores, data, and groups (will be unified — DB supports shared access via WAL mode + service partitioning). Agents run as direct host processes (no containers). Claude Code uses the Agent SDK; Codex uses the Codex SDK (`codex exec`). Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
+Single unified service (`ejclaw`) manages three Discord bots (Claude, Codex-main, Codex-review) in one process. Owner/reviewer agent types are configurable via `OWNER_AGENT_TYPE` and `REVIEWER_AGENT_TYPE` in `.env`. Claude Code uses the Agent SDK; Codex uses the Codex SDK (`codex exec`). Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
 
 ## Key Files
 
@@ -45,28 +45,25 @@ npm run dev                                # Dev mode with hot reload
 
 Service management (Linux):
 ```bash
-npm run restart:stack                             # Restart the configured stack and verify it
-systemctl --user restart ejclaw ejclaw-codex ejclaw-review
+systemctl --user restart ejclaw                   # Restart unified service
 systemctl --user status ejclaw                    # Check status
 journalctl --user -u ejclaw -f                    # Follow logs
 ```
 
-`npm run restart:stack` is an external deploy/operator entrypoint. Do not invoke it from inside a managed EJClaw service process.
-If you pulled this slice onto an existing install, run `npm run setup -- --step service` once so `ejclaw-stack-restart.service` is installed.
-
-Deploy to server: `scp dist/*.js clone-ej@100.64.185.108:~/EJClaw/dist/`
+Deploy to server (build on server, not locally):
+```bash
+ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && npm run build && npm run build:runners && systemctl --user restart ejclaw'
+```
 
 ## Service Stack Architecture
 
-- `ejclaw.service` — Claude Code bot (`@claude`), `SERVICE_ID=claude`, `SERVICE_AGENT_TYPE=claude-code`
-- `ejclaw-codex.service` — Codex bot (`@codex`), `SERVICE_ID=codex-main`, `SERVICE_AGENT_TYPE=codex`
-- `ejclaw-review.service` — Codex reviewer bot (`@codex-review`), `SERVICE_ID=codex-review`, `SERVICE_AGENT_TYPE=codex`
-- All services share the same codebase (`dist/index.js`), differentiated by env vars
-- Unified dirs (`store/`, `groups/`, `data/` shared by all services):
-  - `router_state`: keys prefixed with `{SERVICE_ID}:` (e.g., `claude:last_timestamp`)
-  - `sessions`: composite PK `(group_folder, agent_type)`
-  - `registered_groups`: filtered by `agent_type` on load
-  - SQLite WAL mode + `busy_timeout=5000` for concurrent access
+Single unified service manages all three Discord bots in one process:
+- `ejclaw.service` — Unified process, `UNIFIED_MODE=true` (default)
+- Discord bots: `DISCORD_BOT_TOKEN` (Claude), `DISCORD_CODEX_BOT_TOKEN` (Codex-main), `DISCORD_REVIEW_BOT_TOKEN` (Codex-review)
+- Paired review: owner (`OWNER_AGENT_TYPE`, default: codex) ↔ reviewer (`REVIEWER_AGENT_TYPE`, default: claude-code)
+- Reviewer fallback: Claude 429/한도초과 시 codex-review로 자동 핸드오프
+- Shared dirs: `store/`, `groups/`, `data/`
+- SQLite WAL mode + `busy_timeout=5000` for concurrent access
 
 ## Debugging Paths (Server: clone-ej@100.64.185.108)
 
@@ -75,9 +72,7 @@ Unified DB + directories (both services share `store/`, `groups/`, `data/`):
 | 항목 | 경로 |
 |------|------|
 | **DB** | `store/messages.db` (공유, WAL 모드) |
-| 서비스 로그 (Claude) | `journalctl --user -u ejclaw -f` 또는 `logs/ejclaw.log` |
-| 서비스 로그 (Codex) | `journalctl --user -u ejclaw-codex -f` 또는 `logs/ejclaw-codex.log` |
-| 서비스 로그 (Review) | `journalctl --user -u ejclaw-review -f` 또는 `logs/ejclaw-review.log` |
+| 서비스 로그 | `journalctl --user -u ejclaw -f` 또는 `logs/ejclaw.log` |
 | 그룹별 로그 | `groups/{name}/logs/` (공유 채널은 양쪽 봇 로그가 같은 폴더) |
 | Claude 세션 | `data/sessions/{name}/.claude/` |
 | Codex 세션 | `data/sessions/{name}/.codex/` |

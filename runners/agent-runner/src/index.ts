@@ -214,73 +214,8 @@ function normalizeStructuredOutput(result: string | null): {
   if (typeof result !== 'string' || result.length === 0) {
     return { result };
   }
-
-  const trimmed = result.trim();
-  try {
-    const parsed = JSON.parse(trimmed) as {
-      ejclaw?: { visibility?: unknown; text?: unknown; verdict?: unknown };
-    };
-    const envelope = parsed?.ejclaw;
-    if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
-      if (envelope.visibility === 'silent') {
-        if (
-          envelope.verdict !== undefined &&
-          envelope.verdict !== 'silent'
-        ) {
-          return {
-            result,
-            output: { visibility: 'public', text: result },
-          };
-        }
-        return {
-          result: null,
-          output: {
-            visibility: 'silent',
-            verdict:
-              envelope.verdict === 'silent' ? ('silent' as const) : undefined,
-          },
-        };
-      }
-      if (
-        envelope.visibility === 'public' &&
-        typeof envelope.text === 'string' &&
-        envelope.text.length > 0
-      ) {
-        if (
-          envelope.verdict !== undefined &&
-          envelope.verdict !== 'done' &&
-          envelope.verdict !== 'done_with_concerns' &&
-          envelope.verdict !== 'blocked'
-        ) {
-          return {
-            result,
-            output: { visibility: 'public', text: result },
-          };
-        }
-        return {
-          result: envelope.text,
-          output: {
-            visibility: 'public',
-            text: envelope.text,
-            verdict:
-              typeof envelope.verdict === 'string'
-                ? (envelope.verdict as
-                    | 'done'
-                    | 'done_with_concerns'
-                    | 'blocked')
-                : undefined,
-          },
-        };
-      }
-    }
-  } catch {
-    // fall through to legacy string output
-  }
-
-  return {
-    result,
-    output: { visibility: 'public', text: result },
-  };
+  // All output is public — silent suppression was removed.
+  return { result, output: { visibility: 'public', text: result } };
 }
 
 function log(message: string): void {
@@ -677,6 +612,19 @@ async function runQuery(
     if (!ipcPolling) return;
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
+      // Flush any buffered text before closing — the for-await loop may not
+      // reach the post-loop flush code after stream.end().
+      if (pendingProgressText && !terminalResultObserved) {
+        log(`Flushing pending text before close (${pendingProgressText.length} chars)`);
+        writeOutput({
+          status: 'success',
+          ...normalizeStructuredOutput(pendingProgressText),
+          newSessionId,
+        });
+        pendingProgressText = null;
+        terminalResultObserved = true;
+        resultCount++;
+      }
       closedDuringQuery = true;
       stream.end();
       ipcPolling = false;
@@ -916,14 +864,21 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      let textResult = 'result' in message ? (message as { result?: string }).result : null;
       const isError = message.subtype?.startsWith('error');
       // Discard pending progress if it matches the final result (prevent duplicate)
       if (pendingProgressText && textResult && pendingProgressText === textResult) {
         log(`Discarding pending progress (matches result)`);
         pendingProgressText = null;
       } else if (pendingProgressText) {
-        writeOutput({ status: 'success', phase: 'intermediate', result: pendingProgressText, newSessionId });
+        // If the result has no text, promote pending progress to the result
+        // so it gets delivered as the final output instead of being lost.
+        if (!textResult) {
+          log(`Promoting pending progress text to result (${pendingProgressText.length} chars)`);
+          textResult = pendingProgressText;
+        } else {
+          writeOutput({ status: 'success', phase: 'intermediate', result: pendingProgressText, newSessionId });
+        }
         pendingProgressText = null;
       }
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
@@ -1009,6 +964,19 @@ async function runQuery(
         log(`Intermediate assistant text buffered (${textResult.length} chars, stop=${stopReason})`);
       }
     }
+  }
+
+  // Flush any remaining buffered text that was never followed by a result event.
+  // This happens when the agent produces a short response without a formal end_turn.
+  if (pendingProgressText && !terminalResultObserved) {
+    log(`Flushing remaining pending progress text as final output (${pendingProgressText.length} chars)`);
+    writeOutput({
+      status: 'success',
+      ...normalizeStructuredOutput(pendingProgressText),
+      newSessionId,
+    });
+    terminalResultObserved = true;
+    resultCount++;
   }
 
   ipcPolling = false;
