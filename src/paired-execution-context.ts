@@ -10,6 +10,7 @@ import {
   getLatestOpenPairedTaskForChat,
   getPairedTaskById,
   getPairedWorkspace,
+  hasActiveCiWatcherForChat,
   updatePairedTask,
   upsertPairedProject,
 } from './db.js';
@@ -388,6 +389,17 @@ export function completePairedExecutionContext(args: {
           'Owner made changes after reviewer approval — re-triggering review',
         );
       }
+    }
+
+    // Active CI watcher → skip auto-review until watcher completes.
+    // The watcher result will be posted via reviewer bot, triggering
+    // the owner to act on it, which then resumes the review loop.
+    if (hasActiveCiWatcherForChat(task.chat_jid)) {
+      logger.info(
+        { taskId, chatJid: task.chat_jid },
+        'Active CI watcher found, deferring auto-review until watcher completes',
+      );
+      return;
     }
 
     // Normal turn → auto-trigger reviewer (if within round trip limit)

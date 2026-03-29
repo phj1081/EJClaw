@@ -1411,6 +1411,17 @@ export function deleteTask(id: string): void {
   }
 }
 
+export function hasActiveCiWatcherForChat(chatJid: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM scheduled_tasks
+       WHERE chat_jid = ? AND status = 'active' AND prompt LIKE '[BACKGROUND CI WATCH]%'
+       LIMIT 1`,
+    )
+    .get(chatJid);
+  return !!row;
+}
+
 export function getDueTasks(): ScheduledTask[] {
   const now = new Date().toISOString();
   return db
