@@ -25,7 +25,6 @@ import {
   TIMEZONE,
 } from './config.js';
 import {
-  CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
   ensureContainerRuntimeRunning,
   hostGatewayArgs,
@@ -43,10 +42,6 @@ import type { RegisteredGroup } from './types.js';
 
 const CONTAINER_IMAGE =
   process.env.REVIEWER_CONTAINER_IMAGE || 'ejclaw-reviewer:latest';
-const CREDENTIAL_PROXY_PORT = parseInt(
-  process.env.CREDENTIAL_PROXY_PORT || '3001',
-  10,
-);
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -331,17 +326,18 @@ function buildCreateArgs(
   // Timezone
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Credential proxy — containers never see real API keys
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
-
+  // Pass real credentials — Claude Code SDK handles OAuth internally,
+  // raw Bearer tokens on api.anthropic.com are not supported.
   const authMode = detectAuthMode();
   if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    const apiKey = process.env.ANTHROPIC_API_KEY || '';
+    args.push('-e', `ANTHROPIC_API_KEY=${apiKey}`);
   } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    const oauthToken =
+      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+      process.env.ANTHROPIC_AUTH_TOKEN ||
+      '';
+    args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
   }
 
   // Reviewer runtime flag
@@ -355,11 +351,8 @@ function buildCreateArgs(
   // Extra env overrides from paired-execution-context
   if (envOverrides) {
     for (const [key, value] of Object.entries(envOverrides)) {
-      if (
-        key === 'ANTHROPIC_BASE_URL' ||
-        key === 'ANTHROPIC_API_KEY' ||
-        key === 'CLAUDE_CODE_OAUTH_TOKEN'
-      )
+      // Already set above — skip duplicates
+      if (key === 'ANTHROPIC_API_KEY' || key === 'CLAUDE_CODE_OAUTH_TOKEN')
         continue;
       if (key === 'EJCLAW_WORK_DIR') {
         args.push('-e', 'EJCLAW_WORK_DIR=/workspace/project');
@@ -440,11 +433,26 @@ export async function runReviewerContainer(args: {
     'Executing reviewer turn in persistent container',
   );
 
-  // Run a turn inside the persistent container via docker exec
+  // Run a turn inside the persistent container via docker exec.
+  // Inject credentials at exec-time so token rotation is picked up
+  // without recreating the container.
+  const execArgs = ['exec', '-i'];
+  const authMode = detectAuthMode();
+  if (authMode === 'api-key') {
+    execArgs.push('-e', `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY || ''}`);
+  } else {
+    const oauthToken =
+      process.env.CLAUDE_CODE_OAUTH_TOKEN ||
+      process.env.ANTHROPIC_AUTH_TOKEN ||
+      '';
+    execArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
+  }
+  execArgs.push(containerName, 'node', '/app/dist/index.js');
+
   return new Promise<AgentOutput>((resolve) => {
     const proc = spawn(
       CONTAINER_RUNTIME_BIN,
-      ['exec', '-i', containerName, 'node', '/app/dist/index.js'],
+      execArgs,
       { stdio: ['pipe', 'pipe', 'pipe'] },
     );
 
