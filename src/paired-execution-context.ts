@@ -348,32 +348,52 @@ export function completePairedExecutionContext(args: {
   if (role === 'owner') {
     const now = new Date().toISOString();
 
-    // merge_ready → reviewer already approved. Check if owner made
-    // additional changes that need re-review.
+    // merge_ready → reviewer already approved. Check owner verdict and
+    // whether owner made additional changes that need re-review.
     if (task.status === 'merge_ready') {
-      const workspace = getPairedWorkspace(task.id, 'owner');
-      const hasNewChanges = workspace?.workspace_dir
-        ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
-        : null;
-
-      if (hasNewChanges === false) {
-        // No code changes since reviewer approved → finalize complete
-        updatePairedTask(taskId, { status: 'completed', updated_at: now });
+      // Owner can raise concerns even during finalize (e.g. push failed,
+      // detached HEAD, discovered issue). Respect the owner's verdict.
+      const ownerVerdict = classifyReviewerVerdict(args.summary);
+      if (
+        ownerVerdict === 'done_with_concerns' ||
+        ownerVerdict === 'blocked' ||
+        ownerVerdict === 'needs_context'
+      ) {
+        updatePairedTask(taskId, { status: 'active', updated_at: now });
         logger.info(
-          { taskId, summary: args.summary?.slice(0, 100) },
-          'Owner finalized after reviewer approval — task completed',
+          {
+            taskId,
+            ownerVerdict,
+            summary: args.summary?.slice(0, 100),
+          },
+          'Owner raised concerns during finalize — task set back to active',
         );
-        return;
+        // Fall through to auto-trigger reviewer for the new concern
+      } else {
+        const workspace = getPairedWorkspace(task.id, 'owner');
+        const hasNewChanges = workspace?.workspace_dir
+          ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
+          : null;
+
+        if (hasNewChanges === false) {
+          // No code changes since reviewer approved → finalize complete
+          updatePairedTask(taskId, { status: 'completed', updated_at: now });
+          logger.info(
+            { taskId, summary: args.summary?.slice(0, 100) },
+            'Owner finalized after reviewer approval — task completed',
+          );
+          return;
+        }
+        // Owner made changes after approval → needs re-review
+        logger.info(
+          {
+            taskId,
+            sourceRef: task.source_ref,
+            hasNewChanges,
+          },
+          'Owner made changes after reviewer approval — re-triggering review',
+        );
       }
-      // Owner made changes after approval → needs re-review
-      logger.info(
-        {
-          taskId,
-          sourceRef: task.source_ref,
-          hasNewChanges,
-        },
-        'Owner made changes after reviewer approval — re-triggering review',
-      );
     }
 
     // Normal turn → auto-trigger reviewer (if within round trip limit)
