@@ -330,6 +330,11 @@ export async function runReviewerContainer(args: {
     let lastOutput: AgentOutput | null = null;
     let totalOutputSize = 0;
     let parseBuffer = '';
+    // Chain onOutput calls so all async work (message delivery, DB writes)
+    // completes before the container exit handler runs. Without this,
+    // work items are still 'produced' when the drain loop checks, causing
+    // duplicate deliveries through different channels.
+    let outputChain = Promise.resolve();
 
     // Streaming output: parse OUTPUT_START/END marker pairs
     proc.stdout.on('data', (chunk: Buffer) => {
@@ -367,7 +372,9 @@ export async function runReviewerContainer(args: {
         try {
           const parsed = JSON.parse(json) as AgentOutput;
           lastOutput = parsed;
-          void onOutput?.(parsed);
+          if (onOutput) {
+            outputChain = outputChain.then(() => onOutput(parsed));
+          }
         } catch (err) {
           logger.warn(
             { containerName, err },
@@ -421,7 +428,9 @@ export async function runReviewerContainer(args: {
       );
 
       if (lastOutput) {
-        resolve(lastOutput);
+        // Wait for all queued onOutput handlers to finish so work items
+        // are marked delivered before the caller proceeds to drain.
+        outputChain.then(() => resolve(lastOutput!));
         return;
       }
 
