@@ -386,7 +386,7 @@ After=network.target
 Type=oneshot
 WorkingDirectory=${projectRoot}
 ${envLines.join('\n')}
-ExecStart=/bin/bash ${projectRoot}/scripts/restart-ejclaw-stack.sh --direct
+ExecStart=${nodePath} ${projectRoot}/setup/restart-stack.ts --direct
 `;
 }
 

@@ -214,7 +214,7 @@ describe('service definitions', () => {
     expect(unit).toContain('Description=EJClaw Stack Restart Orchestrator');
     expect(unit).toContain('Type=oneshot');
     expect(unit).toContain(
-      'ExecStart=/bin/bash /srv/ejclaw/scripts/restart-ejclaw-stack.sh --direct',
+      'ExecStart=/usr/bin/bun /srv/ejclaw/setup/restart-stack.ts --direct',
     );
   });
 });

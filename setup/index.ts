@@ -13,6 +13,7 @@ const STEPS: Record<
   runners: () => import('./runners.js'),
   groups: () => import('./groups.js'),
   register: () => import('./register.js'),
+  'restart-stack': () => import('./restart-stack.js'),
   service: () => import('./service.js'),
   verify: () => import('./verify.js'),
 };
