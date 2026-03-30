@@ -67,9 +67,16 @@ function classifyReviewerVerdict(
 // Arbiter verdict detection
 // ---------------------------------------------------------------------------
 
-type ArbiterVerdictResult = 'proceed' | 'revise' | 'reset' | 'escalate' | 'unknown';
+type ArbiterVerdictResult =
+  | 'proceed'
+  | 'revise'
+  | 'reset'
+  | 'escalate'
+  | 'unknown';
 
-function classifyArbiterVerdict(summary: string | null | undefined): ArbiterVerdictResult {
+function classifyArbiterVerdict(
+  summary: string | null | undefined,
+): ArbiterVerdictResult {
   if (!summary) return 'unknown';
   const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
   if (!cleaned) return 'unknown';
@@ -522,12 +529,25 @@ export function completePairedExecutionContext(args: {
 
       case 'blocked':
       case 'needs_context':
-        // Needs user decision — stop ping-pong, leave task active
-        updatePairedTask(taskId, { status: 'completed', updated_at: now });
-        logger.info(
-          { taskId, verdict, summary: args.summary?.slice(0, 100) },
-          'Reviewer escalated to user — ping-pong stopped',
-        );
+        // If arbiter is enabled, let arbiter judge before escalating to user.
+        // Arbiter may resolve the block (e.g. owner can fix it, info exists in context).
+        if (isArbiterEnabled()) {
+          updatePairedTask(taskId, {
+            status: 'arbiter_requested',
+            arbiter_requested_at: now,
+            updated_at: now,
+          });
+          logger.info(
+            { taskId, verdict, summary: args.summary?.slice(0, 100) },
+            'Reviewer blocked/needs_context — requesting arbiter before escalating',
+          );
+        } else {
+          updatePairedTask(taskId, { status: 'completed', updated_at: now });
+          logger.info(
+            { taskId, verdict, summary: args.summary?.slice(0, 100) },
+            'Reviewer escalated to user — ping-pong stopped',
+          );
+        }
         break;
 
       case 'done_with_concerns':
@@ -597,10 +617,7 @@ export function completePairedExecutionContext(args: {
           arbiter_verdict: 'escalate',
           updated_at: now,
         });
-        logger.info(
-          { taskId },
-          'Arbiter escalated to user — task completed',
-        );
+        logger.info({ taskId }, 'Arbiter escalated to user — task completed');
         break;
       default:
         // Unknown verdict — treat as escalate
