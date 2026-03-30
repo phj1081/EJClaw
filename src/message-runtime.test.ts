@@ -117,6 +117,7 @@ vi.mock('./db.js', () => {
     getPendingServiceHandoffs: vi.fn(() => []),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
+    getRecentChatMessages: vi.fn(() => []),
     createProducedWorkItem: vi.fn((input) => ({
       id: 1,
       group_folder: input.group_folder,
@@ -211,6 +212,7 @@ describe('createMessageRuntime', () => {
     vi.resetAllMocks();
     vi.mocked(db.getLastBotFinalMessage).mockReturnValue([]);
     vi.mocked(db.isPairedRoomJid).mockReturnValue(false);
+    vi.mocked(db.getRecentChatMessages).mockReturnValue([]);
     vi.mocked(config.isClaudeService).mockReturnValue(true);
     vi.mocked(config.isReviewService).mockReturnValue(false);
   });
@@ -746,6 +748,122 @@ describe('createMessageRuntime', () => {
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
     expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '최종 정리 완료');
+  });
+
+  it('reuses the shared arbiter prompt builder for pending arbiter turns', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-arbiter',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 3,
+      status: 'arbiter_requested',
+      arbiter_verdict: null,
+      arbiter_requested_at: '2026-03-30T00:00:10.000Z',
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:10.000Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-arbiter',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'owner 산출물',
+        created_at: '2026-03-30T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-arbiter',
+        turn_number: 2,
+        role: 'reviewer',
+        output_text: 'reviewer 이견',
+        created_at: '2026-03-30T00:00:02.000Z',
+      },
+    ]);
+    vi.mocked(db.getRecentChatMessages).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '추가 맥락',
+        timestamp: '2026-03-30T00:00:00.500Z',
+        is_bot_message: false,
+      } as any,
+      {
+        id: 'bot-1',
+        chat_jid: chatJid,
+        sender: 'bot@test',
+        sender_name: 'Bot',
+        content: 'bot progress',
+        timestamp: '2026-03-30T00:00:03.000Z',
+        is_bot_message: true,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('<task-id>task-arbiter</task-id>');
+        expect(input.prompt).toContain('<round-trips>3</round-trips>');
+        expect(input.prompt).toContain('추가 맥락');
+        expect(input.prompt).toContain('owner 산출물');
+        expect(input.prompt).toContain('reviewer 이견');
+        expect(input.prompt).not.toContain('bot progress');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'arbiter 확인 완료',
+          newSessionId: 'session-arbiter-pending',
+        });
+        return {
+          status: 'success',
+          result: 'arbiter 확인 완료',
+          newSessionId: 'session-arbiter-pending',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-arbiter-pending-shared-prompt',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, 'arbiter 확인 완료');
   });
 
   it('allows follow-up messages without a trigger after a visible reply in non-main groups', async () => {

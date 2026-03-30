@@ -56,7 +56,13 @@ import {
   isSessionCommandAllowed,
   isSessionCommandControlMessage,
 } from './session-commands.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import {
+  Channel,
+  NewMessage,
+  RegisteredGroup,
+  type PairedTask,
+  type PairedTurnOutput,
+} from './types.js';
 import { logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { getEffectiveChannelLease } from './service-routing.js';
@@ -163,7 +169,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
   /** Convert paired turn outputs to NewMessage format for formatMessages(). */
   const turnOutputsToMessages = (
-    outputs: import('./types.js').PairedTurnOutput[],
+    outputs: PairedTurnOutput[],
     chatJid: string,
   ): NewMessage[] =>
     outputs.map((t) => ({
@@ -176,6 +182,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       is_bot_message: true as const,
       is_from_me: false as const,
     }));
+
+  const mergeHumanAndTurnOutputMessages = (
+    chatJid: string,
+    humanMessages: NewMessage[],
+    turnOutputs: PairedTurnOutput[],
+  ): NewMessage[] =>
+    [...humanMessages, ...turnOutputsToMessages(turnOutputs, chatJid)].sort(
+      (a, b) => a.timestamp.localeCompare(b.timestamp),
+    );
 
   /**
    * Build a prompt from paired_turn_outputs (Discord-independent) + human messages.
@@ -198,14 +213,72 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     // Human messages from the missed messages (exclude bot messages)
     const humanMessages = missedMessages.filter((m) => !m.is_bot_message);
-    const agentMessages = turnOutputsToMessages(turnOutputs, chatJid);
 
-    // Merge human + agent messages chronologically
-    const allMessages = [...humanMessages, ...agentMessages].sort((a, b) =>
-      a.timestamp.localeCompare(b.timestamp),
+    return formatMessages(
+      mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),
+      timezone,
     );
+  };
 
-    return formatMessages(allMessages, timezone);
+  const buildReviewerPendingPrompt = (
+    task: PairedTask,
+    chatJid: string,
+    timezone: string,
+  ): string => {
+    const turnOutputs = getPairedTurnOutputs(task.id);
+    if (turnOutputs.length > 0) {
+      const humanMessages = getRecentChatMessages(chatJid, 20).filter(
+        (message) => !message.is_bot_message,
+      );
+      return formatMessages(
+        mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),
+        timezone,
+      );
+    }
+
+    const userMessage = getLastHumanMessageContent(chatJid);
+    if (!userMessage) {
+      return 'Review the latest owner changes in the workspace.';
+    }
+
+    return `User request:\n---\n${userMessage}\n---\n\nReview the latest owner changes in the workspace.`;
+  };
+
+  const buildArbiterPromptForTask = (
+    task: PairedTask,
+    chatJid: string,
+    timezone: string,
+  ): string => {
+    const turnOutputs = getPairedTurnOutputs(task.id);
+    const recentMessages = getRecentChatMessages(chatJid, 20);
+    const arbiterMessages =
+      turnOutputs.length > 0
+        ? mergeHumanAndTurnOutputMessages(
+            chatJid,
+            recentMessages.filter((message) => !message.is_bot_message),
+            turnOutputs,
+          )
+        : labelPairedSenders(chatJid, recentMessages);
+
+    return buildArbiterContextPrompt({
+      chatJid,
+      taskId: task.id,
+      roundTripCount: task.round_trip_count,
+      timezone,
+      messages: arbiterMessages,
+    });
+  };
+
+  const buildFinalizePendingPrompt = (task: PairedTask): string => {
+    const turnOutputs = getPairedTurnOutputs(task.id);
+    const lastReviewerOutput = [...turnOutputs]
+      .reverse()
+      .find((output) => output.role === 'reviewer');
+    const reviewerSummary = lastReviewerOutput?.output_text
+      ? `\n\nReviewer's final assessment:\n${lastReviewerOutput.output_text.slice(0, 2000)}`
+      : '';
+
+    return `The reviewer approved your work (DONE). Finalize and report the result.${reviewerSummary}`;
   };
 
   const isBotOnlyPairedRoomTurn = (
@@ -591,6 +664,80 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const resolveChannel = (taskStatus?: string | null): Channel =>
       roleToChannel[resolveActiveRole(taskStatus)] ?? channel;
 
+    const buildPendingPairedTurn = (
+      task: PairedTask,
+      rawMissedMessages: NewMessage[],
+    ):
+      | {
+          prompt: string;
+          channel: Channel;
+          cursor: string | number | null;
+          cursorKey?: string;
+        }
+      | null => {
+      const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
+      const cursor = lastRaw?.seq ?? lastRaw?.timestamp ?? null;
+      const taskStatus = task.status;
+      const pendingRole = resolveActiveRole(taskStatus);
+
+      if (pendingRole === 'reviewer') {
+        return {
+          prompt: buildReviewerPendingPrompt(task, chatJid, deps.timezone),
+          channel: resolveChannel(taskStatus),
+          cursor,
+          cursorKey: resolveCursorKey(chatJid, taskStatus),
+        };
+      }
+
+      if (pendingRole === 'arbiter') {
+        return {
+          prompt: buildArbiterPromptForTask(task, chatJid, deps.timezone),
+          channel: resolveChannel(taskStatus),
+          cursor,
+          cursorKey: resolveCursorKey(chatJid, taskStatus),
+        };
+      }
+
+      if (taskStatus === 'merge_ready') {
+        return {
+          prompt: buildFinalizePendingPrompt(task),
+          channel: resolveChannel(taskStatus),
+          cursor,
+        };
+      }
+
+      return null;
+    };
+
+    const executePendingPairedTurn = async (args: {
+      prompt: string;
+      channel: Channel;
+      cursor: string | number | null;
+      cursorKey?: string;
+    }): Promise<boolean> => {
+      if (args.cursor != null) {
+        advanceLastAgentCursor(
+          deps.getLastAgentTimestamps(),
+          deps.saveState,
+          chatJid,
+          args.cursor,
+          args.cursorKey,
+        );
+      }
+
+      const { deliverySucceeded } = await executeTurn({
+        group,
+        prompt: args.prompt,
+        chatJid,
+        runId,
+        channel: args.channel,
+        startSeq: null,
+        endSeq: null,
+      });
+
+      return deliverySucceeded;
+    };
+
     if (isPairedRoomJid(chatJid)) {
       logger.info(
         {
@@ -649,132 +796,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         const pendingReviewTask = isPairedRoomJid(chatJid)
           ? getLatestOpenPairedTaskForChat(chatJid)
           : null;
-        const pendingRole = resolveActiveRole(pendingReviewTask?.status);
-        if (pendingReviewTask && pendingRole === 'reviewer') {
-          // Build reviewer prompt from turn outputs (Discord-independent).
-          // Includes full owner/reviewer conversation history + human messages.
-          const turnOutputs = getPairedTurnOutputs(pendingReviewTask.id);
-          let reviewPrompt: string;
-          if (turnOutputs.length > 0) {
-            const humanMsgs = getRecentChatMessages(chatJid, 20).filter(
-              (m) => !m.is_bot_message,
-            );
-            const allMsgs = [
-              ...humanMsgs,
-              ...turnOutputsToMessages(turnOutputs, chatJid),
-            ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-            reviewPrompt = formatMessages(allMsgs, deps.timezone);
-          } else {
-            // Fallback: no turn outputs yet (pre-migration task)
-            const userMessage = getLastHumanMessageContent(chatJid);
-            const parts: string[] = [];
-            if (userMessage) {
-              parts.push(`User request:\n---\n${userMessage}\n---`);
-            }
-            reviewPrompt =
-              parts.length > 0
-                ? `${parts.join('\n\n')}\n\nReview the latest owner changes in the workspace.`
-                : 'Review the latest owner changes in the workspace.';
-          }
-
-          // Advance reviewer cursor (not owner cursor) so the reviewer
-          // still sees the owner's messages on subsequent turns.
-          const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
-          const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
-          if (cursor != null) {
-            advanceLastAgentCursor(
-              deps.getLastAgentTimestamps(),
-              deps.saveState,
-              chatJid,
-              cursor,
-              resolveCursorKey(chatJid, pendingReviewTask?.status),
-            );
-          }
-
-          const { deliverySucceeded } = await executeTurn({
-            group,
-            prompt: reviewPrompt,
-            chatJid,
-            runId,
-            channel: resolveChannel(pendingReviewTask?.status),
-            startSeq: null,
-            endSeq: null,
-          });
-          return deliverySucceeded;
-        }
-
-        if (pendingReviewTask && pendingRole === 'arbiter') {
-          const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
-          const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
-          if (cursor != null) {
-            advanceLastAgentCursor(
-              deps.getLastAgentTimestamps(),
-              deps.saveState,
-              chatJid,
-              cursor,
-              resolveCursorKey(chatJid, pendingReviewTask?.status),
-            );
-          }
-
-          const arbiterTurnOutputs = getPairedTurnOutputs(pendingReviewTask.id);
-          const recentMsgs = getRecentChatMessages(chatJid, 20);
-          const arbiterMessages =
-            arbiterTurnOutputs.length > 0
-              ? [
-                  ...recentMsgs.filter((m) => !m.is_bot_message),
-                  ...turnOutputsToMessages(arbiterTurnOutputs, chatJid),
-                ].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-              : labelPairedSenders(chatJid, recentMsgs);
-          const arbiterPrompt = buildArbiterContextPrompt({
-            chatJid,
-            taskId: pendingReviewTask.id,
-            roundTripCount: pendingReviewTask.round_trip_count,
-            timezone: deps.timezone,
-            messages: arbiterMessages,
-          });
-
-          const { deliverySucceeded } = await executeTurn({
-            group,
-            prompt: arbiterPrompt,
-            chatJid,
-            runId,
-            channel: resolveChannel(pendingReviewTask?.status),
-            startSeq: null,
-            endSeq: null,
-          });
-          return deliverySucceeded;
-        }
-
-        // merge_ready: reviewer approved, owner gets final turn to finalize
-        if (pendingReviewTask && pendingReviewTask.status === 'merge_ready') {
-          const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
-          const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
-          if (cursor != null) {
-            advanceLastAgentCursor(
-              deps.getLastAgentTimestamps(),
-              deps.saveState,
-              chatJid,
-              cursor,
-            );
-          }
-          const turnOutputs = getPairedTurnOutputs(pendingReviewTask.id);
-          const lastReviewerOutput = [...turnOutputs]
-            .reverse()
-            .find((output) => output.role === 'reviewer');
-          const reviewerSummary = lastReviewerOutput?.output_text
-            ? `\n\nReviewer's final assessment:\n${lastReviewerOutput.output_text.slice(0, 2000)}`
-            : '';
-          const finalizePrompt = `The reviewer approved your work (DONE). Finalize and report the result.${reviewerSummary}`;
-          const { deliverySucceeded } = await executeTurn({
-            group,
-            prompt: finalizePrompt,
-            chatJid,
-            runId,
-            channel,
-            startSeq: null,
-            endSeq: null,
-          });
-          return deliverySucceeded;
+        const pendingTurn = pendingReviewTask
+          ? buildPendingPairedTurn(pendingReviewTask, rawMissedMessages)
+          : null;
+        if (pendingTurn) {
+          return executePendingPairedTurn(pendingTurn);
         }
 
         const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
@@ -893,23 +919,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const turnRole = resolveActiveRole(taskStatus);
       let prompt: string;
       if (turnRole === 'arbiter' && pendingTaskForChannel) {
-        // Prefer direct turn outputs; fall back to Discord messages
-        const turnOutputs = getPairedTurnOutputs(pendingTaskForChannel.id);
-        const arbiterRecentMsgs = getRecentChatMessages(chatJid, 20);
-        const arbiterMsgs =
-          turnOutputs.length > 0
-            ? [
-                ...arbiterRecentMsgs.filter((m) => !m.is_bot_message),
-                ...turnOutputsToMessages(turnOutputs, chatJid),
-              ].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
-            : labelPairedSenders(chatJid, arbiterRecentMsgs);
-        prompt = buildArbiterContextPrompt({
+        prompt = buildArbiterPromptForTask(
+          pendingTaskForChannel,
           chatJid,
-          taskId: pendingTaskForChannel.id,
-          roundTripCount: pendingTaskForChannel.round_trip_count,
-          timezone: deps.timezone,
-          messages: arbiterMsgs,
-        });
+          deps.timezone,
+        );
       } else if (pendingTaskForChannel) {
         prompt = buildPairedTurnPrompt(
           pendingTaskForChannel.id,
