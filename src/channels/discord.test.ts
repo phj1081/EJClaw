@@ -107,7 +107,7 @@ vi.mock('discord.js', () => {
     Client: MockClient,
     Events,
     GatewayIntentBits,
-    MessageFlags: { SuppressEmbeds: 1 << 2 },
+    MessageFlags: { SuppressEmbeds: 1 << 2, IsVoiceMessage: 1 << 13 },
     TextChannel,
   };
 });
@@ -188,6 +188,7 @@ function createMessage(overrides: {
     },
     attachments: overrides.attachments ?? new Map(),
     reference: overrides.reference ?? null,
+    flags: { has: () => false },
   };
 }
 

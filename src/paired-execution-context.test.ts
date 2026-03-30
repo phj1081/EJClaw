@@ -13,6 +13,7 @@ vi.mock('./db.js', () => ({
   getPairedWorkspace: vi.fn(),
   updatePairedTask: vi.fn(),
   upsertPairedProject: vi.fn(),
+  hasActiveCiWatcherForChat: vi.fn(() => false),
 }));
 
 vi.mock('./paired-workspace-manager.js', () => ({
