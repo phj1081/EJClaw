@@ -1,13 +1,14 @@
 # EJClaw
 
+![Version](https://img.shields.io/badge/version-0.1.0-blue)
 ![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.81-blueviolet)
 ![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.115.0-green)
 ![Bun](https://img.shields.io/badge/Bun-1.3+-f9f1e1?logo=bun&logoColor=black)
 ![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
 
-Tribunal multi-agent AI assistant (Claude Code + Codex + Arbiter) over Discord with autonomous paired review and Mixture of Agents.
+Tribunal multi-agent AI assistant (Owner + Reviewer + Arbiter) over Discord with autonomous paired review and Mixture of Agents.
 
-Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now maintained as EJClaw for personal production use.
+Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now independently maintained as EJClaw.
 Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros) and [garrytan/gstack](https://github.com/garrytan/gstack), adapted for EJClaw's Discord and dual-service workflow.
 Tribunal arbiter system inspired by multi-agent consensus architectures.
 
@@ -96,7 +97,10 @@ Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (ho
                                           │
                                      IPC polling ◄── follow-up messages
                                           │
-                                     Router ──► Discord (text, images, files)
+                              ┌────────── Router ──────────┐
+                              ▼                            ▼
+                   paired_turn_outputs           Discord (display only)
+                   (agent ↔ agent data)      (user observation, @mention)
 ```
 
 ## Setup
