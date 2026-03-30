@@ -32,6 +32,7 @@ vi.mock('./logger.js', () => ({
 }));
 
 import * as db from './db.js';
+import * as config from './config.js';
 import {
   completePairedExecutionContext,
   preparePairedExecutionContext,
@@ -442,6 +443,38 @@ describe('paired execution context', () => {
       }),
     );
   });
+
+  it.each(['BLOCKED', 'NEEDS_CONTEXT'])(
+    'escalates immediately when owner reports %s during finalize without arbiter',
+    (summary) => {
+      vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(false);
+
+      vi.mocked(db.getPairedTaskById).mockReturnValue(
+        buildPairedTask({
+          status: 'merge_ready',
+          round_trip_count: 1,
+        }),
+      );
+
+      completePairedExecutionContext({
+        taskId: 'task-1',
+        role: 'owner',
+        status: 'succeeded',
+        summary,
+      });
+
+      expect(db.updatePairedTask).toHaveBeenCalledWith(
+        'task-1',
+        expect.objectContaining({
+          status: 'completed',
+          completion_reason: 'escalated',
+        }),
+      );
+      expect(
+        pairedWorkspaceManager.markPairedTaskReviewReady,
+      ).not.toHaveBeenCalled();
+    },
+  );
 
   it('records source_ref when reviewer verdict DONE arrives via failed fallback', () => {
     const repoDir = createCanonicalRepoWithCommit('reviewed');

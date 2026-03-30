@@ -422,10 +422,42 @@ export function completePairedExecutionContext(args: {
       // detached HEAD, discovered issue). Respect the owner's verdict.
       const ownerVerdict = classifyReviewerVerdict(args.summary);
       if (
-        ownerVerdict === 'done_with_concerns' ||
         ownerVerdict === 'blocked' ||
         ownerVerdict === 'needs_context'
       ) {
+        if (isArbiterEnabled()) {
+          updatePairedTask(taskId, {
+            status: 'arbiter_requested',
+            arbiter_requested_at: now,
+            updated_at: now,
+          });
+          logger.info(
+            {
+              taskId,
+              ownerVerdict,
+              summary: args.summary?.slice(0, 100),
+            },
+            'Owner blocked during finalize — requesting arbiter',
+          );
+        } else {
+          updatePairedTask(taskId, {
+            status: 'completed',
+            completion_reason: 'escalated',
+            updated_at: now,
+          });
+          logger.info(
+            {
+              taskId,
+              ownerVerdict,
+              summary: args.summary?.slice(0, 100),
+            },
+            'Owner blocked during finalize — escalating to user',
+          );
+        }
+        return;
+      }
+
+      if (ownerVerdict === 'done_with_concerns') {
         // Check deadlock threshold before looping back — prevents
         // merge_ready ↔ active infinite oscillation.
         if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
