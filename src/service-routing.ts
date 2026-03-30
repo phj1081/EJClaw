@@ -45,7 +45,9 @@ function normalizeLeaseRow(
       : null,
     arbiter_service_id: row.arbiter_service_id
       ? normalizeServiceId(row.arbiter_service_id)
-      : null,
+      : isArbiterEnabled()
+        ? ARBITER_SERVICE_ID
+        : null,
     activated_at: row.activated_at,
     reason: row.reason,
     explicit,
