@@ -281,7 +281,8 @@ export class DiscordChannel implements Channel {
                 const label = contentType.startsWith('image/')
                   ? 'Image'
                   : 'Audio';
-                return `[${label}: ${filePath}]`;
+                const origName = att.name || 'file';
+                return `[${label}: ${origName} → ${filePath}]`;
               } catch (err) {
                 logger.error(
                   { err, file: att.name },
