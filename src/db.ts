@@ -1137,6 +1137,18 @@ export function getLastHumanMessageTimestamp(chatJid: string): string | null {
   return row?.timestamp ?? null;
 }
 
+export function getLastHumanMessageSender(chatJid: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT sender FROM messages
+       WHERE chat_jid = ? AND is_bot_message = 0 AND is_from_me = 0
+         AND content != '' AND content IS NOT NULL
+       ORDER BY timestamp DESC, seq DESC LIMIT 1`,
+    )
+    .get(chatJid) as { sender: string } | undefined;
+  return row?.sender ?? null;
+}
+
 export function getLastHumanMessageContent(chatJid: string): string | null {
   const row = db
     .prepare(

@@ -89,6 +89,8 @@ export function resolveSessionFolder(
   role: 'owner' | 'reviewer' | 'arbiter',
   groupAgentType: AgentType | undefined,
 ): string {
+  // Arbiter always gets a separate session — must never share with owner/reviewer
+  if (role === 'arbiter') return `${groupFolder}:arbiter`;
   const effectiveType = resolveEffectiveAgentType(role, groupAgentType);
   const groupDefault: AgentType = groupAgentType || 'claude-code';
   if (effectiveType === groupDefault) return groupFolder;

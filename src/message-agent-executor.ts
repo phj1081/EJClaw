@@ -14,8 +14,10 @@ import { listAvailableGroups } from './available-groups.js';
 import {
   createServiceHandoff,
   getAllTasks,
+  getLastHumanMessageSender,
   getLatestOpenPairedTaskForChat,
   getLatestTurnNumber,
+  getPairedTaskById,
   insertPairedTurnOutput,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
@@ -128,7 +130,8 @@ export async function runAgentForGroup(
     activeRole,
     group.agentType,
   );
-  const sessionId = sessions[sessionFolder];
+  // Arbiter always starts fresh — never resume a previous session
+  const sessionId = activeRole === 'arbiter' ? undefined : sessions[sessionFolder];
   const memoryBriefing = sessionId
     ? undefined
     : await buildRoomMemoryBriefing({
