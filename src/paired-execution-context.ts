@@ -215,11 +215,17 @@ export function preparePairedExecutionContext(args: {
   const now = new Date().toISOString();
 
   if (roomRoleContext.role === 'owner') {
-    // New human message → new ping-pong cycle. Reset the round trip counter
-    // so previous interactions don't block the auto-review trigger.
-    if (latestTask.round_trip_count > 0) {
+    // New human message → new ping-pong cycle. Reset round trip counter
+    // AND status so the owner turn is not treated as a finalize turn.
+    const needsReset =
+      latestTask.round_trip_count > 0 ||
+      latestTask.status === 'merge_ready' ||
+      latestTask.status === 'review_ready' ||
+      latestTask.status === 'in_review';
+    if (needsReset) {
       updatePairedTask(latestTask.id, {
         round_trip_count: 0,
+        status: 'active',
         updated_at: now,
       });
     }
