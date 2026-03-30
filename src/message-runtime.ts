@@ -846,6 +846,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               if (task) {
                 updatePairedTask(task.id, {
                   status: 'completed',
+                  completion_reason: 'stopped',
                   updated_at: new Date().toISOString(),
                 });
               }

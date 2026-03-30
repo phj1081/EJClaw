@@ -256,6 +256,7 @@ function createSchema(database: Database): void {
       status TEXT NOT NULL DEFAULT 'active',
       arbiter_verdict TEXT,
       arbiter_requested_at TEXT,
+      completion_reason TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
@@ -633,6 +634,7 @@ function createSchema(database: Database): void {
           status TEXT NOT NULL DEFAULT 'active',
           arbiter_verdict TEXT,
           arbiter_requested_at TEXT,
+          completion_reason TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
@@ -659,6 +661,15 @@ function createSchema(database: Database): void {
   try {
     database.exec(
       `ALTER TABLE channel_owner ADD COLUMN arbiter_service_id TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Migration: add completion_reason column to paired_tasks if it doesn't exist
+  try {
+    database.exec(
+      `ALTER TABLE paired_tasks ADD COLUMN completion_reason TEXT`,
     );
   } catch {
     /* column already exists */
@@ -2035,6 +2046,7 @@ export function updatePairedTask(
       | 'status'
       | 'arbiter_verdict'
       | 'arbiter_requested_at'
+      | 'completion_reason'
       | 'updated_at'
     >
   >,
@@ -2073,6 +2085,10 @@ export function updatePairedTask(
   if (updates.arbiter_requested_at !== undefined) {
     fields.push('arbiter_requested_at = ?');
     values.push(updates.arbiter_requested_at);
+  }
+  if (updates.completion_reason !== undefined) {
+    fields.push('completion_reason = ?');
+    values.push(updates.completion_reason);
   }
   if (updates.updated_at !== undefined) {
     fields.push('updated_at = ?');

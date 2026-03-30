@@ -189,6 +189,7 @@ function ensureActiveTask(
     status: 'active',
     arbiter_verdict: null,
     arbiter_requested_at: null,
+    completion_reason: null,
     created_at: now,
     updated_at: now,
   };
@@ -384,6 +385,7 @@ export function completePairedExecutionContext(args: {
         updatePairedTask(taskId, {
           status: verdict === 'done' ? 'merge_ready' : 'completed',
           ...(verdict === 'done' ? { source_ref: approvedSourceRef } : {}),
+          ...(verdict !== 'done' ? { completion_reason: 'escalated' } : {}),
           updated_at: now,
         });
         logger.info(
@@ -442,7 +444,7 @@ export function completePairedExecutionContext(args: {
 
         if (hasNewChanges === false) {
           // No code changes since reviewer approved → finalize complete
-          updatePairedTask(taskId, { status: 'completed', updated_at: now });
+          updatePairedTask(taskId, { status: 'completed', completion_reason: 'done', updated_at: now });
           logger.info(
             { taskId, summary: args.summary?.slice(0, 100) },
             'Owner finalized after reviewer approval — task completed',
@@ -573,7 +575,7 @@ export function completePairedExecutionContext(args: {
             'Reviewer blocked/needs_context — requesting arbiter before escalating',
           );
         } else {
-          updatePairedTask(taskId, { status: 'completed', updated_at: now });
+          updatePairedTask(taskId, { status: 'completed', completion_reason: 'escalated', updated_at: now });
           logger.info(
             { taskId, verdict, summary: args.summary?.slice(0, 100) },
             'Reviewer escalated to user — ping-pong stopped',
@@ -598,7 +600,7 @@ export function completePairedExecutionContext(args: {
               'Deadlock detected — requesting arbiter intervention',
             );
           } else {
-            updatePairedTask(taskId, { status: 'completed', updated_at: now });
+            updatePairedTask(taskId, { status: 'completed', completion_reason: 'escalated', updated_at: now });
             logger.info(
               { taskId, verdict, roundTrips: task.round_trip_count },
               'Stopped ping-pong — escalating to user (arbiter not configured)',
@@ -646,6 +648,7 @@ export function completePairedExecutionContext(args: {
         updatePairedTask(taskId, {
           status: 'completed',
           arbiter_verdict: 'escalate',
+          completion_reason: 'arbiter_escalated',
           updated_at: now,
         });
         logger.info({ taskId }, 'Arbiter escalated to user — task completed');
@@ -655,6 +658,7 @@ export function completePairedExecutionContext(args: {
         updatePairedTask(taskId, {
           status: 'completed',
           arbiter_verdict: 'unknown',
+          completion_reason: 'arbiter_escalated',
           updated_at: now,
         });
         break;

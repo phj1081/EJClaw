@@ -80,6 +80,7 @@ describe('paired workspace manager', () => {
       status: 'active',
       arbiter_verdict: null,
       arbiter_requested_at: null,
+      completion_reason: null,
       created_at: now,
       updated_at: now,
     });
@@ -171,6 +172,7 @@ describe('paired workspace manager', () => {
       status: 'active',
       arbiter_verdict: null,
       arbiter_requested_at: null,
+      completion_reason: null,
       created_at: now,
       updated_at: now,
     });
@@ -249,6 +251,7 @@ describe('paired workspace manager', () => {
       status: 'active',
       arbiter_verdict: null,
       arbiter_requested_at: null,
+      completion_reason: null,
       created_at: now,
       updated_at: now,
     });
@@ -326,6 +329,7 @@ describe('paired workspace manager', () => {
       status: 'active',
       arbiter_verdict: null,
       arbiter_requested_at: null,
+      completion_reason: null,
       created_at: now,
       updated_at: now,
     });
@@ -469,6 +473,7 @@ describe('paired workspace manager', () => {
       status: 'active',
       arbiter_verdict: null,
       arbiter_requested_at: null,
+      completion_reason: null,
       created_at: now,
       updated_at: now,
     });
@@ -533,6 +538,7 @@ describe('paired workspace manager', () => {
       status: 'review_ready',
       arbiter_verdict: null,
       arbiter_requested_at: null,
+      completion_reason: null,
       created_at: now,
       updated_at: '2026-03-28T00:01:00.000Z',
     });
@@ -601,6 +607,7 @@ describe('paired workspace manager', () => {
       status: 'active',
       arbiter_verdict: null,
       arbiter_requested_at: null,
+      completion_reason: null,
       created_at: now,
       updated_at: now,
     });

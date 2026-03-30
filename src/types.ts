@@ -71,6 +71,7 @@ export interface PairedTask {
   status: PairedTaskStatus;
   arbiter_verdict: string | null;
   arbiter_requested_at: string | null;
+  completion_reason: string | null;
   created_at: string;
   updated_at: string;
 }
