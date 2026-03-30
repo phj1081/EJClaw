@@ -1,5 +1,6 @@
 import { getRecentChatMessages } from './db.js';
 import { formatMessages } from './router.js';
+import type { NewMessage } from './types.js';
 
 export function buildArbiterContextPrompt(args: {
   chatJid: string;
@@ -7,10 +8,19 @@ export function buildArbiterContextPrompt(args: {
   roundTripCount: number;
   timezone: string;
   recentTurnLimit?: number;
+  /** Pre-labeled messages. If provided, skips DB fetch. */
+  messages?: NewMessage[];
 }): string {
-  const { chatJid, taskId, roundTripCount, timezone, recentTurnLimit = 20 } = args;
+  const {
+    chatJid,
+    taskId,
+    roundTripCount,
+    timezone,
+    recentTurnLimit = 20,
+  } = args;
 
-  const recentMessages = getRecentChatMessages(chatJid, recentTurnLimit);
+  const recentMessages =
+    args.messages ?? getRecentChatMessages(chatJid, recentTurnLimit);
   const conversationContext = formatMessages(recentMessages, timezone);
 
   return [

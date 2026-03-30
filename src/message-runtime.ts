@@ -668,11 +668,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             );
           }
 
+          const arbiterMessages = labelPairedSenders(
+            chatJid,
+            getRecentChatMessages(chatJid, 20),
+          );
           const arbiterPrompt = buildArbiterContextPrompt({
             chatJid,
             taskId: pendingReviewTask.id,
             roundTripCount: pendingReviewTask.round_trip_count,
             timezone: deps.timezone,
+            messages: arbiterMessages,
           });
 
           const { deliverySucceeded } = await executeTurn({
@@ -840,11 +845,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       // Arbiter turns use a dedicated context prompt; regular turns use formatted messages.
       let prompt: string;
       if (useArbiterChannel && pendingTaskForChannel) {
+        const arbiterMsgs = labelPairedSenders(
+          chatJid,
+          getRecentChatMessages(chatJid, 20),
+        );
         prompt = buildArbiterContextPrompt({
           chatJid,
           taskId: pendingTaskForChannel.id,
           roundTripCount: pendingTaskForChannel.round_trip_count,
           timezone: deps.timezone,
+          messages: arbiterMsgs,
         });
       } else {
         prompt = formatMessages(
