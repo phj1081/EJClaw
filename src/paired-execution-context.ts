@@ -324,6 +324,9 @@ export function preparePairedExecutionContext(args: {
       'sessions',
       `${group.folder}-arbiter`,
     );
+    // Clear arbiter session each invocation — each deadlock is a fresh
+    // judgment call, previous verdicts should not bias the decision.
+    fs.rmSync(arbiterSessionDir, { recursive: true, force: true });
     fs.mkdirSync(arbiterSessionDir, { recursive: true });
     envOverrides.CLAUDE_CONFIG_DIR = arbiterSessionDir;
   }
