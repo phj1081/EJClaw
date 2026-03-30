@@ -421,10 +421,7 @@ export function completePairedExecutionContext(args: {
       // Owner can raise concerns even during finalize (e.g. push failed,
       // detached HEAD, discovered issue). Respect the owner's verdict.
       const ownerVerdict = classifyReviewerVerdict(args.summary);
-      if (
-        ownerVerdict === 'blocked' ||
-        ownerVerdict === 'needs_context'
-      ) {
+      if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
         if (isArbiterEnabled()) {
           updatePairedTask(taskId, {
             status: 'arbiter_requested',

@@ -1,8 +1,8 @@
 # EJClaw
 
 ![Version](https://img.shields.io/badge/version-0.1.0-blue)
-![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.81-blueviolet)
-![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.115.0-green)
+![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.87-blueviolet)
+![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.117.0-green)
 ![Bun](https://img.shields.io/badge/Bun-1.3+-f9f1e1?logo=bun&logoColor=black)
 ![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
 

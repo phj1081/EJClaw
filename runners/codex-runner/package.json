@@ -9,7 +9,7 @@
     "start": "bun dist/index.js"
   },
   "dependencies": {
-    "@openai/codex": "^0.115.0"
+    "@openai/codex": "^0.117.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
