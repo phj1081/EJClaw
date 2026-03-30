@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'fs';
 
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 
 /**
  * Tests for the environment check step.
@@ -18,7 +18,7 @@ describe('environment detection', () => {
 });
 
 describe('registered groups DB query', () => {
-  let db: Database.Database;
+  let db: Database;
 
   beforeEach(() => {
     db = new Database(':memory:');

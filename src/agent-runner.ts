@@ -178,7 +178,7 @@ export async function runAgentProcess(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const proc = spawn('node', [distEntry], {
+    const proc = spawn('bun', [distEntry], {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: runnerDir,
       env,

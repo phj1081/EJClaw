@@ -518,7 +518,7 @@ export async function runReviewerContainer(args: {
       }
     }
   }
-  execArgs.push(containerName, 'node', '/app/dist/index.js');
+  execArgs.push(containerName, 'bun', '/app/dist/index.js');
 
   return new Promise<AgentOutput>((resolve) => {
     const proc = spawn(CONTAINER_RUNTIME_BIN, execArgs, {

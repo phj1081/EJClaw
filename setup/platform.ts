@@ -100,7 +100,7 @@ export function getServiceManager(): ServiceManager {
 
 export function getNodePath(): string {
   try {
-    return execSync('command -v node', { encoding: 'utf-8' }).trim();
+    return execSync('command -v bun', { encoding: 'utf-8' }).trim();
   } catch {
     return process.execPath;
   }

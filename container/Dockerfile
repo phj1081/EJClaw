@@ -42,24 +42,28 @@ RUN apt-get update --fix-missing && apt-get install -y --no-install-recommends \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install Claude Code and Codex CLI globally
+# Install Claude Code and Codex CLI globally (requires Node.js)
 RUN npm install -g @anthropic-ai/claude-code @openai/codex
+
+# Install Bun runtime (EJClaw runner uses bun:sqlite and runs via bun)
+ENV BUN_INSTALL="/usr/local"
+RUN curl -fsSL https://bun.sh/install | bash
 
 # Create app directory
 WORKDIR /app
 
 # Copy host's agent-runner (same code, same SDK version)
 COPY runners/agent-runner/package*.json ./
-RUN npm install
+RUN bun install
 COPY runners/agent-runner/ ./
-RUN npm run build
+RUN bun run build
 
 # Create workspace directories
 RUN mkdir -p /workspace/project /workspace/group /workspace/global \
     /workspace/ipc/messages /workspace/ipc/input
 
 # Create entrypoint script
-RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nnode /app/dist/index.js < /tmp/input.json\n' \
+RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nbun /app/dist/index.js < /tmp/input.json\n' \
     > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root)

@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Database } from 'bun:sqlite';
 import fs from 'fs';
 import path from 'path';
 
@@ -33,7 +33,7 @@ import {
 } from './types.js';
 import { readJsonFile } from './utils.js';
 
-let db: Database.Database;
+let db: Database;
 
 export interface WorkItem {
   id: number;
@@ -80,7 +80,7 @@ export interface ServiceHandoff {
   last_error: string | null;
 }
 
-function backfillMessageSeq(database: Database.Database): void {
+function backfillMessageSeq(database: Database): void {
   const rows = database
     .prepare(
       `SELECT rowid, seq
@@ -118,7 +118,7 @@ function backfillMessageSeq(database: Database.Database): void {
   }
 }
 
-function createSchema(database: Database.Database): void {
+function createSchema(database: Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
       jid TEXT PRIMARY KEY,
@@ -762,8 +762,8 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('busy_timeout = 5000');
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA busy_timeout = 5000');
   createSchema(db);
 
   // Migrate from JSON files if they exist
@@ -851,10 +851,10 @@ export function getAllChats(): ChatInfo[] {
  */
 export function storeMessage(msg: NewMessage): void {
   const nextSeq = () => {
-    const result = db
-      .prepare('INSERT INTO message_sequence DEFAULT VALUES')
-      .run() as Database.RunResult;
-    return Number(result.lastInsertRowid);
+    db.prepare('INSERT INTO message_sequence DEFAULT VALUES').run();
+    return (
+      db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
+    ).id;
   };
 
   db.transaction(() => {
@@ -1177,9 +1177,8 @@ export function createProducedWorkItem(input: {
   const now = new Date().toISOString();
   const agentType = input.agent_type || 'claude-code';
   const serviceId = input.service_id || SERVICE_SESSION_SCOPE;
-  const result = db
-    .prepare(
-      `INSERT INTO work_items (
+  db.prepare(
+    `INSERT INTO work_items (
          group_folder,
          chat_jid,
          agent_type,
@@ -1192,22 +1191,24 @@ export function createProducedWorkItem(input: {
          created_at,
          updated_at
        ) VALUES (?, ?, ?, ?, 'produced', ?, ?, ?, 0, ?, ?)`,
-    )
-    .run(
-      input.group_folder,
-      input.chat_jid,
-      agentType,
-      serviceId,
-      input.start_seq,
-      input.end_seq,
-      input.result_payload,
-      now,
-      now,
-    ) as Database.RunResult;
+  ).run(
+    input.group_folder,
+    input.chat_jid,
+    agentType,
+    serviceId,
+    input.start_seq,
+    input.end_seq,
+    input.result_payload,
+    now,
+    now,
+  );
 
+  const lastId = (
+    db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
+  ).id;
   return db
     .prepare('SELECT * FROM work_items WHERE id = ?')
-    .get(Number(result.lastInsertRowid)) as WorkItem;
+    .get(lastId) as WorkItem;
 }
 
 export function markWorkItemDelivered(
@@ -1356,7 +1357,7 @@ export function updateTask(
   >,
 ): void {
   const fields: string[] = [];
-  const values: unknown[] = [];
+  const values: (string | number | null)[] = [];
 
   if (updates.prompt !== undefined) {
     fields.push('prompt = ?');
@@ -1402,7 +1403,7 @@ export function updateTaskStatusTracking(
   >,
 ): void {
   const fields: string[] = [];
-  const values: unknown[] = [];
+  const values: (string | number | null)[] = [];
 
   if (updates.status_message_id !== undefined) {
     fields.push('status_message_id = ?');
@@ -2026,7 +2027,7 @@ export function updatePairedTask(
   >,
 ): void {
   const fields: string[] = [];
-  const values: unknown[] = [];
+  const values: (string | number | null)[] = [];
 
   if (updates.title !== undefined) {
     fields.push('title = ?');
@@ -2216,9 +2217,8 @@ export function createServiceHandoff(input: {
   end_seq?: number | null;
   reason?: string | null;
 }): ServiceHandoff {
-  const result = db
-    .prepare(
-      `INSERT INTO service_handoffs (
+  db.prepare(
+    `INSERT INTO service_handoffs (
         chat_jid,
         group_folder,
         source_service_id,
@@ -2229,22 +2229,24 @@ export function createServiceHandoff(input: {
         end_seq,
         reason
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      input.chat_jid,
-      input.group_folder,
-      input.source_service_id,
-      input.target_service_id,
-      input.target_agent_type,
-      input.prompt,
-      input.start_seq ?? null,
-      input.end_seq ?? null,
-      input.reason ?? null,
-    );
+  ).run(
+    input.chat_jid,
+    input.group_folder,
+    input.source_service_id,
+    input.target_service_id,
+    input.target_agent_type,
+    input.prompt,
+    input.start_seq ?? null,
+    input.end_seq ?? null,
+    input.reason ?? null,
+  );
 
+  const lastId = (
+    db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
+  ).id;
   return db
     .prepare('SELECT * FROM service_handoffs WHERE id = ?')
-    .get(result.lastInsertRowid) as ServiceHandoff;
+    .get(lastId) as ServiceHandoff;
 }
 
 export function getPendingServiceHandoffs(
@@ -2262,16 +2264,16 @@ export function getPendingServiceHandoffs(
 }
 
 export function claimServiceHandoff(id: number): boolean {
-  const result = db
-    .prepare(
-      `UPDATE service_handoffs
+  db.prepare(
+    `UPDATE service_handoffs
        SET status = 'claimed',
            claimed_at = datetime('now')
        WHERE id = ?
          AND status = 'pending'`,
-    )
-    .run(id);
-  return result.changes > 0;
+  ).run(id);
+  return (
+    (db.prepare('SELECT changes() as c').get() as { c: number }).c > 0
+  );
 }
 
 export function completeServiceHandoff(id: number): void {
