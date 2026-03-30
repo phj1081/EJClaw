@@ -2469,7 +2469,13 @@ export function insertPairedTurnOutput(
 ): void {
   if (outputText.length > MAX_TURN_OUTPUT_CHARS) {
     logger.warn(
-      { taskId, turnNumber, role, originalLen: outputText.length, maxLen: MAX_TURN_OUTPUT_CHARS },
+      {
+        taskId,
+        turnNumber,
+        role,
+        originalLen: outputText.length,
+        maxLen: MAX_TURN_OUTPUT_CHARS,
+      },
       'Paired turn output truncated — agent output exceeds storage limit',
     );
   }
@@ -2486,9 +2492,7 @@ export function insertPairedTurnOutput(
   );
 }
 
-export function getPairedTurnOutputs(
-  taskId: string,
-): PairedTurnOutput[] {
+export function getPairedTurnOutputs(taskId: string): PairedTurnOutput[] {
   return db
     .prepare(
       `SELECT * FROM paired_turn_outputs

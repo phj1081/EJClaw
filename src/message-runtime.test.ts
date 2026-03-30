@@ -116,6 +116,7 @@ vi.mock('./db.js', () => {
     getOpenWorkItem: vi.fn(() => undefined),
     getPendingServiceHandoffs: vi.fn(() => []),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
+    getPairedTurnOutputs: vi.fn(() => []),
     createProducedWorkItem: vi.fn((input) => ({
       id: 1,
       group_folder: input.group_folder,

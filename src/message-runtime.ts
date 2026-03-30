@@ -201,8 +201,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const agentMessages = turnOutputsToMessages(turnOutputs, chatJid);
 
     // Merge human + agent messages chronologically
-    const allMessages = [...humanMessages, ...agentMessages].sort(
-      (a, b) => a.timestamp.localeCompare(b.timestamp),
+    const allMessages = [...humanMessages, ...agentMessages].sort((a, b) =>
+      a.timestamp.localeCompare(b.timestamp),
     );
 
     return formatMessages(allMessages, timezone);
@@ -651,18 +651,31 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           : null;
         const pendingRole = resolveActiveRole(pendingReviewTask?.status);
         if (pendingReviewTask && pendingRole === 'reviewer') {
-          // No processable messages remain. Review workspace state using the
-          // user's request as context, but don't re-inject filtered raw bot
-          // output from older turns into the next review prompt.
-          const userMessage = getLastHumanMessageContent(chatJid);
-          const parts: string[] = [];
-          if (userMessage) {
-            parts.push(`User request:\n---\n${userMessage}\n---`);
+          // Build reviewer prompt from turn outputs (Discord-independent).
+          // Includes full owner/reviewer conversation history + human messages.
+          const turnOutputs = getPairedTurnOutputs(pendingReviewTask.id);
+          let reviewPrompt: string;
+          if (turnOutputs.length > 0) {
+            const humanMsgs = getRecentChatMessages(chatJid, 20).filter(
+              (m) => !m.is_bot_message,
+            );
+            const allMsgs = [
+              ...humanMsgs,
+              ...turnOutputsToMessages(turnOutputs, chatJid),
+            ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+            reviewPrompt = formatMessages(allMsgs, deps.timezone);
+          } else {
+            // Fallback: no turn outputs yet (pre-migration task)
+            const userMessage = getLastHumanMessageContent(chatJid);
+            const parts: string[] = [];
+            if (userMessage) {
+              parts.push(`User request:\n---\n${userMessage}\n---`);
+            }
+            reviewPrompt =
+              parts.length > 0
+                ? `${parts.join('\n\n')}\n\nReview the latest owner changes in the workspace.`
+                : 'Review the latest owner changes in the workspace.';
           }
-          const reviewPrompt =
-            parts.length > 0
-              ? `${parts.join('\n\n')}\n\nReview the latest owner changes in the workspace.`
-              : 'Review the latest owner changes in the workspace.';
 
           // Advance reviewer cursor (not owner cursor) so the reviewer
           // still sees the owner's messages on subsequent turns.
@@ -703,9 +716,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             );
           }
 
-          const arbiterTurnOutputs = getPairedTurnOutputs(
-            pendingReviewTask.id,
-          );
+          const arbiterTurnOutputs = getPairedTurnOutputs(pendingReviewTask.id);
           const recentMsgs = getRecentChatMessages(chatJid, 20);
           const arbiterMessages =
             arbiterTurnOutputs.length > 0
