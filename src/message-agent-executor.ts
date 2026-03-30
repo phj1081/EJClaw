@@ -15,6 +15,8 @@ import {
   createServiceHandoff,
   getAllTasks,
   getLatestOpenPairedTaskForChat,
+  getLatestTurnNumber,
+  insertPairedTurnOutput,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
@@ -226,6 +228,7 @@ export async function runAgentForGroup(
   const effectivePrompt = moaEnrichedPrompt;
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
+  let pairedFullOutput: string | null = null;
   let pairedExecutionCompleted = false;
   let pairedSawOutput = false;
 
@@ -420,6 +423,7 @@ export async function runAgentForGroup(
           const outputText = getAgentOutputText(output);
           if (typeof outputText === 'string' && outputText.length > 0) {
             pairedExecutionSummary = outputText.slice(0, 500);
+            pairedFullOutput = outputText;
           } else if (
             typeof output.error === 'string' &&
             output.error.length > 0
@@ -1019,6 +1023,25 @@ export async function runAgentForGroup(
         status: effectiveStatus,
         summary: pairedExecutionSummary,
       });
+
+      // Store full output for direct inter-agent data passing (Discord-independent).
+      if (pairedFullOutput && effectiveStatus === 'succeeded') {
+        try {
+          const turnNumber =
+            getLatestTurnNumber(pairedExecutionContext.task.id) + 1;
+          insertPairedTurnOutput(
+            pairedExecutionContext.task.id,
+            turnNumber,
+            completedRole,
+            pairedFullOutput,
+          );
+        } catch (err) {
+          logger.warn(
+            { taskId: pairedExecutionContext.task.id, err },
+            'Failed to store paired turn output',
+          );
+        }
+      }
     }
 
     // After owner/reviewer completes, enqueue the next turn so

@@ -75,6 +75,15 @@ export interface PairedTask {
   updated_at: string;
 }
 
+export interface PairedTurnOutput {
+  id: number;
+  task_id: string;
+  turn_number: number;
+  role: PairedRoomRole;
+  output_text: string;
+  created_at: string;
+}
+
 export interface PairedWorkspace {
   id: string;
   task_id: string;

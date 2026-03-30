@@ -25,7 +25,9 @@ import {
   NewMessage,
   AgentType,
   PairedProject,
+  PairedRoomRole,
   PairedTask,
+  PairedTurnOutput,
   PairedWorkspace,
   RegisteredGroup,
   ScheduledTask,
@@ -276,6 +278,17 @@ function createSchema(database: Database): void {
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_paired_workspaces_task_role
       ON paired_workspaces(task_id, role);
+    CREATE TABLE IF NOT EXISTS paired_turn_outputs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL,
+      turn_number INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      output_text TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(task_id, turn_number, role)
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_turn_outputs_task
+      ON paired_turn_outputs(task_id, turn_number);
     CREATE TABLE IF NOT EXISTS channel_owner (
       chat_jid TEXT PRIMARY KEY,
       owner_service_id TEXT NOT NULL,
@@ -2442,4 +2455,56 @@ function migrateJsonState(): void {
       }
     }
   }
+}
+
+// ── Paired turn outputs ──────────────────────────────────────────
+
+const MAX_TURN_OUTPUT_CHARS = 50_000;
+
+export function insertPairedTurnOutput(
+  taskId: string,
+  turnNumber: number,
+  role: PairedRoomRole,
+  outputText: string,
+): void {
+  if (outputText.length > MAX_TURN_OUTPUT_CHARS) {
+    logger.warn(
+      { taskId, turnNumber, role, originalLen: outputText.length, maxLen: MAX_TURN_OUTPUT_CHARS },
+      'Paired turn output truncated — agent output exceeds storage limit',
+    );
+  }
+  db.prepare(
+    `INSERT OR REPLACE INTO paired_turn_outputs
+       (task_id, turn_number, role, output_text, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(
+    taskId,
+    turnNumber,
+    role,
+    outputText.slice(0, MAX_TURN_OUTPUT_CHARS),
+    new Date().toISOString(),
+  );
+}
+
+export function getPairedTurnOutputs(
+  taskId: string,
+): PairedTurnOutput[] {
+  return db
+    .prepare(
+      `SELECT * FROM paired_turn_outputs
+        WHERE task_id = ?
+        ORDER BY turn_number ASC`,
+    )
+    .all(taskId) as PairedTurnOutput[];
+}
+
+export function getLatestTurnNumber(taskId: string): number {
+  const row = db
+    .prepare(
+      `SELECT MAX(turn_number) as max_turn
+        FROM paired_turn_outputs
+        WHERE task_id = ?`,
+    )
+    .get(taskId) as { max_turn: number | null } | undefined;
+  return row?.max_turn ?? 0;
 }

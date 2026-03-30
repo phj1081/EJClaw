@@ -16,6 +16,7 @@ import {
   getRecentChatMessages,
   isPairedRoomJid,
   getLatestOpenPairedTaskForChat,
+  getPairedTurnOutputs,
   updatePairedTask,
   type ServiceHandoff,
   type WorkItem,
@@ -158,6 +159,53 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               : msg.sender_name;
       return { ...msg, sender_name: role };
     });
+  };
+
+  /** Convert paired turn outputs to NewMessage format for formatMessages(). */
+  const turnOutputsToMessages = (
+    outputs: import('./types.js').PairedTurnOutput[],
+    chatJid: string,
+  ): NewMessage[] =>
+    outputs.map((t) => ({
+      id: `turn-${t.task_id}-${t.turn_number}`,
+      chat_jid: chatJid,
+      sender: t.role,
+      sender_name: t.role,
+      content: t.output_text,
+      timestamp: t.created_at,
+      is_bot_message: true as const,
+      is_from_me: false as const,
+    }));
+
+  /**
+   * Build a prompt from paired_turn_outputs (Discord-independent) + human messages.
+   * Falls back to the legacy labelPairedSenders path when no turn outputs exist.
+   */
+  const buildPairedTurnPrompt = (
+    taskId: string,
+    chatJid: string,
+    timezone: string,
+    missedMessages: NewMessage[],
+  ): string => {
+    const turnOutputs = getPairedTurnOutputs(taskId);
+    if (turnOutputs.length === 0) {
+      // No stored outputs yet — fall back to Discord messages
+      return formatMessages(
+        labelPairedSenders(chatJid, missedMessages),
+        timezone,
+      );
+    }
+
+    // Human messages from the missed messages (exclude bot messages)
+    const humanMessages = missedMessages.filter((m) => !m.is_bot_message);
+    const agentMessages = turnOutputsToMessages(turnOutputs, chatJid);
+
+    // Merge human + agent messages chronologically
+    const allMessages = [...humanMessages, ...agentMessages].sort(
+      (a, b) => a.timestamp.localeCompare(b.timestamp),
+    );
+
+    return formatMessages(allMessages, timezone);
   };
 
   const isBotOnlyPairedRoomTurn = (
@@ -655,10 +703,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             );
           }
 
-          const arbiterMessages = labelPairedSenders(
-            chatJid,
-            getRecentChatMessages(chatJid, 20),
+          const arbiterTurnOutputs = getPairedTurnOutputs(
+            pendingReviewTask.id,
           );
+          const recentMsgs = getRecentChatMessages(chatJid, 20);
+          const arbiterMessages =
+            arbiterTurnOutputs.length > 0
+              ? [
+                  ...recentMsgs.filter((m) => !m.is_bot_message),
+                  ...turnOutputsToMessages(arbiterTurnOutputs, chatJid),
+                ].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+              : labelPairedSenders(chatJid, recentMsgs);
           const arbiterPrompt = buildArbiterContextPrompt({
             chatJid,
             taskId: pendingReviewTask.id,
@@ -820,10 +875,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const turnRole = resolveActiveRole(taskStatus);
       let prompt: string;
       if (turnRole === 'arbiter' && pendingTaskForChannel) {
-        const arbiterMsgs = labelPairedSenders(
-          chatJid,
-          getRecentChatMessages(chatJid, 20),
-        );
+        // Prefer direct turn outputs; fall back to Discord messages
+        const turnOutputs = getPairedTurnOutputs(pendingTaskForChannel.id);
+        const arbiterRecentMsgs = getRecentChatMessages(chatJid, 20);
+        const arbiterMsgs =
+          turnOutputs.length > 0
+            ? [
+                ...arbiterRecentMsgs.filter((m) => !m.is_bot_message),
+                ...turnOutputsToMessages(turnOutputs, chatJid),
+              ].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+            : labelPairedSenders(chatJid, arbiterRecentMsgs);
         prompt = buildArbiterContextPrompt({
           chatJid,
           taskId: pendingTaskForChannel.id,
@@ -831,6 +892,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           timezone: deps.timezone,
           messages: arbiterMsgs,
         });
+      } else if (pendingTaskForChannel) {
+        prompt = buildPairedTurnPrompt(
+          pendingTaskForChannel.id,
+          chatJid,
+          deps.timezone,
+          missedMessages,
+        );
       } else {
         prompt = formatMessages(
           labelPairedSenders(chatJid, missedMessages),
@@ -1042,10 +1110,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               pendingMessages.length > 0
                 ? pendingMessages
                 : processableGroupMessages;
-            const formatted = formatMessages(
-              labelPairedSenders(chatJid, messagesToSend),
-              deps.timezone,
-            );
+            const formatted = loopPendingTask
+              ? buildPairedTurnPrompt(
+                  loopPendingTask.id,
+                  chatJid,
+                  deps.timezone,
+                  messagesToSend,
+                )
+              : formatMessages(
+                  labelPairedSenders(chatJid, messagesToSend),
+                  deps.timezone,
+                );
             const isBotOnlyPairedFollowUp = isBotOnlyPairedRoomTurn(
               chatJid,
               messagesToSend,
