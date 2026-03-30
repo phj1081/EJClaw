@@ -10,11 +10,14 @@ import {
   createTask,
   createServiceHandoff,
   createProducedWorkItem,
+  clearExplicitRoomMode,
   deleteSession,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
   getDueTasks,
+  getEffectiveRoomMode,
+  getExplicitRoomMode,
   getLatestMessageSeqAtOrBefore,
   getLatestPairedTaskForChat,
   getMessagesSinceSeq,
@@ -37,6 +40,7 @@ import {
   setSession,
   setRegisteredGroup,
   setRouterStateForService,
+  setExplicitRoomMode,
   storeChatMetadata,
   storeMessage,
   updatePairedTask,
@@ -800,6 +804,73 @@ describe('paired room registration', () => {
 
     expect(getRegisteredAgentTypesForJid('dc:solo')).toEqual(['claude-code']);
     expect(isPairedRoomJid('dc:solo')).toBe(false);
+  });
+
+  it('falls back to legacy paired-room inference when no explicit room mode exists', () => {
+    setRegisteredGroup('dc:legacy-paired', {
+      name: 'Legacy Paired Claude',
+      folder: 'legacy-paired-claude',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    setRegisteredGroup('dc:legacy-paired', {
+      name: 'Legacy Paired Codex',
+      folder: 'legacy-paired-codex',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+
+    expect(getExplicitRoomMode('dc:legacy-paired')).toBeUndefined();
+    expect(getEffectiveRoomMode('dc:legacy-paired')).toBe(
+      isPairedRoomJid('dc:legacy-paired') ? 'tribunal' : 'single',
+    );
+  });
+
+  it('lets explicit single override dual registration without changing legacy paired inference yet', () => {
+    setRegisteredGroup('dc:explicit-single', {
+      name: 'Explicit Single Claude',
+      folder: 'explicit-single-claude',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    setRegisteredGroup('dc:explicit-single', {
+      name: 'Explicit Single Codex',
+      folder: 'explicit-single-codex',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+
+    setExplicitRoomMode('dc:explicit-single', 'single');
+
+    expect(getExplicitRoomMode('dc:explicit-single')).toBe('single');
+    expect(getEffectiveRoomMode('dc:explicit-single')).toBe('single');
+    expect(isPairedRoomJid('dc:explicit-single')).toBe(true);
+  });
+
+  it('lets explicit tribunal override solo fallback and clears back to inferred mode', () => {
+    setRegisteredGroup('dc:explicit-tribunal', {
+      name: 'Explicit Tribunal Claude',
+      folder: 'explicit-tribunal-claude',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+
+    expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('single');
+
+    setExplicitRoomMode('dc:explicit-tribunal', 'tribunal');
+
+    expect(getExplicitRoomMode('dc:explicit-tribunal')).toBe('tribunal');
+    expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('tribunal');
+
+    clearExplicitRoomMode('dc:explicit-tribunal');
+
+    expect(getExplicitRoomMode('dc:explicit-tribunal')).toBeUndefined();
+    expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('single');
   });
 });
 

@@ -26,6 +26,7 @@ import {
   AgentType,
   PairedProject,
   PairedRoomRole,
+  RoomMode,
   PairedTask,
   PairedTurnOutput,
   PairedWorkspace,
@@ -297,6 +298,12 @@ function createSchema(database: Database): void {
       arbiter_service_id TEXT,
       activated_at TEXT,
       reason TEXT
+    );
+    CREATE TABLE IF NOT EXISTS room_settings (
+      chat_jid TEXT PRIMARY KEY,
+      room_mode TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (room_mode IN ('single', 'tribunal'))
     );
     CREATE TABLE IF NOT EXISTS service_handoffs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1923,6 +1930,52 @@ export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
     }
   }
   return [...types];
+}
+
+export function inferRoomModeFromRegisteredAgentTypes(
+  agentTypes: readonly AgentType[],
+): RoomMode {
+  const types = new Set(agentTypes);
+  return types.has('claude-code') && types.has('codex')
+    ? 'tribunal'
+    : 'single';
+}
+
+export function inferRoomModeForJid(jid: string): RoomMode {
+  return inferRoomModeFromRegisteredAgentTypes(getRegisteredAgentTypesForJid(jid));
+}
+
+export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
+  if (!db) return undefined;
+
+  const row = db
+    .prepare(
+      `SELECT room_mode
+       FROM room_settings
+       WHERE chat_jid = ?`,
+    )
+    .get(chatJid) as { room_mode: string | null } | undefined;
+  return row?.room_mode === 'single' || row?.room_mode === 'tribunal'
+    ? row.room_mode
+    : undefined;
+}
+
+export function setExplicitRoomMode(chatJid: string, roomMode: RoomMode): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO room_settings (
+      chat_jid,
+      room_mode,
+      updated_at
+    ) VALUES (?, ?, ?)`,
+  ).run(chatJid, roomMode, new Date().toISOString());
+}
+
+export function clearExplicitRoomMode(chatJid: string): void {
+  db.prepare('DELETE FROM room_settings WHERE chat_jid = ?').run(chatJid);
+}
+
+export function getEffectiveRoomMode(chatJid: string): RoomMode {
+  return getExplicitRoomMode(chatJid) ?? inferRoomModeForJid(chatJid);
 }
 
 export function isPairedRoomJid(jid: string): boolean {
