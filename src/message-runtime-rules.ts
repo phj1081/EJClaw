@@ -16,16 +16,27 @@ export function advanceLastAgentCursor(
   saveState: () => void,
   chatJid: string,
   cursorOrTimestamp: string | number,
+  /** Override cursor key (e.g. `${chatJid}:reviewer` for paired rooms). */
+  cursorKey?: string,
 ): void {
+  const key = cursorKey ?? chatJid;
   if (typeof cursorOrTimestamp === 'number') {
-    lastAgentTimestamps[chatJid] = String(cursorOrTimestamp);
+    lastAgentTimestamps[key] = String(cursorOrTimestamp);
   } else {
-    lastAgentTimestamps[chatJid] = normalizeStoredSeqCursor(
+    lastAgentTimestamps[key] = normalizeStoredSeqCursor(
       cursorOrTimestamp,
       chatJid,
     );
   }
   saveState();
+}
+
+/** Returns the cursor key for a paired room role. */
+export function pairedCursorKey(
+  chatJid: string,
+  isReviewerTurn: boolean,
+): string {
+  return isReviewerTurn ? `${chatJid}:reviewer` : chatJid;
 }
 
 export function createImplicitContinuationTracker(idleTimeout: number) {

@@ -13,6 +13,7 @@ import {
   markWorkItemDeliveryRetry,
   getLastBotFinalMessage,
   getLastHumanMessageContent,
+  getRecentChatMessages,
   isPairedRoomJid,
   getLatestOpenPairedTaskForChat,
   updatePairedTask,
@@ -36,6 +37,7 @@ import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   advanceLastAgentCursor,
   createImplicitContinuationTracker,
+  pairedCursorKey,
   filterLoopingPairedBotMessages,
   getProcessableMessages,
   hasAllowedTrigger,
@@ -721,6 +723,19 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         return true;
       }
 
+      // Determine role BEFORE advancing cursor — paired rooms use
+      // separate cursors for owner and reviewer so neither misses
+      // the other's messages.
+      const pendingTaskForChannel = isPairedRoomJid(chatJid)
+        ? getLatestOpenPairedTaskForChat(chatJid)
+        : null;
+      const useReviewerChannel =
+        pendingTaskForChannel &&
+        (pendingTaskForChannel.status === 'review_ready' ||
+          pendingTaskForChannel.status === 'in_review');
+      const turnChannel = useReviewerChannel ? reviewerChannel : channel;
+      const cursorKey = pairedCursorKey(chatJid, !!useReviewerChannel);
+
       const prompt = formatMessages(
         labelPairedSenders(chatJid, missedMessages),
         deps.timezone,
@@ -733,6 +748,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           deps.saveState,
           chatJid,
           endSeq,
+          cursorKey,
         );
       }
 
@@ -746,17 +762,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         },
         'Dispatching queued messages to agent',
       );
-      // Use reviewer channel when the agent will run in reviewer mode.
-      // This is determined by the paired task status — if review_ready
-      // or in_review, the executor switches to reviewer mode.
-      const pendingTaskForChannel = isPairedRoomJid(chatJid)
-        ? getLatestOpenPairedTaskForChat(chatJid)
-        : null;
-      const useReviewerChannel =
-        pendingTaskForChannel &&
-        (pendingTaskForChannel.status === 'review_ready' ||
-          pendingTaskForChannel.status === 'in_review');
-      const turnChannel = useReviewerChannel ? reviewerChannel : channel;
 
       const hasHumanMsg = !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
       const { deliverySucceeded, visiblePhase } = await executeTurn({
@@ -916,9 +921,23 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               continue;
             }
 
+            // Use role-aware cursor for paired rooms so the reviewer
+            // always sees the owner's last messages and vice versa.
+            const loopPendingTask = isPairedRoomJid(chatJid)
+              ? getLatestOpenPairedTaskForChat(chatJid)
+              : null;
+            const loopIsReviewerTurn =
+              !!loopPendingTask &&
+              (loopPendingTask.status === 'review_ready' ||
+                loopPendingTask.status === 'in_review');
+            const loopCursorKey = pairedCursorKey(
+              chatJid,
+              loopIsReviewerTurn,
+            );
+
             const rawPendingMessages = getMessagesSinceSeq(
               chatJid,
-              deps.getLastAgentTimestamps()[chatJid] || '0',
+              deps.getLastAgentTimestamps()[loopCursorKey] || '0',
               deps.assistantName,
             );
             const pendingMessages = filterLoopingPairedBotMessages(
@@ -947,6 +966,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   deps.saveState,
                   chatJid,
                   endSeq,
+                  loopCursorKey,
                 );
               }
               logger.debug(
