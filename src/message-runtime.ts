@@ -21,6 +21,9 @@ import {
   type WorkItem,
 } from './db.js';
 import {
+  CLAUDE_SERVICE_ID,
+  CODEX_MAIN_SERVICE_ID,
+  CODEX_REVIEW_SERVICE_ID,
   isSessionCommandSenderAllowed,
   REVIEWER_AGENT_TYPE,
   SERVICE_AGENT_TYPE,
@@ -392,7 +395,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   };
 
   const enqueuePendingHandoffs = (): void => {
-    for (const handoff of getPendingServiceHandoffs(SERVICE_ID)) {
+    // Unified service handles all three bots — collect handoffs for all service IDs.
+    const allServiceIds = new Set([
+      SERVICE_ID,
+      CLAUDE_SERVICE_ID,
+      CODEX_MAIN_SERVICE_ID,
+      CODEX_REVIEW_SERVICE_ID,
+    ]);
+    const allHandoffs = [...allServiceIds].flatMap((id) =>
+      getPendingServiceHandoffs(id),
+    );
+    for (const handoff of allHandoffs) {
       if (!claimServiceHandoff(handoff.id)) {
         continue;
       }
@@ -930,10 +943,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               !!loopPendingTask &&
               (loopPendingTask.status === 'review_ready' ||
                 loopPendingTask.status === 'in_review');
-            const loopCursorKey = pairedCursorKey(
-              chatJid,
-              loopIsReviewerTurn,
-            );
+            const loopCursorKey = pairedCursorKey(chatJid, loopIsReviewerTurn);
 
             const rawPendingMessages = getMessagesSinceSeq(
               chatJid,
