@@ -624,7 +624,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               ? `${parts.join('\n\n')}\n\nReview the latest owner changes in the workspace.`
               : 'Review the latest owner changes in the workspace.';
 
-          // Advance cursor past filtered bot messages so they aren't re-processed
+          // Advance reviewer cursor (not owner cursor) so the reviewer
+          // still sees the owner's messages on subsequent turns.
           const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
           const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
           if (cursor != null) {
@@ -633,6 +634,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               deps.saveState,
               chatJid,
               cursor,
+              `${chatJid}:reviewer`,
             );
           }
 
@@ -654,6 +656,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           (pendingReviewTask.status === 'arbiter_requested' ||
             pendingReviewTask.status === 'in_arbitration')
         ) {
+          // Advance only the arbiter cursor — do NOT touch the owner cursor
           const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
           const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
           if (cursor != null) {
@@ -662,6 +665,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               deps.saveState,
               chatJid,
               cursor,
+              `${chatJid}:arbiter`,
             );
           }
 

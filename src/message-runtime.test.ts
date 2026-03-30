@@ -631,7 +631,7 @@ describe('createMessageRuntime', () => {
 
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
-    expect(lastAgentTimestamps[chatJid]).toBe('41');
+    expect(lastAgentTimestamps[`${chatJid}:reviewer`]).toBe('41');
     expect(saveState).toHaveBeenCalled();
     expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '리뷰 확인 완료');
   });
