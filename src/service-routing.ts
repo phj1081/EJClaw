@@ -5,7 +5,6 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   OWNER_AGENT_TYPE,
   REVIEWER_SERVICE_ID_FOR_TYPE,
-  SERVICE_AGENT_TYPE,
   SERVICE_ID,
   isArbiterEnabled,
   normalizeServiceId,
@@ -99,9 +98,7 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
   return {
     chat_jid: chatJid,
     owner_service_id:
-      SERVICE_AGENT_TYPE === 'codex'
-        ? CODEX_MAIN_SERVICE_ID
-        : CLAUDE_SERVICE_ID,
+      CLAUDE_SERVICE_ID,
     reviewer_service_id: null,
     arbiter_service_id: null,
     activated_at: null,

@@ -530,7 +530,13 @@ export function prepareContainerSessionEnvironment(args: {
   memoryBriefing?: string;
   role?: 'reviewer' | 'arbiter';
 }): void {
-  const { sessionDir, chatJid, isMain, memoryBriefing, role = 'reviewer' } = args;
+  const {
+    sessionDir,
+    chatJid,
+    isMain,
+    memoryBriefing,
+    role = 'reviewer',
+  } = args;
   const projectRoot = process.cwd();
 
   fs.mkdirSync(sessionDir, { recursive: true });
@@ -546,9 +552,9 @@ export function prepareContainerSessionEnvironment(args: {
   // Build CLAUDE.md with role-appropriate prompts (reviewer or arbiter)
   const claudePlatformPrompt = readPlatformPrompt('claude-code', projectRoot);
   const claudePairedRoomPrompt = isPairedRoomJid(chatJid)
-    ? (role === 'arbiter'
-        ? readArbiterPrompt(projectRoot)
-        : readPairedRoomPrompt('claude-code', projectRoot))
+    ? role === 'arbiter'
+      ? readArbiterPrompt(projectRoot)
+      : readPairedRoomPrompt('claude-code', projectRoot)
     : undefined;
   const globalDir = path.join(GROUPS_DIR, 'global');
   const globalClaudeMdPath = path.join(globalDir, 'CLAUDE.md');

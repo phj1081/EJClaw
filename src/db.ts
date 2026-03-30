@@ -9,7 +9,6 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   DATA_DIR,
   normalizeServiceId,
-  SERVICE_AGENT_TYPE,
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
   STORE_DIR,
@@ -729,7 +728,7 @@ function createSchema(database: Database.Database): void {
         `INSERT INTO sessions_new (group_folder, agent_type, session_id)
          SELECT group_folder, ?, session_id FROM sessions`,
       )
-      .run(SERVICE_AGENT_TYPE);
+      .run('claude-code');
     database.exec(`
       DROP TABLE sessions;
       ALTER TABLE sessions_new RENAME TO sessions;
@@ -1151,7 +1150,7 @@ export function hasRecentRestartAnnouncement(
 
 export function getOpenWorkItem(
   chatJid: string,
-  agentType: AgentType = SERVICE_AGENT_TYPE,
+  agentType: AgentType = 'claude-code',
   serviceId: string = SERVICE_SESSION_SCOPE,
 ): WorkItem | undefined {
   return db
@@ -1176,7 +1175,7 @@ export function createProducedWorkItem(input: {
   result_payload: string;
 }): WorkItem {
   const now = new Date().toISOString();
-  const agentType = input.agent_type || SERVICE_AGENT_TYPE;
+  const agentType = input.agent_type || 'claude-code';
   const serviceId = input.service_id || SERVICE_SESSION_SCOPE;
   const result = db
     .prepare(
@@ -1267,7 +1266,7 @@ export function createTask(
     task.id,
     task.group_folder,
     task.chat_jid,
-    task.agent_type || SERVICE_AGENT_TYPE,
+    task.agent_type || 'claude-code',
     task.ci_provider ?? null,
     task.ci_metadata ?? null,
     task.max_duration_ms ?? null,
@@ -1596,7 +1595,10 @@ export function setRouterStateForService(
 
 // --- Session accessors ---
 
-export function getSession(groupFolder: string): string | undefined {
+export function getSession(
+  groupFolder: string,
+  agentType: AgentType = 'claude-code',
+): string | undefined {
   const serviceScopedRow = db
     .prepare(
       'SELECT session_id FROM service_sessions WHERE group_folder = ? AND service_id = ?',
@@ -1612,26 +1614,33 @@ export function getSession(groupFolder: string): string | undefined {
     .prepare(
       'SELECT session_id FROM sessions WHERE group_folder = ? AND agent_type = ?',
     )
-    .get(groupFolder, SERVICE_AGENT_TYPE) as { session_id: string } | undefined;
+    .get(groupFolder, agentType) as { session_id: string } | undefined;
   return row?.session_id;
 }
 
-export function setSession(groupFolder: string, sessionId: string): void {
+export function setSession(
+  groupFolder: string,
+  sessionId: string,
+  agentType: AgentType = 'claude-code',
+): void {
   db.prepare(
     'INSERT OR REPLACE INTO service_sessions (group_folder, service_id, session_id) VALUES (?, ?, ?)',
   ).run(groupFolder, SERVICE_SESSION_SCOPE, sessionId);
   db.prepare(
     'INSERT OR REPLACE INTO sessions (group_folder, agent_type, session_id) VALUES (?, ?, ?)',
-  ).run(groupFolder, SERVICE_AGENT_TYPE, sessionId);
+  ).run(groupFolder, agentType, sessionId);
 }
 
-export function deleteSession(groupFolder: string): void {
+export function deleteSession(
+  groupFolder: string,
+  agentType: AgentType = 'claude-code',
+): void {
   db.prepare(
     'DELETE FROM service_sessions WHERE group_folder = ? AND service_id = ?',
   ).run(groupFolder, SERVICE_SESSION_SCOPE);
   db.prepare(
     'DELETE FROM sessions WHERE group_folder = ? AND agent_type = ?',
-  ).run(groupFolder, SERVICE_AGENT_TYPE);
+  ).run(groupFolder, agentType);
 }
 
 export function deleteAllSessionsForGroup(groupFolder: string): void {
@@ -1662,7 +1671,7 @@ export function getAllSessions(): Record<string, string> {
     .prepare(
       'SELECT group_folder, session_id FROM sessions WHERE agent_type = ?',
     )
-    .all(SERVICE_AGENT_TYPE) as Array<{
+    .all('claude-code') as Array<{
     group_folder: string;
     session_id: string;
   }>;
@@ -2125,7 +2134,7 @@ export function listPairedWorkspacesForTask(taskId: string): PairedWorkspace[] {
  */
 export function getLastBotFinalMessage(
   chatJid: string,
-  _agentType: AgentType = SERVICE_AGENT_TYPE,
+  _agentType: AgentType = 'claude-code',
   limit: number = 1,
 ): Array<{ content: string; timestamp: string }> {
   const rows = db

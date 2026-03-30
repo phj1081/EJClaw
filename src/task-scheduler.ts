@@ -7,7 +7,6 @@ import { getErrorMessage } from './utils.js';
 import {
   ASSISTANT_NAME,
   SCHEDULER_POLL_INTERVAL,
-  SERVICE_AGENT_TYPE,
   TIMEZONE,
 } from './config.js';
 import {
@@ -201,7 +200,7 @@ function resolveTaskExecutionContext(
 
   const isMain = group.isMain === true;
   const taskAgentType =
-    task.agent_type || deps.serviceAgentType || SERVICE_AGENT_TYPE;
+    task.agent_type || deps.serviceAgentType || 'claude-code';
   const sessions = deps.getSessions();
   const runtimeTaskId = getTaskRuntimeTaskId(task);
   const useTaskScopedSession = shouldUseTaskScopedSession(task);
@@ -641,7 +640,8 @@ async function runTask(
 
   // Try token rotation before suspending
   if (error) {
-    const isCodex = SERVICE_AGENT_TYPE === 'codex';
+    const effectiveAgentType = context.taskAgentType;
+    const isCodex = effectiveAgentType === 'codex';
     if (isCodex) {
       const trigger = detectCodexRotationTrigger(error);
       if (trigger.shouldRotate) {
@@ -650,7 +650,7 @@ async function runTask(
           logger.info(
             {
               taskId: task.id,
-              agent: SERVICE_AGENT_TYPE,
+              agent: effectiveAgentType,
               reason: trigger.reason,
             },
             'Task rate-limited, rotated token — will retry on next schedule',
@@ -668,7 +668,7 @@ async function runTask(
           logger.info(
             {
               taskId: task.id,
-              agent: SERVICE_AGENT_TYPE,
+              agent: effectiveAgentType,
               reason: trigger.reason,
             },
             'Task rate-limited, rotated token — will retry on next schedule',

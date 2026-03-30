@@ -63,13 +63,8 @@ export function readPairedRoomPrompt(
   return prompt || undefined;
 }
 
-export function getArbiterPromptPath(
-  projectRoot = process.cwd(),
-): string {
-  return path.join(
-    getPlatformPromptsDir(projectRoot),
-    ARBITER_PROMPT_FILE,
-  );
+export function getArbiterPromptPath(projectRoot = process.cwd()): string {
+  return path.join(getPlatformPromptsDir(projectRoot), ARBITER_PROMPT_FILE);
 }
 
 export function readArbiterPrompt(

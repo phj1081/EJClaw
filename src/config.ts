@@ -8,19 +8,12 @@ export const ASSISTANT_NAME = getEnv('ASSISTANT_NAME') || 'Andy';
 export const ASSISTANT_HAS_OWN_NUMBER =
   getEnv('ASSISTANT_HAS_OWN_NUMBER') === 'true';
 const ASSISTANT_SLUG = ASSISTANT_NAME.trim().toLowerCase();
-const rawServiceAgentType = getEnv('SERVICE_AGENT_TYPE');
 export const SERVICE_ID = getEnv('SERVICE_ID') || ASSISTANT_SLUG;
 export const CLAUDE_SERVICE_ID = getEnv('CLAUDE_SERVICE_ID') || 'claude';
 export const CODEX_MAIN_SERVICE_ID =
   getEnv('CODEX_MAIN_SERVICE_ID') || 'codex-main';
 export const CODEX_REVIEW_SERVICE_ID =
   getEnv('CODEX_REVIEW_SERVICE_ID') || 'codex-review';
-export const SERVICE_AGENT_TYPE: AgentType =
-  rawServiceAgentType === 'codex' || rawServiceAgentType === 'claude-code'
-    ? rawServiceAgentType
-    : ASSISTANT_SLUG === 'codex'
-      ? 'codex'
-      : 'claude-code';
 
 export function normalizeServiceId(serviceId: string): string {
   if (serviceId === 'codex') {
@@ -119,7 +112,7 @@ export const ARBITER_AGENT_TYPE: AgentType | undefined =
 
 /** Service ID for the arbiter. Re-uses codex-review bot by default when arbiter is enabled. */
 export const ARBITER_SERVICE_ID = ARBITER_AGENT_TYPE
-  ? (getEnv('ARBITER_SERVICE_ID') || CODEX_REVIEW_SERVICE_ID)
+  ? getEnv('ARBITER_SERVICE_ID') || CODEX_REVIEW_SERVICE_ID
   : null;
 
 /** Number of consecutive owner↔reviewer round trips before arbiter is auto-requested. */

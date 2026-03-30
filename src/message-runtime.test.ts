@@ -14,7 +14,6 @@ vi.mock('./agent-runner.js', () => ({
 vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/ejclaw-test-data',
   SERVICE_ID: 'claude',
-  SERVICE_AGENT_TYPE: 'claude-code',
   SERVICE_SESSION_SCOPE: 'claude',
   CODEX_MAIN_SERVICE_ID: 'codex-main',
   CODEX_REVIEW_SERVICE_ID: 'codex-review',

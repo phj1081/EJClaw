@@ -26,7 +26,6 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   isSessionCommandSenderAllowed,
   REVIEWER_AGENT_TYPE,
-  SERVICE_AGENT_TYPE,
   SERVICE_ID,
 } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
@@ -75,7 +74,7 @@ export function isDuplicateOfLastBotFinal(
   }
 
   // Get the last bot final message from DB (any bot, not just this service)
-  const lastMessages = getLastBotFinalMessage(chatJid, SERVICE_AGENT_TYPE, 1);
+  const lastMessages = getLastBotFinalMessage(chatJid, 'claude-code', 1);
   if (lastMessages.length === 0) {
     return false;
   }

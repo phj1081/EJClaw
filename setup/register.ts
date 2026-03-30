@@ -9,7 +9,7 @@ import path from 'path';
 
 import Database from 'better-sqlite3';
 
-import { SERVICE_AGENT_TYPE, STORE_DIR } from '../src/config.js';
+import { STORE_DIR } from '../src/config.js';
 import { isValidGroupFolder } from '../src/group-folder.js';
 import { logger } from '../src/logger.js';
 import { emitStatus } from './status.js';
@@ -156,7 +156,7 @@ export async function run(args: string[]): Promise<void> {
     timestamp,
     requiresTriggerInt,
     isMainInt,
-    SERVICE_AGENT_TYPE,
+    'claude-code',
   );
 
   db.close();

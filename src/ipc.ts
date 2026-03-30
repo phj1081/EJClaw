@@ -6,7 +6,6 @@ import { CronExpressionParser } from 'cron-parser';
 import {
   DATA_DIR,
   IPC_POLL_INTERVAL,
-  SERVICE_AGENT_TYPE,
   TIMEZONE,
 } from './config.js';
 import { readJsonFile } from './utils.js';
@@ -433,7 +432,7 @@ export async function processTaskIpc(
           id: taskId,
           group_folder: targetFolder,
           chat_jid: resolvedTargetJid,
-          agent_type: targetGroupEntry.agentType || SERVICE_AGENT_TYPE,
+          agent_type: targetGroupEntry.agentType || 'claude-code',
           ci_provider: data.ci_provider ?? null,
           ci_metadata: data.ci_metadata ?? null,
           max_duration_ms: isWatchCiTask({ prompt: data.prompt })
@@ -453,7 +452,7 @@ export async function processTaskIpc(
             sourceGroup,
             targetFolder,
             contextMode,
-            agentType: targetGroupEntry.agentType || SERVICE_AGENT_TYPE,
+            agentType: targetGroupEntry.agentType || 'claude-code',
           },
           'Task created via IPC',
         );

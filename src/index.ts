@@ -9,7 +9,6 @@ import {
   POLL_INTERVAL,
   REVIEWER_AGENT_TYPE,
   SERVICE_ID,
-  SERVICE_AGENT_TYPE,
   isSessionCommandSenderAllowed,
   STATUS_CHANNEL_ID,
   STATUS_UPDATE_INTERVAL,
@@ -194,7 +193,7 @@ function loadState(): void {
   logger.info(
     {
       groupCount: Object.keys(registeredGroups).length,
-      agentType: SERVICE_AGENT_TYPE,
+      agentType: 'unified',
     },
     'State loaded',
   );
@@ -520,7 +519,7 @@ async function main(): Promise<void> {
   await startUnifiedDashboard({
     assistantName: ASSISTANT_NAME,
     serviceId: SERVICE_ID,
-    serviceAgentType: SERVICE_AGENT_TYPE,
+    serviceAgentType: 'claude-code',
     statusChannelId: STATUS_CHANNEL_ID,
     statusUpdateInterval: STATUS_UPDATE_INTERVAL,
     usageUpdateInterval: USAGE_UPDATE_INTERVAL,
