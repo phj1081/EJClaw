@@ -110,6 +110,28 @@ export const REVIEWER_SERVICE_ID_FOR_TYPE =
     ? CLAUDE_SERVICE_ID
     : CODEX_REVIEW_SERVICE_ID;
 
+/** Arbiter agent type. Disabled by default. Set ARBITER_AGENT_TYPE=codex or claude-code to enable. */
+const rawArbiterAgentType = getEnv('ARBITER_AGENT_TYPE');
+export const ARBITER_AGENT_TYPE: AgentType | undefined =
+  rawArbiterAgentType === 'codex' || rawArbiterAgentType === 'claude-code'
+    ? rawArbiterAgentType
+    : undefined;
+
+/** Service ID for the arbiter. Re-uses codex-review bot by default when arbiter is enabled. */
+export const ARBITER_SERVICE_ID = ARBITER_AGENT_TYPE
+  ? (getEnv('ARBITER_SERVICE_ID') || CODEX_REVIEW_SERVICE_ID)
+  : null;
+
+/** Number of consecutive owner↔reviewer round trips before arbiter is auto-requested. */
+export const ARBITER_DEADLOCK_THRESHOLD = parseInt(
+  getEnv('ARBITER_DEADLOCK_THRESHOLD') || '3',
+  10,
+);
+
+export function isArbiterEnabled(): boolean {
+  return ARBITER_AGENT_TYPE !== undefined;
+}
+
 // Max owner↔reviewer round trips per task. 0 = unlimited.
 const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '10';
 export const PAIRED_MAX_ROUND_TRIPS =

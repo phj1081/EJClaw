@@ -58,6 +58,7 @@ export interface ChannelOwnerLeaseRow {
   chat_jid: string;
   owner_service_id: string;
   reviewer_service_id: string | null;
+  arbiter_service_id: string | null;
   activated_at: string | null;
   reason: string | null;
 }
@@ -252,9 +253,11 @@ function createSchema(database: Database.Database): void {
       review_requested_at TEXT,
       round_trip_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
+      arbiter_verdict TEXT,
+      arbiter_requested_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed'))
+      CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
     );
     CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
       ON paired_tasks(chat_jid, status, updated_at);
@@ -278,6 +281,7 @@ function createSchema(database: Database.Database): void {
       chat_jid TEXT PRIMARY KEY,
       owner_service_id TEXT NOT NULL,
       reviewer_service_id TEXT,
+      arbiter_service_id TEXT,
       activated_at TEXT,
       reason TEXT
     );
@@ -580,13 +584,72 @@ function createSchema(database: Database.Database): void {
         review_requested_at TEXT,
         round_trip_count INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'active',
+        arbiter_verdict TEXT,
+        arbiter_requested_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed'))
+        CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
       );
       CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
         ON paired_tasks(chat_jid, status, updated_at);
     `);
+  }
+
+  // Migration: add arbiter columns to paired_tasks and rebuild CHECK constraint
+  // if it doesn't include arbiter statuses
+  {
+    const ptSqlRow = database
+      .prepare(
+        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_tasks'`,
+      )
+      .get() as { sql?: string } | undefined;
+    const ptSql = ptSqlRow?.sql || '';
+    if (ptSql && !ptSql.includes('arbiter_requested')) {
+      // CHECK constraint cannot be altered in SQLite — rebuild table
+      database.exec(`
+        CREATE TABLE paired_tasks_new (
+          id TEXT PRIMARY KEY,
+          chat_jid TEXT NOT NULL,
+          group_folder TEXT NOT NULL,
+          owner_service_id TEXT NOT NULL,
+          reviewer_service_id TEXT NOT NULL,
+          title TEXT,
+          source_ref TEXT,
+          plan_notes TEXT,
+          review_requested_at TEXT,
+          round_trip_count INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'active',
+          arbiter_verdict TEXT,
+          arbiter_requested_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
+        );
+        INSERT INTO paired_tasks_new (
+          id, chat_jid, group_folder, owner_service_id, reviewer_service_id,
+          title, source_ref, plan_notes, review_requested_at,
+          round_trip_count, status, created_at, updated_at
+        )
+        SELECT
+          id, chat_jid, group_folder, owner_service_id, reviewer_service_id,
+          title, source_ref, plan_notes, review_requested_at,
+          round_trip_count, status, created_at, updated_at
+        FROM paired_tasks;
+        DROP TABLE paired_tasks;
+        ALTER TABLE paired_tasks_new RENAME TO paired_tasks;
+        CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
+          ON paired_tasks(chat_jid, status, updated_at);
+      `);
+    }
+  }
+
+  // Migration: add arbiter_service_id column to channel_owner if it doesn't exist
+  try {
+    database.exec(
+      `ALTER TABLE channel_owner ADD COLUMN arbiter_service_id TEXT`,
+    );
+  } catch {
+    /* column already exists */
   }
 
   // Drop legacy tables that are no longer used
@@ -1871,10 +1934,12 @@ export function createPairedTask(task: PairedTask): void {
         review_requested_at,
         round_trip_count,
         status,
+        arbiter_verdict,
+        arbiter_requested_at,
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
@@ -1888,6 +1953,8 @@ export function createPairedTask(task: PairedTask): void {
     task.review_requested_at,
     task.round_trip_count,
     task.status,
+    task.arbiter_verdict,
+    task.arbiter_requested_at,
     task.created_at,
     task.updated_at,
   );
@@ -1943,6 +2010,8 @@ export function updatePairedTask(
       | 'review_requested_at'
       | 'round_trip_count'
       | 'status'
+      | 'arbiter_verdict'
+      | 'arbiter_requested_at'
       | 'updated_at'
     >
   >,
@@ -1973,6 +2042,14 @@ export function updatePairedTask(
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.arbiter_verdict !== undefined) {
+    fields.push('arbiter_verdict = ?');
+    values.push(updates.arbiter_verdict);
+  }
+  if (updates.arbiter_requested_at !== undefined) {
+    fields.push('arbiter_requested_at = ?');
+    values.push(updates.arbiter_requested_at);
   }
   if (updates.updated_at !== undefined) {
     fields.push('updated_at = ?');
@@ -2070,7 +2147,7 @@ export function getChannelOwnerLease(
 ): ChannelOwnerLeaseRow | undefined {
   return db
     .prepare(
-      `SELECT chat_jid, owner_service_id, reviewer_service_id, activated_at, reason
+      `SELECT chat_jid, owner_service_id, reviewer_service_id, arbiter_service_id, activated_at, reason
        FROM channel_owner
        WHERE chat_jid = ?`,
     )
@@ -2080,7 +2157,7 @@ export function getChannelOwnerLease(
 export function getAllChannelOwnerLeases(): ChannelOwnerLeaseRow[] {
   return db
     .prepare(
-      `SELECT chat_jid, owner_service_id, reviewer_service_id, activated_at, reason
+      `SELECT chat_jid, owner_service_id, reviewer_service_id, arbiter_service_id, activated_at, reason
        FROM channel_owner`,
     )
     .all() as ChannelOwnerLeaseRow[];
@@ -2090,6 +2167,7 @@ export function setChannelOwnerLease(input: {
   chat_jid: string;
   owner_service_id: string;
   reviewer_service_id?: string | null;
+  arbiter_service_id?: string | null;
   activated_at?: string | null;
   reason?: string | null;
 }): void {
@@ -2098,13 +2176,15 @@ export function setChannelOwnerLease(input: {
       chat_jid,
       owner_service_id,
       reviewer_service_id,
+      arbiter_service_id,
       activated_at,
       reason
-    ) VALUES (?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     input.chat_jid,
     input.owner_service_id,
     input.reviewer_service_id ?? null,
+    input.arbiter_service_id ?? null,
     input.activated_at ?? new Date().toISOString(),
     input.reason ?? null,
   );

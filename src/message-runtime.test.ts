@@ -19,6 +19,7 @@ vi.mock('./config.js', () => ({
   CODEX_MAIN_SERVICE_ID: 'codex-main',
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   REVIEWER_AGENT_TYPE: 'claude-code',
+  ARBITER_AGENT_TYPE: undefined,
   normalizeServiceId: vi.fn((serviceId: string) => serviceId),
   isClaudeService: vi.fn(() => true),
   isReviewService: vi.fn(() => false),
@@ -556,6 +557,8 @@ describe('createMessageRuntime', () => {
       review_requested_at: '2026-03-30T00:00:00.000Z',
       round_trip_count: 0,
       status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
       created_at: '2026-03-30T00:00:00.000Z',
       updated_at: '2026-03-30T00:00:00.000Z',
     });

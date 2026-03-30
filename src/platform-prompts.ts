@@ -15,6 +15,8 @@ const PAIRED_ROOM_PROMPT_FILES: Record<AgentType, string> = {
   codex: 'claude-paired-room.md',
 };
 
+const ARBITER_PROMPT_FILE = 'arbiter-paired-room.md';
+
 export function getPlatformPromptsDir(projectRoot = process.cwd()): string {
   return path.join(projectRoot, 'prompts');
 }
@@ -55,6 +57,25 @@ export function readPairedRoomPrompt(
   projectRoot = process.cwd(),
 ): string | undefined {
   const promptPath = getPairedRoomPromptPath(agentType, projectRoot);
+  if (!fs.existsSync(promptPath)) return undefined;
+
+  const prompt = fs.readFileSync(promptPath, 'utf-8').trim();
+  return prompt || undefined;
+}
+
+export function getArbiterPromptPath(
+  projectRoot = process.cwd(),
+): string {
+  return path.join(
+    getPlatformPromptsDir(projectRoot),
+    ARBITER_PROMPT_FILE,
+  );
+}
+
+export function readArbiterPrompt(
+  projectRoot = process.cwd(),
+): string | undefined {
+  const promptPath = getArbiterPromptPath(projectRoot);
   if (!fs.existsSync(promptPath)) return undefined;
 
   const prompt = fs.readFileSync(promptPath, 'utf-8').trim();

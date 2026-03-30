@@ -21,6 +21,7 @@ import {
   type WorkItem,
 } from './db.js';
 import {
+  ARBITER_AGENT_TYPE,
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
@@ -46,6 +47,7 @@ import {
   hasAllowedTrigger,
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
+import { buildArbiterContextPrompt } from './arbiter-context.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
 import {
@@ -152,7 +154,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           ? 'owner'
           : serviceId === lease.reviewer_service_id
             ? 'reviewer'
-            : msg.sender_name;
+            : serviceId === lease.arbiter_service_id
+              ? 'arbiter'
+              : msg.sender_name;
       return { ...msg, sender_name: role };
     });
   };
@@ -435,14 +439,19 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return;
     }
 
-    // Reviewer failover handoffs (reason starts with "reviewer-") should
-    // run via the reviewer channel so they execute in reviewer mode.
+    // Reviewer/arbiter failover handoffs should run via the appropriate
+    // channel so they execute in the correct role mode.
     const isReviewerHandoff = handoff.reason?.startsWith('reviewer-');
+    const isArbiterHandoff = handoff.reason?.startsWith('arbiter-');
     let handoffChannel = channel;
     if (isReviewerHandoff) {
       const revChName =
         REVIEWER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
       handoffChannel = findChannelByName(deps.channels, revChName) || channel;
+    } else if (isArbiterHandoff) {
+      const arbChName =
+        ARBITER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
+      handoffChannel = findChannelByName(deps.channels, arbChName) || channel;
     }
 
     const runId = `handoff-${handoff.id}`;
@@ -517,6 +526,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       reviewerChannelName,
     );
     const reviewerChannel = foundReviewerChannel || channel;
+
+    // Arbiter channel: route arbiter output through the appropriate bot.
+    const arbiterChannelName =
+      isPairedRoomJid(chatJid) && ARBITER_AGENT_TYPE === 'claude-code'
+        ? 'discord'
+        : 'discord-review';
+    const foundArbiterChannel = findChannelByName(
+      deps.channels,
+      arbiterChannelName,
+    );
+    const arbiterChannel = foundArbiterChannel || channel;
+
     if (isPairedRoomJid(chatJid)) {
       logger.info(
         {
@@ -524,9 +545,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           reviewerChannelName,
           foundChannel: foundReviewerChannel?.name ?? null,
           usingChannel: reviewerChannel.name,
+          arbiterChannelName,
+          foundArbiterChannel: foundArbiterChannel?.name ?? null,
+          usingArbiterChannel: arbiterChannel.name,
           availableChannels: deps.channels.map((c) => c.name),
         },
-        'Paired room reviewer channel resolution',
+        'Paired room reviewer/arbiter channel resolution',
       );
     }
 
@@ -545,7 +569,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         pendingTask &&
         (pendingTask.status === 'review_ready' ||
           pendingTask.status === 'in_review');
-      const deliveryChannel = isReviewerWorkItem ? reviewerChannel : channel;
+      const isArbiterWorkItem =
+        pendingTask &&
+        (pendingTask.status === 'arbiter_requested' ||
+          pendingTask.status === 'in_arbitration');
+      const deliveryChannel = isArbiterWorkItem
+        ? arbiterChannel
+        : isReviewerWorkItem
+          ? reviewerChannel
+          : channel;
       const delivered = await deliverOpenWorkItem(
         deliveryChannel,
         openWorkItem,
@@ -613,6 +645,42 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             chatJid,
             runId,
             channel: reviewerChannel,
+            startSeq: null,
+            endSeq: null,
+          });
+          return deliverySucceeded;
+        }
+
+        // arbiter_requested / in_arbitration: run arbiter turn
+        if (
+          pendingReviewTask &&
+          (pendingReviewTask.status === 'arbiter_requested' ||
+            pendingReviewTask.status === 'in_arbitration')
+        ) {
+          const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
+          const cursor = lastRaw?.seq ?? lastRaw?.timestamp;
+          if (cursor != null) {
+            advanceLastAgentCursor(
+              deps.getLastAgentTimestamps(),
+              deps.saveState,
+              chatJid,
+              cursor,
+            );
+          }
+
+          const arbiterPrompt = buildArbiterContextPrompt({
+            chatJid,
+            taskId: pendingReviewTask.id,
+            roundTripCount: pendingReviewTask.round_trip_count,
+            timezone: deps.timezone,
+          });
+
+          const { deliverySucceeded } = await executeTurn({
+            group,
+            prompt: arbiterPrompt,
+            chatJid,
+            runId,
+            channel: arbiterChannel,
             startSeq: null,
             endSeq: null,
           });
@@ -756,13 +824,34 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         pendingTaskForChannel &&
         (pendingTaskForChannel.status === 'review_ready' ||
           pendingTaskForChannel.status === 'in_review');
-      const turnChannel = useReviewerChannel ? reviewerChannel : channel;
-      const cursorKey = pairedCursorKey(chatJid, !!useReviewerChannel);
+      const useArbiterChannel =
+        pendingTaskForChannel &&
+        (pendingTaskForChannel.status === 'arbiter_requested' ||
+          pendingTaskForChannel.status === 'in_arbitration');
+      const turnChannel = useArbiterChannel
+        ? arbiterChannel
+        : useReviewerChannel
+          ? reviewerChannel
+          : channel;
+      const cursorKey = useArbiterChannel
+        ? `${chatJid}:arbiter`
+        : pairedCursorKey(chatJid, !!useReviewerChannel);
 
-      const prompt = formatMessages(
-        labelPairedSenders(chatJid, missedMessages),
-        deps.timezone,
-      );
+      // Arbiter turns use a dedicated context prompt; regular turns use formatted messages.
+      let prompt: string;
+      if (useArbiterChannel && pendingTaskForChannel) {
+        prompt = buildArbiterContextPrompt({
+          chatJid,
+          taskId: pendingTaskForChannel.id,
+          roundTripCount: pendingTaskForChannel.round_trip_count,
+          timezone: deps.timezone,
+        });
+      } else {
+        prompt = formatMessages(
+          labelPairedSenders(chatJid, missedMessages),
+          deps.timezone,
+        );
+      }
       const startSeq = missedMessages[0].seq ?? null;
       const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
       if (endSeq !== null) {
@@ -953,7 +1042,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               !!loopPendingTask &&
               (loopPendingTask.status === 'review_ready' ||
                 loopPendingTask.status === 'in_review');
-            const loopCursorKey = pairedCursorKey(chatJid, loopIsReviewerTurn);
+            const loopIsArbiterTurn =
+              !!loopPendingTask &&
+              (loopPendingTask.status === 'arbiter_requested' ||
+                loopPendingTask.status === 'in_arbitration');
+            const loopCursorKey = loopIsArbiterTurn
+              ? `${chatJid}:arbiter`
+              : pairedCursorKey(chatJid, loopIsReviewerTurn);
 
             const rawPendingMessages = getMessagesSinceSeq(
               chatJid,

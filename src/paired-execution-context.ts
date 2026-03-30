@@ -3,7 +3,12 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, PAIRED_MAX_ROUND_TRIPS } from './config.js';
+import {
+  ARBITER_DEADLOCK_THRESHOLD,
+  DATA_DIR,
+  PAIRED_MAX_ROUND_TRIPS,
+  isArbiterEnabled,
+} from './config.js';
 import {
   createPairedTask,
   getLatestPairedTaskForChat,
@@ -21,6 +26,7 @@ import {
   provisionOwnerWorkspaceForPairedTask,
 } from './paired-workspace-manager.js';
 import type {
+  PairedRoomRole,
   PairedTask,
   PairedWorkspace,
   RegisteredGroup,
@@ -55,6 +61,24 @@ function classifyReviewerVerdict(
   if (/^\*{0,2}Approved\.?\*{0,2}/i.test(firstLine)) return 'done';
   if (/^\*{0,2}LGTM\*{0,2}/i.test(firstLine)) return 'done';
   return 'continue';
+}
+
+// ---------------------------------------------------------------------------
+// Arbiter verdict detection
+// ---------------------------------------------------------------------------
+
+type ArbiterVerdictResult = 'proceed' | 'revise' | 'reset' | 'escalate' | 'unknown';
+
+function classifyArbiterVerdict(summary: string | null | undefined): ArbiterVerdictResult {
+  if (!summary) return 'unknown';
+  const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  if (!cleaned) return 'unknown';
+  const firstLine = cleaned.split('\n')[0].trim();
+  if (/^\*{0,2}PROCEED\*{0,2}\b/i.test(firstLine)) return 'proceed';
+  if (/^\*{0,2}REVISE\*{0,2}\b/i.test(firstLine)) return 'revise';
+  if (/^\*{0,2}RESET\*{0,2}\b/i.test(firstLine)) return 'reset';
+  if (/^\*{0,2}ESCALATE\*{0,2}\b/i.test(firstLine)) return 'escalate';
+  return 'unknown';
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +180,8 @@ function ensureActiveTask(
     review_requested_at: null,
     round_trip_count: 0,
     status: 'active',
+    arbiter_verdict: null,
+    arbiter_requested_at: null,
     created_at: now,
     updated_at: now,
   };
@@ -239,7 +265,7 @@ export function preparePairedExecutionContext(args: {
     // Use a stable per-channel worktree (not per-task) so the Claude SDK
     // session persists across tasks. Different channels still get isolation.
     workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
-  } else {
+  } else if (roomRoleContext.role === 'reviewer') {
     const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
     workspace = reviewerWorkspace.workspace;
     blockMessage = reviewerWorkspace.blockMessage;
@@ -247,6 +273,18 @@ export function preparePairedExecutionContext(args: {
     if (workspace && refreshedTask.status === 'review_ready') {
       updatePairedTask(latestTask.id, {
         status: 'in_review',
+        updated_at: now,
+      });
+    }
+  } else if (roomRoleContext.role === 'arbiter') {
+    // Arbiter uses same read-only workspace as reviewer
+    const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
+    workspace = reviewerWorkspace.workspace;
+    blockMessage = reviewerWorkspace.blockMessage;
+    const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
+    if (workspace && refreshedTask.status === 'arbiter_requested') {
+      updatePairedTask(latestTask.id, {
+        status: 'in_arbitration',
         updated_at: now,
       });
     }
@@ -272,6 +310,15 @@ export function preparePairedExecutionContext(args: {
     );
     fs.mkdirSync(reviewerSessionDir, { recursive: true });
     envOverrides.CLAUDE_CONFIG_DIR = reviewerSessionDir;
+  } else if (roomRoleContext.role === 'arbiter') {
+    envOverrides.EJCLAW_ARBITER_RUNTIME = '1';
+    const arbiterSessionDir = path.join(
+      DATA_DIR,
+      'sessions',
+      `${group.folder}-arbiter`,
+    );
+    fs.mkdirSync(arbiterSessionDir, { recursive: true });
+    envOverrides.CLAUDE_CONFIG_DIR = arbiterSessionDir;
   }
 
   return {
@@ -288,7 +335,7 @@ export function preparePairedExecutionContext(args: {
 
 export function completePairedExecutionContext(args: {
   taskId: string;
-  role: 'owner' | 'reviewer';
+  role: PairedRoomRole;
   status: 'succeeded' | 'failed';
   summary?: string | null;
 }): void {
@@ -487,13 +534,25 @@ export function completePairedExecutionContext(args: {
       case 'continue':
       default:
         // If both sides keep echoing DONE_WITH_CONCERNS without progress,
-        // stop the loop after 3 round trips to prevent infinite ping-pong.
-        if (task.round_trip_count >= 3) {
-          updatePairedTask(taskId, { status: 'completed', updated_at: now });
-          logger.info(
-            { taskId, verdict, roundTrips: task.round_trip_count },
-            'Stopped ping-pong after repeated DONE_WITH_CONCERNS — escalating to user',
-          );
+        // request arbiter intervention (or escalate to user if arbiter not configured).
+        if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
+          if (isArbiterEnabled()) {
+            updatePairedTask(taskId, {
+              status: 'arbiter_requested',
+              arbiter_requested_at: now,
+              updated_at: now,
+            });
+            logger.info(
+              { taskId, verdict, roundTrips: task.round_trip_count },
+              'Deadlock detected — requesting arbiter intervention',
+            );
+          } else {
+            updatePairedTask(taskId, { status: 'completed', updated_at: now });
+            logger.info(
+              { taskId, verdict, roundTrips: task.round_trip_count },
+              'Stopped ping-pong — escalating to user (arbiter not configured)',
+            );
+          }
           break;
         }
         // Owner needs to address feedback — ping-pong continues
@@ -502,6 +561,54 @@ export function completePairedExecutionContext(args: {
           { taskId, verdict },
           'Reviewer has feedback, task set back to active for owner',
         );
+        break;
+    }
+  }
+
+  // Arbiter finished → classify verdict and route accordingly
+  if (role === 'arbiter') {
+    const now = new Date().toISOString();
+    const arbiterVerdict = classifyArbiterVerdict(args.summary);
+
+    logger.info(
+      { taskId, arbiterVerdict, summary: args.summary?.slice(0, 200) },
+      'Arbiter verdict rendered',
+    );
+
+    switch (arbiterVerdict) {
+      case 'proceed':
+      case 'revise':
+      case 'reset':
+        // Non-escalate: reset counter, continue ping-pong
+        updatePairedTask(taskId, {
+          status: 'active',
+          round_trip_count: 0,
+          arbiter_verdict: arbiterVerdict,
+          updated_at: now,
+        });
+        logger.info(
+          { taskId, arbiterVerdict },
+          'Arbiter resolved deadlock — resuming ping-pong',
+        );
+        break;
+      case 'escalate':
+        updatePairedTask(taskId, {
+          status: 'completed',
+          arbiter_verdict: 'escalate',
+          updated_at: now,
+        });
+        logger.info(
+          { taskId },
+          'Arbiter escalated to user — task completed',
+        );
+        break;
+      default:
+        // Unknown verdict — treat as escalate
+        updatePairedTask(taskId, {
+          status: 'completed',
+          arbiter_verdict: 'unknown',
+          updated_at: now,
+        });
         break;
     }
   }

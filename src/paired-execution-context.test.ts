@@ -110,6 +110,8 @@ function buildPairedTask(overrides: Partial<PairedTask> = {}): PairedTask {
     review_requested_at: null,
     round_trip_count: 0,
     status: 'active',
+    arbiter_verdict: null,
+    arbiter_requested_at: null,
     created_at: '2026-03-28T00:00:00.000Z',
     updated_at: '2026-03-28T00:00:00.000Z',
     ...overrides,
@@ -198,6 +200,8 @@ describe('paired execution context', () => {
       round_trip_count: 0,
       review_requested_at: '2026-03-28T00:00:00.000Z',
       status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
       created_at: '2026-03-28T00:00:00.000Z',
       updated_at: '2026-03-28T00:00:00.000Z',
     });
@@ -230,6 +234,8 @@ describe('paired execution context', () => {
       round_trip_count: 0,
       review_requested_at: '2026-03-28T00:00:00.000Z',
       status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
       created_at: '2026-03-28T00:00:00.000Z',
       updated_at: '2026-03-28T00:00:00.000Z',
     });
@@ -265,6 +271,8 @@ describe('paired execution context', () => {
       round_trip_count: 0,
       review_requested_at: null,
       status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
       created_at: '2026-03-28T00:00:00.000Z',
       updated_at: '2026-03-28T00:00:00.000Z',
     });
@@ -306,6 +314,8 @@ describe('paired execution context', () => {
       round_trip_count: 0,
       review_requested_at: '2026-03-28T00:00:00.000Z',
       status: 'in_review',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
       created_at: '2026-03-28T00:00:00.000Z',
       updated_at: '2026-03-28T00:00:00.000Z',
     });

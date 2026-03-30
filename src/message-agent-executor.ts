@@ -34,6 +34,7 @@ import {
   shouldRetryFreshSessionOnAgentFailure,
 } from './session-recovery.js';
 import {
+  ARBITER_AGENT_TYPE,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
   SERVICE_SESSION_SCOPE,
@@ -96,29 +97,41 @@ export async function runAgentForGroup(
     : null;
   const effectiveServiceId =
     pairedTask &&
-    (pairedTask.status === 'review_ready' || pairedTask.status === 'in_review')
-      ? currentLease.reviewer_service_id!
-      : currentLease.owner_service_id;
+    (pairedTask.status === 'arbiter_requested' || pairedTask.status === 'in_arbitration')
+      ? currentLease.arbiter_service_id!
+      : pairedTask &&
+          (pairedTask.status === 'review_ready' || pairedTask.status === 'in_review')
+        ? currentLease.reviewer_service_id!
+        : currentLease.owner_service_id;
   const reviewerMode = effectiveServiceId === currentLease.reviewer_service_id;
+  const arbiterMode = effectiveServiceId === currentLease.arbiter_service_id;
 
   // Override agent type based on role config (OWNER_AGENT_TYPE / REVIEWER_AGENT_TYPE).
   // When the reviewer uses a different agent type than the group default,
   // swap in the configured type for the duration of this execution.
   const reviewerAgentTypeOverride =
     reviewerMode && REVIEWER_AGENT_TYPE !== (group.agentType || 'claude-code');
-  const effectiveAgentType = reviewerAgentTypeOverride
-    ? REVIEWER_AGENT_TYPE
-    : group.agentType || 'claude-code';
-  const effectiveGroup = reviewerAgentTypeOverride
-    ? { ...group, agentType: REVIEWER_AGENT_TYPE }
-    : group;
+  const arbiterAgentTypeOverride =
+    arbiterMode && ARBITER_AGENT_TYPE != null && ARBITER_AGENT_TYPE !== (group.agentType || 'claude-code');
+  const effectiveAgentType = arbiterAgentTypeOverride
+    ? ARBITER_AGENT_TYPE!
+    : reviewerAgentTypeOverride
+      ? REVIEWER_AGENT_TYPE
+      : group.agentType || 'claude-code';
+  const effectiveGroup = arbiterAgentTypeOverride
+    ? { ...group, agentType: ARBITER_AGENT_TYPE! }
+    : reviewerAgentTypeOverride
+      ? { ...group, agentType: REVIEWER_AGENT_TYPE }
+      : group;
   const isClaudeCodeAgent = effectiveAgentType === 'claude-code';
 
-  // When the reviewer uses a different agent type than the group default,
-  // use a separate session key so owner and reviewer sessions don't collide.
-  const sessionFolder = reviewerAgentTypeOverride
-    ? `${group.folder}:reviewer`
-    : group.folder;
+  // When the reviewer/arbiter uses a different agent type than the group default,
+  // use a separate session key so owner, reviewer, and arbiter sessions don't collide.
+  const sessionFolder = arbiterAgentTypeOverride
+    ? `${group.folder}:arbiter`
+    : reviewerAgentTypeOverride
+      ? `${group.folder}:reviewer`
+      : group.folder;
   const sessionId = sessions[sessionFolder];
   const memoryBriefing = sessionId
     ? undefined
@@ -192,6 +205,26 @@ export async function runAgentForGroup(
     }
     if (currentLease.reviewer_service_id === null) {
       return false;
+    }
+
+    if (arbiterMode) {
+      // Arbiter failed (e.g. Claude 401/429) — re-trigger arbitration with codex
+      createServiceHandoff({
+        chat_jid: chatJid,
+        group_folder: group.folder,
+        source_service_id: SERVICE_SESSION_SCOPE,
+        target_service_id: CODEX_REVIEW_SERVICE_ID,
+        target_agent_type: 'codex',
+        prompt,
+        start_seq: startSeq ?? null,
+        end_seq: endSeq ?? null,
+        reason: `arbiter-claude-${reason}`,
+      });
+      logger.warn(
+        { chatJid, group: group.name, runId, reason },
+        'Claude arbiter unavailable, handed off arbiter turn to codex',
+      );
+      return true;
     }
 
     if (reviewerMode) {
@@ -421,7 +454,9 @@ export async function runAgentForGroup(
         runId,
         provider: effectiveAgentType,
         reviewerMode,
+        arbiterMode,
         reviewerAgentTypeOverride,
+        arbiterAgentTypeOverride,
       },
       `Using provider: ${effectiveAgentType}`,
     );

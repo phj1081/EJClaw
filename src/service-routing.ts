@@ -1,4 +1,5 @@
 import {
+  ARBITER_SERVICE_ID,
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
@@ -6,6 +7,7 @@ import {
   REVIEWER_SERVICE_ID_FOR_TYPE,
   SERVICE_AGENT_TYPE,
   SERVICE_ID,
+  isArbiterEnabled,
   normalizeServiceId,
 } from './config.js';
 import {
@@ -20,6 +22,7 @@ export interface EffectiveChannelLease {
   chat_jid: string;
   owner_service_id: string;
   reviewer_service_id: string | null;
+  arbiter_service_id: string | null;
   activated_at: string | null;
   reason: string | null;
   explicit: boolean;
@@ -40,6 +43,9 @@ function normalizeLeaseRow(
     reviewer_service_id: row.reviewer_service_id
       ? normalizeServiceId(row.reviewer_service_id)
       : null,
+    arbiter_service_id: row.arbiter_service_id
+      ? normalizeServiceId(row.arbiter_service_id)
+      : null,
     activated_at: row.activated_at,
     reason: row.reason,
     explicit,
@@ -59,6 +65,7 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
       chat_jid: chatJid,
       owner_service_id: ownerServiceId,
       reviewer_service_id: REVIEWER_SERVICE_ID_FOR_TYPE,
+      arbiter_service_id: isArbiterEnabled() ? ARBITER_SERVICE_ID : null,
       activated_at: null,
       reason: null,
       explicit: false,
@@ -70,6 +77,7 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
       chat_jid: chatJid,
       owner_service_id: CODEX_MAIN_SERVICE_ID,
       reviewer_service_id: null,
+      arbiter_service_id: null,
       activated_at: null,
       reason: null,
       explicit: false,
@@ -81,6 +89,7 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
       chat_jid: chatJid,
       owner_service_id: CLAUDE_SERVICE_ID,
       reviewer_service_id: null,
+      arbiter_service_id: null,
       activated_at: null,
       reason: null,
       explicit: false,
@@ -94,6 +103,7 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
         ? CODEX_MAIN_SERVICE_ID
         : CLAUDE_SERVICE_ID,
     reviewer_service_id: null,
+    arbiter_service_id: null,
     activated_at: null,
     reason: null,
     explicit: false,
@@ -143,6 +153,17 @@ export function isReviewerServiceForChat(
   );
 }
 
+export function isArbiterServiceForChat(
+  chatJid: string,
+  serviceId: string = SERVICE_ID,
+): boolean {
+  const lease = getEffectiveChannelLease(chatJid);
+  return (
+    lease.arbiter_service_id !== null &&
+    normalizeServiceId(serviceId) === lease.arbiter_service_id
+  );
+}
+
 export function shouldServiceProcessChat(
   _chatJid: string,
   _serviceId: string = SERVICE_ID,
@@ -156,6 +177,7 @@ export function activateCodexFailover(chatJid: string, reason: string): void {
     chat_jid: chatJid,
     owner_service_id: CODEX_REVIEW_SERVICE_ID,
     reviewer_service_id: CODEX_MAIN_SERVICE_ID,
+    arbiter_service_id: null,
     activated_at: now,
     reason,
   };

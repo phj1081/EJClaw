@@ -23,14 +23,18 @@ export type VisiblePhase = 'silent' | 'progress' | 'final';
 
 export type AgentVisibility = 'public' | 'silent';
 
-export type PairedRoomRole = 'owner' | 'reviewer';
+export type PairedRoomRole = 'owner' | 'reviewer' | 'arbiter';
 
 export type PairedTaskStatus =
   | 'active'
   | 'review_ready'
   | 'in_review'
   | 'merge_ready'
-  | 'completed';
+  | 'completed'
+  | 'arbiter_requested'
+  | 'in_arbitration';
+
+export type ArbiterVerdict = 'proceed' | 'revise' | 'reset' | 'escalate';
 
 export type PairedWorkspaceRole = 'owner' | 'reviewer';
 
@@ -42,6 +46,7 @@ export interface RoomRoleContext {
   ownerServiceId: string;
   reviewerServiceId: string;
   failoverOwner: boolean;
+  arbiterServiceId?: string;
 }
 
 export interface PairedProject {
@@ -64,6 +69,8 @@ export interface PairedTask {
   review_requested_at: string | null;
   round_trip_count: number;
   status: PairedTaskStatus;
+  arbiter_verdict: string | null;
+  arbiter_requested_at: string | null;
   created_at: string;
   updated_at: string;
 }

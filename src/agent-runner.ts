@@ -75,7 +75,7 @@ export async function runAgentProcess(
   // ── Reviewer container mode ─────────────────────────────────────
   // Reviewers always run inside a Docker container with read-only source
   // mount for kernel-level write protection. Docker is required.
-  if (envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1') {
+  if (envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1' || envOverrides?.EJCLAW_ARBITER_RUNTIME === '1') {
     const ownerWorkspaceDir =
       envOverrides?.EJCLAW_WORK_DIR || group.workDir || process.cwd();
 
@@ -83,11 +83,13 @@ export async function runAgentProcess(
     // so the Claude SDK inside the container has platform & paired room prompts.
     const sessionDir = envOverrides?.CLAUDE_CONFIG_DIR;
     if (sessionDir) {
+      const containerRole = envOverrides?.EJCLAW_ARBITER_RUNTIME === '1' ? 'arbiter' as const : 'reviewer' as const;
       prepareContainerSessionEnvironment({
         sessionDir,
         chatJid: input.chatJid,
         isMain: input.isMain,
         memoryBriefing: input.memoryBriefing,
+        role: containerRole,
       });
     }
 
