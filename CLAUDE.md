@@ -29,9 +29,6 @@ Single unified service (`ejclaw`) manages three Discord bots (Claude, Codex-main
 | `/setup` | First-time installation, authentication, service configuration |
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Agent issues, logs, troubleshooting |
-| `/update-ejclaw` | Bring upstream EJClaw updates into a customized install |
-| `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
-| `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
 
 ## Development
 
