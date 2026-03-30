@@ -10,6 +10,7 @@ export interface AgentConfig {
 }
 
 export type AgentType = 'claude-code' | 'codex';
+export type RoomMode = 'single' | 'tribunal';
 
 /** Phase of agent output as emitted by the runner. */
 export type AgentOutputPhase =
