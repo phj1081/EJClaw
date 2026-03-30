@@ -16,6 +16,7 @@ import {
   setChannelOwnerLease,
   type ChannelOwnerLeaseRow,
 } from './db.js';
+import { logger } from './logger.js';
 
 export interface EffectiveChannelLease {
   chat_jid: string;
@@ -122,6 +123,18 @@ export function refreshChannelOwnerCache(force = false): void {
 export function getEffectiveChannelLease(
   chatJid: string,
 ): EffectiveChannelLease {
+  // Global failover overrides all per-channel leases
+  if (globalFailoverActive) {
+    return {
+      chat_jid: chatJid,
+      owner_service_id: CODEX_REVIEW_SERVICE_ID,
+      reviewer_service_id: CODEX_MAIN_SERVICE_ID,
+      arbiter_service_id: null,
+      activated_at: globalFailoverActivatedAt,
+      reason: globalFailoverReason,
+      explicit: true,
+    };
+  }
   refreshChannelOwnerCache();
   const row = leaseCache.get(chatJid);
   if (row) {
@@ -167,19 +180,48 @@ export function shouldServiceProcessChat(
   return true;
 }
 
-export function activateCodexFailover(chatJid: string, reason: string): void {
-  const now = new Date().toISOString();
-  const row: ChannelOwnerLeaseRow = {
-    chat_jid: chatJid,
-    owner_service_id: CODEX_REVIEW_SERVICE_ID,
-    reviewer_service_id: CODEX_MAIN_SERVICE_ID,
-    arbiter_service_id: null,
-    activated_at: now,
-    reason,
+// ── Global failover ──────────────────────────────────────────────
+// Claude API limits are account-level, so failover applies to all channels.
+
+let globalFailoverActive = false;
+let globalFailoverReason: string | null = null;
+let globalFailoverActivatedAt: string | null = null;
+
+export function activateCodexFailover(
+  _chatJid: string,
+  reason: string,
+): void {
+  globalFailoverActive = true;
+  globalFailoverReason = reason;
+  globalFailoverActivatedAt = new Date().toISOString();
+  logger.warn(
+    { reason, activatedAt: globalFailoverActivatedAt },
+    'Global failover activated — all channels switching to codex',
+  );
+}
+
+export function isGlobalFailoverActive(): boolean {
+  return globalFailoverActive;
+}
+
+export function getGlobalFailoverInfo(): {
+  active: boolean;
+  reason: string | null;
+  activatedAt: string | null;
+} {
+  return {
+    active: globalFailoverActive,
+    reason: globalFailoverReason,
+    activatedAt: globalFailoverActivatedAt,
   };
-  setChannelOwnerLease(row);
-  leaseCache.set(chatJid, row);
-  lastLeaseRefreshAt = Date.now();
+}
+
+export function clearGlobalFailover(): void {
+  if (!globalFailoverActive) return;
+  globalFailoverActive = false;
+  globalFailoverReason = null;
+  globalFailoverActivatedAt = null;
+  logger.info('Global failover cleared — resuming normal routing');
 }
 
 export function restoreDefaultChannelLease(chatJid: string): void {
@@ -194,18 +236,13 @@ export interface ActiveFailoverLease {
 }
 
 export function getActiveCodexFailoverLeases(): ActiveFailoverLease[] {
-  refreshChannelOwnerCache(true);
-  return [...leaseCache.values()]
-    .filter(
-      (row) =>
-        normalizeServiceId(row.owner_service_id) === CODEX_REVIEW_SERVICE_ID &&
-        normalizeServiceId(row.reviewer_service_id || '') ===
-          CODEX_MAIN_SERVICE_ID,
-    )
-    .map((row) => ({
-      chatJid: row.chat_jid,
-      activatedAt: row.activated_at ?? null,
-    }));
+  // Global failover: report as a single pseudo-lease
+  if (globalFailoverActive) {
+    return [
+      { chatJid: '*', activatedAt: globalFailoverActivatedAt },
+    ];
+  }
+  return [];
 }
 
 /** @deprecated Use getActiveCodexFailoverLeases() instead */

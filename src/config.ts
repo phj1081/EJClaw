@@ -191,8 +191,7 @@ function parseMoaReferenceModels(): MoaModelConfig[] {
 export function getMoaConfig(): MoaConfig {
   const referenceModels = parseMoaReferenceModels();
   return {
-    enabled:
-      getEnv('MOA_ENABLED') === 'true' && referenceModels.length > 0,
+    enabled: getEnv('MOA_ENABLED') === 'true' && referenceModels.length > 0,
     referenceModels,
   };
 }

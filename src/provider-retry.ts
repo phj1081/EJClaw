@@ -19,6 +19,7 @@ import {
   getTokenCount,
   markTokenHealthy,
 } from './token-rotation.js';
+import { clearGlobalFailover } from './service-routing.js';
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -159,6 +160,7 @@ export async function runClaudeRotationLoop(
 
     // ── Success ──
     markTokenHealthy();
+    clearGlobalFailover();
     return { type: 'success' };
   }
 

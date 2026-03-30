@@ -53,6 +53,7 @@ vi.mock('./db.js', () => ({
 
 vi.mock('./service-routing.js', () => ({
   activateCodexFailover: vi.fn(),
+  clearGlobalFailover: vi.fn(),
   getEffectiveChannelLease: vi.fn(() => ({
     chat_jid: 'group@test',
     owner_service_id: 'claude',

@@ -2,10 +2,18 @@ import { execSync } from 'child_process';
 import os from 'os';
 
 import {
+  ARBITER_AGENT_TYPE,
+  ARBITER_MODEL_CONFIG,
+  OWNER_AGENT_TYPE,
+  OWNER_MODEL_CONFIG,
+  REVIEWER_AGENT_TYPE,
+  REVIEWER_MODEL_CONFIG,
   STATUS_SHOW_ROOM_DETAILS,
   STATUS_SHOW_ROOMS,
   USAGE_DASHBOARD_ENABLED,
+  getMoaConfig,
 } from './config.js';
+import { getGlobalFailoverInfo } from './service-routing.js';
 import {
   fetchAllClaudeUsage,
   fetchAllClaudeProfiles,
@@ -540,8 +548,55 @@ async function buildUsageContent(): Promise<string> {
   return lines.join('\n');
 }
 
+function buildModelConfigSection(): string {
+  const roleConfigs = [
+    {
+      label: 'Owner',
+      agentType: OWNER_AGENT_TYPE,
+      model: OWNER_MODEL_CONFIG.model,
+    },
+    {
+      label: 'Reviewer',
+      agentType: REVIEWER_AGENT_TYPE,
+      model: REVIEWER_MODEL_CONFIG.model,
+    },
+    {
+      label: 'Arbiter',
+      agentType: ARBITER_AGENT_TYPE,
+      model: ARBITER_MODEL_CONFIG.model,
+    },
+  ];
+
+  const lines = ['🤖 *모델 구성*'];
+  for (const role of roleConfigs) {
+    if (!role.agentType && role.label === 'Arbiter') continue;
+    const type = role.agentType || '—';
+    const defaultModel = type === 'codex'
+      ? (process.env.CODEX_MODEL || 'codex')
+      : (process.env.CLAUDE_MODEL || 'claude');
+    const model = role.model || defaultModel;
+    lines.push(`  **${role.label}** — ${type} \`${model}\``);
+  }
+
+  // MoA status
+  const moaConfig = getMoaConfig();
+  if (moaConfig.enabled) {
+    const refs = moaConfig.referenceModels.map((m) => m.name).join(', ');
+    lines.push(`  **MoA** — ${refs}`);
+  }
+
+  // Global failover
+  const failover = getGlobalFailoverInfo();
+  if (failover.active) {
+    lines.push(`  ⚠️ **Failover 활성** — ${failover.reason || '알 수 없음'}`);
+  }
+
+  return lines.join('\n');
+}
+
 function buildUnifiedDashboardContent(): string {
   const sections: string[] = [];
+  sections.push(buildModelConfigSection());
   if (STATUS_SHOW_ROOMS) {
     sections.push(buildStatusContent());
   }

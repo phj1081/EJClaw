@@ -3,19 +3,20 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { _initTestDatabase, setRegisteredGroup } from './db.js';
 import {
   activateCodexFailover,
-  getActiveCodexFailoverLeases,
+  clearGlobalFailover,
   getEffectiveChannelLease,
+  getGlobalFailoverInfo,
   refreshChannelOwnerCache,
-  restoreDefaultChannelLease,
 } from './service-routing.js';
 
 beforeEach(() => {
   _initTestDatabase();
   refreshChannelOwnerCache(true);
+  clearGlobalFailover();
 });
 
-describe('service-routing failover leases', () => {
-  it('uses codex-review as owner and codex-main as reviewer during failover', () => {
+describe('service-routing global failover', () => {
+  it('uses codex-review as owner during global failover', () => {
     setRegisteredGroup('dc:paired', {
       name: 'Paired Room Claude',
       folder: 'paired-claude',
@@ -33,6 +34,8 @@ describe('service-routing failover leases', () => {
 
     activateCodexFailover('dc:paired', 'claude-429');
 
+    // Global failover applies to ALL channels
+    expect(getGlobalFailoverInfo().active).toBe(true);
     expect(getEffectiveChannelLease('dc:paired')).toMatchObject({
       chat_jid: 'dc:paired',
       owner_service_id: 'codex-review',
@@ -40,15 +43,15 @@ describe('service-routing failover leases', () => {
       reason: 'claude-429',
       explicit: true,
     });
-    expect(getActiveCodexFailoverLeases()).toEqual([
-      {
-        chatJid: 'dc:paired',
-        activatedAt: expect.any(String),
-      },
-    ]);
+    // Any other channel is also affected
+    expect(getEffectiveChannelLease('dc:other')).toMatchObject({
+      owner_service_id: 'codex-review',
+      reviewer_service_id: 'codex-main',
+      explicit: true,
+    });
   });
 
-  it('restores the default lease after failover is cleared', () => {
+  it('restores default lease after global failover is cleared', () => {
     setRegisteredGroup('dc:paired', {
       name: 'Paired Room Claude',
       folder: 'paired-claude',
@@ -65,8 +68,9 @@ describe('service-routing failover leases', () => {
     });
 
     activateCodexFailover('dc:paired', 'claude-429');
-    restoreDefaultChannelLease('dc:paired');
+    clearGlobalFailover();
 
+    expect(getGlobalFailoverInfo().active).toBe(false);
     expect(getEffectiveChannelLease('dc:paired')).toMatchObject({
       chat_jid: 'dc:paired',
       owner_service_id: 'codex-main',
