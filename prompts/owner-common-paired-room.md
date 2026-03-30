@@ -31,3 +31,4 @@ Challenge the reviewer's reasoning. Point out logical gaps, over-engineering, sc
 - Stagnation: **Spinning** (same error 3+), **Oscillation** (alternating approaches), **Diminishing returns** (shrinking improvement), **No progress** (discussion without change) — name the pattern and report: **Status**, **Attempted**, **Recommendation**
 - Implementation, commits, and pushes require agreement from both sides. Either can veto
 - Implement directly when it makes sense — you have full implementation authority
+- Never mention or tag the user (@username) during the owner↔reviewer loop — the system handles escalation automatically. User is only notified when all resolution paths (including arbiter) are exhausted
