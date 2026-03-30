@@ -163,6 +163,7 @@ function ensureActiveTask(
   group: RegisteredGroup,
   chatJid: string,
   roomRoleContext: RoomRoleContext,
+  hasHumanMessage?: boolean,
 ): PairedTask | null {
   const canonicalWorkDir = ensurePairedProject(group, chatJid);
   if (!canonicalWorkDir) {
@@ -172,6 +173,12 @@ function ensureActiveTask(
   const existing = getLatestOpenPairedTaskForChat(chatJid);
   if (existing) {
     return existing;
+  }
+
+  // Don't create a new task for bot-only messages — prevents
+  // ESCALATE → completed → bot message triggers new task → loop.
+  if (!hasHumanMessage) {
+    return null;
   }
 
   const now = new Date().toISOString();
@@ -239,7 +246,7 @@ export function preparePairedExecutionContext(args: {
     return undefined;
   }
 
-  const task = ensureActiveTask(group, chatJid, roomRoleContext);
+  const task = ensureActiveTask(group, chatJid, roomRoleContext, args.hasHumanMessage);
   if (!task) {
     return undefined;
   }

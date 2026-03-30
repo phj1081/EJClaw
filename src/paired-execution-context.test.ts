@@ -174,6 +174,7 @@ describe('paired execution context', () => {
       chatJid: 'dc:test',
       runId: 'run-1',
       roomRoleContext: ownerContext,
+      hasHumanMessage: true,
     });
 
     expect(db.upsertPairedProject).toHaveBeenCalled();
