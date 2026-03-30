@@ -246,7 +246,12 @@ export function preparePairedExecutionContext(args: {
     return undefined;
   }
 
-  const task = ensureActiveTask(group, chatJid, roomRoleContext, args.hasHumanMessage);
+  const task = ensureActiveTask(
+    group,
+    chatJid,
+    roomRoleContext,
+    args.hasHumanMessage,
+  );
   if (!task) {
     return undefined;
   }

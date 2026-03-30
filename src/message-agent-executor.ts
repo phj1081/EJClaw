@@ -1076,13 +1076,16 @@ export async function runAgentForGroup(
 
     // After owner/reviewer completes, enqueue the next turn so
     // the message loop picks it up without waiting for a new message.
-    // Skip if owner produced no output — likely interrupted by /stop.
+    // Skip if: no output (interrupted), or task already completed (ESCALATE, done, etc.)
     if (
       pairedExecutionContext &&
       pairedExecutionStatus === 'succeeded' &&
       pairedSawOutput
     ) {
-      deps.queue.enqueueMessageCheck(chatJid);
+      const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);
+      if (finishedCheck?.status !== 'completed') {
+        deps.queue.enqueueMessageCheck(chatJid);
+      }
     }
   }
 }
