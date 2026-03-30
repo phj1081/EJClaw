@@ -131,7 +131,8 @@ export async function runAgentForGroup(
     group.agentType,
   );
   // Arbiter always starts fresh — never resume a previous session
-  const sessionId = activeRole === 'arbiter' ? undefined : sessions[sessionFolder];
+  const sessionId =
+    activeRole === 'arbiter' ? undefined : sessions[sessionFolder];
   const memoryBriefing = sessionId
     ? undefined
     : await buildRoomMemoryBriefing({
@@ -1043,6 +1044,29 @@ export async function runAgentForGroup(
             { taskId: pairedExecutionContext.task.id, err },
             'Failed to store paired turn output',
           );
+        }
+      }
+    }
+
+    // Notify user when paired task reaches a terminal state that requires attention.
+    if (pairedExecutionContext) {
+      const finishedTask = getPairedTaskById(pairedExecutionContext.task.id);
+      if (finishedTask?.status === 'completed' && finishedTask.completion_reason) {
+        const sender = getLastHumanMessageSender(chatJid);
+        const mention = sender ? `<@${sender}>` : '';
+        const notifications: Record<string, string> = {
+          done: `${mention} ✅ 작업 완료.`,
+          escalated: `${mention} ⚠️ 자동 해결 불가 — 확인이 필요합니다.`,
+          arbiter_escalated: `${mention} ⚠️ 중재자 판단: 사람 개입이 필요합니다.`,
+        };
+        const message = notifications[finishedTask.completion_reason];
+        if (message) {
+          await args.onOutput?.({
+            status: 'success',
+            result: message,
+            output: { visibility: 'public', text: message },
+            phase: 'final',
+          });
         }
       }
     }

@@ -48,7 +48,11 @@ vi.mock('./platform-prompts.js', () => ({
 vi.mock('./db.js', () => ({
   createServiceHandoff: vi.fn(),
   getAllTasks: vi.fn(() => []),
+  getLastHumanMessageSender: vi.fn(() => null),
   getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
+  getLatestTurnNumber: vi.fn(() => 0),
+  getPairedTaskById: vi.fn(() => undefined),
+  insertPairedTurnOutput: vi.fn(),
 }));
 
 vi.mock('./service-routing.js', () => ({
