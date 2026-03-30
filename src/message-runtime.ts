@@ -435,6 +435,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return;
     }
 
+    // Reviewer failover handoffs (reason starts with "reviewer-") should
+    // run via the reviewer channel so they execute in reviewer mode.
+    const isReviewerHandoff = handoff.reason?.startsWith('reviewer-');
+    let handoffChannel = channel;
+    if (isReviewerHandoff) {
+      const revChName =
+        REVIEWER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
+      handoffChannel =
+        findChannelByName(deps.channels, revChName) || channel;
+    }
+
     const runId = `handoff-${handoff.id}`;
     try {
       const result = await executeTurn({
@@ -442,7 +453,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         prompt: handoff.prompt,
         chatJid: handoff.chat_jid,
         runId,
-        channel,
+        channel: handoffChannel,
         startSeq: handoff.start_seq,
         endSeq: handoff.end_seq,
       });
