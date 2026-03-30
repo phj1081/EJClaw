@@ -142,6 +142,7 @@ import {
   isWatchCiTask,
   nudgeSchedulerLoop,
   renderWatchCiStatusMessage,
+  runSchedulerTickOnce,
   startSchedulerLoop,
 } from './task-scheduler.js';
 
@@ -281,6 +282,48 @@ describe('task scheduler', () => {
         'shared@g.us::task:task-codex|task-codex',
       ].sort(),
     );
+  });
+
+  it('can execute one scheduler tick without starting the timer loop', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-single-tick',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: 'single tick task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn();
+
+    await runSchedulerTickOnce({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    expect(enqueueTask).toHaveBeenCalledTimes(1);
+    expect(enqueueTask.mock.calls[0][0]).toBe(
+      'shared@g.us::task:task-single-tick',
+    );
+    expect(enqueueTask.mock.calls[0][1]).toBe('task-single-tick');
   });
 
   it('keeps group-context tasks on the chat queue key', async () => {
@@ -1282,6 +1325,44 @@ Check the run.
     expect(getTaskById('task-watch-expired')).toBeUndefined();
     expect(enqueueTask).not.toHaveBeenCalled();
     expect(runAgentProcessMock).not.toHaveBeenCalled();
+  });
+
+  it('deletes expired tasks during a direct scheduler tick before enqueueing', async () => {
+    const enqueueTask = vi.fn();
+    createTask({
+      id: 'task-watch-expired-direct',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      max_duration_ms: 60_000,
+      prompt: 'expired direct tick task',
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    await runSchedulerTickOnce({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({ 'shared-group': 'session-123' }),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+
+    expect(getTaskById('task-watch-expired-direct')).toBeUndefined();
+    expect(enqueueTask).not.toHaveBeenCalled();
   });
 
   it('isolates both IPC and session state for isolated tasks', async () => {

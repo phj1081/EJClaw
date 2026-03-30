@@ -857,6 +857,60 @@ async function runGithubCiTask(
   );
 }
 
+/**
+ * Execute one scheduler tick without timer/in-flight coordination.
+ * This keeps the scheduler loop focused on timing while tests and debugging
+ * can exercise the due-task path directly.
+ */
+export async function runSchedulerTickOnce(
+  deps: SchedulerDependencies,
+): Promise<void> {
+  // Unified service: process all agent types, not just the service default.
+  const nowMs = Date.now();
+  const activeTasks = getAllTasks().filter((task) => task.status === 'active');
+
+  for (const task of activeTasks) {
+    const currentTask = getTaskById(task.id);
+    if (!currentTask || currentTask.status !== 'active') {
+      continue;
+    }
+
+    if (!hasTaskExceededMaxDuration(currentTask, nowMs)) {
+      continue;
+    }
+
+    deleteTask(currentTask.id);
+    logger.warn(
+      {
+        taskId: currentTask.id,
+        groupFolder: currentTask.group_folder,
+        maxDurationMs: currentTask.max_duration_ms,
+        createdAt: currentTask.created_at,
+      },
+      'Deleted task that exceeded max duration',
+    );
+  }
+
+  const dueTasks = getDueTasks();
+  if (dueTasks.length > 0) {
+    logger.info({ count: dueTasks.length }, 'Found due tasks');
+  }
+
+  for (const task of dueTasks) {
+    // Re-check task status in case it was paused/cancelled
+    const currentTask = getTaskById(task.id);
+    if (!currentTask || currentTask.status !== 'active') {
+      continue;
+    }
+
+    deps.queue.enqueueTask(getTaskQueueJid(currentTask), currentTask.id, () =>
+      isGitHubCiTask(currentTask)
+        ? runGithubCiTask(currentTask, deps)
+        : runTask(currentTask, deps),
+    );
+  }
+}
+
 let schedulerRunning = false;
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
 let schedulerLoopFn: (() => Promise<void>) | null = null;
@@ -899,55 +953,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
     schedulerTickInFlight = true;
 
     try {
-      // Unified service: process all agent types, not just the service default.
-      const nowMs = Date.now();
-      const activeTasks = getAllTasks().filter(
-        (task) => task.status === 'active',
-      );
-
-      for (const task of activeTasks) {
-        const currentTask = getTaskById(task.id);
-        if (!currentTask || currentTask.status !== 'active') {
-          continue;
-        }
-
-        if (!hasTaskExceededMaxDuration(currentTask, nowMs)) {
-          continue;
-        }
-
-        deleteTask(currentTask.id);
-        logger.warn(
-          {
-            taskId: currentTask.id,
-            groupFolder: currentTask.group_folder,
-            maxDurationMs: currentTask.max_duration_ms,
-            createdAt: currentTask.created_at,
-          },
-          'Deleted task that exceeded max duration',
-        );
-      }
-
-      const dueTasks = getDueTasks();
-      if (dueTasks.length > 0) {
-        logger.info({ count: dueTasks.length }, 'Found due tasks');
-      }
-
-      for (const task of dueTasks) {
-        // Re-check task status in case it was paused/cancelled
-        const currentTask = getTaskById(task.id);
-        if (!currentTask || currentTask.status !== 'active') {
-          continue;
-        }
-
-        deps.queue.enqueueTask(
-          getTaskQueueJid(currentTask),
-          currentTask.id,
-          () =>
-            isGitHubCiTask(currentTask)
-              ? runGithubCiTask(currentTask, deps)
-              : runTask(currentTask, deps),
-        );
-      }
+      await runSchedulerTickOnce(deps);
     } catch (err) {
       logger.error({ err }, 'Error in scheduler loop');
     } finally {
