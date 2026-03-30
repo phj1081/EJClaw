@@ -21,7 +21,6 @@ import {
   type WorkItem,
 } from './db.js';
 import {
-  ARBITER_AGENT_TYPE,
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,

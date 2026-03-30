@@ -31,14 +31,6 @@ export function advanceLastAgentCursor(
   saveState();
 }
 
-/** Returns the cursor key for a paired room role. */
-export function pairedCursorKey(
-  chatJid: string,
-  isReviewerTurn: boolean,
-): string {
-  return isReviewerTurn ? `${chatJid}:reviewer` : chatJid;
-}
-
 /** Map task status to the active role. */
 export function resolveActiveRole(
   taskStatus?: string | null,
