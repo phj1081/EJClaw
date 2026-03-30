@@ -51,9 +51,9 @@ systemctl --user status ejclaw                    # Check status
 journalctl --user -u ejclaw -f                    # Follow logs
 ```
 
-Deploy to server (build on server, not locally):
+Deploy:
 ```bash
-ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && bun run build && bun run build:runners && bun run build:container && systemctl --user restart ejclaw'
+bun run deploy
 ```
 
 ## Service Stack Architecture
@@ -66,7 +66,7 @@ Single unified service manages all three Discord bots in one process:
 - Shared dirs: `store/`, `groups/`, `data/`
 - SQLite WAL mode + `busy_timeout=5000` for concurrent access
 
-## Debugging Paths (Server: clone-ej@100.64.185.108)
+## Debugging Paths
 
 Unified DB + directories (both services share `store/`, `groups/`, `data/`):
 

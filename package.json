@@ -8,6 +8,8 @@
     "build": "tsc",
     "build:runners": "bun install --cwd runners/agent-runner && bun run --cwd runners/agent-runner build && bun install --cwd runners/codex-runner && bun run --cwd runners/codex-runner build",
     "build:container": "docker build -f container/Dockerfile -t ejclaw-reviewer:latest .",
+    "build:all": "bun run build && bun run build:runners && bun run build:container",
+    "deploy": "git pull && bun run build:all && systemctl --user restart ejclaw",
     "restart:stack": "bash scripts/restart-ejclaw-stack.sh",
     "restart:hint": "bun src/restart-context-cli.ts write",
     "start": "bun dist/index.js",
