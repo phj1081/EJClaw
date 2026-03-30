@@ -4,7 +4,7 @@
 
 FROM node:22-slim
 
-# System dependencies
+# System dependencies — verification/review tools included
 RUN apt-get update --fix-missing && apt-get install -y --no-install-recommends \
     chromium \
     fonts-liberation \
@@ -12,11 +12,25 @@ RUN apt-get update --fix-missing && apt-get install -y --no-install-recommends \
     fonts-noto-color-emoji \
     curl \
     git \
+    # Media
     ffmpeg \
     sox \
+    mediainfo \
     imagemagick \
-    jq \
+    # Build
+    make \
+    gcc \
+    g++ \
     python3 \
+    python3-pip \
+    # Utils
+    jq \
+    file \
+    sqlite3 \
+    rsync \
+    zip \
+    unzip \
+    strace \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
