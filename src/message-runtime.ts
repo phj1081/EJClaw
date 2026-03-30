@@ -144,9 +144,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (!serviceId) return msg;
       const role =
         serviceId === lease.owner_service_id
-          ? '오너'
+          ? 'owner'
           : serviceId === lease.reviewer_service_id
-            ? '리뷰어'
+            ? 'reviewer'
             : msg.sender_name;
       return { ...msg, sender_name: role };
     });
