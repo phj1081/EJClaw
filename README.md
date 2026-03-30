@@ -5,11 +5,11 @@
 ![Bun](https://img.shields.io/badge/Bun-1.3+-f9f1e1?logo=bun&logoColor=black)
 ![Discord](https://img.shields.io/badge/Discord-Bot-5865F2?logo=discord&logoColor=white)
 
-MAGI-style multi-agent AI assistant (Claude Code + Codex + Arbiter) over Discord with autonomous paired review and Mixture of Agents.
+Tribunal multi-agent AI assistant (Claude Code + Codex + Arbiter) over Discord with autonomous paired review and Mixture of Agents.
 
 Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now maintained as EJClaw for personal production use.
-Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros), adapted for EJClaw's Discord and dual-service workflow.
-Arbiter system inspired by [Evangelion MAGI](https://evangelion.fandom.com/wiki/MAGI) consensus architecture.
+Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros) and [garrytan/gstack](https://github.com/garrytan/gstack), adapted for EJClaw's Discord and dual-service workflow.
+Tribunal arbiter system inspired by multi-agent consensus architectures.
 
 ## Overview
 
@@ -21,7 +21,7 @@ A single unified service (`ejclaw`) manages three Discord bots in one process:
 
 All agent types and models are independently configurable per role via `.env`.
 
-## MAGI 3-Agent System
+## Tribunal 3-Agent System
 
 ```
 User message
@@ -52,7 +52,7 @@ No extra SDK processes. External references use lightweight API calls (Anthropic
 
 ## Features
 
-- **MAGI 3-agent system** — Owner/reviewer/arbiter with on-demand deadlock resolution
+- **Tribunal 3-agent system** — Owner/reviewer/arbiter with on-demand deadlock resolution
 - **Mixture of Agents** — External model opinions (Kimi, GLM) enrich arbiter verdicts
 - **Per-role model selection** — `OWNER_MODEL`, `REVIEWER_MODEL`, `ARBITER_MODEL` + effort + fallback toggle
 - **Container-isolated reviewer** — Persistent Docker container with read-only source mount
