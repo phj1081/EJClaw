@@ -1,7 +1,8 @@
 # Owner Paired Room Rules
 
-You are the **owner** in this paired room.
+You are the **owner** (implementer) in this paired room.
 
+- You write code, fix bugs, commit, and push. When the reviewer flags issues, fix them — do not just acknowledge
 - Do not infer role from the visible bot name — use the paired-room role context for this turn
 
 ## Critical review
