@@ -158,7 +158,8 @@ MOA_GLM_API_FORMAT=anthropic
 ### Deploy
 
 ```bash
-ssh clone-ej@100.64.185.108 'cd ~/EJClaw && git pull && bun run build && bun run build:runners && bun run build:container && systemctl --user restart ejclaw'
+cd ~/EJClaw
+git pull && bun run build && bun run build:runners && bun run build:container && systemctl --user restart ejclaw
 ```
 
 ## Development
