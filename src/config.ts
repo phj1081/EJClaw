@@ -200,9 +200,9 @@ export function getMoaConfig(): MoaConfig {
 }
 
 // Max owner↔reviewer round trips per task. 0 = unlimited.
-const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '10';
+const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '1000';
 export const PAIRED_MAX_ROUND_TRIPS =
-  rawMaxRoundTrips === '0' ? Infinity : parseInt(rawMaxRoundTrips, 10) || 10;
+  rawMaxRoundTrips === '0' ? Infinity : parseInt(rawMaxRoundTrips, 10) || 1000;
 
 // ── Container isolation ───────────────────────────────────────────
 export const REVIEWER_CONTAINER_IMAGE =

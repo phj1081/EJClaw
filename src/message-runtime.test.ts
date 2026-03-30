@@ -643,6 +643,111 @@ describe('createMessageRuntime', () => {
     expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '리뷰 확인 완료');
   });
 
+  it('includes the latest reviewer summary in merge_ready finalize prompts and truncates it', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const longReviewerOutput = `검토 요약 ${'a'.repeat(2105)} 끝`;
+    const truncatedReviewerOutput = longReviewerOutput.slice(0, 2000);
+
+    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-merge-ready',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'merge_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-merge-ready',
+        turn_number: 1,
+        role: 'reviewer',
+        output_text: '이전 reviewer 요약',
+        created_at: '2026-03-30T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-merge-ready',
+        turn_number: 2,
+        role: 'owner',
+        output_text: 'owner 중간 응답',
+        created_at: '2026-03-30T00:00:02.000Z',
+      },
+      {
+        id: 3,
+        task_id: 'task-merge-ready',
+        turn_number: 3,
+        role: 'reviewer',
+        output_text: longReviewerOutput,
+        created_at: '2026-03-30T00:00:03.000Z',
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toBe(
+          `The reviewer approved your work (DONE). Finalize and report the result.\n\nReviewer's final assessment:\n${truncatedReviewerOutput}`,
+        );
+        expect(input.prompt).not.toContain(longReviewerOutput);
+        expect(input.prompt).not.toContain('이전 reviewer 요약');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '최종 정리 완료',
+          newSessionId: 'session-finalize-merge-ready',
+        });
+        return {
+          status: 'success',
+          result: '최종 정리 완료',
+          newSessionId: 'session-finalize-merge-ready',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-merge-ready-finalize-summary',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '최종 정리 완료');
+  });
+
   it('allows follow-up messages without a trigger after a visible reply in non-main groups', async () => {
     const chatJid = 'group@test';
     const group: RegisteredGroup = {

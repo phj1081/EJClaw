@@ -757,8 +757,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               cursor,
             );
           }
-          const finalizePrompt =
-            'The reviewer approved your work (DONE). Finalize and report the result.';
+          const turnOutputs = getPairedTurnOutputs(pendingReviewTask.id);
+          const lastReviewerOutput = [...turnOutputs]
+            .reverse()
+            .find((output) => output.role === 'reviewer');
+          const reviewerSummary = lastReviewerOutput?.output_text
+            ? `\n\nReviewer's final assessment:\n${lastReviewerOutput.output_text.slice(0, 2000)}`
+            : '';
+          const finalizePrompt = `The reviewer approved your work (DONE). Finalize and report the result.${reviewerSummary}`;
           const { deliverySucceeded } = await executeTurn({
             group,
             prompt: finalizePrompt,
