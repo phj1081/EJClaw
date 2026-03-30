@@ -8,7 +8,7 @@ import {
   buildRuntimePathEnv,
   buildStackRestartSystemdUnit,
   buildSystemdUnit,
-} from './service.js';
+} from './service-renderers.js';
 import { getServiceDefs, type ServiceDef } from './service-defs.js';
 
 /**

@@ -9,7 +9,6 @@
  *
  * Uses better-sqlite3 directly (no sqlite3 CLI), platform-aware service checks.
  */
-import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -18,91 +17,10 @@ import { Database } from 'bun:sqlite';
 import { STORE_DIR } from '../src/config.js';
 import { readEnvFile } from '../src/env.js';
 import { logger } from '../src/logger.js';
-import { getPlatform, getServiceManager, isRoot } from './platform.js';
+import { getServiceManager } from './platform.js';
 import { getServiceDefs } from './service-defs.js';
 import { emitStatus } from './status.js';
-
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
-
-type ServiceStatus = 'running' | 'stopped' | 'not_found' | 'not_configured';
-
-interface ServiceCheck {
-  name: string;
-  status: ServiceStatus;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Service status checks                                              */
-/* ------------------------------------------------------------------ */
-
-function checkLaunchdService(label: string): ServiceStatus {
-  try {
-    const output = execSync('launchctl list', { encoding: 'utf-8' });
-    if (output.includes(label)) {
-      const line = output.split('\n').find((l) => l.includes(label));
-      if (line) {
-        const pidField = line.trim().split(/\s+/)[0];
-        return pidField !== '-' && pidField ? 'running' : 'stopped';
-      }
-    }
-  } catch {
-    // launchctl not available
-  }
-  return 'not_found';
-}
-
-function checkSystemdService(name: string): ServiceStatus {
-  const prefix = isRoot() ? 'systemctl' : 'systemctl --user';
-  try {
-    execSync(`${prefix} is-active ${name}`, { stdio: 'ignore' });
-    return 'running';
-  } catch {
-    try {
-      const output = execSync(`${prefix} list-unit-files`, {
-        encoding: 'utf-8',
-      });
-      if (output.includes(name)) {
-        return 'stopped';
-      }
-    } catch {
-      // systemctl not available
-    }
-  }
-  return 'not_found';
-}
-
-function checkNohupService(
-  projectRoot: string,
-  serviceName: string,
-): ServiceStatus {
-  const pidFile = path.join(projectRoot, `${serviceName}.pid`);
-  if (fs.existsSync(pidFile)) {
-    try {
-      const raw = fs.readFileSync(pidFile, 'utf-8').trim();
-      const pid = Number(raw);
-      if (raw && Number.isInteger(pid) && pid > 0) {
-        process.kill(pid, 0);
-        return 'running';
-      }
-    } catch {
-      return 'stopped';
-    }
-  }
-  return 'not_found';
-}
-
-function checkService(
-  projectRoot: string,
-  mgr: ReturnType<typeof getServiceManager>,
-  serviceName: string,
-  launchdLabel: string,
-): ServiceStatus {
-  if (mgr === 'launchd') return checkLaunchdService(launchdLabel);
-  if (mgr === 'systemd') return checkSystemdService(serviceName);
-  return checkNohupService(projectRoot, serviceName);
-}
+import { getServiceChecks } from './verify-services.js';
 
 /* ------------------------------------------------------------------ */
 /*  Main                                                               */
@@ -116,10 +34,7 @@ export async function run(_args: string[]): Promise<void> {
 
   // 1. Check service statuses
   const serviceDefs = getServiceDefs(projectRoot);
-  const services: ServiceCheck[] = serviceDefs.map((def) => ({
-    name: def.name,
-    status: checkService(projectRoot, mgr, def.name, def.launchdLabel),
-  }));
+  const services = getServiceChecks(serviceDefs, projectRoot, mgr);
 
   for (const svc of services) {
     logger.info({ service: svc.name, status: svc.status }, 'Service status');
