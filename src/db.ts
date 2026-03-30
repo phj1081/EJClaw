@@ -1936,13 +1936,13 @@ export function inferRoomModeFromRegisteredAgentTypes(
   agentTypes: readonly AgentType[],
 ): RoomMode {
   const types = new Set(agentTypes);
-  return types.has('claude-code') && types.has('codex')
-    ? 'tribunal'
-    : 'single';
+  return types.has('claude-code') && types.has('codex') ? 'tribunal' : 'single';
 }
 
 export function inferRoomModeForJid(jid: string): RoomMode {
-  return inferRoomModeFromRegisteredAgentTypes(getRegisteredAgentTypesForJid(jid));
+  return inferRoomModeFromRegisteredAgentTypes(
+    getRegisteredAgentTypesForJid(jid),
+  );
 }
 
 export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
