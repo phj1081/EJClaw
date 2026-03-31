@@ -194,8 +194,11 @@ export async function runAgentForGroup(
     roomRoleContext,
     hasHumanMessage: args.hasHumanMessage,
   });
-  // Inject role-specific model overrides into envOverrides
-  if (pairedExecutionContext) {
+  // Inject role-specific model overrides into envOverrides.
+  // When running a forced agent type (failover), skip the role's configured
+  // model — it belongs to the primary agent type (e.g. claude-opus-4-6 for
+  // a claude-code reviewer) and would be rejected by the fallback runtime.
+  if (pairedExecutionContext && !args.forcedAgentType) {
     const roleConfig = getRoleModelConfig(activeRole);
     if (roleConfig.model) {
       const modelKey = isClaudeCodeAgent ? 'CLAUDE_MODEL' : 'CODEX_MODEL';

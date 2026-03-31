@@ -494,7 +494,9 @@ export async function runReviewerContainer(args: {
       containerName,
       groupAgentType: group.agentType,
       isCodexAgent,
-      runnerPath: isCodexAgent ? '/app/codex/dist/index.js' : '/app/agent/dist/index.js',
+      runnerPath: isCodexAgent
+        ? '/app/codex/dist/index.js'
+        : '/app/agent/dist/index.js',
     },
     'Container exec runner selection',
   );
