@@ -1130,7 +1130,7 @@ describe('paired room registration', () => {
     expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('single');
   });
 
-  it('keeps explicit tribunal non-runnable when the configured reviewer service is unavailable', () => {
+  it('trusts stored tribunal mode even when legacy capability rows are incomplete', () => {
     _setRegisteredGroupForTests('dc:explicit-tribunal-codex', {
       name: 'Explicit Tribunal Codex',
       folder: 'explicit-tribunal-codex',
@@ -1143,7 +1143,7 @@ describe('paired room registration', () => {
 
     expect(getEffectiveRoomMode('dc:explicit-tribunal-codex')).toBe('tribunal');
     expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal-codex')).toBe(
-      'single',
+      'tribunal',
     );
   });
 });

@@ -138,7 +138,7 @@ describe('service-routing global failover', () => {
     });
   });
 
-  it('falls back to the available service when stored owner agent type is unavailable', () => {
+  it('trusts stored owner agent type over incomplete legacy capability rows', () => {
     _setRegisteredGroupForTests('dc:stored-owner-fallback', {
       name: 'Stored Owner Fallback',
       folder: 'stored-owner-fallback',
@@ -150,7 +150,7 @@ describe('service-routing global failover', () => {
 
     expect(getEffectiveChannelLease('dc:stored-owner-fallback')).toMatchObject({
       chat_jid: 'dc:stored-owner-fallback',
-      owner_service_id: 'claude',
+      owner_service_id: 'codex-main',
       reviewer_service_id: null,
       explicit: false,
     });
@@ -174,7 +174,7 @@ describe('service-routing global failover', () => {
     });
   });
 
-  it('keeps reviewer lease disabled when explicit tribunal cannot deliver the configured reviewer', () => {
+  it('builds reviewer lease from stored tribunal mode even when legacy rows are incomplete', () => {
     _setRegisteredGroupForTests('dc:explicit-tribunal-codex', {
       name: 'Explicit Tribunal Codex',
       folder: 'explicit-tribunal-codex',
@@ -189,7 +189,7 @@ describe('service-routing global failover', () => {
     ).toMatchObject({
       chat_jid: 'dc:explicit-tribunal-codex',
       owner_service_id: 'codex-main',
-      reviewer_service_id: null,
+      reviewer_service_id: 'claude',
       explicit: false,
     });
   });
