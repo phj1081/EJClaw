@@ -2770,7 +2770,12 @@ function canRunTribunalFromRegisteredAgentTypes(
 }
 
 export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
-  return getEffectiveRoomMode(chatJid) === 'tribunal' &&
+  const stored = getStoredRoomSettings(chatJid);
+  if (stored) {
+    return stored.roomMode;
+  }
+
+  return inferStoredRoomModeForJid(chatJid) === 'tribunal' &&
     canRunTribunalFromRegisteredAgentTypes(
       getRegisteredAgentTypesForJid(chatJid),
     )
