@@ -22,7 +22,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { createScopedLogger } from './logger.js';
-import { buildRoomMemoryBriefing } from './memento-client.js';
+import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
 import {
   completePairedExecutionContext,
   preparePairedExecutionContext,

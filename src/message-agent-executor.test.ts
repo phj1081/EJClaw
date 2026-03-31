@@ -142,7 +142,7 @@ vi.mock('./codex-token-rotation.js', () => ({
   markCodexTokenHealthy: vi.fn(),
 }));
 
-vi.mock('./memento-client.js', () => ({
+vi.mock('./sqlite-memory-store.js', () => ({
   buildRoomMemoryBriefing: vi.fn(),
 }));
 
@@ -155,7 +155,7 @@ import * as agentRunner from './agent-runner.js';
 import type { AgentOutput } from './agent-runner.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import * as db from './db.js';
-import { buildRoomMemoryBriefing } from './memento-client.js';
+import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import * as pairedExecutionContext from './paired-execution-context.js';
 import * as sessionRecovery from './session-recovery.js';

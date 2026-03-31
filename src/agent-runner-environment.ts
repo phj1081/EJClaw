@@ -316,10 +316,6 @@ function prepareCodexSessionEnvironment(args: {
       ? fs.readFileSync(sessionConfigPath, 'utf-8')
       : '';
     toml = toml.replace(/\n?\[mcp_servers\.ejclaw\][\s\S]*?(?=\n\[|$)/, '');
-    toml = toml.replace(
-      /\n?\[mcp_servers\.memento-mcp\][\s\S]*?(?=\n\[|$)/,
-      '',
-    );
     const mcpSection = `
 [mcp_servers.ejclaw]
 command = "node"
@@ -333,24 +329,9 @@ EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.group.folder)}
 EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
 EJCLAW_AGENT_TYPE = ${JSON.stringify(args.env.EJCLAW_AGENT_TYPE)}
 `;
-    const mementoSseUrl =
-      args.envVars.MEMENTO_MCP_SSE_URL || process.env.MEMENTO_MCP_SSE_URL;
-    const mementoAccessKey =
-      args.envVars.MEMENTO_ACCESS_KEY || process.env.MEMENTO_ACCESS_KEY || '';
-    const mementoRemotePath =
-      args.envVars.MEMENTO_MCP_REMOTE_PATH ||
-      process.env.MEMENTO_MCP_REMOTE_PATH ||
-      'mcp-remote';
-    const mementoSection = mementoSseUrl
-      ? `
-[mcp_servers.memento-mcp]
-command = ${JSON.stringify(mementoRemotePath)}
-args = [${JSON.stringify(mementoSseUrl)}, "--header", ${JSON.stringify(`Authorization:Bearer ${mementoAccessKey}`)}]
-`
-      : '';
     fs.writeFileSync(
       sessionConfigPath,
-      toml.trimEnd() + '\n' + mcpSection + mementoSection,
+      toml.trimEnd() + '\n' + mcpSection,
     );
   }
 
@@ -474,9 +455,6 @@ export function prepareGroupEnvironment(
     'CLAUDE_EFFORT',
     'CODEX_MODEL',
     'CODEX_EFFORT',
-    'MEMENTO_MCP_SSE_URL',
-    'MEMENTO_ACCESS_KEY',
-    'MEMENTO_MCP_REMOTE_PATH',
   ]);
 
   const env = buildBaseRunnerEnv({
