@@ -29,10 +29,10 @@ vi.mock('../logger.js', () => ({
   },
 }));
 
-const isPairedRoomJidMock = vi.hoisted(() => vi.fn(() => false));
+const hasReviewerLeaseMock = vi.hoisted(() => vi.fn(() => false));
 
-vi.mock('../db.js', () => ({
-  isPairedRoomJid: isPairedRoomJidMock,
+vi.mock('../service-routing.js', () => ({
+  hasReviewerLease: hasReviewerLeaseMock,
 }));
 
 // --- discord.js mock ---
@@ -206,7 +206,7 @@ async function triggerMessage(message: any) {
 describe('DiscordChannel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    isPairedRoomJidMock.mockReturnValue(false);
+    hasReviewerLeaseMock.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -343,7 +343,7 @@ describe('DiscordChannel', () => {
     });
 
     it('delivers other bot messages in paired rooms', async () => {
-      isPairedRoomJidMock.mockReturnValue(true);
+      hasReviewerLeaseMock.mockReturnValue(true);
 
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);

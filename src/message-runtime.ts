@@ -14,7 +14,6 @@ import {
   getLastBotFinalMessage,
   getLastHumanMessageContent,
   getRecentChatMessages,
-  isPairedRoomJid,
   getLatestOpenPairedTaskForChat,
   getPairedTurnOutputs,
   updatePairedTask,
@@ -65,7 +64,7 @@ import {
 } from './types.js';
 import { logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
-import { getEffectiveChannelLease } from './service-routing.js';
+import { getEffectiveChannelLease, hasReviewerLease } from './service-routing.js';
 
 /**
  * Check if a message is a duplicate of the last bot final message in a paired room.
@@ -75,8 +74,7 @@ export function isDuplicateOfLastBotFinal(
   chatJid: string,
   text: string,
 ): boolean {
-  // Only check in paired rooms (both claude and codex registered)
-  if (!isPairedRoomJid(chatJid)) {
+  if (!hasReviewerLease(chatJid)) {
     return false;
   }
 
@@ -130,7 +128,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     chatJid: string,
     messages: NewMessage[],
   ): NewMessage[] => {
-    if (!isPairedRoomJid(chatJid)) return messages;
+    if (!hasReviewerLease(chatJid)) return messages;
     const lease = getEffectiveChannelLease(chatJid);
     const sharedOwnerReviewerService =
       lease.reviewer_service_id !== null &&
@@ -297,7 +295,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     chatJid: string,
     messages: NewMessage[],
   ): boolean =>
-    isPairedRoomJid(chatJid) &&
+    hasReviewerLease(chatJid) &&
     messages.every(
       (message) => message.is_from_me === true || !!message.is_bot_message,
     );
@@ -649,7 +647,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     // For paired rooms, determine the reviewer channel for correct bot routing.
     // This is used whenever the reviewer needs to send output.
     const reviewerChannelName =
-      isPairedRoomJid(chatJid) && REVIEWER_AGENT_TYPE === 'claude-code'
+      hasReviewerLease(chatJid) && REVIEWER_AGENT_TYPE === 'claude-code'
         ? 'discord'
         : 'discord-review';
     const foundReviewerChannel = findChannelByName(
@@ -748,7 +746,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return deliverySucceeded;
     };
 
-    if (isPairedRoomJid(chatJid)) {
+    if (hasReviewerLease(chatJid)) {
       logger.info(
         {
           chatJid,
@@ -771,7 +769,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       (group.agentType || 'claude-code') as 'claude-code' | 'codex',
     );
     if (openWorkItem) {
-      const pendingTask = isPairedRoomJid(chatJid)
+      const pendingTask = hasReviewerLease(chatJid)
         ? getLatestOpenPairedTaskForChat(chatJid)
         : null;
       const deliveryChannel = resolveChannel(pendingTask?.status);
@@ -803,7 +801,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       if (missedMessages.length === 0) {
         // Check if a paired review is pending — run reviewer even without new messages
-        const pendingReviewTask = isPairedRoomJid(chatJid)
+        const pendingReviewTask = hasReviewerLease(chatJid)
           ? getLatestOpenPairedTaskForChat(chatJid)
           : null;
         const pendingTurn = pendingReviewTask
@@ -883,7 +881,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             );
           },
           resetPairedTask: () => {
-            if (isPairedRoomJid(chatJid)) {
+            if (hasReviewerLease(chatJid)) {
               const task = getLatestOpenPairedTaskForChat(chatJid);
               if (task) {
                 updatePairedTask(task.id, {
@@ -918,7 +916,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       // Determine role BEFORE advancing cursor — paired rooms use
       // separate cursors for owner and reviewer so neither misses
       // the other's messages.
-      const pendingTaskForChannel = isPairedRoomJid(chatJid)
+      const pendingTaskForChannel = hasReviewerLease(chatJid)
         ? getLatestOpenPairedTaskForChat(chatJid)
         : null;
       const taskStatus = pendingTaskForChannel?.status;
@@ -1130,7 +1128,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
             // Use role-aware cursor for paired rooms so the reviewer
             // always sees the owner's last messages and vice versa.
-            const loopPendingTask = isPairedRoomJid(chatJid)
+            const loopPendingTask = hasReviewerLease(chatJid)
               ? getLatestOpenPairedTaskForChat(chatJid)
               : null;
             const loopCursorKey = resolveCursorKey(

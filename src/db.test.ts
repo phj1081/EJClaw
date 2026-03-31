@@ -1,9 +1,12 @@
+import { Database } from 'bun:sqlite';
 import fs from 'fs';
+import path from 'path';
 
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  _initTestDatabaseFromFile,
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
   createPairedTask,
@@ -791,6 +794,8 @@ describe('paired room registration', () => {
       'claude-code',
       'codex',
     ]);
+    expect(getExplicitRoomMode('dc:123')).toBeUndefined();
+    expect(getEffectiveRoomMode('dc:123')).toBe('tribunal');
     expect(isPairedRoomJid('dc:123')).toBe(true);
   });
 
@@ -807,7 +812,7 @@ describe('paired room registration', () => {
     expect(isPairedRoomJid('dc:solo')).toBe(false);
   });
 
-  it('falls back to inferred room mode when no explicit room mode exists', () => {
+  it('keeps inferred room mode available when no explicit override exists', () => {
     setRegisteredGroup('dc:legacy-paired', {
       name: 'Legacy Paired Claude',
       folder: 'legacy-paired-claude',
@@ -827,6 +832,74 @@ describe('paired room registration', () => {
     expect(getEffectiveRoomMode('dc:legacy-paired')).toBe('tribunal');
     expect(getEffectiveRuntimeRoomMode('dc:legacy-paired')).toBe('tribunal');
     expect(isPairedRoomJid('dc:legacy-paired')).toBe(true);
+  });
+
+  it('backfills inferred room modes for legacy SQL rows missing room_settings', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-room-mode-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE registered_groups (
+        jid TEXT NOT NULL,
+        name TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        trigger_pattern TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        agent_config TEXT,
+        requires_trigger INTEGER DEFAULT 1,
+        is_main INTEGER DEFAULT 0,
+        agent_type TEXT NOT NULL DEFAULT 'claude-code',
+        work_dir TEXT,
+        PRIMARY KEY (jid, agent_type),
+        UNIQUE (folder, agent_type)
+      );
+      CREATE TABLE room_settings (
+        chat_jid TEXT PRIMARY KEY,
+        room_mode TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (room_mode IN ('single', 'tribunal'))
+      );
+    `);
+
+    const insertGroup = legacyDb.prepare(
+      `INSERT INTO registered_groups (
+        jid,
+        name,
+        folder,
+        trigger_pattern,
+        added_at,
+        agent_config,
+        requires_trigger,
+        is_main,
+        agent_type,
+        work_dir
+      ) VALUES (?, ?, ?, ?, ?, NULL, 1, 0, ?, NULL)`,
+    );
+    insertGroup.run(
+      'dc:legacy-sql',
+      'Legacy SQL Claude',
+      'legacy-sql-claude',
+      '@Andy',
+      '2024-01-01T00:00:00.000Z',
+      'claude-code',
+    );
+    insertGroup.run(
+      'dc:legacy-sql',
+      'Legacy SQL Codex',
+      'legacy-sql-codex',
+      '@Codex',
+      '2024-01-01T00:00:00.000Z',
+      'codex',
+    );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(getExplicitRoomMode('dc:legacy-sql')).toBeUndefined();
+    expect(getEffectiveRoomMode('dc:legacy-sql')).toBe('tribunal');
+    expect(getEffectiveRuntimeRoomMode('dc:legacy-sql')).toBe('tribunal');
+    expect(isPairedRoomJid('dc:legacy-sql')).toBe(true);
   });
 
   it('lets explicit single override dual registration for paired-room checks', () => {

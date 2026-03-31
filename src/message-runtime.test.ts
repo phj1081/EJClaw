@@ -137,12 +137,12 @@ vi.mock('./db.js', () => {
     })),
     markWorkItemDelivered: vi.fn(),
     markWorkItemDeliveryRetry: vi.fn(),
-    isPairedRoomJid: vi.fn(() => false),
     getLastBotFinalMessage: vi.fn(() => []),
   };
 });
 
 vi.mock('./service-routing.js', () => ({
+  hasReviewerLease: vi.fn(() => false),
   getEffectiveChannelLease: vi.fn((chatJid: string) => ({
     chat_jid: chatJid,
     owner_service_id: 'claude',
@@ -212,7 +212,7 @@ describe('createMessageRuntime', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(db.getLastBotFinalMessage).mockReturnValue([]);
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(false);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(false);
     vi.mocked(db.getRecentChatMessages).mockReturnValue([]);
     vi.mocked(config.isClaudeService).mockReturnValue(true);
     vi.mocked(config.isReviewService).mockReturnValue(false);
@@ -225,7 +225,7 @@ describe('createMessageRuntime', () => {
     const saveState = vi.fn();
     const lastAgentTimestamps: Record<string, string> = {};
 
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
         id: 'msg-1',
@@ -280,7 +280,7 @@ describe('createMessageRuntime', () => {
 
     vi.mocked(config.isClaudeService).mockReturnValue(false);
     vi.mocked(config.isReviewService).mockReturnValue(false);
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
         id: 'msg-1',
@@ -355,7 +355,7 @@ describe('createMessageRuntime', () => {
 
     vi.mocked(config.isClaudeService).mockReturnValue(false);
     vi.mocked(config.isReviewService).mockReturnValue(true);
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
         id: 'msg-1',
@@ -423,7 +423,7 @@ describe('createMessageRuntime', () => {
     const saveState = vi.fn();
     const lastAgentTimestamps: Record<string, string> = {};
 
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
         id: 'msg-1',
@@ -553,7 +553,7 @@ describe('createMessageRuntime', () => {
 
     vi.mocked(config.isClaudeService).mockReturnValue(false);
     vi.mocked(config.isReviewService).mockReturnValue(false);
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
       id: 'task-1',
       chat_jid: chatJid,
@@ -653,7 +653,7 @@ describe('createMessageRuntime', () => {
     const longReviewerOutput = `검토 요약 ${'a'.repeat(2105)} 끝`;
     const truncatedReviewerOutput = longReviewerOutput.slice(0, 2000);
 
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
       id: 'task-merge-ready',
       chat_jid: chatJid,
@@ -756,7 +756,7 @@ describe('createMessageRuntime', () => {
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
 
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
       id: 'task-arbiter',
       chat_jid: chatJid,
@@ -880,7 +880,7 @@ describe('createMessageRuntime', () => {
       isOwnMessage: vi.fn((msg) => msg.sender === 'shared-bot@test'),
     };
 
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: chatJid,
       owner_service_id: 'claude',
@@ -990,7 +990,7 @@ describe('createMessageRuntime', () => {
       isOwnMessage: vi.fn((msg) => msg.sender === 'shared-bot@test'),
     };
 
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: chatJid,
       owner_service_id: 'claude',

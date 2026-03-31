@@ -67,6 +67,7 @@ vi.mock('./service-routing.js', () => ({
     reason: null,
     explicit: false,
   })),
+  hasReviewerLease: vi.fn(() => true),
 }));
 
 // Create a controllable fake ChildProcess

@@ -17,10 +17,6 @@ vi.mock('./config.js', () => ({
   isReviewService: vi.fn(() => false),
 }));
 
-vi.mock('./db.js', () => ({
-  isPairedRoomJid: vi.fn(() => false),
-}));
-
 vi.mock('./env.js', () => ({
   readEnvFile: mockReadEnvFile,
   getEnv: vi.fn((key: string) => undefined),
@@ -40,6 +36,7 @@ vi.mock('./platform-prompts.js', () => ({
 }));
 
 vi.mock('./service-routing.js', () => ({
+  hasReviewerLease: vi.fn(() => false),
   getEffectiveChannelLease: vi.fn(() => ({
     chat_jid: 'dc:test',
     owner_service_id: 'claude',
@@ -82,7 +79,6 @@ vi.mock('os', async () => {
 
 import { prepareGroupEnvironment } from './agent-runner-environment.js';
 import * as config from './config.js';
-import * as db from './db.js';
 import * as serviceRouting from './service-routing.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -202,7 +198,7 @@ describe('prepareGroupEnvironment codex auth handling', () => {
 
   it('uses the failover owner prompt pack for codex-review when it owns an explicit failover lease', () => {
     vi.mocked(config.isReviewService).mockReturnValue(true);
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'dc:test',
       owner_service_id: 'codex-review',
@@ -262,7 +258,7 @@ describe('prepareGroupEnvironment codex auth handling', () => {
   });
 
   it('adds only the shared owner prompt fragments to Claude session prompts', () => {
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     mockReadEnvFile.mockReturnValue({});
 
     const promptsDir = path.join(tempRoot, 'prompts');
@@ -307,7 +303,7 @@ describe('prepareGroupEnvironment codex auth handling', () => {
 
   it('returns to the normal owner prompt stack after failover is cleared', () => {
     vi.mocked(config.isReviewService).mockReturnValue(true);
-    vi.mocked(db.isPairedRoomJid).mockReturnValue(true);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'dc:test',
       owner_service_id: 'claude',

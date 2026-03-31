@@ -15,7 +15,6 @@ import {
   deleteTask,
   getDueTasks,
   getTaskById,
-  isPairedRoomJid,
   logTaskRun,
   updateTask,
   updateTaskAfterRun,
@@ -62,6 +61,7 @@ import {
   shouldUseTaskScopedSession,
 } from './task-watch-status.js';
 import { AgentType, RegisteredGroup, ScheduledTask } from './types.js';
+import { hasReviewerLease } from './service-routing.js';
 import {
   checkGitHubActionsRun,
   computeGitHubWatcherDelayMs,
@@ -403,7 +403,7 @@ async function runTask(
             // In paired rooms, post cron output via reviewer bot so the
             // owner treats it as a peer request and acts on it.
             const send =
-              isPairedRoomJid(task.chat_jid) && deps.sendMessageViaReviewerBot
+              hasReviewerLease(task.chat_jid) && deps.sendMessageViaReviewerBot
                 ? deps.sendMessageViaReviewerBot
                 : deps.sendMessage;
             await send(task.chat_jid, outputText);
@@ -757,7 +757,7 @@ async function runGithubCiTask(
       await statusTracker.update('completed');
       if (check.completionMessage) {
         const send =
-          isPairedRoomJid(task.chat_jid) && deps.sendMessageViaReviewerBot
+          hasReviewerLease(task.chat_jid) && deps.sendMessageViaReviewerBot
             ? deps.sendMessageViaReviewerBot
             : deps.sendMessage;
         await send(task.chat_jid, check.completionMessage);

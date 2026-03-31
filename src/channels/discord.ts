@@ -17,10 +17,10 @@ import {
   DATA_DIR,
   TRIGGER_PATTERN,
 } from '../config.js';
-import { isPairedRoomJid } from '../db.js';
 import { getEnv } from '../env.js';
 import { logger } from '../logger.js';
 import { formatOutbound } from '../router.js';
+import { hasReviewerLease } from '../service-routing.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
 const TRANSCRIPTION_CACHE_DIR = path.join(CACHE_DIR, 'transcriptions');
@@ -214,7 +214,7 @@ export class DiscordChannel implements Channel {
       const chatJid = `dc:${channelId}`;
       const isOwnBotMessage = message.author.id === this.client?.user?.id;
       if (isOwnBotMessage) return;
-      if (message.author.bot && !isPairedRoomJid(chatJid)) return;
+      if (message.author.bot && !hasReviewerLease(chatJid)) return;
 
       let content = message.content;
       const timestamp = message.createdAt.toISOString();

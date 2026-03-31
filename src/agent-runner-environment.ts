@@ -11,7 +11,6 @@ import {
   isReviewService,
 } from './config.js';
 import { logger } from './logger.js';
-import { isPairedRoomJid } from './db.js';
 import { readEnvFile } from './env.js';
 import { getActiveCodexAuthPath } from './codex-token-rotation.js';
 import { getCurrentToken } from './token-rotation.js';
@@ -27,7 +26,7 @@ import {
   readPairedRoomPrompt,
   readPlatformPrompt,
 } from './platform-prompts.js';
-import { getEffectiveChannelLease } from './service-routing.js';
+import { getEffectiveChannelLease, hasReviewerLease } from './service-routing.js';
 import type { AgentType, RegisteredGroup } from './types.js';
 
 // writeCodexApiKeyAuth removed — Codex uses OAuth only.
@@ -418,7 +417,7 @@ export function prepareGroupEnvironment(
 
   const globalDir = path.join(GROUPS_DIR, 'global');
   const globalClaudeMdPath = path.join(globalDir, 'CLAUDE.md');
-  const isPairedRoom = isPairedRoomJid(chatJid);
+  const isPairedRoom = hasReviewerLease(chatJid);
   const effectiveLease = getEffectiveChannelLease(chatJid);
   const useCodexReviewFailoverPromptPack =
     isReviewService(SERVICE_ID) &&
@@ -551,7 +550,7 @@ export function prepareContainerSessionEnvironment(args: {
 
   // Build CLAUDE.md with role-appropriate prompts (reviewer or arbiter)
   const claudePlatformPrompt = readPlatformPrompt('claude-code', projectRoot);
-  const claudePairedRoomPrompt = isPairedRoomJid(chatJid)
+  const claudePairedRoomPrompt = hasReviewerLease(chatJid)
     ? role === 'arbiter'
       ? readArbiterPrompt(projectRoot)
       : readPairedRoomPrompt('claude-code', projectRoot)

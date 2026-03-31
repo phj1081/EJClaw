@@ -171,6 +171,10 @@ export function isReviewerServiceForChat(
   );
 }
 
+export function hasReviewerLease(chatJid: string): boolean {
+  return getEffectiveChannelLease(chatJid).reviewer_service_id !== null;
+}
+
 export function isArbiterServiceForChat(
   chatJid: string,
   serviceId: string = SERVICE_ID,

@@ -1,9 +1,10 @@
-import { getLastHumanMessageTimestamp, isPairedRoomJid } from './db.js';
+import { getLastHumanMessageTimestamp } from './db.js';
 import { filterProcessableMessages } from './bot-message-filter.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isTaskStatusControlMessage } from './task-watch-status.js';
 import { ARBITER_AGENT_TYPE, REVIEWER_AGENT_TYPE } from './config.js';
+import { hasReviewerLease } from './service-routing.js';
 import {
   resolveAgentTypeForRole,
   resolveRoleAgentPlan,
@@ -59,7 +60,7 @@ export function resolveCursorKey(
   chatJid: string,
   taskStatus?: string | null,
 ): string {
-  if (!isPairedRoomJid(chatJid)) return chatJid;
+  if (!hasReviewerLease(chatJid)) return chatJid;
   const role = resolveActiveRole(taskStatus);
   return role === 'owner' ? chatJid : `${chatJid}:${role}`;
 }
@@ -128,7 +129,7 @@ export function shouldSkipBotOnlyCollaboration(
   chatJid: string,
   messages: NewMessage[],
 ): boolean {
-  if (isPairedRoomJid(chatJid)) return false;
+  if (hasReviewerLease(chatJid)) return false;
   const allFromBots = messages.every(
     (message) => message.is_from_me || !!message.is_bot_message,
   );
@@ -164,7 +165,7 @@ export function hasAllowedTrigger(opts: {
 
   // Paired rooms: bot-to-bot ping-pong doesn't need trigger patterns.
   // Peer bot messages (from reviewer/owner) are always allowed.
-  if (isPairedRoomJid(chatJid)) {
+  if (hasReviewerLease(chatJid)) {
     return true;
   }
 
@@ -185,7 +186,7 @@ export function getProcessableMessages(
 ) {
   return filterProcessableMessages(
     messages,
-    isPairedRoomJid(chatJid),
+    hasReviewerLease(chatJid),
     channel?.isOwnMessage?.bind(channel),
   ).filter((message) => !isTaskStatusControlMessage(message.content));
 }
@@ -195,7 +196,7 @@ export function filterLoopingPairedBotMessages(
   messages: Parameters<typeof filterProcessableMessages>[0],
   failureText: string,
 ) {
-  if (!isPairedRoomJid(chatJid)) return messages;
+  if (!hasReviewerLease(chatJid)) return messages;
 
   return messages.filter(
     (message) =>

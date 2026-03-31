@@ -38,6 +38,12 @@ import {
 import { readJsonFile } from './utils.js';
 
 let db: Database;
+type RoomModeSource = 'explicit' | 'inferred';
+
+interface StoredRoomModeRow {
+  roomMode: RoomMode;
+  source: RoomModeSource;
+}
 
 export interface WorkItem {
   id: number;
@@ -303,6 +309,7 @@ function createSchema(database: Database): void {
     CREATE TABLE IF NOT EXISTS room_settings (
       chat_jid TEXT PRIMARY KEY,
       room_mode TEXT NOT NULL,
+      mode_source TEXT NOT NULL DEFAULT 'explicit',
       updated_at TEXT NOT NULL,
       CHECK (room_mode IN ('single', 'tribunal'))
     );
@@ -386,6 +393,20 @@ function createSchema(database: Database): void {
   } catch {
     /* column already exists */
   }
+
+  try {
+    database.exec(
+      `ALTER TABLE room_settings ADD COLUMN mode_source TEXT NOT NULL DEFAULT 'explicit'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  database.exec(
+    `UPDATE room_settings
+     SET mode_source = 'explicit'
+     WHERE COALESCE(mode_source, '') NOT IN ('explicit', 'inferred')`,
+  );
 
   database.exec(`
     UPDATE scheduled_tasks
@@ -785,6 +806,8 @@ function createSchema(database: Database): void {
   } catch {
     /* columns already exist */
   }
+
+  backfillStoredRoomModes(database);
 }
 
 export function initDatabase(): void {
@@ -1832,6 +1855,7 @@ export function getRegisteredGroup(
 }
 
 export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
+  const existingRoomMode = getStoredRoomModeRow(jid);
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
@@ -1850,6 +1874,10 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.agentType || 'claude-code',
     group.workDir || null,
   );
+
+  if (!existingRoomMode || existingRoomMode.source === 'inferred') {
+    syncInferredRoomModeForJid(jid);
+  }
 }
 
 export function updateRegisteredGroupName(jid: string, name: string): void {
@@ -1916,10 +1944,11 @@ export function getAllRegisteredGroups(
   return result;
 }
 
-export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
-  if (!db) return [];
-
-  const rows = db
+function collectRegisteredAgentTypes(
+  database: Database,
+  jid: string,
+): AgentType[] {
+  const rows = database
     .prepare('SELECT agent_type FROM registered_groups WHERE jid = ?')
     .all(jid) as Array<{ agent_type: string | null }>;
 
@@ -1931,6 +1960,11 @@ export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
     }
   }
   return [...types];
+}
+
+export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
+  if (!db) return [];
+  return collectRegisteredAgentTypes(db, jid);
 }
 
 export function inferRoomModeFromRegisteredAgentTypes(
@@ -1946,37 +1980,75 @@ export function inferRoomModeForJid(jid: string): RoomMode {
   );
 }
 
-export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
+function normalizeRoomModeSource(
+  source: string | null | undefined,
+): RoomModeSource | undefined {
+  return source === 'explicit' || source === 'inferred' ? source : undefined;
+}
+
+function getStoredRoomModeRow(chatJid: string): StoredRoomModeRow | undefined {
   if (!db) return undefined;
 
   const row = db
     .prepare(
-      `SELECT room_mode
+      `SELECT room_mode, mode_source
        FROM room_settings
        WHERE chat_jid = ?`,
     )
-    .get(chatJid) as { room_mode: string | null } | undefined;
-  return row?.room_mode === 'single' || row?.room_mode === 'tribunal'
-    ? row.room_mode
-    : undefined;
+    .get(chatJid) as
+    | { room_mode: string | null; mode_source: string | null }
+    | undefined;
+  const roomMode =
+    row?.room_mode === 'single' || row?.room_mode === 'tribunal'
+      ? row.room_mode
+      : undefined;
+  const source = normalizeRoomModeSource(row?.mode_source);
+  return roomMode && source ? { roomMode, source } : undefined;
 }
 
-export function setExplicitRoomMode(chatJid: string, roomMode: RoomMode): void {
+function upsertStoredRoomMode(
+  chatJid: string,
+  roomMode: RoomMode,
+  source: RoomModeSource,
+): void {
   db.prepare(
     `INSERT OR REPLACE INTO room_settings (
       chat_jid,
       room_mode,
+      mode_source,
       updated_at
-    ) VALUES (?, ?, ?)`,
-  ).run(chatJid, roomMode, new Date().toISOString());
+    ) VALUES (?, ?, ?, ?)`,
+  ).run(chatJid, roomMode, source, new Date().toISOString());
+}
+
+function syncInferredRoomModeForJid(chatJid: string): void {
+  upsertStoredRoomMode(chatJid, inferRoomModeForJid(chatJid), 'inferred');
+}
+
+export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
+  const row = getStoredRoomModeRow(chatJid);
+  return row?.source === 'explicit' ? row.roomMode : undefined;
+}
+
+export function setExplicitRoomMode(chatJid: string, roomMode: RoomMode): void {
+  upsertStoredRoomMode(chatJid, roomMode, 'explicit');
 }
 
 export function clearExplicitRoomMode(chatJid: string): void {
-  db.prepare('DELETE FROM room_settings WHERE chat_jid = ?').run(chatJid);
+  const agentTypes = getRegisteredAgentTypesForJid(chatJid);
+  if (agentTypes.length === 0) {
+    db.prepare('DELETE FROM room_settings WHERE chat_jid = ?').run(chatJid);
+    return;
+  }
+  upsertStoredRoomMode(
+    chatJid,
+    inferRoomModeFromRegisteredAgentTypes(agentTypes),
+    'inferred',
+  );
 }
 
 export function getEffectiveRoomMode(chatJid: string): RoomMode {
-  return getExplicitRoomMode(chatJid) ?? inferRoomModeForJid(chatJid);
+  return getStoredRoomModeRow(chatJid)?.roomMode ?? 'single';
 }
 
 function canRunTribunalFromRegisteredAgentTypes(
@@ -2000,6 +2072,39 @@ export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
 
 export function isPairedRoomJid(jid: string): boolean {
   return getEffectiveRuntimeRoomMode(jid) === 'tribunal';
+}
+
+function backfillStoredRoomModes(database: Database): void {
+  const rows = database
+    .prepare(
+      `SELECT DISTINCT rg.jid
+       FROM registered_groups rg
+       LEFT JOIN room_settings rs ON rs.chat_jid = rg.jid
+       WHERE rs.chat_jid IS NULL`,
+    )
+    .all() as Array<{ jid: string }>;
+  if (rows.length === 0) return;
+
+  const insertRoomMode = database.prepare(
+    `INSERT OR REPLACE INTO room_settings (
+      chat_jid,
+      room_mode,
+      mode_source,
+      updated_at
+    ) VALUES (?, ?, 'inferred', ?)`,
+  );
+
+  const tx = database.transaction((missingRows: Array<{ jid: string }>) => {
+    const updatedAt = new Date().toISOString();
+    for (const row of missingRows) {
+      const roomMode = inferRoomModeFromRegisteredAgentTypes(
+        collectRegisteredAgentTypes(database, row.jid),
+      );
+      insertRoomMode.run(row.jid, roomMode, updatedAt);
+    }
+  });
+
+  tx(rows);
 }
 
 // --- Paired task/project/workspace state ---
