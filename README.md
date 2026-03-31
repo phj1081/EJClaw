@@ -8,9 +8,8 @@
 
 Tribunal multi-agent AI assistant (Owner + Reviewer + Arbiter) over Discord with autonomous paired review and Mixture of Agents.
 
-Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now independently maintained as EJClaw.
-Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros) and [garrytan/gstack](https://github.com/garrytan/gstack), adapted for EJClaw's Discord and dual-service workflow.
-Tribunal arbiter system inspired by multi-agent consensus architectures.
+Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw).
+Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros) and [garrytan/gstack](https://github.com/garrytan/gstack).
 
 ## Overview
 
@@ -24,170 +23,45 @@ A single unified service (`ejclaw`) runs a **Tribunal** of three roles:
 
 Each role's agent type and model are independently configurable via `.env` (`OWNER_AGENT_TYPE`, `REVIEWER_AGENT_TYPE`, `ARBITER_AGENT_TYPE`, `*_MODEL`). Three Discord bots provide the identity layer — which bot speaks is determined by the active role, not hardcoded.
 
-## Room Assignment Model
-
-Per-room routing now uses an explicit assignment model:
-
-- `room_settings` is the room-level source of truth (SSOT)
-- Each room stores:
-  - `room_mode`: `single` or `tribunal`
-  - `owner_agent_type`: `codex` or `claude-code`
-- Public room assignment uses `assign_room`
-- Legacy `register_group` public interfaces were removed
-- `registered_groups` remains as a materialized capability/read-model layer and legacy fallback, not the authoritative room configuration
-
-Operationally:
-
-- `single` → one owner bot
-- `tribunal` → per-room owner + globally configured reviewer + optional arbiter
-
-This means tribunal is no longer inferred from “two bots registered on one room”; it is an explicit room setting.
-
-## Tribunal 3-Agent System
+### Tribunal Flow
 
 ```
 User message
-  → Owner responds (implementation, answer, etc.)
-    → Reviewer auto-triggered (critical review, design check)
-      → Verdict:
-          DONE              → Owner finalizes → Task completed → @user ✅
-          DONE_WITH_CONCERNS → Owner addresses feedback → loop
-          BLOCKED/NEEDS_CONTEXT
-            ├─ Arbiter enabled → Arbiter judges → PROCEED/REVISE/RESET/ESCALATE
-            └─ Arbiter disabled → Escalate to user → @user ⚠️
-      → Owner BLOCKED/NEEDS_CONTEXT → Arbiter (same path as reviewer)
-      → Deadlock (3+ round trips without progress)
-          → Arbiter summoned → binding verdict → loop resumes
+  → Owner responds
+    → Reviewer auto-triggered (critical review)
+      → DONE → Owner finalizes → @user ✅
+      → Feedback → Owner addresses → loop
+      → BLOCKED → Arbiter (if enabled) or @user ⚠️
+      → Deadlock (3+ rounds) → Arbiter summoned → binding verdict
 ```
 
 ### Mixture of Agents (MoA)
 
-When enabled, the arbiter collects opinions from configurable external reference models before rendering its verdict:
-
-```
-Deadlock detected → MoA reference queries (parallel, configurable via MOA_REF_MODELS)
-  → Opinions injected into arbiter's prompt
-    → Arbiter aggregates all perspectives
-      → Final verdict: PROCEED / REVISE / RESET / ESCALATE
-```
-
-No extra SDK processes. External references use lightweight OpenAI/Anthropic-compatible API calls.
+When enabled, the arbiter collects opinions from configurable external reference models before rendering its verdict. No extra SDK processes — lightweight API calls only.
 
 ## Features
 
 - **Tribunal 3-agent system** — Owner/reviewer/arbiter with on-demand deadlock resolution
-- **Discord-independent communication** — Agent-to-agent data flows directly via DB, Discord is display-only
-- **Mixture of Agents** — Configurable external reference models enrich arbiter verdicts
-- **Per-role model selection** — `OWNER_MODEL`, `REVIEWER_MODEL`, `ARBITER_MODEL` + effort + fallback toggle
-- **Container-isolated reviewer** — Persistent Docker container with read-only source mount
-- **Global failover** — Account-level Claude failure → all channels switch to codex, auto-recovers
-- **Post-approval change detection** — Re-triggers review if owner modifies code after approval
-- **Auto user notification** — @mention on task completion (✅ done, ⚠️ escalated)
-- **Loop protection** — Deadlock threshold, merge_ready oscillation guard, arbiter re-invocation limit
-- **Voice transcription** — Groq Whisper (primary) / OpenAI Whisper (fallback)
+- **Per-role model selection** — `OWNER_MODEL`, `REVIEWER_MODEL`, `ARBITER_MODEL` + effort + fallback
+- **Container-isolated reviewer** — Docker container with read-only source mount (supports both Claude and Codex runners)
+- **Global failover** — Claude exhaustion → automatic codex fallback, auto-recovers
+- **Mixture of Agents** — External reference models enrich arbiter verdicts
 - **Token rotation** — Multi-account Claude/Codex rotation on rate limits
-- **Kimi usage dashboard** — Coding plan 5h/7d usage displayed alongside Claude/Codex
-- **MCP integration** — Memento (persistent memory) + EJClaw host tools
-- **Session persistence** — Separate sessions per role (owner/reviewer/arbiter)
-- **Scheduled tasks** — Cron/interval/once via MCP tool
+- **Voice transcription** — Groq/OpenAI Whisper
+- **Session persistence** — Separate sessions per role
 - **Mid-turn steering** — Inject follow-up messages while agent is working
-- **Bun runtime** — Native SQLite (bun:sqlite), fast startup, no native addon builds
 
-## Architecture
-
-```
-Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (host process)
-                                          │       │
-                                          │       ▼ (auto-trigger)
-                                          ├──► Reviewer (Docker container, :ro mount)
-                                          │       │
-                                          │   Verdict routing
-                                          │       ├─ DONE → change detection → finalize or re-review
-                                          │       ├─ BLOCKED → Arbiter (if enabled) or User
-                                          │       └─ Feedback → Owner (loop)
-                                          │
-                                          ├──► Arbiter (on-demand, fresh session each time)
-                                          │       │
-                                          │   ┌───┴─── MoA (if enabled) ───┐
-                                          │   │ Ref model A ──► opinion    │
-                                          │   │ Ref model B ──► opinion    │
-                                          │   │ → injected into prompt     │
-                                          │   └────────────────────────────┘
-                                          │       │
-                                          │   PROCEED/REVISE/RESET/ESCALATE
-                                          │
-                                     IPC polling ◄── follow-up messages
-                                          │
-                              ┌────────── Router ──────────┐
-                              ▼                            ▼
-                   paired_turn_outputs           Discord (display only)
-                   (agent ↔ agent data)      (user observation, @mention)
-```
-
-## Setup
-
-### Prerequisites
-
-- Linux (Ubuntu 22.04+) or macOS
-- [Bun](https://bun.sh/) 1.3+
-- Docker (required for reviewer container isolation)
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
-- [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
-- Discord bot tokens (3: Claude, Codex-main, Codex-review/Arbiter)
-
-### Install
+## Quick Start
 
 ```bash
 git clone https://github.com/phj1081/EJClaw.git
 cd EJClaw
 bun install
-bun run build:runners
-bun run build
-bun run build:container          # Build reviewer Docker image
-```
-
-### Environment
-
-All configuration in a single `.env` file:
-
-```bash
-# Discord bots (3 tokens for 3 bots)
-DISCORD_BOT_TOKEN=               # Claude bot
-DISCORD_CODEX_BOT_TOKEN=         # Codex-main bot (owner)
-DISCORD_REVIEW_BOT_TOKEN=        # Codex-review bot (arbiter)
-
-# Agent types
-OWNER_AGENT_TYPE=codex            # codex | claude-code
-REVIEWER_AGENT_TYPE=claude-code   # claude-code | codex
-ARBITER_AGENT_TYPE=codex          # codex | claude-code (optional, enables 3rd agent)
-
-# Per-role model overrides
-OWNER_MODEL=gpt-5.4
-REVIEWER_MODEL=claude-opus-4-6
-ARBITER_MODEL=gpt-5.4
-
-# API keys
-CLAUDE_CODE_OAUTH_TOKEN=          # Claude Code OAuth token
-CLAUDE_CODE_OAUTH_TOKENS=         # Comma-separated for multi-account rotation
-GROQ_API_KEY=                     # Voice transcription (Groq Whisper)
-
-# Mixture of Agents (MoA)
-MOA_ENABLED=true
-MOA_REF_MODELS=kimi,glm
-MOA_KIMI_MODEL=kimi-k2.5
-MOA_KIMI_BASE_URL=https://api.kimi.com/coding
-MOA_KIMI_API_KEY=sk-kimi-xxx
-MOA_KIMI_API_FORMAT=anthropic
-MOA_GLM_MODEL=glm-5.1
-MOA_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
-MOA_GLM_API_KEY=xxx
-MOA_GLM_API_FORMAT=anthropic
-```
-
-### Deploy
-
-```bash
-bun run deploy
+bun run build:runners    # Build both runners
+bun run build            # Build main project
+bun run build:container  # Build reviewer Docker image
+cp .env.example .env     # Configure tokens and settings
+bun run deploy           # Or: bun run dev
 ```
 
 ## Development
