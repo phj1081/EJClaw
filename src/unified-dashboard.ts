@@ -604,11 +604,12 @@ function buildModelConfigSection(): string {
 
     // Show fallback status for claude-code roles when global failover is active
     const isFallback = failover.active && type === 'claude-code';
-    const fallbackModel = process.env.CODEX_MODEL || 'codex';
-    const modelDisplay = isFallback
-      ? `\`${model}\` (fallback → \`${fallbackModel}\`)`
-      : `\`${model}\``;
-    lines.push(`  **${role.label}** — ${type} ${modelDisplay}`);
+    if (isFallback) {
+      const fallbackModel = process.env.CODEX_MODEL || 'codex';
+      lines.push(`  **${role.label}** — codex \`${fallbackModel}\` (fallback)`);
+    } else {
+      lines.push(`  **${role.label}** — ${type} \`${model}\``);
+    }
   }
 
   // MoA status
