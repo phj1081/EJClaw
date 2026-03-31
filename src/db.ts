@@ -9,6 +9,7 @@ import {
   CODEX_REVIEW_SERVICE_ID,
   DATA_DIR,
   normalizeServiceId,
+  OWNER_AGENT_TYPE,
   REVIEWER_AGENT_TYPE,
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
@@ -43,6 +44,29 @@ type RoomModeSource = 'explicit' | 'inferred';
 interface StoredRoomModeRow {
   roomMode: RoomMode;
   source: RoomModeSource;
+}
+
+export interface StoredRoomSettings {
+  chatJid: string;
+  roomMode: RoomMode;
+  modeSource: RoomModeSource;
+  name?: string;
+  folder?: string;
+  trigger?: string;
+  requiresTrigger?: boolean;
+  isMain?: boolean;
+  ownerAgentType?: AgentType;
+  workDir?: string;
+}
+
+interface RoomRegistrationSnapshot {
+  name: string;
+  folder: string;
+  triggerPattern: string;
+  requiresTrigger: boolean;
+  isMain: boolean;
+  ownerAgentType: AgentType;
+  workDir: string | null;
 }
 
 export interface WorkItem {
@@ -310,8 +334,16 @@ function createSchema(database: Database): void {
       chat_jid TEXT PRIMARY KEY,
       room_mode TEXT NOT NULL,
       mode_source TEXT NOT NULL DEFAULT 'explicit',
+      name TEXT,
+      folder TEXT,
+      trigger_pattern TEXT,
+      requires_trigger INTEGER DEFAULT 1,
+      is_main INTEGER DEFAULT 0,
+      owner_agent_type TEXT,
+      work_dir TEXT,
       updated_at TEXT NOT NULL,
-      CHECK (room_mode IN ('single', 'tribunal'))
+      CHECK (room_mode IN ('single', 'tribunal')),
+      CHECK (owner_agent_type IN ('claude-code', 'codex') OR owner_agent_type IS NULL)
     );
     CREATE TABLE IF NOT EXISTS service_handoffs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -398,6 +430,52 @@ function createSchema(database: Database): void {
     database.exec(
       `ALTER TABLE room_settings ADD COLUMN mode_source TEXT NOT NULL DEFAULT 'explicit'`,
     );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE room_settings ADD COLUMN name TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE room_settings ADD COLUMN folder TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE room_settings ADD COLUMN trigger_pattern TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE room_settings ADD COLUMN requires_trigger INTEGER DEFAULT 1`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE room_settings ADD COLUMN is_main INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE room_settings ADD COLUMN owner_agent_type TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE room_settings ADD COLUMN work_dir TEXT`);
   } catch {
     /* column already exists */
   }
@@ -807,7 +885,7 @@ function createSchema(database: Database): void {
     /* columns already exist */
   }
 
-  backfillStoredRoomModes(database);
+  backfillStoredRoomSettings(database);
 }
 
 export function initDatabase(): void {
@@ -833,6 +911,22 @@ export function _initTestDatabase(): void {
 export function _initTestDatabaseFromFile(dbPath: string): void {
   db = new Database(dbPath);
   createSchema(db);
+}
+
+/** @internal - for tests only. */
+export function _setStoredRoomOwnerAgentTypeForTests(
+  chatJid: string,
+  ownerAgentType: AgentType | null,
+): void {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+  db.prepare(
+    `UPDATE room_settings
+     SET owner_agent_type = ?,
+         updated_at = ?
+     WHERE chat_jid = ?`,
+  ).run(ownerAgentType, new Date().toISOString(), chatJid);
 }
 
 /**
@@ -1859,25 +1953,29 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
-  db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger, is_main, agent_type, work_dir)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    jid,
-    group.name,
-    group.folder,
-    group.trigger,
-    group.added_at,
-    group.agentConfig ? JSON.stringify(group.agentConfig) : null,
-    group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
-    group.isMain ? 1 : 0,
-    group.agentType || 'claude-code',
-    group.workDir || null,
-  );
+  const tx = db.transaction(() => {
+    db.prepare(
+      `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger, is_main, agent_type, work_dir)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      jid,
+      group.name,
+      group.folder,
+      group.trigger,
+      group.added_at,
+      group.agentConfig ? JSON.stringify(group.agentConfig) : null,
+      group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
+      group.isMain ? 1 : 0,
+      group.agentType || 'claude-code',
+      group.workDir || null,
+    );
 
-  if (!existingRoomMode || existingRoomMode.source === 'inferred') {
-    syncInferredRoomModeForJid(jid);
-  }
+    syncStoredRoomRegistrationSnapshotForJid(jid);
+    if (!existingRoomMode || existingRoomMode.source === 'inferred') {
+      syncInferredRoomModeForJid(jid);
+    }
+  });
+  tx();
 }
 
 export function updateRegisteredGroupName(jid: string, name: string): void {
@@ -1885,6 +1983,7 @@ export function updateRegisteredGroupName(jid: string, name: string): void {
     name,
     jid,
   );
+  syncStoredRoomRegistrationSnapshotForJid(jid);
 }
 
 export function getAllRegisteredGroups(
@@ -1974,6 +2073,15 @@ export function inferRoomModeFromRegisteredAgentTypes(
   return types.has('claude-code') && types.has('codex') ? 'tribunal' : 'single';
 }
 
+function inferOwnerAgentTypeFromRegisteredAgentTypes(
+  agentTypes: readonly AgentType[],
+): AgentType {
+  const types = new Set(agentTypes);
+  if (types.has(OWNER_AGENT_TYPE)) return OWNER_AGENT_TYPE;
+  if (types.has('codex')) return 'codex';
+  return 'claude-code';
+}
+
 /**
  * Internal registration/backfill helper.
  * This infers the stored room mode from current registrations and must not be
@@ -1991,24 +2099,228 @@ function normalizeRoomModeSource(
   return source === 'explicit' || source === 'inferred' ? source : undefined;
 }
 
-function getStoredRoomModeRow(chatJid: string): StoredRoomModeRow | undefined {
-  if (!db) return undefined;
+function normalizeStoredAgentType(
+  agentType: string | null | undefined,
+): AgentType | undefined {
+  return agentType === 'claude-code' || agentType === 'codex'
+    ? agentType
+    : undefined;
+}
 
-  const row = db
+function getStoredRoomSettingsRowFromDatabase(
+  database: Database,
+  chatJid: string,
+): StoredRoomSettings | undefined {
+  const row = database
     .prepare(
-      `SELECT room_mode, mode_source
+      `SELECT room_mode, mode_source, name, folder, trigger_pattern,
+              requires_trigger, is_main, owner_agent_type, work_dir
        FROM room_settings
        WHERE chat_jid = ?`,
     )
     .get(chatJid) as
-    | { room_mode: string | null; mode_source: string | null }
+    | {
+        room_mode: string | null;
+        mode_source: string | null;
+        name: string | null;
+        folder: string | null;
+        trigger_pattern: string | null;
+        requires_trigger: number | null;
+        is_main: number | null;
+        owner_agent_type: string | null;
+        work_dir: string | null;
+      }
     | undefined;
   const roomMode =
     row?.room_mode === 'single' || row?.room_mode === 'tribunal'
       ? row.room_mode
       : undefined;
   const source = normalizeRoomModeSource(row?.mode_source);
-  return roomMode && source ? { roomMode, source } : undefined;
+  if (!row || !roomMode || !source) return undefined;
+
+  return {
+    chatJid,
+    roomMode,
+    modeSource: source,
+    name: row.name ?? undefined,
+    folder: row.folder ?? undefined,
+    trigger: row.trigger_pattern ?? undefined,
+    requiresTrigger:
+      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
+    isMain: row.is_main === null ? undefined : row.is_main === 1,
+    ownerAgentType: normalizeStoredAgentType(row.owner_agent_type),
+    workDir: row.work_dir ?? undefined,
+  };
+}
+
+export function getStoredRoomSettings(
+  chatJid: string,
+): StoredRoomSettings | undefined {
+  if (!db) return undefined;
+  return getStoredRoomSettingsRowFromDatabase(db, chatJid);
+}
+
+function getStoredRoomModeRow(chatJid: string): StoredRoomModeRow | undefined {
+  const row = getStoredRoomSettings(chatJid);
+  return row
+    ? {
+        roomMode: row.roomMode,
+        source: row.modeSource,
+      }
+    : undefined;
+}
+
+function collectRoomRegistrationSnapshot(
+  database: Database,
+  jid: string,
+): RoomRegistrationSnapshot | undefined {
+  const rows = database
+    .prepare(
+      `SELECT name, folder, trigger_pattern, requires_trigger, is_main, agent_type, work_dir
+       FROM registered_groups
+       WHERE jid = ?
+       ORDER BY agent_type`,
+    )
+    .all(jid) as Array<{
+    name: string;
+    folder: string;
+    trigger_pattern: string;
+    requires_trigger: number | null;
+    is_main: number | null;
+    agent_type: string | null;
+    work_dir: string | null;
+  }>;
+
+  if (rows.length === 0) return undefined;
+
+  const first = rows[0];
+  const conflicts = new Set<string>();
+  for (const row of rows.slice(1)) {
+    if (row.name !== first.name) conflicts.add('name');
+    if (row.folder !== first.folder) conflicts.add('folder');
+    if ((row.requires_trigger ?? 1) !== (first.requires_trigger ?? 1)) {
+      conflicts.add('requires_trigger');
+    }
+    if ((row.is_main ?? 0) !== (first.is_main ?? 0)) {
+      conflicts.add('is_main');
+    }
+    if ((row.work_dir ?? null) !== (first.work_dir ?? null)) {
+      conflicts.add('work_dir');
+    }
+  }
+
+  if (conflicts.size > 0) {
+    throw new Error(
+      `Conflicting room-level registered_groups metadata for ${jid}: ${[
+        ...conflicts,
+      ].join(', ')}`,
+    );
+  }
+
+  const agentTypes = collectRegisteredAgentTypes(database, jid);
+  const ownerAgentType = inferOwnerAgentTypeFromRegisteredAgentTypes(agentTypes);
+  const ownerRow =
+    rows.find(
+      (row) => normalizeStoredAgentType(row.agent_type) === ownerAgentType,
+    ) ?? rows[0];
+
+  return {
+    name: first.name,
+    folder: first.folder,
+    triggerPattern: ownerRow.trigger_pattern,
+    requiresTrigger: (first.requires_trigger ?? 1) === 1,
+    isMain: (first.is_main ?? 0) === 1,
+    ownerAgentType,
+    workDir: first.work_dir ?? null,
+  };
+}
+
+function insertStoredRoomSettings(
+  database: Database,
+  chatJid: string,
+  roomMode: RoomMode,
+  source: RoomModeSource,
+  snapshot: RoomRegistrationSnapshot,
+): void {
+  database
+    .prepare(
+      `INSERT INTO room_settings (
+        chat_jid,
+        room_mode,
+        mode_source,
+        name,
+        folder,
+        trigger_pattern,
+        requires_trigger,
+        is_main,
+        owner_agent_type,
+        work_dir,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      chatJid,
+      roomMode,
+      source,
+      snapshot.name,
+      snapshot.folder,
+      snapshot.triggerPattern,
+      snapshot.requiresTrigger ? 1 : 0,
+      snapshot.isMain ? 1 : 0,
+      snapshot.ownerAgentType,
+      snapshot.workDir,
+      new Date().toISOString(),
+    );
+}
+
+function updateStoredRoomMetadata(
+  database: Database,
+  chatJid: string,
+  snapshot: RoomRegistrationSnapshot,
+): void {
+  database
+    .prepare(
+      `UPDATE room_settings
+       SET name = ?,
+           folder = ?,
+           trigger_pattern = ?,
+           requires_trigger = ?,
+           is_main = ?,
+           owner_agent_type = ?,
+           work_dir = ?,
+           updated_at = ?
+       WHERE chat_jid = ?`,
+    )
+    .run(
+      snapshot.name,
+      snapshot.folder,
+      snapshot.triggerPattern,
+      snapshot.requiresTrigger ? 1 : 0,
+      snapshot.isMain ? 1 : 0,
+      snapshot.ownerAgentType,
+      snapshot.workDir,
+      new Date().toISOString(),
+      chatJid,
+    );
+}
+
+function syncStoredRoomRegistrationSnapshotForJid(chatJid: string): void {
+  const snapshot = collectRoomRegistrationSnapshot(db, chatJid);
+  if (!snapshot) return;
+
+  const existing = getStoredRoomModeRow(chatJid);
+  if (!existing) {
+    insertStoredRoomSettings(
+      db,
+      chatJid,
+      inferRoomModeFromRegisteredAgentTypes(getRegisteredAgentTypesForJid(chatJid)),
+      'inferred',
+      snapshot,
+    );
+    return;
+  }
+
+  updateStoredRoomMetadata(db, chatJid, snapshot);
 }
 
 function upsertStoredRoomMode(
@@ -2017,12 +2329,16 @@ function upsertStoredRoomMode(
   source: RoomModeSource,
 ): void {
   db.prepare(
-    `INSERT OR REPLACE INTO room_settings (
+    `INSERT INTO room_settings (
       chat_jid,
       room_mode,
       mode_source,
       updated_at
-    ) VALUES (?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?)
+    ON CONFLICT(chat_jid) DO UPDATE SET
+      room_mode = excluded.room_mode,
+      mode_source = excluded.mode_source,
+      updated_at = excluded.updated_at`,
   ).run(chatJid, roomMode, source, new Date().toISOString());
 }
 
@@ -2075,36 +2391,34 @@ export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
     : 'single';
 }
 
-function backfillStoredRoomModes(database: Database): void {
+function backfillStoredRoomSettings(database: Database): void {
   const rows = database
-    .prepare(
-      `SELECT DISTINCT rg.jid
-       FROM registered_groups rg
-       LEFT JOIN room_settings rs ON rs.chat_jid = rg.jid
-       WHERE rs.chat_jid IS NULL`,
-    )
+    .prepare(`SELECT DISTINCT jid FROM registered_groups`)
     .all() as Array<{ jid: string }>;
   if (rows.length === 0) return;
 
-  const insertRoomMode = database.prepare(
-    `INSERT OR REPLACE INTO room_settings (
-      chat_jid,
-      room_mode,
-      mode_source,
-      updated_at
-    ) VALUES (?, ?, 'inferred', ?)`,
-  );
+  const tx = database.transaction((registeredRows: Array<{ jid: string }>) => {
+    for (const row of registeredRows) {
+      const snapshot = collectRoomRegistrationSnapshot(database, row.jid);
+      if (!snapshot) continue;
 
-  const tx = database.transaction((missingRows: Array<{ jid: string }>) => {
-    const updatedAt = new Date().toISOString();
-    for (const row of missingRows) {
-      const roomMode = inferRoomModeFromRegisteredAgentTypes(
-        collectRegisteredAgentTypes(database, row.jid),
+      const existing = getStoredRoomSettingsRowFromDatabase(database, row.jid);
+      if (existing) {
+        updateStoredRoomMetadata(database, row.jid, snapshot);
+        continue;
+      }
+
+      insertStoredRoomSettings(
+        database,
+        row.jid,
+        inferRoomModeFromRegisteredAgentTypes(
+          collectRegisteredAgentTypes(database, row.jid),
+        ),
+        'inferred',
+        snapshot,
       );
-      insertRoomMode.run(row.jid, roomMode, updatedAt);
     }
   });
-
   tx(rows);
 }
 
