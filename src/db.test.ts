@@ -17,6 +17,7 @@ import {
   getAllRegisteredGroups,
   getDueTasks,
   getEffectiveRoomMode,
+  getEffectiveRuntimeRoomMode,
   getExplicitRoomMode,
   getLatestMessageSeqAtOrBefore,
   getLatestPairedTaskForChat,
@@ -824,6 +825,7 @@ describe('paired room registration', () => {
 
     expect(getExplicitRoomMode('dc:legacy-paired')).toBeUndefined();
     expect(getEffectiveRoomMode('dc:legacy-paired')).toBe('tribunal');
+    expect(getEffectiveRuntimeRoomMode('dc:legacy-paired')).toBe('tribunal');
     expect(isPairedRoomJid('dc:legacy-paired')).toBe(true);
   });
 
@@ -847,10 +849,11 @@ describe('paired room registration', () => {
 
     expect(getExplicitRoomMode('dc:explicit-single')).toBe('single');
     expect(getEffectiveRoomMode('dc:explicit-single')).toBe('single');
+    expect(getEffectiveRuntimeRoomMode('dc:explicit-single')).toBe('single');
     expect(isPairedRoomJid('dc:explicit-single')).toBe(false);
   });
 
-  it('lets explicit tribunal override solo fallback and clears back to inferred mode', () => {
+  it('keeps explicit tribunal configured but not runnable without dual registration', () => {
     setRegisteredGroup('dc:explicit-tribunal', {
       name: 'Explicit Tribunal Claude',
       folder: 'explicit-tribunal-claude',
@@ -865,12 +868,14 @@ describe('paired room registration', () => {
 
     expect(getExplicitRoomMode('dc:explicit-tribunal')).toBe('tribunal');
     expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('tribunal');
-    expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(true);
+    expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('single');
+    expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(false);
 
     clearExplicitRoomMode('dc:explicit-tribunal');
 
     expect(getExplicitRoomMode('dc:explicit-tribunal')).toBeUndefined();
     expect(getEffectiveRoomMode('dc:explicit-tribunal')).toBe('single');
+    expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('single');
     expect(isPairedRoomJid('dc:explicit-tribunal')).toBe(false);
   });
 });

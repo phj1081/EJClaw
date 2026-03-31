@@ -1978,8 +1978,15 @@ export function getEffectiveRoomMode(chatJid: string): RoomMode {
   return getExplicitRoomMode(chatJid) ?? inferRoomModeForJid(chatJid);
 }
 
+export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
+  return getEffectiveRoomMode(chatJid) === 'tribunal' &&
+    inferRoomModeForJid(chatJid) === 'tribunal'
+    ? 'tribunal'
+    : 'single';
+}
+
 export function isPairedRoomJid(jid: string): boolean {
-  return getEffectiveRoomMode(jid) === 'tribunal';
+  return getEffectiveRuntimeRoomMode(jid) === 'tribunal';
 }
 
 // --- Paired task/project/workspace state ---

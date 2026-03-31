@@ -108,7 +108,7 @@ describe('service-routing global failover', () => {
     });
   });
 
-  it('uses explicit tribunal room mode to add reviewer lease on solo rooms', () => {
+  it('does not create reviewer lease for explicit tribunal without dual registration capability', () => {
     setRegisteredGroup('dc:explicit-tribunal', {
       name: 'Explicit Tribunal Claude',
       folder: 'explicit-tribunal-claude',
@@ -121,7 +121,7 @@ describe('service-routing global failover', () => {
     expect(getEffectiveChannelLease('dc:explicit-tribunal')).toMatchObject({
       chat_jid: 'dc:explicit-tribunal',
       owner_service_id: 'claude',
-      reviewer_service_id: 'claude',
+      reviewer_service_id: null,
       explicit: false,
     });
   });
