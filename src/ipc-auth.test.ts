@@ -7,6 +7,7 @@ import {
   assignRoom,
   createTask,
   getAllTasks,
+  recallMemories,
   getRegisteredAgentTypesForJid,
   getRegisteredGroup,
   getStoredRoomSettings,
@@ -193,6 +194,56 @@ describe('schedule_task authorization', () => {
     expect(allTasks).toHaveLength(1);
     expect(allTasks[0].group_folder).toBe('other-group');
     expect(allTasks[0].chat_jid).toBe('other@g.us');
+  });
+});
+
+describe('persist_memory authorization', () => {
+  it('allows a room runtime to persist memory for its own room scope', async () => {
+    await processTaskIpc(
+      {
+        type: 'persist_memory',
+        scopeKind: 'room',
+        scopeKey: 'room:other-group',
+        content: 'compact summary',
+        keywords: ['room:other-group'],
+        source_kind: 'compact',
+        source_ref: 'compact:test',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    const recalled = recallMemories({
+      scopeKind: 'room',
+      scopeKey: 'room:other-group',
+      limit: 10,
+    });
+    expect(recalled).toHaveLength(1);
+    expect(recalled[0].content).toBe('compact summary');
+  });
+
+  it('blocks persist_memory when scopeKey does not match the source group', async () => {
+    await processTaskIpc(
+      {
+        type: 'persist_memory',
+        scopeKind: 'room',
+        scopeKey: 'room:third-group',
+        content: 'should be denied',
+        keywords: ['room:third-group'],
+        source_kind: 'compact',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    const recalled = recallMemories({
+      scopeKind: 'room',
+      scopeKey: 'room:third-group',
+      limit: 10,
+    });
+    expect(recalled).toHaveLength(0);
   });
 });
 

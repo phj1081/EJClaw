@@ -445,6 +445,51 @@ describe('paired execution context', () => {
     );
   });
 
+  it('requests arbiter instead of re-reviewing when repeated DONE finalize loops exceed the threshold', () => {
+    vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
+
+    const repoDir = createCanonicalRepoWithCommit('reviewed');
+    const approvedSourceRef = resolveTreeRef(repoDir);
+    fs.writeFileSync(path.join(repoDir, 'README.md'), 'changed again\n');
+    execFileSync('git', ['add', 'README.md'], {
+      cwd: repoDir,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['commit', '-m', 'code change'], {
+      cwd: repoDir,
+      stdio: 'ignore',
+    });
+
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+        source_ref: approvedSourceRef,
+        round_trip_count: config.ARBITER_DEADLOCK_THRESHOLD,
+      }),
+    );
+    vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
+      role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'DONE',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'arbiter_requested',
+        arbiter_requested_at: expect.any(String),
+      }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).not.toHaveBeenCalled();
+  });
+
   it.each(['BLOCKED', 'NEEDS_CONTEXT'])(
     'escalates immediately when owner reports %s during finalize without arbiter',
     (summary) => {

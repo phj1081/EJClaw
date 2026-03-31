@@ -12,6 +12,7 @@ import {
   deleteTask,
   findDuplicateCiWatcher,
   getTaskById,
+  rememberMemory,
   updateTask,
 } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -303,6 +304,13 @@ export async function processTaskIpc(
     owner_agent_type?: AgentType;
     isMain?: boolean;
     workDir?: string;
+    scopeKind?: string;
+    scopeKey?: string;
+    content?: string;
+    keywords?: string[];
+    memory_kind?: string | null;
+    source_kind?: string;
+    source_ref?: string | null;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -656,6 +664,74 @@ export async function processTaskIpc(
         );
       }
       break;
+
+    case 'persist_memory': {
+      if (
+        data.scopeKind !== 'room' ||
+        typeof data.scopeKey !== 'string' ||
+        typeof data.content !== 'string'
+      ) {
+        logger.warn(
+          { sourceGroup, data },
+          'Invalid persist_memory request - missing required fields',
+        );
+        break;
+      }
+
+      const expectedScopeKey = `room:${sourceGroup}`;
+      if (data.scopeKey !== expectedScopeKey) {
+        logger.warn(
+          { sourceGroup, scopeKey: data.scopeKey, expectedScopeKey },
+          'Unauthorized persist_memory attempt blocked',
+        );
+        break;
+      }
+
+      if (
+        data.source_kind !== undefined &&
+        data.source_kind !== 'compact' &&
+        data.source_kind !== 'explicit' &&
+        data.source_kind !== 'import' &&
+        data.source_kind !== 'system'
+      ) {
+        logger.warn(
+          { sourceGroup, sourceKind: data.source_kind },
+          'Invalid persist_memory request - unknown source_kind',
+        );
+        break;
+      }
+
+      if (Array.isArray(data.keywords) && !data.keywords.every((v) => typeof v === 'string')) {
+        logger.warn(
+          { sourceGroup, keywords: data.keywords },
+          'Invalid persist_memory request - keywords must be strings',
+        );
+        break;
+      }
+
+      rememberMemory({
+        scopeKind: 'room',
+        scopeKey: data.scopeKey,
+        content: data.content,
+        keywords: data.keywords,
+        memoryKind:
+          typeof data.memory_kind === 'string' ? data.memory_kind : null,
+        sourceKind:
+          (data.source_kind as 'compact' | 'explicit' | 'import' | 'system' | undefined) ??
+          'compact',
+        sourceRef:
+          typeof data.source_ref === 'string' ? data.source_ref : null,
+      });
+      logger.info(
+        {
+          sourceGroup,
+          scopeKey: data.scopeKey,
+          sourceKind: data.source_kind ?? 'compact',
+        },
+        'Memory persisted via IPC',
+      );
+      break;
+    }
 
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');

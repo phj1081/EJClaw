@@ -183,7 +183,10 @@ vi.mock('./session-commands.js', () => ({
 import * as agentRunner from './agent-runner.js';
 import * as db from './db.js';
 import { resolveGroupIpcPath } from './group-folder.js';
-import { createMessageRuntime } from './message-runtime.js';
+import {
+  createMessageRuntime,
+  resolveHandoffRoleOverride,
+} from './message-runtime.js';
 import * as config from './config.js';
 import * as serviceRouting from './service-routing.js';
 import type { Channel, RegisteredGroup } from './types.js';
@@ -221,6 +224,33 @@ describe('createMessageRuntime', () => {
     vi.mocked(db.getRecentChatMessages).mockReturnValue([]);
     vi.mocked(config.isClaudeService).mockReturnValue(true);
     vi.mocked(config.isReviewService).mockReturnValue(false);
+  });
+
+  it('prefers intended_role over reason prefixes for handoff role resolution', () => {
+    expect(
+      resolveHandoffRoleOverride({
+        intended_role: 'reviewer',
+        reason: 'claude-429',
+      }),
+    ).toBe('reviewer');
+    expect(
+      resolveHandoffRoleOverride({
+        intended_role: null,
+        reason: 'arbiter-claude-429',
+      }),
+    ).toBe('arbiter');
+    expect(
+      resolveHandoffRoleOverride({
+        intended_role: null,
+        reason: 'reviewer-claude-usage-exhausted',
+      }),
+    ).toBe('reviewer');
+    expect(
+      resolveHandoffRoleOverride({
+        intended_role: null,
+        reason: 'claude-usage-exhausted',
+      }),
+    ).toBeUndefined();
   });
 
   it('ignores generic failure bot messages in paired rooms', async () => {

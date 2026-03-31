@@ -17,8 +17,6 @@
 import fs from 'fs';
 import path from 'path';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { fileURLToPath } from 'url';
 
 import {
@@ -30,6 +28,7 @@ import {
   isReviewerMutatingShellCommand,
   isReviewerRuntime,
 } from './reviewer-runtime.js';
+import { selectCompactMemoriesFromSummary } from './memory-selection.js';
 
 interface ContainerInput {
   prompt: string;
@@ -87,23 +86,18 @@ interface AssistantContentBlock {
   text?: string;
 }
 
-interface MementoCallToolResult {
-  isError?: boolean;
-}
-
 // Paths configurable via env vars.
 const GROUP_DIR = process.env.EJCLAW_GROUP_DIR || '/workspace/group';
 const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
+const HOST_IPC_DIR = process.env.EJCLAW_HOST_IPC_DIR || IPC_DIR;
 // Optional: override cwd (agent works in this directory instead of GROUP_DIR)
 const WORK_DIR = process.env.EJCLAW_WORK_DIR || '';
 const GROUP_FOLDER = process.env.EJCLAW_GROUP_FOLDER || '';
-const MEMENTO_SSE_URL = process.env.MEMENTO_MCP_SSE_URL || '';
-const MEMENTO_ACCESS_KEY = process.env.MEMENTO_ACCESS_KEY || '';
-const MEMENTO_TIMEOUT_MS = 4_000;
 
 const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const HOST_TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
 
 /** SSOT: src/agent-protocol.ts — keep in sync */
 const IMAGE_TAG_RE = /\[Image:\s*(\/[^\]]+)\]/g;
@@ -270,100 +264,53 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
   return null;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
 function trimSummary(summary: string, maxChars: number): string {
   if (summary.length <= maxChars) return summary;
   return summary.slice(0, Math.max(0, maxChars - 1)).trimEnd() + '…';
 }
 
-async function callMementoTool(
-  name: string,
-  args: Record<string, unknown>,
-  timeoutMs = MEMENTO_TIMEOUT_MS,
-): Promise<boolean> {
-  if (!MEMENTO_SSE_URL || !MEMENTO_ACCESS_KEY) return false;
-
-  const transport = new SSEClientTransport(new URL(MEMENTO_SSE_URL), {
-    requestInit: {
-      headers: {
-        Authorization: `Bearer ${MEMENTO_ACCESS_KEY}`,
-      },
-    },
-  });
-  const client = new Client({ name: 'ejclaw-precompact', version: '1.0.0' });
-
-  try {
-    await withTimeout(client.connect(transport), timeoutMs, `${name}/connect`);
-    const result = await withTimeout(
-      client.callTool({
-        name,
-        arguments: args,
-      }) as Promise<MementoCallToolResult>,
-      timeoutMs,
-      `${name}/call`,
-    );
-
-    if (result.isError) {
-      log(`Memento tool returned error: ${name}`);
-      return false;
-    }
-
-    return true;
-  } catch (err) {
-    log(`Memento tool failed (${name}): ${err instanceof Error ? err.message : String(err)}`);
-    return false;
-  } finally {
-    await client.close().catch(() => {});
-  }
+function writeHostTaskIpcFile(data: object): string {
+  fs.mkdirSync(HOST_TASKS_DIR, { recursive: true });
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const filepath = path.join(HOST_TASKS_DIR, filename);
+  const tempPath = `${filepath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.renameSync(tempPath, filepath);
+  return filename;
 }
 
 async function persistCompactMemory(summary: string, sessionId: string): Promise<void> {
   const normalized = summary.trim();
-  if (!normalized) return;
+  if (!normalized || !GROUP_FOLDER) return;
 
-  const tasks: Promise<boolean>[] = [
-    callMementoTool('reflect', {
-      summary: normalized,
-    }),
-  ];
+  try {
+    const scopeKey = `room:${GROUP_FOLDER}`;
+    const selected = selectCompactMemoriesFromSummary(normalized, scopeKey);
+    if (selected.length === 0) {
+      log('Skipped compact memory persist - no salient room memory found');
+      return;
+    }
 
-  if (GROUP_FOLDER) {
-    tasks.push(
-      callMementoTool('remember', {
-        content: trimSummary(normalized, 300),
-        topic: 'room-memory',
-        type: 'fact',
-        keywords: [`room:${GROUP_FOLDER}`],
-        source: `compact:${sessionId}`,
-      }),
+    for (const memory of selected) {
+      const file = writeHostTaskIpcFile({
+        type: 'persist_memory',
+        scopeKind: 'room',
+        scopeKey,
+        content: trimSummary(memory.content, 300),
+        keywords: memory.keywords,
+        memory_kind: memory.memoryKind,
+        source_kind: 'compact',
+        source_ref: sessionId ? `compact:${sessionId}` : null,
+        timestamp: new Date().toISOString(),
+      });
+      log(`Persisted compact memory via IPC (${file})`);
+    }
+  } catch (err) {
+    log(
+      `Failed to persist compact memory via IPC: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
     );
-  }
-
-  const results = await Promise.allSettled(tasks);
-  const succeeded = results.filter(
-    (result) => result.status === 'fulfilled' && result.value,
-  ).length;
-
-  if (succeeded > 0) {
-    log(`Persisted compact memory (${succeeded}/${results.length})`);
   }
 }
 
@@ -729,18 +676,6 @@ async function runQuery(
             }),
           },
         },
-        ...(process.env.MEMENTO_MCP_SSE_URL
-          ? {
-              'memento-mcp': {
-                command: process.env.MEMENTO_MCP_REMOTE_PATH || 'mcp-remote',
-                args: [
-                  process.env.MEMENTO_MCP_SSE_URL,
-                  '--header',
-                  `Authorization:Bearer ${process.env.MEMENTO_ACCESS_KEY || ''}`,
-                ],
-              },
-            }
-          : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

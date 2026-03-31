@@ -22,7 +22,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { createScopedLogger } from './logger.js';
-import { buildRoomMemoryBriefing } from './memento-client.js';
+import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
 import {
   completePairedExecutionContext,
   preparePairedExecutionContext,
@@ -44,7 +44,9 @@ import {
   shouldRetryFreshSessionOnAgentFailure,
 } from './session-recovery.js';
 import {
+  ARBITER_AGENT_TYPE,
   CODEX_REVIEW_SERVICE_ID,
+  REVIEWER_AGENT_TYPE,
   SERVICE_SESSION_SCOPE,
   TIMEZONE,
   isClaudeService,
@@ -69,7 +71,7 @@ import {
 } from './codex-token-rotation.js';
 import type { CodexRotationReason } from './agent-error-detection.js';
 import { getTokenCount } from './token-rotation.js';
-import type { RegisteredGroup } from './types.js';
+import type { AgentType, PairedRoomRole, RegisteredGroup } from './types.js';
 
 // ── Main executor ─────────────────────────────────────────────────
 
@@ -92,6 +94,8 @@ export async function runAgentForGroup(
     startSeq?: number | null;
     endSeq?: number | null;
     hasHumanMessage?: boolean;
+    forcedRole?: PairedRoomRole;
+    forcedAgentType?: AgentType;
     onOutput?: (output: AgentOutput) => Promise<void>;
   },
 ): Promise<'success' | 'error'> {
@@ -107,7 +111,13 @@ export async function runAgentForGroup(
   const pairedTask = currentLease.reviewer_service_id
     ? getLatestOpenPairedTaskForChat(chatJid)
     : null;
-  const activeRole = resolveActiveRole(pairedTask?.status);
+  const inferredRole = resolveActiveRole(pairedTask?.status);
+  const canHonorForcedRole = Boolean(
+    args.forcedRole === 'owner' ||
+      (args.forcedRole === 'reviewer' && currentLease.reviewer_service_id) ||
+      (args.forcedRole === 'arbiter' && currentLease.arbiter_service_id),
+  );
+  const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
   const effectiveServiceId =
     activeRole === 'arbiter'
       ? currentLease.arbiter_service_id!
@@ -121,10 +131,11 @@ export async function runAgentForGroup(
     group.agentType,
   );
 
-  const effectiveAgentType = resolveEffectiveAgentType(
+  const configuredAgentType = resolveEffectiveAgentType(
     activeRole,
     group.agentType,
   );
+  const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
   const effectiveGroup =
     effectiveAgentType !== roleAgentPlan.ownerAgentType
       ? { ...group, agentType: effectiveAgentType }
@@ -137,7 +148,9 @@ export async function runAgentForGroup(
   );
   // Arbiter always starts fresh — never resume a previous session
   const sessionId =
-    activeRole === 'arbiter' ? undefined : sessions[sessionFolder];
+    activeRole === 'arbiter' || args.forcedAgentType
+      ? undefined
+      : sessions[sessionFolder];
   const memoryBriefing = sessionId
     ? undefined
     : await buildRoomMemoryBriefing({
@@ -203,6 +216,29 @@ export async function runAgentForGroup(
     role: activeRole,
     serviceId: effectiveServiceId,
   });
+  log.info(
+    {
+      forcedRole: args.forcedRole,
+      forcedAgentType: args.forcedAgentType ?? null,
+      inferredRole,
+      canHonorForcedRole,
+      pairedTaskId: pairedTask?.id,
+      pairedTaskStatus: pairedTask?.status,
+      configuredAgentType,
+      effectiveServiceId,
+      effectiveAgentType,
+      groupAgentType: group.agentType,
+      configuredReviewerAgentType: REVIEWER_AGENT_TYPE,
+      configuredArbiterAgentType: ARBITER_AGENT_TYPE,
+      reviewerServiceId: currentLease.reviewer_service_id,
+      arbiterServiceId: currentLease.arbiter_service_id,
+      reviewerMode,
+      arbiterMode,
+      sessionFolder,
+      resumedSession: sessionId ?? null,
+    },
+    'Resolved execution target for agent turn',
+  );
 
   // ── MoA prompt enrichment ─────────────────────────────────────
   // When MoA is enabled and we're in arbiter mode, query external API
@@ -293,6 +329,7 @@ export async function runAgentForGroup(
         start_seq: startSeq ?? null,
         end_seq: endSeq ?? null,
         reason: `arbiter-claude-${reason}`,
+        intended_role: 'arbiter',
       });
       log.warn(
         { reason },
@@ -314,6 +351,7 @@ export async function runAgentForGroup(
         start_seq: startSeq ?? null,
         end_seq: endSeq ?? null,
         reason: `reviewer-claude-${reason}`,
+        intended_role: 'reviewer',
       });
       log.warn(
         { reason },
@@ -333,6 +371,7 @@ export async function runAgentForGroup(
       start_seq: startSeq ?? null,
       end_seq: endSeq ?? null,
       reason: `claude-${reason}`,
+      intended_role: activeRole,
     });
     log.warn(
       { reason },
