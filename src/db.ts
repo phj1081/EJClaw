@@ -1017,12 +1017,49 @@ export function _setStoredRoomOwnerAgentTypeForTests(
   ).run(ownerAgentType, new Date().toISOString(), chatJid);
 }
 
+/** @internal - for tests only. */
+export function _setMemoryTimestampsForTests(
+  id: number,
+  args: {
+    createdAt?: string;
+    lastUsedAt?: string | null;
+    archivedAt?: string | null;
+  },
+): void {
+  const existing = db
+    .prepare(
+      `SELECT created_at, last_used_at, archived_at
+       FROM memories
+       WHERE id = ?`,
+    )
+    .get(id) as
+    | {
+        created_at: string;
+        last_used_at: string | null;
+        archived_at: string | null;
+      }
+    | undefined;
+  if (!existing) throw new Error(`Memory ${id} not found`);
+
+  db.prepare(
+    `UPDATE memories
+     SET created_at = ?, last_used_at = ?, archived_at = ?
+     WHERE id = ?`,
+  ).run(
+    args.createdAt ?? existing.created_at,
+    args.lastUsedAt === undefined ? existing.last_used_at : args.lastUsedAt,
+    args.archivedAt === undefined ? existing.archived_at : args.archivedAt,
+    id,
+  );
+}
+
 const MEMORY_SCOPE_LIMITS: Record<MemoryScopeKind, number> = {
   room: 300,
   user: 100,
   project: 200,
   global: 100,
 };
+const COMPACT_MEMORY_TTL_DAYS = 30;
 
 interface MemoryDatabaseRow {
   id: number;
@@ -1155,6 +1192,39 @@ export function archiveMemory(id: number): void {
   ).run(new Date().toISOString(), id);
 }
 
+function buildCompactMemoryExpiryCutoff(nowIso: string): string {
+  return new Date(
+    new Date(nowIso).getTime() - COMPACT_MEMORY_TTL_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+}
+
+export function expireStaleMemories(args?: {
+  scopeKind?: MemoryScopeKind;
+  scopeKey?: string;
+  now?: string;
+}): number {
+  const nowIso = args?.now ?? new Date().toISOString();
+  const cutoff = buildCompactMemoryExpiryCutoff(nowIso);
+  const scopeClause =
+    args?.scopeKind && args?.scopeKey
+      ? 'AND scope_kind = ? AND scope_key = ?'
+      : '';
+  const stmt = db.prepare(
+    `UPDATE memories
+     SET archived_at = COALESCE(archived_at, ?)
+     WHERE archived_at IS NULL
+       AND source_kind = 'compact'
+       AND COALESCE(last_used_at, created_at) < ?
+       ${scopeClause}`,
+  );
+  const result = (
+    args?.scopeKind && args?.scopeKey
+      ? stmt.run(nowIso, cutoff, args.scopeKind, args.scopeKey)
+      : stmt.run(nowIso, cutoff)
+  ) as { changes?: number };
+  return result.changes ?? 0;
+}
+
 export function enforceMemoryBounds(
   scopeKind: MemoryScopeKind,
   scopeKey: string,
@@ -1221,12 +1291,20 @@ export function rememberMemory(input: {
     createdAt,
   );
   const row = db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number };
+  expireStaleMemories({
+    scopeKind: input.scopeKind,
+    scopeKey: input.scopeKey,
+  });
   enforceMemoryBounds(input.scopeKind, input.scopeKey);
   return row.id;
 }
 
 export function recallMemories(query: RecallMemoryQuery): MemoryRecord[] {
   const limit = Math.max(1, query.limit ?? 6);
+  expireStaleMemories({
+    scopeKind: query.scopeKind,
+    scopeKey: query.scopeKey,
+  });
   const rows = getMemoryRowsForScope(query.scopeKind, query.scopeKey);
   if (rows.length === 0) return [];
 

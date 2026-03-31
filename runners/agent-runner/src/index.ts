@@ -28,6 +28,7 @@ import {
   isReviewerMutatingShellCommand,
   isReviewerRuntime,
 } from './reviewer-runtime.js';
+import { selectCompactMemoriesFromSummary } from './memory-selection.js';
 
 interface ContainerInput {
   prompt: string;
@@ -284,17 +285,26 @@ async function persistCompactMemory(summary: string, sessionId: string): Promise
 
   try {
     const scopeKey = `room:${GROUP_FOLDER}`;
-    const file = writeHostTaskIpcFile({
-      type: 'persist_memory',
-      scopeKind: 'room',
-      scopeKey,
-      content: trimSummary(normalized, 300),
-      keywords: [scopeKey],
-      source_kind: 'compact',
-      source_ref: sessionId ? `compact:${sessionId}` : null,
-      timestamp: new Date().toISOString(),
-    });
-    log(`Persisted compact memory via IPC (${file})`);
+    const selected = selectCompactMemoriesFromSummary(normalized, scopeKey);
+    if (selected.length === 0) {
+      log('Skipped compact memory persist - no salient room memory found');
+      return;
+    }
+
+    for (const memory of selected) {
+      const file = writeHostTaskIpcFile({
+        type: 'persist_memory',
+        scopeKind: 'room',
+        scopeKey,
+        content: trimSummary(memory.content, 300),
+        keywords: memory.keywords,
+        memory_kind: memory.memoryKind,
+        source_kind: 'compact',
+        source_ref: sessionId ? `compact:${sessionId}` : null,
+        timestamp: new Date().toISOString(),
+      });
+      log(`Persisted compact memory via IPC (${file})`);
+    }
   } catch (err) {
     log(
       `Failed to persist compact memory via IPC: ${

@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   _initTestDatabaseFromFile,
+  _setMemoryTimestampsForTests,
   _setRegisteredGroupForTests,
   assignRoom,
   claimServiceHandoff,
@@ -1341,6 +1342,66 @@ describe('memories', () => {
     expect(recalled).toHaveLength(300);
     expect(recalled.some((memory) => memory.content === 'memory-0')).toBe(false);
     expect(recalled.some((memory) => memory.content === 'memory-304')).toBe(true);
+  });
+
+  it('archives stale compact memories before recall using last_used_at TTL', () => {
+    const staleId = rememberMemory({
+      scopeKind: 'room',
+      scopeKey: 'room:ttl',
+      content: '오래된 compact memory',
+      keywords: ['room:ttl'],
+      sourceKind: 'compact',
+      sourceRef: 'compact:stale',
+    });
+    rememberMemory({
+      scopeKind: 'room',
+      scopeKey: 'room:ttl',
+      content: '최근에 다시 쓰인 compact memory',
+      keywords: ['room:ttl'],
+      sourceKind: 'compact',
+      sourceRef: 'compact:fresh',
+    });
+
+    _setMemoryTimestampsForTests(staleId, {
+      createdAt: '2020-01-01T00:00:00.000Z',
+      lastUsedAt: '2020-01-02T00:00:00.000Z',
+    });
+
+    const recalled = recallMemories({
+      scopeKind: 'room',
+      scopeKey: 'room:ttl',
+      limit: 10,
+    });
+
+    expect(recalled.some((memory) => memory.content === '오래된 compact memory')).toBe(false);
+    expect(
+      recalled.some((memory) => memory.content === '최근에 다시 쓰인 compact memory'),
+    ).toBe(true);
+  });
+
+  it('keeps explicit memories even when they are old', () => {
+    const explicitId = rememberMemory({
+      scopeKind: 'room',
+      scopeKey: 'room:ttl-explicit',
+      content: '관리자가 남긴 고정 규칙',
+      keywords: ['room:ttl-explicit'],
+      sourceKind: 'explicit',
+      sourceRef: 'msg:1',
+    });
+
+    _setMemoryTimestampsForTests(explicitId, {
+      createdAt: '2020-01-01T00:00:00.000Z',
+      lastUsedAt: '2020-01-02T00:00:00.000Z',
+    });
+
+    const recalled = recallMemories({
+      scopeKind: 'room',
+      scopeKey: 'room:ttl-explicit',
+      limit: 10,
+    });
+
+    expect(recalled).toHaveLength(1);
+    expect(recalled[0].content).toBe('관리자가 남긴 고정 규칙');
   });
 });
 
