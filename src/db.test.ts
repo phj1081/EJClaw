@@ -36,6 +36,7 @@ import {
   getPairedWorkspace,
   getRouterStateForService,
   getSession,
+  getStoredRoomSettings,
   getTaskById,
   listPairedWorkspacesForTask,
   markWorkItemDelivered,
@@ -46,6 +47,7 @@ import {
   setExplicitRoomMode,
   storeChatMetadata,
   storeMessage,
+  updateRegisteredGroupName,
   updatePairedTask,
   upsertPairedProject,
   upsertPairedWorkspace,
@@ -748,16 +750,16 @@ describe('registered group isMain', () => {
 
   it('filters duplicate jid registrations by agent type', () => {
     setRegisteredGroup('dc:shared', {
-      name: 'Shared Room Claude',
+      name: 'Shared Room',
       folder: 'shared-room',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
     setRegisteredGroup('dc:shared', {
-      name: 'Shared Room Codex',
+      name: 'Shared Room',
       folder: 'shared-room',
-      trigger: '@Andy',
+      trigger: '@Codex',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'codex',
     });
@@ -766,24 +768,24 @@ describe('registered group isMain', () => {
     const codexGroups = getAllRegisteredGroups('codex');
 
     expect(claudeGroups['dc:shared']?.agentType).toBe('claude-code');
-    expect(claudeGroups['dc:shared']?.name).toBe('Shared Room Claude');
+    expect(claudeGroups['dc:shared']?.name).toBe('Shared Room');
     expect(codexGroups['dc:shared']?.agentType).toBe('codex');
-    expect(codexGroups['dc:shared']?.name).toBe('Shared Room Codex');
+    expect(codexGroups['dc:shared']?.name).toBe('Shared Room');
   });
 });
 
 describe('paired room registration', () => {
   it('detects when both Claude and Codex are registered on the same jid', () => {
     setRegisteredGroup('dc:123', {
-      name: 'Paired Room Claude',
-      folder: 'paired-claude',
+      name: 'Paired Room',
+      folder: 'paired-room',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
     setRegisteredGroup('dc:123', {
-      name: 'Paired Room Codex',
-      folder: 'paired-codex',
+      name: 'Paired Room',
+      folder: 'paired-room',
       trigger: '@Codex',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'codex',
@@ -813,15 +815,15 @@ describe('paired room registration', () => {
 
   it('keeps inferred room mode available when no explicit override exists', () => {
     setRegisteredGroup('dc:legacy-paired', {
-      name: 'Legacy Paired Claude',
-      folder: 'legacy-paired-claude',
+      name: 'Legacy Paired',
+      folder: 'legacy-paired',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
     setRegisteredGroup('dc:legacy-paired', {
-      name: 'Legacy Paired Codex',
-      folder: 'legacy-paired-codex',
+      name: 'Legacy Paired',
+      folder: 'legacy-paired',
       trigger: '@Codex',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'codex',
@@ -876,16 +878,16 @@ describe('paired room registration', () => {
     );
     insertGroup.run(
       'dc:legacy-sql',
-      'Legacy SQL Claude',
-      'legacy-sql-claude',
-      '@Andy',
+      'Legacy SQL Room',
+      'legacy-sql-room',
+      '@Claude',
       '2024-01-01T00:00:00.000Z',
       'claude-code',
     );
     insertGroup.run(
       'dc:legacy-sql',
-      'Legacy SQL Codex',
-      'legacy-sql-codex',
+      'Legacy SQL Room',
+      'legacy-sql-room',
       '@Codex',
       '2024-01-01T00:00:00.000Z',
       'codex',
@@ -897,19 +899,147 @@ describe('paired room registration', () => {
     expect(getExplicitRoomMode('dc:legacy-sql')).toBeUndefined();
     expect(getEffectiveRoomMode('dc:legacy-sql')).toBe('tribunal');
     expect(getEffectiveRuntimeRoomMode('dc:legacy-sql')).toBe('tribunal');
+
+    expect(getStoredRoomSettings('dc:legacy-sql')).toMatchObject({
+      chatJid: 'dc:legacy-sql',
+      roomMode: 'tribunal',
+      modeSource: 'inferred',
+      name: 'Legacy SQL Room',
+      folder: 'legacy-sql-room',
+      trigger: '@Codex',
+      requiresTrigger: true,
+      isMain: false,
+      ownerAgentType: 'codex',
+    });
+  });
+
+  it('keeps room-level metadata synced on legacy register_group writes', () => {
+    setRegisteredGroup('dc:room-settings', {
+      name: 'Room Settings Test',
+      folder: 'room-settings-test',
+      trigger: '@Claude',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    setRegisteredGroup('dc:room-settings', {
+      name: 'Room Settings Test',
+      folder: 'room-settings-test',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+
+    expect(getStoredRoomSettings('dc:room-settings')).toMatchObject({
+      chatJid: 'dc:room-settings',
+      roomMode: 'tribunal',
+      modeSource: 'inferred',
+      name: 'Room Settings Test',
+      folder: 'room-settings-test',
+      trigger: '@Codex',
+      ownerAgentType: 'codex',
+    });
+
+    setExplicitRoomMode('dc:room-settings', 'single');
+
+    expect(getStoredRoomSettings('dc:room-settings')).toMatchObject({
+      chatJid: 'dc:room-settings',
+      roomMode: 'single',
+      modeSource: 'explicit',
+      name: 'Room Settings Test',
+      folder: 'room-settings-test',
+      trigger: '@Codex',
+      ownerAgentType: 'codex',
+    });
+
+    updateRegisteredGroupName('dc:room-settings', 'Room Settings Renamed');
+
+    expect(getStoredRoomSettings('dc:room-settings')).toMatchObject({
+      chatJid: 'dc:room-settings',
+      roomMode: 'single',
+      modeSource: 'explicit',
+      name: 'Room Settings Renamed',
+      folder: 'room-settings-test',
+      trigger: '@Codex',
+      ownerAgentType: 'codex',
+    });
+  });
+
+  it('fails room_settings backfill when room-level metadata conflicts across agent rows', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-room-settings-conflict-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE registered_groups (
+        jid TEXT NOT NULL,
+        name TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        trigger_pattern TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        agent_config TEXT,
+        requires_trigger INTEGER DEFAULT 1,
+        is_main INTEGER DEFAULT 0,
+        agent_type TEXT NOT NULL DEFAULT 'claude-code',
+        work_dir TEXT,
+        PRIMARY KEY (jid, agent_type),
+        UNIQUE (folder, agent_type)
+      );
+      CREATE TABLE room_settings (
+        chat_jid TEXT PRIMARY KEY,
+        room_mode TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        CHECK (room_mode IN ('single', 'tribunal'))
+      );
+    `);
+
+    const insertGroup = legacyDb.prepare(
+      `INSERT INTO registered_groups (
+        jid,
+        name,
+        folder,
+        trigger_pattern,
+        added_at,
+        agent_config,
+        requires_trigger,
+        is_main,
+        agent_type,
+        work_dir
+      ) VALUES (?, ?, ?, ?, ?, NULL, 1, 0, ?, NULL)`,
+    );
+    insertGroup.run(
+      'dc:conflict',
+      'Conflict Room',
+      'conflict-folder-1',
+      '@Claude',
+      '2024-01-01T00:00:00.000Z',
+      'claude-code',
+    );
+    insertGroup.run(
+      'dc:conflict',
+      'Conflict Room',
+      'conflict-folder-2',
+      '@Codex',
+      '2024-01-01T00:00:00.000Z',
+      'codex',
+    );
+    legacyDb.close();
+
+    expect(() => _initTestDatabaseFromFile(dbPath)).toThrow(
+      /Conflicting room-level registered_groups metadata/,
+    );
   });
 
   it('lets explicit single override dual registration for paired-room checks', () => {
     setRegisteredGroup('dc:explicit-single', {
-      name: 'Explicit Single Claude',
-      folder: 'explicit-single-claude',
+      name: 'Explicit Single',
+      folder: 'explicit-single',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
     setRegisteredGroup('dc:explicit-single', {
-      name: 'Explicit Single Codex',
-      folder: 'explicit-single-codex',
+      name: 'Explicit Single',
+      folder: 'explicit-single',
       trigger: '@Codex',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'codex',
