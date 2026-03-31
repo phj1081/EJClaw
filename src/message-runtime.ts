@@ -58,6 +58,7 @@ import {
 import {
   Channel,
   NewMessage,
+  type PairedRoomRole,
   RegisteredGroup,
   type PairedTask,
   type PairedTurnOutput,
@@ -92,6 +93,21 @@ export function isDuplicateOfLastBotFinal(
   const normalizedCurrent = normalizeMessageForDedupe(text);
 
   return normalizedLast === normalizedCurrent && normalizedLast.length > 0;
+}
+
+export function resolveHandoffRoleOverride(
+  handoff: Pick<ServiceHandoff, 'intended_role' | 'reason'>,
+): PairedRoomRole | undefined {
+  if (handoff.intended_role) {
+    return handoff.intended_role;
+  }
+  if (handoff.reason?.startsWith('reviewer-')) {
+    return 'reviewer';
+  }
+  if (handoff.reason?.startsWith('arbiter-')) {
+    return 'arbiter';
+  }
+  return undefined;
 }
 
 export interface MessageRuntimeDeps {
@@ -415,6 +431,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       startSeq?: number | null;
       endSeq?: number | null;
       hasHumanMessage?: boolean;
+      forcedRole?: PairedRoomRole;
     },
   ): Promise<'success' | 'error'> =>
     runAgentForGroup(
@@ -434,6 +451,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         startSeq: options?.startSeq,
         endSeq: options?.endSeq,
         hasHumanMessage: options?.hasHumanMessage,
+        forcedRole: options?.forcedRole,
         onOutput,
       },
     );
@@ -447,6 +465,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     startSeq: number | null;
     endSeq: number | null;
     hasHumanMessage?: boolean;
+    forcedRole?: PairedRoomRole;
   }): Promise<{
     outputStatus: 'success' | 'error';
     deliverySucceeded: boolean;
@@ -503,7 +522,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         chatJid,
         runId,
         (result) => turnController.handleOutput(result),
-        { startSeq, endSeq, hasHumanMessage: args.hasHumanMessage },
+        {
+          startSeq,
+          endSeq,
+          hasHumanMessage: args.hasHumanMessage,
+          forcedRole: args.forcedRole,
+        },
       );
 
       const { deliverySucceeded, visiblePhase } =
@@ -574,14 +598,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     // Reviewer/arbiter failover handoffs should run via the appropriate
     // channel so they execute in the correct role mode.
-    const isReviewerHandoff = handoff.reason?.startsWith('reviewer-');
-    const isArbiterHandoff = handoff.reason?.startsWith('arbiter-');
+    const handoffRole = resolveHandoffRoleOverride(handoff);
     let handoffChannel = channel;
-    if (isReviewerHandoff) {
+    if (handoffRole === 'reviewer') {
       const revChName =
         REVIEWER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
       handoffChannel = findChannelByName(deps.channels, revChName) || channel;
-    } else if (isArbiterHandoff) {
+    } else if (handoffRole === 'arbiter') {
       handoffChannel =
         findChannelByName(deps.channels, 'discord-review') || channel;
     }
@@ -596,6 +619,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         channel: handoffChannel,
         startSeq: handoff.start_seq,
         endSeq: handoff.end_seq,
+        forcedRole: handoffRole,
       });
 
       if (!result.deliverySucceeded) {

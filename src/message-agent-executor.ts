@@ -69,7 +69,7 @@ import {
 } from './codex-token-rotation.js';
 import type { CodexRotationReason } from './agent-error-detection.js';
 import { getTokenCount } from './token-rotation.js';
-import type { RegisteredGroup } from './types.js';
+import type { PairedRoomRole, RegisteredGroup } from './types.js';
 
 // ── Main executor ─────────────────────────────────────────────────
 
@@ -92,6 +92,7 @@ export async function runAgentForGroup(
     startSeq?: number | null;
     endSeq?: number | null;
     hasHumanMessage?: boolean;
+    forcedRole?: PairedRoomRole;
     onOutput?: (output: AgentOutput) => Promise<void>;
   },
 ): Promise<'success' | 'error'> {
@@ -107,7 +108,13 @@ export async function runAgentForGroup(
   const pairedTask = currentLease.reviewer_service_id
     ? getLatestOpenPairedTaskForChat(chatJid)
     : null;
-  const activeRole = resolveActiveRole(pairedTask?.status);
+  const inferredRole = resolveActiveRole(pairedTask?.status);
+  const canHonorForcedRole = Boolean(
+    args.forcedRole === 'owner' ||
+      (args.forcedRole === 'reviewer' && currentLease.reviewer_service_id) ||
+      (args.forcedRole === 'arbiter' && currentLease.arbiter_service_id),
+  );
+  const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
   const effectiveServiceId =
     activeRole === 'arbiter'
       ? currentLease.arbiter_service_id!
@@ -293,6 +300,7 @@ export async function runAgentForGroup(
         start_seq: startSeq ?? null,
         end_seq: endSeq ?? null,
         reason: `arbiter-claude-${reason}`,
+        intended_role: 'arbiter',
       });
       log.warn(
         { reason },
@@ -314,6 +322,7 @@ export async function runAgentForGroup(
         start_seq: startSeq ?? null,
         end_seq: endSeq ?? null,
         reason: `reviewer-claude-${reason}`,
+        intended_role: 'reviewer',
       });
       log.warn(
         { reason },
@@ -333,6 +342,7 @@ export async function runAgentForGroup(
       start_seq: startSeq ?? null,
       end_seq: endSeq ?? null,
       reason: `claude-${reason}`,
+      intended_role: activeRole,
     });
     log.warn(
       { reason },

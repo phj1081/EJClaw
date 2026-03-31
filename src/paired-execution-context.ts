@@ -525,6 +525,30 @@ export function completePairedExecutionContext(args: {
           : null;
 
         if (hasNewChanges === true) {
+          if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
+            if (isArbiterEnabled()) {
+              updatePairedTask(taskId, {
+                status: 'arbiter_requested',
+                arbiter_requested_at: now,
+                updated_at: now,
+              });
+              logger.info(
+                { taskId, roundTrips: task.round_trip_count, hasNewChanges },
+                'Owner finalize DONE loop detected — requesting arbiter',
+              );
+            } else {
+              updatePairedTask(taskId, {
+                status: 'completed',
+                completion_reason: 'escalated',
+                updated_at: now,
+              });
+              logger.info(
+                { taskId, roundTrips: task.round_trip_count, hasNewChanges },
+                'Owner finalize DONE loop detected — escalating to user',
+              );
+            }
+            return;
+          }
           // Owner made changes after approval → needs re-review
           logger.info(
             {

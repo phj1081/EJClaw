@@ -1227,6 +1227,28 @@ describe('service handoff completion', () => {
       'dc:handoff': '5',
     });
   });
+
+  it('stores the intended handoff role when provided', () => {
+    const handoff = createServiceHandoff({
+      chat_jid: 'dc:handoff-role',
+      group_folder: 'test-group',
+      source_service_id: 'claude',
+      target_service_id: 'codex-review',
+      target_agent_type: 'codex',
+      prompt: 'please review',
+      reason: 'reviewer-claude-429',
+      intended_role: 'reviewer',
+    });
+
+    expect(handoff.intended_role).toBe('reviewer');
+    expect(getPendingServiceHandoffs('codex-review')).toEqual([
+      expect.objectContaining({
+        id: handoff.id,
+        intended_role: 'reviewer',
+        reason: 'reviewer-claude-429',
+      }),
+    ]);
+  });
 });
 
 describe('message seq cursors', () => {

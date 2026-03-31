@@ -397,6 +397,61 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
+  it('honors a forced reviewer role even when the paired task status is active', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-active',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'please retry review',
+      chatJid: 'group@test',
+      runId: 'run-forced-reviewer',
+      forcedRole: 'reviewer',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.objectContaining({
+        roomRoleContext: {
+          serviceId: 'claude',
+          role: 'reviewer',
+          ownerServiceId: 'codex-main',
+          reviewerServiceId: 'claude',
+          failoverOwner: false,
+        },
+      }),
+      expect.any(Function),
+      undefined,
+      undefined,
+    );
+  });
+
   it('allows silent reviewer outputs', async () => {
     const group = { ...makeGroup(), folder: 'test-group', workDir: '/repo' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
@@ -1005,6 +1060,7 @@ describe('runAgentForGroup Claude rotation', () => {
         start_seq: 10,
         end_seq: 12,
         reason: 'claude-usage-exhausted',
+        intended_role: 'owner',
       }),
     );
   });
@@ -1207,6 +1263,7 @@ describe('runAgentForGroup Claude rotation', () => {
         target_service_id: 'codex-review',
         target_agent_type: 'codex',
         reason: 'claude-org-access-denied',
+        intended_role: 'owner',
       }),
     );
   });

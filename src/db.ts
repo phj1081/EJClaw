@@ -159,6 +159,7 @@ export interface ServiceHandoff {
   start_seq: number | null;
   end_seq: number | null;
   reason: string | null;
+  intended_role: PairedRoomRole | null;
   created_at: string;
   claimed_at: string | null;
   completed_at: string | null;
@@ -408,11 +409,13 @@ function createSchema(database: Database): void {
       start_seq INTEGER,
       end_seq INTEGER,
       reason TEXT,
+      intended_role TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       claimed_at TEXT,
       completed_at TEXT,
       last_error TEXT,
-      CHECK (status IN ('pending', 'claimed', 'completed', 'failed'))
+      CHECK (status IN ('pending', 'claimed', 'completed', 'failed')),
+      CHECK (intended_role IN ('owner', 'reviewer', 'arbiter') OR intended_role IS NULL)
     );
     CREATE INDEX IF NOT EXISTS idx_service_handoffs_target
       ON service_handoffs(target_service_id, status, created_at);
@@ -564,6 +567,12 @@ function createSchema(database: Database): void {
 
   try {
     database.exec(`ALTER TABLE room_settings ADD COLUMN work_dir TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE service_handoffs ADD COLUMN intended_role TEXT`);
   } catch {
     /* column already exists */
   }
@@ -3518,6 +3527,7 @@ export function createServiceHandoff(input: {
   start_seq?: number | null;
   end_seq?: number | null;
   reason?: string | null;
+  intended_role?: PairedRoomRole | null;
 }): ServiceHandoff {
   db.prepare(
     `INSERT INTO service_handoffs (
@@ -3529,8 +3539,9 @@ export function createServiceHandoff(input: {
         prompt,
         start_seq,
         end_seq,
-        reason
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        reason,
+        intended_role
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.chat_jid,
     input.group_folder,
@@ -3541,6 +3552,7 @@ export function createServiceHandoff(input: {
     input.start_seq ?? null,
     input.end_seq ?? null,
     input.reason ?? null,
+    input.intended_role ?? null,
   );
 
   const lastId = (
