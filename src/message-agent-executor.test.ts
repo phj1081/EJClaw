@@ -452,6 +452,68 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
+  it('honors a forced agent type for reviewer failover handoffs', async () => {
+    const group: RegisteredGroup = {
+      ...makeGroup(),
+      agentType: 'codex',
+      folder: 'test-group',
+    };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-reviewer-failover',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+
+    await runAgentForGroup(
+      {
+        ...makeDeps(),
+        getSessions: () => ({ 'test-group:reviewer': 'claude-review-session' }),
+      },
+      {
+        group,
+        prompt: 'please retry review with codex',
+        chatJid: 'group@test',
+        runId: 'run-forced-reviewer-codex',
+        forcedRole: 'reviewer',
+        forcedAgentType: 'codex',
+      },
+    );
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentType: 'codex',
+      }),
+      expect.objectContaining({
+        sessionId: undefined,
+      }),
+      expect.any(Function),
+      undefined,
+      undefined,
+    );
+  });
+
   it('allows silent reviewer outputs', async () => {
     const group = { ...makeGroup(), folder: 'test-group', workDir: '/repo' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({

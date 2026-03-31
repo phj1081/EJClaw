@@ -44,7 +44,9 @@ import {
   shouldRetryFreshSessionOnAgentFailure,
 } from './session-recovery.js';
 import {
+  ARBITER_AGENT_TYPE,
   CODEX_REVIEW_SERVICE_ID,
+  REVIEWER_AGENT_TYPE,
   SERVICE_SESSION_SCOPE,
   TIMEZONE,
   isClaudeService,
@@ -69,7 +71,7 @@ import {
 } from './codex-token-rotation.js';
 import type { CodexRotationReason } from './agent-error-detection.js';
 import { getTokenCount } from './token-rotation.js';
-import type { PairedRoomRole, RegisteredGroup } from './types.js';
+import type { AgentType, PairedRoomRole, RegisteredGroup } from './types.js';
 
 // ── Main executor ─────────────────────────────────────────────────
 
@@ -93,6 +95,7 @@ export async function runAgentForGroup(
     endSeq?: number | null;
     hasHumanMessage?: boolean;
     forcedRole?: PairedRoomRole;
+    forcedAgentType?: AgentType;
     onOutput?: (output: AgentOutput) => Promise<void>;
   },
 ): Promise<'success' | 'error'> {
@@ -128,10 +131,11 @@ export async function runAgentForGroup(
     group.agentType,
   );
 
-  const effectiveAgentType = resolveEffectiveAgentType(
+  const configuredAgentType = resolveEffectiveAgentType(
     activeRole,
     group.agentType,
   );
+  const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
   const effectiveGroup =
     effectiveAgentType !== roleAgentPlan.ownerAgentType
       ? { ...group, agentType: effectiveAgentType }
@@ -144,7 +148,9 @@ export async function runAgentForGroup(
   );
   // Arbiter always starts fresh — never resume a previous session
   const sessionId =
-    activeRole === 'arbiter' ? undefined : sessions[sessionFolder];
+    activeRole === 'arbiter' || args.forcedAgentType
+      ? undefined
+      : sessions[sessionFolder];
   const memoryBriefing = sessionId
     ? undefined
     : await buildRoomMemoryBriefing({
@@ -210,6 +216,29 @@ export async function runAgentForGroup(
     role: activeRole,
     serviceId: effectiveServiceId,
   });
+  log.info(
+    {
+      forcedRole: args.forcedRole,
+      forcedAgentType: args.forcedAgentType ?? null,
+      inferredRole,
+      canHonorForcedRole,
+      pairedTaskId: pairedTask?.id,
+      pairedTaskStatus: pairedTask?.status,
+      configuredAgentType,
+      effectiveServiceId,
+      effectiveAgentType,
+      groupAgentType: group.agentType,
+      configuredReviewerAgentType: REVIEWER_AGENT_TYPE,
+      configuredArbiterAgentType: ARBITER_AGENT_TYPE,
+      reviewerServiceId: currentLease.reviewer_service_id,
+      arbiterServiceId: currentLease.arbiter_service_id,
+      reviewerMode,
+      arbiterMode,
+      sessionFolder,
+      resumedSession: sessionId ?? null,
+    },
+    'Resolved execution target for agent turn',
+  );
 
   // ── MoA prompt enrichment ─────────────────────────────────────
   // When MoA is enabled and we're in arbiter mode, query external API
