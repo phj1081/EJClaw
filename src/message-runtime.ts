@@ -608,10 +608,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const handoffRole = resolveHandoffRoleOverride(handoff);
     let handoffChannel = channel;
     if (handoffRole === 'reviewer') {
+      // Use the same channel as the normal reviewer path — role determines
+      // which bot speaks, not the fallback agent type.
       const revChName =
-        handoff.target_agent_type === 'claude-code'
-          ? 'discord'
-          : 'discord-review';
+        REVIEWER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
       handoffChannel = findChannelByName(deps.channels, revChName) || channel;
     } else if (handoffRole === 'arbiter') {
       handoffChannel =
