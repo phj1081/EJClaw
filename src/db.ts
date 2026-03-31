@@ -1987,7 +1987,10 @@ export function getRegisteredGroup(
   return getLegacyRegisteredGroup(db, jid, agentType);
 }
 
-export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
+function writeLegacyRegisteredGroupAndSyncRoomSettings(
+  jid: string,
+  group: RegisteredGroup,
+): void {
   const existingRoomMode = getStoredRoomModeRow(jid);
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
@@ -2015,6 +2018,17 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     }
   });
   tx();
+}
+
+/**
+ * @internal Test/migration helper for seeding legacy capability rows.
+ * Runtime code must use assignRoom() so room_settings remains the explicit SSOT.
+ */
+export function _setRegisteredGroupForTests(
+  jid: string,
+  group: RegisteredGroup,
+): void {
+  writeLegacyRegisteredGroupAndSyncRoomSettings(jid, group);
 }
 
 export function assignRoom(
@@ -3337,7 +3351,7 @@ function migrateJsonState(): void {
   if (groups) {
     for (const [jid, group] of Object.entries(groups)) {
       try {
-        setRegisteredGroup(jid, group);
+        writeLegacyRegisteredGroupAndSyncRoomSettings(jid, group);
       } catch (err) {
         logger.warn(
           { jid, folder: group.folder, err },

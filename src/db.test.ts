@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   _initTestDatabaseFromFile,
+  _setRegisteredGroupForTests,
   assignRoom,
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
@@ -43,7 +44,6 @@ import {
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,
   setSession,
-  setRegisteredGroup,
   setRouterStateForService,
   setExplicitRoomMode,
   storeChatMetadata,
@@ -720,7 +720,7 @@ describe('message query LIMIT', () => {
 
 describe('registered group isMain', () => {
   it('persists isMain=true through set/get round-trip', () => {
-    setRegisteredGroup('dc:main', {
+    _setRegisteredGroupForTests('dc:main', {
       name: 'Main Chat',
       folder: 'discord_main',
       trigger: '@Andy',
@@ -736,7 +736,7 @@ describe('registered group isMain', () => {
   });
 
   it('omits isMain for non-main groups', () => {
-    setRegisteredGroup('group@g.us', {
+    _setRegisteredGroupForTests('group@g.us', {
       name: 'Family Chat',
       folder: 'discord_family-chat',
       trigger: '@Andy',
@@ -750,14 +750,14 @@ describe('registered group isMain', () => {
   });
 
   it('filters duplicate jid registrations by agent type', () => {
-    setRegisteredGroup('dc:shared', {
+    _setRegisteredGroupForTests('dc:shared', {
       name: 'Shared Room',
       folder: 'shared-room',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:shared', {
+    _setRegisteredGroupForTests('dc:shared', {
       name: 'Shared Room',
       folder: 'shared-room',
       trigger: '@Codex',
@@ -828,14 +828,14 @@ describe('room assignment writes', () => {
 
 describe('paired room registration', () => {
   it('detects when both Claude and Codex are registered on the same jid', () => {
-    setRegisteredGroup('dc:123', {
+    _setRegisteredGroupForTests('dc:123', {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:123', {
+    _setRegisteredGroupForTests('dc:123', {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@Codex',
@@ -853,7 +853,7 @@ describe('paired room registration', () => {
   });
 
   it('does not mark solo rooms as paired', () => {
-    setRegisteredGroup('dc:solo', {
+    _setRegisteredGroupForTests('dc:solo', {
       name: 'Solo Claude Room',
       folder: 'solo-claude',
       trigger: '@Andy',
@@ -866,14 +866,14 @@ describe('paired room registration', () => {
   });
 
   it('keeps inferred room mode available when no explicit override exists', () => {
-    setRegisteredGroup('dc:legacy-paired', {
+    _setRegisteredGroupForTests('dc:legacy-paired', {
       name: 'Legacy Paired',
       folder: 'legacy-paired',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:legacy-paired', {
+    _setRegisteredGroupForTests('dc:legacy-paired', {
       name: 'Legacy Paired',
       folder: 'legacy-paired',
       trigger: '@Codex',
@@ -966,14 +966,14 @@ describe('paired room registration', () => {
   });
 
   it('keeps room-level metadata synced on setRegisteredGroup helper writes', () => {
-    setRegisteredGroup('dc:room-settings', {
+    _setRegisteredGroupForTests('dc:room-settings', {
       name: 'Room Settings Test',
       folder: 'room-settings-test',
       trigger: '@Claude',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:room-settings', {
+    _setRegisteredGroupForTests('dc:room-settings', {
       name: 'Room Settings Test',
       folder: 'room-settings-test',
       trigger: '@Codex',
@@ -1082,14 +1082,14 @@ describe('paired room registration', () => {
   });
 
   it('lets explicit single override dual registration for paired-room checks', () => {
-    setRegisteredGroup('dc:explicit-single', {
+    _setRegisteredGroupForTests('dc:explicit-single', {
       name: 'Explicit Single',
       folder: 'explicit-single',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:explicit-single', {
+    _setRegisteredGroupForTests('dc:explicit-single', {
       name: 'Explicit Single',
       folder: 'explicit-single',
       trigger: '@Codex',
@@ -1105,7 +1105,7 @@ describe('paired room registration', () => {
   });
 
   it('lets explicit tribunal become runnable when the configured reviewer can run on the solo registration', () => {
-    setRegisteredGroup('dc:explicit-tribunal', {
+    _setRegisteredGroupForTests('dc:explicit-tribunal', {
       name: 'Explicit Tribunal Claude',
       folder: 'explicit-tribunal-claude',
       trigger: '@Andy',
@@ -1131,7 +1131,7 @@ describe('paired room registration', () => {
   });
 
   it('keeps explicit tribunal non-runnable when the configured reviewer service is unavailable', () => {
-    setRegisteredGroup('dc:explicit-tribunal-codex', {
+    _setRegisteredGroupForTests('dc:explicit-tribunal-codex', {
       name: 'Explicit Tribunal Codex',
       folder: 'explicit-tribunal-codex',
       trigger: '@Codex',
