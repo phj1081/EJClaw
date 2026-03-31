@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
+  _setRegisteredGroupForTests,
   _initTestDatabase,
   storeMessage,
   storeChatMetadata,
   createProducedWorkItem,
   getOpenWorkItem,
-  setRegisteredGroup,
   getLastBotFinalMessage,
   markWorkItemDelivered,
 } from './db.js';
@@ -56,7 +56,7 @@ describe('hasReviewerLease', () => {
   it('returns true when both claude-code and codex are registered', () => {
     const jid = 'dc:paired-room';
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@claude',
@@ -64,7 +64,7 @@ describe('hasReviewerLease', () => {
       agentType: 'claude-code',
     });
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@codex',
@@ -78,7 +78,7 @@ describe('hasReviewerLease', () => {
   it('returns false when only claude-code is registered', () => {
     const jid = 'dc:single-claude';
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Single Claude',
       folder: 'single-claude',
       trigger: '@claude',
@@ -92,7 +92,7 @@ describe('hasReviewerLease', () => {
   it('returns false when only codex is registered', () => {
     const jid = 'dc:single-codex';
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Single Codex',
       folder: 'single-codex',
       trigger: '@codex',
@@ -180,7 +180,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     setupChat(jid);
 
     // Register as paired room
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@claude',
@@ -188,7 +188,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
       agentType: 'claude-code',
     });
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@codex',
@@ -225,7 +225,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     setupChat(jid);
 
     // Register only one bot
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Single Bot',
       folder: 'single-bot',
       trigger: '@claude',
@@ -257,7 +257,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     setupChat(jid);
 
     // Register as paired room
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@claude',
@@ -265,7 +265,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
       agentType: 'claude-code',
     });
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@codex',
@@ -297,7 +297,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     setupChat(jid);
 
     // Register as paired room
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@claude',
@@ -305,7 +305,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
       agentType: 'claude-code',
     });
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@codex',
@@ -336,7 +336,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     setupChat(jid);
 
     // Register as paired room
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@claude',
@@ -344,7 +344,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
       agentType: 'claude-code',
     });
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@codex',
@@ -384,7 +384,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     setupChat(jid);
 
     // Register as paired room
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@claude',
@@ -392,7 +392,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
       agentType: 'claude-code',
     });
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@codex',
@@ -440,7 +440,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
     setupChat(jid);
 
     // Register as paired room
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@claude',
@@ -448,7 +448,7 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
       agentType: 'claude-code',
     });
 
-    setRegisteredGroup(jid, {
+    _setRegisteredGroupForTests(jid, {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@codex',

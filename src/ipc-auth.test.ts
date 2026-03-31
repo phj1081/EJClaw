@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { ASSISTANT_NAME } from './config.js';
 import {
+  _setRegisteredGroupForTests,
   _initTestDatabase,
   assignRoom,
   createTask,
@@ -10,7 +11,6 @@ import {
   getRegisteredGroup,
   getStoredRoomSettings,
   getTaskById,
-  setRegisteredGroup,
 } from './db.js';
 import { processTaskIpc, IpcDeps } from './ipc.js';
 import { DEFAULT_WATCH_CI_MAX_DURATION_MS } from './task-watch-status.js';
@@ -52,9 +52,9 @@ beforeEach(() => {
   };
 
   // Populate DB as well
-  setRegisteredGroup('main@g.us', MAIN_GROUP);
-  setRegisteredGroup('other@g.us', OTHER_GROUP);
-  setRegisteredGroup('third@g.us', THIRD_GROUP);
+  _setRegisteredGroupForTests('main@g.us', MAIN_GROUP);
+  _setRegisteredGroupForTests('other@g.us', OTHER_GROUP);
+  _setRegisteredGroupForTests('third@g.us', THIRD_GROUP);
 
   deps = {
     sendMessage: async () => {},
@@ -119,7 +119,7 @@ describe('schedule_task authorization', () => {
       ...OTHER_GROUP,
       agentType: 'codex',
     };
-    setRegisteredGroup('other@g.us', groups['other@g.us']);
+    _setRegisteredGroupForTests('other@g.us', groups['other@g.us']);
 
     await processTaskIpc(
       {

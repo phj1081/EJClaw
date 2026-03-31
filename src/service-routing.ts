@@ -72,17 +72,14 @@ function inferFallbackOwnerAgentType(
 }
 
 function resolveDefaultOwnerAgentType(chatJid: string): AgentType | undefined {
+  const storedOwnerAgentType = getStoredRoomSettings(chatJid)?.ownerAgentType;
+  if (storedOwnerAgentType) {
+    return storedOwnerAgentType;
+  }
+
   const types = getRegisteredAgentTypesForJid(chatJid);
   const hasClaude = types.includes('claude-code');
   const hasCodex = types.includes('codex');
-  const storedOwnerAgentType = getStoredRoomSettings(chatJid)?.ownerAgentType;
-
-  if (storedOwnerAgentType === 'claude-code' && hasClaude) {
-    return 'claude-code';
-  }
-  if (storedOwnerAgentType === 'codex' && hasCodex) {
-    return 'codex';
-  }
 
   return inferFallbackOwnerAgentType(hasClaude, hasCodex);
 }

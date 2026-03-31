@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  _setRegisteredGroupForTests,
   _setStoredRoomOwnerAgentTypeForTests,
   _initTestDatabase,
   setExplicitRoomMode,
-  setRegisteredGroup,
 } from './db.js';
 import {
   activateCodexFailover,
@@ -22,14 +22,14 @@ beforeEach(() => {
 
 describe('service-routing global failover', () => {
   it('uses codex-review as owner during global failover', () => {
-    setRegisteredGroup('dc:paired', {
+    _setRegisteredGroupForTests('dc:paired', {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:paired', {
+    _setRegisteredGroupForTests('dc:paired', {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@Codex',
@@ -57,14 +57,14 @@ describe('service-routing global failover', () => {
   });
 
   it('restores default lease after global failover is cleared', () => {
-    setRegisteredGroup('dc:paired', {
+    _setRegisteredGroupForTests('dc:paired', {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:paired', {
+    _setRegisteredGroupForTests('dc:paired', {
       name: 'Paired Room',
       folder: 'paired-room',
       trigger: '@Codex',
@@ -85,14 +85,14 @@ describe('service-routing global failover', () => {
   });
 
   it('uses explicit single room mode to suppress reviewer lease on dual registration', () => {
-    setRegisteredGroup('dc:explicit-single', {
+    _setRegisteredGroupForTests('dc:explicit-single', {
       name: 'Explicit Single',
       folder: 'explicit-single',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:explicit-single', {
+    _setRegisteredGroupForTests('dc:explicit-single', {
       name: 'Explicit Single',
       folder: 'explicit-single',
       trigger: '@Codex',
@@ -110,14 +110,14 @@ describe('service-routing global failover', () => {
   });
 
   it('uses stored owner agent type when room_settings selects a different owner', () => {
-    setRegisteredGroup('dc:stored-owner-claude', {
+    _setRegisteredGroupForTests('dc:stored-owner-claude', {
       name: 'Stored Owner Claude',
       folder: 'stored-owner-claude',
       trigger: '@Andy',
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'claude-code',
     });
-    setRegisteredGroup('dc:stored-owner-claude', {
+    _setRegisteredGroupForTests('dc:stored-owner-claude', {
       name: 'Stored Owner Claude',
       folder: 'stored-owner-claude',
       trigger: '@Codex',
@@ -138,8 +138,8 @@ describe('service-routing global failover', () => {
     });
   });
 
-  it('falls back to the available service when stored owner agent type is unavailable', () => {
-    setRegisteredGroup('dc:stored-owner-fallback', {
+  it('trusts stored owner agent type over incomplete legacy capability rows', () => {
+    _setRegisteredGroupForTests('dc:stored-owner-fallback', {
       name: 'Stored Owner Fallback',
       folder: 'stored-owner-fallback',
       trigger: '@Andy',
@@ -150,14 +150,14 @@ describe('service-routing global failover', () => {
 
     expect(getEffectiveChannelLease('dc:stored-owner-fallback')).toMatchObject({
       chat_jid: 'dc:stored-owner-fallback',
-      owner_service_id: 'claude',
+      owner_service_id: 'codex-main',
       reviewer_service_id: null,
       explicit: false,
     });
   });
 
   it('creates a same-service reviewer lease when explicit tribunal is runnable on a solo registration', () => {
-    setRegisteredGroup('dc:explicit-tribunal', {
+    _setRegisteredGroupForTests('dc:explicit-tribunal', {
       name: 'Explicit Tribunal Claude',
       folder: 'explicit-tribunal-claude',
       trigger: '@Andy',
@@ -174,8 +174,8 @@ describe('service-routing global failover', () => {
     });
   });
 
-  it('keeps reviewer lease disabled when explicit tribunal cannot deliver the configured reviewer', () => {
-    setRegisteredGroup('dc:explicit-tribunal-codex', {
+  it('builds reviewer lease from stored tribunal mode even when legacy rows are incomplete', () => {
+    _setRegisteredGroupForTests('dc:explicit-tribunal-codex', {
       name: 'Explicit Tribunal Codex',
       folder: 'explicit-tribunal-codex',
       trigger: '@Codex',
@@ -189,7 +189,7 @@ describe('service-routing global failover', () => {
     ).toMatchObject({
       chat_jid: 'dc:explicit-tribunal-codex',
       owner_service_id: 'codex-main',
-      reviewer_service_id: null,
+      reviewer_service_id: 'claude',
       explicit: false,
     });
   });
