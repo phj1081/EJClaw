@@ -115,6 +115,9 @@ export const ARBITER_SERVICE_ID = ARBITER_AGENT_TYPE
   ? getEnv('ARBITER_SERVICE_ID') || CODEX_REVIEW_SERVICE_ID
   : null;
 
+/** Language for agent responses. When set, a language instruction is appended to all paired room prompts. */
+export const AGENT_LANGUAGE = getEnv('AGENT_LANGUAGE') || '';
+
 /** Number of consecutive owner↔reviewer round trips before arbiter is auto-requested. */
 export const ARBITER_DEADLOCK_THRESHOLD = parseInt(
   getEnv('ARBITER_DEADLOCK_THRESHOLD') || '3',

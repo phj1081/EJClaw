@@ -1,7 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 
+import { AGENT_LANGUAGE } from './config.js';
 import type { AgentType } from './types.js';
+
+function appendLanguageInstruction(prompt: string): string {
+  if (!AGENT_LANGUAGE) return prompt;
+  return `${prompt}\n\n## Language\n\nAlways respond in ${AGENT_LANGUAGE}.`;
+}
 
 const PLATFORM_PROMPT_FILES: Record<AgentType, string> = {
   'claude-code': 'claude-platform.md',
@@ -60,7 +66,7 @@ export function readPairedRoomPrompt(
   if (!fs.existsSync(promptPath)) return undefined;
 
   const prompt = fs.readFileSync(promptPath, 'utf-8').trim();
-  return prompt || undefined;
+  return prompt ? appendLanguageInstruction(prompt) : undefined;
 }
 
 export function getArbiterPromptPath(projectRoot = process.cwd()): string {
@@ -74,5 +80,5 @@ export function readArbiterPrompt(
   if (!fs.existsSync(promptPath)) return undefined;
 
   const prompt = fs.readFileSync(promptPath, 'utf-8').trim();
-  return prompt || undefined;
+  return prompt ? appendLanguageInstruction(prompt) : undefined;
 }

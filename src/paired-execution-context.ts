@@ -288,6 +288,18 @@ export function preparePairedExecutionContext(args: {
     // Use a stable per-channel worktree (not per-task) so the Claude SDK
     // session persists across tasks. Different channels still get isolation.
     workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
+    // Update source_ref from workspace HEAD so change detection compares
+    // against the correct repo. At task creation, source_ref is from the
+    // canonical workDir which may differ from the workspace clone.
+    if (workspace?.workspace_dir && latestTask.status === 'active') {
+      const wsRef = resolveCanonicalSourceRef(workspace.workspace_dir);
+      if (wsRef !== latestTask.source_ref) {
+        updatePairedTask(latestTask.id, {
+          source_ref: wsRef,
+          updated_at: now,
+        });
+      }
+    }
   } else if (roomRoleContext.role === 'reviewer') {
     const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
     workspace = reviewerWorkspace.workspace;
@@ -512,28 +524,32 @@ export function completePairedExecutionContext(args: {
           ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
           : null;
 
-        if (hasNewChanges === false) {
-          // No code changes since reviewer approved → finalize complete
+        if (hasNewChanges === true) {
+          // Owner made changes after approval → needs re-review
+          logger.info(
+            {
+              taskId,
+              sourceRef: task.source_ref,
+              hasNewChanges,
+            },
+            'Owner made changes after reviewer approval — re-triggering review',
+          );
+        } else {
+          // No code changes (false) or unable to determine (null) →
+          // finalize complete. Treating null as "no changes" prevents
+          // infinite DONE↔DONE loops when source_ref is from a different
+          // repo or the workspace has no matching ref.
           updatePairedTask(taskId, {
             status: 'completed',
             completion_reason: 'done',
             updated_at: now,
           });
           logger.info(
-            { taskId, summary: args.summary?.slice(0, 100) },
+            { taskId, hasNewChanges, summary: args.summary?.slice(0, 100) },
             'Owner finalized after reviewer approval — task completed',
           );
           return;
         }
-        // Owner made changes after approval → needs re-review
-        logger.info(
-          {
-            taskId,
-            sourceRef: task.source_ref,
-            hasNewChanges,
-          },
-          'Owner made changes after reviewer approval — re-triggering review',
-        );
       }
     }
 
