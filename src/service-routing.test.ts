@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  _setStoredRoomOwnerAgentTypeForTests,
   _initTestDatabase,
   setExplicitRoomMode,
   setRegisteredGroup,
@@ -108,6 +109,53 @@ describe('service-routing global failover', () => {
     });
   });
 
+  it('uses stored owner agent type when room_settings selects a different owner', () => {
+    setRegisteredGroup('dc:stored-owner-claude', {
+      name: 'Stored Owner Claude',
+      folder: 'stored-owner-claude',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    setRegisteredGroup('dc:stored-owner-claude', {
+      name: 'Stored Owner Claude',
+      folder: 'stored-owner-claude',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+    setExplicitRoomMode('dc:stored-owner-claude', 'single');
+    _setStoredRoomOwnerAgentTypeForTests(
+      'dc:stored-owner-claude',
+      'claude-code',
+    );
+
+    expect(getEffectiveChannelLease('dc:stored-owner-claude')).toMatchObject({
+      chat_jid: 'dc:stored-owner-claude',
+      owner_service_id: 'claude',
+      reviewer_service_id: null,
+      explicit: false,
+    });
+  });
+
+  it('falls back to the available service when stored owner agent type is unavailable', () => {
+    setRegisteredGroup('dc:stored-owner-fallback', {
+      name: 'Stored Owner Fallback',
+      folder: 'stored-owner-fallback',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    _setStoredRoomOwnerAgentTypeForTests('dc:stored-owner-fallback', 'codex');
+
+    expect(getEffectiveChannelLease('dc:stored-owner-fallback')).toMatchObject({
+      chat_jid: 'dc:stored-owner-fallback',
+      owner_service_id: 'claude',
+      reviewer_service_id: null,
+      explicit: false,
+    });
+  });
+
   it('creates a same-service reviewer lease when explicit tribunal is runnable on a solo registration', () => {
     setRegisteredGroup('dc:explicit-tribunal', {
       name: 'Explicit Tribunal Claude',
@@ -141,6 +189,15 @@ describe('service-routing global failover', () => {
     ).toMatchObject({
       chat_jid: 'dc:explicit-tribunal-codex',
       owner_service_id: 'codex-main',
+      reviewer_service_id: null,
+      explicit: false,
+    });
+  });
+
+  it('keeps the legacy claude fallback for chats without room settings', () => {
+    expect(getEffectiveChannelLease('dc:unregistered')).toMatchObject({
+      chat_jid: 'dc:unregistered',
+      owner_service_id: 'claude',
       reviewer_service_id: null,
       explicit: false,
     });

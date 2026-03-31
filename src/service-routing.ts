@@ -14,10 +14,12 @@ import {
   getAllChannelOwnerLeases,
   getEffectiveRuntimeRoomMode,
   getRegisteredAgentTypesForJid,
+  getStoredRoomSettings,
   setChannelOwnerLease,
   type ChannelOwnerLeaseRow,
 } from './db.js';
 import { logger } from './logger.js';
+import type { AgentType } from './types.js';
 
 export interface EffectiveChannelLease {
   chat_jid: string;
@@ -55,21 +57,44 @@ function normalizeLeaseRow(
   };
 }
 
-function getDefaultLease(chatJid: string): EffectiveChannelLease {
+function getServiceIdForAgentType(agentType: AgentType): string {
+  return agentType === 'codex' ? CODEX_MAIN_SERVICE_ID : CLAUDE_SERVICE_ID;
+}
+
+function inferFallbackOwnerAgentType(
+  hasClaude: boolean,
+  hasCodex: boolean,
+): AgentType | undefined {
+  if (hasClaude && hasCodex) return OWNER_AGENT_TYPE;
+  if (hasCodex) return 'codex';
+  if (hasClaude) return 'claude-code';
+  return undefined;
+}
+
+function resolveDefaultOwnerAgentType(chatJid: string): AgentType | undefined {
   const types = getRegisteredAgentTypesForJid(chatJid);
   const hasClaude = types.includes('claude-code');
   const hasCodex = types.includes('codex');
+  const storedOwnerAgentType = getStoredRoomSettings(chatJid)?.ownerAgentType;
+
+  if (storedOwnerAgentType === 'claude-code' && hasClaude) {
+    return 'claude-code';
+  }
+  if (storedOwnerAgentType === 'codex' && hasCodex) {
+    return 'codex';
+  }
+
+  return inferFallbackOwnerAgentType(hasClaude, hasCodex);
+}
+
+function getDefaultLease(chatJid: string): EffectiveChannelLease {
   const roomMode = getEffectiveRuntimeRoomMode(chatJid);
+  const ownerAgentType = resolveDefaultOwnerAgentType(chatJid);
+  const ownerServiceId = ownerAgentType
+    ? getServiceIdForAgentType(ownerAgentType)
+    : CLAUDE_SERVICE_ID;
 
   if (roomMode === 'tribunal') {
-    const ownerServiceId =
-      hasClaude && hasCodex
-        ? OWNER_AGENT_TYPE === 'codex'
-          ? CODEX_MAIN_SERVICE_ID
-          : CLAUDE_SERVICE_ID
-        : hasCodex
-          ? CODEX_MAIN_SERVICE_ID
-          : CLAUDE_SERVICE_ID;
     return {
       chat_jid: chatJid,
       owner_service_id: ownerServiceId,
@@ -81,33 +106,9 @@ function getDefaultLease(chatJid: string): EffectiveChannelLease {
     };
   }
 
-  if (hasCodex) {
-    return {
-      chat_jid: chatJid,
-      owner_service_id: CODEX_MAIN_SERVICE_ID,
-      reviewer_service_id: null,
-      arbiter_service_id: null,
-      activated_at: null,
-      reason: null,
-      explicit: false,
-    };
-  }
-
-  if (hasClaude) {
-    return {
-      chat_jid: chatJid,
-      owner_service_id: CLAUDE_SERVICE_ID,
-      reviewer_service_id: null,
-      arbiter_service_id: null,
-      activated_at: null,
-      reason: null,
-      explicit: false,
-    };
-  }
-
   return {
     chat_jid: chatJid,
-    owner_service_id: CLAUDE_SERVICE_ID,
+    owner_service_id: ownerServiceId,
     reviewer_service_id: null,
     arbiter_service_id: null,
     activated_at: null,

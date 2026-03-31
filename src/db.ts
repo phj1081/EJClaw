@@ -913,6 +913,22 @@ export function _initTestDatabaseFromFile(dbPath: string): void {
   createSchema(db);
 }
 
+/** @internal - for tests only. */
+export function _setStoredRoomOwnerAgentTypeForTests(
+  chatJid: string,
+  ownerAgentType: AgentType | null,
+): void {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+  db.prepare(
+    `UPDATE room_settings
+     SET owner_agent_type = ?,
+         updated_at = ?
+     WHERE chat_jid = ?`,
+  ).run(ownerAgentType, new Date().toISOString(), chatJid);
+}
+
 /**
  * Store chat metadata only (no message content).
  * Used for all chats to enable group discovery without storing sensitive content.
