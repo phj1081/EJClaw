@@ -22,6 +22,25 @@ A single unified service (`ejclaw`) manages three Discord bots in one process:
 
 All agent types and models are independently configurable per role via `.env`.
 
+## Room Assignment Model
+
+Per-room routing now uses an explicit assignment model:
+
+- `room_settings` is the room-level source of truth (SSOT)
+- Each room stores:
+  - `room_mode`: `single` or `tribunal`
+  - `owner_agent_type`: `codex` or `claude-code`
+- Public room assignment uses `assign_room`
+- Legacy `register_group` public interfaces were removed
+- `registered_groups` remains as a materialized capability/read-model layer and legacy fallback, not the authoritative room configuration
+
+Operationally:
+
+- `single` → one owner bot
+- `tribunal` → per-room owner + globally configured reviewer + optional arbiter
+
+This means tribunal is no longer inferred from “two bots registered on one room”; it is an explicit room setting.
+
 ## Tribunal 3-Agent System
 
 ```
