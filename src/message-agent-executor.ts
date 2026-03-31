@@ -114,8 +114,8 @@ export async function runAgentForGroup(
   const inferredRole = resolveActiveRole(pairedTask?.status);
   const canHonorForcedRole = Boolean(
     args.forcedRole === 'owner' ||
-      (args.forcedRole === 'reviewer' && currentLease.reviewer_service_id) ||
-      (args.forcedRole === 'arbiter' && currentLease.arbiter_service_id),
+    (args.forcedRole === 'reviewer' && currentLease.reviewer_service_id) ||
+    (args.forcedRole === 'arbiter' && currentLease.arbiter_service_id),
   );
   const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
   const effectiveServiceId =
@@ -534,7 +534,16 @@ export async function runAgentForGroup(
           if (!evaluation.shouldForwardOutput) {
             return;
           }
-          if (typeof outputText === 'string' && outputText.length > 0) {
+          // Only count final-phase output as "visible" for handoff decisions.
+          // Progress messages (phase: 'progress') should not block failover
+          // handoffs — they don't represent meaningful completed work.
+          const isFinalPhase =
+            output.phase === undefined || output.phase === 'final';
+          if (
+            isFinalPhase &&
+            typeof outputText === 'string' &&
+            outputText.length > 0
+          ) {
             streamedState = {
               ...evaluation.state,
               sawVisibleOutput: true,
