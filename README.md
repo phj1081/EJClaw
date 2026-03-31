@@ -15,11 +15,11 @@ Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros) and 
 
 A single unified service (`ejclaw`) runs a **Tribunal** of three roles:
 
-| Role | Purpose | Default |
-|------|---------|---------|
-| **Owner** | Handles user requests, writes code | Codex (`@codex`) |
-| **Reviewer** | Critically reviews owner's work, verifies design direction | Claude Code (`@claude`) |
-| **Arbiter** | On-demand deadlock breaker between owner and reviewer | Codex (`@codex-review`) |
+| Role | Purpose |
+|------|---------|
+| **Owner** | Handles user requests, writes code |
+| **Reviewer** | Critically reviews owner's work, verifies design direction |
+| **Arbiter** | On-demand deadlock breaker between owner and reviewer |
 
 Each role's agent type and model are independently configurable via `.env` (`OWNER_AGENT_TYPE`, `REVIEWER_AGENT_TYPE`, `ARBITER_AGENT_TYPE`, `*_MODEL`). Three Discord bots provide the identity layer — which bot speaks is determined by the active role, not hardcoded.
 
