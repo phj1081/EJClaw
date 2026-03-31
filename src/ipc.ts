@@ -26,7 +26,6 @@ export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   nudgeScheduler?: () => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
-  registerGroup: (jid: string, group: RegisteredGroup) => void;
   assignRoom: (jid: string, room: AssignRoomInput) => void;
   syncGroups: (force: boolean) => Promise<void>;
   getAvailableGroups: () => AvailableGroup[];
@@ -294,7 +293,7 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
-    // For assign_room / register_group
+    // For assign_room
     jid?: string;
     name?: string;
     folder?: string;
@@ -304,7 +303,6 @@ export async function processTaskIpc(
     owner_agent_type?: AgentType;
     isMain?: boolean;
     workDir?: string;
-    agentConfig?: RegisteredGroup['agentConfig'];
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -602,8 +600,7 @@ export async function processTaskIpc(
       break;
 
     case 'assign_room':
-    case 'register_group':
-      // Only main group can assign/register rooms
+      // Only main group can assign rooms
       if (!isMain) {
         logger.warn(
           { sourceGroup, type: data.type },
@@ -642,28 +639,15 @@ export async function processTaskIpc(
           break;
         }
 
-        if (data.type === 'assign_room') {
-          deps.assignRoom(data.jid, {
-            name: data.name,
-            roomMode: data.room_mode,
-            ownerAgentType: data.owner_agent_type,
-            folder: data.folder,
-            trigger: data.trigger,
-            requiresTrigger: data.requiresTrigger,
-            isMain: data.isMain,
-            workDir: data.workDir,
-          });
-          break;
-        }
-
         deps.assignRoom(data.jid, {
           name: data.name,
+          roomMode: data.room_mode,
           ownerAgentType: data.owner_agent_type,
           folder: data.folder,
           trigger: data.trigger,
           requiresTrigger: data.requiresTrigger,
-          ownerAgentConfig: data.agentConfig,
-          addedAt: new Date().toISOString(),
+          isMain: data.isMain,
+          workDir: data.workDir,
         });
       } else {
         logger.warn(

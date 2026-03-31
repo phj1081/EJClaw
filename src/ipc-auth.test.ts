@@ -60,11 +60,6 @@ beforeEach(() => {
     sendMessage: async () => {},
     nudgeScheduler: vi.fn(),
     registeredGroups: () => groups,
-    registerGroup: (jid, group) => {
-      groups[jid] = group;
-      setRegisteredGroup(jid, group);
-      // Mock the fs.mkdirSync that registerGroup does
-    },
     assignRoom: (jid, room) => {
       const assigned = assignRoom(jid, room);
       if (!assigned) return;
@@ -384,13 +379,13 @@ describe('cancel_task authorization', () => {
   });
 });
 
-// --- register_group authorization ---
+// --- assign_room authorization ---
 
-describe('register_group authorization', () => {
-  it('non-main group cannot register a group', async () => {
+describe('assign_room authorization', () => {
+  it('non-main group cannot assign a room', async () => {
     await processTaskIpc(
       {
-        type: 'register_group',
+        type: 'assign_room',
         jid: 'new@g.us',
         name: 'New Group',
         folder: 'new-group',
@@ -405,10 +400,10 @@ describe('register_group authorization', () => {
     expect(groups['new@g.us']).toBeUndefined();
   });
 
-  it('main group cannot register with unsafe folder path', async () => {
+  it('main group cannot assign with unsafe folder path', async () => {
     await processTaskIpc(
       {
-        type: 'register_group',
+        type: 'assign_room',
         jid: 'new@g.us',
         name: 'New Group',
         folder: '../../outside',
@@ -779,13 +774,13 @@ describe('schedule_task context_mode', () => {
   });
 });
 
-// --- register_group success path ---
+// --- assign_room success path ---
 
-describe('register_group success', () => {
-  it('main group can register a new group', async () => {
+describe('assign_room success', () => {
+  it('main group can assign a new room', async () => {
     await processTaskIpc(
       {
-        type: 'register_group',
+        type: 'assign_room',
         jid: 'new@g.us',
         name: 'New Group',
         folder: 'new-group',
@@ -796,7 +791,6 @@ describe('register_group success', () => {
       deps,
     );
 
-    // Verify group was registered in DB
     const group = getRegisteredGroup('new@g.us');
     expect(group).toBeDefined();
     expect(group!.name).toBe('New Group');
@@ -804,10 +798,10 @@ describe('register_group success', () => {
     expect(group!.trigger).toBe('@Andy');
   });
 
-  it('register_group auto-fills missing folder and trigger for single rooms', async () => {
+  it('assign_room auto-fills missing folder and trigger for single rooms', async () => {
     await processTaskIpc(
       {
-        type: 'register_group',
+        type: 'assign_room',
         jid: 'partial@g.us',
         name: 'Partial',
       },
@@ -823,7 +817,7 @@ describe('register_group success', () => {
     expect(getStoredRoomSettings('partial@g.us')?.roomMode).toBe('single');
   });
 
-  it('register_group preserves an existing tribunal room mode', async () => {
+  it('assign_room preserves an existing tribunal room mode when room_mode is omitted', async () => {
     assignRoom('legacy-tribunal@g.us', {
       name: 'Legacy Tribunal',
       roomMode: 'tribunal',
@@ -833,7 +827,7 @@ describe('register_group success', () => {
 
     await processTaskIpc(
       {
-        type: 'register_group',
+        type: 'assign_room',
         jid: 'legacy-tribunal@g.us',
         name: 'Legacy Tribunal Renamed',
         folder: 'legacy-tribunal',
@@ -854,9 +848,7 @@ describe('register_group success', () => {
       'codex',
     ]);
   });
-});
 
-describe('assign_room success', () => {
   it('main group can assign a tribunal room and materialize capability rows', async () => {
     await processTaskIpc(
       {

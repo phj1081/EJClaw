@@ -495,7 +495,7 @@ server.tool(
   'assign_room',
   `Assign or update a room using room-level settings. Main group only.
 
-This is the room-level replacement for legacy register_group. If folder is omitted, the host generates one automatically.`,
+If folder is omitted, the host generates one automatically.`,
   {
     jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
     name: z.string().describe('Display name for the room'),
@@ -543,42 +543,6 @@ This is the room-level replacement for legacy register_group. If folder is omitt
 
     return {
       content: [{ type: 'text' as const, text: `Room "${args.name}" assignment requested.` }],
-    };
-  },
-);
-
-server.tool(
-  'register_group',
-  `Register a new chat/group so the agent can respond to messages there. Main group only.
-
-Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
-  {
-    jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
-    name: z.string().describe('Display name for the group'),
-    folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
-    trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
-  },
-  async (args: { jid: string; name: string; folder: string; trigger: string }) => {
-    if (!isMain) {
-      return {
-        content: [{ type: 'text' as const, text: 'Only the main group can register new groups.' }],
-        isError: true,
-      };
-    }
-
-    const data = {
-      type: 'register_group',
-      jid: args.jid,
-      name: args.name,
-      folder: args.folder,
-      trigger: args.trigger,
-      timestamp: new Date().toISOString(),
-    };
-
-    writeIpcFile(TASKS_DIR, data);
-
-    return {
-      content: [{ type: 'text' as const, text: `Group "${args.name}" registration requested.` }],
     };
   },
 );

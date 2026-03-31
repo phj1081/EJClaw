@@ -216,46 +216,6 @@ function clearSession(
   }
 }
 
-function registerGroup(jid: string, group: RegisteredGroup): void {
-  const assignedGroup = assignRoom(jid, {
-    name: group.name,
-    ownerAgentType: group.agentType,
-    folder: group.folder,
-    trigger: group.trigger,
-    requiresTrigger: group.requiresTrigger,
-    isMain: group.isMain,
-    workDir: group.workDir,
-    addedAt: group.added_at,
-    ownerAgentConfig: group.agentConfig,
-  });
-  if (!assignedGroup) {
-    logger.warn({ jid }, 'Failed to assign room during legacy registration');
-    return;
-  }
-
-  let groupDir: string;
-  try {
-    groupDir = resolveGroupFolderPath(assignedGroup.folder);
-  } catch (err) {
-    logger.warn(
-      { jid, folder: assignedGroup.folder, err },
-      'Rejecting group registration with invalid folder',
-    );
-    return;
-  }
-
-  const { jid: _ignoredJid, ...storedGroup } = assignedGroup;
-  registeredGroups[jid] = storedGroup;
-
-  // Create group folder
-  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
-
-  logger.info(
-    { jid, name: assignedGroup.name, folder: assignedGroup.folder },
-    'Group registered',
-  );
-}
-
 function assignRoomForIpc(jid: string, input: AssignRoomInput): void {
   const assignedGroup = assignRoom(jid, input);
   if (!assignedGroup) {
@@ -521,7 +481,6 @@ async function main(): Promise<void> {
     },
     nudgeScheduler: nudgeSchedulerLoop,
     registeredGroups: () => registeredGroups,
-    registerGroup,
     assignRoom: assignRoomForIpc,
     syncGroups: async (force: boolean) => {
       await Promise.all(

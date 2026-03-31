@@ -965,7 +965,7 @@ describe('paired room registration', () => {
     });
   });
 
-  it('keeps room-level metadata synced on legacy register_group writes', () => {
+  it('keeps room-level metadata synced on setRegisteredGroup helper writes', () => {
     setRegisteredGroup('dc:room-settings', {
       name: 'Room Settings Test',
       folder: 'room-settings-test',
