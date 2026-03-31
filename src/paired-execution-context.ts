@@ -738,13 +738,18 @@ export function completePairedExecutionContext(args: {
         logger.info({ taskId }, 'Arbiter escalated to user — task completed');
         break;
       default:
-        // Unknown verdict — treat as escalate
+        // Unknown verdict — fallback to proceed so the loop continues.
+        // Stopping the task on a parse failure is worse than letting it run.
         updatePairedTask(taskId, {
-          status: 'completed',
+          status: 'active',
+          round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
           arbiter_verdict: 'unknown',
-          completion_reason: 'arbiter_escalated',
           updated_at: now,
         });
+        logger.warn(
+          { taskId, summary: args.summary?.slice(0, 200) },
+          'Arbiter verdict unrecognized — falling back to proceed',
+        );
         break;
     }
   }
