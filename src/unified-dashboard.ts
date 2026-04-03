@@ -591,6 +591,7 @@ function buildModelConfigSection(): string {
     },
   ];
 
+  const failover = getGlobalFailoverInfo();
   const lines = ['🤖 *모델 구성*'];
   for (const role of roleConfigs) {
     if (!role.agentType && role.label === 'Arbiter') continue;
@@ -600,7 +601,15 @@ function buildModelConfigSection(): string {
         ? process.env.CODEX_MODEL || 'codex'
         : process.env.CLAUDE_MODEL || 'claude';
     const model = role.model || defaultModel;
-    lines.push(`  **${role.label}** — ${type} \`${model}\``);
+
+    // Show fallback status for claude-code roles when global failover is active
+    const isFallback = failover.active && type === 'claude-code';
+    if (isFallback) {
+      const fallbackModel = process.env.CODEX_MODEL || 'codex';
+      lines.push(`  **${role.label}** — codex \`${fallbackModel}\` (fallback)`);
+    } else {
+      lines.push(`  **${role.label}** — ${type} \`${model}\``);
+    }
   }
 
   // MoA status
@@ -612,8 +621,6 @@ function buildModelConfigSection(): string {
     lines.push(`  **MoA** — ${refs}`);
   }
 
-  // Global failover
-  const failover = getGlobalFailoverInfo();
   if (failover.active) {
     lines.push(`  ⚠️ **Failover 활성** — ${failover.reason || '알 수 없음'}`);
   }

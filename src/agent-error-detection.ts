@@ -102,7 +102,8 @@ export type AgentTriggerReason =
   | 'session-failure'
   | 'overloaded'
   | 'network-error'
-  | 'success-null-result';
+  | 'success-null-result'
+  | 'session-failure';
 
 export type ClaudeRotationReason = Extract<
   AgentTriggerReason,

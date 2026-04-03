@@ -31,6 +31,10 @@ RUN apt-get update --fix-missing && apt-get install -y --no-install-recommends \
     zip \
     unzip \
     strace \
+    ripgrep \
+    fd-find \
+    bat \
+    tree \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -52,18 +56,24 @@ RUN curl -fsSL https://bun.sh/install | bash
 # Create app directory
 WORKDIR /app
 
-# Copy host's agent-runner (same code, same SDK version)
-COPY runners/agent-runner/package*.json ./
-RUN bun install
-COPY runners/agent-runner/ ./
-RUN bun run build
+# Copy agent-runner (Claude Code)
+COPY runners/agent-runner/package*.json ./agent/
+RUN bun install --cwd ./agent
+COPY runners/agent-runner/ ./agent/
+RUN bun run --cwd ./agent build
+
+# Copy codex-runner
+COPY runners/codex-runner/package*.json ./codex/
+RUN bun install --cwd ./codex
+COPY runners/codex-runner/ ./codex/
+RUN bun run --cwd ./codex build
 
 # Create workspace directories
 RUN mkdir -p /workspace/project /workspace/group /workspace/global \
     /workspace/ipc/messages /workspace/ipc/input
 
-# Create entrypoint script
-RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nbun /app/dist/index.js < /tmp/input.json\n' \
+# Entrypoint (fallback — persistent containers use docker exec with explicit runner path)
+RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nbun /app/agent/dist/index.js < /tmp/input.json\n' \
     > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root)

@@ -321,6 +321,28 @@ export function buildReviewerMounts(
     readonly: false,
   });
 
+  // Owner session directory: read-only so reviewer can verify runtime state
+  // files (cron state, configs, etc.) that the owner references by absolute path.
+  const ownerSessionDir = path.join(DATA_DIR, 'sessions', group.folder);
+  if (fs.existsSync(ownerSessionDir)) {
+    mounts.push({
+      hostPath: ownerSessionDir,
+      containerPath: ownerSessionDir,
+      readonly: true,
+    });
+  }
+
+  // Codex OAuth: mount host's ~/.codex (read-only) so codex-runner can authenticate
+  const hostCodexHome =
+    process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  if (fs.existsSync(hostCodexHome)) {
+    mounts.push({
+      hostPath: hostCodexHome,
+      containerPath: '/home/node/.codex',
+      readonly: true,
+    });
+  }
+
   return mounts;
 }
 
@@ -367,12 +389,20 @@ function buildCreateArgs(
     args.push('-e', `SENTRY_AUTH_TOKEN=${process.env.SENTRY_AUTH_TOKEN}`);
   }
 
-  // Extra env overrides from paired-execution-context
+  // Extra env overrides from paired-execution-context.
+  // Model/effort keys are excluded here — they are injected per-exec so the
+  // correct agent-type-specific values are used (claude vs codex).
+  const perExecKeys = new Set([
+    'CLAUDE_MODEL',
+    'CLAUDE_EFFORT',
+    'CODEX_MODEL',
+    'CODEX_EFFORT',
+  ]);
   if (envOverrides) {
     for (const [key, value] of Object.entries(envOverrides)) {
-      // Already set above — skip duplicates
       if (key === 'ANTHROPIC_API_KEY' || key === 'CLAUDE_CODE_OAUTH_TOKEN')
         continue;
+      if (perExecKeys.has(key)) continue;
       if (key === 'EJCLAW_WORK_DIR') {
         args.push('-e', 'EJCLAW_WORK_DIR=/workspace/project');
         continue;
@@ -469,22 +499,38 @@ export async function runReviewerContainer(args: {
       '';
     execArgs.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
   }
-  // Inject model/effort overrides at exec-time so per-role config
-  // takes effect even with persistent containers.
-  const modelEnvKeys = [
-    'CLAUDE_MODEL',
-    'CLAUDE_EFFORT',
-    'CODEX_MODEL',
-    'CODEX_EFFORT',
-  ];
+  const isCodexAgent = (group.agentType || 'claude-code') === 'codex';
+  logger.info(
+    {
+      containerName,
+      groupAgentType: group.agentType,
+      isCodexAgent,
+      runnerPath: isCodexAgent
+        ? '/app/codex/dist/index.js'
+        : '/app/agent/dist/index.js',
+    },
+    'Container exec runner selection',
+  );
+  // Inject only agent-type-appropriate model/effort overrides per exec.
   if (envOverrides) {
+    const modelEnvKeys = isCodexAgent
+      ? ['CODEX_MODEL', 'CODEX_EFFORT']
+      : ['CLAUDE_MODEL', 'CLAUDE_EFFORT'];
     for (const key of modelEnvKeys) {
       if (envOverrides[key]) {
         execArgs.push('-e', `${key}=${envOverrides[key]}`);
       }
     }
   }
-  execArgs.push(containerName, 'bun', '/app/dist/index.js');
+  if (isCodexAgent) {
+    // Use session-local .codex dir (contains AGENTS.md with role prompts)
+    // instead of the host-mounted ~/.codex (which has owner-only config).
+    execArgs.push('-e', 'CODEX_HOME=/home/node/.claude/.codex');
+  }
+  const runnerPath = isCodexAgent
+    ? '/app/codex/dist/index.js'
+    : '/app/agent/dist/index.js';
+  execArgs.push(containerName, 'bun', runnerPath);
 
   return new Promise<AgentOutput>((resolve) => {
     const proc = spawn(CONTAINER_RUNTIME_BIN, execArgs, {

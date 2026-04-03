@@ -97,6 +97,26 @@ export async function runAgentProcess(
         memoryBriefing: input.memoryBriefing,
         role: containerRole,
       });
+      // For codex: also write AGENTS.md to the reviewer session dir, because
+      // the container's /home/node/.claude always mounts the reviewer session.
+      // Arbiter and reviewer never run simultaneously, so this is safe.
+      if (containerRole === 'arbiter') {
+        const reviewerSessionDir = path.join(
+          path.dirname(sessionDir),
+          `${group.folder}-reviewer`,
+        );
+        const reviewerCodexDir = path.join(reviewerSessionDir, '.codex');
+        if (fs.existsSync(reviewerSessionDir)) {
+          fs.mkdirSync(reviewerCodexDir, { recursive: true });
+          const arbiterAgentsMd = path.join(sessionDir, '.codex', 'AGENTS.md');
+          if (fs.existsSync(arbiterAgentsMd)) {
+            fs.copyFileSync(
+              arbiterAgentsMd,
+              path.join(reviewerCodexDir, 'AGENTS.md'),
+            );
+          }
+        }
+      }
     }
 
     return runReviewerContainer({
