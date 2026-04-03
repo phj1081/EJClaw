@@ -46,8 +46,11 @@ export interface RoomRoleContext {
   role: PairedRoomRole;
   ownerServiceId: string;
   reviewerServiceId: string;
+  ownerAgentType?: AgentType;
+  reviewerAgentType?: AgentType | null;
   failoverOwner: boolean;
   arbiterServiceId?: string;
+  arbiterAgentType?: AgentType | null;
 }
 
 export interface PairedProject {
@@ -64,6 +67,9 @@ export interface PairedTask {
   group_folder: string;
   owner_service_id: string;
   reviewer_service_id: string;
+  owner_agent_type?: AgentType | null;
+  reviewer_agent_type?: AgentType | null;
+  arbiter_agent_type?: AgentType | null;
   title: string | null;
   source_ref: string | null;
   plan_notes: string | null;

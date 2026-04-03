@@ -21,8 +21,6 @@ describe('restartStackServices', () => {
   it('dispatches stack restart through the oneshot unit by default', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
     tempRoots.push(tempRoot);
-    fs.writeFileSync(path.join(tempRoot, '.env.codex'), 'A=1\n');
-    fs.writeFileSync(path.join(tempRoot, '.env.codex-review'), 'B=1\n');
 
     const execFileSyncImpl = vi.fn();
 
@@ -33,7 +31,7 @@ describe('restartStackServices', () => {
       serviceId: null,
     });
 
-    expect(services).toEqual(['ejclaw', 'ejclaw-codex', 'ejclaw-review']);
+    expect(services).toEqual(['ejclaw']);
     expect(execFileSyncImpl).toHaveBeenNthCalledWith(
       1,
       'systemctl',
@@ -43,11 +41,9 @@ describe('restartStackServices', () => {
     expect(execFileSyncImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('restarts and verifies the configured three-service stack in direct mode', () => {
+  it('restarts and verifies the unified service in direct mode', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
     tempRoots.push(tempRoot);
-    fs.writeFileSync(path.join(tempRoot, '.env.codex'), 'A=1\n');
-    fs.writeFileSync(path.join(tempRoot, '.env.codex-review'), 'B=1\n');
 
     const execFileSyncImpl = vi.fn();
 
@@ -59,11 +55,11 @@ describe('restartStackServices', () => {
       serviceId: null,
     });
 
-    expect(services).toEqual(['ejclaw', 'ejclaw-codex', 'ejclaw-review']);
+    expect(services).toEqual(['ejclaw']);
     expect(execFileSyncImpl).toHaveBeenNthCalledWith(
       1,
       'systemctl',
-      ['--user', 'restart', 'ejclaw', 'ejclaw-codex', 'ejclaw-review'],
+      ['--user', 'restart', 'ejclaw'],
       { stdio: 'ignore' },
     );
     expect(execFileSyncImpl).toHaveBeenNthCalledWith(
@@ -72,18 +68,7 @@ describe('restartStackServices', () => {
       ['--user', 'is-active', '--quiet', 'ejclaw'],
       { stdio: 'ignore' },
     );
-    expect(execFileSyncImpl).toHaveBeenNthCalledWith(
-      3,
-      'systemctl',
-      ['--user', 'is-active', '--quiet', 'ejclaw-codex'],
-      { stdio: 'ignore' },
-    );
-    expect(execFileSyncImpl).toHaveBeenNthCalledWith(
-      4,
-      'systemctl',
-      ['--user', 'is-active', '--quiet', 'ejclaw-review'],
-      { stdio: 'ignore' },
-    );
+    expect(execFileSyncImpl).toHaveBeenCalledTimes(2);
   });
 
   it('rejects non-systemd environments', () => {
@@ -97,11 +82,34 @@ describe('restartStackServices', () => {
     ).toThrow('restart:stack only supports Linux systemd services in this repo');
   });
 
+  it('fails fast when legacy services are still present', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
+    tempRoots.push(tempRoot);
+
+    const execFileSyncImpl = vi.fn();
+
+    expect(() =>
+      restartStackServices(tempRoot, {
+        direct: true,
+        execFileSyncImpl,
+        runningAsRoot: false,
+        serviceManager: 'systemd',
+        serviceId: null,
+        legacyServiceIssues: [
+          {
+            name: 'ejclaw-codex',
+            status: 'stopped',
+            sources: ['systemd-system'],
+          },
+        ],
+      }),
+    ).toThrow('Legacy EJClaw multi-service install detected');
+    expect(execFileSyncImpl).not.toHaveBeenCalled();
+  });
+
   it('falls back to direct restart when the oneshot unit is not installed for an external caller', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
     tempRoots.push(tempRoot);
-    fs.writeFileSync(path.join(tempRoot, '.env.codex'), 'A=1\n');
-    fs.writeFileSync(path.join(tempRoot, '.env.codex-review'), 'B=1\n');
 
     const execFileSyncImpl = vi
       .fn()
@@ -120,7 +128,7 @@ describe('restartStackServices', () => {
       serviceId: null,
     });
 
-    expect(services).toEqual(['ejclaw', 'ejclaw-codex', 'ejclaw-review']);
+    expect(services).toEqual(['ejclaw']);
     expect(execFileSyncImpl).toHaveBeenNthCalledWith(
       1,
       'systemctl',
@@ -130,7 +138,7 @@ describe('restartStackServices', () => {
     expect(execFileSyncImpl).toHaveBeenNthCalledWith(
       2,
       'systemctl',
-      ['--user', 'restart', 'ejclaw', 'ejclaw-codex', 'ejclaw-review'],
+      ['--user', 'restart', 'ejclaw'],
       { stdio: 'ignore' },
     );
   });
@@ -138,7 +146,6 @@ describe('restartStackServices', () => {
   it('rejects direct fallback when the unit is missing for a managed service caller', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
     tempRoots.push(tempRoot);
-    fs.writeFileSync(path.join(tempRoot, '.env.codex'), 'A=1\n');
 
     const execFileSyncImpl = vi.fn().mockImplementation(() => {
       const error = new Error('unit missing');
@@ -161,7 +168,6 @@ describe('restartStackServices', () => {
   it('does not hide a general start failure behind direct fallback', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
     tempRoots.push(tempRoot);
-    fs.writeFileSync(path.join(tempRoot, '.env.codex'), 'A=1\n');
 
     const execFileSyncImpl = vi.fn().mockImplementation(() => {
       const error = new Error('job failed');

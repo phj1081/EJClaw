@@ -121,6 +121,144 @@ function ensureCleanDirectory(targetDir: string): void {
   fs.mkdirSync(targetDir, { recursive: true });
 }
 
+type GitWorktreeEntry = {
+  worktreePath: string;
+  head: string | null;
+  branchRef: string | null;
+  detached: boolean;
+  prunableReason: string | null;
+};
+
+function tryRunGit(args: string[], cwd?: string): string | null {
+  try {
+    return runGit(args, cwd);
+  } catch {
+    return null;
+  }
+}
+
+function listGitWorktrees(repoDir: string): GitWorktreeEntry[] {
+  const output = execFileSync('git', ['worktree', 'list', '--porcelain'], {
+    cwd: repoDir,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const entries: GitWorktreeEntry[] = [];
+  let current: GitWorktreeEntry | null = null;
+
+  const pushCurrent = () => {
+    if (current) {
+      entries.push(current);
+      current = null;
+    }
+  };
+
+  for (const rawLine of output.split('\n')) {
+    const line = rawLine.trimEnd();
+    if (line.length === 0) {
+      pushCurrent();
+      continue;
+    }
+    if (line.startsWith('worktree ')) {
+      pushCurrent();
+      current = {
+        worktreePath: path.resolve(line.slice('worktree '.length).trim()),
+        head: null,
+        branchRef: null,
+        detached: false,
+        prunableReason: null,
+      };
+      continue;
+    }
+    if (!current) {
+      continue;
+    }
+    if (line.startsWith('HEAD ')) {
+      current.head = line.slice('HEAD '.length).trim();
+      continue;
+    }
+    if (line.startsWith('branch ')) {
+      current.branchRef = line.slice('branch '.length).trim();
+      continue;
+    }
+    if (line === 'detached') {
+      current.detached = true;
+      continue;
+    }
+    if (line.startsWith('prunable')) {
+      current.prunableReason = line.slice('prunable'.length).trim() || null;
+    }
+  }
+  pushCurrent();
+  return entries;
+}
+
+function branchRefName(branchName: string): string {
+  return `refs/heads/${branchName}`;
+}
+
+function buildOwnerBranchName(groupFolder: string): string {
+  return `codex/owner/${groupFolder}`;
+}
+
+function resolveBranchName(repoDir: string): string | null {
+  return tryRunGit(['symbolic-ref', '--short', '-q', 'HEAD'], repoDir);
+}
+
+function resolveCommit(repoDir: string, ref: string): string | null {
+  return tryRunGit(['rev-parse', '--verify', `${ref}^{commit}`], repoDir);
+}
+
+function findWorktreeEntry(
+  repoDir: string,
+  workspaceDir: string,
+): GitWorktreeEntry | null {
+  const resolvedWorkspaceDir = path.resolve(workspaceDir);
+  return (
+    listGitWorktrees(repoDir).find(
+      (entry) => path.resolve(entry.worktreePath) === resolvedWorkspaceDir,
+    ) ?? null
+  );
+}
+
+function ensureBranchNotCheckedOutElsewhere(
+  canonicalWorkDir: string,
+  workspaceDir: string,
+  branchName: string,
+): void {
+  const resolvedWorkspaceDir = path.resolve(workspaceDir);
+  const targetBranchRef = branchRefName(branchName);
+  const conflictingWorktree = listGitWorktrees(canonicalWorkDir).find(
+    (entry) =>
+      entry.branchRef === targetBranchRef &&
+      path.resolve(entry.worktreePath) !== resolvedWorkspaceDir,
+  );
+  if (conflictingWorktree) {
+    throw new Error(
+      `Owner branch ${branchName} is already checked out at ${conflictingWorktree.worktreePath}.`,
+    );
+  }
+}
+
+function repairOwnerWorktreeRegistration(
+  workspaceDir: string,
+  canonicalWorkDir: string,
+): void {
+  runGit(['worktree', 'prune', '--expire', 'now'], canonicalWorkDir);
+
+  const entry = findWorktreeEntry(canonicalWorkDir, workspaceDir);
+  if (!entry) {
+    return;
+  }
+
+  const workspaceExists = fs.existsSync(workspaceDir);
+  if (!workspaceExists || entry.prunableReason) {
+    throw new Error(
+      `Owner workspace registration for ${workspaceDir} is stale after repair: ${entry.prunableReason ?? 'missing worktree path'}.`,
+    );
+  }
+}
+
 function listGitPaths(repoDir: string, args: string[]): string[] {
   const output = execFileSync('git', args, {
     cwd: repoDir,
@@ -415,6 +553,13 @@ export function provisionOwnerWorkspaceForPairedTask(
 ): PairedWorkspace {
   const { task, canonicalWorkDir } = getTaskAndProject(taskId);
   ensureGitRepository(canonicalWorkDir);
+  const targetBranch = buildOwnerBranchName(task.group_folder);
+  const canonicalHeadCommit = resolveCommit(canonicalWorkDir, 'HEAD');
+  if (!canonicalHeadCommit) {
+    throw new Error(
+      `Unable to resolve canonical HEAD for owner workspace task ${taskId}.`,
+    );
+  }
 
   // Use a stable per-channel path (not per-task) so the Claude SDK
   // recognizes it as the same project across tasks → session persists.
@@ -425,19 +570,70 @@ export function provisionOwnerWorkspaceForPairedTask(
     'owner',
   );
   fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
+  repairOwnerWorktreeRegistration(workspaceDir, canonicalWorkDir);
 
-  if (!fs.existsSync(path.join(workspaceDir, '.git'))) {
-    runGit(['worktree', 'add', workspaceDir, 'HEAD'], canonicalWorkDir);
+  const workspaceGitPath = path.join(workspaceDir, '.git');
+  const targetBranchCommit = resolveCommit(
+    canonicalWorkDir,
+    branchRefName(targetBranch),
+  );
+
+  if (!fs.existsSync(workspaceGitPath)) {
+    if (targetBranchCommit) {
+      ensureBranchNotCheckedOutElsewhere(
+        canonicalWorkDir,
+        workspaceDir,
+        targetBranch,
+      );
+      runGit(['worktree', 'add', workspaceDir, targetBranch], canonicalWorkDir);
+    } else {
+      runGit(
+        ['worktree', 'add', '-b', targetBranch, workspaceDir, canonicalHeadCommit],
+        canonicalWorkDir,
+      );
+    }
     logger.info(
-      { taskId, workspaceDir },
-      'Provisioned stable owner workspace for channel',
+      {
+        taskId,
+        workspaceDir,
+        targetBranch,
+        baseRef: canonicalHeadCommit,
+        sourceRef: task.source_ref,
+      },
+      'Provisioned stable owner workspace branch for channel',
     );
   } else {
-    // Worktree exists — pull latest changes from canonical repo
-    try {
-      runGit(['checkout', '--detach', 'HEAD'], workspaceDir);
-    } catch {
-      // Already at HEAD or detached — fine
+    ensureGitRepository(workspaceDir);
+
+    const currentBranch = resolveBranchName(workspaceDir);
+    if (currentBranch === targetBranch) {
+      // Stable owner workspace is already attached to the channel branch.
+    } else if (currentBranch) {
+      throw new Error(
+        `Owner workspace ${workspaceDir} is on unexpected branch ${currentBranch}; expected ${targetBranch}.`,
+      );
+    } else {
+      const currentHeadCommit = resolveCommit(workspaceDir, 'HEAD');
+      if (!currentHeadCommit) {
+        throw new Error(
+          `Unable to resolve detached owner workspace HEAD for ${workspaceDir}.`,
+        );
+      }
+
+      if (!targetBranchCommit) {
+        runGit(['switch', '-c', targetBranch], workspaceDir);
+      } else if (targetBranchCommit === currentHeadCommit) {
+        ensureBranchNotCheckedOutElsewhere(
+          canonicalWorkDir,
+          workspaceDir,
+          targetBranch,
+        );
+        runGit(['switch', targetBranch], workspaceDir);
+      } else {
+        throw new Error(
+          `Owner workspace ${workspaceDir} is detached at ${currentHeadCommit}, but ${targetBranch} points to ${targetBranchCommit}.`,
+        );
+      }
     }
   }
 

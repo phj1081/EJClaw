@@ -2,14 +2,18 @@
  * Step: verify — End-to-end health check of the full installation.
  * Replaces 09-verify.sh
  *
- * Supports the EJClaw service stack:
- *   - ejclaw (Claude Code) — always checked
- *   - ejclaw-codex (Codex) — checked when .env.codex exists
- *   - ejclaw-review (Codex Review) — checked when .env.codex-review exists
+ * Supports the unified EJClaw service:
+ *   - ejclaw — always checked
  *
  * Uses better-sqlite3 directly (no sqlite3 CLI), platform-aware service checks.
  */
+import os from 'os';
+
 import { logger } from '../src/logger.js';
+import {
+  detectLegacyServiceIssues,
+  formatLegacyServiceFailureMessage,
+} from './legacy-service-guard.js';
 import { getServiceManager } from './platform.js';
 import { getServiceDefs } from './service-defs.js';
 import { emitStatus } from './status.js';
@@ -17,7 +21,9 @@ import {
   buildVerifySummary,
   detectChannelAuth,
   detectCredentials,
+  detectLegacyDiscordTokenKeys,
   loadRegisteredGroupsSummary,
+  loadRoleRoutingRequirementsSummary,
 } from './verify-state.js';
 import { getServiceChecks } from './verify-services.js';
 
@@ -34,18 +40,35 @@ export async function run(_args: string[]): Promise<void> {
   // 1. Check service statuses
   const serviceDefs = getServiceDefs(projectRoot);
   const services = getServiceChecks(serviceDefs, projectRoot, mgr);
+  const legacyServiceIssues = detectLegacyServiceIssues(
+    projectRoot,
+    mgr,
+    os.homedir(),
+  );
 
   for (const svc of services) {
     logger.info({ service: svc.name, status: svc.status }, 'Service status');
   }
+  for (const svc of legacyServiceIssues) {
+    logger.error(
+      { service: svc.name, status: svc.status },
+      'Legacy service detected during verification',
+    );
+  }
 
   const credentials = detectCredentials(projectRoot);
   const channelAuth = detectChannelAuth();
+  const legacyDiscordTokenKeys = detectLegacyDiscordTokenKeys();
   const { registeredGroups, groupsByAgent } = loadRegisteredGroupsSummary();
+  const { tribunalRooms, activeArbiterTasks } =
+    loadRoleRoutingRequirementsSummary();
   const {
-    status,
+    status: baseStatus,
     servicesSummary,
     configuredChannels,
+    legacyDiscordTokenKeys: legacyDiscordTokens,
+    tribunalRooms: detectedTribunalRooms,
+    activeArbiterTasks: detectedActiveArbiterTasks,
     codexConfigured,
     reviewConfigured,
   } = buildVerifySummary(
@@ -55,17 +78,64 @@ export async function run(_args: string[]): Promise<void> {
     channelAuth,
     registeredGroups,
     groupsByAgent,
+    {
+      legacyDiscordTokenKeys,
+      tribunalRooms,
+      activeArbiterTasks,
+    },
   );
+  const legacyServicesSummary = Object.fromEntries(
+    legacyServiceIssues.map((service) => [service.name, service.status]),
+  );
+  const status = legacyServiceIssues.length > 0 ? 'failed' : baseStatus;
 
-  logger.info({ status, channelAuth, servicesSummary }, 'Verification complete');
+  logger.info(
+    {
+      status,
+      channelAuth,
+      legacyDiscordTokens,
+      tribunalRooms: detectedTribunalRooms,
+      activeArbiterTasks: detectedActiveArbiterTasks,
+      servicesSummary,
+      legacyServicesSummary,
+    },
+    'Verification complete',
+  );
+  if (legacyDiscordTokens.length > 0) {
+    logger.error(
+      {
+        legacyDiscordTokens,
+        migration:
+          'Rename Discord bot tokens to DISCORD_OWNER_BOT_TOKEN / DISCORD_REVIEWER_BOT_TOKEN / DISCORD_ARBITER_BOT_TOKEN',
+      },
+      'Verification failed due to legacy service-based Discord bot token names',
+    );
+  }
+  if (legacyServiceIssues.length > 0) {
+    logger.error(
+      {
+        cleanup: formatLegacyServiceFailureMessage({
+          projectRoot,
+          serviceManager: mgr,
+          homeDir: os.homedir(),
+          services: legacyServiceIssues,
+        }),
+      },
+      'Verification failed due to legacy multi-service install',
+    );
+  }
 
   emitStatus('VERIFY', {
     SERVICES: JSON.stringify(servicesSummary),
+    LEGACY_SERVICES: JSON.stringify(legacyServicesSummary),
     // Legacy field (keep for backward compatibility)
     SERVICE: services[0].status,
     CREDENTIALS: credentials,
     CONFIGURED_CHANNELS: configuredChannels.join(','),
     CHANNEL_AUTH: JSON.stringify(channelAuth),
+    LEGACY_DISCORD_TOKENS: legacyDiscordTokens.join(','),
+    TRIBUNAL_ROOMS: detectedTribunalRooms,
+    ACTIVE_ARBITER_TASKS: detectedActiveArbiterTasks,
     REGISTERED_GROUPS: registeredGroups,
     GROUPS_BY_AGENT: JSON.stringify(groupsByAgent),
     CODEX_CONFIGURED: codexConfigured,

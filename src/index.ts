@@ -7,7 +7,6 @@ import {
   DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
-  REVIEWER_AGENT_TYPE,
   SERVICE_ID,
   isSessionCommandSenderAllowed,
   STATUS_CHANNEL_ID,
@@ -445,10 +444,8 @@ async function main(): Promise<void> {
   }
 
   // Start subsystems (independently of connection handler)
-  // Resolve the reviewer channel so cron output in paired rooms is posted
-  // via the reviewer bot — the owner then treats it as a peer request.
-  const reviewerChannelName =
-    REVIEWER_AGENT_TYPE === 'claude-code' ? 'discord' : 'discord-review';
+  // Paired-room scheduler output goes through the reviewer bot slot.
+  const reviewerChannelName = 'discord-review';
   const reviewerChannelForCron = findChannelByName(
     channels,
     reviewerChannelName,

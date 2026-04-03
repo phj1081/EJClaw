@@ -179,6 +179,25 @@ interface TaskExecutionContext {
   taskAgentType: AgentType;
 }
 
+async function sendScheduledMessage(
+  deps: SchedulerDependencies,
+  chatJid: string,
+  text: string,
+): Promise<void> {
+  if (!hasReviewerLease(chatJid)) {
+    await deps.sendMessage(chatJid, text);
+    return;
+  }
+
+  if (!deps.sendMessageViaReviewerBot) {
+    throw new Error(
+      'Paired-room scheduled output requires a configured reviewer Discord bot',
+    );
+  }
+
+  await deps.sendMessageViaReviewerBot(chatJid, text);
+}
+
 function resolveTaskExecutionContext(
   task: ScheduledTask,
   deps: SchedulerDependencies,
@@ -396,13 +415,8 @@ async function runTask(
           const outputText = getAgentOutputText(streamedOutput);
           if (outputText) {
             attemptResult = outputText;
-            // In paired rooms, post cron output via reviewer bot so the
-            // owner treats it as a peer request and acts on it.
-            const send =
-              hasReviewerLease(task.chat_jid) && deps.sendMessageViaReviewerBot
-                ? deps.sendMessageViaReviewerBot
-                : deps.sendMessage;
-            await send(task.chat_jid, outputText);
+            // Paired-room scheduler output must use the reviewer bot slot.
+            await sendScheduledMessage(deps, task.chat_jid, outputText);
           }
 
           if (streamedOutput.status === 'error') {
@@ -743,11 +757,7 @@ async function runGithubCiTask(
     if (check.terminal) {
       await statusTracker.update('completed');
       if (check.completionMessage) {
-        const send =
-          hasReviewerLease(task.chat_jid) && deps.sendMessageViaReviewerBot
-            ? deps.sendMessageViaReviewerBot
-            : deps.sendMessage;
-        await send(task.chat_jid, check.completionMessage);
+        await sendScheduledMessage(deps, task.chat_jid, check.completionMessage);
       }
       deleteTask(task.id);
       completedAndDeleted = true;

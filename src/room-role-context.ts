@@ -1,8 +1,5 @@
-import {
-  CODEX_MAIN_SERVICE_ID,
-  CODEX_REVIEW_SERVICE_ID,
-  normalizeServiceId,
-} from './config.js';
+import { normalizeServiceId } from './config.js';
+import { resolveLeaseServiceId } from './service-routing.js';
 import type { PairedRoomRole, RoomRoleContext } from './types.js';
 import type { EffectiveChannelLease } from './service-routing.js';
 
@@ -12,18 +9,16 @@ export function buildRoomRoleContext(
   preferredRole?: PairedRoomRole,
 ): RoomRoleContext | undefined {
   const normalizedServiceId = normalizeServiceId(serviceId);
-  const reviewerServiceId = lease.reviewer_service_id
-    ? normalizeServiceId(lease.reviewer_service_id)
-    : null;
+  const reviewerServiceId = resolveLeaseServiceId(lease, 'reviewer');
 
   if (!reviewerServiceId) {
     return undefined;
   }
 
-  const ownerServiceId = normalizeServiceId(lease.owner_service_id);
-  const arbiterServiceId = lease.arbiter_service_id
-    ? normalizeServiceId(lease.arbiter_service_id)
-    : undefined;
+  const ownerServiceId =
+    resolveLeaseServiceId(lease, 'owner') ??
+    normalizeServiceId(lease.owner_service_id);
+  const arbiterServiceId = resolveLeaseServiceId(lease, 'arbiter') ?? undefined;
 
   const matches = {
     owner: ownerServiceId === normalizedServiceId,
@@ -51,9 +46,16 @@ export function buildRoomRoleContext(
     role,
     ownerServiceId,
     reviewerServiceId,
-    failoverOwner:
-      ownerServiceId === CODEX_REVIEW_SERVICE_ID &&
-      reviewerServiceId === CODEX_MAIN_SERVICE_ID,
+    ...(lease.owner_agent_type
+      ? { ownerAgentType: lease.owner_agent_type }
+      : {}),
+    ...(lease.reviewer_agent_type !== undefined
+      ? { reviewerAgentType: lease.reviewer_agent_type }
+      : {}),
+    failoverOwner: Boolean(lease.owner_failover_active),
     arbiterServiceId,
+    ...(lease.arbiter_agent_type !== undefined
+      ? { arbiterAgentType: lease.arbiter_agent_type }
+      : {}),
   };
 }

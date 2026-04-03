@@ -66,6 +66,7 @@ vi.mock('./db.js', () => {
     failServiceHandoff: vi.fn(),
     getAllChats: vi.fn(() => []),
     getAllTasks: vi.fn(() => []),
+    getAllPendingServiceHandoffs: vi.fn(() => []),
     getLastHumanMessageTimestamp: vi.fn(() => null),
     getLastHumanMessageContent: vi.fn(() => null),
     getMessagesSince,
@@ -114,7 +115,6 @@ vi.mock('./db.js', () => {
       },
     ),
     getOpenWorkItem: vi.fn(() => undefined),
-    getPendingServiceHandoffs: vi.fn(() => []),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
     getRecentChatMessages: vi.fn(() => []),
@@ -124,6 +124,7 @@ vi.mock('./db.js', () => {
       chat_jid: input.chat_jid,
       agent_type: input.agent_type || 'claude-code',
       service_id: 'claude',
+      delivery_role: input.delivery_role ?? null,
       status: 'produced',
       start_seq: input.start_seq,
       end_seq: input.end_seq,
@@ -151,6 +152,20 @@ vi.mock('./service-routing.js', () => ({
     reason: null,
     explicit: false,
   })),
+  resolveLeaseServiceId: vi.fn(
+    (
+      lease: {
+        owner_service_id: string;
+        reviewer_service_id: string | null;
+        arbiter_service_id?: string | null;
+      },
+      role: 'owner' | 'reviewer' | 'arbiter',
+    ) => {
+      if (role === 'owner') return lease.owner_service_id;
+      if (role === 'reviewer') return lease.reviewer_service_id;
+      return lease.arbiter_service_id ?? null;
+    },
+  ),
   shouldServiceProcessChat: vi.fn(() => true),
 }));
 
@@ -185,6 +200,7 @@ import * as db from './db.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import {
   createMessageRuntime,
+  resolveHandoffCursorKey,
   resolveHandoffRoleOverride,
 } from './message-runtime.js';
 import * as config from './config.js';
@@ -202,14 +218,18 @@ function makeGroup(agentType: 'claude-code' | 'codex'): RegisteredGroup {
   };
 }
 
-function makeChannel(chatJid: string): Channel {
+function makeChannel(
+  chatJid: string,
+  name = 'discord',
+  ownsJid = true,
+): Channel {
   return {
-    name: 'discord',
+    name,
     connect: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn().mockResolvedValue(undefined),
     sendAndTrack: vi.fn().mockResolvedValue('progress-1'),
     isConnected: vi.fn(() => true),
-    ownsJid: vi.fn((jid: string) => jid === chatJid),
+    ownsJid: vi.fn((jid: string) => ownsJid && jid === chatJid),
     disconnect: vi.fn().mockResolvedValue(undefined),
     setTyping: vi.fn().mockResolvedValue(undefined),
     editMessage: vi.fn().mockResolvedValue(undefined),
@@ -229,28 +249,50 @@ describe('createMessageRuntime', () => {
   it('prefers intended_role over reason prefixes for handoff role resolution', () => {
     expect(
       resolveHandoffRoleOverride({
+        target_role: 'arbiter',
+        intended_role: 'reviewer',
+        reason: 'reviewer-claude-429',
+      }),
+    ).toBe('arbiter');
+    expect(
+      resolveHandoffRoleOverride({
+        target_role: null,
         intended_role: 'reviewer',
         reason: 'claude-429',
       }),
     ).toBe('reviewer');
     expect(
       resolveHandoffRoleOverride({
+        target_role: null,
         intended_role: null,
         reason: 'arbiter-claude-429',
       }),
     ).toBe('arbiter');
     expect(
       resolveHandoffRoleOverride({
+        target_role: null,
         intended_role: null,
         reason: 'reviewer-claude-usage-exhausted',
       }),
     ).toBe('reviewer');
     expect(
       resolveHandoffRoleOverride({
+        target_role: null,
         intended_role: null,
         reason: 'claude-usage-exhausted',
       }),
     ).toBeUndefined();
+  });
+
+  it('uses role-scoped cursor keys for reviewer and arbiter handoffs', () => {
+    expect(resolveHandoffCursorKey('group@test')).toBe('group@test');
+    expect(resolveHandoffCursorKey('group@test', 'owner')).toBe('group@test');
+    expect(resolveHandoffCursorKey('group@test', 'reviewer')).toBe(
+      'group@test:reviewer',
+    );
+    expect(resolveHandoffCursorKey('group@test', 'arbiter')).toBe(
+      'group@test:arbiter',
+    );
   });
 
   it('ignores generic failure bot messages in paired rooms', async () => {
@@ -576,15 +618,180 @@ describe('createMessageRuntime', () => {
     expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
   });
 
+  it('retries a stale reviewer work item when the reviewer channel is missing', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const enqueueMessageCheck = vi.fn();
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getOpenWorkItem).mockReturnValue({
+      id: 100,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'claude',
+      delivery_role: 'reviewer',
+      status: 'delivery_retry',
+      start_seq: 10,
+      end_seq: 11,
+      result_payload: 'reviewer final',
+      delivery_attempts: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'missing role channel',
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-review-delivery',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'in_review',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-open-review-work-item-missing-channel',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(false);
+    expect(db.markWorkItemDeliveryRetry).toHaveBeenCalledWith(
+      100,
+      expect.stringContaining('discord-review'),
+    );
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+
+  it('retries a stale reviewer work item via the persisted delivery role even after task status changed', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const enqueueMessageCheck = vi.fn();
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getOpenWorkItem).mockReturnValue({
+      id: 101,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'claude',
+      delivery_role: 'reviewer',
+      status: 'delivery_retry',
+      start_seq: 10,
+      end_seq: 11,
+      result_payload: 'reviewer final retry',
+      delivery_attempts: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'discord send failed',
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-review-delivery-role',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'merge_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-open-review-work-item-persisted-role',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'reviewer final retry',
+    );
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+  });
+
   it('does not inject filtered raw bot finals into workspace-based review prompts', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const saveState = vi.fn();
     const lastAgentTimestamps: Record<string, string> = {};
-    const channel: Channel = {
+    const ownerChannel: Channel = {
       ...makeChannel(chatJid),
       isOwnMessage: vi.fn((msg) => msg.sender === 'owner-bot@test'),
     };
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
 
     vi.mocked(config.isClaudeService).mockReturnValue(false);
     vi.mocked(config.isReviewService).mockReturnValue(false);
@@ -653,7 +860,7 @@ describe('createMessageRuntime', () => {
       pollInterval: 1_000,
       timezone: 'UTC',
       triggerPattern: /^@Andy\b/i,
-      channels: [channel],
+      channels: [ownerChannel, reviewerChannel],
       queue: {
         registerProcess: vi.fn(),
         closeStdin: vi.fn(),
@@ -678,7 +885,10 @@ describe('createMessageRuntime', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
     expect(lastAgentTimestamps[`${chatJid}:reviewer`]).toBe('41');
     expect(saveState).toHaveBeenCalled();
-    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '리뷰 확인 완료');
+    expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      '리뷰 확인 완료',
+    );
   });
 
   it('includes the latest reviewer summary in merge_ready finalize prompts and truncates it', async () => {
@@ -789,7 +999,8 @@ describe('createMessageRuntime', () => {
   it('reuses the shared arbiter prompt builder for pending arbiter turns', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
+    const ownerChannel = makeChannel(chatJid);
+    const arbiterChannel = makeChannel(chatJid, 'discord-arbiter', false);
 
     vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
@@ -876,7 +1087,7 @@ describe('createMessageRuntime', () => {
       pollInterval: 1_000,
       timezone: 'UTC',
       triggerPattern: /^@Andy\b/i,
-      channels: [channel],
+      channels: [ownerChannel, arbiterChannel],
       queue: {
         registerProcess: vi.fn(),
         closeStdin: vi.fn(),
@@ -899,19 +1110,234 @@ describe('createMessageRuntime', () => {
 
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
-    expect(channel.sendMessage).toHaveBeenCalledWith(
+    expect(arbiterChannel.sendMessage).toHaveBeenCalledWith(
       chatJid,
       'arbiter 확인 완료',
     );
   });
 
-  it('does not fabricate owner labels from same-service raw bot history in paired turn prompts', async () => {
+  it('fails closed for pending reviewer turns when the reviewer channel is missing', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-review-pending-missing-channel',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 0,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '리뷰해줘',
+        timestamp: '2026-03-30T00:00:11.000Z',
+        seq: 12,
+        is_bot_message: false,
+      },
+    ] as any);
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-pending-review-missing-channel',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(false);
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(lastAgentTimestamps[`${chatJid}:reviewer`]).toBeUndefined();
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for pending arbiter turns when the arbiter channel is missing', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn();
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-arbiter-pending-missing-channel',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 3,
+      status: 'arbiter_requested',
+      arbiter_verdict: null,
+      arbiter_requested_at: '2026-03-30T00:00:10.000Z',
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:10.000Z',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '판정해줘',
+        timestamp: '2026-03-30T00:00:11.000Z',
+        seq: 22,
+        is_bot_message: false,
+      },
+    ] as any);
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-pending-arbiter-missing-channel',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(false);
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(lastAgentTimestamps[`${chatJid}:arbiter`]).toBeUndefined();
+    expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for normal arbiter turns when the arbiter channel is missing', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-arbiter-normal-missing-channel',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 3,
+      status: 'in_arbitration',
+      arbiter_verdict: null,
+      arbiter_requested_at: '2026-03-30T00:00:10.000Z',
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:10.000Z',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '판정해줘',
+        timestamp: '2026-03-30T00:00:11.000Z',
+        is_bot_message: false,
+      },
+    ] as any);
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-normal-arbiter-missing-channel',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(false);
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('labels raw reviewer bot history by fixed role in paired turn prompts', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const saveState = vi.fn();
     const lastAgentTimestamps: Record<string, string> = {};
-    const channel: Channel = {
-      ...makeChannel(chatJid),
+    const ownerChannel = makeChannel(chatJid);
+    const reviewerChannel: Channel = {
+      ...makeChannel(chatJid, 'discord-review', false),
       isOwnMessage: vi.fn((msg) => msg.sender === 'shared-bot@test'),
     };
 
@@ -967,7 +1393,7 @@ describe('createMessageRuntime', () => {
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toContain(
-          '<message sender="Shared Bot" time="30 Mar 09:00">reviewer-like reply</message>',
+          '<message sender="reviewer" time="30 Mar 09:00">reviewer-like reply</message>',
         );
         expect(input.prompt).not.toContain(
           '<message sender="owner" time="30 Mar 09:00">reviewer-like reply</message>',
@@ -992,7 +1418,7 @@ describe('createMessageRuntime', () => {
       pollInterval: 1_000,
       timezone: 'Asia/Seoul',
       triggerPattern: /^@Andy\b/i,
-      channels: [channel],
+      channels: [ownerChannel, reviewerChannel],
       queue: {
         registerProcess: vi.fn(),
         closeStdin: vi.fn(),
@@ -1009,7 +1435,7 @@ describe('createMessageRuntime', () => {
     });
 
     const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-same-service-raw-history',
+      runId: 'run-fixed-reviewer-bot-history',
       reason: 'messages',
     });
 
@@ -1017,11 +1443,12 @@ describe('createMessageRuntime', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
   });
 
-  it('does not fabricate owner labels from same-service raw bot history in arbiter prompts', async () => {
+  it('labels raw arbiter bot history by fixed role in arbiter prompts', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
-    const channel: Channel = {
-      ...makeChannel(chatJid),
+    const ownerChannel = makeChannel(chatJid);
+    const arbiterChannel: Channel = {
+      ...makeChannel(chatJid, 'discord-arbiter', false),
       isOwnMessage: vi.fn((msg) => msg.sender === 'shared-bot@test'),
     };
 
@@ -1077,7 +1504,7 @@ describe('createMessageRuntime', () => {
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toContain(
-          '<message sender="Shared Bot" time="30 Mar 09:00">reviewer-like reply</message>',
+          '<message sender="arbiter" time="30 Mar 09:00">reviewer-like reply</message>',
         );
         expect(input.prompt).not.toContain(
           '<message sender="owner" time="30 Mar 09:00">reviewer-like reply</message>',
@@ -1102,7 +1529,7 @@ describe('createMessageRuntime', () => {
       pollInterval: 1_000,
       timezone: 'Asia/Seoul',
       triggerPattern: /^@Andy\b/i,
-      channels: [channel],
+      channels: [ownerChannel, arbiterChannel],
       queue: {
         registerProcess: vi.fn(),
         closeStdin: vi.fn(),
@@ -1119,7 +1546,7 @@ describe('createMessageRuntime', () => {
     });
 
     const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-same-service-arbiter-fallback',
+      runId: 'run-fixed-arbiter-bot-history',
       reason: 'messages',
     });
 

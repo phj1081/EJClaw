@@ -1,7 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-
-export type ServiceKind = 'primary' | 'codex' | 'review';
+export type ServiceKind = 'primary' | 'legacy';
 
 export interface ServiceDef {
   /** Stable topology kind used by setup/verify logic */
@@ -26,11 +23,9 @@ interface ServiceTemplate {
   launchdLabel: string;
   description: string;
   logName: string;
-  envFileName?: string;
-  assistantName?: string;
 }
 
-const SERVICE_TEMPLATES: ServiceTemplate[] = [
+const CURRENT_SERVICE_TEMPLATES: ServiceTemplate[] = [
   {
     kind: 'primary',
     name: 'ejclaw',
@@ -38,37 +33,27 @@ const SERVICE_TEMPLATES: ServiceTemplate[] = [
     description: 'EJClaw Personal Assistant (Claude Code)',
     logName: 'ejclaw',
   },
+];
+
+const LEGACY_SERVICE_TEMPLATES: ServiceTemplate[] = [
   {
-    kind: 'codex',
+    kind: 'legacy',
     name: 'ejclaw-codex',
     launchdLabel: 'com.ejclaw-codex',
-    description: 'EJClaw Codex Assistant',
+    description: 'Legacy EJClaw Codex Assistant',
     logName: 'ejclaw-codex',
-    envFileName: '.env.codex',
-    assistantName: 'codex',
   },
   {
-    kind: 'review',
+    kind: 'legacy',
     name: 'ejclaw-review',
     launchdLabel: 'com.ejclaw-review',
-    description: 'EJClaw Codex Review Assistant',
+    description: 'Legacy EJClaw Codex Review Assistant',
     logName: 'ejclaw-review',
-    envFileName: '.env.codex-review',
-    assistantName: 'codex',
   },
 ];
 
-function materializeServiceDef(
-  projectRoot: string,
-  template: ServiceTemplate,
-): ServiceDef | null {
-  const environmentFile = template.envFileName
-    ? path.join(projectRoot, template.envFileName)
-    : undefined;
-
-  if (environmentFile && !fs.existsSync(environmentFile)) {
-    return null;
-  }
+function materializeServiceDef(template: ServiceTemplate): ServiceDef {
+  const environmentFile = undefined;
 
   return {
     kind: template.kind,
@@ -77,21 +62,28 @@ function materializeServiceDef(
     description: template.description,
     logName: template.logName,
     environmentFile,
-    extraEnv: template.assistantName
-      ? {
-          ASSISTANT_NAME: template.assistantName,
-        }
-      : undefined,
+    extraEnv: undefined,
   };
 }
 
 export function getServiceDefs(projectRoot: string): ServiceDef[] {
-  return SERVICE_TEMPLATES.flatMap((template) => {
-    const def = materializeServiceDef(projectRoot, template);
-    return def ? [def] : [];
-  });
+  void projectRoot;
+  return CURRENT_SERVICE_TEMPLATES.map((template) =>
+    materializeServiceDef(template),
+  );
+}
+
+export function getLegacyServiceDefs(projectRoot: string): ServiceDef[] {
+  void projectRoot;
+  return LEGACY_SERVICE_TEMPLATES.map((template) =>
+    materializeServiceDef(template),
+  );
 }
 
 export function getConfiguredServiceNames(projectRoot: string): string[] {
   return getServiceDefs(projectRoot).map((def) => def.name);
+}
+
+export function getLegacyServiceNames(projectRoot: string): string[] {
+  return getLegacyServiceDefs(projectRoot).map((def) => def.name);
 }

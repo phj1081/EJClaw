@@ -11,9 +11,23 @@ import type { ServiceCheck } from './verify-services.js';
 export type CredentialsStatus = 'configured' | 'missing';
 export type VerifyStatus = 'success' | 'failed';
 
+const LEGACY_DISCORD_TOKEN_KEYS = [
+  'DISCORD_BOT_TOKEN',
+  'DISCORD_CODEX_BOT_TOKEN',
+  'DISCORD_REVIEW_BOT_TOKEN',
+  'DISCORD_CLAUDE_BOT_TOKEN',
+  'DISCORD_CODEX_MAIN_BOT_TOKEN',
+  'DISCORD_CODEX_REVIEW_BOT_TOKEN',
+];
+
 export interface RegisteredGroupsSummary {
   registeredGroups: number;
   groupsByAgent: Record<string, number>;
+}
+
+export interface RoleRoutingRequirementsSummary {
+  tribunalRooms: number;
+  activeArbiterTasks: number;
 }
 
 export interface VerifySummary extends RegisteredGroupsSummary {
@@ -21,6 +35,10 @@ export interface VerifySummary extends RegisteredGroupsSummary {
   servicesSummary: Record<string, string>;
   configuredChannels: string[];
   channelAuth: Record<string, string>;
+  legacyDiscordTokenKeys: string[];
+  tribunalRooms: number;
+  activeArbiterTasks: number;
+  // Legacy status fields kept for backward-compatible setup output.
   codexConfigured: boolean;
   reviewConfigured: boolean;
 }
@@ -38,16 +56,37 @@ export function detectCredentials(projectRoot: string): CredentialsStatus {
 }
 
 export function detectChannelAuth(
-  envVars = readEnvFile(['DISCORD_BOT_TOKEN']),
+  envVars = readEnvFile([
+    'DISCORD_OWNER_BOT_TOKEN',
+    'DISCORD_REVIEWER_BOT_TOKEN',
+    'DISCORD_ARBITER_BOT_TOKEN',
+  ]),
   processEnv: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   const channelAuth: Record<string, string> = {};
 
-  if (processEnv.DISCORD_BOT_TOKEN || envVars.DISCORD_BOT_TOKEN) {
+  const hasEnv = (key: string): boolean => !!(processEnv[key] || envVars[key]);
+
+  if (hasEnv('DISCORD_OWNER_BOT_TOKEN')) {
     channelAuth.discord = 'configured';
+  }
+  if (hasEnv('DISCORD_REVIEWER_BOT_TOKEN')) {
+    channelAuth['discord-review'] = 'configured';
+  }
+  if (hasEnv('DISCORD_ARBITER_BOT_TOKEN')) {
+    channelAuth['discord-arbiter'] = 'configured';
   }
 
   return channelAuth;
+}
+
+export function detectLegacyDiscordTokenKeys(
+  envVars = readEnvFile(LEGACY_DISCORD_TOKEN_KEYS),
+  processEnv: NodeJS.ProcessEnv = process.env,
+): string[] {
+  return LEGACY_DISCORD_TOKEN_KEYS.filter(
+    (key) => !!(processEnv[key] || envVars[key]),
+  );
 }
 
 export function loadRegisteredGroupsSummary(
@@ -88,6 +127,82 @@ export function loadRegisteredGroupsSummary(
   return { registeredGroups, groupsByAgent };
 }
 
+export function loadRoleRoutingRequirementsSummary(
+  dbPath = path.join(STORE_DIR, 'messages.db'),
+): RoleRoutingRequirementsSummary {
+  let tribunalRooms = 0;
+  let activeArbiterTasks = 0;
+
+  if (!fs.existsSync(dbPath)) {
+    return { tribunalRooms, activeArbiterTasks };
+  }
+
+  try {
+    const db = new Database(dbPath, { readonly: true });
+
+    try {
+      const roomModeRow = db
+        .prepare(
+          `
+            SELECT COUNT(*) as count
+              FROM (
+                SELECT chat_jid AS jid
+                  FROM room_settings
+                 WHERE room_mode = 'tribunal'
+                UNION
+                SELECT jid
+                  FROM registered_groups
+                 GROUP BY jid
+                HAVING COUNT(DISTINCT agent_type) > 1
+              )
+          `,
+        )
+        .get() as { count: number };
+      tribunalRooms = roomModeRow.count;
+    } catch {
+      try {
+        const fallbackRow = db
+          .prepare(
+            `
+              SELECT COUNT(*) as count
+                FROM (
+                  SELECT jid
+                    FROM registered_groups
+                   GROUP BY jid
+                  HAVING COUNT(DISTINCT agent_type) > 1
+                )
+            `,
+          )
+          .get() as { count: number };
+        tribunalRooms = fallbackRow.count;
+      } catch {
+        tribunalRooms = 0;
+      }
+    }
+
+    try {
+      const arbiterRow = db
+        .prepare(
+          `
+            SELECT COUNT(*) as count
+              FROM paired_tasks
+             WHERE status IN ('arbiter_requested', 'in_arbitration')
+          `,
+        )
+        .get() as { count: number };
+      activeArbiterTasks = arbiterRow.count;
+    } catch {
+      activeArbiterTasks = 0;
+    }
+
+    db.close();
+  } catch {
+    // Tables might not exist yet
+  }
+
+  return { tribunalRooms, activeArbiterTasks };
+}
+
 export function buildVerifySummary(
   services: ServiceCheck[],
   serviceDefs: ServiceDef[],
@@ -95,22 +210,33 @@ export function buildVerifySummary(
   channelAuth: Record<string, string>,
   registeredGroups: number,
   groupsByAgent: Record<string, number>,
+  options: {
+    legacyDiscordTokenKeys?: string[];
+    tribunalRooms?: number;
+    activeArbiterTasks?: number;
+  } = {},
 ): VerifySummary {
+  void serviceDefs;
   const configuredChannels = Object.keys(channelAuth);
   const allConfiguredServicesRunning = services.every(
     (service) => service.status === 'running',
   );
-  const codexConfigured = serviceDefs.some(
-    (service) => service.kind === 'codex',
-  );
-  const reviewConfigured = serviceDefs.some(
-    (service) => service.kind === 'review',
-  );
+  const hasOwnerCapableChannel = 'discord' in channelAuth;
+  const codexConfigured = 'discord-review' in channelAuth;
+  const reviewConfigured = 'discord-arbiter' in channelAuth;
+  const legacyDiscordTokenKeys = options.legacyDiscordTokenKeys ?? [];
+  const tribunalRooms = options.tribunalRooms ?? 0;
+  const activeArbiterTasks = options.activeArbiterTasks ?? 0;
+  const reviewerConfigured = tribunalRooms === 0 || codexConfigured;
+  const arbiterConfigured = activeArbiterTasks === 0 || reviewConfigured;
 
   const status =
     allConfiguredServicesRunning &&
     credentials === 'configured' &&
-    configuredChannels.length > 0 &&
+    hasOwnerCapableChannel &&
+    legacyDiscordTokenKeys.length === 0 &&
+    reviewerConfigured &&
+    arbiterConfigured &&
     registeredGroups > 0
       ? 'success'
       : 'failed';
@@ -125,6 +251,9 @@ export function buildVerifySummary(
     servicesSummary,
     configuredChannels,
     channelAuth,
+    legacyDiscordTokenKeys,
+    tribunalRooms,
+    activeArbiterTasks,
     registeredGroups,
     groupsByAgent,
     codexConfigured,

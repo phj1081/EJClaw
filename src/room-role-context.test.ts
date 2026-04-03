@@ -11,6 +11,7 @@ describe('buildRoomRoleContext', () => {
           owner_service_id: 'claude',
           reviewer_service_id: 'codex-main',
           arbiter_service_id: null,
+          owner_failover_active: false,
           activated_at: null,
           reason: null,
           explicit: false,
@@ -27,14 +28,46 @@ describe('buildRoomRoleContext', () => {
     });
   });
 
-  it('returns owner failover context for a codex-review failover turn', () => {
+  it('prefers the canonical reviewer shadow over a stale compatibility field', () => {
     expect(
       buildRoomRoleContext(
         {
           chat_jid: 'group@test',
-          owner_service_id: 'codex-review',
-          reviewer_service_id: 'codex-main',
+          owner_agent_type: 'claude-code',
+          reviewer_agent_type: 'codex',
+          owner_service_id: 'claude',
+          reviewer_service_id: 'stale-reviewer-shadow',
           arbiter_service_id: null,
+          owner_failover_active: false,
+          activated_at: null,
+          reason: null,
+          explicit: true,
+        },
+        'codex-review',
+      ),
+    ).toEqual({
+      serviceId: 'codex-review',
+      role: 'reviewer',
+      ownerServiceId: 'claude',
+      reviewerServiceId: 'codex-review',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'codex',
+      failoverOwner: false,
+      arbiterServiceId: undefined,
+    });
+  });
+
+  it('returns owner failover context from the explicit owner failover flag', () => {
+    expect(
+      buildRoomRoleContext(
+        {
+          chat_jid: 'group@test',
+          owner_agent_type: 'claude-code',
+          reviewer_agent_type: 'claude-code',
+          owner_service_id: 'codex-review',
+          reviewer_service_id: 'claude',
+          arbiter_service_id: null,
+          owner_failover_active: true,
           activated_at: '2026-03-28T10:00:00.000Z',
           reason: 'claude-429',
           explicit: true,
@@ -45,7 +78,9 @@ describe('buildRoomRoleContext', () => {
       serviceId: 'codex-review',
       role: 'owner',
       ownerServiceId: 'codex-review',
-      reviewerServiceId: 'codex-main',
+      reviewerServiceId: 'claude',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'claude-code',
       failoverOwner: true,
       arbiterServiceId: undefined,
     });
@@ -59,6 +94,7 @@ describe('buildRoomRoleContext', () => {
           owner_service_id: 'codex-main',
           reviewer_service_id: 'claude',
           arbiter_service_id: 'codex-review',
+          owner_failover_active: false,
           activated_at: null,
           reason: null,
           explicit: false,
@@ -83,6 +119,7 @@ describe('buildRoomRoleContext', () => {
           owner_service_id: 'claude',
           reviewer_service_id: 'claude',
           arbiter_service_id: null,
+          owner_failover_active: false,
           activated_at: null,
           reason: null,
           explicit: false,
@@ -108,6 +145,7 @@ describe('buildRoomRoleContext', () => {
           owner_service_id: 'codex-main',
           reviewer_service_id: null,
           arbiter_service_id: null,
+          owner_failover_active: false,
           activated_at: null,
           reason: null,
           explicit: false,

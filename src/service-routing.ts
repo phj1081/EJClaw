@@ -1,10 +1,9 @@
 import {
+  ARBITER_AGENT_TYPE,
   ARBITER_SERVICE_ID,
-  CLAUDE_SERVICE_ID,
-  CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
   OWNER_AGENT_TYPE,
-  REVIEWER_SERVICE_ID_FOR_TYPE,
+  REVIEWER_AGENT_TYPE,
   SERVICE_ID,
   isArbiterEnabled,
   normalizeServiceId,
@@ -15,17 +14,25 @@ import {
   getEffectiveRuntimeRoomMode,
   getRegisteredAgentTypesForJid,
   getStoredRoomSettings,
-  setChannelOwnerLease,
   type ChannelOwnerLeaseRow,
 } from './db.js';
 import { logger } from './logger.js';
-import type { AgentType } from './types.js';
+import {
+  inferAgentTypeFromServiceShadow,
+  resolveRoleServiceShadow,
+} from './role-service-shadow.js';
+import { resolveRoleAgentPlan } from './role-agent-plan.js';
+import type { AgentType, PairedRoomRole } from './types.js';
 
 export interface EffectiveChannelLease {
   chat_jid: string;
+  owner_agent_type?: AgentType;
+  reviewer_agent_type?: AgentType | null;
+  arbiter_agent_type?: AgentType | null;
   owner_service_id: string;
   reviewer_service_id: string | null;
   arbiter_service_id: string | null;
+  owner_failover_active?: boolean;
   activated_at: string | null;
   reason: string | null;
   explicit: boolean;
@@ -40,25 +47,54 @@ function normalizeLeaseRow(
   row: ChannelOwnerLeaseRow,
   explicit: boolean,
 ): EffectiveChannelLease {
+  const ownerAgentType =
+    row.owner_agent_type ??
+    getStoredRoomSettings(row.chat_jid)?.ownerAgentType ??
+    inferAgentTypeFromServiceShadow(row.owner_service_id) ??
+    'claude-code';
+  const reviewerAgentType =
+    row.reviewer_service_id == null
+      ? null
+      : row.reviewer_agent_type ??
+        inferAgentTypeFromServiceShadow(row.reviewer_service_id) ??
+        resolveRoleAgentPlan({
+          paired: true,
+          groupAgentType: ownerAgentType,
+          configuredReviewer: REVIEWER_AGENT_TYPE,
+          configuredArbiter: ARBITER_AGENT_TYPE,
+        }).reviewerAgentType;
+  const arbiterAgentType =
+    row.arbiter_agent_type ??
+    (row.arbiter_service_id
+      ? inferAgentTypeFromServiceShadow(row.arbiter_service_id)
+      : undefined) ??
+    null;
+
   return {
     chat_jid: row.chat_jid,
-    owner_service_id: normalizeServiceId(row.owner_service_id),
-    reviewer_service_id: row.reviewer_service_id
-      ? normalizeServiceId(row.reviewer_service_id)
+    owner_agent_type: ownerAgentType,
+    reviewer_agent_type: reviewerAgentType,
+    arbiter_agent_type: arbiterAgentType,
+    owner_service_id:
+      resolveRoleServiceShadow('owner', ownerAgentType) ??
+      normalizeServiceId(row.owner_service_id),
+    reviewer_service_id: reviewerAgentType
+      ? resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
+        normalizeServiceId(row.reviewer_service_id!)
       : null,
-    arbiter_service_id: row.arbiter_service_id
-      ? normalizeServiceId(row.arbiter_service_id)
-      : isArbiterEnabled()
-        ? ARBITER_SERVICE_ID
-        : null,
+    arbiter_service_id: arbiterAgentType
+      ? resolveRoleServiceShadow('arbiter', arbiterAgentType) ??
+        (row.arbiter_service_id ? normalizeServiceId(row.arbiter_service_id) : null)
+      : row.arbiter_service_id
+        ? normalizeServiceId(row.arbiter_service_id)
+        : isArbiterEnabled()
+          ? ARBITER_SERVICE_ID
+          : null,
+    owner_failover_active: false,
     activated_at: row.activated_at,
     reason: row.reason,
     explicit,
   };
-}
-
-function getServiceIdForAgentType(agentType: AgentType): string {
-  return agentType === 'codex' ? CODEX_MAIN_SERVICE_ID : CLAUDE_SERVICE_ID;
 }
 
 function inferFallbackOwnerAgentType(
@@ -86,32 +122,44 @@ function resolveDefaultOwnerAgentType(chatJid: string): AgentType | undefined {
 
 function getDefaultLease(chatJid: string): EffectiveChannelLease {
   const roomMode = getEffectiveRuntimeRoomMode(chatJid);
-  const ownerAgentType = resolveDefaultOwnerAgentType(chatJid);
-  const ownerServiceId = ownerAgentType
-    ? getServiceIdForAgentType(ownerAgentType)
-    : CLAUDE_SERVICE_ID;
-
-  if (roomMode === 'tribunal') {
-    return {
-      chat_jid: chatJid,
-      owner_service_id: ownerServiceId,
-      reviewer_service_id: REVIEWER_SERVICE_ID_FOR_TYPE,
-      arbiter_service_id: isArbiterEnabled() ? ARBITER_SERVICE_ID : null,
-      activated_at: null,
-      reason: null,
-      explicit: false,
-    };
-  }
+  const ownerAgentType = resolveDefaultOwnerAgentType(chatJid) ?? 'claude-code';
+  const rolePlan = resolveRoleAgentPlan({
+    paired: roomMode === 'tribunal',
+    groupAgentType: ownerAgentType,
+    configuredReviewer: REVIEWER_AGENT_TYPE,
+    configuredArbiter: ARBITER_AGENT_TYPE,
+  });
 
   return {
     chat_jid: chatJid,
-    owner_service_id: ownerServiceId,
-    reviewer_service_id: null,
-    arbiter_service_id: null,
+    owner_agent_type: rolePlan.ownerAgentType,
+    reviewer_agent_type: rolePlan.reviewerAgentType,
+    arbiter_agent_type: rolePlan.arbiterAgentType,
+    owner_service_id:
+      resolveRoleServiceShadow('owner', rolePlan.ownerAgentType) ??
+      normalizeServiceId(SERVICE_ID),
+    reviewer_service_id: resolveRoleServiceShadow(
+      'reviewer',
+      rolePlan.reviewerAgentType,
+    ),
+    arbiter_service_id: resolveRoleServiceShadow(
+      'arbiter',
+      rolePlan.arbiterAgentType,
+    ),
+    owner_failover_active: false,
     activated_at: null,
     reason: null,
     explicit: false,
   };
+}
+
+function getStoredOrDefaultLease(chatJid: string): EffectiveChannelLease {
+  refreshChannelOwnerCache();
+  const row = leaseCache.get(chatJid);
+  if (row) {
+    return normalizeLeaseRow(row, true);
+  }
+  return getDefaultLease(chatJid);
 }
 
 export function refreshChannelOwnerCache(force = false): void {
@@ -130,24 +178,63 @@ export function refreshChannelOwnerCache(force = false): void {
 export function getEffectiveChannelLease(
   chatJid: string,
 ): EffectiveChannelLease {
-  // Global failover overrides all per-channel leases
+  // Global failover overrides the owner execution backend for all channels,
+  // while preserving the room's reviewer/arbiter role assignments.
   if (globalFailoverActive) {
+    const baseLease = getStoredOrDefaultLease(chatJid);
     return {
-      chat_jid: chatJid,
+      ...baseLease,
       owner_service_id: CODEX_REVIEW_SERVICE_ID,
-      reviewer_service_id: CODEX_MAIN_SERVICE_ID,
-      arbiter_service_id: null,
+      owner_failover_active: true,
       activated_at: globalFailoverActivatedAt,
       reason: globalFailoverReason,
       explicit: true,
     };
   }
-  refreshChannelOwnerCache();
-  const row = leaseCache.get(chatJid);
-  if (row) {
-    return normalizeLeaseRow(row, true);
+  return getStoredOrDefaultLease(chatJid);
+}
+
+export function resolveLeaseServiceId(
+  lease: Pick<
+    EffectiveChannelLease,
+    | 'owner_agent_type'
+    | 'reviewer_agent_type'
+    | 'arbiter_agent_type'
+    | 'owner_service_id'
+    | 'reviewer_service_id'
+    | 'arbiter_service_id'
+    | 'owner_failover_active'
+  >,
+  role: PairedRoomRole,
+): string | null {
+  switch (role) {
+    case 'owner':
+      if (lease.owner_failover_active) {
+        return normalizeServiceId(lease.owner_service_id);
+      }
+      return (
+        resolveRoleServiceShadow('owner', lease.owner_agent_type) ??
+        normalizeServiceId(lease.owner_service_id)
+      );
+    case 'reviewer':
+      return lease.reviewer_agent_type
+        ? resolveRoleServiceShadow('reviewer', lease.reviewer_agent_type) ??
+            (lease.reviewer_service_id
+              ? normalizeServiceId(lease.reviewer_service_id)
+              : null)
+        : lease.reviewer_service_id
+          ? normalizeServiceId(lease.reviewer_service_id)
+          : null;
+    case 'arbiter':
+      return lease.arbiter_agent_type
+        ? resolveRoleServiceShadow('arbiter', lease.arbiter_agent_type) ??
+            (lease.arbiter_service_id
+              ? normalizeServiceId(lease.arbiter_service_id)
+              : null)
+        : lease.arbiter_service_id
+          ? normalizeServiceId(lease.arbiter_service_id)
+          : null;
   }
-  return getDefaultLease(chatJid);
 }
 
 export function isOwnerServiceForChat(
@@ -155,7 +242,7 @@ export function isOwnerServiceForChat(
   serviceId: string = SERVICE_ID,
 ): boolean {
   const lease = getEffectiveChannelLease(chatJid);
-  return normalizeServiceId(serviceId) === lease.owner_service_id;
+  return normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'owner');
 }
 
 export function isReviewerServiceForChat(
@@ -163,14 +250,11 @@ export function isReviewerServiceForChat(
   serviceId: string = SERVICE_ID,
 ): boolean {
   const lease = getEffectiveChannelLease(chatJid);
-  return (
-    lease.reviewer_service_id !== null &&
-    normalizeServiceId(serviceId) === lease.reviewer_service_id
-  );
+  return normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'reviewer');
 }
 
 export function hasReviewerLease(chatJid: string): boolean {
-  return getEffectiveChannelLease(chatJid).reviewer_service_id !== null;
+  return resolveLeaseServiceId(getEffectiveChannelLease(chatJid), 'reviewer') !== null;
 }
 
 export function isArbiterServiceForChat(
@@ -178,10 +262,7 @@ export function isArbiterServiceForChat(
   serviceId: string = SERVICE_ID,
 ): boolean {
   const lease = getEffectiveChannelLease(chatJid);
-  return (
-    lease.arbiter_service_id !== null &&
-    normalizeServiceId(serviceId) === lease.arbiter_service_id
-  );
+  return normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'arbiter');
 }
 
 export function shouldServiceProcessChat(
@@ -192,7 +273,7 @@ export function shouldServiceProcessChat(
 }
 
 // ── Global failover ──────────────────────────────────────────────
-// Claude API limits are account-level, so failover applies to all channels.
+// Claude API limits are account-level, so owner failover applies to all channels.
 
 let globalFailoverActive = false;
 let globalFailoverReason: string | null = null;
@@ -204,7 +285,7 @@ export function activateCodexFailover(_chatJid: string, reason: string): void {
   globalFailoverActivatedAt = new Date().toISOString();
   logger.warn(
     { reason, activatedAt: globalFailoverActivatedAt },
-    'Global failover activated — all channels switching to codex',
+    'Global failover activated — owner execution switching to codex across all channels',
   );
 }
 
@@ -229,7 +310,7 @@ export function clearGlobalFailover(): void {
   globalFailoverActive = false;
   globalFailoverReason = null;
   globalFailoverActivatedAt = null;
-  logger.info('Global failover cleared — resuming normal routing');
+  logger.info('Global failover cleared — resuming normal owner routing');
 }
 
 export function restoreDefaultChannelLease(chatJid: string): void {

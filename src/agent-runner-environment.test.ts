@@ -42,6 +42,7 @@ vi.mock('./service-routing.js', () => ({
     owner_service_id: 'claude',
     reviewer_service_id: 'codex-main',
     arbiter_service_id: null,
+    owner_failover_active: false,
     activated_at: null,
     reason: null,
     explicit: false,
@@ -77,7 +78,10 @@ vi.mock('os', async () => {
   };
 });
 
-import { prepareGroupEnvironment } from './agent-runner-environment.js';
+import {
+  prepareContainerSessionEnvironment,
+  prepareGroupEnvironment,
+} from './agent-runner-environment.js';
 import * as config from './config.js';
 import * as serviceRouting from './service-routing.js';
 import type { RegisteredGroup } from './types.js';
@@ -202,8 +206,9 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'dc:test',
       owner_service_id: 'codex-review',
-      reviewer_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
       arbiter_service_id: null,
+      owner_failover_active: true,
       activated_at: '2026-03-28T00:00:00.000Z',
       reason: 'claude-429',
       explicit: true,
@@ -309,6 +314,7 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       owner_service_id: 'claude',
       reviewer_service_id: 'codex-main',
       arbiter_service_id: null,
+      owner_failover_active: false,
       activated_at: null,
       reason: null,
       explicit: false,
@@ -332,5 +338,69 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     const segments = agents.trim().split('\n\n---\n\n');
 
     expect(segments).toEqual(['platform prompt']);
+  });
+});
+
+describe('prepareContainerSessionEnvironment codex compatibility', () => {
+  let tempRoot: string;
+  let previousCwd: string;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-container-env-'));
+    previousCwd = process.cwd();
+    process.chdir(tempRoot);
+
+    process.env.EJ_TEST_ROOT = tempRoot;
+    process.env.EJ_TEST_HOME = path.join(tempRoot, 'home');
+
+    fs.mkdirSync(process.env.EJ_TEST_HOME, { recursive: true });
+    fs.mkdirSync(path.join(process.env.EJ_TEST_HOME, '.codex'), {
+      recursive: true,
+    });
+
+    mockReadEnvFile.mockReset();
+    mockGetActiveCodexAuthPath.mockReset();
+  });
+
+  afterEach(() => {
+    process.chdir(previousCwd);
+    delete process.env.EJ_TEST_ROOT;
+    delete process.env.EJ_TEST_HOME;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('writes matching AGENTS.md and copies host codex auth/config into the container session', () => {
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+
+    const promptsDir = path.join(tempRoot, 'prompts');
+    fs.mkdirSync(promptsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(process.env.EJ_TEST_HOME!, '.codex', 'auth.json'),
+      '{"auth_mode":"chatgpt"}\n',
+    );
+    fs.writeFileSync(
+      path.join(process.env.EJ_TEST_HOME!, '.codex', 'config.toml'),
+      'model = "gpt-5.4"\n',
+    );
+
+    const sessionDir = path.join(tempRoot, 'container-reviewer-session');
+    prepareContainerSessionEnvironment({
+      sessionDir,
+      chatJid: 'dc:test',
+      isMain: false,
+      memoryBriefing: 'memory briefing',
+      role: 'reviewer',
+    });
+
+    const claudeMd = fs.readFileSync(path.join(sessionDir, 'CLAUDE.md'), 'utf-8');
+    expect(fs.readFileSync(path.join(sessionDir, '.codex', 'AGENTS.md'), 'utf-8')).toBe(
+      claudeMd,
+    );
+    expect(
+      fs.readFileSync(path.join(sessionDir, '.codex', 'auth.json'), 'utf-8'),
+    ).toContain('"auth_mode":"chatgpt"');
+    expect(
+      fs.readFileSync(path.join(sessionDir, '.codex', 'config.toml'), 'utf-8'),
+    ).toContain('model = "gpt-5.4"');
   });
 });

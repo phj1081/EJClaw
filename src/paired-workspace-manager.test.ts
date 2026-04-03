@@ -18,6 +18,79 @@ async function loadModules() {
   return { db, manager };
 }
 
+const FIXTURE_NOW = '2026-03-28T00:00:00.000Z';
+
+function initCanonicalRepo(
+  repoDir: string,
+  files: Record<string, string> = { 'README.md': 'original\n' },
+): void {
+  fs.mkdirSync(repoDir, { recursive: true });
+  runGit(['init'], repoDir);
+  runGit(['config', 'user.email', 'test@example.com'], repoDir);
+  runGit(['config', 'user.name', 'EJClaw Test'], repoDir);
+  for (const [relativePath, contents] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(repoDir, relativePath)), {
+      recursive: true,
+    });
+    fs.writeFileSync(path.join(repoDir, relativePath), contents);
+  }
+  runGit(['add', '.'], repoDir);
+  runGit(['commit', '-m', 'initial'], repoDir);
+}
+
+function seedPairedTask(
+  db: Awaited<ReturnType<typeof loadModules>>['db'],
+  canonicalDir: string,
+  args: {
+    taskId: string;
+    groupFolder?: string;
+    chatJid?: string;
+    sourceRef?: string;
+    status?: 'active' | 'review_ready' | 'in_review' | 'merge_ready';
+    reviewRequestedAt?: string | null;
+    updatedAt?: string;
+  },
+): void {
+  const groupFolder = args.groupFolder ?? 'paired-room';
+  const chatJid = args.chatJid ?? 'dc:test';
+  const reviewRequestedAt = args.reviewRequestedAt ?? null;
+  const updatedAt = args.updatedAt ?? FIXTURE_NOW;
+
+  db.upsertPairedProject({
+    chat_jid: chatJid,
+    group_folder: groupFolder,
+    canonical_work_dir: canonicalDir,
+    created_at: FIXTURE_NOW,
+    updated_at: FIXTURE_NOW,
+  });
+  db.createPairedTask({
+    id: args.taskId,
+    chat_jid: chatJid,
+    group_folder: groupFolder,
+    owner_service_id: 'codex-main',
+    reviewer_service_id: 'codex-review',
+    title: null,
+    source_ref: args.sourceRef ?? 'HEAD',
+    plan_notes: null,
+    round_trip_count: 0,
+    review_requested_at: reviewRequestedAt,
+    status: args.status ?? 'active',
+    arbiter_verdict: null,
+    arbiter_requested_at: null,
+    completion_reason: null,
+    created_at: FIXTURE_NOW,
+    updated_at: updatedAt,
+  });
+}
+
+function ownerBranchName(groupFolder: string): string {
+  return `codex/owner/${groupFolder}`;
+}
+
+function ownerWorkspacePath(groupFolder: string): string {
+  return path.join(process.env.EJCLAW_DATA_DIR!, 'workspaces', groupFolder, 'owner');
+}
+
 describe('paired workspace manager', () => {
   let tempRoot: string;
   let previousDataDir: string | undefined;
@@ -90,6 +163,9 @@ describe('paired workspace manager', () => {
     expect(fs.existsSync(path.join(ownerWorkspace.workspace_dir, '.git'))).toBe(
       true,
     );
+    expect(
+      runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
+    ).toBe(ownerBranchName('paired-room'));
 
     fs.writeFileSync(
       path.join(ownerWorkspace.workspace_dir, 'README.md'),
@@ -646,5 +722,205 @@ describe('paired workspace manager', () => {
         'utf-8',
       ),
     ).toBe('owner changed again\n');
+  });
+
+  it('bases a new owner branch on the canonical repo HEAD without requiring a remote', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    runGit(['checkout', '-b', 'feature/base'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'feature base\n');
+    runGit(['commit', '-am', 'feature base'], canonicalDir);
+
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-head-base',
+      groupFolder: 'head-base-room',
+    });
+
+    const ownerWorkspace =
+      manager.provisionOwnerWorkspaceForPairedTask('paired-task-head-base');
+
+    expect(
+      runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
+    ).toBe(ownerBranchName('head-base-room'));
+    expect(
+      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'README.md'), 'utf-8'),
+    ).toBe('feature base\n');
+    expect(runGit(['rev-parse', 'HEAD'], ownerWorkspace.workspace_dir)).toBe(
+      runGit(['rev-parse', 'HEAD'], canonicalDir),
+    );
+  });
+
+  it('provisions and reprovisions owner workspaces when source_ref is a tree hash', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'tree source\n');
+    runGit(['commit', '-am', 'tree source'], canonicalDir);
+    const treeSourceRef = runGit(['rev-parse', 'HEAD^{tree}'], canonicalDir);
+
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-tree-source-ref',
+      groupFolder: 'tree-source-room',
+      sourceRef: treeSourceRef,
+    });
+
+    const firstProvision = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-tree-source-ref',
+    );
+    const secondProvision = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-tree-source-ref',
+    );
+
+    expect(firstProvision.workspace_dir).toBe(secondProvision.workspace_dir);
+    expect(
+      runGit(['branch', '--show-current'], secondProvision.workspace_dir),
+    ).toBe(ownerBranchName('tree-source-room'));
+    expect(
+      fs.readFileSync(path.join(secondProvision.workspace_dir, 'README.md'), 'utf-8'),
+    ).toBe('tree source\n');
+    expect(runGit(['rev-parse', 'HEAD'], secondProvision.workspace_dir)).toBe(
+      runGit(['rev-parse', 'HEAD'], canonicalDir),
+    );
+  });
+
+  it('repairs a missing but registered owner worktree path before reprovisioning', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-repair',
+      groupFolder: 'repair-room',
+    });
+
+    const ownerWorkspace =
+      manager.provisionOwnerWorkspaceForPairedTask('paired-task-repair');
+    fs.rmSync(ownerWorkspace.workspace_dir, { recursive: true, force: true });
+
+    expect(runGit(['worktree', 'list', '--porcelain'], canonicalDir)).toContain(
+      ownerWorkspace.workspace_dir,
+    );
+
+    const reprovisioned =
+      manager.provisionOwnerWorkspaceForPairedTask('paired-task-repair');
+
+    expect(reprovisioned.workspace_dir).toBe(ownerWorkspace.workspace_dir);
+    expect(
+      runGit(['branch', '--show-current'], reprovisioned.workspace_dir),
+    ).toBe(ownerBranchName('repair-room'));
+    expect(
+      runGit(['worktree', 'list', '--porcelain'], canonicalDir),
+    ).toContain(reprovisioned.workspace_dir);
+  });
+
+  it('lazy-migrates a detached dirty owner workspace to a new channel branch', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-migrate-new-branch',
+      groupFolder: 'migrate-room',
+    });
+
+    const workspaceDir = ownerWorkspacePath('migrate-room');
+    fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
+    runGit(['worktree', 'add', workspaceDir, 'HEAD'], canonicalDir);
+    fs.writeFileSync(path.join(workspaceDir, 'README.md'), 'detached dirty\n');
+    fs.writeFileSync(path.join(workspaceDir, 'NEW_FILE.txt'), 'new file\n');
+
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-migrate-new-branch',
+    );
+
+    expect(
+      runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
+    ).toBe(ownerBranchName('migrate-room'));
+    expect(
+      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'README.md'), 'utf-8'),
+    ).toBe('detached dirty\n');
+    expect(
+      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'NEW_FILE.txt'), 'utf-8'),
+    ).toBe('new file\n');
+    expect(runGit(['status', '--short'], ownerWorkspace.workspace_dir)).toContain(
+      'M README.md',
+    );
+    expect(runGit(['status', '--short'], ownerWorkspace.workspace_dir)).toContain(
+      '?? NEW_FILE.txt',
+    );
+  });
+
+  it('lazy-migrates a detached dirty owner workspace onto an existing matching channel branch', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-migrate-existing-branch',
+      groupFolder: 'migrate-existing-room',
+    });
+
+    runGit(
+      ['branch', ownerBranchName('migrate-existing-room'), 'HEAD'],
+      canonicalDir,
+    );
+    const workspaceDir = ownerWorkspacePath('migrate-existing-room');
+    fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
+    runGit(['worktree', 'add', workspaceDir, 'HEAD'], canonicalDir);
+    fs.writeFileSync(path.join(workspaceDir, 'README.md'), 'detached existing\n');
+    fs.writeFileSync(path.join(workspaceDir, 'NOTES.md'), 'keep me\n');
+
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-migrate-existing-branch',
+    );
+
+    expect(
+      runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
+    ).toBe(ownerBranchName('migrate-existing-room'));
+    expect(
+      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'README.md'), 'utf-8'),
+    ).toBe('detached existing\n');
+    expect(
+      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'NOTES.md'), 'utf-8'),
+    ).toBe('keep me\n');
+  });
+
+  it('blocks provisioning when the channel branch is already checked out in another worktree', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-branch-collision',
+      groupFolder: 'collision-room',
+    });
+
+    const conflictingDir = path.join(tempRoot, 'conflicting-owner');
+    runGit(
+      [
+        'worktree',
+        'add',
+        '-b',
+        ownerBranchName('collision-room'),
+        conflictingDir,
+        'HEAD',
+      ],
+      canonicalDir,
+    );
+
+    expect(() =>
+      manager.provisionOwnerWorkspaceForPairedTask(
+        'paired-task-branch-collision',
+      ),
+    ).toThrow(/already checked out/i);
   });
 });

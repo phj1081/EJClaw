@@ -2,10 +2,8 @@
  * Step: service — Generate and load service manager config.
  * Replaces 08-setup-service.sh
  *
- * Supports the EJClaw service stack:
- *   - ejclaw (Claude Code) — always installed
- *   - ejclaw-codex (Codex) — installed when .env.codex exists
- *   - ejclaw-review (Codex Review) — installed when .env.codex-review exists
+ * Supports the unified EJClaw service:
+ *   - ejclaw — always installed
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
@@ -13,7 +11,11 @@ import os from 'os';
 import path from 'path';
 
 import { logger } from '../src/logger.js';
-import { getPlatform, getNodePath } from './platform.js';
+import { getPlatform, getNodePath, getServiceManager } from './platform.js';
+import {
+  detectLegacyServiceIssues,
+  formatLegacyServiceFailureMessage,
+} from './legacy-service-guard.js';
 import { getServiceDefs } from './service-defs.js';
 import { setupLaunchd, setupLinux } from './service-installers.js';
 import { emitStatus } from './status.js';
@@ -27,8 +29,40 @@ export async function run(_args: string[]): Promise<void> {
   const platform = getPlatform();
   const nodePath = getNodePath();
   const homeDir = os.homedir();
+  const serviceManager = getServiceManager();
 
   logger.info({ platform, nodePath, projectRoot }, 'Setting up service');
+
+  const legacyServiceIssues = detectLegacyServiceIssues(
+    projectRoot,
+    serviceManager,
+    homeDir,
+  );
+  if (legacyServiceIssues.length > 0) {
+    const errorMessage = formatLegacyServiceFailureMessage({
+      projectRoot,
+      serviceManager,
+      homeDir,
+      services: legacyServiceIssues,
+    });
+    logger.error(
+      { legacyServiceIssues, serviceManager },
+      'Legacy multi-service install detected during setup',
+    );
+    emitStatus('SETUP_SERVICE', {
+      SERVICE_TYPE: serviceManager,
+      NODE_PATH: nodePath,
+      PROJECT_PATH: projectRoot,
+      STATUS: 'failed',
+      ERROR: 'legacy_services_detected',
+      LEGACY_SERVICES: legacyServiceIssues
+        .map((service) => `${service.name}:${service.status}`)
+        .join(','),
+      LOG: 'logs/setup.log',
+    });
+    console.error(errorMessage);
+    process.exit(1);
+  }
 
   // Build first
   logger.info('Building TypeScript');
@@ -54,14 +88,6 @@ export async function run(_args: string[]): Promise<void> {
   fs.mkdirSync(path.join(projectRoot, 'logs'), { recursive: true });
 
   const serviceDefs = getServiceDefs(projectRoot);
-  for (const def of serviceDefs) {
-    if (def.kind === 'primary' || !def.environmentFile) {
-      continue;
-    }
-    logger.info(
-      `Detected ${path.basename(def.environmentFile)} — will also install ${def.name} service`,
-    );
-  }
 
   if (platform === 'macos') {
     for (const def of serviceDefs) {

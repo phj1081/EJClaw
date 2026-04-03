@@ -134,9 +134,18 @@ vi.mock('./github-ci.js', () => ({
   ),
 }));
 
-import { _initTestDatabase, createTask, getTaskById } from './db.js';
+vi.mock('./service-routing.js', () => ({
+  hasReviewerLease: vi.fn(() => false),
+}));
+
+import {
+  _initTestDatabase,
+  createTask,
+  getTaskById,
+} from './db.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import { TIMEZONE } from './config.js';
+import * as serviceRouting from './service-routing.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import * as tokenRotation from './token-rotation.js';
@@ -185,6 +194,7 @@ describe('task scheduler', () => {
     vi.mocked(codexTokenRotation.rotateCodexToken).mockReturnValue(false);
     vi.mocked(codexTokenRotation.getCodexAccountCount).mockReturnValue(1);
     vi.mocked(codexTokenRotation.markCodexTokenHealthy).mockClear();
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(false);
     vi.useFakeTimers();
   });
 
@@ -329,6 +339,146 @@ describe('task scheduler', () => {
       'shared@g.us::task:task-single-tick',
     );
     expect(enqueueTask.mock.calls[0][1]).toBe('task-single-tick');
+  });
+
+  it('uses the reviewer bot identity for paired-room scheduled output', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-paired-reviewer-output',
+      group_folder: 'paired-group',
+      chat_jid: 'paired@g.us',
+      agent_type: 'codex',
+      prompt: 'paired task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockImplementation(
+      (jid) => jid === 'paired@g.us',
+    );
+    (runAgentProcessMock as any).mockImplementationOnce(
+      async (
+        _group: unknown,
+        _input: unknown,
+        _onProcess: unknown,
+        onOutput?: (output: Record<string, unknown>) => Promise<void>,
+      ) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'paired reviewer output',
+        });
+        return {
+          status: 'success',
+          result: 'paired reviewer output',
+        };
+      },
+    );
+
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+    const sendMessage = vi.fn(async () => {});
+    const sendMessageViaReviewerBot = vi.fn(async () => {});
+
+    await runSchedulerTickOnce({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'paired@g.us': {
+          name: 'Paired',
+          folder: 'paired-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+      sendMessageViaReviewerBot,
+    });
+
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(1);
+    expect(sendMessageViaReviewerBot).toHaveBeenCalledTimes(1);
+    expect(sendMessageViaReviewerBot).toHaveBeenCalledWith(
+      'paired@g.us',
+      'paired reviewer output',
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for paired-room scheduled output when the reviewer bot is missing', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-paired-reviewer-missing',
+      group_folder: 'paired-group',
+      chat_jid: 'paired@g.us',
+      agent_type: 'codex',
+      prompt: 'paired task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockImplementation(
+      (jid) => jid === 'paired@g.us',
+    );
+    (runAgentProcessMock as any).mockImplementationOnce(
+      async (
+        _group: unknown,
+        _input: unknown,
+        _onProcess: unknown,
+        onOutput?: (output: Record<string, unknown>) => Promise<void>,
+      ) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'paired reviewer output',
+        });
+        return {
+          status: 'success',
+          result: 'paired reviewer output',
+        };
+      },
+    );
+
+    const enqueueTask = vi.fn(
+      async (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        await fn();
+      },
+    );
+    const sendMessage = vi.fn(async () => {});
+
+    await runSchedulerTickOnce({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'paired@g.us': {
+          name: 'Paired',
+          folder: 'paired-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(getTaskById('task-paired-reviewer-missing')).toBeDefined();
   });
 
   it('keeps group-context tasks on the chat queue key', async () => {

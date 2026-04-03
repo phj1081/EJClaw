@@ -4,7 +4,7 @@ Dual-agent AI assistant (Claude Code + Codex) over Discord. Originally derived f
 
 ## Quick Context
 
-Single unified service (`ejclaw`) manages three Discord bots (Claude, Codex-main, Codex-review) in one process. Owner/reviewer agent types are configurable via `OWNER_AGENT_TYPE` and `REVIEWER_AGENT_TYPE` in `.env`. Claude Code uses the Agent SDK; Codex uses the Codex SDK (`codex exec`). Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
+Single unified service (`ejclaw`) manages three Discord bots (owner, reviewer, arbiter) in one process. Agent types behind each role remain configurable via `OWNER_AGENT_TYPE`, `REVIEWER_AGENT_TYPE`, and `ARBITER_AGENT_TYPE` in `.env`. Claude Code uses the Agent SDK; Codex uses the Codex SDK (`codex exec`). Auth via `CLAUDE_CODE_OAUTH_TOKEN` in `.env` (1-year token from `claude setup-token`).
 
 ## Key Files
 
@@ -57,9 +57,10 @@ bun run deploy
 
 Single unified service manages all three Discord bots in one process:
 - `ejclaw.service` — Single unified process
-- Discord bots: `DISCORD_BOT_TOKEN` (Claude), `DISCORD_CODEX_BOT_TOKEN` (Codex-main), `DISCORD_REVIEW_BOT_TOKEN` (Codex-review)
+- Discord bots: `DISCORD_OWNER_BOT_TOKEN` (owner), `DISCORD_REVIEWER_BOT_TOKEN` (reviewer), `DISCORD_ARBITER_BOT_TOKEN` (arbiter)
+- Old service-based token names are no longer accepted; migrate them to the canonical role-based keys above before starting the service
 - Paired review: owner (`OWNER_AGENT_TYPE`, default: codex) ↔ reviewer (`REVIEWER_AGENT_TYPE`, default: claude-code)
-- Reviewer fallback: Claude 429/한도초과 시 codex-review로 자동 핸드오프
+- Provider fallback is internal routing only — visible Discord bots stay owner/reviewer/arbiter fixed
 - Shared dirs: `store/`, `groups/`, `data/`
 - SQLite WAL mode + `busy_timeout=5000` for concurrent access
 

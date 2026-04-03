@@ -58,6 +58,7 @@ import { readArbiterPrompt } from './platform-prompts.js';
 import {
   activateCodexFailover,
   getEffectiveChannelLease,
+  resolveLeaseServiceId,
 } from './service-routing.js';
 import {
   evaluateStreamedOutput,
@@ -108,26 +109,26 @@ export async function runAgentForGroup(
   // In unified mode, determine role from the lease directly.
   // Default to owner; the auto-review trigger in completePairedExecutionContext
   // will switch to reviewer when the task is in review_ready state.
-  const pairedTask = currentLease.reviewer_service_id
+  const pairedTask = currentLease.reviewer_agent_type
     ? getLatestOpenPairedTaskForChat(chatJid)
     : null;
   const inferredRole = resolveActiveRole(pairedTask?.status);
   const canHonorForcedRole = Boolean(
     args.forcedRole === 'owner' ||
-      (args.forcedRole === 'reviewer' && currentLease.reviewer_service_id) ||
-      (args.forcedRole === 'arbiter' && currentLease.arbiter_service_id),
+      (args.forcedRole === 'reviewer' && currentLease.reviewer_agent_type) ||
+      (args.forcedRole === 'arbiter' && currentLease.arbiter_agent_type),
   );
   const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
-  const effectiveServiceId =
-    activeRole === 'arbiter'
-      ? currentLease.arbiter_service_id!
-      : activeRole === 'reviewer'
-        ? currentLease.reviewer_service_id!
-        : currentLease.owner_service_id;
+  const effectiveServiceId = resolveLeaseServiceId(currentLease, activeRole);
+  if (!effectiveServiceId) {
+    throw new Error(`Missing runtime service id for ${activeRole} lease`);
+  }
   const reviewerMode = activeRole === 'reviewer';
   const arbiterMode = activeRole === 'arbiter';
+  const reviewerServiceId = resolveLeaseServiceId(currentLease, 'reviewer');
+  const arbiterServiceId = resolveLeaseServiceId(currentLease, 'arbiter');
   const roleAgentPlan = resolveConfiguredRoleAgentPlan(
-    currentLease.reviewer_service_id != null,
+    currentLease.reviewer_agent_type != null,
     group.agentType,
   );
 
@@ -194,8 +195,10 @@ export async function runAgentForGroup(
     roomRoleContext,
     hasHumanMessage: args.hasHumanMessage,
   });
-  // Inject role-specific model overrides into envOverrides
-  if (pairedExecutionContext) {
+  // Forced fallbacks run under a different agent runtime, so keep the
+  // fallback session on its default model/effort unless explicitly configured
+  // for that runtime elsewhere.
+  if (pairedExecutionContext && !args.forcedAgentType) {
     const roleConfig = getRoleModelConfig(activeRole);
     if (roleConfig.model) {
       const modelKey = isClaudeCodeAgent ? 'CLAUDE_MODEL' : 'CODEX_MODEL';
@@ -230,8 +233,10 @@ export async function runAgentForGroup(
       groupAgentType: group.agentType,
       configuredReviewerAgentType: REVIEWER_AGENT_TYPE,
       configuredArbiterAgentType: ARBITER_AGENT_TYPE,
-      reviewerServiceId: currentLease.reviewer_service_id,
-      arbiterServiceId: currentLease.arbiter_service_id,
+      reviewerServiceId,
+      arbiterServiceId,
+      reviewerAgentType: currentLease.reviewer_agent_type,
+      arbiterAgentType: currentLease.arbiter_agent_type,
       reviewerMode,
       arbiterMode,
       sessionFolder,
@@ -295,7 +300,8 @@ export async function runAgentForGroup(
       reason === '429' ||
       reason === 'usage-exhausted' ||
       reason === 'auth-expired' ||
-      reason === 'org-access-denied'
+      reason === 'org-access-denied' ||
+      reason === 'session-failure'
     );
   };
 
@@ -307,7 +313,7 @@ export async function runAgentForGroup(
     if (!shouldHandoffToCodex(reason, sawVisibleOutput)) {
       return false;
     }
-    if (currentLease.reviewer_service_id === null) {
+    if (currentLease.reviewer_agent_type === null) {
       return false;
     }
     // Per-role fallback toggle
@@ -322,8 +328,9 @@ export async function runAgentForGroup(
       createServiceHandoff({
         chat_jid: chatJid,
         group_folder: group.folder,
-        source_service_id: SERVICE_SESSION_SCOPE,
-        target_service_id: CODEX_REVIEW_SERVICE_ID,
+        source_role: activeRole,
+        target_role: 'arbiter',
+        source_agent_type: effectiveAgentType,
         target_agent_type: 'codex',
         prompt,
         start_seq: startSeq ?? null,
@@ -344,8 +351,9 @@ export async function runAgentForGroup(
       createServiceHandoff({
         chat_jid: chatJid,
         group_folder: group.folder,
-        source_service_id: SERVICE_SESSION_SCOPE,
-        target_service_id: CODEX_REVIEW_SERVICE_ID,
+        source_role: activeRole,
+        target_role: 'reviewer',
+        source_agent_type: effectiveAgentType,
         target_agent_type: 'codex',
         prompt,
         start_seq: startSeq ?? null,
@@ -364,8 +372,9 @@ export async function runAgentForGroup(
     createServiceHandoff({
       chat_jid: chatJid,
       group_folder: group.folder,
-      source_service_id: SERVICE_SESSION_SCOPE,
-      target_service_id: CODEX_REVIEW_SERVICE_ID,
+      source_role: activeRole,
+      target_role: activeRole,
+      source_agent_type: effectiveAgentType,
       target_agent_type: 'codex',
       prompt,
       start_seq: startSeq ?? null,
@@ -375,7 +384,7 @@ export async function runAgentForGroup(
     });
     log.warn(
       { reason },
-      'Claude unavailable, handed off current turn to codex-review',
+      'Claude unavailable, handed off current owner turn to codex fallback',
     );
     return true;
   };
@@ -442,6 +451,41 @@ export async function runAgentForGroup(
 
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
+          const outputPhase = output.phase ?? 'final';
+          const outputText = getAgentOutputText(output);
+          const structuredOutput = getStructuredAgentOutput(output);
+          if (outputPhase !== 'final') {
+            log.info(
+              {
+                provider,
+                outputPhase,
+                outputStatus: output.status,
+                visibility: structuredOutput?.visibility ?? null,
+                preview:
+                  typeof outputText === 'string' && outputText.length > 0
+                    ? outputText.slice(0, 160)
+                    : null,
+                errorPreview:
+                  typeof output.error === 'string' && output.error.length > 0
+                    ? output.error.slice(0, 160)
+                    : null,
+                activeRole,
+                effectiveServiceId,
+                effectiveAgentType,
+                sessionFolder,
+                resumedSession: sessionId ?? null,
+                streamedSessionId: output.newSessionId ?? null,
+                roomRoleServiceId: roomRoleContext?.serviceId ?? null,
+                roomRole: roomRoleContext?.role ?? null,
+                pairedTaskId: pairedExecutionContext?.task.id ?? null,
+                workspaceDir:
+                  pairedExecutionContext?.workspace?.workspace_dir ??
+                  group.workDir ??
+                  null,
+              },
+              'Observed streamed agent activity',
+            );
+          }
           if (
             isClaudeCodeAgent &&
             provider === 'claude' &&
@@ -468,7 +512,6 @@ export async function runAgentForGroup(
           });
           streamedState = evaluation.state;
 
-          const outputText = getAgentOutputText(output);
           if (typeof outputText === 'string' && outputText.length > 0) {
             pairedExecutionSummary = outputText.slice(0, 500);
             pairedFullOutput = outputText;
@@ -772,7 +815,7 @@ export async function runAgentForGroup(
         log.error(
           'Retryable Claude session failure persisted after fresh retry',
         );
-        return 'error';
+        return maybeHandoffAfterError('session-failure', primaryAttempt);
       }
     }
 

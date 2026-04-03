@@ -4,6 +4,7 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  ARBITER_AGENT_TYPE,
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
@@ -22,6 +23,11 @@ import {
   resolveTaskSessionsPath as resolveTaskSessionsPathFromGroup,
 } from './group-folder.js';
 import { logger } from './logger.js';
+import {
+  inferAgentTypeFromServiceShadow,
+  inferRoleFromServiceShadow,
+  resolveRoleServiceShadow,
+} from './role-service-shadow.js';
 import { getTaskRuntimeTaskId } from './task-watch-status.js';
 import {
   NewMessage,
@@ -126,6 +132,7 @@ export interface WorkItem {
   chat_jid: string;
   agent_type: AgentType;
   service_id: string;
+  delivery_role?: PairedRoomRole | null;
   status: 'produced' | 'delivery_retry' | 'delivered';
   start_seq: number | null;
   end_seq: number | null;
@@ -143,6 +150,9 @@ export interface ChannelOwnerLeaseRow {
   owner_service_id: string;
   reviewer_service_id: string | null;
   arbiter_service_id: string | null;
+  owner_agent_type?: AgentType | null;
+  reviewer_agent_type?: AgentType | null;
+  arbiter_agent_type?: AgentType | null;
   activated_at: string | null;
   reason: string | null;
 }
@@ -153,6 +163,9 @@ export interface ServiceHandoff {
   group_folder: string;
   source_service_id: string;
   target_service_id: string;
+  source_role: PairedRoomRole | null;
+  source_agent_type?: AgentType | null;
+  target_role: PairedRoomRole | null;
   target_agent_type: AgentType;
   prompt: string;
   status: 'pending' | 'claimed' | 'completed' | 'failed';
@@ -164,6 +177,58 @@ export interface ServiceHandoff {
   claimed_at: string | null;
   completed_at: string | null;
   last_error: string | null;
+}
+
+interface StoredWorkItemRow extends Omit<WorkItem, 'service_id' | 'agent_type'> {
+  agent_type: string;
+}
+
+interface StoredChannelOwnerLeaseRow {
+  chat_jid: string;
+  owner_agent_type?: string | null;
+  reviewer_agent_type?: string | null;
+  arbiter_agent_type?: string | null;
+  activated_at: string | null;
+  reason: string | null;
+}
+
+interface LegacyChannelOwnerLeaseServiceRow extends StoredChannelOwnerLeaseRow {
+  owner_service_id?: string | null;
+  reviewer_service_id?: string | null;
+  arbiter_service_id?: string | null;
+}
+
+interface StoredServiceHandoffRow
+  extends Omit<
+    ServiceHandoff,
+    'source_service_id' | 'target_service_id' | 'source_agent_type' | 'target_agent_type'
+  > {
+  source_agent_type?: string | null;
+  target_agent_type: string;
+}
+
+interface LegacyServiceHandoffServiceRow extends StoredServiceHandoffRow {
+  source_service_id?: string | null;
+  target_service_id?: string | null;
+}
+
+interface StoredPairedTaskRow
+  extends Omit<
+    PairedTask,
+    | 'owner_service_id'
+    | 'reviewer_service_id'
+    | 'owner_agent_type'
+    | 'reviewer_agent_type'
+    | 'arbiter_agent_type'
+  > {
+  owner_agent_type?: string | null;
+  reviewer_agent_type?: string | null;
+  arbiter_agent_type?: string | null;
+}
+
+interface LegacyPairedTaskServiceRow extends StoredPairedTaskRow {
+  owner_service_id?: string | null;
+  reviewer_service_id?: string | null;
 }
 
 function backfillMessageSeq(database: Database): void {
@@ -204,6 +269,129 @@ function backfillMessageSeq(database: Database): void {
   }
 }
 
+function hydrateWorkItem(row: StoredWorkItemRow): WorkItem {
+  const agentType = normalizeStoredAgentType(row.agent_type) ?? 'claude-code';
+  return {
+    ...row,
+    agent_type: agentType,
+    service_id: resolveWorkItemServiceShadow(agentType, row.delivery_role),
+  };
+}
+
+function hydrateChannelOwnerLeaseRow(
+  row: StoredChannelOwnerLeaseRow,
+): ChannelOwnerLeaseRow {
+  const ownerAgentType =
+    normalizeStoredAgentType(row.owner_agent_type) ?? OWNER_AGENT_TYPE;
+  const reviewerAgentType =
+    row.reviewer_agent_type == null
+      ? null
+      : normalizeStoredAgentType(row.reviewer_agent_type) ??
+        resolveStableReviewerAgentType(ownerAgentType, null);
+  const arbiterAgentType =
+    row.arbiter_agent_type == null
+      ? null
+      : normalizeStoredAgentType(row.arbiter_agent_type) ??
+        ARBITER_AGENT_TYPE ??
+        null;
+
+  return {
+    chat_jid: row.chat_jid,
+    owner_service_id:
+      resolveRoleServiceShadow('owner', ownerAgentType) ??
+      CLAUDE_SERVICE_ID,
+    reviewer_service_id:
+      reviewerAgentType == null
+        ? null
+        : resolveRoleServiceShadow('reviewer', reviewerAgentType),
+    arbiter_service_id:
+      arbiterAgentType == null
+        ? null
+        : resolveRoleServiceShadow('arbiter', arbiterAgentType),
+    owner_agent_type: ownerAgentType,
+    reviewer_agent_type: reviewerAgentType,
+    arbiter_agent_type: arbiterAgentType,
+    activated_at: row.activated_at,
+    reason: row.reason,
+  };
+}
+
+function hydratePairedTaskRow(row: StoredPairedTaskRow): PairedTask {
+  const ownerAgentType = resolveStablePairedTaskOwnerAgentType(db, row);
+  const reviewerAgentType = resolveStableReviewerAgentType(
+    ownerAgentType,
+    row.reviewer_agent_type ?? null,
+  );
+  const arbiterAgentType =
+    normalizeStoredAgentType(row.arbiter_agent_type) ?? ARBITER_AGENT_TYPE ?? null;
+
+  return {
+    ...row,
+    owner_service_id:
+      resolveRoleServiceShadow('owner', ownerAgentType) ?? CODEX_MAIN_SERVICE_ID,
+    reviewer_service_id:
+      resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
+      CODEX_REVIEW_SERVICE_ID,
+    owner_agent_type: ownerAgentType ?? null,
+    reviewer_agent_type: reviewerAgentType ?? null,
+    arbiter_agent_type: arbiterAgentType,
+  };
+}
+
+function hydrateServiceHandoffRow(row: StoredServiceHandoffRow): ServiceHandoff {
+  const sourceAgentType =
+    normalizeStoredAgentType(row.source_agent_type) ??
+    (row.source_role
+      ? resolveStableRoomRoleAgentType(db, {
+          chatJid: row.chat_jid,
+          groupFolder: row.group_folder,
+          role: row.source_role,
+        })
+      : null);
+  const targetAgentType =
+    normalizeStoredAgentType(row.target_agent_type) ??
+    (row.target_role
+      ? resolveStableRoomRoleAgentType(db, {
+          chatJid: row.chat_jid,
+          groupFolder: row.group_folder,
+          role: row.target_role,
+        })
+      : null) ??
+    'claude-code';
+
+  return {
+    ...row,
+    source_agent_type: sourceAgentType ?? null,
+    target_agent_type: targetAgentType,
+    source_service_id:
+      row.source_role != null
+        ? resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
+          SERVICE_SESSION_SCOPE
+        : SERVICE_SESSION_SCOPE,
+    target_service_id:
+      row.target_role != null
+        ? resolveRoleServiceShadow(row.target_role, targetAgentType) ??
+          SERVICE_SESSION_SCOPE
+        : SERVICE_SESSION_SCOPE,
+  };
+}
+
+function getTableColumns(database: Database, tableName: string): string[] {
+  return (
+    database
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all() as Array<{ name: string }>
+  ).map((column) => column.name);
+}
+
+function tableHasColumn(
+  database: Database,
+  tableName: string,
+  columnName: string,
+): boolean {
+  return getTableColumns(database, tableName).includes(columnName);
+}
+
 function createSchema(database: Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
@@ -236,7 +424,7 @@ function createSchema(database: Database): void {
       group_folder TEXT NOT NULL,
       chat_jid TEXT NOT NULL,
       agent_type TEXT NOT NULL,
-      service_id TEXT NOT NULL DEFAULT '',
+      delivery_role TEXT,
       status TEXT NOT NULL DEFAULT 'produced',
       start_seq INTEGER,
       end_seq INTEGER,
@@ -247,12 +435,13 @@ function createSchema(database: Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       delivered_at TEXT,
-      CHECK (status IN ('produced', 'delivery_retry', 'delivered'))
+      CHECK (status IN ('produced', 'delivery_retry', 'delivered')),
+      CHECK (delivery_role IN ('owner', 'reviewer', 'arbiter') OR delivery_role IS NULL)
     );
     CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status, updated_at);
-    CREATE INDEX IF NOT EXISTS idx_work_items_group_agent ON work_items(chat_jid, agent_type, service_id, status);
+    CREATE INDEX IF NOT EXISTS idx_work_items_group_agent ON work_items(chat_jid, agent_type, delivery_role, status);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_open
-      ON work_items(chat_jid, agent_type, service_id)
+      ON work_items(chat_jid, agent_type, IFNULL(delivery_role, ''))
       WHERE status IN ('produced', 'delivery_retry');
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
@@ -299,12 +488,6 @@ function createSchema(database: Database): void {
       session_id TEXT NOT NULL,
       PRIMARY KEY (group_folder, agent_type)
     );
-    CREATE TABLE IF NOT EXISTS service_sessions (
-      group_folder TEXT NOT NULL,
-      service_id TEXT NOT NULL,
-      session_id TEXT NOT NULL,
-      PRIMARY KEY (group_folder, service_id)
-    );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT NOT NULL,
       name TEXT NOT NULL,
@@ -330,8 +513,9 @@ function createSchema(database: Database): void {
       id TEXT PRIMARY KEY,
       chat_jid TEXT NOT NULL,
       group_folder TEXT NOT NULL,
-      owner_service_id TEXT NOT NULL,
-      reviewer_service_id TEXT NOT NULL,
+      owner_agent_type TEXT,
+      reviewer_agent_type TEXT,
+      arbiter_agent_type TEXT,
       title TEXT,
       source_ref TEXT,
       plan_notes TEXT,
@@ -343,7 +527,10 @@ function createSchema(database: Database): void {
       completion_reason TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
+      CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration')),
+      CHECK (owner_agent_type IN ('claude-code', 'codex') OR owner_agent_type IS NULL),
+      CHECK (reviewer_agent_type IN ('claude-code', 'codex') OR reviewer_agent_type IS NULL),
+      CHECK (arbiter_agent_type IN ('claude-code', 'codex') OR arbiter_agent_type IS NULL)
     );
     CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
       ON paired_tasks(chat_jid, status, updated_at);
@@ -376,11 +563,14 @@ function createSchema(database: Database): void {
       ON paired_turn_outputs(task_id, turn_number);
     CREATE TABLE IF NOT EXISTS channel_owner (
       chat_jid TEXT PRIMARY KEY,
-      owner_service_id TEXT NOT NULL,
-      reviewer_service_id TEXT,
-      arbiter_service_id TEXT,
+      owner_agent_type TEXT,
+      reviewer_agent_type TEXT,
+      arbiter_agent_type TEXT,
       activated_at TEXT,
-      reason TEXT
+      reason TEXT,
+      CHECK (owner_agent_type IN ('claude-code', 'codex') OR owner_agent_type IS NULL),
+      CHECK (reviewer_agent_type IN ('claude-code', 'codex') OR reviewer_agent_type IS NULL),
+      CHECK (arbiter_agent_type IN ('claude-code', 'codex') OR arbiter_agent_type IS NULL)
     );
     CREATE TABLE IF NOT EXISTS room_settings (
       chat_jid TEXT PRIMARY KEY,
@@ -401,8 +591,9 @@ function createSchema(database: Database): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       chat_jid TEXT NOT NULL,
       group_folder TEXT NOT NULL,
-      source_service_id TEXT NOT NULL,
-      target_service_id TEXT NOT NULL,
+      source_role TEXT,
+      source_agent_type TEXT,
+      target_role TEXT,
       target_agent_type TEXT NOT NULL,
       prompt TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
@@ -415,10 +606,12 @@ function createSchema(database: Database): void {
       completed_at TEXT,
       last_error TEXT,
       CHECK (status IN ('pending', 'claimed', 'completed', 'failed')),
-      CHECK (intended_role IN ('owner', 'reviewer', 'arbiter') OR intended_role IS NULL)
+      CHECK (intended_role IN ('owner', 'reviewer', 'arbiter') OR intended_role IS NULL),
+      CHECK (source_role IN ('owner', 'reviewer', 'arbiter') OR source_role IS NULL),
+      CHECK (target_role IN ('owner', 'reviewer', 'arbiter') OR target_role IS NULL)
     );
     CREATE INDEX IF NOT EXISTS idx_service_handoffs_target
-      ON service_handoffs(target_service_id, status, created_at);
+      ON service_handoffs(status, target_role, target_agent_type, created_at);
     CREATE TABLE IF NOT EXISTS memories (
       id INTEGER PRIMARY KEY,
       scope_kind TEXT NOT NULL,
@@ -577,6 +770,69 @@ function createSchema(database: Database): void {
     /* column already exists */
   }
 
+  try {
+    database.exec(`ALTER TABLE service_handoffs ADD COLUMN source_role TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE service_handoffs ADD COLUMN target_role TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE service_handoffs ADD COLUMN source_agent_type TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE paired_tasks ADD COLUMN owner_agent_type TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE paired_tasks ADD COLUMN reviewer_agent_type TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE paired_tasks ADD COLUMN arbiter_agent_type TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  try {
+    database.exec(`ALTER TABLE work_items ADD COLUMN delivery_role TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
+  database.exec(
+    `UPDATE service_handoffs
+     SET target_role = COALESCE(
+       target_role,
+       intended_role,
+       CASE
+         WHEN reason LIKE 'reviewer-%' THEN 'reviewer'
+         WHEN reason LIKE 'arbiter-%' THEN 'arbiter'
+         WHEN reason IS NOT NULL THEN 'owner'
+         ELSE NULL
+       END
+     )
+     WHERE target_role IS NULL`,
+  );
+
+  database.exec(
+    `UPDATE service_handoffs
+     SET source_role = COALESCE(source_role, target_role, intended_role)
+     WHERE source_role IS NULL`,
+  );
+
   database.exec(
     `UPDATE room_settings
      SET mode_source = 'explicit'
@@ -625,28 +881,6 @@ function createSchema(database: Database): void {
     /* column already exists */
   }
 
-  try {
-    database.exec(
-      `ALTER TABLE work_items ADD COLUMN service_id TEXT DEFAULT ''`,
-    );
-  } catch {
-    /* column already exists */
-  }
-  try {
-    database
-      .prepare(
-        `UPDATE work_items
-         SET service_id = CASE
-           WHEN agent_type = 'codex' THEN ?
-           ELSE ?
-         END
-         WHERE COALESCE(service_id, '') = ''`,
-      )
-      .run(CODEX_MAIN_SERVICE_ID, CLAUDE_SERVICE_ID);
-  } catch {
-    /* best effort */
-  }
-
   backfillMessageSeq(database);
 
   database.exec(`
@@ -657,9 +891,9 @@ function createSchema(database: Database): void {
   database.exec(`DROP INDEX IF EXISTS idx_work_items_open;`);
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_work_items_group_agent
-      ON work_items(chat_jid, agent_type, service_id, status);
+      ON work_items(chat_jid, agent_type, delivery_role, status);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_open
-      ON work_items(chat_jid, agent_type, service_id)
+      ON work_items(chat_jid, agent_type, IFNULL(delivery_role, ''))
       WHERE status IN ('produced', 'delivery_retry');
   `);
 
@@ -793,8 +1027,9 @@ function createSchema(database: Database): void {
         id TEXT PRIMARY KEY,
         chat_jid TEXT NOT NULL,
         group_folder TEXT NOT NULL,
-        owner_service_id TEXT NOT NULL,
-        reviewer_service_id TEXT NOT NULL,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
         title TEXT,
         source_ref TEXT,
         plan_notes TEXT,
@@ -803,9 +1038,13 @@ function createSchema(database: Database): void {
         status TEXT NOT NULL DEFAULT 'active',
         arbiter_verdict TEXT,
         arbiter_requested_at TEXT,
+        completion_reason TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
+        CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration')),
+        CHECK (owner_agent_type IN ('claude-code', 'codex') OR owner_agent_type IS NULL),
+        CHECK (reviewer_agent_type IN ('claude-code', 'codex') OR reviewer_agent_type IS NULL),
+        CHECK (arbiter_agent_type IN ('claude-code', 'codex') OR arbiter_agent_type IS NULL)
       );
       CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
         ON paired_tasks(chat_jid, status, updated_at);
@@ -828,8 +1067,9 @@ function createSchema(database: Database): void {
           id TEXT PRIMARY KEY,
           chat_jid TEXT NOT NULL,
           group_folder TEXT NOT NULL,
-          owner_service_id TEXT NOT NULL,
-          reviewer_service_id TEXT NOT NULL,
+          owner_agent_type TEXT,
+          reviewer_agent_type TEXT,
+          arbiter_agent_type TEXT,
           title TEXT,
           source_ref TEXT,
           plan_notes TEXT,
@@ -841,16 +1081,19 @@ function createSchema(database: Database): void {
           completion_reason TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
-          CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
+          CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration')),
+          CHECK (owner_agent_type IN ('claude-code', 'codex') OR owner_agent_type IS NULL),
+          CHECK (reviewer_agent_type IN ('claude-code', 'codex') OR reviewer_agent_type IS NULL),
+          CHECK (arbiter_agent_type IN ('claude-code', 'codex') OR arbiter_agent_type IS NULL)
         );
         INSERT INTO paired_tasks_new (
-          id, chat_jid, group_folder, owner_service_id, reviewer_service_id,
-          title, source_ref, plan_notes, review_requested_at,
+          id, chat_jid, group_folder, owner_agent_type, reviewer_agent_type,
+          arbiter_agent_type, title, source_ref, plan_notes, review_requested_at,
           round_trip_count, status, created_at, updated_at
         )
         SELECT
-          id, chat_jid, group_folder, owner_service_id, reviewer_service_id,
-          title, source_ref, plan_notes, review_requested_at,
+          id, chat_jid, group_folder, owner_agent_type, reviewer_agent_type,
+          arbiter_agent_type, title, source_ref, plan_notes, review_requested_at,
           round_trip_count, status, created_at, updated_at
         FROM paired_tasks;
         DROP TABLE paired_tasks;
@@ -861,13 +1104,16 @@ function createSchema(database: Database): void {
     }
   }
 
-  // Migration: add arbiter_service_id column to channel_owner if it doesn't exist
-  try {
-    database.exec(
-      `ALTER TABLE channel_owner ADD COLUMN arbiter_service_id TEXT`,
-    );
-  } catch {
-    /* column already exists */
+  for (const column of [
+    'owner_agent_type',
+    'reviewer_agent_type',
+    'arbiter_agent_type',
+  ]) {
+    try {
+      database.exec(`ALTER TABLE channel_owner ADD COLUMN ${column} TEXT`);
+    } catch {
+      /* column already exists */
+    }
   }
 
   // Migration: add completion_reason column to paired_tasks if it doesn't exist
@@ -983,6 +1229,34 @@ function createSchema(database: Database): void {
   }
 
   backfillStoredRoomSettings(database);
+  if (tableHasColumn(database, 'channel_owner', 'owner_service_id')) {
+    backfillChannelOwnerRoleMetadata(database);
+  }
+  const hasLegacyServiceSessions = Boolean(
+    database
+      .prepare(
+        `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'service_sessions'`,
+      )
+      .get(),
+  );
+  if (hasLegacyServiceSessions) {
+    backfillLegacyServiceSessions(database);
+  }
+  if (tableHasColumn(database, 'work_items', 'service_id')) {
+    backfillWorkItemServiceShadows(database);
+  }
+  if (tableHasColumn(database, 'service_handoffs', 'source_service_id')) {
+    backfillServiceHandoffServiceShadows(database);
+  }
+  if (tableHasColumn(database, 'paired_tasks', 'owner_service_id')) {
+    backfillPairedTaskRoleMetadata(database);
+  }
+
+  rebuildWorkItemsCanonicalSchema(database);
+  dropLegacyServiceSessionsTable(database);
+  rebuildChannelOwnerCanonicalSchema(database);
+  rebuildPairedTasksCanonicalSchema(database);
+  rebuildServiceHandoffsCanonicalSchema(database);
 }
 
 export function initDatabase(): void {
@@ -1726,36 +2000,48 @@ export function getOpenWorkItem(
   agentType: AgentType = 'claude-code',
   serviceId: string = SERVICE_SESSION_SCOPE,
 ): WorkItem | undefined {
-  return db
+  const preferredRole = inferRoleFromServiceShadow(agentType, serviceId);
+  const row = db
     .prepare(
       `SELECT *
        FROM work_items
-       WHERE chat_jid = ? AND agent_type = ? AND service_id = ?
+       WHERE chat_jid = ? AND agent_type = ?
          AND status IN ('produced', 'delivery_retry')
-       ORDER BY id ASC
+       ORDER BY
+         CASE
+           WHEN ? IS NOT NULL AND delivery_role = ? THEN 0
+           WHEN delivery_role IS NULL THEN 1
+           ELSE 2
+         END,
+         id ASC
        LIMIT 1`,
     )
-    .get(chatJid, agentType, serviceId) as WorkItem | undefined;
+    .get(
+      chatJid,
+      agentType,
+      preferredRole,
+      preferredRole,
+    ) as StoredWorkItemRow | undefined;
+  return row ? hydrateWorkItem(row) : undefined;
 }
 
 export function createProducedWorkItem(input: {
   group_folder: string;
   chat_jid: string;
   agent_type?: AgentType;
-  service_id?: string;
+  delivery_role?: PairedRoomRole | null;
   start_seq: number | null;
   end_seq: number | null;
   result_payload: string;
 }): WorkItem {
   const now = new Date().toISOString();
   const agentType = input.agent_type || 'claude-code';
-  const serviceId = input.service_id || SERVICE_SESSION_SCOPE;
   db.prepare(
     `INSERT INTO work_items (
          group_folder,
          chat_jid,
          agent_type,
-         service_id,
+         delivery_role,
          status,
          start_seq,
          end_seq,
@@ -1768,7 +2054,7 @@ export function createProducedWorkItem(input: {
     input.group_folder,
     input.chat_jid,
     agentType,
-    serviceId,
+    input.delivery_role ?? null,
     input.start_seq,
     input.end_seq,
     input.result_payload,
@@ -1779,9 +2065,11 @@ export function createProducedWorkItem(input: {
   const lastId = (
     db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
   ).id;
-  return db
-    .prepare('SELECT * FROM work_items WHERE id = ?')
-    .get(lastId) as WorkItem;
+  return hydrateWorkItem(
+    db.prepare('SELECT * FROM work_items WHERE id = ?').get(
+      lastId,
+    ) as StoredWorkItemRow,
+  );
 }
 
 export function markWorkItemDelivered(
@@ -2125,7 +2413,22 @@ export function getRecentConsecutiveErrors(
 // --- Router state accessors ---
 
 export function getRouterState(key: string): string | undefined {
-  return getRouterStateForService(key, SERVICE_ID);
+  const row = db
+    .prepare('SELECT value FROM router_state WHERE key = ?')
+    .get(key) as { value: string } | undefined;
+  if (row) return row.value;
+
+  const prefixedKey = `${normalizeServiceId(SERVICE_ID)}:${key}`;
+  const prefixedRow = db
+    .prepare('SELECT value FROM router_state WHERE key = ?')
+    .get(prefixedKey) as { value: string } | undefined;
+  if (!prefixedRow) return undefined;
+
+  db.prepare(
+    'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
+  ).run(key, prefixedRow.value);
+  db.prepare('DELETE FROM router_state WHERE key = ?').run(prefixedKey);
+  return prefixedRow.value;
 }
 
 export function getRouterStateForService(
@@ -2138,22 +2441,16 @@ export function getRouterStateForService(
     .get(prefixedKey) as { value: string } | undefined;
   if (row) return row.value;
 
-  // Lazy migration: read unprefixed key and migrate to prefixed
-  const old = db
+  const canonical = db
     .prepare('SELECT value FROM router_state WHERE key = ?')
     .get(key) as { value: string } | undefined;
-  if (old) {
-    db.prepare(
-      'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
-    ).run(prefixedKey, old.value);
-    db.prepare('DELETE FROM router_state WHERE key = ?').run(key);
-    return old.value;
-  }
-  return undefined;
+  return canonical?.value;
 }
 
 export function setRouterState(key: string, value: string): void {
-  setRouterStateForService(key, value, SERVICE_ID);
+  db.prepare(
+    'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
+  ).run(key, value);
 }
 
 export function setRouterStateForService(
@@ -2173,22 +2470,13 @@ export function getSession(
   groupFolder: string,
   agentType: AgentType = 'claude-code',
 ): string | undefined {
-  const serviceScopedRow = db
-    .prepare(
-      'SELECT session_id FROM service_sessions WHERE group_folder = ? AND service_id = ?',
-    )
-    .get(groupFolder, SERVICE_SESSION_SCOPE) as
-    | { session_id: string }
-    | undefined;
-  if (serviceScopedRow?.session_id) {
-    return serviceScopedRow.session_id;
-  }
-
   const row = db
     .prepare(
       'SELECT session_id FROM sessions WHERE group_folder = ? AND agent_type = ?',
     )
-    .get(groupFolder, agentType) as { session_id: string } | undefined;
+    .get(groupFolder, agentType) as
+    | { session_id: string }
+    | undefined;
   return row?.session_id;
 }
 
@@ -2197,9 +2485,6 @@ export function setSession(
   sessionId: string,
   agentType: AgentType = 'claude-code',
 ): void {
-  db.prepare(
-    'INSERT OR REPLACE INTO service_sessions (group_folder, service_id, session_id) VALUES (?, ?, ?)',
-  ).run(groupFolder, SERVICE_SESSION_SCOPE, sessionId);
   db.prepare(
     'INSERT OR REPLACE INTO sessions (group_folder, agent_type, session_id) VALUES (?, ?, ?)',
   ).run(groupFolder, agentType, sessionId);
@@ -2210,50 +2495,30 @@ export function deleteSession(
   agentType: AgentType = 'claude-code',
 ): void {
   db.prepare(
-    'DELETE FROM service_sessions WHERE group_folder = ? AND service_id = ?',
-  ).run(groupFolder, SERVICE_SESSION_SCOPE);
-  db.prepare(
     'DELETE FROM sessions WHERE group_folder = ? AND agent_type = ?',
   ).run(groupFolder, agentType);
 }
 
 export function deleteAllSessionsForGroup(groupFolder: string): void {
-  db.prepare('DELETE FROM service_sessions WHERE group_folder = ?').run(
-    groupFolder,
-  );
   db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
 }
 
 export function getAllSessions(): Record<string, string> {
-  const serviceRows = db
-    .prepare(
-      'SELECT group_folder, session_id FROM service_sessions WHERE service_id = ?',
-    )
-    .all(SERVICE_SESSION_SCOPE) as Array<{
-    group_folder: string;
-    session_id: string;
-  }>;
-  const result: Record<string, string> = {};
-  for (const row of serviceRows) {
-    result[row.group_folder] = row.session_id;
-  }
-  if (serviceRows.length > 0) {
-    return result;
-  }
-
+  const currentAgentType =
+    inferAgentTypeFromServiceShadow(SERVICE_SESSION_SCOPE) ?? 'claude-code';
   const rows = db
     .prepare(
       'SELECT group_folder, session_id FROM sessions WHERE agent_type = ?',
     )
-    .all('claude-code') as Array<{
+    .all(currentAgentType) as Array<{
     group_folder: string;
     session_id: string;
   }>;
-  const legacyResult: Record<string, string> = {};
+  const result: Record<string, string> = {};
   for (const row of rows) {
-    legacyResult[row.group_folder] = row.session_id;
+    result[row.group_folder] = row.session_id;
   }
-  return legacyResult;
+  return result;
 }
 
 /**
@@ -2948,6 +3213,10 @@ function getStoredRoomModeRow(chatJid: string): StoredRoomModeRow | undefined {
 function collectRoomRegistrationSnapshot(
   database: Database,
   jid: string,
+  existingStored?: Pick<
+    StoredRoomSettings,
+    'modeSource' | 'ownerAgentType' | 'trigger'
+  >,
 ): RoomRegistrationSnapshot | undefined {
   const rows = database
     .prepare(
@@ -2993,16 +3262,42 @@ function collectRoomRegistrationSnapshot(
   }
 
   const agentTypes = collectRegisteredAgentTypes(database, jid);
-  const ownerAgentType = inferOwnerAgentTypeFromRegisteredAgentTypes(agentTypes);
-  const ownerRow =
+  const inferredOwnerAgentType = inferOwnerAgentTypeFromRegisteredAgentTypes(
+    agentTypes,
+  );
+  const preferExplicitTrigger =
+    existingStored?.modeSource === 'explicit' && existingStored.trigger;
+  const preferExplicitOwner =
+    existingStored?.modeSource === 'explicit' && existingStored.ownerAgentType;
+  const preferredOwnerAgentType = preferExplicitOwner
+    ? existingStored.ownerAgentType
+    : undefined;
+  const preferredOwnerRow = preferredOwnerAgentType
+    ? rows.find(
+        (row) =>
+          normalizeStoredAgentType(row.agent_type) === preferredOwnerAgentType,
+      )
+    : undefined;
+  const inferredOwnerRow =
     rows.find(
-      (row) => normalizeStoredAgentType(row.agent_type) === ownerAgentType,
+      (row) => normalizeStoredAgentType(row.agent_type) === inferredOwnerAgentType,
     ) ?? rows[0];
+  const ownerAgentType = preferredOwnerAgentType
+    ? preferredOwnerRow
+      ? preferredOwnerAgentType
+      : preferredOwnerAgentType
+    : inferredOwnerAgentType;
+  const ownerRow = preferredOwnerRow ?? inferredOwnerRow;
 
   return {
     name: first.name,
     folder: first.folder,
-    triggerPattern: ownerRow.trigger_pattern,
+    triggerPattern:
+      preferExplicitTrigger
+        ? existingStored.trigger!
+        : preferredOwnerRow != null
+          ? preferredOwnerRow.trigger_pattern
+          : ownerRow.trigger_pattern,
     requiresTrigger: (first.requires_trigger ?? 1) === 1,
     isMain: (first.is_main ?? 0) === 1,
     ownerAgentType,
@@ -3080,11 +3375,11 @@ function updateStoredRoomMetadata(
 }
 
 function syncStoredRoomRegistrationSnapshotForJid(chatJid: string): void {
-  const snapshot = collectRoomRegistrationSnapshot(db, chatJid);
+  const existingSettings = getStoredRoomSettingsRowFromDatabase(db, chatJid);
+  const snapshot = collectRoomRegistrationSnapshot(db, chatJid, existingSettings);
   if (!snapshot) return;
 
-  const existing = getStoredRoomModeRow(chatJid);
-  if (!existing) {
+  if (!existingSettings) {
     insertStoredRoomSettings(
       db,
       chatJid,
@@ -3179,10 +3474,14 @@ function backfillStoredRoomSettings(database: Database): void {
 
   const tx = database.transaction((registeredRows: Array<{ jid: string }>) => {
     for (const row of registeredRows) {
-      const snapshot = collectRoomRegistrationSnapshot(database, row.jid);
+      const existing = getStoredRoomSettingsRowFromDatabase(database, row.jid);
+      const snapshot = collectRoomRegistrationSnapshot(
+        database,
+        row.jid,
+        existing,
+      );
       if (!snapshot) continue;
 
-      const existing = getStoredRoomSettingsRowFromDatabase(database, row.jid);
       if (existing) {
         updateStoredRoomMetadata(database, row.jid, snapshot);
         continue;
@@ -3200,6 +3499,810 @@ function backfillStoredRoomSettings(database: Database): void {
     }
   });
   tx(rows);
+}
+
+function collectRegisteredAgentTypesForFolder(
+  database: Database,
+  folder: string,
+): AgentType[] {
+  const rows = database
+    .prepare('SELECT agent_type FROM registered_groups WHERE folder = ?')
+    .all(folder) as Array<{ agent_type: string | null }>;
+
+  const types = new Set<AgentType>();
+  for (const row of rows) {
+    const agentType = normalizeStoredAgentType(row.agent_type);
+    if (agentType) {
+      types.add(agentType);
+    }
+  }
+  return [...types];
+}
+
+function resolveStablePairedTaskOwnerAgentType(
+  database: Database,
+  task: Pick<StoredPairedTaskRow, 'chat_jid' | 'group_folder' | 'owner_agent_type'>,
+): AgentType | undefined {
+  const persistedOwnerAgentType = normalizeStoredAgentType(task.owner_agent_type);
+  if (persistedOwnerAgentType) {
+    return persistedOwnerAgentType;
+  }
+
+  const stored = getStoredRoomSettingsRowFromDatabase(database, task.chat_jid);
+  if (stored?.ownerAgentType) {
+    return stored.ownerAgentType;
+  }
+
+  const jidAgentTypes = collectRegisteredAgentTypes(database, task.chat_jid);
+  if (jidAgentTypes.length > 0) {
+    return inferOwnerAgentTypeFromRegisteredAgentTypes(jidAgentTypes);
+  }
+
+  const folderAgentTypes = collectRegisteredAgentTypesForFolder(
+    database,
+    task.group_folder,
+  );
+  if (folderAgentTypes.length > 0) {
+    return inferOwnerAgentTypeFromRegisteredAgentTypes(folderAgentTypes);
+  }
+
+  return undefined;
+}
+
+function resolveStableReviewerAgentType(
+  ownerAgentType: AgentType | undefined,
+  fallbackReviewerAgentType?: string | null,
+): AgentType | null {
+  const persistedReviewerAgentType = normalizeStoredAgentType(
+    fallbackReviewerAgentType,
+  );
+  if (persistedReviewerAgentType) {
+    return persistedReviewerAgentType;
+  }
+
+  if (ownerAgentType) {
+    return REVIEWER_AGENT_TYPE !== ownerAgentType
+      ? REVIEWER_AGENT_TYPE
+      : ownerAgentType;
+  }
+  return null;
+}
+
+function resolveStableRoomRoleAgentType(
+  database: Database,
+  input: {
+    chatJid: string;
+    groupFolder: string;
+    role: PairedRoomRole;
+  },
+): AgentType | null | undefined {
+  if (input.role === 'owner') {
+    return resolveStablePairedTaskOwnerAgentType(database, {
+      chat_jid: input.chatJid,
+      group_folder: input.groupFolder,
+      owner_agent_type: null,
+    });
+  }
+
+  if (input.role === 'reviewer') {
+    const ownerAgentType = resolveStablePairedTaskOwnerAgentType(database, {
+      chat_jid: input.chatJid,
+      group_folder: input.groupFolder,
+      owner_agent_type: null,
+    });
+    return resolveStableReviewerAgentType(ownerAgentType, null);
+  }
+
+  return ARBITER_AGENT_TYPE ?? null;
+}
+
+function resolveStableLeaseOwnerAgentType(
+  database: Database,
+  row: Pick<
+    ChannelOwnerLeaseRow,
+    'chat_jid' | 'owner_service_id' | 'owner_agent_type'
+  >,
+): AgentType | undefined {
+  const persisted = normalizeStoredAgentType(row.owner_agent_type);
+  if (persisted) {
+    return persisted;
+  }
+  const stored = getStoredRoomSettingsRowFromDatabase(database, row.chat_jid);
+  if (stored?.ownerAgentType) {
+    return stored.ownerAgentType;
+  }
+  return inferAgentTypeFromServiceShadow(row.owner_service_id);
+}
+
+function resolveStableLeaseRoleAgentType(
+  database: Database,
+  row: Pick<
+    ChannelOwnerLeaseRow,
+    | 'chat_jid'
+    | 'owner_service_id'
+    | 'reviewer_service_id'
+    | 'arbiter_service_id'
+    | 'owner_agent_type'
+    | 'reviewer_agent_type'
+    | 'arbiter_agent_type'
+  >,
+  role: PairedRoomRole,
+): AgentType | null | undefined {
+  if (role === 'owner') {
+    return resolveStableLeaseOwnerAgentType(database, row);
+  }
+  if (role === 'reviewer') {
+    if (row.reviewer_service_id == null) {
+      return null;
+    }
+    return (
+      normalizeStoredAgentType(row.reviewer_agent_type) ??
+      inferAgentTypeFromServiceShadow(row.reviewer_service_id) ??
+      resolveStableReviewerAgentType(
+        resolveStableLeaseOwnerAgentType(database, row),
+        null,
+      )
+    );
+  }
+  return (
+    normalizeStoredAgentType(row.arbiter_agent_type) ??
+    (row.arbiter_service_id
+      ? inferAgentTypeFromServiceShadow(row.arbiter_service_id)
+      : undefined) ??
+    ARBITER_AGENT_TYPE ??
+    null
+  );
+}
+
+function backfillChannelOwnerRoleMetadata(database: Database): void {
+  const rows = database
+    .prepare(
+      `SELECT
+         chat_jid,
+         owner_service_id,
+         reviewer_service_id,
+         arbiter_service_id,
+         owner_agent_type,
+         reviewer_agent_type,
+         arbiter_agent_type
+       FROM channel_owner`,
+    )
+    .all() as Array<
+    Pick<
+      ChannelOwnerLeaseRow,
+      | 'chat_jid'
+      | 'owner_service_id'
+      | 'reviewer_service_id'
+      | 'arbiter_service_id'
+      | 'owner_agent_type'
+      | 'reviewer_agent_type'
+      | 'arbiter_agent_type'
+    >
+  >;
+
+  const update = database.prepare(
+    `UPDATE channel_owner
+     SET owner_service_id = ?,
+         reviewer_service_id = ?,
+         arbiter_service_id = ?,
+         owner_agent_type = ?,
+         reviewer_agent_type = ?,
+         arbiter_agent_type = ?
+     WHERE chat_jid = ?`,
+  );
+
+  const tx = database.transaction(
+    (
+      leaseRows: Array<
+        Pick<
+          ChannelOwnerLeaseRow,
+          | 'chat_jid'
+          | 'owner_service_id'
+          | 'reviewer_service_id'
+          | 'arbiter_service_id'
+          | 'owner_agent_type'
+          | 'reviewer_agent_type'
+          | 'arbiter_agent_type'
+        >
+      >,
+    ) => {
+      for (const row of leaseRows) {
+        const ownerAgentType = resolveStableLeaseRoleAgentType(
+          database,
+          row,
+          'owner',
+        );
+        const reviewerAgentType = resolveStableLeaseRoleAgentType(
+          database,
+          row,
+          'reviewer',
+        );
+        const arbiterAgentType = resolveStableLeaseRoleAgentType(
+          database,
+          row,
+          'arbiter',
+        );
+
+        const ownerServiceId =
+          resolveRoleServiceShadow('owner', ownerAgentType) ??
+          row.owner_service_id;
+        const reviewerServiceId =
+          row.reviewer_service_id == null
+            ? null
+            : resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
+              row.reviewer_service_id;
+        const arbiterServiceId =
+          row.arbiter_service_id == null
+            ? null
+            : resolveRoleServiceShadow('arbiter', arbiterAgentType) ??
+              row.arbiter_service_id;
+
+        if (
+          ownerServiceId === row.owner_service_id &&
+          reviewerServiceId === row.reviewer_service_id &&
+          arbiterServiceId === row.arbiter_service_id &&
+          (ownerAgentType ?? null) === (row.owner_agent_type ?? null) &&
+          (reviewerAgentType ?? null) === (row.reviewer_agent_type ?? null) &&
+          (arbiterAgentType ?? null) === (row.arbiter_agent_type ?? null)
+        ) {
+          continue;
+        }
+
+        update.run(
+          ownerServiceId,
+          reviewerServiceId,
+          arbiterServiceId,
+          ownerAgentType ?? null,
+          reviewerAgentType ?? null,
+          arbiterAgentType ?? null,
+          row.chat_jid,
+        );
+      }
+    },
+  );
+
+  tx(rows);
+}
+
+function resolveWorkItemServiceShadow(
+  agentType: AgentType,
+  deliveryRole?: PairedRoomRole | null,
+): string {
+  return (
+    resolveRoleServiceShadow(deliveryRole ?? 'owner', agentType) ??
+    SERVICE_SESSION_SCOPE
+  );
+}
+
+function backfillLegacyServiceSessions(database: Database): void {
+  const rows = database
+    .prepare(
+      `SELECT group_folder, service_id, session_id
+       FROM service_sessions`,
+    )
+    .all() as Array<{
+    group_folder: string;
+    service_id: string;
+    session_id: string;
+  }>;
+
+  const upsert = database.prepare(
+    `INSERT OR IGNORE INTO sessions (group_folder, agent_type, session_id)
+     VALUES (?, ?, ?)`,
+  );
+
+  const tx = database.transaction(
+    (
+      sessionRows: Array<{
+        group_folder: string;
+        service_id: string;
+        session_id: string;
+      }>,
+    ) => {
+      for (const row of sessionRows) {
+        const agentType = inferAgentTypeFromServiceShadow(row.service_id);
+        if (!agentType) {
+          continue;
+        }
+        upsert.run(row.group_folder, agentType, row.session_id);
+      }
+    },
+  );
+
+  tx(rows);
+}
+
+function backfillWorkItemServiceShadows(database: Database): void {
+  const rows = database
+    .prepare(
+      `SELECT id, agent_type, service_id, delivery_role
+       FROM work_items`,
+    )
+    .all() as Array<{
+    id: number;
+    agent_type: string;
+    service_id: string;
+    delivery_role: PairedRoomRole | null;
+  }>;
+
+  const update = database.prepare(
+    `UPDATE work_items
+     SET service_id = ?
+     WHERE id = ?`,
+  );
+
+  const tx = database.transaction(
+    (
+      workItemRows: Array<{
+        id: number;
+        agent_type: string;
+        service_id: string;
+        delivery_role: PairedRoomRole | null;
+      }>,
+    ) => {
+      for (const row of workItemRows) {
+        const agentType = normalizeStoredAgentType(row.agent_type);
+        if (!agentType) {
+          continue;
+        }
+        const normalizedServiceId = resolveWorkItemServiceShadow(
+          agentType,
+          row.delivery_role,
+        );
+        if (normalizedServiceId === row.service_id) {
+          continue;
+        }
+        update.run(normalizedServiceId, row.id);
+      }
+    },
+  );
+
+  tx(rows);
+}
+
+function backfillServiceHandoffServiceShadows(database: Database): void {
+  const rows = database
+    .prepare(
+      `SELECT
+         id,
+         chat_jid,
+         group_folder,
+         source_service_id,
+         target_service_id,
+         source_role,
+         source_agent_type,
+         target_role,
+         target_agent_type
+       FROM service_handoffs`,
+    )
+    .all() as Array<LegacyServiceHandoffServiceRow>;
+
+  const update = database.prepare(
+    `UPDATE service_handoffs
+     SET source_service_id = ?,
+         target_service_id = ?,
+         source_agent_type = ?,
+         target_agent_type = ?
+     WHERE id = ?`,
+  );
+
+  const tx = database.transaction(
+    (handoffRows: Array<LegacyServiceHandoffServiceRow>) => {
+      for (const row of handoffRows) {
+        const sourceAgentType =
+          normalizeStoredAgentType(row.source_agent_type) ??
+          (row.source_role
+            ? resolveStableRoomRoleAgentType(database, {
+                chatJid: row.chat_jid,
+                groupFolder: row.group_folder,
+                role: row.source_role,
+              })
+            : null) ??
+          inferAgentTypeFromServiceShadow(row.source_service_id);
+        const targetAgentType =
+          normalizeStoredAgentType(row.target_agent_type) ??
+          (row.target_role
+            ? resolveStableRoomRoleAgentType(database, {
+                chatJid: row.chat_jid,
+                groupFolder: row.group_folder,
+                role: row.target_role,
+              })
+            : null);
+
+        const normalizedSourceServiceId =
+          row.source_role != null
+            ? resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
+              row.source_service_id
+            : row.source_service_id;
+        const normalizedTargetServiceId =
+          row.target_role != null
+            ? resolveRoleServiceShadow(row.target_role, targetAgentType) ??
+              row.target_service_id
+            : row.target_service_id;
+
+        if (
+          normalizedSourceServiceId === row.source_service_id &&
+          normalizedTargetServiceId === row.target_service_id &&
+          (sourceAgentType ?? null) === (row.source_agent_type ?? null) &&
+          (targetAgentType ?? null) === (row.target_agent_type ?? null)
+        ) {
+          continue;
+        }
+
+        update.run(
+          normalizedSourceServiceId ?? SERVICE_SESSION_SCOPE,
+          normalizedTargetServiceId ?? SERVICE_SESSION_SCOPE,
+          sourceAgentType ?? null,
+          targetAgentType ?? null,
+          row.id,
+        );
+      }
+    },
+  );
+
+  tx(rows);
+}
+
+function backfillPairedTaskRoleMetadata(database: Database): void {
+  const rows = database
+    .prepare(
+      `SELECT
+         id,
+         chat_jid,
+         group_folder,
+         owner_service_id,
+         reviewer_service_id,
+         owner_agent_type,
+         reviewer_agent_type,
+         arbiter_agent_type
+       FROM paired_tasks`,
+    )
+    .all() as Array<
+    Pick<
+      PairedTask,
+      | 'id'
+      | 'chat_jid'
+      | 'group_folder'
+      | 'owner_service_id'
+      | 'reviewer_service_id'
+      | 'owner_agent_type'
+      | 'reviewer_agent_type'
+      | 'arbiter_agent_type'
+    >
+  >;
+
+  const tx = database.transaction(
+    (
+      taskRows: Array<
+        Pick<
+          PairedTask,
+          | 'id'
+          | 'chat_jid'
+          | 'group_folder'
+          | 'owner_service_id'
+          | 'reviewer_service_id'
+          | 'owner_agent_type'
+          | 'reviewer_agent_type'
+          | 'arbiter_agent_type'
+        >
+      >,
+    ) => {
+      const update = database.prepare(
+        `UPDATE paired_tasks
+         SET owner_service_id = ?,
+             reviewer_service_id = ?,
+             owner_agent_type = ?,
+             reviewer_agent_type = ?,
+             arbiter_agent_type = ?
+         WHERE id = ?`,
+      );
+
+      for (const row of taskRows) {
+        const ownerAgentType = resolveStablePairedTaskOwnerAgentType(
+          database,
+          row,
+        );
+        const reviewerAgentType = resolveStableReviewerAgentType(
+          ownerAgentType,
+          row.reviewer_agent_type ?? null,
+        );
+        const arbiterAgentType =
+          normalizeStoredAgentType(row.arbiter_agent_type) ??
+          ARBITER_AGENT_TYPE ??
+          null;
+
+        const ownerServiceId =
+          resolveRoleServiceShadow('owner', ownerAgentType) ??
+          row.owner_service_id;
+        const reviewerServiceId =
+          resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
+          row.reviewer_service_id;
+
+        update.run(
+          ownerServiceId,
+          reviewerServiceId,
+          ownerAgentType ?? null,
+          reviewerAgentType ?? null,
+          arbiterAgentType,
+          row.id,
+        );
+      }
+    },
+  );
+
+  tx(rows);
+}
+
+function rebuildWorkItemsCanonicalSchema(database: Database): void {
+  if (!tableHasColumn(database, 'work_items', 'service_id')) {
+    return;
+  }
+
+  database.exec(`
+    CREATE TABLE work_items_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      agent_type TEXT NOT NULL,
+      delivery_role TEXT,
+      status TEXT NOT NULL DEFAULT 'produced',
+      start_seq INTEGER,
+      end_seq INTEGER,
+      result_payload TEXT NOT NULL,
+      delivery_attempts INTEGER NOT NULL DEFAULT 0,
+      delivery_message_id TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      delivered_at TEXT,
+      CHECK (status IN ('produced', 'delivery_retry', 'delivered')),
+      CHECK (delivery_role IN ('owner', 'reviewer', 'arbiter') OR delivery_role IS NULL)
+    );
+    INSERT INTO work_items_new (
+      id,
+      group_folder,
+      chat_jid,
+      agent_type,
+      delivery_role,
+      status,
+      start_seq,
+      end_seq,
+      result_payload,
+      delivery_attempts,
+      delivery_message_id,
+      last_error,
+      created_at,
+      updated_at,
+      delivered_at
+    )
+    SELECT
+      id,
+      group_folder,
+      chat_jid,
+      agent_type,
+      delivery_role,
+      status,
+      start_seq,
+      end_seq,
+      result_payload,
+      delivery_attempts,
+      delivery_message_id,
+      last_error,
+      created_at,
+      updated_at,
+      delivered_at
+    FROM work_items;
+    DROP TABLE work_items;
+    ALTER TABLE work_items_new RENAME TO work_items;
+    CREATE INDEX IF NOT EXISTS idx_work_items_status
+      ON work_items(status, updated_at);
+    CREATE INDEX IF NOT EXISTS idx_work_items_group_agent
+      ON work_items(chat_jid, agent_type, delivery_role, status);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_open
+      ON work_items(chat_jid, agent_type, IFNULL(delivery_role, ''))
+      WHERE status IN ('produced', 'delivery_retry');
+  `);
+}
+
+function dropLegacyServiceSessionsTable(database: Database): void {
+  const serviceSessionsExists = Boolean(
+    database
+      .prepare(
+        `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'service_sessions'`,
+      )
+      .get(),
+  );
+  if (!serviceSessionsExists) {
+    return;
+  }
+  database.exec(`DROP TABLE service_sessions`);
+}
+
+function rebuildChannelOwnerCanonicalSchema(database: Database): void {
+  if (!tableHasColumn(database, 'channel_owner', 'owner_service_id')) {
+    return;
+  }
+
+  database.exec(`
+    CREATE TABLE channel_owner_new (
+      chat_jid TEXT PRIMARY KEY,
+      owner_agent_type TEXT,
+      reviewer_agent_type TEXT,
+      arbiter_agent_type TEXT,
+      activated_at TEXT,
+      reason TEXT,
+      CHECK (owner_agent_type IN ('claude-code', 'codex') OR owner_agent_type IS NULL),
+      CHECK (reviewer_agent_type IN ('claude-code', 'codex') OR reviewer_agent_type IS NULL),
+      CHECK (arbiter_agent_type IN ('claude-code', 'codex') OR arbiter_agent_type IS NULL)
+    );
+    INSERT INTO channel_owner_new (
+      chat_jid,
+      owner_agent_type,
+      reviewer_agent_type,
+      arbiter_agent_type,
+      activated_at,
+      reason
+    )
+    SELECT
+      chat_jid,
+      owner_agent_type,
+      reviewer_agent_type,
+      arbiter_agent_type,
+      activated_at,
+      reason
+    FROM channel_owner;
+    DROP TABLE channel_owner;
+    ALTER TABLE channel_owner_new RENAME TO channel_owner;
+  `);
+}
+
+function rebuildPairedTasksCanonicalSchema(database: Database): void {
+  if (!tableHasColumn(database, 'paired_tasks', 'owner_service_id')) {
+    return;
+  }
+
+  database.exec(`
+    CREATE TABLE paired_tasks_new (
+      id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      owner_agent_type TEXT,
+      reviewer_agent_type TEXT,
+      arbiter_agent_type TEXT,
+      title TEXT,
+      source_ref TEXT,
+      plan_notes TEXT,
+      review_requested_at TEXT,
+      round_trip_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      arbiter_verdict TEXT,
+      arbiter_requested_at TEXT,
+      completion_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration')),
+      CHECK (owner_agent_type IN ('claude-code', 'codex') OR owner_agent_type IS NULL),
+      CHECK (reviewer_agent_type IN ('claude-code', 'codex') OR reviewer_agent_type IS NULL),
+      CHECK (arbiter_agent_type IN ('claude-code', 'codex') OR arbiter_agent_type IS NULL)
+    );
+    INSERT INTO paired_tasks_new (
+      id,
+      chat_jid,
+      group_folder,
+      owner_agent_type,
+      reviewer_agent_type,
+      arbiter_agent_type,
+      title,
+      source_ref,
+      plan_notes,
+      review_requested_at,
+      round_trip_count,
+      status,
+      arbiter_verdict,
+      arbiter_requested_at,
+      completion_reason,
+      created_at,
+      updated_at
+    )
+    SELECT
+      id,
+      chat_jid,
+      group_folder,
+      owner_agent_type,
+      reviewer_agent_type,
+      arbiter_agent_type,
+      title,
+      source_ref,
+      plan_notes,
+      review_requested_at,
+      round_trip_count,
+      status,
+      arbiter_verdict,
+      arbiter_requested_at,
+      completion_reason,
+      created_at,
+      updated_at
+    FROM paired_tasks;
+    DROP TABLE paired_tasks;
+    ALTER TABLE paired_tasks_new RENAME TO paired_tasks;
+    CREATE INDEX IF NOT EXISTS idx_paired_tasks_chat_status
+      ON paired_tasks(chat_jid, status, updated_at);
+  `);
+}
+
+function rebuildServiceHandoffsCanonicalSchema(database: Database): void {
+  if (!tableHasColumn(database, 'service_handoffs', 'source_service_id')) {
+    return;
+  }
+
+  database.exec(`
+    CREATE TABLE service_handoffs_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_jid TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      source_role TEXT,
+      source_agent_type TEXT,
+      target_role TEXT,
+      target_agent_type TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      start_seq INTEGER,
+      end_seq INTEGER,
+      reason TEXT,
+      intended_role TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      claimed_at TEXT,
+      completed_at TEXT,
+      last_error TEXT,
+      CHECK (status IN ('pending', 'claimed', 'completed', 'failed')),
+      CHECK (intended_role IN ('owner', 'reviewer', 'arbiter') OR intended_role IS NULL),
+      CHECK (source_role IN ('owner', 'reviewer', 'arbiter') OR source_role IS NULL),
+      CHECK (target_role IN ('owner', 'reviewer', 'arbiter') OR target_role IS NULL),
+      CHECK (source_agent_type IN ('claude-code', 'codex') OR source_agent_type IS NULL)
+    );
+    INSERT INTO service_handoffs_new (
+      id,
+      chat_jid,
+      group_folder,
+      source_role,
+      source_agent_type,
+      target_role,
+      target_agent_type,
+      prompt,
+      status,
+      start_seq,
+      end_seq,
+      reason,
+      intended_role,
+      created_at,
+      claimed_at,
+      completed_at,
+      last_error
+    )
+    SELECT
+      id,
+      chat_jid,
+      group_folder,
+      source_role,
+      source_agent_type,
+      target_role,
+      target_agent_type,
+      prompt,
+      status,
+      start_seq,
+      end_seq,
+      reason,
+      intended_role,
+      created_at,
+      claimed_at,
+      completed_at,
+      last_error
+    FROM service_handoffs;
+    DROP TABLE service_handoffs;
+    ALTER TABLE service_handoffs_new RENAME TO service_handoffs;
+    CREATE INDEX IF NOT EXISTS idx_service_handoffs_target
+      ON service_handoffs(status, target_role, target_agent_type, created_at);
+  `);
 }
 
 // --- Paired task/project/workspace state ---
@@ -3242,8 +4345,9 @@ export function createPairedTask(task: PairedTask): void {
         id,
         chat_jid,
         group_folder,
-        owner_service_id,
-        reviewer_service_id,
+        owner_agent_type,
+        reviewer_agent_type,
+        arbiter_agent_type,
         title,
         source_ref,
         plan_notes,
@@ -3255,14 +4359,15 @@ export function createPairedTask(task: PairedTask): void {
         created_at,
         updated_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   ).run(
     task.id,
     task.chat_jid,
     task.group_folder,
-    task.owner_service_id,
-    task.reviewer_service_id,
+    task.owner_agent_type ?? null,
+    task.reviewer_agent_type ?? null,
+    task.arbiter_agent_type ?? null,
     task.title,
     task.source_ref,
     task.plan_notes,
@@ -3277,15 +4382,16 @@ export function createPairedTask(task: PairedTask): void {
 }
 
 export function getPairedTaskById(id: string): PairedTask | undefined {
-  return db.prepare('SELECT * FROM paired_tasks WHERE id = ?').get(id) as
-    | PairedTask
+  const row = db.prepare('SELECT * FROM paired_tasks WHERE id = ?').get(id) as
+    | StoredPairedTaskRow
     | undefined;
+  return row ? hydratePairedTaskRow(row) : undefined;
 }
 
 export function getLatestPairedTaskForChat(
   chatJid: string,
 ): PairedTask | undefined {
-  return db
+  const row = db
     .prepare(
       `
         SELECT *
@@ -3295,13 +4401,14 @@ export function getLatestPairedTaskForChat(
          LIMIT 1
       `,
     )
-    .get(chatJid) as PairedTask | undefined;
+    .get(chatJid) as StoredPairedTaskRow | undefined;
+  return row ? hydratePairedTaskRow(row) : undefined;
 }
 
 export function getLatestOpenPairedTaskForChat(
   chatJid: string,
 ): PairedTask | undefined {
-  return db
+  const row = db
     .prepare(
       `
         SELECT *
@@ -3312,7 +4419,8 @@ export function getLatestOpenPairedTaskForChat(
          LIMIT 1
       `,
     )
-    .get(chatJid) as PairedTask | undefined;
+    .get(chatJid) as StoredPairedTaskRow | undefined;
+  return row ? hydratePairedTaskRow(row) : undefined;
 }
 
 export function updatePairedTask(
@@ -3466,46 +4574,81 @@ export function getLastBotFinalMessage(
 export function getChannelOwnerLease(
   chatJid: string,
 ): ChannelOwnerLeaseRow | undefined {
-  return db
+  const row = db
     .prepare(
-      `SELECT chat_jid, owner_service_id, reviewer_service_id, arbiter_service_id, activated_at, reason
+      `SELECT
+         chat_jid,
+         owner_agent_type,
+         reviewer_agent_type,
+         arbiter_agent_type,
+         activated_at,
+         reason
        FROM channel_owner
        WHERE chat_jid = ?`,
     )
-    .get(chatJid) as ChannelOwnerLeaseRow | undefined;
+    .get(chatJid) as StoredChannelOwnerLeaseRow | undefined;
+  return row ? hydrateChannelOwnerLeaseRow(row) : undefined;
 }
 
 export function getAllChannelOwnerLeases(): ChannelOwnerLeaseRow[] {
-  return db
+  const rows = db
     .prepare(
-      `SELECT chat_jid, owner_service_id, reviewer_service_id, arbiter_service_id, activated_at, reason
+      `SELECT
+         chat_jid,
+         owner_agent_type,
+         reviewer_agent_type,
+         arbiter_agent_type,
+         activated_at,
+         reason
        FROM channel_owner`,
     )
-    .all() as ChannelOwnerLeaseRow[];
+    .all() as StoredChannelOwnerLeaseRow[];
+  return rows.map(hydrateChannelOwnerLeaseRow);
 }
 
 export function setChannelOwnerLease(input: {
   chat_jid: string;
-  owner_service_id: string;
+  owner_service_id?: string;
   reviewer_service_id?: string | null;
   arbiter_service_id?: string | null;
+  owner_agent_type?: AgentType | null;
+  reviewer_agent_type?: AgentType | null;
+  arbiter_agent_type?: AgentType | null;
   activated_at?: string | null;
   reason?: string | null;
 }): void {
+  const ownerAgentType =
+    normalizeStoredAgentType(input.owner_agent_type) ??
+    inferAgentTypeFromServiceShadow(input.owner_service_id) ??
+    OWNER_AGENT_TYPE;
+  const reviewerAgentType =
+    input.reviewer_service_id == null && input.reviewer_agent_type == null
+      ? null
+      : normalizeStoredAgentType(input.reviewer_agent_type) ??
+        inferAgentTypeFromServiceShadow(input.reviewer_service_id ?? null) ??
+        resolveStableReviewerAgentType(ownerAgentType, null);
+  const arbiterAgentType =
+    input.arbiter_service_id == null && input.arbiter_agent_type == null
+      ? null
+      : normalizeStoredAgentType(input.arbiter_agent_type) ??
+        inferAgentTypeFromServiceShadow(input.arbiter_service_id ?? null) ??
+        ARBITER_AGENT_TYPE ??
+        null;
+
   db.prepare(
     `INSERT OR REPLACE INTO channel_owner (
       chat_jid,
-      owner_service_id,
-      reviewer_service_id,
-      arbiter_service_id,
+      owner_agent_type,
+      reviewer_agent_type,
+      arbiter_agent_type,
       activated_at,
       reason
     ) VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     input.chat_jid,
-    input.owner_service_id,
-    input.reviewer_service_id ?? null,
-    input.arbiter_service_id ?? null,
+    ownerAgentType ?? null,
+    reviewerAgentType ?? null,
+    arbiterAgentType ?? null,
     input.activated_at ?? new Date().toISOString(),
     input.reason ?? null,
   );
@@ -3520,8 +4663,11 @@ export function clearChannelOwnerLease(chatJid: string): void {
 export function createServiceHandoff(input: {
   chat_jid: string;
   group_folder: string;
-  source_service_id: string;
-  target_service_id: string;
+  source_service_id?: string;
+  target_service_id?: string;
+  source_role?: PairedRoomRole | null;
+  target_role?: PairedRoomRole | null;
+  source_agent_type?: AgentType | null;
   target_agent_type: AgentType;
   prompt: string;
   start_seq?: number | null;
@@ -3529,24 +4675,38 @@ export function createServiceHandoff(input: {
   reason?: string | null;
   intended_role?: PairedRoomRole | null;
 }): ServiceHandoff {
+  const sourceRole = input.source_role ?? input.intended_role ?? null;
+  const targetRole = input.target_role ?? input.intended_role ?? null;
+  const sourceAgentType =
+    normalizeStoredAgentType(input.source_agent_type) ??
+    (sourceRole
+      ? resolveStableRoomRoleAgentType(db, {
+          chatJid: input.chat_jid,
+          groupFolder: input.group_folder,
+          role: sourceRole,
+        })
+      : null);
+
   db.prepare(
     `INSERT INTO service_handoffs (
         chat_jid,
         group_folder,
-        source_service_id,
-        target_service_id,
+        source_role,
+        source_agent_type,
+        target_role,
         target_agent_type,
         prompt,
         start_seq,
         end_seq,
         reason,
         intended_role
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     input.chat_jid,
     input.group_folder,
-    input.source_service_id,
-    input.target_service_id,
+    sourceRole,
+    sourceAgentType ?? null,
+    targetRole,
     input.target_agent_type,
     input.prompt,
     input.start_seq ?? null,
@@ -3558,23 +4718,44 @@ export function createServiceHandoff(input: {
   const lastId = (
     db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
   ).id;
-  return db
-    .prepare('SELECT * FROM service_handoffs WHERE id = ?')
-    .get(lastId) as ServiceHandoff;
+  return hydrateServiceHandoffRow(
+    db.prepare('SELECT * FROM service_handoffs WHERE id = ?').get(
+      lastId,
+    ) as StoredServiceHandoffRow,
+  );
 }
 
 export function getPendingServiceHandoffs(
   targetServiceId: string = SERVICE_SESSION_SCOPE,
 ): ServiceHandoff[] {
-  return db
+  const handoffs = db
     .prepare(
       `SELECT *
        FROM service_handoffs
-       WHERE target_service_id = ?
-         AND status = 'pending'
+       WHERE status = 'pending'
        ORDER BY created_at ASC, id ASC`,
     )
-    .all(targetServiceId) as ServiceHandoff[];
+    .all() as StoredServiceHandoffRow[];
+  return handoffs
+    .map(hydrateServiceHandoffRow)
+    .filter(
+      (handoff) =>
+        normalizeServiceId(handoff.target_service_id) ===
+        normalizeServiceId(targetServiceId),
+    );
+}
+
+export function getAllPendingServiceHandoffs(): ServiceHandoff[] {
+  return (
+    db
+      .prepare(
+        `SELECT *
+       FROM service_handoffs
+       WHERE status = 'pending'
+       ORDER BY created_at ASC, id ASC`,
+      )
+      .all() as StoredServiceHandoffRow[]
+  ).map(hydrateServiceHandoffRow);
 }
 
 export function claimServiceHandoff(id: number): boolean {
@@ -3657,31 +4838,26 @@ function parseLastAgentSeqState(
 
 export function completeServiceHandoffAndAdvanceTargetCursor(input: {
   id: number;
-  target_service_id: string;
   chat_jid: string;
+  cursor_key?: string;
   end_seq?: number | null;
 }): string | null {
   return db.transaction(() => {
     let appliedCursor: string | null = null;
 
     if (input.end_seq != null) {
+      const cursorKey = input.cursor_key ?? input.chat_jid;
       const currentState = parseLastAgentSeqState(
-        getRouterStateForService('last_agent_seq', input.target_service_id),
-        input.target_service_id,
+        getRouterState('last_agent_seq'),
+        'last_agent_seq',
       );
       const existingSeq = normalizeStoredLastAgentSeqCursor(
-        currentState[input.chat_jid],
+        currentState[cursorKey],
         input.chat_jid,
       );
-      currentState[input.chat_jid] = String(
-        Math.max(existingSeq, input.end_seq),
-      );
-      setRouterStateForService(
-        'last_agent_seq',
-        JSON.stringify(currentState),
-        input.target_service_id,
-      );
-      appliedCursor = currentState[input.chat_jid];
+      currentState[cursorKey] = String(Math.max(existingSeq, input.end_seq));
+      setRouterState('last_agent_seq', JSON.stringify(currentState));
+      appliedCursor = currentState[cursorKey];
     }
 
     db.prepare(

@@ -5,8 +5,8 @@ import {
   completeServiceHandoffAndAdvanceTargetCursor,
   createProducedWorkItem,
   failServiceHandoff,
+  getAllPendingServiceHandoffs,
   getOpenWorkItem,
-  getPendingServiceHandoffs,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
   markWorkItemDelivered,
@@ -21,12 +21,7 @@ import {
   type WorkItem,
 } from './db.js';
 import {
-  CLAUDE_SERVICE_ID,
-  CODEX_MAIN_SERVICE_ID,
-  CODEX_REVIEW_SERVICE_ID,
   isSessionCommandSenderAllowed,
-  REVIEWER_AGENT_TYPE,
-  SERVICE_ID,
 } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
 import {
@@ -67,7 +62,6 @@ import {
 import { createScopedLogger, logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import {
-  getEffectiveChannelLease,
   hasReviewerLease,
 } from './service-routing.js';
 
@@ -97,8 +91,11 @@ export function isDuplicateOfLastBotFinal(
 }
 
 export function resolveHandoffRoleOverride(
-  handoff: Pick<ServiceHandoff, 'intended_role' | 'reason'>,
+  handoff: Pick<ServiceHandoff, 'target_role' | 'intended_role' | 'reason'>,
 ): PairedRoomRole | undefined {
+  if (handoff.target_role) {
+    return handoff.target_role;
+  }
   if (handoff.intended_role) {
     return handoff.intended_role;
   }
@@ -109,6 +106,16 @@ export function resolveHandoffRoleOverride(
     return 'arbiter';
   }
   return undefined;
+}
+
+export function resolveHandoffCursorKey(
+  chatJid: string,
+  role?: PairedRoomRole,
+): string {
+  if (!role || role === 'owner') {
+    return chatJid;
+  }
+  return `${chatJid}:${role}`;
 }
 
 export interface MessageRuntimeDeps {
@@ -127,6 +134,14 @@ export interface MessageRuntimeDeps {
   saveState: () => void;
   persistSession: (groupFolder: string, sessionId: string) => void;
   clearSession: (groupFolder: string, opts?: { allRoles?: boolean }) => void;
+}
+
+function getFixedRoleChannelName(role: 'reviewer' | 'arbiter'): string {
+  return role === 'reviewer' ? 'discord-review' : 'discord-arbiter';
+}
+
+function getMissingRoleChannelMessage(role: 'reviewer' | 'arbiter'): string {
+  return `Missing configured ${role} Discord bot channel (${getFixedRoleChannelName(role)}) for role-fixed delivery`;
 }
 
 export function createMessageRuntime(deps: MessageRuntimeDeps): {
@@ -149,10 +164,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     messages: NewMessage[],
   ): NewMessage[] => {
     if (!hasReviewerLease(chatJid)) return messages;
-    const lease = getEffectiveChannelLease(chatJid);
-    const sharedOwnerReviewerService =
-      lease.reviewer_service_id !== null &&
-      lease.owner_service_id === lease.reviewer_service_id;
     // Build bot-user-id → channel-name mapping from connected channels
     const botIdToChannelName = new Map<string, string>();
     for (const ch of deps.channels) {
@@ -164,36 +175,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         }
       }
     }
-    // Map channel name → service ID
-    const channelToService: Record<string, string> = {
-      discord: 'claude',
-      'discord-codex': 'codex-main',
-      'discord-review': 'codex-review',
+    const channelToRole: Record<string, PairedRoomRole> = {
+      discord: 'owner',
+      'discord-review': 'reviewer',
+      'discord-arbiter': 'arbiter',
     };
     return messages.map((msg) => {
       if (!msg.is_bot_message) return msg;
       const channelName = botIdToChannelName.get(msg.sender);
       if (!channelName) return msg;
-      const serviceId = channelToService[channelName];
-      if (!serviceId) return msg;
-      // Raw channel history cannot tell owner/reviewer apart when both roles
-      // are delivered by the same service, so avoid fabricating a role label.
-      if (
-        sharedOwnerReviewerService &&
-        serviceId === lease.owner_service_id &&
-        serviceId === lease.reviewer_service_id
-      ) {
-        return msg;
-      }
-      const role =
-        serviceId === lease.owner_service_id
-          ? 'owner'
-          : serviceId === lease.reviewer_service_id
-            ? 'reviewer'
-            : serviceId === lease.arbiter_service_id
-              ? 'arbiter'
-              : msg.sender_name;
-      return { ...msg, sender_name: role };
+      const role = channelToRole[channelName];
+      return role ? { ...msg, sender_name: role } : msg;
     });
   };
 
@@ -467,6 +459,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     channel: Channel;
     startSeq: number | null;
     endSeq: number | null;
+    deliveryRole?: PairedRoomRole;
     hasHumanMessage?: boolean;
     forcedRole?: PairedRoomRole;
     forcedAgentType?: AgentType;
@@ -504,6 +497,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             chat_jid: chatJid,
             agent_type:
               args.forcedAgentType ?? group.agentType ?? 'claude-code',
+            delivery_role: args.deliveryRole ?? args.forcedRole ?? null,
             start_seq: startSeq,
             end_seq: endSeq,
             result_payload: text,
@@ -563,17 +557,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   };
 
   const enqueuePendingHandoffs = (): void => {
-    // Unified service handles all three bots — collect handoffs for all service IDs.
-    const allServiceIds = new Set([
-      SERVICE_ID,
-      CLAUDE_SERVICE_ID,
-      CODEX_MAIN_SERVICE_ID,
-      CODEX_REVIEW_SERVICE_ID,
-    ]);
-    const allHandoffs = [...allServiceIds].flatMap((id) =>
-      getPendingServiceHandoffs(id),
-    );
-    for (const handoff of allHandoffs) {
+    // Unified runtime claims pending handoffs once and resolves delivery from role context.
+    for (const handoff of getAllPendingServiceHandoffs()) {
       if (!claimServiceHandoff(handoff.id)) {
         continue;
       }
@@ -608,14 +593,29 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const handoffRole = resolveHandoffRoleOverride(handoff);
     let handoffChannel = channel;
     if (handoffRole === 'reviewer') {
-      const revChName =
-        handoff.target_agent_type === 'claude-code'
-          ? 'discord'
-          : 'discord-review';
-      handoffChannel = findChannelByName(deps.channels, revChName) || channel;
+      // Role-fixed delivery intentionally does not follow fallback agent type.
+      const reviewerChannel = findChannelByName(
+        deps.channels,
+        getFixedRoleChannelName('reviewer'),
+      );
+      if (!reviewerChannel) {
+        failServiceHandoff(
+          handoff.id,
+          getMissingRoleChannelMessage('reviewer'),
+        );
+        return;
+      }
+      handoffChannel = reviewerChannel;
     } else if (handoffRole === 'arbiter') {
-      handoffChannel =
-        findChannelByName(deps.channels, 'discord-review') || channel;
+      const arbiterChannel = findChannelByName(
+        deps.channels,
+        getFixedRoleChannelName('arbiter'),
+      );
+      if (!arbiterChannel) {
+        failServiceHandoff(handoff.id, getMissingRoleChannelMessage('arbiter'));
+        return;
+      }
+      handoffChannel = arbiterChannel;
     }
 
     const runId = `handoff-${handoff.id}`;
@@ -626,6 +626,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           handoffId: handoff.id,
           runId,
           handoffRole,
+          targetRole: handoff.target_role ?? null,
           targetServiceId: handoff.target_service_id,
           targetAgentType: handoff.target_agent_type,
           reason: handoff.reason,
@@ -651,14 +652,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         return;
       }
 
+      const cursorKey = resolveHandoffCursorKey(handoff.chat_jid, handoffRole);
       const appliedCursor = completeServiceHandoffAndAdvanceTargetCursor({
         id: handoff.id,
-        target_service_id: handoff.target_service_id,
         chat_jid: handoff.chat_jid,
+        cursor_key: cursorKey,
         end_seq: handoff.end_seq,
       });
       if (appliedCursor) {
-        deps.getLastAgentTimestamps()[handoff.chat_jid] = appliedCursor;
+        deps.getLastAgentTimestamps()[cursorKey] = appliedCursor;
+        deps.saveState();
       }
       logger.info(
         {
@@ -668,6 +671,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           outputStatus: result.outputStatus,
           visiblePhase: result.visiblePhase,
           appliedCursor,
+          cursorKey:
+            appliedCursor != null
+              ? resolveHandoffCursorKey(handoff.chat_jid, handoffRole)
+              : null,
         },
         'Completed claimed service handoff',
       );
@@ -701,44 +708,39 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return true;
     }
 
-    // For paired rooms, determine the reviewer channel for correct bot routing.
-    // This is used whenever the reviewer needs to send output.
-    const reviewerChannelName =
-      hasReviewerLease(chatJid) && REVIEWER_AGENT_TYPE === 'claude-code'
-        ? 'discord'
-        : 'discord-review';
+    // For paired rooms, reviewer/arbiter outputs use their fixed role bots.
+    const reviewerChannelName = 'discord-review';
     const foundReviewerChannel = findChannelByName(
       deps.channels,
       reviewerChannelName,
     );
-    const reviewerChannel = foundReviewerChannel || channel;
 
-    // Arbiter always uses discord-review bot regardless of model —
-    // the arbiter role is tied to the 3rd bot, not the model behind it.
-    const arbiterChannelName = 'discord-review';
+    const arbiterChannelName = 'discord-arbiter';
     const foundArbiterChannel = findChannelByName(
       deps.channels,
       arbiterChannelName,
     );
-    const arbiterChannel = foundArbiterChannel || channel;
 
     // Resolve the correct Discord channel for a given task status.
-    const roleToChannel: Record<string, Channel> = {
+    const roleToChannel: Record<string, Channel | null> = {
       owner: channel,
-      reviewer: reviewerChannel,
-      arbiter: arbiterChannel,
+      reviewer: foundReviewerChannel || null,
+      arbiter: foundArbiterChannel || null,
     };
-    const resolveChannel = (taskStatus?: string | null): Channel =>
-      roleToChannel[resolveActiveRole(taskStatus)] ?? channel;
+    const resolveChannel = (taskStatus?: string | null): Channel | null => {
+      const role = resolveActiveRole(taskStatus);
+      return role === 'owner' ? channel : roleToChannel[role];
+    };
 
     const buildPendingPairedTurn = (
       task: PairedTask,
       rawMissedMessages: NewMessage[],
     ): {
       prompt: string;
-      channel: Channel;
+      channel: Channel | null;
       cursor: string | number | null;
       cursorKey?: string;
+      role?: 'reviewer' | 'arbiter';
     } | null => {
       const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
       const cursor = lastRaw?.seq ?? lastRaw?.timestamp ?? null;
@@ -751,6 +753,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           channel: resolveChannel(taskStatus),
           cursor,
           cursorKey: resolveCursorKey(chatJid, taskStatus),
+          role: 'reviewer',
         };
       }
 
@@ -760,6 +763,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           channel: resolveChannel(taskStatus),
           cursor,
           cursorKey: resolveCursorKey(chatJid, taskStatus),
+          role: 'arbiter',
         };
       }
 
@@ -776,10 +780,23 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     const executePendingPairedTurn = async (args: {
       prompt: string;
-      channel: Channel;
+      channel: Channel | null;
       cursor: string | number | null;
       cursorKey?: string;
+      role?: 'reviewer' | 'arbiter';
     }): Promise<boolean> => {
+      if (!args.channel) {
+        const missingRole = args.role ?? 'reviewer';
+        log.error(
+          {
+            role: missingRole,
+            requiredChannel: getFixedRoleChannelName(missingRole),
+          },
+          'Skipping paired turn because the dedicated Discord role channel is not configured',
+        );
+        return false;
+      }
+
       if (args.cursor != null) {
         advanceLastAgentCursor(
           deps.getLastAgentTimestamps(),
@@ -796,6 +813,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         chatJid,
         runId,
         channel: args.channel,
+        deliveryRole: args.role,
         startSeq: null,
         endSeq: null,
       });
@@ -808,10 +826,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         {
           reviewerChannelName,
           foundChannel: foundReviewerChannel?.name ?? null,
-          usingChannel: reviewerChannel.name,
           arbiterChannelName,
           foundArbiterChannel: foundArbiterChannel?.name ?? null,
-          usingArbiterChannel: arbiterChannel.name,
           availableChannels: deps.channels.map((c) => c.name),
         },
         'Paired room reviewer/arbiter channel resolution',
@@ -828,7 +844,25 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const pendingTask = hasReviewerLease(chatJid)
         ? getLatestOpenPairedTaskForChat(chatJid)
         : null;
-      const deliveryChannel = resolveChannel(pendingTask?.status);
+      const deliveryRole =
+        openWorkItem.delivery_role ??
+        (pendingTask ? resolveActiveRole(pendingTask.status) : 'owner');
+      const deliveryChannel =
+        deliveryRole === 'owner' ? channel : roleToChannel[deliveryRole];
+      if (!deliveryChannel) {
+        const missingRole = deliveryRole === 'arbiter' ? 'arbiter' : 'reviewer';
+        const errorMessage = getMissingRoleChannelMessage(missingRole);
+        markWorkItemDeliveryRetry(openWorkItem.id, errorMessage);
+        log.error(
+          {
+            workItemId: openWorkItem.id,
+            role: deliveryRole,
+            requiredChannel: getFixedRoleChannelName(missingRole),
+          },
+          'Unable to deliver paired-room work item because the dedicated Discord role channel is not configured',
+        );
+        return false;
+      }
       const delivered = await deliverOpenWorkItem(
         deliveryChannel,
         openWorkItem,
@@ -999,6 +1033,28 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       }
       const startSeq = missedMessages[0].seq ?? null;
       const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
+      log.info(
+        {
+          messageCount: missedMessages.length,
+          messageSeqStart: startSeq,
+          messageSeqEnd: endSeq,
+        },
+        'Dispatching queued messages to agent',
+      );
+
+      if (!turnChannel) {
+        const missingRole = turnRole === 'arbiter' ? 'arbiter' : 'reviewer';
+        log.error(
+          {
+            taskStatus,
+            role: turnRole,
+            requiredChannel: getFixedRoleChannelName(missingRole),
+          },
+          'Skipping paired-room run because the dedicated Discord role channel is not configured',
+        );
+        return false;
+      }
+
       if (endSeq !== null) {
         advanceLastAgentCursor(
           deps.getLastAgentTimestamps(),
@@ -1009,15 +1065,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         );
       }
 
-      log.info(
-        {
-          messageCount: missedMessages.length,
-          messageSeqStart: startSeq,
-          messageSeqEnd: endSeq,
-        },
-        'Dispatching queued messages to agent',
-      );
-
       const hasHumanMsg = !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
       const { deliverySucceeded, visiblePhase } = await executeTurn({
         group,
@@ -1025,6 +1072,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         chatJid,
         runId,
         channel: turnChannel,
+        deliveryRole: pendingTaskForChannel ? turnRole : undefined,
         startSeq,
         endSeq,
         hasHumanMessage: hasHumanMsg,

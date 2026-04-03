@@ -42,6 +42,46 @@ function resolveGitBinary(baseEnv: NodeJS.ProcessEnv): string {
   }).trim();
 }
 
+function createExecutableWrapperDir(baseEnv: NodeJS.ProcessEnv): string {
+  const candidateRoots = [
+    baseEnv.EJCLAW_REVIEWER_GIT_WRAPPER_ROOT,
+    baseEnv.HOME ? path.join(baseEnv.HOME, '.ejclaw-reviewer-runtime') : null,
+    process.cwd()
+      ? path.join(process.cwd(), '.ejclaw-reviewer-runtime')
+      : null,
+    path.join(os.tmpdir(), '.ejclaw-reviewer-runtime'),
+  ].filter((value): value is string => Boolean(value));
+
+  const probeContents = '#!/usr/bin/env bash\nexit 0\n';
+  const tried = new Set<string>();
+
+  for (const candidateRoot of candidateRoots) {
+    if (tried.has(candidateRoot)) {
+      continue;
+    }
+    tried.add(candidateRoot);
+    try {
+      fs.mkdirSync(candidateRoot, { recursive: true });
+      const wrapperDir = fs.mkdtempSync(
+        path.join(candidateRoot, 'ejclaw-reviewer-git-'),
+      );
+      const probePath = path.join(wrapperDir, 'probe');
+      fs.writeFileSync(probePath, probeContents, { mode: 0o755 });
+      execFileSync(probePath, [], {
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+      fs.rmSync(probePath, { force: true });
+      return wrapperDir;
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error(
+    'Unable to create an executable git guard wrapper directory for reviewer runtime.',
+  );
+}
+
 export function buildReviewerGitGuardEnv(
   baseEnv: NodeJS.ProcessEnv,
   reviewerRuntime: boolean,
@@ -52,9 +92,7 @@ export function buildReviewerGitGuardEnv(
 
   const realGitPath = resolveGitBinary(baseEnv);
   const protectedWorkDir = baseEnv.EJCLAW_WORK_DIR || '';
-  const wrapperDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), 'ejclaw-reviewer-git-'),
-  );
+  const wrapperDir = createExecutableWrapperDir(baseEnv);
   const wrapperPath = path.join(wrapperDir, 'git');
   const blocked = [...BLOCKED_GIT_SUBCOMMANDS]
     .map((value) => `'${value}'`)

@@ -99,6 +99,7 @@ export type AgentTriggerReason =
   | 'usage-exhausted'
   | 'auth-expired'
   | 'org-access-denied'
+  | 'session-failure'
   | 'overloaded'
   | 'network-error'
   | 'success-null-result';

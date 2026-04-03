@@ -5,8 +5,13 @@ import path from 'path';
 
 import {
   ARBITER_DEADLOCK_THRESHOLD,
+  ARBITER_AGENT_TYPE,
+  CLAUDE_SERVICE_ID,
+  CODEX_MAIN_SERVICE_ID,
+  CODEX_REVIEW_SERVICE_ID,
   DATA_DIR,
   PAIRED_MAX_ROUND_TRIPS,
+  REVIEWER_AGENT_TYPE,
   isArbiterEnabled,
 } from './config.js';
 import {
@@ -26,12 +31,14 @@ import {
   provisionOwnerWorkspaceForPairedTask,
 } from './paired-workspace-manager.js';
 import type {
+  AgentType,
   PairedRoomRole,
   PairedTask,
   PairedWorkspace,
   RegisteredGroup,
   RoomRoleContext,
 } from './types.js';
+import { resolveRoleAgentPlan } from './role-agent-plan.js';
 
 // ---------------------------------------------------------------------------
 // Reviewer verdict detection
@@ -158,6 +165,21 @@ function ensurePairedProject(
   return group.workDir;
 }
 
+function resolvePairedTaskServiceShadow(
+  role: 'owner' | 'reviewer',
+  agentType: AgentType | null | undefined,
+): string | null {
+  if (!agentType) {
+    return null;
+  }
+
+  if (agentType === 'claude-code') {
+    return CLAUDE_SERVICE_ID;
+  }
+
+  return role === 'owner' ? CODEX_MAIN_SERVICE_ID : CODEX_REVIEW_SERVICE_ID;
+}
+
 // ---------------------------------------------------------------------------
 // ensureActiveTask
 // ---------------------------------------------------------------------------
@@ -185,12 +207,29 @@ function ensureActiveTask(
   }
 
   const now = new Date().toISOString();
+  const rolePlan = resolveRoleAgentPlan({
+    paired: true,
+    groupAgentType: group.agentType,
+    configuredReviewer: REVIEWER_AGENT_TYPE,
+    configuredArbiter: ARBITER_AGENT_TYPE,
+  });
+  const ownerServiceShadow = resolvePairedTaskServiceShadow(
+    'owner',
+    rolePlan.ownerAgentType,
+  )!;
+  const reviewerServiceShadow = resolvePairedTaskServiceShadow(
+    'reviewer',
+    rolePlan.reviewerAgentType,
+  )!;
   const task: PairedTask = {
     id: crypto.randomUUID(),
     chat_jid: chatJid,
     group_folder: group.folder,
-    owner_service_id: roomRoleContext.ownerServiceId,
-    reviewer_service_id: roomRoleContext.reviewerServiceId,
+    owner_service_id: ownerServiceShadow,
+    reviewer_service_id: reviewerServiceShadow,
+    owner_agent_type: rolePlan.ownerAgentType,
+    reviewer_agent_type: rolePlan.reviewerAgentType,
+    arbiter_agent_type: rolePlan.arbiterAgentType,
     title: null,
     source_ref: resolveCanonicalSourceRef(canonicalWorkDir),
     plan_notes: null,

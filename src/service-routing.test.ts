@@ -12,6 +12,7 @@ import {
   getEffectiveChannelLease,
   getGlobalFailoverInfo,
   refreshChannelOwnerCache,
+  resolveLeaseServiceId,
 } from './service-routing.js';
 
 beforeEach(() => {
@@ -21,7 +22,7 @@ beforeEach(() => {
 });
 
 describe('service-routing global failover', () => {
-  it('uses codex-review as owner during global failover', () => {
+  it('uses codex-review as owner during global failover without rewriting the reviewer lease', () => {
     _setRegisteredGroupForTests('dc:paired', {
       name: 'Paired Room',
       folder: 'paired-room',
@@ -44,14 +45,47 @@ describe('service-routing global failover', () => {
     expect(getEffectiveChannelLease('dc:paired')).toMatchObject({
       chat_jid: 'dc:paired',
       owner_service_id: 'codex-review',
-      reviewer_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      owner_failover_active: true,
       reason: 'claude-429',
       explicit: true,
     });
     // Any other channel is also affected
     expect(getEffectiveChannelLease('dc:other')).toMatchObject({
       owner_service_id: 'codex-review',
-      reviewer_service_id: 'codex-main',
+      reviewer_service_id: null,
+      owner_failover_active: true,
+      explicit: true,
+    });
+  });
+
+  it('preserves reviewer and arbiter leases for tribunal rooms during global failover', () => {
+    _setRegisteredGroupForTests('dc:tribunal', {
+      name: 'Tribunal Room',
+      folder: 'tribunal-room',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    _setRegisteredGroupForTests('dc:tribunal', {
+      name: 'Tribunal Room',
+      folder: 'tribunal-room',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+    setExplicitRoomMode('dc:tribunal', 'tribunal');
+    const baseLease = getEffectiveChannelLease('dc:tribunal');
+
+    activateCodexFailover('dc:tribunal', 'claude-429');
+
+    expect(getEffectiveChannelLease('dc:tribunal')).toMatchObject({
+      chat_jid: 'dc:tribunal',
+      owner_service_id: 'codex-review',
+      reviewer_service_id: baseLease.reviewer_service_id,
+      arbiter_service_id: baseLease.arbiter_service_id,
+      owner_failover_active: true,
+      reason: 'claude-429',
       explicit: true,
     });
   });
@@ -80,6 +114,7 @@ describe('service-routing global failover', () => {
       chat_jid: 'dc:paired',
       owner_service_id: 'codex-main',
       reviewer_service_id: 'claude',
+      owner_failover_active: false,
       explicit: false,
     });
   });
@@ -105,6 +140,7 @@ describe('service-routing global failover', () => {
       chat_jid: 'dc:explicit-single',
       owner_service_id: 'codex-main',
       reviewer_service_id: null,
+      owner_failover_active: false,
       explicit: false,
     });
   });
@@ -134,6 +170,7 @@ describe('service-routing global failover', () => {
       chat_jid: 'dc:stored-owner-claude',
       owner_service_id: 'claude',
       reviewer_service_id: null,
+      owner_failover_active: false,
       explicit: false,
     });
   });
@@ -152,6 +189,7 @@ describe('service-routing global failover', () => {
       chat_jid: 'dc:stored-owner-fallback',
       owner_service_id: 'codex-main',
       reviewer_service_id: null,
+      owner_failover_active: false,
       explicit: false,
     });
   });
@@ -170,6 +208,7 @@ describe('service-routing global failover', () => {
       chat_jid: 'dc:explicit-tribunal',
       owner_service_id: 'claude',
       reviewer_service_id: 'claude',
+      owner_failover_active: false,
       explicit: false,
     });
   });
@@ -190,6 +229,7 @@ describe('service-routing global failover', () => {
       chat_jid: 'dc:explicit-tribunal-codex',
       owner_service_id: 'codex-main',
       reviewer_service_id: 'claude',
+      owner_failover_active: false,
       explicit: false,
     });
   });
@@ -199,7 +239,44 @@ describe('service-routing global failover', () => {
       chat_jid: 'dc:unregistered',
       owner_service_id: 'claude',
       reviewer_service_id: null,
+      owner_failover_active: false,
       explicit: false,
     });
+  });
+});
+
+describe('resolveLeaseServiceId', () => {
+  it('prefers canonical reviewer shadow over a stale compatibility field', () => {
+    expect(
+      resolveLeaseServiceId(
+        {
+          owner_agent_type: 'claude-code',
+          reviewer_agent_type: 'codex',
+          arbiter_agent_type: null,
+          owner_service_id: 'claude',
+          reviewer_service_id: 'stale-reviewer-shadow',
+          arbiter_service_id: null,
+          owner_failover_active: false,
+        },
+        'reviewer',
+      ),
+    ).toBe('codex-review');
+  });
+
+  it('keeps the explicit owner failover service instead of recomputing the stable shadow', () => {
+    expect(
+      resolveLeaseServiceId(
+        {
+          owner_agent_type: 'claude-code',
+          reviewer_agent_type: 'codex',
+          arbiter_agent_type: null,
+          owner_service_id: 'codex-review',
+          reviewer_service_id: 'claude',
+          arbiter_service_id: null,
+          owner_failover_active: true,
+        },
+        'owner',
+      ),
+    ).toBe('codex-review');
   });
 });

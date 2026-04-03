@@ -49,6 +49,27 @@ describe('codex reviewer runtime guard', () => {
     expect(env.EJCLAW_REAL_GIT).toBeTruthy();
   });
 
+  it('prefers an executable HOME-scoped wrapper dir before tmp', () => {
+    const homeDir = fs.mkdtempSync(
+      path.join(process.cwd(), '.ejclaw-reviewer-home-'),
+    );
+    try {
+      const env = buildReviewerGitGuardEnv(
+        {
+          PATH: process.env.PATH,
+          HOME: homeDir,
+        },
+        true,
+      );
+      const wrapperDir = env.PATH?.split(path.delimiter)[0] ?? '';
+      expect(wrapperDir).toContain(
+        path.join(homeDir, '.ejclaw-reviewer-runtime'),
+      );
+    } finally {
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it('allows mutating git commands in temp repos outside the protected workspace', () => {
     const protectedDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-protected-workspace-'),

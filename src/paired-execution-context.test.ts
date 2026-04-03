@@ -55,19 +55,27 @@ const group: RegisteredGroup = {
 };
 
 const ownerContext: RoomRoleContext = {
-  serviceId: 'codex-main',
+  serviceId: config.CODEX_MAIN_SERVICE_ID,
   role: 'owner',
-  ownerServiceId: 'codex-main',
-  reviewerServiceId: 'codex-review',
+  ownerServiceId: config.CODEX_MAIN_SERVICE_ID,
+  reviewerServiceId: config.REVIEWER_SERVICE_ID_FOR_TYPE,
   failoverOwner: false,
 };
 
 const reviewerContext: RoomRoleContext = {
-  serviceId: 'codex-review',
+  serviceId: config.REVIEWER_SERVICE_ID_FOR_TYPE,
   role: 'reviewer',
-  ownerServiceId: 'codex-main',
-  reviewerServiceId: 'codex-review',
+  ownerServiceId: config.CODEX_MAIN_SERVICE_ID,
+  reviewerServiceId: config.REVIEWER_SERVICE_ID_FOR_TYPE,
   failoverOwner: false,
+};
+
+const failoverOwnerContext: RoomRoleContext = {
+  serviceId: config.CODEX_REVIEW_SERVICE_ID,
+  role: 'owner',
+  ownerServiceId: config.CODEX_REVIEW_SERVICE_ID,
+  reviewerServiceId: config.REVIEWER_SERVICE_ID_FOR_TYPE,
+  failoverOwner: true,
 };
 
 function createCanonicalRepoWithCommit(commitMessage: string): string {
@@ -103,8 +111,8 @@ function buildPairedTask(overrides: Partial<PairedTask> = {}): PairedTask {
     id: 'task-1',
     chat_jid: 'dc:test',
     group_folder: group.folder,
-    owner_service_id: 'codex-main',
-    reviewer_service_id: 'codex-review',
+    owner_service_id: config.CODEX_MAIN_SERVICE_ID,
+    reviewer_service_id: config.REVIEWER_SERVICE_ID_FOR_TYPE,
     title: null,
     source_ref: 'HEAD',
     plan_notes: null,
@@ -181,13 +189,37 @@ describe('paired execution context', () => {
     expect(db.createPairedTask).toHaveBeenCalledTimes(1);
     expect(db.createPairedTask).toHaveBeenCalledWith(
       expect.objectContaining({
+        owner_service_id: config.CODEX_MAIN_SERVICE_ID,
+        reviewer_service_id: config.REVIEWER_SERVICE_ID_FOR_TYPE,
         status: 'active',
+        owner_agent_type: 'codex',
+        reviewer_agent_type: config.REVIEWER_AGENT_TYPE,
+        arbiter_agent_type: config.ARBITER_AGENT_TYPE ?? null,
       }),
     );
     expect(result?.envOverrides).toMatchObject({
       EJCLAW_WORK_DIR: '/tmp/paired/task-1/owner',
       EJCLAW_PAIRED_ROLE: 'owner',
     });
+  });
+
+  it('persists stable role-slot service shadow instead of the transient failover owner lease', () => {
+    preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-failover-owner',
+      roomRoleContext: failoverOwnerContext,
+      hasHumanMessage: true,
+    });
+
+    expect(db.createPairedTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_service_id: config.CODEX_MAIN_SERVICE_ID,
+        reviewer_service_id: config.REVIEWER_SERVICE_ID_FOR_TYPE,
+        owner_agent_type: 'codex',
+        reviewer_agent_type: config.REVIEWER_AGENT_TYPE,
+      }),
+    );
   });
 
   it('uses the reviewer snapshot after lazy auto-refresh and marks the task in_review', () => {

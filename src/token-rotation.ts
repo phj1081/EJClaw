@@ -114,9 +114,44 @@ function loadState(): void {
   );
 }
 
+function refreshRuntimeTokenSelection(): void {
+  if (tokens.length <= 1) return;
+
+  const now = Date.now();
+  const previousIndex = currentIndex;
+  let expiredCooldowns = 0;
+
+  for (const token of tokens) {
+    if (token.rateLimitedUntil && token.rateLimitedUntil <= now) {
+      token.rateLimitedUntil = null;
+      expiredCooldowns += 1;
+    }
+  }
+
+  const preferredIndex = tokens.findIndex(
+    (token) => !token.rateLimitedUntil || token.rateLimitedUntil <= now,
+  );
+  if (preferredIndex !== -1) {
+    currentIndex = preferredIndex;
+  }
+
+  if (expiredCooldowns > 0 || currentIndex !== previousIndex) {
+    logger.info(
+      {
+        previousIndex,
+        currentIndex,
+        expiredCooldowns,
+      },
+      'Refreshed Claude token runtime selection',
+    );
+    saveState();
+  }
+}
+
 /** Get the current active token. */
 export function getCurrentToken(): string | undefined {
   if (tokens.length === 0) return process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  refreshRuntimeTokenSelection();
   return tokens[currentIndex % tokens.length]?.token;
 }
 
@@ -181,9 +216,11 @@ export function rotateToken(
 export function markTokenHealthy(): void {
   if (tokens.length === 0) return;
   const state = tokens[currentIndex];
+  let updated = false;
   if (state?.rateLimitedUntil) {
     const previousCooldownUntil = state.rateLimitedUntil;
     state.rateLimitedUntil = null;
+    updated = true;
     logger.info(
       {
         transition: 'rotation:clear-rate-limit',
@@ -192,8 +229,9 @@ export function markTokenHealthy(): void {
       },
       'Cleared Claude token rate-limit state after successful response',
     );
-    saveState();
   }
+  refreshRuntimeTokenSelection();
+  if (updated) saveState();
 }
 
 /** Number of configured tokens. */
@@ -209,6 +247,7 @@ export function getAllTokens(): {
   isActive: boolean;
   isRateLimited: boolean;
 }[] {
+  refreshRuntimeTokenSelection();
   const now = Date.now();
   return tokens.map((t, i) => ({
     index: i,
@@ -244,6 +283,7 @@ export function getTokenRotationInfo(): {
   currentIndex: number;
   rateLimited: number;
 } {
+  refreshRuntimeTokenSelection();
   const now = Date.now();
   return {
     total: tokens.length,
@@ -258,6 +298,7 @@ export function hasAvailableClaudeToken(): boolean {
   if (tokens.length === 0) {
     return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
   }
+  refreshRuntimeTokenSelection();
   const now = Date.now();
   return tokens.some(
     (token) => !token.rateLimitedUntil || token.rateLimitedUntil <= now,

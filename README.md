@@ -14,13 +14,25 @@ Tribunal arbiter system inspired by multi-agent consensus architectures.
 
 ## Overview
 
-A single unified service (`ejclaw`) manages three Discord bots in one process:
+A single unified service (`ejclaw`) runs a **Tribunal** of three roles while
+managing three Discord bots in one process:
 
-- **Codex-main** (`@codex`) — Owner agent. Handles user requests, writes code.
-- **Claude** (`@claude`) — Reviewer agent. Critically reviews owner's work, verifies design direction.
-- **Codex-review** (`@codex-review`) — Arbiter agent. Summoned on-demand to break deadlocks between owner and reviewer.
+| Role | Purpose |
+|------|---------|
+| **Owner** | Handles user requests, writes code |
+| **Reviewer** | Critically reviews owner's work, verifies design direction |
+| **Arbiter** | On-demand deadlock breaker between owner and reviewer |
 
-All agent types and models are independently configurable per role via `.env`.
+The identity layer is role-fixed:
+
+- **Owner bot** — Handles the owner turn output slot.
+- **Reviewer bot** — Handles the reviewer turn output slot.
+- **Arbiter bot** — Handles the arbiter turn output slot.
+
+Each role's agent type and model are independently configurable via `.env`
+(`OWNER_AGENT_TYPE`, `REVIEWER_AGENT_TYPE`, `ARBITER_AGENT_TYPE`, `*_MODEL`).
+Three Discord bots provide the identity layer — which bot speaks is determined
+by the active role, not hardcoded.
 
 ## Room Assignment Model
 
@@ -41,7 +53,7 @@ Operationally:
 
 This means tribunal is no longer inferred from “two bots registered on one room”; it is an explicit room setting.
 
-## Tribunal 3-Agent System
+## Tribunal Flow
 
 ```
 User message
@@ -131,7 +143,7 @@ Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (ho
 - Docker (required for reviewer container isolation)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
-- Discord bot tokens (3: Claude, Codex-main, Codex-review/Arbiter)
+- Discord bot tokens (3: owner, reviewer, arbiter)
 
 ### Install
 
@@ -144,15 +156,23 @@ bun run build
 bun run build:container          # Build reviewer Docker image
 ```
 
+## Documentation
+
+- [Architecture](docs/architecture.md) — Data flow, room model, container isolation, key files
+- [Configuration](docs/configuration.md) — Full `.env` reference, debugging paths
+
 ### Environment
 
 All configuration in a single `.env` file:
 
 ```bash
-# Discord bots (3 tokens for 3 bots)
-DISCORD_BOT_TOKEN=               # Claude bot
-DISCORD_CODEX_BOT_TOKEN=         # Codex-main bot (owner)
-DISCORD_REVIEW_BOT_TOKEN=        # Codex-review bot (arbiter)
+# Discord bots (canonical role-fixed names)
+DISCORD_OWNER_BOT_TOKEN=         # Owner bot
+DISCORD_REVIEWER_BOT_TOKEN=      # Reviewer bot
+DISCORD_ARBITER_BOT_TOKEN=       # Arbiter bot
+
+# Old service-based token names are no longer accepted.
+# Rename existing values to the canonical role-based keys above.
 
 # Agent types
 OWNER_AGENT_TYPE=codex            # codex | claude-code

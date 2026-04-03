@@ -9,7 +9,11 @@ import {
   buildStackRestartSystemdUnit,
   buildSystemdUnit,
 } from './service-renderers.js';
-import { getServiceDefs, type ServiceDef } from './service-defs.js';
+import {
+  getLegacyServiceDefs,
+  getServiceDefs,
+  type ServiceDef,
+} from './service-defs.js';
 
 /**
  * Tests for service configuration generation.
@@ -127,19 +131,18 @@ describe('systemd unit generation', () => {
     const unit = buildSystemdUnit(
       {
         ...baseServiceDef,
-        kind: 'codex',
-        environmentFile: '/srv/ejclaw/.env.codex',
+        kind: 'primary',
+        environmentFile: '/srv/ejclaw/.env.extra',
         extraEnv: { ASSISTANT_NAME: 'codex' },
-        logName: 'ejclaw-codex',
-        name: 'ejclaw-codex',
+        logName: 'ejclaw',
+        name: 'ejclaw',
       },
       '/srv/ejclaw',
       '/usr/bin/bun',
       '/home/user',
       false,
     );
-
-    expect(unit).toContain('EnvironmentFile=/srv/ejclaw/.env.codex');
+    expect(unit).toContain('EnvironmentFile=/srv/ejclaw/.env.extra');
     expect(unit).toContain('Environment=ASSISTANT_NAME=codex');
   });
 });
@@ -173,24 +176,27 @@ describe('service definitions', () => {
     }
   });
 
-  it('includes the review service when .env.codex-review exists', () => {
+  it('returns only the unified service definition', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-stack-'));
     tempRoots.push(tempRoot);
-    fs.writeFileSync(path.join(tempRoot, '.env.codex'), 'A=1\n');
-    fs.writeFileSync(path.join(tempRoot, '.env.codex-review'), 'B=1\n');
 
     const defs = getServiceDefs(tempRoot);
 
+    expect(defs.map((def) => def.name)).toEqual(['ejclaw']);
+    expect(defs.map((def) => def.kind)).toEqual(['primary']);
+  });
+
+  it('keeps legacy service identities available for migration guards', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-stack-'));
+    tempRoots.push(tempRoot);
+
+    const defs = getLegacyServiceDefs(tempRoot);
+
     expect(defs.map((def) => def.name)).toEqual([
-      'ejclaw',
       'ejclaw-codex',
       'ejclaw-review',
     ]);
-    expect(defs.map((def) => def.kind)).toEqual([
-      'primary',
-      'codex',
-      'review',
-    ]);
+    expect(defs.map((def) => def.kind)).toEqual(['legacy', 'legacy']);
   });
 
   it('generates a oneshot stack restart unit', () => {

@@ -1,6 +1,12 @@
 import { execFileSync } from 'child_process';
+import os from 'os';
 import { pathToFileURL } from 'url';
 
+import {
+  detectLegacyServiceIssues,
+  formatLegacyServiceFailureMessage,
+  type LegacyServiceIssue,
+} from './legacy-service-guard.js';
 import { getServiceManager, isRoot } from './platform.js';
 import { getConfiguredServiceNames } from './service-defs.js';
 
@@ -17,6 +23,8 @@ interface RestartStackDeps {
   serviceManager?: ServiceManager;
   direct?: boolean;
   serviceId?: string | null;
+  legacyServiceIssues?: LegacyServiceIssue[];
+  homeDir?: string;
 }
 
 function restartStackServicesDirect(
@@ -59,6 +67,24 @@ export function restartStackServices(
   if (serviceManager !== 'systemd') {
     throw new Error(
       'restart:stack only supports Linux systemd services in this repo',
+    );
+  }
+
+  const legacyServiceIssues =
+    deps.legacyServiceIssues ??
+    detectLegacyServiceIssues(
+      projectRoot,
+      serviceManager,
+      deps.homeDir ?? os.homedir(),
+    );
+  if (legacyServiceIssues.length > 0) {
+    throw new Error(
+      formatLegacyServiceFailureMessage({
+        projectRoot,
+        serviceManager,
+        services: legacyServiceIssues,
+        homeDir: deps.homeDir,
+      }),
     );
   }
 

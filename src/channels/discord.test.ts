@@ -825,6 +825,18 @@ describe('DiscordChannel', () => {
       expect(channel.ownsJid('dc:1234567890123456')).toBe(true);
     });
 
+    it('can be configured as an outbound-only role bot', () => {
+      const channel = new DiscordChannel(
+        'test-token',
+        createTestOpts(),
+        undefined,
+        'discord-review',
+        false,
+        false,
+      );
+      expect(channel.ownsJid('dc:1234567890123456')).toBe(false);
+    });
+
     it('does not own WhatsApp group JIDs', () => {
       const channel = new DiscordChannel('test-token', createTestOpts());
       expect(channel.ownsJid('12345@g.us')).toBe(false);

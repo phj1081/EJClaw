@@ -110,7 +110,7 @@ export const ARBITER_AGENT_TYPE: AgentType | undefined =
     ? rawArbiterAgentType
     : undefined;
 
-/** Service ID for the arbiter. Re-uses codex-review bot by default when arbiter is enabled. */
+/** Service ID for the arbiter. Defaults to codex-review for internal routing when arbiter is enabled. */
 export const ARBITER_SERVICE_ID = ARBITER_AGENT_TYPE
   ? getEnv('ARBITER_SERVICE_ID') || CODEX_REVIEW_SERVICE_ID
   : null;

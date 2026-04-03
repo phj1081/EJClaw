@@ -3,7 +3,6 @@ import os from 'os';
 import path from 'path';
 
 import {
-  CODEX_REVIEW_SERVICE_ID,
   GROUPS_DIR,
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
@@ -76,6 +75,31 @@ function ensureClaudeSessionSettings(groupSessionsDir: string): void {
       2,
     ) + '\n',
   );
+}
+
+function syncHostCodexSessionFiles(sessionCodexDir: string): void {
+  const hostCodexDir = path.join(os.homedir(), '.codex');
+  fs.mkdirSync(sessionCodexDir, { recursive: true });
+
+  const authDst = path.join(sessionCodexDir, 'auth.json');
+  const rotatedAuthSrc = getActiveCodexAuthPath();
+  const authSrc =
+    rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
+      ? rotatedAuthSrc
+      : path.join(hostCodexDir, 'auth.json');
+  if (fs.existsSync(authSrc)) {
+    fs.copyFileSync(authSrc, authDst);
+  } else if (fs.existsSync(authDst)) {
+    fs.unlinkSync(authDst);
+  }
+
+  for (const file of ['config.toml', 'config.json']) {
+    const src = path.join(hostCodexDir, file);
+    const dst = path.join(sessionCodexDir, file);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, dst);
+    }
+  }
 }
 
 function buildBaseRunnerEnv(args: {
@@ -214,31 +238,8 @@ function prepareCodexSessionEnvironment(args: {
     process.env.CODEX_EFFORT;
   if (codexEffort) args.env.CODEX_EFFORT = codexEffort;
 
-  const hostCodexDir = path.join(os.homedir(), '.codex');
   const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
-  fs.mkdirSync(sessionCodexDir, { recursive: true });
-
-  const authDst = path.join(sessionCodexDir, 'auth.json');
-  // Always use OAuth auth from rotated accounts (API key auth removed)
-  {
-    const rotatedAuthSrc = getActiveCodexAuthPath();
-    const authSrc =
-      rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
-        ? rotatedAuthSrc
-        : path.join(hostCodexDir, 'auth.json');
-    if (fs.existsSync(authSrc)) {
-      fs.copyFileSync(authSrc, authDst);
-    } else if (fs.existsSync(authDst)) {
-      fs.unlinkSync(authDst);
-    }
-  }
-  for (const file of ['config.toml', 'config.json']) {
-    const src = path.join(hostCodexDir, file);
-    const dst = path.join(sessionCodexDir, file);
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, dst);
-    }
-  }
+  syncHostCodexSessionFiles(sessionCodexDir);
 
   const overlayPath = path.join(args.groupDir, '.codex', 'config.toml');
   const sessionConfigPath = path.join(sessionCodexDir, 'config.toml');
@@ -400,10 +401,10 @@ export function prepareGroupEnvironment(
   const globalClaudeMdPath = path.join(globalDir, 'CLAUDE.md');
   const isPairedRoom = hasReviewerLease(chatJid);
   const effectiveLease = getEffectiveChannelLease(chatJid);
+  // Canonical lease state now exposes owner failover directly, so prefer the
+  // explicit flag over the older CODEX_REVIEW_SERVICE_ID shadow heuristic.
   const useCodexReviewFailoverPromptPack =
-    isReviewService(SERVICE_ID) &&
-    effectiveLease.explicit &&
-    effectiveLease.owner_service_id === CODEX_REVIEW_SERVICE_ID;
+    isReviewService(SERVICE_ID) && effectiveLease.owner_failover_active === true;
 
   const ownerCommonPlatformPrompt = readOptionalPromptFile(
     projectRoot,
@@ -553,6 +554,12 @@ export function prepareContainerSessionEnvironment(args: {
   const sessionClaudeMdPath = path.join(sessionDir, 'CLAUDE.md');
   if (sessionClaudeMd) {
     fs.writeFileSync(sessionClaudeMdPath, sessionClaudeMd + '\n');
+    const sessionCodexDir = path.join(sessionDir, '.codex');
+    syncHostCodexSessionFiles(sessionCodexDir);
+    fs.writeFileSync(
+      path.join(sessionCodexDir, 'AGENTS.md'),
+      sessionClaudeMd + '\n',
+    );
     logger.info(
       {
         sessionDir,

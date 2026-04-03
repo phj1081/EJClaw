@@ -24,6 +24,51 @@ import { hasReviewerLease } from '../service-routing.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
 const TRANSCRIPTION_CACHE_DIR = path.join(CACHE_DIR, 'transcriptions');
+const DISCORD_OWNER_CHANNEL = 'discord';
+const DISCORD_REVIEWER_CHANNEL = 'discord-review';
+const DISCORD_ARBITER_CHANNEL = 'discord-arbiter';
+const DISCORD_OWNER_TOKEN_KEY = 'DISCORD_OWNER_BOT_TOKEN';
+const DISCORD_REVIEWER_TOKEN_KEY = 'DISCORD_REVIEWER_BOT_TOKEN';
+const DISCORD_ARBITER_TOKEN_KEY = 'DISCORD_ARBITER_BOT_TOKEN';
+const DISCORD_OWNER_LEGACY_TOKEN_KEYS = [
+  'DISCORD_BOT_TOKEN',
+  'DISCORD_CLAUDE_BOT_TOKEN',
+];
+const DISCORD_REVIEWER_LEGACY_TOKEN_KEYS = [
+  'DISCORD_CODEX_BOT_TOKEN',
+  'DISCORD_CODEX_MAIN_BOT_TOKEN',
+];
+const DISCORD_ARBITER_LEGACY_TOKEN_KEYS = [
+  'DISCORD_REVIEW_BOT_TOKEN',
+  'DISCORD_CODEX_REVIEW_BOT_TOKEN',
+];
+
+function getConfiguredLegacyDiscordTokenKeys(keys: string[]): string[] {
+  return keys.filter((key) => !!getEnv(key));
+}
+
+function getRoleTokenOrLogMigrationError(
+  canonicalKey: string,
+  legacyKeys: string[],
+  role: 'owner' | 'reviewer' | 'arbiter',
+): string {
+  const canonicalValue = getEnv(canonicalKey) || '';
+  if (canonicalValue) return canonicalValue;
+
+  const configuredLegacyKeys = getConfiguredLegacyDiscordTokenKeys(legacyKeys);
+  if (configuredLegacyKeys.length > 0) {
+    logger.error(
+      {
+        role,
+        canonicalKey,
+        legacyKeys: configuredLegacyKeys,
+      },
+      'Discord: legacy service-based bot token names are no longer supported; rename them to canonical role-based names',
+    );
+  }
+
+  return '';
+}
 
 /**
  * Download a Discord attachment to local disk.
@@ -182,16 +227,22 @@ export class DiscordChannel implements Channel {
   private typingIntervals = new Map<string, NodeJS.Timeout>();
   private typingGenerations = new Map<string, number>();
   private agentTypeFilter?: AgentType;
+  private receivesInbound: boolean;
+  private ownsDiscordJids: boolean;
 
   constructor(
     botToken: string,
     opts: DiscordChannelOpts,
     agentTypeFilter?: AgentType,
     channelName?: string,
+    receivesInbound = true,
+    ownsDiscordJids = true,
   ) {
     this.botToken = botToken;
     this.opts = opts;
     this.agentTypeFilter = agentTypeFilter;
+    this.receivesInbound = receivesInbound;
+    this.ownsDiscordJids = ownsDiscordJids;
     if (channelName) {
       this.name = channelName;
     } else if (agentTypeFilter) {
@@ -212,6 +263,7 @@ export class DiscordChannel implements Channel {
     this.client.on(Events.MessageCreate, async (message: Message) => {
       const channelId = message.channelId;
       const chatJid = `dc:${channelId}`;
+      if (!this.receivesInbound) return;
       const isOwnBotMessage = message.author.id === this.client?.user?.id;
       if (isOwnBotMessage) return;
       if (message.author.bot && !hasReviewerLease(chatJid)) return;
@@ -356,7 +408,8 @@ export class DiscordChannel implements Channel {
         isGroup,
       );
 
-      // Only deliver full message for registered groups matching our agent type
+      // Only deliver full message for registered groups. Secondary role bots
+      // are configured as outbound-only, while the owner bot receives inbound.
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) {
         logger.debug(
@@ -544,6 +597,7 @@ export class DiscordChannel implements Channel {
 
   ownsJid(jid: string): boolean {
     if (!jid.startsWith('dc:')) return false;
+    if (!this.ownsDiscordJids) return false;
     if (!this.agentTypeFilter) return true;
     const group = this.opts.registeredGroups()[jid];
     if (!group) return false;
@@ -733,32 +787,66 @@ export class DiscordChannel implements Channel {
   }
 }
 
-registerChannel('discord', (opts: ChannelOpts) => {
-  const token = getEnv('DISCORD_BOT_TOKEN') || '';
+registerChannel(DISCORD_OWNER_CHANNEL, (opts: ChannelOpts) => {
+  const token = getRoleTokenOrLogMigrationError(
+    DISCORD_OWNER_TOKEN_KEY,
+    DISCORD_OWNER_LEGACY_TOKEN_KEYS,
+    'owner',
+  );
   if (!token) {
-    logger.warn('Discord: DISCORD_BOT_TOKEN not set');
+    logger.warn(
+      'Discord: DISCORD_OWNER_BOT_TOKEN not set',
+    );
     return null;
   }
-  // If a second Codex bot token exists, this instance only handles claude-code groups
-  const hasCodexBot = !!getEnv('DISCORD_CODEX_BOT_TOKEN');
+  return new DiscordChannel(token, opts, undefined, DISCORD_OWNER_CHANNEL);
+});
+
+registerChannel(DISCORD_REVIEWER_CHANNEL, (opts: ChannelOpts) => {
+  const ownerToken = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
+  const token = getRoleTokenOrLogMigrationError(
+    DISCORD_REVIEWER_TOKEN_KEY,
+    DISCORD_REVIEWER_LEGACY_TOKEN_KEYS,
+    'reviewer',
+  );
+  if (!token) return null;
+  if (token === ownerToken) {
+    logger.warn(
+      'Discord: reviewer bot token matches owner bot token; skipping duplicate reviewer bot login',
+    );
+    return null;
+  }
   return new DiscordChannel(
     token,
     opts,
-    hasCodexBot ? 'claude-code' : undefined,
-    'discord',
+    undefined,
+    DISCORD_REVIEWER_CHANNEL,
+    false,
+    false,
   );
 });
 
-// Register the secondary Codex bot channel.
-registerChannel('discord-codex', (opts: ChannelOpts) => {
-  const token = getEnv('DISCORD_CODEX_BOT_TOKEN') || '';
+registerChannel(DISCORD_ARBITER_CHANNEL, (opts: ChannelOpts) => {
+  const ownerToken = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
+  const reviewerToken = getEnv(DISCORD_REVIEWER_TOKEN_KEY) || '';
+  const token = getRoleTokenOrLogMigrationError(
+    DISCORD_ARBITER_TOKEN_KEY,
+    DISCORD_ARBITER_LEGACY_TOKEN_KEYS,
+    'arbiter',
+  );
   if (!token) return null;
-  return new DiscordChannel(token, opts, 'codex', 'discord-codex');
-});
-
-// Register the review bot channel (codex agent type, separate token).
-registerChannel('discord-review', (opts: ChannelOpts) => {
-  const token = getEnv('DISCORD_REVIEW_BOT_TOKEN') || '';
-  if (!token) return null;
-  return new DiscordChannel(token, opts, 'codex', 'discord-review');
+  if (token === ownerToken || token === reviewerToken) {
+    logger.warn(
+      'Discord: arbiter bot token matches another role token; skipping duplicate arbiter bot login',
+    );
+    return null;
+  }
+  return new DiscordChannel(
+    token,
+    opts,
+    undefined,
+    DISCORD_ARBITER_CHANNEL,
+    false,
+    false,
+  );
 });

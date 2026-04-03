@@ -11,6 +11,8 @@ vi.mock('./available-groups.js', () => ({
 }));
 
 vi.mock('./config.js', () => ({
+  ARBITER_SERVICE_ID: null,
+  CLAUDE_SERVICE_ID: 'claude',
   CODEX_MAIN_SERVICE_ID: 'codex-main',
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   DATA_DIR: '/tmp/ejclaw-test-data',
@@ -61,13 +63,48 @@ vi.mock('./service-routing.js', () => ({
   clearGlobalFailover: vi.fn(),
   getEffectiveChannelLease: vi.fn(() => ({
     chat_jid: 'group@test',
+    owner_agent_type: 'claude-code',
+    reviewer_agent_type: 'codex',
+    arbiter_agent_type: null,
     owner_service_id: 'claude',
-    reviewer_service_id: 'codex-main',
+    reviewer_service_id: 'codex-review',
     arbiter_service_id: null,
     activated_at: null,
     reason: null,
     explicit: false,
   })),
+  resolveLeaseServiceId: vi.fn(
+    (
+      lease: {
+        owner_service_id: string;
+        reviewer_service_id: string | null;
+        arbiter_service_id: string | null;
+        owner_agent_type?: 'claude-code' | 'codex';
+        reviewer_agent_type?: 'claude-code' | 'codex' | null;
+        arbiter_agent_type?: 'claude-code' | 'codex' | null;
+        owner_failover_active?: boolean;
+      },
+      role: 'owner' | 'reviewer' | 'arbiter',
+    ) => {
+      if (role === 'owner') {
+        return lease.owner_failover_active
+          ? lease.owner_service_id
+          : lease.owner_agent_type === 'codex'
+            ? 'codex-main'
+            : 'claude';
+      }
+      if (role === 'reviewer') {
+        if (lease.reviewer_agent_type === 'codex') {
+          return 'codex-review';
+        }
+        return lease.reviewer_service_id;
+      }
+      if (lease.arbiter_agent_type === 'codex') {
+        return lease.arbiter_service_id ?? 'codex-review';
+      }
+      return lease.arbiter_service_id;
+    },
+  ),
 }));
 
 vi.mock('./logger.js', () => {
@@ -155,6 +192,7 @@ import * as agentRunner from './agent-runner.js';
 import type { AgentOutput } from './agent-runner.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import * as db from './db.js';
+import { logger } from './logger.js';
 import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import * as pairedExecutionContext from './paired-execution-context.js';
@@ -299,13 +337,13 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        roomRoleContext: {
+        roomRoleContext: expect.objectContaining({
           serviceId: 'claude',
           role: 'owner',
           ownerServiceId: 'claude',
-          reviewerServiceId: 'codex-main',
+          reviewerServiceId: 'codex-review',
           failoverOwner: false,
-        },
+        }),
       }),
       expect.any(Function),
       undefined,
@@ -317,6 +355,9 @@ describe('runAgentForGroup room memory', () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
       owner_service_id: 'claude',
       reviewer_service_id: 'claude',
       arbiter_service_id: null,
@@ -347,6 +388,9 @@ describe('runAgentForGroup room memory', () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
       owner_service_id: 'claude',
       reviewer_service_id: 'claude',
       arbiter_service_id: null,
@@ -383,13 +427,13 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        roomRoleContext: {
+        roomRoleContext: expect.objectContaining({
           serviceId: 'claude',
           role: 'reviewer',
           ownerServiceId: 'claude',
           reviewerServiceId: 'claude',
           failoverOwner: false,
-        },
+        }),
       }),
       expect.any(Function),
       undefined,
@@ -401,6 +445,9 @@ describe('runAgentForGroup room memory', () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
       owner_service_id: 'codex-main',
       reviewer_service_id: 'claude',
       arbiter_service_id: null,
@@ -438,13 +485,13 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
       group,
       expect.objectContaining({
-        roomRoleContext: {
+        roomRoleContext: expect.objectContaining({
           serviceId: 'claude',
           role: 'reviewer',
           ownerServiceId: 'codex-main',
           reviewerServiceId: 'claude',
           failoverOwner: false,
-        },
+        }),
       }),
       expect.any(Function),
       undefined,
@@ -460,6 +507,9 @@ describe('runAgentForGroup room memory', () => {
     };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
       owner_service_id: 'codex-main',
       reviewer_service_id: 'claude',
       arbiter_service_id: null,
@@ -514,10 +564,70 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
+  it('does not inject reviewer model overrides into a forced codex fallback run', async () => {
+    const group: RegisteredGroup = {
+      ...makeGroup(),
+      agentType: 'codex',
+      folder: 'test-group',
+    };
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-reviewer-failover-model',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: '2026-03-31T00:00:00.000Z',
+        status: 'active',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    const config = await import('./config.js');
+    vi.mocked(config.getRoleModelConfig).mockReturnValue({
+      model: 'claude-opus-4-6',
+      effort: 'high',
+      fallbackEnabled: true,
+    });
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'please retry review with codex',
+      chatJid: 'group@test',
+      runId: 'run-forced-reviewer-codex-model',
+      forcedRole: 'reviewer',
+      forcedAgentType: 'codex',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentType: 'codex',
+      }),
+      expect.any(Object),
+      expect.any(Function),
+      undefined,
+      {},
+    );
+  });
+
   it('allows silent reviewer outputs', async () => {
     const group = { ...makeGroup(), folder: 'test-group', workDir: '/repo' };
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
       owner_service_id: 'codex-main',
       reviewer_service_id: 'claude',
       arbiter_service_id: null,
@@ -663,6 +773,114 @@ describe('runAgentForGroup room memory', () => {
     });
   });
 
+  it('logs streamed activity with resolved execution attribution', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      workDir: '/repo/canonical',
+    };
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-reviewer-log',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: null,
+        status: 'active',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:00.000Z',
+      },
+      workspace: {
+        id: 'paired-task-reviewer-log:reviewer',
+        task_id: 'paired-task-reviewer-log',
+        role: 'reviewer',
+        workspace_dir: '/tmp/paired/reviewer',
+        snapshot_source_dir: '/repo/canonical',
+        snapshot_ref: 'HEAD',
+        status: 'ready',
+        snapshot_refreshed_at: null,
+        created_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:00.000Z',
+      },
+      envOverrides: {
+        EJCLAW_WORK_DIR: '/tmp/paired/reviewer',
+        EJCLAW_PAIRED_TASK_ID: 'paired-task-reviewer-log',
+        EJCLAW_PAIRED_ROLE: 'reviewer',
+      },
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'apply_patch setup/service.ts',
+          phase: 'progress',
+          newSessionId: 'session-progress-1',
+        });
+        await onOutput?.({
+          status: 'success',
+          result: 'DONE\nreview complete',
+          output: { visibility: 'public', text: 'DONE\nreview complete' },
+          phase: 'final',
+          newSessionId: 'session-final-1',
+        });
+        return {
+          status: 'success',
+          result: 'DONE\nreview complete',
+          newSessionId: 'session-final-1',
+        };
+      },
+    );
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'please review this change',
+      chatJid: 'group@test',
+      runId: 'run-attribution-log',
+      forcedRole: 'reviewer',
+      onOutput: async () => {},
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'claude',
+        outputPhase: 'progress',
+        outputStatus: 'success',
+        activeRole: 'reviewer',
+        effectiveAgentType: 'claude-code',
+        roomRoleServiceId: 'claude',
+        roomRole: 'reviewer',
+        pairedTaskId: 'paired-task-reviewer-log',
+        workspaceDir: '/tmp/paired/reviewer',
+        preview: 'apply_patch setup/service.ts',
+        streamedSessionId: 'session-progress-1',
+      }),
+      'Observed streamed agent activity',
+    );
+  });
+
   it('blocks reviewer execution when an in-review snapshot became stale and does not spawn the runner', async () => {
     const group = {
       ...makeGroup(),
@@ -673,6 +891,9 @@ describe('runAgentForGroup room memory', () => {
 
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
       owner_service_id: 'codex-main',
       reviewer_service_id: 'claude',
       arbiter_service_id: null,
@@ -759,6 +980,9 @@ describe('runAgentForGroup room memory', () => {
 
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
       owner_service_id: 'codex-main',
       reviewer_service_id: 'claude',
       arbiter_service_id: null,
@@ -1011,7 +1235,7 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(outputs).toEqual(['fresh Claude retry success']);
   });
 
-  it('returns error when the fresh Claude retry also hits the same retryable thinking 400', async () => {
+  it('hands off to codex when the fresh Claude retry also hits the same retryable thinking 400', async () => {
     const outputs: string[] = [];
     const deps = makeDeps();
 
@@ -1055,10 +1279,25 @@ describe('runAgentForGroup Claude rotation', () => {
       },
     });
 
-    expect(result).toBe('error');
+    expect(result).toBe('success');
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
     expect(deps.clearSession).toHaveBeenCalledTimes(2);
     expect(outputs).toEqual([]);
+    expect(serviceRouting.activateCodexFailover).toHaveBeenCalledWith(
+      'group@test',
+      'claude-session-failure',
+    );
+    expect(db.createServiceHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_jid: 'group@test',
+        source_role: 'owner',
+        target_role: 'owner',
+        source_agent_type: 'claude-code',
+        target_agent_type: 'codex',
+        reason: 'claude-session-failure',
+        intended_role: 'owner',
+      }),
+    );
   });
 
   it('returns error after all Claude accounts are usage-exhausted', async () => {
@@ -1117,11 +1356,64 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(db.createServiceHandoff).toHaveBeenCalledWith(
       expect.objectContaining({
         chat_jid: 'group@test',
-        target_service_id: 'codex-review',
+        source_role: 'owner',
+        source_agent_type: 'claude-code',
+        target_role: 'owner',
         target_agent_type: 'codex',
         start_seq: 10,
         end_seq: 12,
         reason: 'claude-usage-exhausted',
+        intended_role: 'owner',
+      }),
+    );
+  });
+
+  it('hands off to codex after repeated retryable Claude session failures', async () => {
+    vi.mocked(
+      sessionRecovery.shouldRetryFreshSessionOnAgentFailure,
+    ).mockReturnValue(true);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: null,
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const deps = makeDeps();
+    const result = await runAgentForGroup(deps, {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-session-failure-handoff',
+      startSeq: 3,
+      endSeq: 7,
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(deps.clearSession).toHaveBeenCalledTimes(2);
+    expect(serviceRouting.activateCodexFailover).toHaveBeenCalledWith(
+      'group@test',
+      'claude-session-failure',
+    );
+    expect(db.createServiceHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_jid: 'group@test',
+        source_role: 'owner',
+        target_role: 'owner',
+        source_agent_type: 'claude-code',
+        target_agent_type: 'codex',
+        start_seq: 3,
+        end_seq: 7,
+        reason: 'claude-session-failure',
         intended_role: 'owner',
       }),
     );
@@ -1322,7 +1614,9 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(db.createServiceHandoff).toHaveBeenCalledWith(
       expect.objectContaining({
         chat_jid: 'group@test',
-        target_service_id: 'codex-review',
+        source_role: 'owner',
+        source_agent_type: 'claude-code',
+        target_role: 'owner',
         target_agent_type: 'codex',
         reason: 'claude-org-access-denied',
         intended_role: 'owner',
