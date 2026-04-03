@@ -122,7 +122,9 @@ vi.mock('./db.js', () => {
       },
     ),
     getOpenWorkItem,
-    getOpenWorkItemForChat: vi.fn((chatJid: string) => getOpenWorkItem(chatJid)),
+    getOpenWorkItemForChat: vi.fn((chatJid: string) =>
+      getOpenWorkItem(chatJid),
+    ),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
     getRecentChatMessages: vi.fn(() => []),
