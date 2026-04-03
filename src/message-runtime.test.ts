@@ -37,6 +37,13 @@ vi.mock('./paired-execution-context.js', () => ({
 }));
 
 vi.mock('./db.js', () => {
+  const getOpenWorkItem = vi.fn(
+    (
+      _chatJid?: string,
+      _agentType?: 'claude-code' | 'codex',
+      _serviceId?: string,
+    ) => undefined,
+  );
   const getMessagesSince = vi.fn(
     (
       _chatJid?: string,
@@ -114,7 +121,8 @@ vi.mock('./db.js', () => {
         };
       },
     ),
-    getOpenWorkItem: vi.fn(() => undefined),
+    getOpenWorkItem,
+    getOpenWorkItemForChat: vi.fn((chatJid: string) => getOpenWorkItem(chatJid)),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
     getRecentChatMessages: vi.fn(() => []),
@@ -777,6 +785,90 @@ describe('createMessageRuntime', () => {
     expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
       chatJid,
       'reviewer final retry',
+    );
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+  });
+
+  it('retries a stale fallback reviewer work item even when the room owner agent type is different', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const ownerChannel = makeChannel(chatJid);
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const enqueueMessageCheck = vi.fn();
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getOpenWorkItem).mockReturnValue(undefined);
+    vi.mocked(db.getOpenWorkItemForChat).mockReturnValue({
+      id: 102,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'codex-review',
+      delivery_role: 'reviewer',
+      status: 'delivery_retry',
+      start_seq: 12,
+      end_seq: 13,
+      result_payload: 'fallback reviewer final retry',
+      delivery_attempts: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'discord send failed',
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-fallback-review-delivery-role',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'merge_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-open-fallback-review-work-item-persisted-role',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(db.getOpenWorkItemForChat).toHaveBeenCalledWith(chatJid);
+    expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'fallback reviewer final retry',
     );
     expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
     expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
@@ -3381,6 +3473,67 @@ describe('createMessageRuntime', () => {
 
     runtime.recoverPendingMessages();
 
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(
+      chatJid,
+      resolveGroupIpcPath(group.folder),
+    );
+    expect(enqueueTask).not.toHaveBeenCalled();
+    expect(db.getMessagesSinceSeq).not.toHaveBeenCalled();
+  });
+
+  it('recovery also queues fallback delivery retries across agent types', () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const enqueueMessageCheck = vi.fn();
+    const enqueueTask = vi.fn();
+
+    vi.mocked(db.getOpenWorkItem).mockReturnValue(undefined);
+    vi.mocked(db.getOpenWorkItemForChat).mockReturnValue({
+      id: 199,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'codex-review',
+      delivery_role: 'reviewer',
+      status: 'delivery_retry',
+      start_seq: 5,
+      end_seq: 6,
+      result_payload: '미전달 reviewer 결과',
+      delivery_attempts: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'discord send failed',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [makeChannel(chatJid)],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+        enqueueTask,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    runtime.recoverPendingMessages();
+
+    expect(db.getOpenWorkItemForChat).toHaveBeenCalledWith(chatJid);
     expect(enqueueMessageCheck).toHaveBeenCalledWith(
       chatJid,
       resolveGroupIpcPath(group.folder),

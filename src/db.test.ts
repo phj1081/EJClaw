@@ -31,6 +31,7 @@ import {
   getMessagesSinceSeq,
   getNewMessagesBySeq,
   getOpenWorkItem,
+  getOpenWorkItemForChat,
   getPendingServiceHandoffs,
   recallMemories,
   getRegisteredAgentTypesForJid,
@@ -2601,6 +2602,24 @@ describe('work items', () => {
 
     markWorkItemDelivered(item.id, 'msg-1');
     expect(getOpenWorkItem('dc:123', 'claude-code')).toBeUndefined();
+  });
+
+  it('finds pending delivery retries even when they were created by a fallback agent type', () => {
+    const fallbackItem = createProducedWorkItem({
+      group_folder: 'discord_test',
+      chat_jid: 'dc:fallback',
+      agent_type: 'codex',
+      delivery_role: 'reviewer',
+      start_seq: 20,
+      end_seq: 22,
+      result_payload: 'fallback reviewer output',
+    });
+
+    expect(getOpenWorkItem('dc:fallback', 'claude-code')).toBeUndefined();
+    expect(getOpenWorkItemForChat('dc:fallback')?.id).toBe(fallbackItem.id);
+
+    markWorkItemDelivered(fallbackItem.id, 'msg-fallback');
+    expect(getOpenWorkItemForChat('dc:fallback')).toBeUndefined();
   });
 
   it('stores service shadow as a derived compatibility field from role and agent type', () => {

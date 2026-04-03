@@ -6,7 +6,7 @@ import {
   createProducedWorkItem,
   failServiceHandoff,
   getAllPendingServiceHandoffs,
-  getOpenWorkItem,
+  getOpenWorkItemForChat,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
   markWorkItemDelivered,
@@ -830,12 +830,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       );
     }
 
-    // Deliver pending work items through the correct channel.
-    // For paired rooms, check if the work item was from a reviewer turn.
-    const openWorkItem = getOpenWorkItem(
-      chatJid,
-      (group.agentType || 'claude-code') as 'claude-code' | 'codex',
-    );
+    // Delivery retries can come from forced fallback runs whose agent_type
+    // differs from the room owner's registered agent type.
+    const openWorkItem = getOpenWorkItemForChat(chatJid);
     if (openWorkItem) {
       const pendingTask = hasReviewerLease(chatJid)
         ? getLatestOpenPairedTaskForChat(chatJid)
@@ -1313,10 +1310,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const recoverPendingMessages = (): void => {
     const registeredGroups = deps.getRegisteredGroups();
     for (const [chatJid, group] of Object.entries(registeredGroups)) {
-      const openWorkItem = getOpenWorkItem(
-        chatJid,
-        (group.agentType || 'claude-code') as 'claude-code' | 'codex',
-      );
+      const openWorkItem = getOpenWorkItemForChat(chatJid);
       if (openWorkItem) {
         logger.info(
           { chatJid, group: group.name, workItemId: openWorkItem.id },

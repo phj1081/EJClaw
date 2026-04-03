@@ -2039,6 +2039,20 @@ export function getOpenWorkItem(
   return row ? hydrateWorkItem(row) : undefined;
 }
 
+export function getOpenWorkItemForChat(chatJid: string): WorkItem | undefined {
+  const row = db
+    .prepare(
+      `SELECT *
+       FROM work_items
+       WHERE chat_jid = ?
+         AND status IN ('produced', 'delivery_retry')
+       ORDER BY id ASC
+       LIMIT 1`,
+    )
+    .get(chatJid) as StoredWorkItemRow | undefined;
+  return row ? hydrateWorkItem(row) : undefined;
+}
+
 export function createProducedWorkItem(input: {
   group_folder: string;
   chat_jid: string;
