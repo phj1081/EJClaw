@@ -88,7 +88,12 @@ function ownerBranchName(groupFolder: string): string {
 }
 
 function ownerWorkspacePath(groupFolder: string): string {
-  return path.join(process.env.EJCLAW_DATA_DIR!, 'workspaces', groupFolder, 'owner');
+  return path.join(
+    process.env.EJCLAW_DATA_DIR!,
+    'workspaces',
+    groupFolder,
+    'owner',
+  );
 }
 
 describe('paired workspace manager', () => {
@@ -739,14 +744,18 @@ describe('paired workspace manager', () => {
       groupFolder: 'head-base-room',
     });
 
-    const ownerWorkspace =
-      manager.provisionOwnerWorkspaceForPairedTask('paired-task-head-base');
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-head-base',
+    );
 
     expect(
       runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
     ).toBe(ownerBranchName('head-base-room'));
     expect(
-      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'README.md'), 'utf-8'),
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'README.md'),
+        'utf-8',
+      ),
     ).toBe('feature base\n');
     expect(runGit(['rev-parse', 'HEAD'], ownerWorkspace.workspace_dir)).toBe(
       runGit(['rev-parse', 'HEAD'], canonicalDir),
@@ -781,7 +790,10 @@ describe('paired workspace manager', () => {
       runGit(['branch', '--show-current'], secondProvision.workspace_dir),
     ).toBe(ownerBranchName('tree-source-room'));
     expect(
-      fs.readFileSync(path.join(secondProvision.workspace_dir, 'README.md'), 'utf-8'),
+      fs.readFileSync(
+        path.join(secondProvision.workspace_dir, 'README.md'),
+        'utf-8',
+      ),
     ).toBe('tree source\n');
     expect(runGit(['rev-parse', 'HEAD'], secondProvision.workspace_dir)).toBe(
       runGit(['rev-parse', 'HEAD'], canonicalDir),
@@ -814,9 +826,9 @@ describe('paired workspace manager', () => {
     expect(
       runGit(['branch', '--show-current'], reprovisioned.workspace_dir),
     ).toBe(ownerBranchName('repair-room'));
-    expect(
-      runGit(['worktree', 'list', '--porcelain'], canonicalDir),
-    ).toContain(reprovisioned.workspace_dir);
+    expect(runGit(['worktree', 'list', '--porcelain'], canonicalDir)).toContain(
+      reprovisioned.workspace_dir,
+    );
   });
 
   it('lazy-migrates a detached dirty owner workspace to a new channel branch', async () => {
@@ -844,17 +856,23 @@ describe('paired workspace manager', () => {
       runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
     ).toBe(ownerBranchName('migrate-room'));
     expect(
-      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'README.md'), 'utf-8'),
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'README.md'),
+        'utf-8',
+      ),
     ).toBe('detached dirty\n');
     expect(
-      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'NEW_FILE.txt'), 'utf-8'),
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'NEW_FILE.txt'),
+        'utf-8',
+      ),
     ).toBe('new file\n');
-    expect(runGit(['status', '--short'], ownerWorkspace.workspace_dir)).toContain(
-      'M README.md',
-    );
-    expect(runGit(['status', '--short'], ownerWorkspace.workspace_dir)).toContain(
-      '?? NEW_FILE.txt',
-    );
+    expect(
+      runGit(['status', '--short'], ownerWorkspace.workspace_dir),
+    ).toContain('M README.md');
+    expect(
+      runGit(['status', '--short'], ownerWorkspace.workspace_dir),
+    ).toContain('?? NEW_FILE.txt');
   });
 
   it('lazy-migrates a detached dirty owner workspace onto an existing matching channel branch', async () => {
@@ -875,7 +893,10 @@ describe('paired workspace manager', () => {
     const workspaceDir = ownerWorkspacePath('migrate-existing-room');
     fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
     runGit(['worktree', 'add', workspaceDir, 'HEAD'], canonicalDir);
-    fs.writeFileSync(path.join(workspaceDir, 'README.md'), 'detached existing\n');
+    fs.writeFileSync(
+      path.join(workspaceDir, 'README.md'),
+      'detached existing\n',
+    );
     fs.writeFileSync(path.join(workspaceDir, 'NOTES.md'), 'keep me\n');
 
     const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
@@ -886,10 +907,16 @@ describe('paired workspace manager', () => {
       runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
     ).toBe(ownerBranchName('migrate-existing-room'));
     expect(
-      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'README.md'), 'utf-8'),
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'README.md'),
+        'utf-8',
+      ),
     ).toBe('detached existing\n');
     expect(
-      fs.readFileSync(path.join(ownerWorkspace.workspace_dir, 'NOTES.md'), 'utf-8'),
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'NOTES.md'),
+        'utf-8',
+      ),
     ).toBe('keep me\n');
   });
 

@@ -25,7 +25,10 @@ import {
   readPairedRoomPrompt,
   readPlatformPrompt,
 } from './platform-prompts.js';
-import { getEffectiveChannelLease, hasReviewerLease } from './service-routing.js';
+import {
+  getEffectiveChannelLease,
+  hasReviewerLease,
+} from './service-routing.js';
 import type { AgentType, RegisteredGroup } from './types.js';
 
 // writeCodexApiKeyAuth removed — Codex uses OAuth only.
@@ -330,10 +333,7 @@ EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.group.folder)}
 EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
 EJCLAW_AGENT_TYPE = ${JSON.stringify(args.env.EJCLAW_AGENT_TYPE)}
 `;
-    fs.writeFileSync(
-      sessionConfigPath,
-      toml.trimEnd() + '\n' + mcpSection,
-    );
+    fs.writeFileSync(sessionConfigPath, toml.trimEnd() + '\n' + mcpSection);
   }
 
   delete args.env.ANTHROPIC_API_KEY;
@@ -404,7 +404,8 @@ export function prepareGroupEnvironment(
   // Canonical lease state now exposes owner failover directly, so prefer the
   // explicit flag over the older CODEX_REVIEW_SERVICE_ID shadow heuristic.
   const useCodexReviewFailoverPromptPack =
-    isReviewService(SERVICE_ID) && effectiveLease.owner_failover_active === true;
+    isReviewService(SERVICE_ID) &&
+    effectiveLease.owner_failover_active === true;
 
   const ownerCommonPlatformPrompt = readOptionalPromptFile(
     projectRoot,

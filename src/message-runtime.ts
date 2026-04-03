@@ -20,9 +20,7 @@ import {
   type ServiceHandoff,
   type WorkItem,
 } from './db.js';
-import {
-  isSessionCommandSenderAllowed,
-} from './config.js';
+import { isSessionCommandSenderAllowed } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
 import {
   findChannel,
@@ -61,9 +59,7 @@ import {
 } from './types.js';
 import { createScopedLogger, logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
-import {
-  hasReviewerLease,
-} from './service-routing.js';
+import { hasReviewerLease } from './service-routing.js';
 
 /**
  * Check if a message is a duplicate of the last bot final message in a paired room.

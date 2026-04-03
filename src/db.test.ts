@@ -396,7 +396,9 @@ describe('session accessors', () => {
     const migratedDb = new Database(dbPath, { readonly: true });
     expect(
       migratedDb
-        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'service_sessions'`)
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'service_sessions'`,
+        )
         .get(),
     ).toBeUndefined();
     migratedDb.close();
@@ -2354,29 +2356,39 @@ describe('service handoff completion', () => {
 
     const migratedDb = new Database(dbPath, { readonly: true });
     expect(
-      (migratedDb
-        .prepare(`PRAGMA table_info(work_items)`)
-        .all() as Array<{ name: string }>).map((row) => row.name),
+      (
+        migratedDb.prepare(`PRAGMA table_info(work_items)`).all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
     ).not.toContain('service_id');
     expect(
-      (migratedDb
-        .prepare(`PRAGMA table_info(channel_owner)`)
-        .all() as Array<{ name: string }>).map((row) => row.name),
+      (
+        migratedDb.prepare(`PRAGMA table_info(channel_owner)`).all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
     ).not.toContain('owner_service_id');
     expect(
-      (migratedDb
-        .prepare(`PRAGMA table_info(paired_tasks)`)
-        .all() as Array<{ name: string }>).map((row) => row.name),
+      (
+        migratedDb.prepare(`PRAGMA table_info(paired_tasks)`).all() as Array<{
+          name: string;
+        }>
+      ).map((row) => row.name),
     ).not.toContain('owner_service_id');
     expect(
-      (migratedDb
-        .prepare(`PRAGMA table_info(service_handoffs)`)
-        .all() as Array<{ name: string }>).map((row) => row.name),
+      (
+        migratedDb
+          .prepare(`PRAGMA table_info(service_handoffs)`)
+          .all() as Array<{ name: string }>
+      ).map((row) => row.name),
     ).not.toContain('source_service_id');
     expect(
-      (migratedDb
-        .prepare(`PRAGMA table_info(service_handoffs)`)
-        .all() as Array<{ name: string }>).map((row) => row.name),
+      (
+        migratedDb
+          .prepare(`PRAGMA table_info(service_handoffs)`)
+          .all() as Array<{ name: string }>
+      ).map((row) => row.name),
     ).toContain('source_agent_type');
     migratedDb.close();
   });
@@ -2493,8 +2505,12 @@ describe('memories', () => {
     });
 
     expect(recalled).toHaveLength(300);
-    expect(recalled.some((memory) => memory.content === 'memory-0')).toBe(false);
-    expect(recalled.some((memory) => memory.content === 'memory-304')).toBe(true);
+    expect(recalled.some((memory) => memory.content === 'memory-0')).toBe(
+      false,
+    );
+    expect(recalled.some((memory) => memory.content === 'memory-304')).toBe(
+      true,
+    );
   });
 
   it('archives stale compact memories before recall using last_used_at TTL', () => {
@@ -2526,9 +2542,13 @@ describe('memories', () => {
       limit: 10,
     });
 
-    expect(recalled.some((memory) => memory.content === '오래된 compact memory')).toBe(false);
     expect(
-      recalled.some((memory) => memory.content === '최근에 다시 쓰인 compact memory'),
+      recalled.some((memory) => memory.content === '오래된 compact memory'),
+    ).toBe(false);
+    expect(
+      recalled.some(
+        (memory) => memory.content === '최근에 다시 쓰인 compact memory',
+      ),
     ).toBe(true);
   });
 

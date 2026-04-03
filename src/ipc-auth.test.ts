@@ -894,10 +894,9 @@ describe('assign_room success', () => {
       modeSource: 'explicit',
       name: 'Legacy Tribunal Renamed',
     });
-    expect(getRegisteredAgentTypesForJid('legacy-tribunal@g.us').sort()).toEqual([
-      'claude-code',
-      'codex',
-    ]);
+    expect(
+      getRegisteredAgentTypesForJid('legacy-tribunal@g.us').sort(),
+    ).toEqual(['claude-code', 'codex']);
   });
 
   it('main group can assign a tribunal room and materialize capability rows', async () => {

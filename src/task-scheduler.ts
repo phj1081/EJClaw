@@ -757,7 +757,11 @@ async function runGithubCiTask(
     if (check.terminal) {
       await statusTracker.update('completed');
       if (check.completionMessage) {
-        await sendScheduledMessage(deps, task.chat_jid, check.completionMessage);
+        await sendScheduledMessage(
+          deps,
+          task.chat_jid,
+          check.completionMessage,
+        );
       }
       deleteTask(task.id);
       completedAndDeleted = true;

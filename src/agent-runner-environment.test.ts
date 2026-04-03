@@ -392,10 +392,13 @@ describe('prepareContainerSessionEnvironment codex compatibility', () => {
       role: 'reviewer',
     });
 
-    const claudeMd = fs.readFileSync(path.join(sessionDir, 'CLAUDE.md'), 'utf-8');
-    expect(fs.readFileSync(path.join(sessionDir, '.codex', 'AGENTS.md'), 'utf-8')).toBe(
-      claudeMd,
+    const claudeMd = fs.readFileSync(
+      path.join(sessionDir, 'CLAUDE.md'),
+      'utf-8',
     );
+    expect(
+      fs.readFileSync(path.join(sessionDir, '.codex', 'AGENTS.md'), 'utf-8'),
+    ).toBe(claudeMd);
     expect(
       fs.readFileSync(path.join(sessionDir, '.codex', 'auth.json'), 'utf-8'),
     ).toContain('"auth_mode":"chatgpt"');

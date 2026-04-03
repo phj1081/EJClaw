@@ -35,7 +35,8 @@ describe('sqlite-memory-store helpers', () => {
         id: 2,
         scopeKind: 'room',
         scopeKey: 'room:ejclaw',
-        content: '자동 recall/compact persist를 호스트가 책임지는 방향으로 합의함.',
+        content:
+          '자동 recall/compact persist를 호스트가 책임지는 방향으로 합의함.',
         keywords: ['room:ejclaw'],
         memoryKind: null,
         sourceKind: 'compact',

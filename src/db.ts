@@ -179,7 +179,10 @@ export interface ServiceHandoff {
   last_error: string | null;
 }
 
-interface StoredWorkItemRow extends Omit<WorkItem, 'service_id' | 'agent_type'> {
+interface StoredWorkItemRow extends Omit<
+  WorkItem,
+  'service_id' | 'agent_type'
+> {
   agent_type: string;
 }
 
@@ -198,11 +201,13 @@ interface LegacyChannelOwnerLeaseServiceRow extends StoredChannelOwnerLeaseRow {
   arbiter_service_id?: string | null;
 }
 
-interface StoredServiceHandoffRow
-  extends Omit<
-    ServiceHandoff,
-    'source_service_id' | 'target_service_id' | 'source_agent_type' | 'target_agent_type'
-  > {
+interface StoredServiceHandoffRow extends Omit<
+  ServiceHandoff,
+  | 'source_service_id'
+  | 'target_service_id'
+  | 'source_agent_type'
+  | 'target_agent_type'
+> {
   source_agent_type?: string | null;
   target_agent_type: string;
 }
@@ -212,15 +217,14 @@ interface LegacyServiceHandoffServiceRow extends StoredServiceHandoffRow {
   target_service_id?: string | null;
 }
 
-interface StoredPairedTaskRow
-  extends Omit<
-    PairedTask,
-    | 'owner_service_id'
-    | 'reviewer_service_id'
-    | 'owner_agent_type'
-    | 'reviewer_agent_type'
-    | 'arbiter_agent_type'
-  > {
+interface StoredPairedTaskRow extends Omit<
+  PairedTask,
+  | 'owner_service_id'
+  | 'reviewer_service_id'
+  | 'owner_agent_type'
+  | 'reviewer_agent_type'
+  | 'arbiter_agent_type'
+> {
   owner_agent_type?: string | null;
   reviewer_agent_type?: string | null;
   arbiter_agent_type?: string | null;
@@ -286,20 +290,19 @@ function hydrateChannelOwnerLeaseRow(
   const reviewerAgentType =
     row.reviewer_agent_type == null
       ? null
-      : normalizeStoredAgentType(row.reviewer_agent_type) ??
-        resolveStableReviewerAgentType(ownerAgentType, null);
+      : (normalizeStoredAgentType(row.reviewer_agent_type) ??
+        resolveStableReviewerAgentType(ownerAgentType, null));
   const arbiterAgentType =
     row.arbiter_agent_type == null
       ? null
-      : normalizeStoredAgentType(row.arbiter_agent_type) ??
+      : (normalizeStoredAgentType(row.arbiter_agent_type) ??
         ARBITER_AGENT_TYPE ??
-        null;
+        null);
 
   return {
     chat_jid: row.chat_jid,
     owner_service_id:
-      resolveRoleServiceShadow('owner', ownerAgentType) ??
-      CLAUDE_SERVICE_ID,
+      resolveRoleServiceShadow('owner', ownerAgentType) ?? CLAUDE_SERVICE_ID,
     reviewer_service_id:
       reviewerAgentType == null
         ? null
@@ -323,12 +326,15 @@ function hydratePairedTaskRow(row: StoredPairedTaskRow): PairedTask {
     row.reviewer_agent_type ?? null,
   );
   const arbiterAgentType =
-    normalizeStoredAgentType(row.arbiter_agent_type) ?? ARBITER_AGENT_TYPE ?? null;
+    normalizeStoredAgentType(row.arbiter_agent_type) ??
+    ARBITER_AGENT_TYPE ??
+    null;
 
   return {
     ...row,
     owner_service_id:
-      resolveRoleServiceShadow('owner', ownerAgentType) ?? CODEX_MAIN_SERVICE_ID,
+      resolveRoleServiceShadow('owner', ownerAgentType) ??
+      CODEX_MAIN_SERVICE_ID,
     reviewer_service_id:
       resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
       CODEX_REVIEW_SERVICE_ID,
@@ -338,7 +344,9 @@ function hydratePairedTaskRow(row: StoredPairedTaskRow): PairedTask {
   };
 }
 
-function hydrateServiceHandoffRow(row: StoredServiceHandoffRow): ServiceHandoff {
+function hydrateServiceHandoffRow(
+  row: StoredServiceHandoffRow,
+): ServiceHandoff {
   const sourceAgentType =
     normalizeStoredAgentType(row.source_agent_type) ??
     (row.source_role
@@ -365,22 +373,22 @@ function hydrateServiceHandoffRow(row: StoredServiceHandoffRow): ServiceHandoff 
     target_agent_type: targetAgentType,
     source_service_id:
       row.source_role != null
-        ? resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
-          SERVICE_SESSION_SCOPE
+        ? (resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
+          SERVICE_SESSION_SCOPE)
         : SERVICE_SESSION_SCOPE,
     target_service_id:
       row.target_role != null
-        ? resolveRoleServiceShadow(row.target_role, targetAgentType) ??
-          SERVICE_SESSION_SCOPE
+        ? (resolveRoleServiceShadow(row.target_role, targetAgentType) ??
+          SERVICE_SESSION_SCOPE)
         : SERVICE_SESSION_SCOPE,
   };
 }
 
 function getTableColumns(database: Database, tableName: string): string[] {
   return (
-    database
-      .prepare(`PRAGMA table_info(${tableName})`)
-      .all() as Array<{ name: string }>
+    database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+      name: string;
+    }>
   ).map((column) => column.name);
 }
 
@@ -783,7 +791,9 @@ function createSchema(database: Database): void {
   }
 
   try {
-    database.exec(`ALTER TABLE service_handoffs ADD COLUMN source_agent_type TEXT`);
+    database.exec(
+      `ALTER TABLE service_handoffs ADD COLUMN source_agent_type TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -795,13 +805,17 @@ function createSchema(database: Database): void {
   }
 
   try {
-    database.exec(`ALTER TABLE paired_tasks ADD COLUMN reviewer_agent_type TEXT`);
+    database.exec(
+      `ALTER TABLE paired_tasks ADD COLUMN reviewer_agent_type TEXT`,
+    );
   } catch {
     /* column already exists */
   }
 
   try {
-    database.exec(`ALTER TABLE paired_tasks ADD COLUMN arbiter_agent_type TEXT`);
+    database.exec(
+      `ALTER TABLE paired_tasks ADD COLUMN arbiter_agent_type TEXT`,
+    );
   } catch {
     /* column already exists */
   }
@@ -1362,9 +1376,7 @@ function normalizeMemoryKeywords(keywords?: string[]): string[] {
   if (!Array.isArray(keywords)) return [];
   return [
     ...new Set(
-      keywords
-        .map((keyword) => keyword.trim().toLowerCase())
-        .filter(Boolean),
+      keywords.map((keyword) => keyword.trim().toLowerCase()).filter(Boolean),
     ),
   ];
 }
@@ -1453,7 +1465,9 @@ function queryFtsRowOrder(query: RecallMemoryQuery): Map<number, number> {
 }
 
 export function touchMemories(ids: number[]): void {
-  const uniqueIds = [...new Set(ids.filter((id) => Number.isInteger(id) && id > 0))];
+  const uniqueIds = [
+    ...new Set(ids.filter((id) => Number.isInteger(id) && id > 0)),
+  ];
   if (uniqueIds.length === 0) return;
   const now = new Date().toISOString();
   const stmt = db.prepare(
@@ -1573,7 +1587,9 @@ export function rememberMemory(input: {
     input.sourceRef ?? null,
     createdAt,
   );
-  const row = db.prepare('SELECT last_insert_rowid() AS id').get() as { id: number };
+  const row = db.prepare('SELECT last_insert_rowid() AS id').get() as {
+    id: number;
+  };
   expireStaleMemories({
     scopeKind: input.scopeKind,
     scopeKey: input.scopeKey,
@@ -1598,8 +1614,9 @@ export function recallMemories(query: RecallMemoryQuery): MemoryRecord[] {
   const scored = rows
     .map((row, index) => {
       const keywords = parseMemoryKeywords(row.keywords_json);
-      const exactMatches = keywords.filter((keyword) => exactKeywords.has(keyword))
-        .length;
+      const exactMatches = keywords.filter((keyword) =>
+        exactKeywords.has(keyword),
+      ).length;
       const ftsScore = ftsOrder.get(row.id) ?? 0;
       const recencyScore = rows.length - index;
       return {
@@ -2016,12 +2033,9 @@ export function getOpenWorkItem(
          id ASC
        LIMIT 1`,
     )
-    .get(
-      chatJid,
-      agentType,
-      preferredRole,
-      preferredRole,
-    ) as StoredWorkItemRow | undefined;
+    .get(chatJid, agentType, preferredRole, preferredRole) as
+    | StoredWorkItemRow
+    | undefined;
   return row ? hydrateWorkItem(row) : undefined;
 }
 
@@ -2066,9 +2080,9 @@ export function createProducedWorkItem(input: {
     db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
   ).id;
   return hydrateWorkItem(
-    db.prepare('SELECT * FROM work_items WHERE id = ?').get(
-      lastId,
-    ) as StoredWorkItemRow,
+    db
+      .prepare('SELECT * FROM work_items WHERE id = ?')
+      .get(lastId) as StoredWorkItemRow,
   );
 }
 
@@ -2474,9 +2488,7 @@ export function getSession(
     .prepare(
       'SELECT session_id FROM sessions WHERE group_folder = ? AND agent_type = ?',
     )
-    .get(groupFolder, agentType) as
-    | { session_id: string }
-    | undefined;
+    .get(groupFolder, agentType) as { session_id: string } | undefined;
   return row?.session_id;
 }
 
@@ -2613,8 +2625,7 @@ function buildRegisteredGroupFromStoredSettings(
     name: stored.name || stored.chatJid,
     folder: stored.folder,
     trigger: stored.trigger || `@${ASSISTANT_NAME}`,
-    added_at:
-      capabilityMetadata?.added_at || new Date(0).toISOString(),
+    added_at: capabilityMetadata?.added_at || new Date(0).toISOString(),
     agentConfig: capabilityMetadata?.agentConfig,
     requiresTrigger: stored.requiresTrigger,
     isMain: stored.isMain ? true : undefined,
@@ -2692,12 +2703,16 @@ export function assignRoom(
   const roomMode = input.roomMode || existing?.roomMode || 'single';
   const ownerAgentType =
     input.ownerAgentType || existing?.ownerAgentType || OWNER_AGENT_TYPE;
-  const folder = resolveAssignedRoomFolder(db, chatJid, input.name, input.folder);
+  const folder = resolveAssignedRoomFolder(
+    db,
+    chatJid,
+    input.name,
+    input.folder,
+  );
   const snapshot: RoomRegistrationSnapshot = {
     name: input.name,
     folder,
-    triggerPattern:
-      input.trigger || existing?.trigger || `@${ASSISTANT_NAME}`,
+    triggerPattern: input.trigger || existing?.trigger || `@${ASSISTANT_NAME}`,
     requiresTrigger: input.requiresTrigger ?? existing?.requiresTrigger ?? true,
     isMain: input.isMain ?? existing?.isMain ?? false,
     ownerAgentType,
@@ -2911,7 +2926,9 @@ function getLegacyRegisteredGroup(
             'SELECT * FROM registered_groups WHERE jid = ? AND agent_type = ?',
           )
           .get(jid, agentType)
-      : database.prepare('SELECT * FROM registered_groups WHERE jid = ?').get(jid)
+      : database
+          .prepare('SELECT * FROM registered_groups WHERE jid = ?')
+          .get(jid)
   ) as RegisteredGroupDatabaseRow | undefined;
   return parseRegisteredGroupRow(row);
 }
@@ -2949,7 +2966,9 @@ function getRegisteredGroupCapabilityMetadata(
   };
 }
 
-function getStoredRoomRowsFromDatabase(database: Database): StoredRoomSettings[] {
+function getStoredRoomRowsFromDatabase(
+  database: Database,
+): StoredRoomSettings[] {
   return database
     .prepare(
       `SELECT chat_jid
@@ -2958,7 +2977,10 @@ function getStoredRoomRowsFromDatabase(database: Database): StoredRoomSettings[]
     )
     .all()
     .map((row) =>
-      getStoredRoomSettingsRowFromDatabase(database, (row as { chat_jid: string }).chat_jid),
+      getStoredRoomSettingsRowFromDatabase(
+        database,
+        (row as { chat_jid: string }).chat_jid,
+      ),
     )
     .filter((row): row is StoredRoomSettings => Boolean(row));
 }
@@ -2995,7 +3017,12 @@ function collectReservedFolders(
        FROM registered_groups
        WHERE ? IS NULL OR jid != ?`,
     )
-    .all(exceptChatJid ?? null, exceptChatJid ?? null, exceptChatJid ?? null, exceptChatJid ?? null) as Array<{
+    .all(
+      exceptChatJid ?? null,
+      exceptChatJid ?? null,
+      exceptChatJid ?? null,
+      exceptChatJid ?? null,
+    ) as Array<{
     folder: string | null;
   }>;
 
@@ -3042,7 +3069,9 @@ function resolveAssignedRoomFolder(
   const reserved = collectReservedFolders(database, chatJid);
   if (explicitFolder) {
     if (!isValidGroupFolder(explicitFolder)) {
-      throw new Error(`Invalid group folder "${explicitFolder}" for JID ${chatJid}`);
+      throw new Error(
+        `Invalid group folder "${explicitFolder}" for JID ${chatJid}`,
+      );
     }
     if (reserved.has(explicitFolder)) {
       throw new Error(`Group folder "${explicitFolder}" is already assigned`);
@@ -3050,7 +3079,10 @@ function resolveAssignedRoomFolder(
     return explicitFolder;
   }
 
-  const existingFolder = getStoredRoomSettingsRowFromDatabase(database, chatJid)?.folder;
+  const existingFolder = getStoredRoomSettingsRowFromDatabase(
+    database,
+    chatJid,
+  )?.folder;
   if (existingFolder) return existingFolder;
 
   return buildGeneratedRoomFolder(database, chatJid, name);
@@ -3089,7 +3121,10 @@ function materializeRegisteredGroupsForRoom(
     added_at: string;
     agent_config: string | null;
   }>;
-  const existingByType = new Map<AgentType, { added_at: string; agent_config: string | null }>();
+  const existingByType = new Map<
+    AgentType,
+    { added_at: string; agent_config: string | null }
+  >();
   for (const row of existingRows) {
     const agentType = normalizeStoredAgentType(row.agent_type);
     if (agentType) {
@@ -3101,8 +3136,10 @@ function materializeRegisteredGroupsForRoom(
     const existing = existingByType.get(agentType);
     const agentConfig =
       agentType === ownerAgentType
-        ? ownerAgentConfig ??
-          (existing?.agent_config ? JSON.parse(existing.agent_config) : undefined)
+        ? (ownerAgentConfig ??
+          (existing?.agent_config
+            ? JSON.parse(existing.agent_config)
+            : undefined))
         : existing?.agent_config
           ? JSON.parse(existing.agent_config)
           : undefined;
@@ -3262,9 +3299,8 @@ function collectRoomRegistrationSnapshot(
   }
 
   const agentTypes = collectRegisteredAgentTypes(database, jid);
-  const inferredOwnerAgentType = inferOwnerAgentTypeFromRegisteredAgentTypes(
-    agentTypes,
-  );
+  const inferredOwnerAgentType =
+    inferOwnerAgentTypeFromRegisteredAgentTypes(agentTypes);
   const preferExplicitTrigger =
     existingStored?.modeSource === 'explicit' && existingStored.trigger;
   const preferExplicitOwner =
@@ -3280,7 +3316,8 @@ function collectRoomRegistrationSnapshot(
     : undefined;
   const inferredOwnerRow =
     rows.find(
-      (row) => normalizeStoredAgentType(row.agent_type) === inferredOwnerAgentType,
+      (row) =>
+        normalizeStoredAgentType(row.agent_type) === inferredOwnerAgentType,
     ) ?? rows[0];
   const ownerAgentType = preferredOwnerAgentType
     ? preferredOwnerRow
@@ -3292,12 +3329,11 @@ function collectRoomRegistrationSnapshot(
   return {
     name: first.name,
     folder: first.folder,
-    triggerPattern:
-      preferExplicitTrigger
-        ? existingStored.trigger!
-        : preferredOwnerRow != null
-          ? preferredOwnerRow.trigger_pattern
-          : ownerRow.trigger_pattern,
+    triggerPattern: preferExplicitTrigger
+      ? existingStored.trigger!
+      : preferredOwnerRow != null
+        ? preferredOwnerRow.trigger_pattern
+        : ownerRow.trigger_pattern,
     requiresTrigger: (first.requires_trigger ?? 1) === 1,
     isMain: (first.is_main ?? 0) === 1,
     ownerAgentType,
@@ -3376,14 +3412,20 @@ function updateStoredRoomMetadata(
 
 function syncStoredRoomRegistrationSnapshotForJid(chatJid: string): void {
   const existingSettings = getStoredRoomSettingsRowFromDatabase(db, chatJid);
-  const snapshot = collectRoomRegistrationSnapshot(db, chatJid, existingSettings);
+  const snapshot = collectRoomRegistrationSnapshot(
+    db,
+    chatJid,
+    existingSettings,
+  );
   if (!snapshot) return;
 
   if (!existingSettings) {
     insertStoredRoomSettings(
       db,
       chatJid,
-      inferRoomModeFromRegisteredAgentTypes(getRegisteredAgentTypesForJid(chatJid)),
+      inferRoomModeFromRegisteredAgentTypes(
+        getRegisteredAgentTypesForJid(chatJid),
+      ),
       'inferred',
       snapshot,
     );
@@ -3521,9 +3563,14 @@ function collectRegisteredAgentTypesForFolder(
 
 function resolveStablePairedTaskOwnerAgentType(
   database: Database,
-  task: Pick<StoredPairedTaskRow, 'chat_jid' | 'group_folder' | 'owner_agent_type'>,
+  task: Pick<
+    StoredPairedTaskRow,
+    'chat_jid' | 'group_folder' | 'owner_agent_type'
+  >,
 ): AgentType | undefined {
-  const persistedOwnerAgentType = normalizeStoredAgentType(task.owner_agent_type);
+  const persistedOwnerAgentType = normalizeStoredAgentType(
+    task.owner_agent_type,
+  );
   if (persistedOwnerAgentType) {
     return persistedOwnerAgentType;
   }
@@ -3729,13 +3776,13 @@ function backfillChannelOwnerRoleMetadata(database: Database): void {
         const reviewerServiceId =
           row.reviewer_service_id == null
             ? null
-            : resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
-              row.reviewer_service_id;
+            : (resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
+              row.reviewer_service_id);
         const arbiterServiceId =
           row.arbiter_service_id == null
             ? null
-            : resolveRoleServiceShadow('arbiter', arbiterAgentType) ??
-              row.arbiter_service_id;
+            : (resolveRoleServiceShadow('arbiter', arbiterAgentType) ??
+              row.arbiter_service_id);
 
         if (
           ownerServiceId === row.owner_service_id &&
@@ -3911,13 +3958,13 @@ function backfillServiceHandoffServiceShadows(database: Database): void {
 
         const normalizedSourceServiceId =
           row.source_role != null
-            ? resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
-              row.source_service_id
+            ? (resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
+              row.source_service_id)
             : row.source_service_id;
         const normalizedTargetServiceId =
           row.target_role != null
-            ? resolveRoleServiceShadow(row.target_role, targetAgentType) ??
-              row.target_service_id
+            ? (resolveRoleServiceShadow(row.target_role, targetAgentType) ??
+              row.target_service_id)
             : row.target_service_id;
 
         if (
@@ -4624,16 +4671,16 @@ export function setChannelOwnerLease(input: {
   const reviewerAgentType =
     input.reviewer_service_id == null && input.reviewer_agent_type == null
       ? null
-      : normalizeStoredAgentType(input.reviewer_agent_type) ??
+      : (normalizeStoredAgentType(input.reviewer_agent_type) ??
         inferAgentTypeFromServiceShadow(input.reviewer_service_id ?? null) ??
-        resolveStableReviewerAgentType(ownerAgentType, null);
+        resolveStableReviewerAgentType(ownerAgentType, null));
   const arbiterAgentType =
     input.arbiter_service_id == null && input.arbiter_agent_type == null
       ? null
-      : normalizeStoredAgentType(input.arbiter_agent_type) ??
+      : (normalizeStoredAgentType(input.arbiter_agent_type) ??
         inferAgentTypeFromServiceShadow(input.arbiter_service_id ?? null) ??
         ARBITER_AGENT_TYPE ??
-        null;
+        null);
 
   db.prepare(
     `INSERT OR REPLACE INTO channel_owner (
@@ -4719,9 +4766,9 @@ export function createServiceHandoff(input: {
     db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
   ).id;
   return hydrateServiceHandoffRow(
-    db.prepare('SELECT * FROM service_handoffs WHERE id = ?').get(
-      lastId,
-    ) as StoredServiceHandoffRow,
+    db
+      .prepare('SELECT * FROM service_handoffs WHERE id = ?')
+      .get(lastId) as StoredServiceHandoffRow,
   );
 }
 

@@ -55,14 +55,14 @@ function normalizeLeaseRow(
   const reviewerAgentType =
     row.reviewer_service_id == null
       ? null
-      : row.reviewer_agent_type ??
+      : (row.reviewer_agent_type ??
         inferAgentTypeFromServiceShadow(row.reviewer_service_id) ??
         resolveRoleAgentPlan({
           paired: true,
           groupAgentType: ownerAgentType,
           configuredReviewer: REVIEWER_AGENT_TYPE,
           configuredArbiter: ARBITER_AGENT_TYPE,
-        }).reviewerAgentType;
+        }).reviewerAgentType);
   const arbiterAgentType =
     row.arbiter_agent_type ??
     (row.arbiter_service_id
@@ -79,12 +79,14 @@ function normalizeLeaseRow(
       resolveRoleServiceShadow('owner', ownerAgentType) ??
       normalizeServiceId(row.owner_service_id),
     reviewer_service_id: reviewerAgentType
-      ? resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
-        normalizeServiceId(row.reviewer_service_id!)
+      ? (resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
+        normalizeServiceId(row.reviewer_service_id!))
       : null,
     arbiter_service_id: arbiterAgentType
-      ? resolveRoleServiceShadow('arbiter', arbiterAgentType) ??
-        (row.arbiter_service_id ? normalizeServiceId(row.arbiter_service_id) : null)
+      ? (resolveRoleServiceShadow('arbiter', arbiterAgentType) ??
+        (row.arbiter_service_id
+          ? normalizeServiceId(row.arbiter_service_id)
+          : null))
       : row.arbiter_service_id
         ? normalizeServiceId(row.arbiter_service_id)
         : isArbiterEnabled()
@@ -218,19 +220,19 @@ export function resolveLeaseServiceId(
       );
     case 'reviewer':
       return lease.reviewer_agent_type
-        ? resolveRoleServiceShadow('reviewer', lease.reviewer_agent_type) ??
+        ? (resolveRoleServiceShadow('reviewer', lease.reviewer_agent_type) ??
             (lease.reviewer_service_id
               ? normalizeServiceId(lease.reviewer_service_id)
-              : null)
+              : null))
         : lease.reviewer_service_id
           ? normalizeServiceId(lease.reviewer_service_id)
           : null;
     case 'arbiter':
       return lease.arbiter_agent_type
-        ? resolveRoleServiceShadow('arbiter', lease.arbiter_agent_type) ??
+        ? (resolveRoleServiceShadow('arbiter', lease.arbiter_agent_type) ??
             (lease.arbiter_service_id
               ? normalizeServiceId(lease.arbiter_service_id)
-              : null)
+              : null))
         : lease.arbiter_service_id
           ? normalizeServiceId(lease.arbiter_service_id)
           : null;
@@ -242,7 +244,9 @@ export function isOwnerServiceForChat(
   serviceId: string = SERVICE_ID,
 ): boolean {
   const lease = getEffectiveChannelLease(chatJid);
-  return normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'owner');
+  return (
+    normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'owner')
+  );
 }
 
 export function isReviewerServiceForChat(
@@ -250,11 +254,16 @@ export function isReviewerServiceForChat(
   serviceId: string = SERVICE_ID,
 ): boolean {
   const lease = getEffectiveChannelLease(chatJid);
-  return normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'reviewer');
+  return (
+    normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'reviewer')
+  );
 }
 
 export function hasReviewerLease(chatJid: string): boolean {
-  return resolveLeaseServiceId(getEffectiveChannelLease(chatJid), 'reviewer') !== null;
+  return (
+    resolveLeaseServiceId(getEffectiveChannelLease(chatJid), 'reviewer') !==
+    null
+  );
 }
 
 export function isArbiterServiceForChat(
@@ -262,7 +271,9 @@ export function isArbiterServiceForChat(
   serviceId: string = SERVICE_ID,
 ): boolean {
   const lease = getEffectiveChannelLease(chatJid);
-  return normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'arbiter');
+  return (
+    normalizeServiceId(serviceId) === resolveLeaseServiceId(lease, 'arbiter')
+  );
 }
 
 export function shouldServiceProcessChat(

@@ -794,9 +794,7 @@ registerChannel(DISCORD_OWNER_CHANNEL, (opts: ChannelOpts) => {
     'owner',
   );
   if (!token) {
-    logger.warn(
-      'Discord: DISCORD_OWNER_BOT_TOKEN not set',
-    );
+    logger.warn('Discord: DISCORD_OWNER_BOT_TOKEN not set');
     return null;
   }
   return new DiscordChannel(token, opts, undefined, DISCORD_OWNER_CHANNEL);

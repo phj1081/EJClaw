@@ -115,8 +115,8 @@ export async function runAgentForGroup(
   const inferredRole = resolveActiveRole(pairedTask?.status);
   const canHonorForcedRole = Boolean(
     args.forcedRole === 'owner' ||
-      (args.forcedRole === 'reviewer' && currentLease.reviewer_agent_type) ||
-      (args.forcedRole === 'arbiter' && currentLease.arbiter_agent_type),
+    (args.forcedRole === 'reviewer' && currentLease.reviewer_agent_type) ||
+    (args.forcedRole === 'arbiter' && currentLease.arbiter_agent_type),
   );
   const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
   const effectiveServiceId = resolveLeaseServiceId(currentLease, activeRole);

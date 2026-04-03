@@ -138,11 +138,7 @@ vi.mock('./service-routing.js', () => ({
   hasReviewerLease: vi.fn(() => false),
 }));
 
-import {
-  _initTestDatabase,
-  createTask,
-  getTaskById,
-} from './db.js';
+import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import { TIMEZONE } from './config.js';
 import * as serviceRouting from './service-routing.js';

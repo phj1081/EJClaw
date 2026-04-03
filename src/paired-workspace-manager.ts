@@ -588,7 +588,14 @@ export function provisionOwnerWorkspaceForPairedTask(
       runGit(['worktree', 'add', workspaceDir, targetBranch], canonicalWorkDir);
     } else {
       runGit(
-        ['worktree', 'add', '-b', targetBranch, workspaceDir, canonicalHeadCommit],
+        [
+          'worktree',
+          'add',
+          '-b',
+          targetBranch,
+          workspaceDir,
+          canonicalHeadCommit,
+        ],
         canonicalWorkDir,
       );
     }
