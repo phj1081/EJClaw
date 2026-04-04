@@ -897,10 +897,30 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         openWorkItem,
       );
       if (!delivered) return false;
+      const skipQueuedFollowUpForInlineFinalize =
+        hasReviewerLease(chatJid) &&
+        deliveryRole === 'reviewer' &&
+        pendingTask?.status === 'merge_ready';
       // Keep stale final delivery isolated from the next conversational turn.
       // A follow-up run will pick up any queued user messages or paired-room
       // auto-review/finalize transitions after this retry succeeds.
-      deps.queue.enqueueMessageCheck(chatJid);
+      //
+      // merge_ready is special: the delivered reviewer bot message itself
+      // triggers the inline finalize path. Queueing a generic follow-up here
+      // can race with that path and produce a second owner finalize turn.
+      if (skipQueuedFollowUpForInlineFinalize) {
+        log.info(
+          {
+            workItemId: openWorkItem.id,
+            chatJid,
+            deliveryRole,
+            pendingTaskStatus: pendingTask?.status ?? null,
+          },
+          'Skipping queued follow-up after reviewer merge_ready delivery because inline finalize will handle the handoff',
+        );
+      } else {
+        deps.queue.enqueueMessageCheck(chatJid);
+      }
       return true;
     }
 

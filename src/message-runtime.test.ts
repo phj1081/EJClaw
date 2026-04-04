@@ -795,7 +795,7 @@ describe('createMessageRuntime', () => {
     expect(enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
-  it('retries a stale reviewer work item via the persisted delivery role even after task status changed', async () => {
+  it('does not queue a second merge_ready follow-up after delivering a stale reviewer work item', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const ownerChannel = makeChannel(chatJid);
@@ -874,10 +874,19 @@ describe('createMessageRuntime', () => {
       'reviewer final retry',
     );
     expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
-    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workItemId: 101,
+        chatJid,
+        deliveryRole: 'reviewer',
+        pendingTaskStatus: 'merge_ready',
+      }),
+      'Skipping queued follow-up after reviewer merge_ready delivery because inline finalize will handle the handoff',
+    );
   });
 
-  it('retries a stale fallback reviewer work item even when the room owner agent type is different', async () => {
+  it('does not queue a second merge_ready follow-up for fallback reviewer deliveries either', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const ownerChannel = makeChannel(chatJid);
@@ -958,7 +967,16 @@ describe('createMessageRuntime', () => {
       'fallback reviewer final retry',
     );
     expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
-    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workItemId: 102,
+        chatJid,
+        deliveryRole: 'reviewer',
+        pendingTaskStatus: 'merge_ready',
+      }),
+      'Skipping queued follow-up after reviewer merge_ready delivery because inline finalize will handle the handoff',
+    );
   });
 
   it('does not inject filtered raw bot finals into workspace-based review prompts', async () => {
