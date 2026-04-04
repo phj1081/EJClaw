@@ -1,4 +1,5 @@
 import { AgentOutput } from './agent-runner.js';
+import { getAgentOutputText } from './agent-output.js';
 import { getErrorMessage } from './utils.js';
 import {
   claimServiceHandoff,
@@ -138,6 +139,13 @@ function getFixedRoleChannelName(role: 'reviewer' | 'arbiter'): string {
 
 function getMissingRoleChannelMessage(role: 'reviewer' | 'arbiter'): string {
   return `Missing configured ${role} Discord bot channel (${getFixedRoleChannelName(role)}) for role-fixed delivery`;
+}
+
+function isTerminalStatusMessage(text: string): boolean {
+  const trimmed = text.trimStart();
+  return /^(?:\*\*)?(DONE(?:_WITH_CONCERNS)?|BLOCKED|NEEDS_CONTEXT)\b/.test(
+    trimmed,
+  );
 }
 
 export function createMessageRuntime(deps: MessageRuntimeDeps): {
@@ -496,6 +504,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const isClaudeCodeAgent =
       (args.forcedAgentType ?? group.agentType ?? 'claude-code') ===
       'claude-code';
+    let directTerminalDeliveryRecorded = false;
 
     const turnController = new MessageTurnController({
       chatJid,
@@ -514,6 +523,25 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             args.deliveryRole ??
             args.forcedRole ??
             (hasReviewerLease(chatJid) ? 'owner' : null);
+          if (
+            (persistedDeliveryRole === 'reviewer' ||
+              persistedDeliveryRole === 'arbiter') &&
+            deps.queue.hasDirectTerminalDeliveryForRun?.(
+              chatJid,
+              runId,
+              persistedDeliveryRole,
+            )
+          ) {
+            logger.info(
+              {
+                chatJid,
+                runId,
+                deliveryRole: persistedDeliveryRole,
+              },
+              'Skipping final work item delivery because this run already sent a direct terminal IPC message',
+            );
+            return true;
+          }
           const workItem = createProducedWorkItem({
             group_folder: group.folder,
             chat_jid: chatJid,
@@ -543,7 +571,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         prompt,
         chatJid,
         runId,
-        (result) => turnController.handleOutput(result),
+        async (result) => {
+          const raw = result ? getAgentOutputText(result) : null;
+          if (
+            !directTerminalDeliveryRecorded &&
+            raw &&
+            isTerminalStatusMessage(raw) &&
+            (args.deliveryRole === 'reviewer' ||
+              args.deliveryRole === 'arbiter')
+          ) {
+            deps.queue.noteDirectTerminalDelivery?.(chatJid, args.deliveryRole);
+            directTerminalDeliveryRecorded = true;
+          }
+          await turnController.handleOutput(result);
+        },
         {
           startSeq,
           endSeq,

@@ -1091,6 +1091,190 @@ describe('createMessageRuntime', () => {
     );
   });
 
+  it('skips reviewer final work item delivery when a direct terminal IPC message was already recorded for the run', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'owner-bot@test'),
+    };
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const noteDirectTerminalDelivery = vi.fn();
+    let recordedReviewerTerminal = false;
+
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-review-direct-terminal',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 0,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getLastHumanMessageContent).mockReturnValue('리뷰해줘');
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '**DONE**\n\n리뷰 승인',
+          newSessionId: 'session-review-direct-terminal',
+        });
+        return {
+          status: 'success',
+          result: '**DONE**\n\n리뷰 승인',
+          newSessionId: 'session-review-direct-terminal',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        noteDirectTerminalDelivery: vi.fn(
+          (groupJid: string, senderRole?: string | null) => {
+            noteDirectTerminalDelivery(groupJid, senderRole);
+            if (groupJid === chatJid && senderRole === 'reviewer') {
+              recordedReviewerTerminal = true;
+            }
+          },
+        ),
+        hasDirectTerminalDeliveryForRun: vi.fn(
+          (groupJid: string, runId: string, senderRole?: string | null) =>
+            groupJid === chatJid &&
+            runId === 'run-review-direct-terminal-skip' &&
+            senderRole === 'reviewer' &&
+            recordedReviewerTerminal,
+        ),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-review-direct-terminal-skip',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(noteDirectTerminalDelivery).toHaveBeenCalledWith(
+      chatJid,
+      'reviewer',
+    );
+    expect(db.createProducedWorkItem).not.toHaveBeenCalled();
+    expect(reviewerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        runId: 'run-review-direct-terminal-skip',
+        deliveryRole: 'reviewer',
+      }),
+      'Skipping final work item delivery because this run already sent a direct terminal IPC message',
+    );
+  });
+
+  it('does not suppress owner finals even if the queue reports a direct terminal delivery for the run', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const noteDirectTerminalDelivery = vi.fn();
+    const hasDirectTerminalDeliveryForRun = vi.fn(() => true);
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-19T00:00:00.000Z',
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '**DONE**\n\nowner final',
+          newSessionId: 'session-owner-terminal',
+        });
+        return {
+          status: 'success',
+          result: '**DONE**\n\nowner final',
+          newSessionId: 'session-owner-terminal',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        noteDirectTerminalDelivery,
+        hasDirectTerminalDeliveryForRun,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-direct-terminal-ignore',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(noteDirectTerminalDelivery).not.toHaveBeenCalled();
+    expect(hasDirectTerminalDeliveryForRun).not.toHaveBeenCalled();
+    expect(db.createProducedWorkItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result_payload: '**DONE**\n\nowner final',
+      }),
+    );
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      '**DONE**\n\nowner final',
+    );
+  });
+
   it('includes the latest reviewer summary in merge_ready finalize prompts and truncates it', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');

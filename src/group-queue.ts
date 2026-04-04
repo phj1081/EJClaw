@@ -48,6 +48,7 @@ interface GroupState {
   runPhase: RunPhase;
   runningTaskId: string | null;
   currentRunId: string | null;
+  directTerminalDeliveryRoles: Set<string>;
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
@@ -113,6 +114,7 @@ function resetRunState(state: GroupState, groupJid: string): void {
   state.process = null;
   state.processName = null;
   state.ipcDir = null;
+  state.directTerminalDeliveryRoles.clear();
   transitionRunPhase(state, groupJid, 'idle');
 }
 
@@ -197,6 +199,7 @@ export class GroupQueue {
         runPhase: 'idle',
         runningTaskId: null,
         currentRunId: null,
+        directTerminalDeliveryRoles: new Set(),
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -419,6 +422,41 @@ export class GroupQueue {
       );
       return false;
     }
+  }
+
+  noteDirectTerminalDelivery(
+    groupJid: string,
+    senderRole?: string | null,
+  ): void {
+    const state = this.getGroup(groupJid);
+    if (
+      state.runPhase !== 'running_messages' ||
+      !state.currentRunId ||
+      !senderRole
+    ) {
+      return;
+    }
+    state.directTerminalDeliveryRoles.add(senderRole);
+    logger.info(
+      {
+        groupJid,
+        runId: state.currentRunId,
+        senderRole,
+      },
+      'Recorded direct terminal delivery for active run',
+    );
+  }
+
+  hasDirectTerminalDeliveryForRun(
+    groupJid: string,
+    runId: string,
+    senderRole?: string | null,
+  ): boolean {
+    const state = this.getGroup(groupJid);
+    if (state.currentRunId !== runId || !senderRole) {
+      return false;
+    }
+    return state.directTerminalDeliveryRoles.has(senderRole);
   }
 
   private clearPostCloseTimers(state: GroupState): void {
