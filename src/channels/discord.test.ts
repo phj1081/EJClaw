@@ -113,6 +113,7 @@ vi.mock('discord.js', () => {
 });
 
 import { DiscordChannel, DiscordChannelOpts } from './discord.js';
+import { logger } from '../logger.js';
 
 // --- Test helpers ---
 
@@ -814,6 +815,32 @@ describe('DiscordChannel', () => {
         files: undefined,
         flags: 1 << 2,
       });
+    });
+
+    it('logs channel name and Discord message ids after sending', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+
+      const mockChannel = {
+        send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
+        sendTyping: vi.fn(),
+      };
+      currentClient().channels.fetch.mockResolvedValue(mockChannel);
+
+      await channel.sendMessage('dc:1234567890123456', 'Hello');
+
+      expect(logger.info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jid: 'dc:1234567890123456',
+          channelName: 'discord',
+          deliveryMode: 'send',
+          chunkCount: 1,
+          messageId: 'discord-message-1',
+          messageIds: ['discord-message-1'],
+        }),
+        'Discord message sent',
+      );
     });
   });
 

@@ -46,9 +46,9 @@ import { startIpcWatcher } from './ipc.js';
 import {
   findChannel,
   findChannelByName,
-  findChannelForDeliveryRole,
   formatOutbound,
   normalizeMessageForDedupe,
+  resolveChannelForDeliveryRole,
 } from './router.js';
 import {
   buildRestartAnnouncement,
@@ -473,9 +473,21 @@ async function main(): Promise<void> {
   });
   startIpcWatcher({
     sendMessage: (jid, text, senderRole) => {
-      const channel = findChannelForDeliveryRole(channels, jid, senderRole);
-      if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid, text);
+      const route = resolveChannelForDeliveryRole(channels, jid, senderRole);
+      if (!route.channel) throw new Error(`No channel for JID: ${jid}`);
+      logger.info(
+        {
+          transition: 'ipc:route',
+          chatJid: jid,
+          senderRole: senderRole ?? null,
+          requestedRoleChannel: route.requestedRoleChannelName,
+          selectedChannel: route.selectedChannelName,
+          usedRoleChannel: route.usedRoleChannel,
+          fallbackUsed: route.fallbackUsed,
+        },
+        'IPC relay routed message to channel',
+      );
+      return route.channel.sendMessage(jid, text);
     },
     nudgeScheduler: nudgeSchedulerLoop,
     registeredGroups: () => registeredGroups,

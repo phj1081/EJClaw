@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { findChannelForDeliveryRole } from './router.js';
+import {
+  findChannelForDeliveryRole,
+  resolveChannelForDeliveryRole,
+} from './router.js';
 import { type Channel } from './types.js';
 
 function createChannel(name: string, ownedJids: string[]): Channel {
@@ -49,6 +52,43 @@ describe('findChannelForDeliveryRole', () => {
 
     expect(findChannelForDeliveryRole([ownerChannel], jid, 'reviewer')).toBe(
       ownerChannel,
+    );
+  });
+
+  it('reports fallback metadata when a role-specific channel is unavailable', () => {
+    const ownerChannel = createChannel('discord-main', [jid]);
+
+    expect(
+      resolveChannelForDeliveryRole([ownerChannel], jid, 'reviewer'),
+    ).toEqual(
+      expect.objectContaining({
+        channel: ownerChannel,
+        requestedRoleChannelName: 'discord-review',
+        selectedChannelName: 'discord-main',
+        usedRoleChannel: false,
+        fallbackUsed: true,
+      }),
+    );
+  });
+
+  it('reports direct role routing metadata when the role channel exists', () => {
+    const ownerChannel = createChannel('discord-main', [jid]);
+    const reviewerChannel = createChannel('discord-review', [jid]);
+
+    expect(
+      resolveChannelForDeliveryRole(
+        [ownerChannel, reviewerChannel],
+        jid,
+        'reviewer',
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        channel: reviewerChannel,
+        requestedRoleChannelName: 'discord-review',
+        selectedChannelName: 'discord-review',
+        usedRoleChannel: true,
+        fallbackUsed: false,
+      }),
     );
   });
 });

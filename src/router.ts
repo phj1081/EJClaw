@@ -93,24 +93,64 @@ export function findChannel(
   return channels.find((c) => c.ownsJid(jid));
 }
 
+export interface DeliveryRouteResolution {
+  channel?: Channel;
+  requestedRoleChannelName: string | null;
+  selectedChannelName: string | null;
+  usedRoleChannel: boolean;
+  fallbackUsed: boolean;
+}
+
+function resolveRequestedRoleChannelName(senderRole?: string): string | null {
+  if (senderRole === 'reviewer') return 'discord-review';
+  if (senderRole === 'arbiter') return 'discord-arbiter';
+  return null;
+}
+
+export function resolveChannelForDeliveryRole(
+  channels: Channel[],
+  jid: string,
+  senderRole?: string,
+): DeliveryRouteResolution {
+  const requestedRoleChannelName = resolveRequestedRoleChannelName(senderRole);
+  if (!requestedRoleChannelName) {
+    const channel = findChannel(channels, jid);
+    return {
+      channel,
+      requestedRoleChannelName,
+      selectedChannelName: channel?.name ?? null,
+      usedRoleChannel: false,
+      fallbackUsed: false,
+    };
+  }
+
+  const roleChannel = findChannelByName(channels, requestedRoleChannelName);
+  if (roleChannel) {
+    return {
+      channel: roleChannel,
+      requestedRoleChannelName,
+      selectedChannelName: roleChannel.name,
+      usedRoleChannel: true,
+      fallbackUsed: false,
+    };
+  }
+
+  const fallbackChannel = findChannel(channels, jid);
+  return {
+    channel: fallbackChannel,
+    requestedRoleChannelName,
+    selectedChannelName: fallbackChannel?.name ?? null,
+    usedRoleChannel: false,
+    fallbackUsed: true,
+  };
+}
+
 export function findChannelForDeliveryRole(
   channels: Channel[],
   jid: string,
   senderRole?: string,
 ): Channel | undefined {
-  if (senderRole === 'reviewer') {
-    return (
-      findChannelByName(channels, 'discord-review') ||
-      findChannel(channels, jid)
-    );
-  }
-  if (senderRole === 'arbiter') {
-    return (
-      findChannelByName(channels, 'discord-arbiter') ||
-      findChannel(channels, jid)
-    );
-  }
-  return findChannel(channels, jid);
+  return resolveChannelForDeliveryRole(channels, jid, senderRole).channel;
 }
 
 export function findChannelByName(

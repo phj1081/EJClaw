@@ -63,6 +63,7 @@ export interface IpcMessageForwardResult {
   chatJid?: string;
   targetGroup?: string | null;
   isMainOverride?: boolean;
+  senderRole?: string | null;
 }
 
 export async function forwardAuthorizedIpcMessage(
@@ -73,7 +74,7 @@ export async function forwardAuthorizedIpcMessage(
   sendMessage: IpcDeps['sendMessage'],
 ): Promise<IpcMessageForwardResult> {
   if (!(msg.type === 'message' && msg.chatJid && msg.text)) {
-    return { outcome: 'ignored' };
+    return { outcome: 'ignored', senderRole: msg.senderRole ?? null };
   }
 
   const targetGroup = registeredGroups[msg.chatJid];
@@ -86,6 +87,7 @@ export async function forwardAuthorizedIpcMessage(
       chatJid: msg.chatJid,
       targetGroup: targetGroup?.folder ?? null,
       isMainOverride,
+      senderRole: msg.senderRole ?? null,
     };
   }
 
@@ -95,6 +97,7 @@ export async function forwardAuthorizedIpcMessage(
     chatJid: msg.chatJid,
     targetGroup: targetGroup?.folder ?? null,
     isMainOverride,
+    senderRole: msg.senderRole ?? null,
   };
 }
 
@@ -253,6 +256,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     sourceGroup,
                     targetGroup: forwardResult.targetGroup ?? null,
                     isMainOverride: forwardResult.isMainOverride,
+                    senderRole: forwardResult.senderRole ?? null,
                   },
                   'IPC message sent',
                 );
@@ -264,6 +268,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     sourceGroup,
                     targetGroup: forwardResult.targetGroup ?? null,
                     isMainOverride: forwardResult.isMainOverride,
+                    senderRole: forwardResult.senderRole ?? null,
                   },
                   'Unauthorized IPC message attempt blocked',
                 );

@@ -533,9 +533,19 @@ export class DiscordChannel implements Channel {
         attachment: f,
         name: path.basename(f),
       }));
+      const sentMessageIds: string[] = [];
+      let chunkCount = 0;
+
+      const recordSentMessage = (message: Message | null | undefined) => {
+        chunkCount += 1;
+        if (message?.id) sentMessageIds.push(message.id);
+      };
 
       if (!cleaned && files.length === 0) {
-        logger.debug({ jid }, 'Skipping empty Discord outbound message');
+        logger.debug(
+          { jid, channelName: this.name },
+          'Skipping empty Discord outbound message',
+        );
         return;
       }
 
@@ -547,17 +557,21 @@ export class DiscordChannel implements Channel {
 
       if (cleaned.length <= MAX_LENGTH) {
         // Send text with first batch of files
-        await textChannel.send({
-          content: cleaned || undefined,
-          files: fileBatches[0]?.length ? fileBatches[0] : undefined,
-          flags: MessageFlags.SuppressEmbeds,
-        });
+        recordSentMessage(
+          await textChannel.send({
+            content: cleaned || undefined,
+            files: fileBatches[0]?.length ? fileBatches[0] : undefined,
+            flags: MessageFlags.SuppressEmbeds,
+          }),
+        );
         // Send remaining file batches as follow-up messages
         for (let b = 1; b < fileBatches.length; b++) {
-          await textChannel.send({
-            files: fileBatches[b],
-            flags: MessageFlags.SuppressEmbeds,
-          });
+          recordSentMessage(
+            await textChannel.send({
+              files: fileBatches[b],
+              flags: MessageFlags.SuppressEmbeds,
+            }),
+          );
         }
       } else {
         // Send text in chunks, attach first batch to the first chunk
@@ -565,24 +579,43 @@ export class DiscordChannel implements Channel {
         for (let i = 0; i < cleaned.length; i += MAX_LENGTH) {
           const chunk = cleaned.slice(i, i + MAX_LENGTH);
           const batch = fileBatches[fileBatchIndex];
-          await textChannel.send({
-            content: chunk,
-            files: batch?.length ? batch : undefined,
-            flags: MessageFlags.SuppressEmbeds,
-          });
+          recordSentMessage(
+            await textChannel.send({
+              content: chunk,
+              files: batch?.length ? batch : undefined,
+              flags: MessageFlags.SuppressEmbeds,
+            }),
+          );
           if (batch?.length) fileBatchIndex++;
         }
         // Send any remaining file batches
         for (let b = fileBatchIndex; b < fileBatches.length; b++) {
-          await textChannel.send({
-            files: fileBatches[b],
-            flags: MessageFlags.SuppressEmbeds,
-          });
+          recordSentMessage(
+            await textChannel.send({
+              files: fileBatches[b],
+              flags: MessageFlags.SuppressEmbeds,
+            }),
+          );
         }
       }
-      logger.info({ jid, length: text.length }, 'Discord message sent');
+      logger.info(
+        {
+          jid,
+          channelName: this.name,
+          length: text.length,
+          deliveryMode: 'send',
+          chunkCount,
+          attachmentCount: files.length,
+          messageId: sentMessageIds[0] ?? null,
+          messageIds: sentMessageIds,
+        },
+        'Discord message sent',
+      );
     } catch (err) {
-      logger.error({ jid, err }, 'Failed to send Discord message');
+      logger.error(
+        { jid, channelName: this.name, err },
+        'Failed to send Discord message',
+      );
       throw err;
     }
   }
@@ -780,8 +813,21 @@ export class DiscordChannel implements Channel {
       if (!channel || !('messages' in channel)) return;
       const msg = await (channel as TextChannel).messages.fetch(messageId);
       await msg.edit(text);
+      logger.info(
+        {
+          jid,
+          channelName: this.name,
+          deliveryMode: 'edit',
+          messageId,
+          length: text.length,
+        },
+        'Discord message edited',
+      );
     } catch (err) {
-      logger.debug({ jid, messageId, err }, 'Failed to edit Discord message');
+      logger.debug(
+        { jid, channelName: this.name, messageId, err },
+        'Failed to edit Discord message',
+      );
       throw err; // Re-throw so callers (e.g. dashboard) can reset message ID
     }
   }

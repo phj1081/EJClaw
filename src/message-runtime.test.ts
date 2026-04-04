@@ -214,6 +214,7 @@ import {
   resolveHandoffRoleOverride,
 } from './message-runtime.js';
 import * as config from './config.js';
+import { logger } from './logger.js';
 import * as serviceRouting from './service-routing.js';
 import type { Channel, RegisteredGroup } from './types.js';
 
@@ -626,6 +627,90 @@ describe('createMessageRuntime', () => {
     );
     expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
     expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+  });
+
+  it('suppresses duplicate stale work item delivery and logs the suppression reason', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const enqueueMessageCheck = vi.fn();
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getOpenWorkItem).mockReturnValue({
+      id: 199,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'claude',
+      delivery_role: 'owner',
+      status: 'delivery_retry',
+      start_seq: 1,
+      end_seq: 1,
+      result_payload: '같은 최종 답변입니다.',
+      delivery_attempts: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'discord send failed',
+    });
+    vi.mocked(db.getLastBotFinalMessage).mockReturnValue([
+      {
+        id: 'last-final',
+        chat_jid: chatJid,
+        sender: 'reviewer-bot@test',
+        sender_name: '리뷰어',
+        content: '같은 최종 답변입니다.',
+        timestamp: new Date().toISOString(),
+        is_from_me: false,
+        is_bot_message: true,
+      } as any,
+    ]);
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-open-work-item-duplicate-suppressed',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(db.markWorkItemDelivered).toHaveBeenCalledWith(199, null);
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        channelName: 'discord',
+        workItemId: 199,
+        deliveryRole: 'owner',
+        suppressionReason: 'paired-final-duplicate',
+        preview: '같은 최종 답변입니다.',
+      }),
+      'Suppressed duplicate final message in paired room (marked as delivered)',
+    );
   });
 
   it('retries a stale reviewer work item when the reviewer channel is missing', async () => {
@@ -1324,6 +1409,17 @@ describe('createMessageRuntime', () => {
     expect(enqueueMessageCheck).not.toHaveBeenCalledWith(
       chatJid,
       resolveGroupIpcPath(group.folder),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        taskId: 'task-merge-ready-inline-loop',
+        taskStatus: 'merge_ready',
+        handoffMode: 'inline-finalize',
+        nextRole: 'owner',
+        cursor: 42,
+      }),
+      'Executing merge_ready finalize turn inline after bot-only reviewer follow-up',
     );
   });
 

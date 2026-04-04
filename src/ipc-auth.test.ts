@@ -540,7 +540,7 @@ describe('IPC message authorization', () => {
   it('forwards senderRole through authorized IPC messages', async () => {
     const sendMessage = vi.fn(async () => {});
 
-    await forwardAuthorizedIpcMessage(
+    const result = await forwardAuthorizedIpcMessage(
       {
         type: 'message',
         chatJid: 'other@g.us',
@@ -557,6 +557,12 @@ describe('IPC message authorization', () => {
       'other@g.us',
       'review text',
       'reviewer',
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        outcome: 'sent',
+        senderRole: 'reviewer',
+      }),
     );
   });
 
@@ -577,6 +583,7 @@ describe('IPC message authorization', () => {
     );
 
     expect(result.outcome).toBe('blocked');
+    expect(result.senderRole).toBe('reviewer');
     expect(sendMessage).not.toHaveBeenCalled();
   });
 });

@@ -319,6 +319,18 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     return isDuplicateOfLastBotFinal(chatJid, text);
   };
 
+  const buildDeliveryLogContext = (
+    channel: Channel,
+    item: WorkItem,
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> => ({
+    chatJid: item.chat_jid,
+    channelName: channel.name,
+    workItemId: item.id,
+    deliveryRole: item.delivery_role ?? null,
+    ...extra,
+  });
+
   const deliverOpenWorkItem = async (
     channel: Channel,
     item: WorkItem,
@@ -338,11 +350,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       // Mark as delivered without sending, and don't open continuation
       markWorkItemDelivered(item.id, null);
       logger.info(
-        {
-          chatJid: item.chat_jid,
-          workItemId: item.id,
+        buildDeliveryLogContext(channel, item, {
           preview: item.result_payload.slice(0, 100),
-        },
+          suppressionReason: 'paired-final-duplicate',
+        }),
         'Suppressed duplicate final message in paired room (marked as delivered)',
       );
       return true;
@@ -350,6 +361,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     try {
       if (replaceMessageId && channel.editMessage) {
+        logger.info(
+          buildDeliveryLogContext(channel, item, {
+            deliveryAttempts: item.delivery_attempts + 1,
+            deliveryMode: 'edit',
+            replacedMessageId: replaceMessageId,
+          }),
+          'Attempting to deliver produced work item by replacing tracked progress message',
+        );
         await channel.editMessage(
           item.chat_jid,
           replaceMessageId,
@@ -358,39 +377,43 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         markWorkItemDelivered(item.id, replaceMessageId);
         continuationTracker.open(item.chat_jid);
         logger.info(
-          {
-            chatJid: item.chat_jid,
-            workItemId: item.id,
+          buildDeliveryLogContext(channel, item, {
             deliveryAttempts: item.delivery_attempts + 1,
+            deliveryMode: 'edit',
             replacedMessageId: replaceMessageId,
-          },
+          }),
           'Delivered produced work item by replacing tracked progress message',
         );
         return true;
       }
     } catch (err) {
       logger.warn(
-        {
-          chatJid: item.chat_jid,
-          workItemId: item.id,
+        buildDeliveryLogContext(channel, item, {
           deliveryAttempts: item.delivery_attempts + 1,
+          deliveryMode: 'edit',
           replacedMessageId: replaceMessageId,
           err,
-        },
+        }),
         'Failed to replace tracked progress message; falling back to a new message',
       );
     }
 
     try {
+      logger.info(
+        buildDeliveryLogContext(channel, item, {
+          deliveryAttempts: item.delivery_attempts + 1,
+          deliveryMode: 'send',
+        }),
+        'Attempting to deliver produced work item as a new message',
+      );
       await channel.sendMessage(item.chat_jid, item.result_payload);
       markWorkItemDelivered(item.id);
       continuationTracker.open(item.chat_jid);
       logger.info(
-        {
-          chatJid: item.chat_jid,
-          workItemId: item.id,
+        buildDeliveryLogContext(channel, item, {
           deliveryAttempts: item.delivery_attempts + 1,
-        },
+          deliveryMode: 'send',
+        }),
         'Delivered produced work item',
       );
       return true;
@@ -398,12 +421,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const errorMessage = getErrorMessage(err);
       markWorkItemDeliveryRetry(item.id, errorMessage);
       logger.warn(
-        {
-          chatJid: item.chat_jid,
-          workItemId: item.id,
+        buildDeliveryLogContext(channel, item, {
           deliveryAttempts: item.delivery_attempts + 1,
+          deliveryMode: 'send',
           err,
-        },
+        }),
         'Failed to deliver produced work item',
       );
       return false;
@@ -1311,6 +1333,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   groupFolder: group.folder,
                   taskId: loopPendingTask?.id ?? null,
                   taskStatus: loopPendingTask?.status ?? null,
+                  handoffMode: 'inline-finalize',
+                  nextRole: 'owner',
+                  cursor: mergeReadyCursor,
                 },
                 'Executing merge_ready finalize turn inline after bot-only reviewer follow-up',
               );
@@ -1374,6 +1399,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   groupFolder: group.folder,
                   taskId: loopPendingTask?.id ?? null,
                   taskStatus: loopPendingTask?.status ?? null,
+                  handoffMode: 'requeue',
+                  nextRole:
+                    loopPendingTask?.status === 'review_ready'
+                      ? 'reviewer'
+                      : loopPendingTask?.status === 'arbiter_requested' ||
+                          loopPendingTask?.status === 'in_arbitration'
+                        ? 'arbiter'
+                        : 'reviewer',
+                  cursor: botOnlyPendingTurn.cursor,
+                  cursorKey: botOnlyPendingTurn.cursorKey,
                 },
                 'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent',
               );
