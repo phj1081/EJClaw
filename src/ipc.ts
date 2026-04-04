@@ -34,7 +34,11 @@ import {
 import { AgentType, RegisteredGroup, RoomMode } from './types.js';
 
 export interface IpcDeps {
-  sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMessage: (
+    jid: string,
+    text: string,
+    senderRole?: string,
+  ) => Promise<void>;
   nudgeScheduler?: () => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
   assignRoom: (jid: string, room: AssignRoomInput) => void;
@@ -45,6 +49,53 @@ export interface IpcDeps {
     isMain: boolean,
     availableGroups: AvailableGroup[],
   ) => void;
+}
+
+export interface IpcMessagePayload {
+  type?: string;
+  chatJid?: string;
+  text?: string;
+  senderRole?: string;
+}
+
+export interface IpcMessageForwardResult {
+  outcome: 'ignored' | 'sent' | 'blocked';
+  chatJid?: string;
+  targetGroup?: string | null;
+  isMainOverride?: boolean;
+}
+
+export async function forwardAuthorizedIpcMessage(
+  msg: IpcMessagePayload,
+  sourceGroup: string,
+  isMain: boolean,
+  registeredGroups: Record<string, RegisteredGroup>,
+  sendMessage: IpcDeps['sendMessage'],
+): Promise<IpcMessageForwardResult> {
+  if (!(msg.type === 'message' && msg.chatJid && msg.text)) {
+    return { outcome: 'ignored' };
+  }
+
+  const targetGroup = registeredGroups[msg.chatJid];
+  const isMainOverride = isMain === true;
+  if (
+    !(isMainOverride || (targetGroup && targetGroup.folder === sourceGroup))
+  ) {
+    return {
+      outcome: 'blocked',
+      chatJid: msg.chatJid,
+      targetGroup: targetGroup?.folder ?? null,
+      isMainOverride,
+    };
+  }
+
+  await sendMessage(msg.chatJid, msg.text, msg.senderRole);
+  return {
+    outcome: 'sent',
+    chatJid: msg.chatJid,
+    targetGroup: targetGroup?.folder ?? null,
+    isMainOverride,
+  };
 }
 
 let ipcWatcherRunning = false;
@@ -186,42 +237,36 @@ export function startIpcWatcher(deps: IpcDeps): void {
               const data = readJsonFile(claimedPath);
               if (!data || typeof data !== 'object')
                 throw new Error('Invalid JSON');
-              const msg = data as {
-                type?: string;
-                chatJid?: string;
-                text?: string;
-              };
-              if (msg.type === 'message' && msg.chatJid && msg.text) {
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[msg.chatJid];
-                const isMainOverride = isMain === true;
-                if (
-                  isMainOverride ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  await deps.sendMessage(msg.chatJid, msg.text);
-                  logger.info(
-                    {
-                      transition: 'ipc:auth:allow',
-                      chatJid: msg.chatJid,
-                      sourceGroup,
-                      targetGroup: targetGroup?.folder ?? null,
-                      isMainOverride,
-                    },
-                    'IPC message sent',
-                  );
-                } else {
-                  logger.warn(
-                    {
-                      transition: 'ipc:auth:deny',
-                      chatJid: msg.chatJid,
-                      sourceGroup,
-                      targetGroup: targetGroup?.folder ?? null,
-                      isMainOverride,
-                    },
-                    'Unauthorized IPC message attempt blocked',
-                  );
-                }
+              const msg = data as IpcMessagePayload;
+              const forwardResult = await forwardAuthorizedIpcMessage(
+                msg,
+                sourceGroup,
+                isMain,
+                registeredGroups,
+                deps.sendMessage,
+              );
+              if (forwardResult.outcome === 'sent') {
+                logger.info(
+                  {
+                    transition: 'ipc:auth:allow',
+                    chatJid: forwardResult.chatJid,
+                    sourceGroup,
+                    targetGroup: forwardResult.targetGroup ?? null,
+                    isMainOverride: forwardResult.isMainOverride,
+                  },
+                  'IPC message sent',
+                );
+              } else if (forwardResult.outcome === 'blocked') {
+                logger.warn(
+                  {
+                    transition: 'ipc:auth:deny',
+                    chatJid: forwardResult.chatJid,
+                    sourceGroup,
+                    targetGroup: forwardResult.targetGroup ?? null,
+                    isMainOverride: forwardResult.isMainOverride,
+                  },
+                  'Unauthorized IPC message attempt blocked',
+                );
               }
               fs.unlinkSync(claimedPath);
             } catch (err) {

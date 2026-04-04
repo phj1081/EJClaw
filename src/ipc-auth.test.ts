@@ -13,7 +13,7 @@ import {
   getStoredRoomSettings,
   getTaskById,
 } from './db.js';
-import { processTaskIpc, IpcDeps } from './ipc.js';
+import { forwardAuthorizedIpcMessage, processTaskIpc, IpcDeps } from './ipc.js';
 import { DEFAULT_WATCH_CI_MAX_DURATION_MS } from './task-watch-status.js';
 import { RegisteredGroup } from './types.js';
 
@@ -535,6 +535,49 @@ describe('IPC message authorization', () => {
     expect(
       isMessageAuthorized('whatsapp_main', true, 'unknown@g.us', groups),
     ).toBe(true);
+  });
+
+  it('forwards senderRole through authorized IPC messages', async () => {
+    const sendMessage = vi.fn(async () => {});
+
+    await forwardAuthorizedIpcMessage(
+      {
+        type: 'message',
+        chatJid: 'other@g.us',
+        text: 'review text',
+        senderRole: 'reviewer',
+      },
+      'other-group',
+      false,
+      groups,
+      sendMessage,
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      'other@g.us',
+      'review text',
+      'reviewer',
+    );
+  });
+
+  it('does not forward unauthorized IPC messages even when senderRole exists', async () => {
+    const sendMessage = vi.fn(async () => {});
+
+    const result = await forwardAuthorizedIpcMessage(
+      {
+        type: 'message',
+        chatJid: 'third@g.us',
+        text: 'review text',
+        senderRole: 'reviewer',
+      },
+      'other-group',
+      false,
+      groups,
+      sendMessage,
+    );
+
+    expect(result.outcome).toBe('blocked');
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });
 
