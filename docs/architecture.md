@@ -5,7 +5,7 @@
 Single unified service (`ejclaw`) manages all three Discord bots in one process:
 
 - `ejclaw.service` — Single unified process
-- Discord bots: `DISCORD_BOT_TOKEN` (Claude), `DISCORD_CODEX_BOT_TOKEN` (Codex-main), `DISCORD_REVIEW_BOT_TOKEN` (Codex-review)
+- Discord bots: `DISCORD_OWNER_BOT_TOKEN` (owner), `DISCORD_REVIEWER_BOT_TOKEN` (reviewer), `DISCORD_ARBITER_BOT_TOKEN` (arbiter)
 - Paired review: owner ↔ reviewer (agent types configurable per role)
 - Reviewer fallback: Claude exhaustion → codex-review auto-handoff
 - Shared dirs: `store/`, `groups/`, `data/`

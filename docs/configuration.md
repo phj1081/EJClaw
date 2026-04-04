@@ -5,9 +5,9 @@ All configuration in a single `.env` file.
 ## Discord Bots
 
 ```bash
-DISCORD_BOT_TOKEN=               # Claude bot
-DISCORD_CODEX_BOT_TOKEN=         # Codex-main bot (owner)
-DISCORD_REVIEW_BOT_TOKEN=        # Codex-review bot (arbiter)
+DISCORD_OWNER_BOT_TOKEN=         # Owner bot
+DISCORD_REVIEWER_BOT_TOKEN=      # Reviewer bot
+DISCORD_ARBITER_BOT_TOKEN=       # Arbiter bot
 ```
 
 ## Agent Types & Models

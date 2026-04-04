@@ -43,31 +43,24 @@ const DISCORD_ARBITER_LEGACY_TOKEN_KEYS = [
   'DISCORD_CODEX_REVIEW_BOT_TOKEN',
 ];
 
-function getConfiguredLegacyDiscordTokenKeys(keys: string[]): string[] {
-  return keys.filter((key) => !!getEnv(key));
-}
-
-function getRoleTokenOrLogMigrationError(
+function warnIfLegacyDiscordTokenConfigured(
   canonicalKey: string,
   legacyKeys: string[],
   role: 'owner' | 'reviewer' | 'arbiter',
-): string {
-  const canonicalValue = getEnv(canonicalKey) || '';
-  if (canonicalValue) return canonicalValue;
+): void {
+  if (getEnv(canonicalKey)) return;
 
-  const configuredLegacyKeys = getConfiguredLegacyDiscordTokenKeys(legacyKeys);
-  if (configuredLegacyKeys.length > 0) {
-    logger.error(
-      {
-        role,
-        canonicalKey,
-        legacyKeys: configuredLegacyKeys,
-      },
-      'Discord: legacy service-based bot token names are no longer supported; rename them to canonical role-based names',
-    );
-  }
+  const configuredLegacyKeys = legacyKeys.filter((key) => !!getEnv(key));
+  if (configuredLegacyKeys.length === 0) return;
 
-  return '';
+  logger.warn(
+    {
+      role,
+      canonicalKey,
+      legacyKeys: configuredLegacyKeys,
+    },
+    'Discord: legacy bot token names detected; rename them to canonical role-based names',
+  );
 }
 
 /**
@@ -834,11 +827,12 @@ export class DiscordChannel implements Channel {
 }
 
 registerChannel(DISCORD_OWNER_CHANNEL, (opts: ChannelOpts) => {
-  const token = getRoleTokenOrLogMigrationError(
+  warnIfLegacyDiscordTokenConfigured(
     DISCORD_OWNER_TOKEN_KEY,
     DISCORD_OWNER_LEGACY_TOKEN_KEYS,
     'owner',
   );
+  const token = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
   if (!token) {
     logger.warn('Discord: DISCORD_OWNER_BOT_TOKEN not set');
     return null;
@@ -847,12 +841,13 @@ registerChannel(DISCORD_OWNER_CHANNEL, (opts: ChannelOpts) => {
 });
 
 registerChannel(DISCORD_REVIEWER_CHANNEL, (opts: ChannelOpts) => {
-  const ownerToken = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
-  const token = getRoleTokenOrLogMigrationError(
+  warnIfLegacyDiscordTokenConfigured(
     DISCORD_REVIEWER_TOKEN_KEY,
     DISCORD_REVIEWER_LEGACY_TOKEN_KEYS,
     'reviewer',
   );
+  const ownerToken = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
+  const token = getEnv(DISCORD_REVIEWER_TOKEN_KEY) || '';
   if (!token) return null;
   if (token === ownerToken) {
     logger.warn(
@@ -871,13 +866,14 @@ registerChannel(DISCORD_REVIEWER_CHANNEL, (opts: ChannelOpts) => {
 });
 
 registerChannel(DISCORD_ARBITER_CHANNEL, (opts: ChannelOpts) => {
-  const ownerToken = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
-  const reviewerToken = getEnv(DISCORD_REVIEWER_TOKEN_KEY) || '';
-  const token = getRoleTokenOrLogMigrationError(
+  warnIfLegacyDiscordTokenConfigured(
     DISCORD_ARBITER_TOKEN_KEY,
     DISCORD_ARBITER_LEGACY_TOKEN_KEYS,
     'arbiter',
   );
+  const ownerToken = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
+  const reviewerToken = getEnv(DISCORD_REVIEWER_TOKEN_KEY) || '';
+  const token = getEnv(DISCORD_ARBITER_TOKEN_KEY) || '';
   if (!token) return null;
   if (token === ownerToken || token === reviewerToken) {
     logger.warn(

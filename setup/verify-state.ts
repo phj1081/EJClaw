@@ -11,15 +11,6 @@ import type { ServiceCheck } from './verify-services.js';
 export type CredentialsStatus = 'configured' | 'missing';
 export type VerifyStatus = 'success' | 'failed';
 
-const LEGACY_DISCORD_TOKEN_KEYS = [
-  'DISCORD_BOT_TOKEN',
-  'DISCORD_CODEX_BOT_TOKEN',
-  'DISCORD_REVIEW_BOT_TOKEN',
-  'DISCORD_CLAUDE_BOT_TOKEN',
-  'DISCORD_CODEX_MAIN_BOT_TOKEN',
-  'DISCORD_CODEX_REVIEW_BOT_TOKEN',
-];
-
 export interface RegisteredGroupsSummary {
   registeredGroups: number;
   groupsByAgent: Record<string, number>;
@@ -35,7 +26,6 @@ export interface VerifySummary extends RegisteredGroupsSummary {
   servicesSummary: Record<string, string>;
   configuredChannels: string[];
   channelAuth: Record<string, string>;
-  legacyDiscordTokenKeys: string[];
   tribunalRooms: number;
   activeArbiterTasks: number;
   // Legacy status fields kept for backward-compatible setup output.
@@ -78,15 +68,6 @@ export function detectChannelAuth(
   }
 
   return channelAuth;
-}
-
-export function detectLegacyDiscordTokenKeys(
-  envVars = readEnvFile(LEGACY_DISCORD_TOKEN_KEYS),
-  processEnv: NodeJS.ProcessEnv = process.env,
-): string[] {
-  return LEGACY_DISCORD_TOKEN_KEYS.filter(
-    (key) => !!(processEnv[key] || envVars[key]),
-  );
 }
 
 export function loadRegisteredGroupsSummary(
@@ -211,7 +192,6 @@ export function buildVerifySummary(
   registeredGroups: number,
   groupsByAgent: Record<string, number>,
   options: {
-    legacyDiscordTokenKeys?: string[];
     tribunalRooms?: number;
     activeArbiterTasks?: number;
   } = {},
@@ -224,7 +204,6 @@ export function buildVerifySummary(
   const hasOwnerCapableChannel = 'discord' in channelAuth;
   const codexConfigured = 'discord-review' in channelAuth;
   const reviewConfigured = 'discord-arbiter' in channelAuth;
-  const legacyDiscordTokenKeys = options.legacyDiscordTokenKeys ?? [];
   const tribunalRooms = options.tribunalRooms ?? 0;
   const activeArbiterTasks = options.activeArbiterTasks ?? 0;
   const reviewerConfigured = tribunalRooms === 0 || codexConfigured;
@@ -234,7 +213,6 @@ export function buildVerifySummary(
     allConfiguredServicesRunning &&
     credentials === 'configured' &&
     hasOwnerCapableChannel &&
-    legacyDiscordTokenKeys.length === 0 &&
     reviewerConfigured &&
     arbiterConfigured &&
     registeredGroups > 0
@@ -251,7 +229,6 @@ export function buildVerifySummary(
     servicesSummary,
     configuredChannels,
     channelAuth,
-    legacyDiscordTokenKeys,
     tribunalRooms,
     activeArbiterTasks,
     registeredGroups,

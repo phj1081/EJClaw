@@ -21,7 +21,6 @@ import {
   buildVerifySummary,
   detectChannelAuth,
   detectCredentials,
-  detectLegacyDiscordTokenKeys,
   loadRegisteredGroupsSummary,
   loadRoleRoutingRequirementsSummary,
 } from './verify-state.js';
@@ -58,7 +57,6 @@ export async function run(_args: string[]): Promise<void> {
 
   const credentials = detectCredentials(projectRoot);
   const channelAuth = detectChannelAuth();
-  const legacyDiscordTokenKeys = detectLegacyDiscordTokenKeys();
   const { registeredGroups, groupsByAgent } = loadRegisteredGroupsSummary();
   const { tribunalRooms, activeArbiterTasks } =
     loadRoleRoutingRequirementsSummary();
@@ -66,7 +64,6 @@ export async function run(_args: string[]): Promise<void> {
     status: baseStatus,
     servicesSummary,
     configuredChannels,
-    legacyDiscordTokenKeys: legacyDiscordTokens,
     tribunalRooms: detectedTribunalRooms,
     activeArbiterTasks: detectedActiveArbiterTasks,
     codexConfigured,
@@ -79,7 +76,6 @@ export async function run(_args: string[]): Promise<void> {
     registeredGroups,
     groupsByAgent,
     {
-      legacyDiscordTokenKeys,
       tribunalRooms,
       activeArbiterTasks,
     },
@@ -93,7 +89,6 @@ export async function run(_args: string[]): Promise<void> {
     {
       status,
       channelAuth,
-      legacyDiscordTokens,
       tribunalRooms: detectedTribunalRooms,
       activeArbiterTasks: detectedActiveArbiterTasks,
       servicesSummary,
@@ -101,16 +96,6 @@ export async function run(_args: string[]): Promise<void> {
     },
     'Verification complete',
   );
-  if (legacyDiscordTokens.length > 0) {
-    logger.error(
-      {
-        legacyDiscordTokens,
-        migration:
-          'Rename Discord bot tokens to DISCORD_OWNER_BOT_TOKEN / DISCORD_REVIEWER_BOT_TOKEN / DISCORD_ARBITER_BOT_TOKEN',
-      },
-      'Verification failed due to legacy service-based Discord bot token names',
-    );
-  }
   if (legacyServiceIssues.length > 0) {
     logger.error(
       {
@@ -133,7 +118,6 @@ export async function run(_args: string[]): Promise<void> {
     CREDENTIALS: credentials,
     CONFIGURED_CHANNELS: configuredChannels.join(','),
     CHANNEL_AUTH: JSON.stringify(channelAuth),
-    LEGACY_DISCORD_TOKENS: legacyDiscordTokens.join(','),
     TRIBUNAL_ROOMS: detectedTribunalRooms,
     ACTIVE_ARBITER_TASKS: detectedActiveArbiterTasks,
     REGISTERED_GROUPS: registeredGroups,

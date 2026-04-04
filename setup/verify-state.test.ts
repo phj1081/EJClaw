@@ -11,7 +11,6 @@ import {
   buildVerifySummary,
   detectChannelAuth,
   detectCredentials,
-  detectLegacyDiscordTokenKeys,
   loadRegisteredGroupsSummary,
   loadRoleRoutingRequirementsSummary,
 } from './verify-state.js';
@@ -53,35 +52,15 @@ describe('verify state helpers', () => {
     });
   });
 
-  it('does not treat legacy service-based channel auth names as configured channels', () => {
+  it('does not treat unknown discord token names as configured channels', () => {
     expect(
       detectChannelAuth(
         {},
         {
-          DISCORD_CLAUDE_BOT_TOKEN: 'legacy-owner-token',
-          DISCORD_CODEX_MAIN_BOT_TOKEN: 'legacy-reviewer-token',
-          DISCORD_CODEX_REVIEW_BOT_TOKEN: 'legacy-arbiter-token',
+          DISCORD_UNUSED_BOT_TOKEN: 'unknown-token',
         },
       ),
     ).toEqual({});
-  });
-
-  it('detects legacy service-based discord token names from env file and process env', () => {
-    expect(
-      detectLegacyDiscordTokenKeys(
-        {
-          DISCORD_BOT_TOKEN: 'legacy-owner-token',
-        },
-        {
-          DISCORD_CODEX_MAIN_BOT_TOKEN: 'legacy-reviewer-token',
-          DISCORD_CODEX_REVIEW_BOT_TOKEN: 'legacy-arbiter-token',
-        },
-      ),
-    ).toEqual([
-      'DISCORD_BOT_TOKEN',
-      'DISCORD_CODEX_MAIN_BOT_TOKEN',
-      'DISCORD_CODEX_REVIEW_BOT_TOKEN',
-    ]);
   });
 
   it('loads paired-room routing requirements from the sqlite store', () => {
@@ -270,26 +249,4 @@ describe('verify state helpers', () => {
     });
   });
 
-  it('fails verification when legacy discord token names are still configured', () => {
-    const services: ServiceCheck[] = [{ name: 'ejclaw', status: 'running' }];
-
-    expect(
-      buildVerifySummary(
-        services,
-        [],
-        'configured',
-        {
-          discord: 'configured',
-          'discord-review': 'configured',
-          'discord-arbiter': 'configured',
-        },
-        1,
-        {},
-        { legacyDiscordTokenKeys: ['DISCORD_BOT_TOKEN'] },
-      ),
-    ).toMatchObject({
-      status: 'failed',
-      legacyDiscordTokenKeys: ['DISCORD_BOT_TOKEN'],
-    });
-  });
 });

@@ -3,7 +3,15 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 // --- Mocks ---
 
 // Mock registry (registerChannel runs at import time)
-vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
+const registeredChannelFactories = vi.hoisted(
+  () => new Map<string, (...args: any[]) => any>(),
+);
+
+vi.mock('./registry.js', () => ({
+  registerChannel: vi.fn((name: string, factory: (...args: any[]) => any) => {
+    registeredChannelFactories.set(name, factory);
+  }),
+}));
 
 // Mock env reader (used by the factory, not needed in unit tests)
 vi.mock('../env.js', () => ({
@@ -113,6 +121,8 @@ vi.mock('discord.js', () => {
 });
 
 import { DiscordChannel, DiscordChannelOpts } from './discord.js';
+import { registerChannel } from './registry.js';
+import { getEnv } from '../env.js';
 import { logger } from '../logger.js';
 
 // --- Test helpers ---
@@ -212,6 +222,31 @@ describe('DiscordChannel', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('channel registration', () => {
+    it('warns when only legacy owner token names are configured', () => {
+      const ownerFactory = registeredChannelFactories.get('discord');
+
+      vi.mocked(getEnv).mockImplementation((key: string) => {
+        if (key === 'DISCORD_BOT_TOKEN') return 'legacy-owner-token';
+        return undefined;
+      });
+
+      expect(ownerFactory).toBeTypeOf('function');
+      expect(ownerFactory?.(createTestOpts() as any)).toBeNull();
+      expect(logger.warn).toHaveBeenCalledWith(
+        {
+          role: 'owner',
+          canonicalKey: 'DISCORD_OWNER_BOT_TOKEN',
+          legacyKeys: ['DISCORD_BOT_TOKEN'],
+        },
+        'Discord: legacy bot token names detected; rename them to canonical role-based names',
+      );
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Discord: DISCORD_OWNER_BOT_TOKEN not set',
+      );
+    });
   });
 
   // --- Connection lifecycle ---
