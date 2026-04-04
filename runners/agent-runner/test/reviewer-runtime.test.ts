@@ -167,6 +167,30 @@ describe('claude reviewer runtime guard', () => {
     expect(() => assertReadonlyWorkspaceRepoConnectivity(env, true)).not.toThrow();
   });
 
+  it.each([
+    'https://github.com/EyeJoker-Internal/eyejoker-db.git',
+    'git@github.com:EyeJoker-Internal/eyejoker-db.git',
+  ])(
+    'accepts remote origin %s without requiring a mounted local canonical path',
+    (originUrl) => {
+      const cwd = createTempRepo('ejclaw-reviewer-remote-origin-');
+      execFileSync('git', ['remote', 'add', 'origin', originUrl], {
+        cwd,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const env = buildReviewerGitGuardEnv(
+        {
+          PATH: process.env.PATH,
+          EJCLAW_WORK_DIR: cwd,
+        },
+        true,
+      );
+
+      expect(() => assertReadonlyWorkspaceRepoConnectivity(env, true)).not.toThrow();
+    },
+  );
+
   it('fails fast when the local origin path is not mounted as a git repo', () => {
     const cwd = createTempRepo('ejclaw-reviewer-workspace-');
     const missingOriginDir = path.join(

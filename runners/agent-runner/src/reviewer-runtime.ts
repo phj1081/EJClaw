@@ -203,6 +203,13 @@ function readGitOutput(
   }).trim();
 }
 
+function isRemoteGitOrigin(originUrl: string): boolean {
+  return (
+    /^(?:https?|ssh|git):\/\//i.test(originUrl) ||
+    /^[^/\\]+@[^:]+:.+/.test(originUrl)
+  );
+}
+
 export function assertReadonlyWorkspaceRepoConnectivity(
   baseEnv: NodeJS.ProcessEnv,
   enabled: boolean,
@@ -224,6 +231,10 @@ export function assertReadonlyWorkspaceRepoConnectivity(
       protectedWorkDir,
     );
   } catch {
+    return;
+  }
+
+  if (isRemoteGitOrigin(originUrl)) {
     return;
   }
 
