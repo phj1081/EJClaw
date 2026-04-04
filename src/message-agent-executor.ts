@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+
 import { getErrorMessage } from './utils.js';
 
 import {
@@ -802,6 +805,22 @@ export async function runAgentForGroup(
 
     if (isRetryableClaudeSessionFailure(primaryAttempt)) {
       deps.clearSession(sessionFolder);
+      // Also clear SDK session state inside the reviewer/arbiter config dir
+      // so the persistent container doesn't resume the same stale session.
+      const configDir =
+        pairedExecutionContext?.envOverrides?.CLAUDE_CONFIG_DIR;
+      if (configDir) {
+        for (const sdkDir of ['.claude', '.codex']) {
+          const sessionsDir = path.join(configDir, sdkDir, 'sessions');
+          if (fs.existsSync(sessionsDir)) {
+            fs.rmSync(sessionsDir, { recursive: true, force: true });
+            log.info(
+              { sessionsDir },
+              'Cleared container SDK sessions for stale session recovery',
+            );
+          }
+        }
+      }
       log.warn(
         'Cleared poisoned Claude session before visible output, retrying fresh session',
       );
