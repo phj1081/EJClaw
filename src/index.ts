@@ -77,6 +77,13 @@ import {
   initTokenRotation,
   onTokenRotated,
 } from './token-rotation.js';
+
+function isTerminalStatusMessage(text: string): boolean {
+  const trimmed = text.trimStart();
+  return /^(?:\*\*)?(DONE(?:_WITH_CONCERNS)?|BLOCKED|NEEDS_CONTEXT)\b/.test(
+    trimmed,
+  );
+}
 import {
   onTokenRefreshed,
   startTokenRefreshLoop,
@@ -472,7 +479,7 @@ async function main(): Promise<void> {
       editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
   });
   startIpcWatcher({
-    sendMessage: (jid, text, senderRole) => {
+    sendMessage: async (jid, text, senderRole) => {
       const route = resolveChannelForDeliveryRole(channels, jid, senderRole);
       if (!route.channel) throw new Error(`No channel for JID: ${jid}`);
       logger.info(
@@ -487,7 +494,13 @@ async function main(): Promise<void> {
         },
         'IPC relay routed message to channel',
       );
-      return route.channel.sendMessage(jid, text);
+      await route.channel.sendMessage(jid, text);
+      if (
+        (senderRole === 'reviewer' || senderRole === 'arbiter') &&
+        isTerminalStatusMessage(text)
+      ) {
+        queue.noteDirectTerminalDelivery(jid, senderRole);
+      }
     },
     nudgeScheduler: nudgeSchedulerLoop,
     registeredGroups: () => registeredGroups,

@@ -1100,7 +1100,6 @@ describe('createMessageRuntime', () => {
     };
     const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
     const noteDirectTerminalDelivery = vi.fn();
-    let recordedReviewerTerminal = false;
 
     vi.mocked(config.isClaudeService).mockReturnValue(false);
     vi.mocked(config.isReviewService).mockReturnValue(false);
@@ -1151,20 +1150,12 @@ describe('createMessageRuntime', () => {
         registerProcess: vi.fn(),
         closeStdin: vi.fn(),
         notifyIdle: vi.fn(),
-        noteDirectTerminalDelivery: vi.fn(
-          (groupJid: string, senderRole?: string | null) => {
-            noteDirectTerminalDelivery(groupJid, senderRole);
-            if (groupJid === chatJid && senderRole === 'reviewer') {
-              recordedReviewerTerminal = true;
-            }
-          },
-        ),
+        noteDirectTerminalDelivery,
         hasDirectTerminalDeliveryForRun: vi.fn(
           (groupJid: string, runId: string, senderRole?: string | null) =>
             groupJid === chatJid &&
             runId === 'run-review-direct-terminal-skip' &&
-            senderRole === 'reviewer' &&
-            recordedReviewerTerminal,
+            senderRole === 'reviewer',
         ),
       } as any,
       getRegisteredGroups: () => ({ [chatJid]: group }),
@@ -1183,10 +1174,7 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
-    expect(noteDirectTerminalDelivery).toHaveBeenCalledWith(
-      chatJid,
-      'reviewer',
-    );
+    expect(noteDirectTerminalDelivery).not.toHaveBeenCalled();
     expect(db.createProducedWorkItem).not.toHaveBeenCalled();
     expect(reviewerChannel.sendMessage).not.toHaveBeenCalled();
     expect(logger.info).toHaveBeenCalledWith(
@@ -1196,6 +1184,97 @@ describe('createMessageRuntime', () => {
         deliveryRole: 'reviewer',
       }),
       'Skipping final work item delivery because this run already sent a direct terminal IPC message',
+    );
+  });
+
+  it('does not suppress reviewer finals based on streamed terminal output alone', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'owner-bot@test'),
+    };
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const noteDirectTerminalDelivery = vi.fn();
+
+    vi.mocked(config.isClaudeService).mockReturnValue(false);
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-review-streamed-terminal',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 0,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getLastHumanMessageContent).mockReturnValue('리뷰해줘');
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '**DONE**\n\n리뷰 승인',
+          newSessionId: 'session-review-streamed-terminal',
+        });
+        return {
+          status: 'success',
+          result: '**DONE**\n\n리뷰 승인',
+          newSessionId: 'session-review-streamed-terminal',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        noteDirectTerminalDelivery,
+        hasDirectTerminalDeliveryForRun: vi.fn(() => false),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-review-streamed-terminal',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(noteDirectTerminalDelivery).not.toHaveBeenCalled();
+    expect(db.createProducedWorkItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        delivery_role: 'reviewer',
+        result_payload: '**DONE**\n\n리뷰 승인',
+      }),
+    );
+    expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      '**DONE**\n\n리뷰 승인',
     );
   });
 

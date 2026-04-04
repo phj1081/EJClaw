@@ -504,8 +504,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const isClaudeCodeAgent =
       (args.forcedAgentType ?? group.agentType ?? 'claude-code') ===
       'claude-code';
-    let directTerminalDeliveryRecorded = false;
-
     const turnController = new MessageTurnController({
       chatJid,
       group,
@@ -572,17 +570,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         chatJid,
         runId,
         async (result) => {
-          const raw = result ? getAgentOutputText(result) : null;
-          if (
-            !directTerminalDeliveryRecorded &&
-            raw &&
-            isTerminalStatusMessage(raw) &&
-            (args.deliveryRole === 'reviewer' ||
-              args.deliveryRole === 'arbiter')
-          ) {
-            deps.queue.noteDirectTerminalDelivery?.(chatJid, args.deliveryRole);
-            directTerminalDeliveryRecorded = true;
-          }
           await turnController.handleOutput(result);
         },
         {
