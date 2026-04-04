@@ -466,8 +466,46 @@ export function completePairedExecutionContext(args: {
         return;
       }
     }
+    const now = new Date().toISOString();
+    if (role === 'reviewer') {
+      const fallbackStatus =
+        task.status === 'in_review' || task.status === 'review_ready'
+          ? 'review_ready'
+          : task.status;
+      if (fallbackStatus !== task.status) {
+        updatePairedTask(taskId, { status: fallbackStatus, updated_at: now });
+        logger.warn(
+          {
+            taskId,
+            role,
+            previousStatus: task.status,
+            nextStatus: fallbackStatus,
+          },
+          'Preserved reviewer task in review-ready state after failed execution',
+        );
+      }
+      return;
+    }
+    if (role === 'arbiter') {
+      const fallbackStatus =
+        task.status === 'in_arbitration' || task.status === 'arbiter_requested'
+          ? 'arbiter_requested'
+          : task.status;
+      if (fallbackStatus !== task.status) {
+        updatePairedTask(taskId, { status: fallbackStatus, updated_at: now });
+        logger.warn(
+          {
+            taskId,
+            role,
+            previousStatus: task.status,
+            nextStatus: fallbackStatus,
+          },
+          'Preserved arbiter task in arbitration-requested state after failed execution',
+        );
+      }
+      return;
+    }
     if (task.status !== 'active') {
-      const now = new Date().toISOString();
       updatePairedTask(taskId, { status: 'active', updated_at: now });
       logger.info(
         { taskId, role, previousStatus: task.status },

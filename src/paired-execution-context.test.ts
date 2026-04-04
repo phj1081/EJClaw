@@ -583,4 +583,73 @@ describe('paired execution context', () => {
       }),
     );
   });
+
+  it('keeps reviewer tasks review_ready when reviewer execution fails without a terminal verdict', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'in_review',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'reviewer',
+      status: 'failed',
+      summary: 'runtime exploded before verdict',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'review_ready',
+        updated_at: expect.any(String),
+      }),
+    );
+  });
+
+  it('keeps arbiter tasks arbiter_requested when arbiter execution fails without a terminal verdict', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'in_arbitration',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'arbiter',
+      status: 'failed',
+      summary: 'runtime exploded before verdict',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'arbiter_requested',
+        updated_at: expect.any(String),
+      }),
+    );
+  });
+
+  it('still resets owner tasks to active after failed execution', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'failed',
+      summary: 'push failed',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'active',
+        updated_at: expect.any(String),
+      }),
+    );
+  });
 });
