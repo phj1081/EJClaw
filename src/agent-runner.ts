@@ -61,6 +61,25 @@ export interface AgentOutput {
   error?: string;
 }
 
+export function mirrorContainerCodexSessionFiles(
+  sourceSessionDir: string,
+  mountedSessionDir: string,
+): void {
+  const sourceCodexDir = path.join(sourceSessionDir, '.codex');
+  const mountedCodexDir = path.join(mountedSessionDir, '.codex');
+  if (!fs.existsSync(sourceCodexDir) || !fs.existsSync(mountedSessionDir)) {
+    return;
+  }
+
+  fs.mkdirSync(mountedCodexDir, { recursive: true });
+  for (const file of ['AGENTS.md', 'config.toml', 'config.json', 'auth.json']) {
+    const sourcePath = path.join(sourceCodexDir, file);
+    if (fs.existsSync(sourcePath)) {
+      fs.copyFileSync(sourcePath, path.join(mountedCodexDir, file));
+    }
+  }
+}
+
 export async function runAgentProcess(
   group: RegisteredGroup,
   input: AgentInput,
@@ -94,28 +113,21 @@ export async function runAgentProcess(
         sessionDir,
         chatJid: input.chatJid,
         isMain: input.isMain,
+        groupFolder: group.folder,
+        agentType: group.agentType || 'claude-code',
         memoryBriefing: input.memoryBriefing,
         role: containerRole,
       });
-      // For codex: also write AGENTS.md to the reviewer session dir, because
-      // the container's /home/node/.claude always mounts the reviewer session.
-      // Arbiter and reviewer never run simultaneously, so this is safe.
+      // The persistent container always mounts the reviewer session path at
+      // /home/node/.claude. When the arbiter stages a separate session dir,
+      // mirror the Codex session files into the mounted reviewer dir so the
+      // container sees the arbiter prompt/config, including MCP servers.
       if (containerRole === 'arbiter') {
         const reviewerSessionDir = path.join(
           path.dirname(sessionDir),
           `${group.folder}-reviewer`,
         );
-        const reviewerCodexDir = path.join(reviewerSessionDir, '.codex');
-        if (fs.existsSync(reviewerSessionDir)) {
-          fs.mkdirSync(reviewerCodexDir, { recursive: true });
-          const arbiterAgentsMd = path.join(sessionDir, '.codex', 'AGENTS.md');
-          if (fs.existsSync(arbiterAgentsMd)) {
-            fs.copyFileSync(
-              arbiterAgentsMd,
-              path.join(reviewerCodexDir, 'AGENTS.md'),
-            );
-          }
-        }
+        mirrorContainerCodexSessionFiles(sessionDir, reviewerSessionDir);
       }
     }
 

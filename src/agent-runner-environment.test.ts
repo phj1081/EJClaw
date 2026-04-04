@@ -374,13 +374,34 @@ describe('prepareContainerSessionEnvironment codex compatibility', () => {
 
     const promptsDir = path.join(tempRoot, 'prompts');
     fs.mkdirSync(promptsDir, { recursive: true });
+    const mcpServerPath = path.join(
+      tempRoot,
+      'runners',
+      'agent-runner',
+      'dist',
+      'ipc-mcp-stdio.js',
+    );
+    fs.mkdirSync(path.dirname(mcpServerPath), { recursive: true });
+    fs.writeFileSync(mcpServerPath, '// test mcp server\n');
     fs.writeFileSync(
       path.join(process.env.EJ_TEST_HOME!, '.codex', 'auth.json'),
       '{"auth_mode":"chatgpt"}\n',
     );
     fs.writeFileSync(
       path.join(process.env.EJ_TEST_HOME!, '.codex', 'config.toml'),
-      'model = "gpt-5.4"\n',
+      `model = "gpt-5.4"
+
+[mcp_servers.ejclaw]
+command = "node"
+args = ["old-ipc.js"]
+
+[mcp_servers.ejclaw.env]
+EJCLAW_IPC_DIR = "/old/ipc"
+
+[mcp_servers.other]
+command = "node"
+args = ["other.js"]
+`,
     );
 
     const sessionDir = path.join(tempRoot, 'container-reviewer-session');
@@ -388,6 +409,8 @@ describe('prepareContainerSessionEnvironment codex compatibility', () => {
       sessionDir,
       chatJid: 'dc:test',
       isMain: false,
+      groupFolder: 'codex-test-group',
+      agentType: 'codex',
       memoryBriefing: 'memory briefing',
       role: 'reviewer',
     });
@@ -402,8 +425,19 @@ describe('prepareContainerSessionEnvironment codex compatibility', () => {
     expect(
       fs.readFileSync(path.join(sessionDir, '.codex', 'auth.json'), 'utf-8'),
     ).toContain('"auth_mode":"chatgpt"');
-    expect(
-      fs.readFileSync(path.join(sessionDir, '.codex', 'config.toml'), 'utf-8'),
-    ).toContain('model = "gpt-5.4"');
+    const toml = fs.readFileSync(
+      path.join(sessionDir, '.codex', 'config.toml'),
+      'utf-8',
+    );
+    expect(toml).toContain('model = "gpt-5.4"');
+    expect(toml).toContain('[mcp_servers.other]');
+    expect(toml).toContain('[mcp_servers.ejclaw]');
+    expect(toml).toContain('EJCLAW_IPC_DIR = "/workspace/ipc"');
+    expect(toml).toContain('EJCLAW_GROUP_FOLDER = "codex-test-group"');
+    expect(toml).toContain('EJCLAW_WORK_DIR = "/workspace/project"');
+    expect(toml).not.toContain('old-ipc.js');
+    expect(toml).not.toContain('"/old/ipc"');
+    expect(toml.match(/\[mcp_servers\.ejclaw\]/g)).toHaveLength(1);
+    expect(toml.match(/\[mcp_servers\.ejclaw\.env\]/g)).toHaveLength(1);
   });
 });

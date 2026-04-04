@@ -4,6 +4,16 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import {
+  isHostEvidenceAction,
+  runHostEvidenceRequest,
+  writeHostEvidenceResponse,
+} from './host-evidence.js';
+import {
+  isVerificationProfile,
+  runVerificationRequest,
+  writeVerificationResponse,
+} from './verification.js';
 import { readJsonFile } from './utils.js';
 import { AvailableGroup } from './agent-runner.js';
 import {
@@ -311,6 +321,11 @@ export async function processTaskIpc(
     memory_kind?: string | null;
     source_kind?: string;
     source_ref?: string | null;
+    requestId?: string;
+    action?: string;
+    tail_lines?: number;
+    profile?: string;
+    expected_snapshot_id?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -521,6 +536,118 @@ export async function processTaskIpc(
             'Unauthorized task cancel attempt',
           );
         }
+      }
+      break;
+
+    case 'host_evidence_request':
+      if (!data.requestId) {
+        logger.warn(
+          { sourceGroup },
+          'Ignoring host_evidence_request without requestId',
+        );
+        break;
+      }
+
+      if (!isHostEvidenceAction(data.action)) {
+        writeHostEvidenceResponse(sourceGroup, {
+          requestId: data.requestId,
+          ok: false,
+          action: 'ejclaw_service_status',
+          command: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 1,
+          error: `Unsupported host evidence action: ${String(data.action)}`,
+        });
+        logger.warn(
+          { sourceGroup, requestId: data.requestId, action: data.action },
+          'Rejected unsupported host evidence action',
+        );
+        break;
+      }
+
+      {
+        const result = await runHostEvidenceRequest({
+          requestId: data.requestId,
+          action: data.action,
+          tailLines:
+            typeof data.tail_lines === 'number' ? data.tail_lines : undefined,
+        });
+
+        writeHostEvidenceResponse(sourceGroup, {
+          requestId: data.requestId,
+          ...result,
+        });
+
+        logger.info(
+          {
+            sourceGroup,
+            requestId: data.requestId,
+            action: data.action,
+            ok: result.ok,
+            exitCode: result.exitCode,
+          },
+          'Processed host evidence request via IPC',
+        );
+      }
+      break;
+
+    case 'verification_request':
+      if (!data.requestId) {
+        logger.warn(
+          { sourceGroup },
+          'Ignoring verification_request without requestId',
+        );
+        break;
+      }
+
+      if (!isVerificationProfile(data.profile)) {
+        writeVerificationResponse(sourceGroup, {
+          requestId: data.requestId,
+          ok: false,
+          profile: 'test',
+          command: '',
+          stdout: '',
+          stderr: '',
+          exitCode: 1,
+          snapshotId: 'unknown',
+          runtimeVersion: '',
+          workdir: process.cwd(),
+          error: `Unsupported verification profile: ${String(data.profile)}`,
+        });
+        logger.warn(
+          { sourceGroup, requestId: data.requestId, profile: data.profile },
+          'Rejected unsupported verification profile',
+        );
+        break;
+      }
+
+      {
+        const result = await runVerificationRequest({
+          requestId: data.requestId,
+          profile: data.profile,
+          expectedSnapshotId:
+            typeof data.expected_snapshot_id === 'string'
+              ? data.expected_snapshot_id
+              : undefined,
+        });
+
+        writeVerificationResponse(sourceGroup, {
+          requestId: data.requestId,
+          ...result,
+        });
+
+        logger.info(
+          {
+            sourceGroup,
+            requestId: data.requestId,
+            profile: data.profile,
+            ok: result.ok,
+            exitCode: result.exitCode,
+            snapshotId: result.snapshotId,
+          },
+          'Processed verification request via IPC',
+        );
       }
       break;
 

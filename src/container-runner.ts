@@ -61,6 +61,30 @@ interface VolumeMount {
   readonly: boolean;
 }
 
+interface InspectedContainerMount {
+  Source?: string;
+  Destination?: string;
+  RW?: boolean;
+}
+
+interface InspectedContainer {
+  Mounts?: InspectedContainerMount[];
+}
+
+const PRIMARY_PROJECT_MOUNT = '/workspace/project';
+
+function pushMountOnce(mounts: VolumeMount[], mount: VolumeMount): void {
+  const exists = mounts.some(
+    (entry) =>
+      entry.hostPath === mount.hostPath &&
+      entry.containerPath === mount.containerPath &&
+      entry.readonly === mount.readonly,
+  );
+  if (!exists) {
+    mounts.push(mount);
+  }
+}
+
 // ── pnpm store detection ─────────────────────────────────────────
 
 function detectPnpmStorePath(workspaceDir: string): string | null {
@@ -131,15 +155,57 @@ function isContainerRunning(name: string): boolean {
   }
 }
 
+function inspectContainer(name: string): InspectedContainer | null {
+  try {
+    const output = execFileSync(CONTAINER_RUNTIME_BIN, ['inspect', name], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 5000,
+    });
+    const parsed = JSON.parse(output) as InspectedContainer[];
+    return parsed[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function containerHasExpectedMounts(
+  name: string,
+  expectedMounts: VolumeMount[],
+): boolean {
+  const inspection = inspectContainer(name);
+  const actualMounts = inspection?.Mounts ?? [];
+
+  return expectedMounts.every((expected) =>
+    actualMounts.some(
+      (actual) =>
+        actual.Source === expected.hostPath &&
+        actual.Destination === expected.containerPath &&
+        Boolean(actual.RW) === !expected.readonly,
+    ),
+  );
+}
+
 function ensurePersistentContainer(
   group: RegisteredGroup,
   ownerWorkspaceDir: string,
   envOverrides?: Record<string, string>,
 ): string {
   const containerName = getContainerName(group.folder);
+  const mounts = buildReviewerMounts(group, ownerWorkspaceDir);
 
   if (isContainerRunning(containerName)) {
-    return containerName;
+    if (containerHasExpectedMounts(containerName, mounts)) {
+      return containerName;
+    }
+    logger.info(
+      {
+        containerName,
+        group: group.name,
+        groupFolder: group.folder,
+      },
+      'Recreating persistent reviewer container because mount layout changed',
+    );
   }
 
   // Remove stale stopped container with same name
@@ -152,8 +218,7 @@ function ensurePersistentContainer(
     /* doesn't exist */
   }
 
-  const mounts = buildReviewerMounts(group, ownerWorkspaceDir);
-  const args = buildCreateArgs(mounts, containerName, envOverrides);
+  const args = buildCreateArgs(mounts, containerName);
 
   logger.info(
     {
@@ -212,11 +277,20 @@ export function buildReviewerMounts(
   const groupIpcDir = resolveGroupIpcPath(group.folder);
 
   // Source code: READ-ONLY (kernel-level protection)
-  mounts.push({
+  pushMountOnce(mounts, {
     hostPath: ownerWorkspaceDir,
-    containerPath: '/workspace/project',
+    containerPath: PRIMARY_PROJECT_MOUNT,
     readonly: true,
   });
+  // Compatibility mount: expose the owner workspace at the same absolute path
+  // inside the container so owner-authored absolute paths still resolve.
+  if (ownerWorkspaceDir !== PRIMARY_PROJECT_MOUNT) {
+    pushMountOnce(mounts, {
+      hostPath: ownerWorkspaceDir,
+      containerPath: ownerWorkspaceDir,
+      readonly: true,
+    });
+  }
 
   // Git worktree support: worktree's .git file references the parent repo's
   // .git directory via absolute path. Mount the parent .git at the same host
@@ -233,7 +307,7 @@ export function buildReviewerMounts(
         // worktreeGitDir = /parent/.git/worktrees/name → parent .git = ../../
         const parentGitDir = path.resolve(worktreeGitDir, '..', '..');
         if (fs.existsSync(parentGitDir)) {
-          mounts.push({
+          pushMountOnce(mounts, {
             hostPath: parentGitDir,
             containerPath: parentGitDir,
             readonly: true,
@@ -252,7 +326,7 @@ export function buildReviewerMounts(
   // pnpm global store: mount at the same host path so hardlinks resolve.
   const pnpmStore = detectPnpmStorePath(ownerWorkspaceDir);
   if (pnpmStore) {
-    mounts.push({
+    pushMountOnce(mounts, {
       hostPath: pnpmStore,
       containerPath: pnpmStore,
       readonly: true,
@@ -263,17 +337,23 @@ export function buildReviewerMounts(
   // Shadow .env so reviewer cannot read secrets from mounted project
   const envFile = path.join(ownerWorkspaceDir, '.env');
   if (fs.existsSync(envFile)) {
-    mounts.push({
-      hostPath: '/dev/null',
-      containerPath: '/workspace/project/.env',
-      readonly: true,
-    });
+    const shadowPaths = new Set<string>([
+      path.join(PRIMARY_PROJECT_MOUNT, '.env'),
+      path.join(ownerWorkspaceDir, '.env'),
+    ]);
+    for (const shadowPath of shadowPaths) {
+      pushMountOnce(mounts, {
+        hostPath: '/dev/null',
+        containerPath: shadowPath,
+        readonly: true,
+      });
+    }
   }
 
   // Attachments directory: read-only (Discord file uploads downloaded here)
   const attachmentsDir = path.join(DATA_DIR, 'attachments');
   if (fs.existsSync(attachmentsDir)) {
-    mounts.push({
+    pushMountOnce(mounts, {
       hostPath: attachmentsDir,
       containerPath: attachmentsDir,
       readonly: true,
@@ -281,7 +361,7 @@ export function buildReviewerMounts(
   }
 
   // Group folder: writable (logs, session data)
-  mounts.push({
+  pushMountOnce(mounts, {
     hostPath: groupDir,
     containerPath: '/workspace/group',
     readonly: false,
@@ -290,7 +370,7 @@ export function buildReviewerMounts(
   // IPC directory: writable (output messages, task results)
   fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
-  mounts.push({
+  pushMountOnce(mounts, {
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',
     readonly: false,
@@ -299,7 +379,7 @@ export function buildReviewerMounts(
   // Global memory: read-only
   const globalDir = path.join(GROUPS_DIR, 'global');
   if (fs.existsSync(globalDir)) {
-    mounts.push({
+    pushMountOnce(mounts, {
       hostPath: globalDir,
       containerPath: '/workspace/global',
       readonly: true,
@@ -315,7 +395,7 @@ export function buildReviewerMounts(
     `${group.folder}-reviewer`,
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
-  mounts.push({
+  pushMountOnce(mounts, {
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
     readonly: false,
@@ -325,7 +405,7 @@ export function buildReviewerMounts(
   // files (cron state, configs, etc.) that the owner references by absolute path.
   const ownerSessionDir = path.join(DATA_DIR, 'sessions', group.folder);
   if (fs.existsSync(ownerSessionDir)) {
-    mounts.push({
+    pushMountOnce(mounts, {
       hostPath: ownerSessionDir,
       containerPath: ownerSessionDir,
       readonly: true,
@@ -336,7 +416,7 @@ export function buildReviewerMounts(
   const hostCodexHome =
     process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   if (fs.existsSync(hostCodexHome)) {
-    mounts.push({
+    pushMountOnce(mounts, {
       hostPath: hostCodexHome,
       containerPath: '/home/node/.codex',
       readonly: true,
@@ -349,10 +429,9 @@ export function buildReviewerMounts(
 // ── Container args builders ──────────────────────────────────────
 
 /** Build args for `docker run -d` (create persistent container). */
-function buildCreateArgs(
+export function buildCreateArgs(
   mounts: VolumeMount[],
   containerName: string,
-  envOverrides?: Record<string, string>,
 ): string[] {
   // Start detached with sleep infinity — turns run via docker exec
   const args: string[] = [
@@ -381,38 +460,9 @@ function buildCreateArgs(
     args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`);
   }
 
-  // Reviewer runtime flag
-  args.push('-e', 'EJCLAW_REVIEWER_RUNTIME=1');
-
   // Sentry read-only token for reviewer to verify error fixes
   if (process.env.SENTRY_AUTH_TOKEN) {
     args.push('-e', `SENTRY_AUTH_TOKEN=${process.env.SENTRY_AUTH_TOKEN}`);
-  }
-
-  // Extra env overrides from paired-execution-context.
-  // Model/effort keys are excluded here — they are injected per-exec so the
-  // correct agent-type-specific values are used (claude vs codex).
-  const perExecKeys = new Set([
-    'CLAUDE_MODEL',
-    'CLAUDE_EFFORT',
-    'CODEX_MODEL',
-    'CODEX_EFFORT',
-  ]);
-  if (envOverrides) {
-    for (const [key, value] of Object.entries(envOverrides)) {
-      if (key === 'ANTHROPIC_API_KEY' || key === 'CLAUDE_CODE_OAUTH_TOKEN')
-        continue;
-      if (perExecKeys.has(key)) continue;
-      if (key === 'EJCLAW_WORK_DIR') {
-        args.push('-e', 'EJCLAW_WORK_DIR=/workspace/project');
-        continue;
-      }
-      if (key === 'CLAUDE_CONFIG_DIR') {
-        args.push('-e', 'CLAUDE_CONFIG_DIR=/home/node/.claude');
-        continue;
-      }
-      args.push('-e', `${key}=${value}`);
-    }
   }
 
   // Host gateway
@@ -445,6 +495,32 @@ function buildCreateArgs(
   args.push('infinity'); // argument to sleep
 
   return args;
+}
+
+export function appendExecEnvArgs(
+  execArgs: string[],
+  envOverrides: Record<string, string> | undefined,
+  isCodexAgent: boolean,
+): void {
+  if (!envOverrides) {
+    return;
+  }
+
+  const ignoredKeys = new Set(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN']);
+  const incompatibleModelKeys = isCodexAgent
+    ? new Set(['CLAUDE_MODEL', 'CLAUDE_EFFORT'])
+    : new Set(['CODEX_MODEL', 'CODEX_EFFORT']);
+
+  for (const [key, value] of Object.entries(envOverrides)) {
+    if (!value || ignoredKeys.has(key) || incompatibleModelKeys.has(key)) {
+      continue;
+    }
+    if (key === 'CLAUDE_CONFIG_DIR') {
+      execArgs.push('-e', 'CLAUDE_CONFIG_DIR=/home/node/.claude');
+      continue;
+    }
+    execArgs.push('-e', `${key}=${value}`);
+  }
 }
 
 // ── Main runner ───────────────────────────────────────────────────
@@ -511,17 +587,7 @@ export async function runReviewerContainer(args: {
     },
     'Container exec runner selection',
   );
-  // Inject only agent-type-appropriate model/effort overrides per exec.
-  if (envOverrides) {
-    const modelEnvKeys = isCodexAgent
-      ? ['CODEX_MODEL', 'CODEX_EFFORT']
-      : ['CLAUDE_MODEL', 'CLAUDE_EFFORT'];
-    for (const key of modelEnvKeys) {
-      if (envOverrides[key]) {
-        execArgs.push('-e', `${key}=${envOverrides[key]}`);
-      }
-    }
-  }
+  appendExecEnvArgs(execArgs, envOverrides, isCodexAgent);
   if (isCodexAgent) {
     // Use session-local .codex dir (contains AGENTS.md with role prompts)
     // instead of the host-mounted ~/.codex (which has owner-only config).

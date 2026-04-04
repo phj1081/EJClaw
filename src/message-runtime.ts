@@ -906,6 +906,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         return true;
       }
 
+      const botOnlyPendingTask = hasReviewerLease(chatJid)
+        ? getLatestOpenPairedTaskForChat(chatJid)
+        : null;
+      const botOnlyPendingTurn =
+        botOnlyPendingTask && isBotOnlyPairedRoomTurn(chatJid, missedMessages)
+          ? buildPendingPairedTurn(botOnlyPendingTask, rawMissedMessages)
+          : null;
+      if (botOnlyPendingTurn) {
+        return executePendingPairedTurn(botOnlyPendingTurn);
+      }
+
       if (shouldSkipBotOnlyCollaboration(chatJid, missedMessages)) {
         const lastMessage = missedMessages[missedMessages.length - 1];
         if (lastMessage?.seq != null) {
@@ -1257,6 +1268,59 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               chatJid,
               messagesToSend,
             );
+            const pendingCursorSource =
+              rawPendingMessages.length > 0
+                ? rawPendingMessages[rawPendingMessages.length - 1]
+                : messagesToSend[messagesToSend.length - 1];
+            const botOnlyPendingTurn =
+              loopPendingTask &&
+              isBotOnlyPairedFollowUp &&
+              (loopPendingTask.status === 'merge_ready' ||
+                loopPendingTask.status === 'review_ready' ||
+                loopPendingTask.status === 'in_review' ||
+                loopPendingTask.status === 'arbiter_requested' ||
+                loopPendingTask.status === 'in_arbitration')
+                ? {
+                    cursor:
+                      pendingCursorSource?.seq ??
+                      pendingCursorSource?.timestamp ??
+                      null,
+                    cursorKey:
+                      loopPendingTask.status === 'merge_ready'
+                        ? undefined
+                        : resolveCursorKey(chatJid, loopPendingTask.status),
+                  }
+                : null;
+
+            if (botOnlyPendingTurn) {
+              if (botOnlyPendingTurn.cursor != null) {
+                advanceLastAgentCursor(
+                  deps.getLastAgentTimestamps(),
+                  deps.saveState,
+                  chatJid,
+                  botOnlyPendingTurn.cursor,
+                  botOnlyPendingTurn.cursorKey,
+                );
+              }
+              deps.queue.closeStdin(chatJid, {
+                reason: 'paired-pending-turn-follow-up',
+              });
+              deps.queue.enqueueMessageCheck(
+                chatJid,
+                resolveGroupIpcPath(group.folder),
+              );
+              logger.info(
+                {
+                  chatJid,
+                  group: group.name,
+                  groupFolder: group.folder,
+                  taskId: loopPendingTask?.id ?? null,
+                  taskStatus: loopPendingTask?.status ?? null,
+                },
+                'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent',
+              );
+              continue;
+            }
 
             if (deps.queue.sendMessage(chatJid, formatted)) {
               const endSeq = messagesToSend[messagesToSend.length - 1]?.seq;

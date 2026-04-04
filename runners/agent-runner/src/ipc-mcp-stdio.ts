@@ -15,12 +15,31 @@ import {
   DEFAULT_WATCH_CI_CONTEXT_MODE,
   normalizeWatchCiIntervalSeconds,
 } from './watch-ci.js';
+import {
+  formatHostEvidenceResponse,
+  HOST_EVIDENCE_ACTIONS,
+  normalizeHostEvidenceTailLines,
+  resolveHostEvidenceResponsesDir,
+  waitForHostEvidenceResponse,
+} from './host-evidence.js';
+import {
+  computeVerificationSnapshotId,
+  formatVerificationResponse,
+  resolveVerificationResponsesDir,
+  VERIFICATION_PROFILES,
+  waitForVerificationResponse,
+} from './verification.js';
 import { resolveIpcDirectories } from './ipc-paths.js';
 
 const { ipcDir: IPC_DIR, hostIpcDir: HOST_IPC_DIR } =
   resolveIpcDirectories(process.env);
 const MESSAGES_DIR = path.join(HOST_IPC_DIR, 'messages');
 const TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
+const HOST_EVIDENCE_RESPONSES_DIR =
+  resolveHostEvidenceResponsesDir(HOST_IPC_DIR);
+const VERIFICATION_RESPONSES_DIR =
+  resolveVerificationResponsesDir(HOST_IPC_DIR);
+const REPO_ROOT = process.env.EJCLAW_WORK_DIR || process.cwd();
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.EJCLAW_CHAT_JID!;
@@ -333,6 +352,142 @@ server.tool(
         },
       ],
     };
+  },
+);
+
+server.tool(
+  'read_host_evidence',
+  'Read host-side deployment evidence through a narrow allowlist. Use this instead of broad shell access when reviewer/arbiter needs service status, recent logs, or reviewer image metadata.',
+  {
+    action: z
+      .enum(HOST_EVIDENCE_ACTIONS)
+      .describe(
+        'ejclaw_service_status=systemctl --user show ejclaw, ejclaw_service_logs=recent journalctl lines, reviewer_image_inspect=docker image inspect for the reviewer image',
+      ),
+    tail_lines: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe(
+        'Only for ejclaw_service_logs. Number of recent journal lines to fetch. Defaults to 20.',
+      ),
+  },
+  async (args) => {
+    const requestId = `host-evidence-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'host_evidence_request',
+      requestId,
+      action: args.action,
+      tail_lines:
+        args.action === 'ejclaw_service_logs'
+          ? normalizeHostEvidenceTailLines(args.tail_lines)
+          : undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const response = await waitForHostEvidenceResponse(
+        HOST_EVIDENCE_RESPONSES_DIR,
+        requestId,
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: formatHostEvidenceResponse(response),
+          },
+        ],
+        isError: !response.ok,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              error instanceof Error ? error.message : String(error),
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'run_verification',
+  'Run a fixed verification profile against the current repo snapshot using an isolated scratch workspace and the reviewer runtime image. Use this instead of broad shell write access for test/typecheck/build verification.',
+  {
+    profile: z
+      .enum(VERIFICATION_PROFILES)
+      .describe(
+        'Fixed verification profile. test=npm test, typecheck=npm run typecheck, build=npm run build.',
+      ),
+  },
+  async (args) => {
+    let snapshotId = '';
+    try {
+      snapshotId = computeVerificationSnapshotId(REPO_ROOT);
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              error instanceof Error
+                ? error.message
+                : String(error),
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const requestId = `verification-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'verification_request',
+      requestId,
+      profile: args.profile,
+      expected_snapshot_id: snapshotId,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      const response = await waitForVerificationResponse(
+        VERIFICATION_RESPONSES_DIR,
+        requestId,
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: formatVerificationResponse(response),
+          },
+        ],
+        isError: !response.ok,
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              error instanceof Error ? error.message : String(error),
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 

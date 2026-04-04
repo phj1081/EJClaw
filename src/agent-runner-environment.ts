@@ -105,6 +105,68 @@ function syncHostCodexSessionFiles(sessionCodexDir: string): void {
   }
 }
 
+function upsertEjclawMcpServerSection(args: {
+  sessionConfigPath: string;
+  mcpServerPath: string;
+  ipcDir: string;
+  hostIpcDir: string;
+  chatJid: string;
+  groupFolder: string;
+  isMain: boolean;
+  agentType: AgentType;
+  workDir?: string;
+}): void {
+  const stripEjclawMcpServerSections = (input: string): string => {
+    const lines = input.split('\n');
+    const kept: string[] = [];
+    let skipping = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const isSectionHeader = trimmed.startsWith('[') && trimmed.endsWith(']');
+      const isEjclawSection = /^\[mcp_servers\.ejclaw(?:\.[^\]]+)?\]$/.test(
+        trimmed,
+      );
+
+      if (isSectionHeader) {
+        if (isEjclawSection) {
+          skipping = true;
+          continue;
+        }
+        if (skipping) {
+          skipping = false;
+        }
+      }
+
+      if (!skipping) {
+        kept.push(line);
+      }
+    }
+
+    return kept.join('\n').replace(/^\n+/, '');
+  };
+
+  let toml = fs.existsSync(args.sessionConfigPath)
+    ? fs.readFileSync(args.sessionConfigPath, 'utf-8')
+    : '';
+  toml = stripEjclawMcpServerSections(toml);
+  const mcpSection = `
+[mcp_servers.ejclaw]
+command = "node"
+args = [${JSON.stringify(args.mcpServerPath)}]
+
+[mcp_servers.ejclaw.env]
+EJCLAW_IPC_DIR = ${JSON.stringify(args.ipcDir)}
+EJCLAW_HOST_IPC_DIR = ${JSON.stringify(args.hostIpcDir)}
+EJCLAW_CHAT_JID = ${JSON.stringify(args.chatJid)}
+EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.groupFolder)}
+EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
+EJCLAW_AGENT_TYPE = ${JSON.stringify(args.agentType)}
+${args.workDir ? `EJCLAW_WORK_DIR = ${JSON.stringify(args.workDir)}\n` : ''}
+`;
+  fs.writeFileSync(args.sessionConfigPath, toml.trimEnd() + '\n' + mcpSection);
+}
+
 function buildBaseRunnerEnv(args: {
   group: RegisteredGroup;
   chatJid: string;
@@ -316,24 +378,18 @@ function prepareCodexSessionEnvironment(args: {
     'ipc-mcp-stdio.js',
   );
   if (fs.existsSync(mcpServerPath)) {
-    let toml = fs.existsSync(sessionConfigPath)
-      ? fs.readFileSync(sessionConfigPath, 'utf-8')
-      : '';
-    toml = toml.replace(/\n?\[mcp_servers\.ejclaw\][\s\S]*?(?=\n\[|$)/, '');
-    const mcpSection = `
-[mcp_servers.ejclaw]
-command = "node"
-args = [${JSON.stringify(mcpServerPath)}]
-
-[mcp_servers.ejclaw.env]
-EJCLAW_IPC_DIR = ${JSON.stringify(args.env.EJCLAW_IPC_DIR)}
-EJCLAW_HOST_IPC_DIR = ${JSON.stringify(args.env.EJCLAW_HOST_IPC_DIR)}
-EJCLAW_CHAT_JID = ${JSON.stringify(args.chatJid)}
-EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.group.folder)}
-EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
-EJCLAW_AGENT_TYPE = ${JSON.stringify(args.env.EJCLAW_AGENT_TYPE)}
-`;
-    fs.writeFileSync(sessionConfigPath, toml.trimEnd() + '\n' + mcpSection);
+    upsertEjclawMcpServerSection({
+      sessionConfigPath,
+      mcpServerPath,
+      ipcDir: args.env.EJCLAW_IPC_DIR,
+      hostIpcDir: args.env.EJCLAW_HOST_IPC_DIR,
+      chatJid: args.chatJid,
+      groupFolder: args.group.folder,
+      isMain: args.isMain,
+      agentType: args.group.agentType || 'claude-code',
+      workDir:
+        args.env.EJCLAW_WORK_DIR || args.group.workDir || args.projectRoot,
+    });
   }
 
   delete args.env.ANTHROPIC_API_KEY;
@@ -506,15 +562,25 @@ export function prepareContainerSessionEnvironment(args: {
   sessionDir: string;
   chatJid: string;
   isMain: boolean;
+  groupFolder: string;
+  agentType: AgentType;
   memoryBriefing?: string;
   role?: 'reviewer' | 'arbiter';
+  ipcDir?: string;
+  hostIpcDir?: string;
+  workDir?: string;
 }): void {
   const {
     sessionDir,
     chatJid,
     isMain,
+    groupFolder,
+    agentType,
     memoryBriefing,
     role = 'reviewer',
+    ipcDir = '/workspace/ipc',
+    hostIpcDir = ipcDir,
+    workDir = '/workspace/project',
   } = args;
   const projectRoot = process.cwd();
 
@@ -561,6 +627,27 @@ export function prepareContainerSessionEnvironment(args: {
       path.join(sessionCodexDir, 'AGENTS.md'),
       sessionClaudeMd + '\n',
     );
+    const sessionConfigPath = path.join(sessionCodexDir, 'config.toml');
+    const mcpServerPath = path.join(
+      projectRoot,
+      'runners',
+      'agent-runner',
+      'dist',
+      'ipc-mcp-stdio.js',
+    );
+    if (fs.existsSync(mcpServerPath)) {
+      upsertEjclawMcpServerSection({
+        sessionConfigPath,
+        mcpServerPath,
+        ipcDir,
+        hostIpcDir,
+        chatJid,
+        groupFolder,
+        isMain,
+        agentType,
+        workDir,
+      });
+    }
     logger.info(
       {
         sessionDir,
