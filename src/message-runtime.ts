@@ -1286,11 +1286,55 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               rawPendingMessages.length > 0
                 ? rawPendingMessages[rawPendingMessages.length - 1]
                 : messagesToSend[messagesToSend.length - 1];
+            if (
+              loopPendingTask &&
+              isBotOnlyPairedFollowUp &&
+              loopPendingTask.status === 'merge_ready'
+            ) {
+              const inlineRunId = `loop-merge-ready-${Date.now().toString(36)}`;
+              const mergeReadyCursor =
+                pendingCursorSource?.seq ??
+                pendingCursorSource?.timestamp ??
+                null;
+              if (mergeReadyCursor != null) {
+                advanceLastAgentCursor(
+                  deps.getLastAgentTimestamps(),
+                  deps.saveState,
+                  chatJid,
+                  mergeReadyCursor,
+                );
+              }
+              logger.info(
+                {
+                  chatJid,
+                  group: group.name,
+                  groupFolder: group.folder,
+                  taskId: loopPendingTask?.id ?? null,
+                  taskStatus: loopPendingTask?.status ?? null,
+                },
+                'Executing merge_ready finalize turn inline after bot-only reviewer follow-up',
+              );
+              const { deliverySucceeded } = await executeTurn({
+                group,
+                prompt: buildFinalizePendingPrompt(loopPendingTask),
+                chatJid,
+                runId: inlineRunId,
+                channel,
+                startSeq: null,
+                endSeq: null,
+              });
+              if (!deliverySucceeded) {
+                deps.queue.enqueueMessageCheck(
+                  chatJid,
+                  resolveGroupIpcPath(group.folder),
+                );
+              }
+              continue;
+            }
             const botOnlyPendingTurn =
               loopPendingTask &&
               isBotOnlyPairedFollowUp &&
-              (loopPendingTask.status === 'merge_ready' ||
-                loopPendingTask.status === 'review_ready' ||
+              (loopPendingTask.status === 'review_ready' ||
                 loopPendingTask.status === 'in_review' ||
                 loopPendingTask.status === 'arbiter_requested' ||
                 loopPendingTask.status === 'in_arbitration')
@@ -1299,10 +1343,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                       pendingCursorSource?.seq ??
                       pendingCursorSource?.timestamp ??
                       null,
-                    cursorKey:
-                      loopPendingTask.status === 'merge_ready'
-                        ? undefined
-                        : resolveCursorKey(chatJid, loopPendingTask.status),
+                    cursorKey: resolveCursorKey(
+                      chatJid,
+                      loopPendingTask.status,
+                    ),
                   }
                 : null;
 

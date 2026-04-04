@@ -1198,6 +1198,135 @@ describe('createMessageRuntime', () => {
     expect(saveState).toHaveBeenCalled();
   });
 
+  it('runs merge_ready bot-only reviewer follow-ups inline in the message loop', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const enqueueMessageCheck = vi.fn();
+    const closeStdin = vi.fn();
+    const setLastTimestamp = vi.fn();
+    const stopLoop = new Error('stop-message-loop');
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-merge-ready-inline-loop',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'merge_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-merge-ready-inline-loop',
+        turn_number: 1,
+        role: 'reviewer',
+        output_text: '리뷰 승인 요약',
+        created_at: '2026-03-30T00:00:03.000Z',
+      },
+    ]);
+    vi.mocked(db.getNewMessages).mockReturnValue({
+      messages: [
+        {
+          id: 'reviewer-bot-message-inline-loop',
+          chat_jid: chatJid,
+          sender: 'reviewer-bot@test',
+          sender_name: '리뷰어',
+          content: 'DONE\n승인합니다.',
+          timestamp: '2026-03-30T00:00:04.000Z',
+          seq: 42,
+          is_bot_message: true,
+        } as any,
+      ],
+      newTimestamp: '42',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toBe(
+          "The reviewer approved your work (DONE). Finalize and report the result.\n\nReviewer's final assessment:\n리뷰 승인 요약",
+        );
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '최종 정리 완료',
+          newSessionId: 'session-inline-loop-finalize',
+        });
+        return {
+          status: 'success',
+          result: '최종 정리 완료',
+          newSessionId: 'session-inline-loop-finalize',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 60_000,
+      pollInterval: 123,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin,
+        enqueueMessageCheck,
+        notifyIdle: vi.fn(),
+        sendMessage: vi.fn(() => false),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp,
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const originalSetTimeout = global.setTimeout;
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation(((
+      handler: any,
+      timeout?: number,
+      ...args: any[]
+    ) => {
+      if (timeout === 123) {
+        throw stopLoop;
+      }
+      return (originalSetTimeout as any)(handler, timeout, ...args);
+    }) as typeof setTimeout);
+
+    try {
+      await expect(runtime.startMessageLoop()).rejects.toThrow(
+        stopLoop.message,
+      );
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+
+    expect(setLastTimestamp).toHaveBeenCalledWith('42');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '최종 정리 완료');
+    expect(closeStdin).not.toHaveBeenCalledWith(
+      chatJid,
+      expect.objectContaining({ reason: 'paired-pending-turn-follow-up' }),
+    );
+    expect(enqueueMessageCheck).not.toHaveBeenCalledWith(
+      chatJid,
+      resolveGroupIpcPath(group.folder),
+    );
+  });
+
   it('reuses the shared arbiter prompt builder for pending arbiter turns', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
