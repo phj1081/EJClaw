@@ -669,6 +669,7 @@ async function runQuery(
             EJCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
             EJCLAW_AGENT_TYPE:
               process.env.EJCLAW_AGENT_TYPE || 'claude-code',
+            EJCLAW_ROOM_ROLE: containerInput.roomRoleContext?.role || '',
             ...(process.env.EJCLAW_IPC_DIR && {
               EJCLAW_IPC_DIR: process.env.EJCLAW_IPC_DIR,
             }),

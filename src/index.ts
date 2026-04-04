@@ -46,6 +46,7 @@ import { startIpcWatcher } from './ipc.js';
 import {
   findChannel,
   findChannelByName,
+  findChannelForDeliveryRole,
   formatOutbound,
   normalizeMessageForDedupe,
 } from './router.js';
@@ -471,8 +472,8 @@ async function main(): Promise<void> {
       editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
   });
   startIpcWatcher({
-    sendMessage: (jid, text) => {
-      const channel = findChannel(channels, jid);
+    sendMessage: (jid, text, senderRole) => {
+      const channel = findChannelForDeliveryRole(channels, jid, senderRole);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
     },

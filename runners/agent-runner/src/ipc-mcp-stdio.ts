@@ -30,6 +30,7 @@ import {
   waitForVerificationResponse,
 } from './verification.js';
 import { resolveIpcDirectories } from './ipc-paths.js';
+import { buildSendMessageIpcPayload } from './ipc-message.js';
 
 const { ipcDir: IPC_DIR, hostIpcDir: HOST_IPC_DIR } =
   resolveIpcDirectories(process.env);
@@ -76,14 +77,13 @@ server.tool(
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
   },
   async (args) => {
-    const data: Record<string, string | undefined> = {
-      type: 'message',
+    const data = buildSendMessageIpcPayload({
       chatJid,
       text: args.text,
       sender: args.sender || undefined,
+      senderRole: process.env.EJCLAW_ROOM_ROLE || undefined,
       groupFolder,
-      timestamp: new Date().toISOString(),
-    };
+    });
 
     writeIpcFile(MESSAGES_DIR, data);
 

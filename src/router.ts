@@ -93,6 +93,26 @@ export function findChannel(
   return channels.find((c) => c.ownsJid(jid));
 }
 
+export function findChannelForDeliveryRole(
+  channels: Channel[],
+  jid: string,
+  senderRole?: string,
+): Channel | undefined {
+  if (senderRole === 'reviewer') {
+    return (
+      findChannelByName(channels, 'discord-review') ||
+      findChannel(channels, jid)
+    );
+  }
+  if (senderRole === 'arbiter') {
+    return (
+      findChannelByName(channels, 'discord-arbiter') ||
+      findChannel(channels, jid)
+    );
+  }
+  return findChannel(channels, jid);
+}
+
 export function findChannelByName(
   channels: Channel[],
   name: string,
