@@ -6,6 +6,7 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  assertReadonlyWorkspaceRepoConnectivity,
   buildReviewerGitGuardEnv,
   isReviewerMutatingShellCommand,
   isReviewerRuntime,
@@ -24,6 +25,17 @@ function createTempRepo(prefix: string): string {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   execFileSync('git', ['config', 'user.name', 'EJClaw Test'], {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  fs.writeFileSync(path.join(cwd, 'README.md'), 'seed\n');
+  execFileSync('git', ['add', 'README.md'], {
+    cwd,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  execFileSync('git', ['commit', '-m', 'seed'], {
     cwd,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -134,5 +146,48 @@ describe('claude reviewer runtime guard', () => {
         'EJClaw reviewer runtime blocks mutating git subcommands: commit',
       );
     }
+  });
+
+  it('accepts a mounted local origin path that resolves as a git repo', () => {
+    const originDir = createTempRepo('ejclaw-reviewer-origin-');
+    const cwd = createTempRepo('ejclaw-reviewer-workspace-');
+    execFileSync('git', ['remote', 'add', 'origin', originDir], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const env = buildReviewerGitGuardEnv(
+      {
+        PATH: process.env.PATH,
+        EJCLAW_WORK_DIR: cwd,
+      },
+      true,
+    );
+
+    expect(() => assertReadonlyWorkspaceRepoConnectivity(env, true)).not.toThrow();
+  });
+
+  it('fails fast when the local origin path is not mounted as a git repo', () => {
+    const cwd = createTempRepo('ejclaw-reviewer-workspace-');
+    const missingOriginDir = path.join(
+      os.tmpdir(),
+      `ejclaw-reviewer-missing-origin-${Date.now()}`,
+    );
+    execFileSync('git', ['remote', 'add', 'origin', missingOriginDir], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const env = buildReviewerGitGuardEnv(
+      {
+        PATH: process.env.PATH,
+        EJCLAW_WORK_DIR: cwd,
+      },
+      true,
+    );
+
+    expect(() => assertReadonlyWorkspaceRepoConnectivity(env, true)).toThrow(
+      `EJClaw readonly runtime cannot access local git origin path: ${missingOriginDir}`,
+    );
   });
 });

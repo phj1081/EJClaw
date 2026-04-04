@@ -85,6 +85,82 @@ function pushMountOnce(mounts: VolumeMount[], mount: VolumeMount): void {
   }
 }
 
+function normalizeLocalGitPath(remoteUrl: string): string | null {
+  if (!remoteUrl) {
+    return null;
+  }
+  if (path.isAbsolute(remoteUrl)) {
+    return path.resolve(remoteUrl);
+  }
+  if (remoteUrl.startsWith('file://')) {
+    try {
+      const parsed = new URL(remoteUrl);
+      if (parsed.protocol === 'file:') {
+        return path.resolve(parsed.pathname);
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function resolveLocalOriginTarget(workspaceDir: string): string | null {
+  try {
+    const remoteUrl = execFileSync(
+      'git',
+      ['config', '--get', 'remote.origin.url'],
+      {
+        cwd: workspaceDir,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 5000,
+      },
+    ).trim();
+    const localPath = normalizeLocalGitPath(remoteUrl);
+    if (!localPath || !fs.existsSync(localPath)) {
+      return null;
+    }
+    return localPath;
+  } catch {
+    return null;
+  }
+}
+
+function pushWorktreeGitMetadataMounts(
+  mounts: VolumeMount[],
+  repoDir: string,
+): void {
+  const dotGitPath = path.join(repoDir, '.git');
+  try {
+    const stat = fs.statSync(dotGitPath);
+    if (!stat.isFile()) {
+      return;
+    }
+    const content = fs.readFileSync(dotGitPath, 'utf-8').trim();
+    const match = content.match(/^gitdir:\s*(.+)$/);
+    if (!match) {
+      return;
+    }
+    const worktreeGitDir = path.resolve(repoDir, match[1]);
+    const parentGitDir = path.resolve(worktreeGitDir, '..', '..');
+    if (!fs.existsSync(parentGitDir)) {
+      return;
+    }
+    pushMountOnce(mounts, {
+      hostPath: parentGitDir,
+      containerPath: parentGitDir,
+      readonly: true,
+    });
+    logger.debug(
+      { parentGitDir, worktreeGitDir, repoDir },
+      'Mounting parent .git for worktree resolution',
+    );
+  } catch {
+    // Not a git repo or .git missing — skip
+  }
+}
+
 // ── pnpm store detection ─────────────────────────────────────────
 
 function detectPnpmStorePath(workspaceDir: string): string | null {
@@ -282,6 +358,18 @@ export function buildReviewerMounts(
     containerPath: PRIMARY_PROJECT_MOUNT,
     readonly: true,
   });
+  const canonicalRepoDir = resolveLocalOriginTarget(ownerWorkspaceDir);
+  if (
+    canonicalRepoDir &&
+    canonicalRepoDir !== ownerWorkspaceDir &&
+    canonicalRepoDir !== PRIMARY_PROJECT_MOUNT
+  ) {
+    pushMountOnce(mounts, {
+      hostPath: canonicalRepoDir,
+      containerPath: canonicalRepoDir,
+      readonly: true,
+    });
+  }
   // Compatibility mount: expose the owner workspace at the same absolute path
   // inside the container so owner-authored absolute paths still resolve.
   if (ownerWorkspaceDir !== PRIMARY_PROJECT_MOUNT) {
@@ -295,32 +383,9 @@ export function buildReviewerMounts(
   // Git worktree support: worktree's .git file references the parent repo's
   // .git directory via absolute path. Mount the parent .git at the same host
   // path so git commands resolve inside the container.
-  const dotGitPath = path.join(ownerWorkspaceDir, '.git');
-  try {
-    const stat = fs.statSync(dotGitPath);
-    if (stat.isFile()) {
-      // Worktree: .git is a file containing "gitdir: /path/to/.git/worktrees/name"
-      const content = fs.readFileSync(dotGitPath, 'utf-8').trim();
-      const match = content.match(/^gitdir:\s*(.+)$/);
-      if (match) {
-        const worktreeGitDir = path.resolve(ownerWorkspaceDir, match[1]);
-        // worktreeGitDir = /parent/.git/worktrees/name → parent .git = ../../
-        const parentGitDir = path.resolve(worktreeGitDir, '..', '..');
-        if (fs.existsSync(parentGitDir)) {
-          pushMountOnce(mounts, {
-            hostPath: parentGitDir,
-            containerPath: parentGitDir,
-            readonly: true,
-          });
-          logger.debug(
-            { parentGitDir, worktreeGitDir },
-            'Mounting parent .git for worktree resolution',
-          );
-        }
-      }
-    }
-  } catch {
-    // Not a git repo or .git missing — skip
+  pushWorktreeGitMetadataMounts(mounts, ownerWorkspaceDir);
+  if (canonicalRepoDir) {
+    pushWorktreeGitMetadataMounts(mounts, canonicalRepoDir);
   }
 
   // pnpm global store: mount at the same host path so hardlinks resolve.
@@ -336,18 +401,23 @@ export function buildReviewerMounts(
 
   // Shadow .env so reviewer cannot read secrets from mounted project
   const envFile = path.join(ownerWorkspaceDir, '.env');
+  const shadowPaths = new Set<string>();
   if (fs.existsSync(envFile)) {
-    const shadowPaths = new Set<string>([
-      path.join(PRIMARY_PROJECT_MOUNT, '.env'),
-      path.join(ownerWorkspaceDir, '.env'),
-    ]);
-    for (const shadowPath of shadowPaths) {
-      pushMountOnce(mounts, {
-        hostPath: '/dev/null',
-        containerPath: shadowPath,
-        readonly: true,
-      });
-    }
+    shadowPaths.add(path.join(PRIMARY_PROJECT_MOUNT, '.env'));
+    shadowPaths.add(path.join(ownerWorkspaceDir, '.env'));
+  }
+  const canonicalEnvFile = canonicalRepoDir
+    ? path.join(canonicalRepoDir, '.env')
+    : null;
+  if (canonicalEnvFile && fs.existsSync(canonicalEnvFile)) {
+    shadowPaths.add(canonicalEnvFile);
+  }
+  for (const shadowPath of shadowPaths) {
+    pushMountOnce(mounts, {
+      hostPath: '/dev/null',
+      containerPath: shadowPath,
+      readonly: true,
+    });
   }
 
   // Attachments directory: read-only (Discord file uploads downloaded here)

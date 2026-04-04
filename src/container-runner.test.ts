@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -76,6 +77,25 @@ function makeGroup(): RegisteredGroup {
   };
 }
 
+function initGitRepo(repoDir: string): void {
+  fs.mkdirSync(repoDir, { recursive: true });
+  execFileSync('git', ['init'], {
+    cwd: repoDir,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], {
+    cwd: repoDir,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  execFileSync('git', ['config', 'user.name', 'EJClaw Test'], {
+    cwd: repoDir,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
 describe('container-runner path compatibility', () => {
   const previousCodeXHome = process.env.CODEX_HOME;
   const previousOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
@@ -137,6 +157,41 @@ describe('container-runner path compatibility', () => {
         expect.objectContaining({
           hostPath: '/dev/null',
           containerPath: path.join(ownerWorkspaceDir, '.env'),
+          readonly: true,
+        }),
+      ]),
+    );
+  });
+
+  it('mounts a local absolute origin target and shadows its .env', () => {
+    const group = makeGroup();
+    const canonicalRepoDir = path.join(TEST_ROOT, 'canonical');
+    const ownerWorkspaceDir = path.join(TEST_ROOT, 'workspace', 'owner');
+    initGitRepo(canonicalRepoDir);
+    initGitRepo(ownerWorkspaceDir);
+    execFileSync('git', ['remote', 'add', 'origin', canonicalRepoDir], {
+      cwd: ownerWorkspaceDir,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    fs.writeFileSync(path.join(canonicalRepoDir, '.env'), 'CANONICAL=1\n');
+    fs.mkdirSync(path.join(TEST_GROUPS_DIR, group.folder), { recursive: true });
+    fs.mkdirSync(path.join(TEST_DATA_DIR, 'ipc', group.folder), {
+      recursive: true,
+    });
+
+    const mounts = buildReviewerMounts(group, ownerWorkspaceDir);
+
+    expect(mounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          hostPath: canonicalRepoDir,
+          containerPath: canonicalRepoDir,
+          readonly: true,
+        }),
+        expect.objectContaining({
+          hostPath: '/dev/null',
+          containerPath: path.join(canonicalRepoDir, '.env'),
           readonly: true,
         }),
       ]),

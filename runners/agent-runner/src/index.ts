@@ -24,6 +24,7 @@ import {
   type RoomRoleContext,
 } from './room-role-context.js';
 import {
+  assertReadonlyWorkspaceRepoConnectivity,
   buildReviewerGitGuardEnv,
   isReviewerMutatingShellCommand,
   isReviewerRuntime,
@@ -948,7 +949,12 @@ async function main(): Promise<void> {
   const reviewerRuntime =
     process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
     isReviewerRuntime(containerInput.roomRoleContext);
+  const readonlyRuntime =
+    reviewerRuntime ||
+    process.env.EJCLAW_ARBITER_RUNTIME === '1' ||
+    containerInput.roomRoleContext?.role === 'arbiter';
   const guardedSdkEnv = buildReviewerGitGuardEnv(sdkEnv, reviewerRuntime);
+  assertReadonlyWorkspaceRepoConnectivity(guardedSdkEnv, readonlyRuntime);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');

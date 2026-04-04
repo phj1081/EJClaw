@@ -24,6 +24,7 @@ import {
   type RoomRoleContext,
 } from './room-role-context.js';
 import {
+  assertReadonlyWorkspaceRepoConnectivity,
   buildReviewerGitGuardEnv,
   isReviewerRuntime,
 } from './reviewer-runtime.js';
@@ -405,7 +406,12 @@ async function runAppServerSession(
   const reviewerRuntime =
     process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
     isReviewerRuntime(containerInput.roomRoleContext);
+  const readonlyRuntime =
+    reviewerRuntime ||
+    process.env.EJCLAW_ARBITER_RUNTIME === '1' ||
+    containerInput.roomRoleContext?.role === 'arbiter';
   const clientEnv = buildReviewerGitGuardEnv(process.env, reviewerRuntime);
+  assertReadonlyWorkspaceRepoConnectivity(clientEnv, readonlyRuntime);
   const client = new CodexAppServerClient({
     cwd: EFFECTIVE_CWD,
     env: clientEnv,

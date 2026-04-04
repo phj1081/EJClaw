@@ -186,3 +186,63 @@ exec "$real_git" "$@"
     PATH: `${wrapperDir}:${baseEnv.PATH || ''}`,
   };
 }
+
+function readGitOutput(
+  args: string[],
+  baseEnv: NodeJS.ProcessEnv,
+  cwd: string,
+): string {
+  return execFileSync('git', args, {
+    cwd,
+    env: baseEnv,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+export function assertReadonlyWorkspaceRepoConnectivity(
+  baseEnv: NodeJS.ProcessEnv,
+  enabled: boolean,
+): void {
+  if (!enabled) {
+    return;
+  }
+
+  const protectedWorkDir = baseEnv.EJCLAW_WORK_DIR || '';
+  if (!protectedWorkDir) {
+    return;
+  }
+
+  let originUrl = '';
+  try {
+    originUrl = readGitOutput(
+      ['config', '--get', 'remote.origin.url'],
+      baseEnv,
+      protectedWorkDir,
+    );
+  } catch {
+    return;
+  }
+
+  if (!path.isAbsolute(originUrl) || !fs.existsSync(originUrl)) {
+    throw new Error(
+      `EJClaw readonly runtime cannot access local git origin path: ${originUrl || '(missing)'}`,
+    );
+  }
+
+  try {
+    readGitOutput(['rev-parse', '--git-dir'], baseEnv, originUrl);
+  } catch {
+    throw new Error(
+      `EJClaw readonly runtime origin path is not mounted as a git repository: ${originUrl}`,
+    );
+  }
+
+  try {
+    readGitOutput(['ls-remote', 'origin', 'HEAD'], baseEnv, protectedWorkDir);
+  } catch {
+    throw new Error(
+      `EJClaw readonly runtime cannot resolve local git origin from ${protectedWorkDir}. Check canonical repo mount for ${originUrl}.`,
+    );
+  }
+}
