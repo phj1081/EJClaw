@@ -488,12 +488,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         deps.queue.closeStdin(chatJid, { runId, reason }),
       deliverFinalText: async (text) => {
         try {
+          const persistedDeliveryRole =
+            args.deliveryRole ??
+            args.forcedRole ??
+            (hasReviewerLease(chatJid) ? 'owner' : null);
           const workItem = createProducedWorkItem({
             group_folder: group.folder,
             chat_jid: chatJid,
             agent_type:
               args.forcedAgentType ?? group.agentType ?? 'claude-code',
-            delivery_role: args.deliveryRole ?? args.forcedRole ?? null,
+            delivery_role: persistedDeliveryRole,
             start_seq: startSeq,
             end_seq: endSeq,
             result_payload: text,
@@ -837,6 +841,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const pendingTask = hasReviewerLease(chatJid)
         ? getLatestOpenPairedTaskForChat(chatJid)
         : null;
+      if (hasReviewerLease(chatJid) && openWorkItem.delivery_role == null) {
+        log.warn(
+          {
+            workItemId: openWorkItem.id,
+            chatJid,
+            pendingTaskStatus: pendingTask?.status ?? null,
+          },
+          'Paired-room delivery retry is missing a persisted delivery role; falling back to inferred routing',
+        );
+      }
       const deliveryRole =
         openWorkItem.delivery_role ??
         (pendingTask ? resolveActiveRole(pendingTask.status) : 'owner');

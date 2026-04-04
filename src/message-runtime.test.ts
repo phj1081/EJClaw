@@ -979,6 +979,9 @@ describe('createMessageRuntime', () => {
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
     expect(lastAgentTimestamps[`${chatJid}:reviewer`]).toBe('41');
     expect(saveState).toHaveBeenCalled();
+    expect(db.createProducedWorkItem).toHaveBeenCalledWith(
+      expect.objectContaining({ delivery_role: 'reviewer' }),
+    );
     expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
       chatJid,
       '리뷰 확인 완료',
@@ -1087,6 +1090,9 @@ describe('createMessageRuntime', () => {
 
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(db.createProducedWorkItem).toHaveBeenCalledWith(
+      expect.objectContaining({ delivery_role: 'owner' }),
+    );
     expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '최종 정리 완료');
   });
 
