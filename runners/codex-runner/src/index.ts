@@ -407,9 +407,7 @@ async function runAppServerSession(
     process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
     isReviewerRuntime(containerInput.roomRoleContext);
   const readonlyRuntime =
-    reviewerRuntime ||
-    process.env.EJCLAW_ARBITER_RUNTIME === '1' ||
-    containerInput.roomRoleContext?.role === 'arbiter';
+    reviewerRuntime || process.env.EJCLAW_ARBITER_RUNTIME === '1';
   const clientEnv = buildReviewerGitGuardEnv(process.env, reviewerRuntime);
   assertReadonlyWorkspaceRepoConnectivity(clientEnv, readonlyRuntime);
   const client = new CodexAppServerClient({
