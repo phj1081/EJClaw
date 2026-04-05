@@ -1697,7 +1697,9 @@ describe('runAgentForGroup Claude rotation', () => {
     vi.mocked(agentRunner.runAgentProcess)
       .mockImplementationOnce(async (_group, input) => {
         expect(input.sessionId).toBe('stale-session-id');
-        throw new Error('No conversation found with session ID: stale-session-id');
+        throw new Error(
+          'No conversation found with session ID: stale-session-id',
+        );
       })
       .mockImplementationOnce(async (_group, input, _onProcess, onOutput) => {
         expect(input.sessionId).toBeUndefined();

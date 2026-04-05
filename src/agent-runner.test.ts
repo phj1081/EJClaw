@@ -105,10 +105,7 @@ vi.mock('child_process', async () => {
   };
 });
 
-import {
-  runAgentProcess,
-  AgentOutput,
-} from './agent-runner.js';
+import { runAgentProcess, AgentOutput } from './agent-runner.js';
 import * as agentRunnerEnvironment from './agent-runner-environment.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -681,5 +678,4 @@ OUROBOROS_LLM_BACKEND = "codex"
       expect.objectContaining({ newSessionId: 'stale-session' }),
     );
   });
-
 });
