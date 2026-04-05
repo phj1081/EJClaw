@@ -2,6 +2,7 @@
   "name": "ejclaw",
   "version": "0.1.0",
   "description": "Personal Claude assistant. Lightweight, secure, customizable.",
+  "packageManager": "bun@1.3.11",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

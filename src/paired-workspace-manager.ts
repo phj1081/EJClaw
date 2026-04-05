@@ -14,6 +14,7 @@ import {
 import { resolvePairedTaskWorkspacePath } from './group-folder.js';
 import { logger } from './logger.js';
 import type { PairedTask, PairedWorkspace } from './types.js';
+import { ensureWorkspaceDependenciesInstalled } from './workspace-package-manager.js';
 
 const REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE =
   'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.';
@@ -539,6 +540,18 @@ export function registerOwnerCanonicalWorkspace(
   canonicalWorkDir: string,
 ): PairedWorkspace {
   ensureGitRepository(canonicalWorkDir);
+  const installResult = ensureWorkspaceDependenciesInstalled(canonicalWorkDir);
+  if (installResult.installed) {
+    logger.info(
+      {
+        taskId,
+        workspaceDir: canonicalWorkDir,
+        packageManager: installResult.packageManager,
+        command: installResult.commandText ?? null,
+      },
+      'Installed owner workspace dependencies',
+    );
+  }
   const workspace = makeWorkspaceRecord({
     taskId,
     role: 'owner',
@@ -644,6 +657,19 @@ export function provisionOwnerWorkspaceForPairedTask(
     }
   }
 
+  const installResult = ensureWorkspaceDependenciesInstalled(workspaceDir);
+  if (installResult.installed) {
+    logger.info(
+      {
+        taskId,
+        workspaceDir,
+        packageManager: installResult.packageManager,
+        command: installResult.commandText ?? null,
+      },
+      'Installed owner workspace dependencies',
+    );
+  }
+
   const workspace = makeWorkspaceRecord({
     taskId,
     role: 'owner',
@@ -739,6 +765,21 @@ export function markPairedTaskReviewReady(taskId: string): {
   const ownerWorkspace = getPairedWorkspace(taskId, 'owner');
   if (!ownerWorkspace) {
     return null;
+  }
+
+  const installResult = ensureWorkspaceDependenciesInstalled(
+    ownerWorkspace.workspace_dir,
+  );
+  if (installResult.installed) {
+    logger.info(
+      {
+        taskId,
+        ownerDir: ownerWorkspace.workspace_dir,
+        packageManager: installResult.packageManager,
+        command: installResult.commandText ?? null,
+      },
+      'Installed owner workspace dependencies before review handoff',
+    );
   }
 
   // Reviewer runs in a container with the owner workspace mounted read-only.

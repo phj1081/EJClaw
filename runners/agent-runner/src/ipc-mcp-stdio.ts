@@ -427,7 +427,7 @@ server.tool(
     profile: z
       .enum(VERIFICATION_PROFILES)
       .describe(
-        'Fixed verification profile. test=npm test, typecheck=npm run typecheck, build=npm run build.',
+        'Fixed verification profile. Runs the workspace test/typecheck/build scripts with the repo-configured package manager.',
       ),
   },
   async (args) => {

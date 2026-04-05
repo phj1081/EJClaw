@@ -8,6 +8,7 @@ import {
   buildVerificationCommand,
   computeVerificationSnapshot,
   isVerificationProfile,
+  runVerificationRequest,
 } from './verification.js';
 
 describe('verification helpers', () => {
@@ -19,20 +20,40 @@ describe('verification helpers', () => {
   });
 
   it('builds deterministic commands for each profile', () => {
-    expect(buildVerificationCommand('test')).toMatchObject({
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-verification-'));
+    fs.writeFileSync(path.join(repoDir, 'package.json'), JSON.stringify({}));
+
+    expect(buildVerificationCommand('test', repoDir)).toMatchObject({
       file: 'npm',
       args: ['test'],
       requiredScript: 'test',
     });
-    expect(buildVerificationCommand('typecheck')).toMatchObject({
+    expect(buildVerificationCommand('typecheck', repoDir)).toMatchObject({
       file: 'npm',
       args: ['run', 'typecheck'],
       requiredScript: 'typecheck',
     });
-    expect(buildVerificationCommand('build')).toMatchObject({
+    expect(buildVerificationCommand('build', repoDir)).toMatchObject({
       file: 'npm',
       args: ['run', 'build'],
       requiredScript: 'build',
+    });
+  });
+
+  it('selects the workspace package manager for verification commands', () => {
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-pnpm-'),
+    );
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({ packageManager: 'pnpm@10.11.0' }),
+    );
+
+    expect(buildVerificationCommand('typecheck', repoDir)).toMatchObject({
+      file: 'corepack',
+      args: ['pnpm', 'run', 'typecheck'],
+      commandText: 'corepack pnpm run typecheck',
+      requiredScript: 'typecheck',
     });
   });
 
@@ -57,5 +78,35 @@ describe('verification helpers', () => {
 
     expect(second).toBe(first);
     expect(third).not.toBe(first);
+  });
+
+  it('fails verification when node_modules contains only cache noise', async () => {
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-noise-'),
+    );
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.vite'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        scripts: {
+          test: 'vitest run',
+          typecheck: 'tsc --noEmit',
+          build: 'tsc',
+        },
+      }),
+    );
+
+    const result = await runVerificationRequest(
+      {
+        requestId: 'req-noise',
+        profile: 'typecheck',
+      },
+      { repoDir },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('installed node_modules tree');
   });
 });
