@@ -20,7 +20,9 @@ describe('verification helpers', () => {
   });
 
   it('builds deterministic commands for each profile', () => {
-    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-verification-'));
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-'),
+    );
     fs.writeFileSync(path.join(repoDir, 'package.json'), JSON.stringify({}));
 
     expect(buildVerificationCommand('test', repoDir)).toMatchObject({

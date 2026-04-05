@@ -1704,6 +1704,230 @@ describe('createMessageRuntime', () => {
     );
   });
 
+  it('auto-runs an owner follow-up when a task returns to active after reviewer feedback', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-active-owner-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([]);
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-active-owner-follow-up',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'owner 초안',
+        created_at: '2026-03-30T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-active-owner-follow-up',
+        turn_number: 2,
+        role: 'reviewer',
+        output_text: '리뷰어가 수정 요청을 남김',
+        created_at: '2026-03-30T00:00:02.000Z',
+      },
+    ]);
+    vi.mocked(db.getRecentChatMessages).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: '눈쟁이',
+        content: '이 기능 마무리해줘',
+        timestamp: '2026-03-30T00:00:00.500Z',
+        seq: 1,
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('이 기능 마무리해줘');
+        expect(input.prompt).toContain('리뷰어가 수정 요청을 남김');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'owner가 reviewer 피드백을 반영했습니다.',
+          newSessionId: 'session-owner-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'owner가 reviewer 피드백을 반영했습니다.',
+          newSessionId: 'session-owner-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-active-owner-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'owner가 reviewer 피드백을 반영했습니다.',
+    );
+  });
+
+  it('builds owner follow-up prompts from paired turn outputs instead of raw reviewer bot delivery text', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-active-bot-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'reviewer-bot-message-active',
+        chat_jid: chatJid,
+        sender: 'reviewer-bot@test',
+        sender_name: '리뷰어',
+        content: 'DONE_WITH_CONCERNS\n\n리뷰어 디스코드 출력 원문',
+        timestamp: '2026-03-30T00:00:04.000Z',
+        seq: 42,
+        is_bot_message: true,
+      } as any,
+    ]);
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-active-bot-follow-up',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'owner 초안',
+        created_at: '2026-03-30T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-active-bot-follow-up',
+        turn_number: 2,
+        role: 'reviewer',
+        output_text: 'paired_turn_outputs 에 저장된 reviewer 요약',
+        created_at: '2026-03-30T00:00:02.000Z',
+      },
+    ]);
+    vi.mocked(db.getRecentChatMessages).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: '눈쟁이',
+        content: '이 기능 마무리해줘',
+        timestamp: '2026-03-30T00:00:00.500Z',
+        seq: 1,
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('paired_turn_outputs 에 저장된 reviewer 요약');
+        expect(input.prompt).not.toContain('리뷰어 디스코드 출력 원문');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'owner follow-up ok',
+          newSessionId: 'session-owner-bot-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'owner follow-up ok',
+          newSessionId: 'session-owner-bot-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-active-bot-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, 'owner follow-up ok');
+  });
+
   it('reuses the shared arbiter prompt builder for pending arbiter turns', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');

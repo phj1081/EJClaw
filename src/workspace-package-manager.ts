@@ -44,7 +44,9 @@ function readPackageJsonMetadata(repoDir: string): PackageJsonMetadata | null {
     return null;
   }
 
-  return JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')) as PackageJsonMetadata;
+  return JSON.parse(
+    fs.readFileSync(packageJsonPath, 'utf-8'),
+  ) as PackageJsonMetadata;
 }
 
 function detectPackageManagerFromField(
@@ -60,10 +62,7 @@ function detectPackageManagerFromField(
   return null;
 }
 
-function hasLockfile(
-  repoDir: string,
-  ...names: readonly string[]
-): boolean {
+function hasLockfile(repoDir: string, ...names: readonly string[]): boolean {
   return names.some((name) => fs.existsSync(path.join(repoDir, name)));
 }
 
@@ -91,7 +90,9 @@ function detectYarnBerry(
   packageManagerField: string | undefined,
 ): boolean {
   if (packageManagerField?.startsWith('yarn@')) {
-    const version = packageManagerField.slice('yarn@'.length).split(/[+-]/, 1)[0];
+    const version = packageManagerField
+      .slice('yarn@'.length)
+      .split(/[+-]/, 1)[0];
     const major = Number.parseInt(version.split('.', 1)[0] ?? '', 10);
     if (Number.isFinite(major) && major >= 2) {
       return true;
@@ -142,11 +143,7 @@ function computeInstallFingerprint(repoDir: string): string | null {
 }
 
 function readInstallFingerprint(repoDir: string): string | null {
-  const statePath = path.join(
-    repoDir,
-    'node_modules',
-    INSTALL_STATE_FILENAME,
-  );
+  const statePath = path.join(repoDir, 'node_modules', INSTALL_STATE_FILENAME);
   if (!fs.existsSync(statePath)) {
     return null;
   }
@@ -356,7 +353,9 @@ export function ensureWorkspaceDependenciesInstalled(
         ? (error as { stdout: string }).stdout.trim()
         : '';
     const detail =
-      stderr || stdout || (error instanceof Error ? error.message : String(error));
+      stderr ||
+      stdout ||
+      (error instanceof Error ? error.message : String(error));
     throw new Error(
       `Failed to install workspace dependencies with "${command.commandText}" in ${repoDir}: ${detail}`,
     );

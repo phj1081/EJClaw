@@ -25,7 +25,10 @@ import {
 } from './room-role-context.js';
 import {
   assertReadonlyWorkspaceRepoConnectivity,
+  buildClaudeReadonlySandboxSettings,
   buildReviewerGitGuardEnv,
+  getClaudeReadonlySandboxMode,
+  isClaudeReadonlyReviewerRuntime,
   isReviewerMutatingShellCommand,
   isReviewerRuntime,
 } from './reviewer-runtime.js';
@@ -545,6 +548,8 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   reviewerRuntime: boolean,
+  claudeReadonlyReviewerRuntime: boolean,
+  claudeReadonlySandboxMode: 'strict' | 'best-effort' | null,
 ): Promise<{
   newSessionId?: string;
   closedDuringQuery: boolean;
@@ -622,8 +627,20 @@ async function runQuery(
   if (thinking) log(`Thinking config: ${JSON.stringify(thinking)}`);
   if (effort) log(`Effort: ${effort}`);
   if (reviewerRuntime) log('Reviewer runtime restrictions enabled');
+  if (claudeReadonlyReviewerRuntime) {
+    log(
+      `Claude host reviewer read-only sandbox enabled (${claudeReadonlySandboxMode || 'unknown'})`,
+    );
+  }
+  if (claudeReadonlySandboxMode === 'best-effort') {
+    log(
+      'Claude host reviewer sandbox capability unavailable on this host, using best-effort read-only mode',
+    );
+  }
 
-  const allowedTools = reviewerRuntime
+  const readonlyReviewerRuntime =
+    reviewerRuntime || claudeReadonlyReviewerRuntime;
+  const allowedTools = readonlyReviewerRuntime
     ? [
         'Bash',
         'Read', 'Glob', 'Grep',
@@ -644,6 +661,18 @@ async function runQuery(
         'mcp__ejclaw__*'
       ];
 
+  const readonlyProtectedPaths = [effectiveCwd, ...extraDirs].filter(
+    (value): value is string => Boolean(value),
+  );
+  const claudeReadonlySandboxSettings =
+    claudeReadonlyReviewerRuntime && claudeReadonlySandboxMode
+      ? buildClaudeReadonlySandboxSettings(
+          readonlyProtectedPaths,
+          undefined,
+          claudeReadonlySandboxMode,
+        )
+      : undefined;
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -657,6 +686,11 @@ async function runQuery(
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
+      ...(claudeReadonlySandboxSettings
+        ? {
+            sandbox: claudeReadonlySandboxSettings,
+          }
+        : {}),
       settingSources: ['project', 'user'],
       abortController: agentAbortController,
       mcpServers: {
@@ -684,7 +718,7 @@ async function runQuery(
         PreToolUse: [
           {
             matcher: 'Bash',
-            hooks: reviewerRuntime
+            hooks: readonlyReviewerRuntime
               ? [createReviewerBashGuardHook(), createSanitizeBashHook()]
               : [createSanitizeBashHook()],
           },
@@ -950,9 +984,19 @@ async function main(): Promise<void> {
   const reviewerRuntime =
     process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
     isReviewerRuntime(containerInput.roomRoleContext);
+  const claudeReadonlyReviewerRuntime =
+    isClaudeReadonlyReviewerRuntime(containerInput.roomRoleContext);
+  const claudeReadonlySandboxMode = claudeReadonlyReviewerRuntime
+    ? getClaudeReadonlySandboxMode()
+    : null;
   const readonlyRuntime =
-    reviewerRuntime || process.env.EJCLAW_ARBITER_RUNTIME === '1';
-  const guardedSdkEnv = buildReviewerGitGuardEnv(sdkEnv, reviewerRuntime);
+    reviewerRuntime ||
+    claudeReadonlyReviewerRuntime ||
+    process.env.EJCLAW_ARBITER_RUNTIME === '1';
+  const guardedSdkEnv = buildReviewerGitGuardEnv(
+    sdkEnv,
+    reviewerRuntime || claudeReadonlyReviewerRuntime,
+  );
   assertReadonlyWorkspaceRepoConnectivity(guardedSdkEnv, readonlyRuntime);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1092,6 +1136,8 @@ async function main(): Promise<void> {
       containerInput,
       guardedSdkEnv,
       reviewerRuntime,
+      claudeReadonlyReviewerRuntime,
+      claudeReadonlySandboxMode,
     );
     if (queryResult.newSessionId) {
       sessionId = queryResult.newSessionId;

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./agent-runner.js', () => ({
   runAgentProcess: vi.fn(),
@@ -156,7 +156,12 @@ vi.mock('./session-recovery.js', () => ({
 vi.mock('./token-rotation.js', () => ({
   rotateToken: vi.fn(() => false),
   getTokenCount: vi.fn(() => 1),
+  getCurrentTokenIndex: vi.fn(() => 0),
   markTokenHealthy: vi.fn(),
+}));
+
+vi.mock('./token-refresh.js', () => ({
+  forceRefreshToken: vi.fn(async () => null),
 }));
 
 vi.mock('./codex-token-rotation.js', () => ({
@@ -198,6 +203,7 @@ import { runAgentForGroup } from './message-agent-executor.js';
 import * as pairedExecutionContext from './paired-execution-context.js';
 import * as sessionRecovery from './session-recovery.js';
 import * as serviceRouting from './service-routing.js';
+import * as tokenRefresh from './token-refresh.js';
 import * as tokenRotation from './token-rotation.js';
 import type { RegisteredGroup } from './types.js';
 
@@ -226,9 +232,13 @@ function makeDeps() {
   };
 }
 
+const ORIGINAL_UNSAFE_HOST_PAIRED_MODE =
+  process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+
 describe('runAgentForGroup room memory', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
         await onOutput?.({
@@ -243,6 +253,15 @@ describe('runAgentForGroup room memory', () => {
     vi.mocked(buildRoomMemoryBriefing).mockResolvedValue(
       '## Shared Room Memory\n- remembered context',
     );
+  });
+
+  afterAll(() => {
+    if (ORIGINAL_UNSAFE_HOST_PAIRED_MODE === undefined) {
+      delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+    } else {
+      process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE =
+        ORIGINAL_UNSAFE_HOST_PAIRED_MODE;
+    }
   });
 
   it('injects a room memory briefing when starting a fresh session', async () => {
@@ -1031,6 +1050,108 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
+  it('starts reviewer Claude fresh in unsafe host mode instead of resuming a stored session', async () => {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      agentType: 'codex' as const,
+    };
+    const deps = {
+      ...makeDeps(),
+      getSessions: () => ({ 'test-group:reviewer': 'reviewer-session' }),
+    };
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-review',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-review',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: '2026-03-31T00:00:00.000Z',
+        status: 'review_ready',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {
+        EJCLAW_PAIRED_TASK_ID: 'paired-task-review',
+        EJCLAW_PAIRED_ROLE: 'reviewer',
+        EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+        CLAUDE_CONFIG_DIR: '/tmp/test-group-reviewer',
+      },
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: 'review ok',
+      newSessionId: 'review-session-new',
+    });
+
+    await runAgentForGroup(deps, {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-review-plan-unsafe-host',
+    });
+
+    expect(deps.clearSession).toHaveBeenCalledWith('test-group:reviewer');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        folder: 'test-group',
+        agentType: 'claude-code',
+      }),
+      expect.objectContaining({
+        sessionId: undefined,
+      }),
+      expect.any(Function),
+      undefined,
+      expect.objectContaining({
+        EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+      }),
+    );
+    expect(deps.persistSession).not.toHaveBeenCalled();
+  });
+
   it('does not enqueue a second generic follow-up when reviewer approval already moved the task to merge_ready', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     const deps = makeDeps();
@@ -1123,7 +1244,9 @@ describe('runAgentForGroup Claude rotation', () => {
     vi.resetAllMocks();
     vi.mocked(buildRoomMemoryBriefing).mockResolvedValue(undefined);
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
+    vi.mocked(tokenRotation.getCurrentTokenIndex).mockReturnValue(0);
     vi.mocked(tokenRotation.rotateToken).mockReturnValue(false);
+    vi.mocked(tokenRefresh.forceRefreshToken).mockResolvedValue(null);
   });
 
   it('rotates to another Claude account on usage exhaustion', async () => {
@@ -1227,6 +1350,62 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
     // No fallback provider — rotation is the only recovery mechanism
     expect(outputs).toEqual(['새 Claude 토큰 응답입니다.']);
+  });
+
+  it('force-refreshes the active Claude token before rotating on auth-expired', async () => {
+    const outputs: string[] = [];
+
+    vi.mocked(tokenRefresh.forceRefreshToken).mockResolvedValueOnce(
+      'new-access-token',
+    );
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'force refresh 뒤 Claude 응답입니다.',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-auth-expired-force-refresh',
+      onOutput: async (output) => {
+        if (typeof output.result === 'string') outputs.push(output.result);
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(tokenRefresh.forceRefreshToken).toHaveBeenCalledWith(0);
+    expect(tokenRotation.rotateToken).not.toHaveBeenCalled();
+    expect(tokenRotation.markTokenHealthy).toHaveBeenCalledTimes(1);
+    expect(outputs).toEqual(['force refresh 뒤 Claude 응답입니다.']);
   });
 
   it('suppresses Claude 502 HTML and returns error when no rotation is available', async () => {
@@ -1503,6 +1682,48 @@ describe('runAgentForGroup Claude rotation', () => {
         intended_role: 'owner',
       }),
     );
+  });
+
+  it('drops a stale Claude session id before retrying a fresh session', async () => {
+    const deps = {
+      ...makeDeps(),
+      getSessions: () => ({ 'test-claude': 'stale-session-id' }),
+    };
+
+    vi.mocked(sessionRecovery.shouldRetryFreshSessionOnAgentFailure)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, input) => {
+        expect(input.sessionId).toBe('stale-session-id');
+        throw new Error('No conversation found with session ID: stale-session-id');
+      })
+      .mockImplementationOnce(async (_group, input, _onProcess, onOutput) => {
+        expect(input.sessionId).toBeUndefined();
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'fresh retry success',
+        });
+        return {
+          status: 'success',
+          result: 'fresh retry success',
+          newSessionId: 'fresh-session-id',
+        };
+      });
+
+    const result = await runAgentForGroup(deps, {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-stale-session-id-retry',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(deps.clearSession).toHaveBeenCalledWith('test-claude');
   });
 
   it('suppresses a usage-exhausted banner even when Claude already emitted progress text', async () => {

@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./db.js', () => ({
   createPairedTask: vi.fn(),
@@ -78,6 +78,12 @@ const failoverOwnerContext: RoomRoleContext = {
   failoverOwner: true,
 };
 
+const ORIGINAL_UNSAFE_HOST_PAIRED_MODE =
+  process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+const ORIGINAL_REVIEWER_RUNTIME = process.env.EJCLAW_REVIEWER_RUNTIME;
+const ORIGINAL_CLAUDE_REVIEWER_READONLY =
+  process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
+
 function createCanonicalRepoWithCommit(commitMessage: string): string {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-finalize-'));
   execFileSync('git', ['init'], { cwd: repoDir, stdio: 'ignore' });
@@ -150,6 +156,9 @@ function buildWorkspace(
 
 describe('paired execution context', () => {
   beforeEach(() => {
+    delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+    delete process.env.EJCLAW_REVIEWER_RUNTIME;
+    delete process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
     vi.resetAllMocks();
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
     vi.mocked(db.getPairedTaskById).mockReturnValue(undefined);
@@ -174,6 +183,28 @@ describe('paired execution context', () => {
       workspace: null,
       autoRefreshed: false,
     });
+  });
+
+  afterAll(() => {
+    if (ORIGINAL_UNSAFE_HOST_PAIRED_MODE == null) {
+      delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+    } else {
+      process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE =
+        ORIGINAL_UNSAFE_HOST_PAIRED_MODE;
+    }
+
+    if (ORIGINAL_REVIEWER_RUNTIME == null) {
+      delete process.env.EJCLAW_REVIEWER_RUNTIME;
+    } else {
+      process.env.EJCLAW_REVIEWER_RUNTIME = ORIGINAL_REVIEWER_RUNTIME;
+    }
+
+    if (ORIGINAL_CLAUDE_REVIEWER_READONLY == null) {
+      delete process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
+    } else {
+      process.env.EJCLAW_CLAUDE_REVIEWER_READONLY =
+        ORIGINAL_CLAUDE_REVIEWER_READONLY;
+    }
   });
 
   it('creates an owner execution with a worktree override', () => {
@@ -413,6 +444,7 @@ describe('paired execution context', () => {
       EJCLAW_PAIRED_ROLE: 'reviewer',
       EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
     });
+    expect(result?.envOverrides.EJCLAW_CLAUDE_REVIEWER_READONLY).toBe('1');
     expect(result?.envOverrides.EJCLAW_REVIEWER_RUNTIME).toBeUndefined();
     expect(result?.envOverrides.CLAUDE_CONFIG_DIR).toContain(
       '/data/sessions/paired-room-reviewer',

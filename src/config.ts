@@ -120,7 +120,7 @@ export const AGENT_LANGUAGE = getEnv('AGENT_LANGUAGE') || '';
 
 /** Number of consecutive owner↔reviewer round trips before arbiter is auto-requested. */
 export const ARBITER_DEADLOCK_THRESHOLD = parseInt(
-  getEnv('ARBITER_DEADLOCK_THRESHOLD') || '3',
+  getEnv('ARBITER_DEADLOCK_THRESHOLD') || '2',
   10,
 );
 

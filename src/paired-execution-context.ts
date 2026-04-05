@@ -387,6 +387,9 @@ export function preparePairedExecutionContext(args: {
     envOverrides.CLAUDE_CONFIG_DIR = reviewerSessionDir;
     if (unsafeHostPairedMode) {
       envOverrides.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+      if (REVIEWER_AGENT_TYPE === 'claude-code') {
+        envOverrides.EJCLAW_CLAUDE_REVIEWER_READONLY = '1';
+      }
     } else {
       envOverrides.EJCLAW_REVIEWER_RUNTIME = '1';
     }

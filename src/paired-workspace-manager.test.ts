@@ -219,10 +219,9 @@ describe('paired workspace manager', () => {
       packageManager: 'pnpm' as const,
     }));
     vi.doMock('./workspace-package-manager.js', async () => {
-      const actual =
-        await vi.importActual<typeof import('./workspace-package-manager.js')>(
-          './workspace-package-manager.js',
-        );
+      const actual = await vi.importActual<
+        typeof import('./workspace-package-manager.js')
+      >('./workspace-package-manager.js');
       return {
         ...actual,
         ensureWorkspaceDependenciesInstalled:
