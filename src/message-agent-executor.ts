@@ -1124,8 +1124,20 @@ export async function runAgentForGroup(
       pairedExecutionStatus === 'succeeded' &&
       pairedSawOutput
     ) {
+      const completedRole = roomRoleContext?.role ?? 'owner';
       const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);
-      if (finishedCheck?.status !== 'completed') {
+      const skipGenericFollowUpForInlineFinalize =
+        completedRole === 'reviewer' && finishedCheck?.status === 'merge_ready';
+      if (skipGenericFollowUpForInlineFinalize) {
+        log.info(
+          {
+            taskId: pairedExecutionContext.task.id,
+            role: completedRole,
+            taskStatus: finishedCheck?.status ?? null,
+          },
+          'Skipping generic follow-up after reviewer approval because inline finalize will handle the owner handoff',
+        );
+      } else if (finishedCheck?.status !== 'completed') {
         deps.queue.enqueueMessageCheck(chatJid);
       }
     }

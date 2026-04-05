@@ -429,6 +429,18 @@ export function completePairedExecutionContext(args: {
 
   const task = getPairedTaskById(taskId);
   if (!task) return;
+  if (task.status === 'completed') {
+    logger.info(
+      {
+        taskId,
+        role,
+        status,
+        completionReason: task.completion_reason ?? null,
+      },
+      'Ignoring late paired execution completion for an already completed task',
+    );
+    return;
+  }
 
   // On failure: for reviewers, still check verdict from summary — output may
   // have been delivered even though the executor classified it as failed

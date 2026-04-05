@@ -1030,6 +1030,92 @@ describe('runAgentForGroup room memory', () => {
       undefined,
     );
   });
+
+  it('does not enqueue a second generic follow-up when reviewer approval already moved the task to merge_ready', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const deps = makeDeps();
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-merge-ready',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 1,
+        review_requested_at: '2026-03-31T00:00:00.000Z',
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-merge-ready',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 1,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'merge_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'DONE\nreview complete',
+          output: { visibility: 'public', text: 'DONE\nreview complete' },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: 'DONE\nreview complete',
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-review-merge-ready',
+      forcedRole: 'reviewer',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
+  });
 });
 
 describe('runAgentForGroup Claude rotation', () => {

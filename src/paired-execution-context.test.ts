@@ -391,6 +391,27 @@ describe('paired execution context', () => {
     // Should not throw; just logs.
   });
 
+  it('ignores late completions after the paired task is already completed', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'completed',
+        completion_reason: 'done',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'DONE',
+    });
+
+    expect(db.updatePairedTask).not.toHaveBeenCalled();
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).not.toHaveBeenCalled();
+  });
+
   it('completes owner finalize when only the commit object changed after approval', () => {
     const repoDir = createCanonicalRepoWithCommit('reviewed');
     const approvedSourceRef = resolveTreeRef(repoDir);
