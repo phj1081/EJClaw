@@ -380,6 +380,46 @@ describe('paired execution context', () => {
     expect(result?.envOverrides.EJCLAW_WORK_DIR).toBeUndefined();
   });
 
+  it('routes reviewer to host mode when unsafe host paired mode is enabled', () => {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(
+      buildPairedTask({
+        status: 'review_ready',
+        review_requested_at: '2026-03-28T00:00:00.000Z',
+      }),
+    );
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'review_ready',
+        review_requested_at: '2026-03-28T00:00:00.000Z',
+      }),
+    );
+    vi.mocked(
+      pairedWorkspaceManager.prepareReviewerWorkspaceForExecution,
+    ).mockReturnValue({
+      workspace: buildWorkspace('reviewer', '/tmp/paired/task-1/reviewer'),
+      autoRefreshed: false,
+    });
+
+    const result = preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-host-reviewer',
+      roomRoleContext: reviewerContext,
+    });
+
+    expect(result?.envOverrides).toMatchObject({
+      EJCLAW_WORK_DIR: '/tmp/paired/task-1/reviewer',
+      EJCLAW_PAIRED_ROLE: 'reviewer',
+      EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+    });
+    expect(result?.envOverrides.EJCLAW_REVIEWER_RUNTIME).toBeUndefined();
+    expect(result?.envOverrides.CLAUDE_CONFIG_DIR).toContain(
+      '/data/sessions/paired-room-reviewer',
+    );
+    delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+  });
+
   it('completePairedExecutionContext logs without error', () => {
     completePairedExecutionContext({
       taskId: 'task-1',

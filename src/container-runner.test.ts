@@ -40,6 +40,10 @@ vi.mock('./container-runtime.js', () => ({
   tmpfsMountArgs: (containerPath: string) => ['--tmpfs', containerPath],
 }));
 
+vi.mock('./agent-runner-environment.js', () => ({
+  ensureClaudeGlobalSettingsFile: vi.fn(),
+}));
+
 vi.mock('./credential-proxy.js', () => ({
   detectAuthMode: mockDetectAuthMode,
 }));
@@ -148,6 +152,16 @@ describe('container-runner path compatibility', () => {
           hostPath: ownerWorkspaceDir,
           containerPath: ownerWorkspaceDir,
           readonly: true,
+        }),
+        expect.objectContaining({
+          hostPath: path.join(
+            TEST_DATA_DIR,
+            'sessions',
+            `${group.folder}-reviewer`,
+            '.claude.json',
+          ),
+          containerPath: '/home/node/.claude.json',
+          readonly: false,
         }),
         expect.objectContaining({
           hostPath: '/dev/null',

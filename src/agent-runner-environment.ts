@@ -80,6 +80,13 @@ function ensureClaudeSessionSettings(groupSessionsDir: string): void {
   );
 }
 
+export function ensureClaudeGlobalSettingsFile(sessionDir: string): void {
+  const settingsFile = path.join(sessionDir, '.claude.json');
+  if (fs.existsSync(settingsFile)) return;
+
+  fs.writeFileSync(settingsFile, '{}\n');
+}
+
 function syncHostCodexSessionFiles(sessionCodexDir: string): void {
   const hostCodexDir = path.join(os.homedir(), '.codex');
   fs.mkdirSync(sessionCodexDir, { recursive: true });
@@ -586,6 +593,7 @@ export function prepareContainerSessionEnvironment(args: {
 
   fs.mkdirSync(sessionDir, { recursive: true });
   ensureClaudeSessionSettings(sessionDir);
+  ensureClaudeGlobalSettingsFile(sessionDir);
 
   // Sync skills from host
   const skillSources = [

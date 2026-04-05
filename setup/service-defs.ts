@@ -54,6 +54,12 @@ const LEGACY_SERVICE_TEMPLATES: ServiceTemplate[] = [
 
 function materializeServiceDef(template: ServiceTemplate): ServiceDef {
   const environmentFile = undefined;
+  const extraEnv =
+    template.kind === 'primary'
+      ? {
+          EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+        }
+      : undefined;
 
   return {
     kind: template.kind,
@@ -62,7 +68,7 @@ function materializeServiceDef(template: ServiceTemplate): ServiceDef {
     description: template.description,
     logName: template.logName,
     environmentFile,
-    extraEnv: undefined,
+    extraEnv,
   };
 }
 

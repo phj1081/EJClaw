@@ -32,6 +32,7 @@ import {
   tmpfsMountArgs,
   writableMountArgs,
 } from './container-runtime.js';
+import { ensureClaudeGlobalSettingsFile } from './agent-runner-environment.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
@@ -435,9 +436,15 @@ export function buildReviewerMounts(
     `${group.folder}-reviewer`,
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
+  ensureClaudeGlobalSettingsFile(groupSessionsDir);
   pushMountOnce(mounts, {
     hostPath: groupSessionsDir,
     containerPath: '/home/node/.claude',
+    readonly: false,
+  });
+  pushMountOnce(mounts, {
+    hostPath: path.join(groupSessionsDir, '.claude.json'),
+    containerPath: '/home/node/.claude.json',
     readonly: false,
   });
 

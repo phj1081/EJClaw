@@ -34,6 +34,9 @@ const MUTATING_SHELL_PATTERNS = [
 export function isReviewerRuntime(
   roomRoleContext?: RoomRoleContext,
 ): boolean {
+  if (process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1') {
+    return false;
+  }
   return roomRoleContext?.role === 'reviewer';
 }
 

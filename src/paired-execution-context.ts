@@ -368,12 +368,13 @@ export function preparePairedExecutionContext(args: {
     EJCLAW_PAIRED_TASK_ID: task.id,
     EJCLAW_PAIRED_ROLE: roomRoleContext.role,
   };
+  const unsafeHostPairedMode =
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
 
   if (workspace?.workspace_dir) {
     envOverrides.EJCLAW_WORK_DIR = workspace.workspace_dir;
   }
   if (roomRoleContext.role === 'reviewer') {
-    envOverrides.EJCLAW_REVIEWER_RUNTIME = '1';
     // Use a separate Claude config dir so the reviewer's SDK session cache
     // doesn't collide with the owner's. Without this, the Claude SDK picks
     // up the owner's cached session from disk even when sessionId is undefined.
@@ -384,8 +385,12 @@ export function preparePairedExecutionContext(args: {
     );
     fs.mkdirSync(reviewerSessionDir, { recursive: true });
     envOverrides.CLAUDE_CONFIG_DIR = reviewerSessionDir;
+    if (unsafeHostPairedMode) {
+      envOverrides.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+    } else {
+      envOverrides.EJCLAW_REVIEWER_RUNTIME = '1';
+    }
   } else if (roomRoleContext.role === 'arbiter') {
-    envOverrides.EJCLAW_ARBITER_RUNTIME = '1';
     const arbiterSessionDir = path.join(
       DATA_DIR,
       'sessions',
@@ -396,6 +401,11 @@ export function preparePairedExecutionContext(args: {
     fs.rmSync(arbiterSessionDir, { recursive: true, force: true });
     fs.mkdirSync(arbiterSessionDir, { recursive: true });
     envOverrides.CLAUDE_CONFIG_DIR = arbiterSessionDir;
+    if (unsafeHostPairedMode) {
+      envOverrides.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+    } else {
+      envOverrides.EJCLAW_ARBITER_RUNTIME = '1';
+    }
   }
 
   return {

@@ -13,6 +13,7 @@ import {
   IDLE_TIMEOUT,
 } from './config.js';
 import {
+  ensureClaudeGlobalSettingsFile,
   prepareContainerSessionEnvironment,
   prepareGroupEnvironment,
 } from './agent-runner-environment.js';
@@ -78,6 +79,15 @@ export function mirrorContainerCodexSessionFiles(
       fs.copyFileSync(sourcePath, path.join(mountedCodexDir, file));
     }
   }
+
+  const sourceClaudeJson = path.join(sourceSessionDir, '.claude.json');
+  if (fs.existsSync(sourceClaudeJson)) {
+    ensureClaudeGlobalSettingsFile(mountedSessionDir);
+    fs.copyFileSync(
+      sourceClaudeJson,
+      path.join(mountedSessionDir, '.claude.json'),
+    );
+  }
 }
 
 export async function runAgentProcess(
@@ -91,12 +101,16 @@ export async function runAgentProcess(
   onOutput?: (output: AgentOutput) => Promise<void>,
   envOverrides?: Record<string, string>,
 ): Promise<AgentOutput> {
+  const unsafeHostPairedMode =
+    envOverrides?.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
+
   // ── Reviewer container mode ─────────────────────────────────────
   // Reviewers always run inside a Docker container with read-only source
   // mount for kernel-level write protection. Docker is required.
   if (
+    !unsafeHostPairedMode &&
     envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1' ||
-    envOverrides?.EJCLAW_ARBITER_RUNTIME === '1'
+    (!unsafeHostPairedMode && envOverrides?.EJCLAW_ARBITER_RUNTIME === '1')
   ) {
     const ownerWorkspaceDir =
       envOverrides?.EJCLAW_WORK_DIR || group.workDir || process.cwd();
@@ -169,6 +183,28 @@ export async function runAgentProcess(
   if (envOverrides) {
     for (const [key, value] of Object.entries(envOverrides)) {
       if (value) env[key] = value;
+    }
+  }
+  if (
+    unsafeHostPairedMode &&
+    envOverrides?.CLAUDE_CONFIG_DIR &&
+    (input.roomRoleContext?.role === 'reviewer' ||
+      input.roomRoleContext?.role === 'arbiter')
+  ) {
+    prepareContainerSessionEnvironment({
+      sessionDir: envOverrides.CLAUDE_CONFIG_DIR,
+      chatJid: input.chatJid,
+      isMain: input.isMain,
+      groupFolder: group.folder,
+      agentType: group.agentType || 'claude-code',
+      memoryBriefing: input.memoryBriefing,
+      role: input.roomRoleContext.role,
+      ipcDir: env.EJCLAW_IPC_DIR,
+      hostIpcDir: env.EJCLAW_HOST_IPC_DIR,
+      workDir: envOverrides.EJCLAW_WORK_DIR || env.EJCLAW_WORK_DIR,
+    });
+    if ((group.agentType || 'claude-code') === 'codex') {
+      env.CODEX_HOME = path.join(envOverrides.CLAUDE_CONFIG_DIR, '.codex');
     }
   }
   if (input.runId) {
