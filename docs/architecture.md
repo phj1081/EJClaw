@@ -17,7 +17,7 @@ Single unified service (`ejclaw`) manages all three Discord bots in one process:
 Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (host process)
                                           │       │
                                           │       ▼ (auto-trigger)
-                                          ├──► Reviewer (Docker container, :ro mount)
+                                          ├──► Reviewer (host process, read-only guarded)
                                           │       │
                                           │   Verdict routing
                                           │       ├─ DONE → change detection → finalize or re-review
@@ -77,16 +77,15 @@ User message
           → Arbiter summoned → binding verdict → loop resumes
 ```
 
-## Container Isolation
+## Verification Isolation
 
-Reviewer and arbiter run inside a Docker container with:
+Reviewer and arbiter now run as host processes with role-scoped read-only
+guards and sandbox settings. Docker remains in use for verification profiles:
 
-- Read-only source mount (kernel-level write protection)
-- Both Claude (agent-runner) and Codex (codex-runner) supported
-- Runner selected at `docker exec` time based on agent type
-- tmpfs overlays for test runner caches
-- IPC via filesystem for follow-up messages
-- Credentials injected per-exec (never baked into container)
+- Scratch workspace copied before execution
+- Verification command run inside the container image
+- Isolated filesystem view for test/typecheck/build checks
+- Runtime image shared with host tooling and evidence inspection
 
 ## Key Files
 
@@ -94,7 +93,8 @@ Reviewer and arbiter run inside a Docker container with:
 |------|---------|
 | `src/index.ts` | Orchestrator: state, message loop, agent invocation |
 | `src/agent-runner.ts` | Spawns agent processes, manages env/sessions/skills |
-| `src/container-runner.ts` | Docker container execution for reviewer/arbiter |
+| `src/verification.ts` | Verification execution using the container image |
+| `src/container-runtime.ts` | Shared Docker runtime helpers for verification |
 | `src/channels/discord.ts` | Discord channel (8s typing refresh, Whisper transcription) |
 | `src/ipc.ts` | IPC watcher and task processing |
 | `src/router.ts` | Message formatting and outbound routing |

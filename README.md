@@ -89,7 +89,7 @@ No extra SDK processes. External references use lightweight API calls (Anthropic
 - **Discord-independent communication** — Agent-to-agent data flows directly via DB, Discord is display-only
 - **Mixture of Agents** — External model opinions (Kimi, GLM) enrich arbiter verdicts
 - **Per-role model selection** — `OWNER_MODEL`, `REVIEWER_MODEL`, `ARBITER_MODEL` + effort + fallback toggle
-- **Container-isolated reviewer** — Persistent Docker container with read-only source mount
+- **Host reviewer with read-only guards** — Reviewer runs on host with role-scoped sandbox and guard policy
 - **Global failover** — Account-level Claude failure → all channels switch to codex, auto-recovers
 - **Post-approval change detection** — Re-triggers review if owner modifies code after approval
 - **Auto user notification** — @mention on task completion (✅ done, ⚠️ escalated)
@@ -109,7 +109,7 @@ No extra SDK processes. External references use lightweight API calls (Anthropic
 Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (host process)
                                           │       │
                                           │       ▼ (auto-trigger)
-                                          ├──► Reviewer (Docker container, :ro mount)
+                                          ├──► Reviewer (host process, read-only guarded)
                                           │       │
                                           │   Verdict routing
                                           │       ├─ DONE → change detection → finalize or re-review
@@ -140,7 +140,7 @@ Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (ho
 
 - Linux (Ubuntu 22.04+) or macOS
 - [Bun](https://bun.sh/) 1.3+
-- Docker (required for reviewer container isolation)
+- Docker (currently used for isolated verification runs)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
 - Discord bot tokens (3: owner, reviewer, arbiter)
@@ -153,12 +153,12 @@ cd EJClaw
 bun install
 bun run build:runners
 bun run build
-bun run build:container          # Build reviewer Docker image
+bun run build:container          # Build verification container image
 ```
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — Data flow, room model, container isolation, key files
+- [Architecture](docs/architecture.md) — Data flow, room model, verification isolation, key files
 - [Configuration](docs/configuration.md) — Full `.env` reference, debugging paths
 
 ### Environment
@@ -213,7 +213,7 @@ bun run deploy
 ```bash
 bun run build                # Build main project
 bun run build:runners        # Install + build both runners
-bun run build:container      # Rebuild reviewer Docker image
+bun run build:container      # Rebuild verification container image
 bun run dev                  # Dev mode with hot reload
 bun test                     # Run tests
 ```
