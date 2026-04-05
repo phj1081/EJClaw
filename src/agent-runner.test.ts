@@ -108,10 +108,8 @@ vi.mock('child_process', async () => {
 import {
   runAgentProcess,
   AgentOutput,
-  mirrorContainerCodexSessionFiles,
 } from './agent-runner.js';
 import * as agentRunnerEnvironment from './agent-runner-environment.js';
-import * as containerRunner from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -327,10 +325,6 @@ describe('agent-runner timeout behavior', () => {
       agentRunnerEnvironment,
       'prepareContainerSessionEnvironment',
     );
-    const runReviewerContainerSpy = vi.spyOn(
-      containerRunner,
-      'runReviewerContainer',
-    );
 
     vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
       const str = String(p);
@@ -365,7 +359,6 @@ describe('agent-runner timeout behavior', () => {
     fakeProc.emit('close', 0);
     const result = await resultPromise;
     expect(result.status).toBe('success');
-    expect(runReviewerContainerSpy).not.toHaveBeenCalled();
     expect(prepareContainerSessionEnvironmentSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionDir: '/tmp/host-reviewer-session',
@@ -689,22 +682,4 @@ OUROBOROS_LLM_BACKEND = "codex"
     );
   });
 
-  it('mirrors .claude.json alongside codex session files for container reuse', () => {
-    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
-      const str = String(p);
-      return (
-        str === '/tmp/source/.codex' ||
-        str === '/tmp/mounted' ||
-        str === '/tmp/source/.codex/AGENTS.md' ||
-        str === '/tmp/source/.claude.json'
-      );
-    });
-
-    mirrorContainerCodexSessionFiles('/tmp/source', '/tmp/mounted');
-
-    expect(vi.mocked(fs.copyFileSync)).toHaveBeenCalledWith(
-      '/tmp/source/.claude.json',
-      '/tmp/mounted/.claude.json',
-    );
-  });
 });

@@ -3,7 +3,6 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
-  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
@@ -72,11 +71,7 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
-import {
-  hasAvailableClaudeToken,
-  initTokenRotation,
-  onTokenRotated,
-} from './token-rotation.js';
+import { hasAvailableClaudeToken, initTokenRotation } from './token-rotation.js';
 
 function isTerminalStatusMessage(text: string): boolean {
   const trimmed = text.trimStart();
@@ -85,7 +80,6 @@ function isTerminalStatusMessage(text: string): boolean {
   );
 }
 import {
-  onTokenRefreshed,
   startTokenRefreshLoop,
   stopTokenRefreshLoop,
 } from './token-refresh.js';
@@ -94,9 +88,6 @@ import {
   getGlobalFailoverInfo,
 } from './service-routing.js';
 import { FAILOVER_MIN_DURATION_MS } from './config.js';
-import { startCredentialProxy } from './credential-proxy.js';
-import { recreateAllReviewerContainers } from './container-runner.js';
-import { cleanupOrphans, PROXY_BIND_HOST } from './container-runtime.js';
 
 // Token rotation is initialized lazily on first use or at startup below
 
@@ -331,21 +322,6 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   initTokenRotation();
   initCodexTokenRotation();
-
-  // Start credential proxy for container isolation and clean up orphaned containers
-  startCredentialProxy(CREDENTIAL_PROXY_PORT, PROXY_BIND_HOST).catch((err) =>
-    logger.warn(
-      { err },
-      'Failed to start credential proxy (may already be running)',
-    ),
-  );
-  cleanupOrphans();
-
-  // Recreate reviewer containers when OAuth tokens are rotated or refreshed.
-  // Persistent containers hold the old token in their running SDK process;
-  // removing them forces re-creation with fresh credentials on next turn.
-  onTokenRotated(recreateAllReviewerContainers);
-  onTokenRefreshed(recreateAllReviewerContainers);
   startTokenRefreshLoop();
 
   loadState();
@@ -392,7 +368,6 @@ async function main(): Promise<void> {
       );
     }
     await queue.shutdown(10000);
-    cleanupOrphans();
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
   };

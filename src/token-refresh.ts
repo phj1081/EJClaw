@@ -322,7 +322,7 @@ async function checkAndRefreshAll(): Promise<void> {
   }
 
   if (anyRefreshed) {
-    // Sync refreshed tokens to process.env so docker exec picks them up
+    // Sync refreshed tokens to process.env so subsequent turns pick them up
     const refreshedTokens = getAllTokens();
     if (refreshedTokens.length > 0) {
       process.env.CLAUDE_CODE_OAUTH_TOKEN = refreshedTokens[0].token;
@@ -333,29 +333,7 @@ async function checkAndRefreshAll(): Promise<void> {
       }
     }
     updateEnvTokens();
-    if (onTokenRefreshedCallback) {
-      try {
-        onTokenRefreshedCallback();
-      } catch (err) {
-        logger.warn(
-          { err: getErrorMessage(err) },
-          'Post-token-refresh callback failed',
-        );
-      }
-    }
   }
-}
-
-// ── Post-refresh callback ───────────────────────────────────────
-// Allows callers (e.g. index.ts) to register a hook that runs after
-// any token is refreshed — used to recreate reviewer containers whose
-// persistent Claude Code SDK process still holds the old token.
-type TokenRefreshCallback = () => void;
-let onTokenRefreshedCallback: TokenRefreshCallback | null = null;
-
-/** Register a callback to be invoked after a successful token refresh. */
-export function onTokenRefreshed(cb: TokenRefreshCallback): void {
-  onTokenRefreshedCallback = cb;
 }
 
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -421,16 +399,6 @@ export async function forceRefreshToken(
     if (tokenIndex < allTokens.length) {
       updateTokenValue(tokenIndex, newAccessToken);
       updateEnvTokens();
-      if (onTokenRefreshedCallback) {
-        try {
-          onTokenRefreshedCallback();
-        } catch (err) {
-          logger.warn(
-            { err: getErrorMessage(err) },
-            'Post-token-refresh callback failed (force refresh)',
-          );
-        }
-      }
     }
   }
   return newAccessToken;

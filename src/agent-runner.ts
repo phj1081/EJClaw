@@ -13,7 +13,6 @@ import {
   IDLE_TIMEOUT,
 } from './config.js';
 import {
-  ensureClaudeGlobalSettingsFile,
   prepareContainerSessionEnvironment,
   prepareGroupEnvironment,
 } from './agent-runner-environment.js';
@@ -25,7 +24,6 @@ export {
 } from './agent-runner-snapshot.js';
 import { logger } from './logger.js';
 import { OUTPUT_END_MARKER, OUTPUT_START_MARKER } from './agent-protocol.js';
-import { runReviewerContainer } from './container-runner.js';
 import {
   AgentOutputPhase,
   AgentType,
@@ -62,34 +60,6 @@ export interface AgentOutput {
   error?: string;
 }
 
-export function mirrorContainerCodexSessionFiles(
-  sourceSessionDir: string,
-  mountedSessionDir: string,
-): void {
-  const sourceCodexDir = path.join(sourceSessionDir, '.codex');
-  const mountedCodexDir = path.join(mountedSessionDir, '.codex');
-  if (!fs.existsSync(sourceCodexDir) || !fs.existsSync(mountedSessionDir)) {
-    return;
-  }
-
-  fs.mkdirSync(mountedCodexDir, { recursive: true });
-  for (const file of ['AGENTS.md', 'config.toml', 'config.json', 'auth.json']) {
-    const sourcePath = path.join(sourceCodexDir, file);
-    if (fs.existsSync(sourcePath)) {
-      fs.copyFileSync(sourcePath, path.join(mountedCodexDir, file));
-    }
-  }
-
-  const sourceClaudeJson = path.join(sourceSessionDir, '.claude.json');
-  if (fs.existsSync(sourceClaudeJson)) {
-    ensureClaudeGlobalSettingsFile(mountedSessionDir);
-    fs.copyFileSync(
-      sourceClaudeJson,
-      path.join(mountedSessionDir, '.claude.json'),
-    );
-  }
-}
-
 export async function runAgentProcess(
   group: RegisteredGroup,
   input: AgentInput,
@@ -103,67 +73,6 @@ export async function runAgentProcess(
 ): Promise<AgentOutput> {
   const unsafeHostPairedMode =
     envOverrides?.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
-
-  // ── Reviewer container mode ─────────────────────────────────────
-  // Reviewers always run inside a Docker container with read-only source
-  // mount for kernel-level write protection. Docker is required.
-  if (
-    (!unsafeHostPairedMode && envOverrides?.EJCLAW_REVIEWER_RUNTIME === '1') ||
-    (!unsafeHostPairedMode && envOverrides?.EJCLAW_ARBITER_RUNTIME === '1')
-  ) {
-    const ownerWorkspaceDir =
-      envOverrides?.EJCLAW_WORK_DIR || group.workDir || process.cwd();
-
-    // Prepare session directory for the container (CLAUDE.md, skills, settings)
-    // so the Claude SDK inside the container has platform & paired room prompts.
-    const sessionDir = envOverrides?.CLAUDE_CONFIG_DIR;
-    if (sessionDir) {
-      const containerRole =
-        envOverrides?.EJCLAW_ARBITER_RUNTIME === '1'
-          ? ('arbiter' as const)
-          : ('reviewer' as const);
-      prepareContainerSessionEnvironment({
-        sessionDir,
-        chatJid: input.chatJid,
-        isMain: input.isMain,
-        groupFolder: group.folder,
-        agentType: group.agentType || 'claude-code',
-        memoryBriefing: input.memoryBriefing,
-        role: containerRole,
-      });
-      // The persistent container always mounts the reviewer session path at
-      // /home/node/.claude. When the arbiter stages a separate session dir,
-      // mirror the Codex session files into the mounted reviewer dir so the
-      // container sees the arbiter prompt/config, including MCP servers.
-      if (containerRole === 'arbiter') {
-        const reviewerSessionDir = path.join(
-          path.dirname(sessionDir),
-          `${group.folder}-reviewer`,
-        );
-        mirrorContainerCodexSessionFiles(sessionDir, reviewerSessionDir);
-      }
-    }
-
-    return runReviewerContainer({
-      group,
-      input: {
-        prompt: input.prompt,
-        sessionId: input.sessionId,
-        groupFolder: input.groupFolder,
-        chatJid: input.chatJid,
-        runId: input.runId || `${Date.now()}`,
-        isMain: input.isMain,
-        assistantName: input.assistantName,
-        roomRoleContext: input.roomRoleContext,
-      },
-      ownerWorkspaceDir,
-      envOverrides,
-      onOutput,
-      onProcess: (proc, containerName) => {
-        onProcess(proc, containerName, '');
-      },
-    });
-  }
 
   // ── Host process mode (owner) ───────────────────────────────────
   const startTime = Date.now();

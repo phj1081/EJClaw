@@ -1,7 +1,7 @@
 /**
- * Container runtime abstraction for EJClaw.
- * Reviewer agents run inside Docker containers for read-only isolation.
- * All runtime-specific logic lives here so swapping runtimes means changing one file.
+ * Container runtime abstraction for EJClaw verification.
+ * Verification profiles and related host evidence still use Docker.
+ * Runtime-specific logic lives here so swapping runtimes means changing one file.
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
