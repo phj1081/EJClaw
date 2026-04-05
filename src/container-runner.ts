@@ -37,6 +37,7 @@ import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import type { AgentOutput } from './agent-runner.js';
 import type { RegisteredGroup } from './types.js';
+import { detectPnpmStorePath } from './workspace-package-manager.js';
 
 // ── Config ────────────────────────────────────────────────────────
 
@@ -159,37 +160,6 @@ function pushWorktreeGitMetadataMounts(
   } catch {
     // Not a git repo or .git missing — skip
   }
-}
-
-// ── pnpm store detection ─────────────────────────────────────────
-
-function detectPnpmStorePath(workspaceDir: string): string | null {
-  if (!fs.existsSync(path.join(workspaceDir, 'pnpm-lock.yaml'))) {
-    return null;
-  }
-  if (process.env.PNPM_STORE_DIR && fs.existsSync(process.env.PNPM_STORE_DIR)) {
-    return process.env.PNPM_STORE_DIR;
-  }
-  try {
-    const storePath = execFileSync('pnpm', ['store', 'path'], {
-      cwd: workspaceDir,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 5000,
-    }).trim();
-    if (storePath && fs.existsSync(storePath)) return storePath;
-  } catch {
-    /* pnpm not available */
-  }
-  const defaultStore = path.join(
-    os.homedir(),
-    '.local',
-    'share',
-    'pnpm',
-    'store',
-  );
-  if (fs.existsSync(defaultStore)) return defaultStore;
-  return null;
 }
 
 // ── Pre-flight checks ────────────────────────────────────────────

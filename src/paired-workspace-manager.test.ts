@@ -213,6 +213,52 @@ describe('paired workspace manager', () => {
     ).toBe(null);
   });
 
+  it('ensures owner workspace dependencies on provision and review handoff', async () => {
+    const ensureWorkspaceDependenciesInstalledMock = vi.fn(() => ({
+      installed: false,
+      packageManager: 'pnpm' as const,
+    }));
+    vi.doMock('./workspace-package-manager.js', async () => {
+      const actual =
+        await vi.importActual<typeof import('./workspace-package-manager.js')>(
+          './workspace-package-manager.js',
+        );
+      return {
+        ...actual,
+        ensureWorkspaceDependenciesInstalled:
+          ensureWorkspaceDependenciesInstalledMock,
+      };
+    });
+
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-install-owner-deps',
+      groupFolder: 'install-room',
+    });
+
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-install-owner-deps',
+    );
+
+    expect(ensureWorkspaceDependenciesInstalledMock).toHaveBeenCalledTimes(1);
+    expect(ensureWorkspaceDependenciesInstalledMock).toHaveBeenNthCalledWith(
+      1,
+      ownerWorkspace.workspace_dir,
+    );
+
+    manager.markPairedTaskReviewReady('paired-task-install-owner-deps');
+
+    expect(ensureWorkspaceDependenciesInstalledMock).toHaveBeenCalledTimes(2);
+    expect(ensureWorkspaceDependenciesInstalledMock).toHaveBeenNthCalledWith(
+      2,
+      ownerWorkspace.workspace_dir,
+    );
+  });
+
   it('uses the shared DB owner workspace across service-local data dirs', async () => {
     const canonicalDir = path.join(tempRoot, 'canonical');
     fs.mkdirSync(canonicalDir, { recursive: true });

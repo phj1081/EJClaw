@@ -13,6 +13,11 @@ import {
   writableMountArgs,
 } from './container-runtime.js';
 import { resolveGroupIpcPath } from './group-folder.js';
+import {
+  buildWorkspaceScriptCommand,
+  detectPnpmStorePath,
+  hasInstalledNodeModules,
+} from './workspace-package-manager.js';
 
 export const VERIFICATION_PROFILES = ['test', 'typecheck', 'build'] as const;
 
@@ -69,30 +74,17 @@ export function isVerificationProfile(
 
 export function buildVerificationCommand(
   profile: VerificationProfile,
+  repoDir: string = process.cwd(),
 ): VerificationCommandSpec {
-  switch (profile) {
-    case 'test':
-      return {
-        file: 'npm',
-        args: ['test'],
-        commandText: 'npm test',
-        requiredScript: 'test',
-      };
-    case 'typecheck':
-      return {
-        file: 'npm',
-        args: ['run', 'typecheck'],
-        commandText: 'npm run typecheck',
-        requiredScript: 'typecheck',
-      };
-    case 'build':
-      return {
-        file: 'npm',
-        args: ['run', 'build'],
-        commandText: 'npm run build',
-        requiredScript: 'build',
-      };
-  }
+  const scriptName =
+    profile === 'test' ? 'test' : profile === 'typecheck' ? 'typecheck' : 'build';
+  const command = buildWorkspaceScriptCommand(repoDir, scriptName);
+  return {
+    file: command.file,
+    args: command.args,
+    commandText: command.commandText,
+    requiredScript: scriptName,
+  };
 }
 
 function shouldExcludePath(name: string): boolean {
@@ -144,35 +136,6 @@ function truncateOutput(value: string | undefined): string {
   if (!value) return '';
   if (value.length <= MAX_OUTPUT_CHARS) return value;
   return `${value.slice(0, MAX_OUTPUT_CHARS)}\n...[truncated]`;
-}
-
-function detectPnpmStorePath(workspaceDir: string): string | null {
-  if (!fs.existsSync(path.join(workspaceDir, 'pnpm-lock.yaml'))) {
-    return null;
-  }
-  if (process.env.PNPM_STORE_DIR && fs.existsSync(process.env.PNPM_STORE_DIR)) {
-    return process.env.PNPM_STORE_DIR;
-  }
-  try {
-    const storePath = execFileSync('pnpm', ['store', 'path'], {
-      cwd: workspaceDir,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 5000,
-    }).trim();
-    if (storePath && fs.existsSync(storePath)) return storePath;
-  } catch {
-    /* ignore */
-  }
-
-  const defaultStore = path.join(
-    os.homedir(),
-    '.local',
-    'share',
-    'pnpm',
-    'store',
-  );
-  return fs.existsSync(defaultStore) ? defaultStore : null;
 }
 
 function readPackageScripts(repoDir: string): Record<string, string> {
@@ -248,7 +211,10 @@ function buildDockerRunArgs(
   args.push(...writableMountArgs(scratchWorkspace, PRIMARY_PROJECT_MOUNT));
 
   const sourceNodeModulesDir = path.join(sourceRepoDir, 'node_modules');
-  if (fs.existsSync(sourceNodeModulesDir)) {
+  if (
+    hasInstalledNodeModules(sourceRepoDir) &&
+    fs.existsSync(sourceNodeModulesDir)
+  ) {
     args.push(
       ...readonlyMountArgs(
         sourceNodeModulesDir,
@@ -314,7 +280,7 @@ export async function runVerificationRequest(
 ): Promise<VerificationResult> {
   const repoDir = options?.repoDir || process.cwd();
   const runtimeVersion = detectRuntimeVersion();
-  const command = buildVerificationCommand(request.profile);
+  const command = buildVerificationCommand(request.profile, repoDir);
   const scripts = readPackageScripts(repoDir);
 
   if (!scripts[command.requiredScript]) {
@@ -331,7 +297,7 @@ export async function runVerificationRequest(
     };
   }
 
-  if (!fs.existsSync(path.join(repoDir, 'node_modules'))) {
+  if (!hasInstalledNodeModules(repoDir)) {
     return {
       ok: false,
       profile: request.profile,
