@@ -1880,7 +1880,9 @@ describe('createMessageRuntime', () => {
     ]);
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
-        expect(input.prompt).toContain('paired_turn_outputs 에 저장된 reviewer 요약');
+        expect(input.prompt).toContain(
+          'paired_turn_outputs 에 저장된 reviewer 요약',
+        );
         expect(input.prompt).not.toContain('리뷰어 디스코드 출력 원문');
         await onOutput?.({
           status: 'success',
@@ -1925,7 +1927,10 @@ describe('createMessageRuntime', () => {
 
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
-    expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, 'owner follow-up ok');
+    expect(channel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'owner follow-up ok',
+    );
   });
 
   it('reuses the shared arbiter prompt builder for pending arbiter turns', async () => {

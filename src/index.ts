@@ -71,7 +71,10 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
-import { hasAvailableClaudeToken, initTokenRotation } from './token-rotation.js';
+import {
+  hasAvailableClaudeToken,
+  initTokenRotation,
+} from './token-rotation.js';
 
 function isTerminalStatusMessage(text: string): boolean {
   const trimmed = text.trimStart();

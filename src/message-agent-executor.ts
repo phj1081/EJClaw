@@ -480,7 +480,8 @@ export async function runAgentForGroup(
       sawVisibleOutput: false,
       sawSuccessNullResultWithoutOutput: false,
     };
-    const attemptSessionId = provider === 'claude' ? currentSessionId : undefined;
+    const attemptSessionId =
+      provider === 'claude' ? currentSessionId : undefined;
 
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
