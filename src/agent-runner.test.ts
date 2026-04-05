@@ -105,7 +105,13 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runAgentProcess, AgentOutput } from './agent-runner.js';
+import {
+  runAgentProcess,
+  AgentOutput,
+  mirrorContainerCodexSessionFiles,
+} from './agent-runner.js';
+import * as agentRunnerEnvironment from './agent-runner-environment.js';
+import * as containerRunner from './container-runner.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -133,6 +139,7 @@ function emitOutputMarker(
 describe('agent-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.clearAllMocks();
     fakeProc = createFakeProcess();
   });
 
@@ -311,6 +318,103 @@ describe('agent-runner timeout behavior', () => {
     expect(String(tomlWrite?.[1])).toContain(
       `EJCLAW_CHAT_JID = ${JSON.stringify(testInput.chatJid)}`,
     );
+  });
+
+  it('uses host IPC and workdir in unsafe host paired mode reviewer sessions', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+    const prepareContainerSessionEnvironmentSpy = vi.spyOn(
+      agentRunnerEnvironment,
+      'prepareContainerSessionEnvironment',
+    );
+    const runReviewerContainerSpy = vi.spyOn(
+      containerRunner,
+      'runReviewerContainer',
+    );
+
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const str = String(p);
+      return (
+        str.includes('dist/index.js') ||
+        str.includes('dist/ipc-mcp-stdio.js') ||
+        str.endsWith('/.codex/config.toml')
+      );
+    });
+
+    const resultPromise = runAgentProcess(
+      testGroup,
+      {
+        ...testInput,
+        roomRoleContext: {
+          serviceId: 'claude',
+          role: 'reviewer',
+          ownerServiceId: 'codex-main',
+          reviewerServiceId: 'claude',
+          failoverOwner: false,
+        },
+      },
+      () => {},
+      async () => {},
+      {
+        EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+        CLAUDE_CONFIG_DIR: '/tmp/host-reviewer-session',
+        EJCLAW_WORK_DIR: '/tmp/paired/task-1/reviewer',
+      },
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(runReviewerContainerSpy).not.toHaveBeenCalled();
+    expect(prepareContainerSessionEnvironmentSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionDir: '/tmp/host-reviewer-session',
+        ipcDir: '/tmp/ejclaw-test-data/ipc/test-group',
+        hostIpcDir: '/tmp/ejclaw-test-data/ipc/test-group',
+        workDir: '/tmp/paired/task-1/reviewer',
+        role: 'reviewer',
+      }),
+    );
+  });
+
+  it('uses role-scoped CODEX_HOME in unsafe host paired mode for codex reviewer', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+
+    const codexGroup: RegisteredGroup = {
+      ...testGroup,
+      agentType: 'codex',
+    };
+
+    const resultPromise = runAgentProcess(
+      codexGroup,
+      {
+        ...testInput,
+        roomRoleContext: {
+          serviceId: 'codex-review',
+          role: 'reviewer',
+          ownerServiceId: 'codex-main',
+          reviewerServiceId: 'codex-review',
+          failoverOwner: false,
+        },
+      },
+      () => {},
+      async () => {},
+      {
+        EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+        CLAUDE_CONFIG_DIR: '/tmp/host-reviewer-session',
+        EJCLAW_WORK_DIR: '/tmp/paired/task-1/reviewer',
+      },
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+
+    const spawnEnv = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as
+      | Record<string, string>
+      | undefined;
+    expect(spawnEnv?.CODEX_HOME).toBe('/tmp/host-reviewer-session/.codex');
   });
 
   it('serializes roomRoleContext into the runner stdin payload', async () => {
@@ -582,6 +686,25 @@ OUROBOROS_LLM_BACKEND = "codex"
     expect(onOutput).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({ newSessionId: 'stale-session' }),
+    );
+  });
+
+  it('mirrors .claude.json alongside codex session files for container reuse', () => {
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const str = String(p);
+      return (
+        str === '/tmp/source/.codex' ||
+        str === '/tmp/mounted' ||
+        str === '/tmp/source/.codex/AGENTS.md' ||
+        str === '/tmp/source/.claude.json'
+      );
+    });
+
+    mirrorContainerCodexSessionFiles('/tmp/source', '/tmp/mounted');
+
+    expect(vi.mocked(fs.copyFileSync)).toHaveBeenCalledWith(
+      '/tmp/source/.claude.json',
+      '/tmp/mounted/.claude.json',
     );
   });
 });

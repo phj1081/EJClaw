@@ -31,6 +31,9 @@ const BLOCKED_GIT_SUBCOMMANDS = new Set([
 export function isReviewerRuntime(
   roomRoleContext?: RoomRoleContext,
 ): boolean {
+  if (process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1') {
+    return false;
+  }
   return roomRoleContext?.role === 'reviewer';
 }
 

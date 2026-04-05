@@ -184,6 +184,9 @@ describe('service definitions', () => {
 
     expect(defs.map((def) => def.name)).toEqual(['ejclaw']);
     expect(defs.map((def) => def.kind)).toEqual(['primary']);
+    expect(defs[0]?.extraEnv).toMatchObject({
+      EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+    });
   });
 
   it('keeps legacy service identities available for migration guards', () => {

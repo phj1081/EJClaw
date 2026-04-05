@@ -425,6 +425,9 @@ args = ["other.js"]
     expect(
       fs.readFileSync(path.join(sessionDir, '.codex', 'auth.json'), 'utf-8'),
     ).toContain('"auth_mode":"chatgpt"');
+    expect(
+      fs.readFileSync(path.join(sessionDir, '.claude.json'), 'utf-8'),
+    ).toBe('{}\n');
     const toml = fs.readFileSync(
       path.join(sessionDir, '.codex', 'config.toml'),
       'utf-8',
