@@ -9,7 +9,14 @@ import { Database } from 'bun:sqlite';
 
 import { STORE_DIR } from '../src/config.js';
 import { logger } from '../src/logger.js';
-import { getPlatform, isHeadless, isWSL } from './platform.js';
+import {
+  canUseLinuxBubblewrapReadonlySandbox,
+  commandExists,
+  getAppArmorRestrictUnprivilegedUsernsValue,
+  getPlatform,
+  isHeadless,
+  isWSL,
+} from './platform.js';
 import { emitStatus } from './status.js';
 
 export async function run(_args: string[]): Promise<void> {
@@ -20,6 +27,14 @@ export async function run(_args: string[]): Promise<void> {
   const platform = getPlatform();
   const wsl = isWSL();
   const headless = isHeadless();
+  const hasBubblewrap = platform === 'linux' && commandExists('bwrap');
+  const hasSocat = platform === 'linux' && commandExists('socat');
+  const apparmorRestrictUnprivilegedUserns =
+    platform === 'linux'
+      ? getAppArmorRestrictUnprivilegedUsernsValue()
+      : null;
+  const hasBubblewrapReadonlySandboxCapability =
+    platform === 'linux' && canUseLinuxBubblewrapReadonlySandbox();
 
   // Check existing config
   const hasEnv = fs.existsSync(path.join(projectRoot, '.env'));
@@ -55,6 +70,10 @@ export async function run(_args: string[]): Promise<void> {
       hasEnv,
       hasAuth,
       hasRegisteredGroups,
+      hasBubblewrap,
+      hasSocat,
+      apparmorRestrictUnprivilegedUserns,
+      hasBubblewrapReadonlySandboxCapability,
     },
     'Environment check complete',
   );
@@ -66,6 +85,12 @@ export async function run(_args: string[]): Promise<void> {
     HAS_ENV: hasEnv,
     HAS_AUTH: hasAuth,
     HAS_REGISTERED_GROUPS: hasRegisteredGroups,
+    HAS_BWRAP: hasBubblewrap,
+    HAS_SOCAT: hasSocat,
+    APPARMOR_RESTRICT_UNPRIVILEGED_USERNS:
+      apparmorRestrictUnprivilegedUserns ?? 'n/a',
+    HAS_BWRAP_READONLY_SANDBOX_CAPABILITY:
+      hasBubblewrapReadonlySandboxCapability,
     STATUS: 'success',
     LOG: 'logs/setup.log',
   });

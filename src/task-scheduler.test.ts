@@ -54,7 +54,12 @@ vi.mock('./agent-error-detection.js', async (importOriginal) => {
 vi.mock('./token-rotation.js', () => ({
   rotateToken: vi.fn(() => false),
   getTokenCount: vi.fn(() => 1),
+  getCurrentTokenIndex: vi.fn(() => 0),
   markTokenHealthy: vi.fn(),
+}));
+
+vi.mock('./token-refresh.js', () => ({
+  forceRefreshToken: vi.fn(async () => null),
 }));
 
 vi.mock('./codex-token-rotation.js', () => ({
@@ -142,6 +147,7 @@ import { _initTestDatabase, createTask, getTaskById } from './db.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import { TIMEZONE } from './config.js';
 import * as serviceRouting from './service-routing.js';
+import * as tokenRefresh from './token-refresh.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import * as tokenRotation from './token-rotation.js';
@@ -183,9 +189,12 @@ describe('task scheduler', () => {
     });
     // No fallback provider setup needed
     vi.mocked(tokenRotation.getTokenCount).mockReturnValue(1);
+    vi.mocked(tokenRotation.getCurrentTokenIndex).mockReturnValue(0);
     vi.mocked(tokenRotation.markTokenHealthy).mockClear();
     vi.mocked(tokenRotation.rotateToken).mockClear();
     vi.mocked(tokenRotation.rotateToken).mockReturnValue(false);
+    vi.mocked(tokenRefresh.forceRefreshToken).mockReset();
+    vi.mocked(tokenRefresh.forceRefreshToken).mockResolvedValue(null);
     vi.mocked(codexTokenRotation.rotateCodexToken).mockClear();
     vi.mocked(codexTokenRotation.rotateCodexToken).mockReturnValue(false);
     vi.mocked(codexTokenRotation.getCodexAccountCount).mockReturnValue(1);

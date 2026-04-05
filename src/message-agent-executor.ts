@@ -150,12 +150,22 @@ export async function runAgentForGroup(
     activeRole,
     group.agentType,
   );
+  const unsafeHostPairedMode =
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
+  const forceFreshClaudeReviewerSession =
+    reviewerMode && isClaudeCodeAgent && unsafeHostPairedMode;
+  const storedSessionId = sessions[sessionFolder];
+  if (forceFreshClaudeReviewerSession && storedSessionId) {
+    deps.clearSession(sessionFolder);
+  }
   // Arbiter always starts fresh — never resume a previous session
-  const sessionId =
-    activeRole === 'arbiter' || args.forcedAgentType
+  let currentSessionId =
+    activeRole === 'arbiter' ||
+    args.forcedAgentType ||
+    forceFreshClaudeReviewerSession
       ? undefined
-      : sessions[sessionFolder];
-  const memoryBriefing = sessionId
+      : storedSessionId;
+  const memoryBriefing = currentSessionId
     ? undefined
     : await buildRoomMemoryBriefing({
         groupFolder: group.folder,
@@ -185,7 +195,9 @@ export async function runAgentForGroup(
 
   let resetSessionRequested = false;
 
-  const canRotateToken = isClaudeCodeAgent && getTokenCount() > 1;
+  const claudeTokenCount = isClaudeCodeAgent ? getTokenCount() : 0;
+  const canRetryClaudeCredentials = isClaudeCodeAgent && claudeTokenCount > 0;
+  const canRotateToken = isClaudeCodeAgent && claudeTokenCount > 1;
   const roomRoleContext = buildRoomRoleContext(
     currentLease,
     effectiveServiceId,
@@ -212,6 +224,7 @@ export async function runAgentForGroup(
       pairedExecutionContext.envOverrides[effortKey] = roleConfig.effort;
     }
   }
+
   const log = createScopedLogger({
     chatJid,
     groupName: group.name,
@@ -243,10 +256,26 @@ export async function runAgentForGroup(
       reviewerMode,
       arbiterMode,
       sessionFolder,
-      resumedSession: sessionId ?? null,
+      resumedSession: currentSessionId ?? null,
     },
     'Resolved execution target for agent turn',
   );
+
+  const clearRoleSdkSessions = (): void => {
+    const configDir = pairedExecutionContext?.envOverrides?.CLAUDE_CONFIG_DIR;
+    if (!configDir) return;
+    for (const sdkDir of ['.claude', '.codex']) {
+      const sessionsDir = path.join(configDir, sdkDir, 'sessions');
+      if (fs.existsSync(sessionsDir)) {
+        fs.rmSync(sessionsDir, { recursive: true, force: true });
+        log.info({ sessionsDir }, 'Cleared SDK sessions for fresh Claude turn');
+      }
+    }
+  };
+
+  if (forceFreshClaudeReviewerSession) {
+    clearRoleSdkSessions();
+  }
 
   // ── MoA prompt enrichment ─────────────────────────────────────
   // When MoA is enabled and we're in arbiter mode, query external API
@@ -394,7 +423,7 @@ export async function runAgentForGroup(
 
   const agentInput = {
     prompt: effectivePrompt,
-    sessionId,
+    sessionId: currentSessionId,
     memoryBriefing,
     groupFolder: group.folder,
     chatJid,
@@ -451,6 +480,7 @@ export async function runAgentForGroup(
       sawVisibleOutput: false,
       sawSuccessNullResultWithoutOutput: false,
     };
+    const attemptSessionId = provider === 'claude' ? currentSessionId : undefined;
 
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
@@ -476,7 +506,7 @@ export async function runAgentForGroup(
                 effectiveServiceId,
                 effectiveAgentType,
                 sessionFolder,
-                resumedSession: sessionId ?? null,
+                resumedSession: attemptSessionId ?? null,
                 streamedSessionId: output.newSessionId ?? null,
                 roomRoleServiceId: roomRoleContext?.serviceId ?? null,
                 roomRole: roomRoleContext?.role ?? null,
@@ -499,9 +529,11 @@ export async function runAgentForGroup(
           if (
             provider === 'claude' &&
             output.newSessionId &&
-            !resetSessionRequested
+            !resetSessionRequested &&
+            !forceFreshClaudeReviewerSession
           ) {
             deps.persistSession(sessionFolder, output.newSessionId);
+            currentSessionId = output.newSessionId;
           }
           const evaluation = evaluateStreamedOutput(output, streamedState, {
             agentType: isClaudeCodeAgent ? 'claude-code' : 'codex',
@@ -510,7 +542,7 @@ export async function runAgentForGroup(
             trackSuccessNullResult: true,
             shortCircuitTriggeredErrors:
               provider === 'claude'
-                ? canRotateToken
+                ? canRetryClaudeCredentials
                 : getCodexAccountCount() > 1,
           });
           streamedState = evaluation.state;
@@ -601,7 +633,7 @@ export async function runAgentForGroup(
         effectiveGroup,
         {
           ...agentInput,
-          sessionId: provider === 'claude' ? sessionId : undefined,
+          sessionId: attemptSessionId,
         },
         (proc, processName, ipcDir) =>
           deps.queue.registerProcess(chatJid, proc, processName, ipcDir),
@@ -609,8 +641,13 @@ export async function runAgentForGroup(
         pairedExecutionContext?.envOverrides,
       );
 
-      if (provider === 'claude' && output.newSessionId) {
+      if (
+        provider === 'claude' &&
+        output.newSessionId &&
+        !forceFreshClaudeReviewerSession
+      ) {
         deps.persistSession(sessionFolder, output.newSessionId);
+        currentSessionId = output.newSessionId;
       }
 
       providerLog.info(
@@ -804,23 +841,9 @@ export async function runAgentForGroup(
           })));
 
     if (isRetryableClaudeSessionFailure(primaryAttempt)) {
+      currentSessionId = undefined;
       deps.clearSession(sessionFolder);
-      // Also clear SDK session state inside the reviewer/arbiter config dir
-      // so the persistent container doesn't resume the same stale session.
-      const configDir =
-        pairedExecutionContext?.envOverrides?.CLAUDE_CONFIG_DIR;
-      if (configDir) {
-        for (const sdkDir of ['.claude', '.codex']) {
-          const sessionsDir = path.join(configDir, sdkDir, 'sessions');
-          if (fs.existsSync(sessionsDir)) {
-            fs.rmSync(sessionsDir, { recursive: true, force: true });
-            log.info(
-              { sessionsDir },
-              'Cleared container SDK sessions for stale session recovery',
-            );
-          }
-        }
-      }
+      clearRoleSdkSessions();
       log.warn(
         'Cleared poisoned Claude session before visible output, retrying fresh session',
       );
@@ -828,6 +851,7 @@ export async function runAgentForGroup(
       primaryAttempt = await runAttempt('claude');
 
       if (isRetryableClaudeSessionFailure(primaryAttempt)) {
+        currentSessionId = undefined;
         deps.clearSession(sessionFolder);
         log.warn('Fresh Claude retry also hit a retryable session failure');
 
@@ -840,7 +864,7 @@ export async function runAgentForGroup(
 
     if (primaryAttempt.error) {
       if (
-        canRotateToken &&
+        canRetryClaudeCredentials &&
         provider === 'claude' &&
         !primaryAttempt.sawOutput
       ) {
@@ -913,7 +937,7 @@ export async function runAgentForGroup(
     }
 
     if (
-      canRotateToken &&
+      canRetryClaudeCredentials &&
       provider === 'claude' &&
       !primaryAttempt.sawOutput &&
       primaryAttempt.streamedTriggerReason &&
@@ -945,7 +969,7 @@ export async function runAgentForGroup(
 
     if (output.status === 'error') {
       if (
-        canRotateToken &&
+        canRetryClaudeCredentials &&
         provider === 'claude' &&
         !primaryAttempt.sawOutput
       ) {

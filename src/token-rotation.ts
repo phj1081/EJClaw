@@ -155,6 +155,13 @@ export function getCurrentToken(): string | undefined {
   return tokens[currentIndex % tokens.length]?.token;
 }
 
+/** Get the current active token index. */
+export function getCurrentTokenIndex(): number | null {
+  if (tokens.length === 0) return null;
+  refreshRuntimeTokenSelection();
+  return currentIndex % tokens.length;
+}
+
 /**
  * Try to rotate to the next available (non-rate-limited) token.
  * Returns true if a fresh token was found, false if all are exhausted.

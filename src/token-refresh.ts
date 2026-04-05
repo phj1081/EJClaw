@@ -237,6 +237,7 @@ async function refreshToken(
  */
 async function checkAndRefreshAccount(
   accountIndex: number,
+  opts?: { force?: boolean },
 ): Promise<string | null> {
   const creds = readCredentials(accountIndex);
   if (!creds?.claudeAiOauth) return null;
@@ -250,7 +251,7 @@ async function checkAndRefreshAccount(
   const now = Date.now();
   const remaining = expiresAt - now;
 
-  if (remaining > REFRESH_BEFORE_EXPIRY_MS) {
+  if (!opts?.force && remaining > REFRESH_BEFORE_EXPIRY_MS) {
     logger.debug(
       { accountIndex, remainingMin: Math.round(remaining / 60000) },
       'Token still valid, no refresh needed',
@@ -260,7 +261,12 @@ async function checkAndRefreshAccount(
 
   const isExpired = remaining <= 0;
   logger.info(
-    { accountIndex, remainingMin: Math.round(remaining / 60000), isExpired },
+    {
+      accountIndex,
+      remainingMin: Math.round(remaining / 60000),
+      isExpired,
+      force: opts?.force === true,
+    },
     'Refreshing Claude OAuth token',
   );
 
@@ -407,7 +413,9 @@ export async function forceRefreshToken(
 ): Promise<string | null> {
   logger.info({ tokenIndex }, 'Force-refreshing token after 401');
 
-  const newAccessToken = await checkAndRefreshAccount(tokenIndex);
+  const newAccessToken = await checkAndRefreshAccount(tokenIndex, {
+    force: true,
+  });
   if (newAccessToken) {
     const allTokens = getAllTokens();
     if (tokenIndex < allTokens.length) {

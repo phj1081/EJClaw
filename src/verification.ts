@@ -77,7 +77,11 @@ export function buildVerificationCommand(
   repoDir: string = process.cwd(),
 ): VerificationCommandSpec {
   const scriptName =
-    profile === 'test' ? 'test' : profile === 'typecheck' ? 'typecheck' : 'build';
+    profile === 'test'
+      ? 'test'
+      : profile === 'typecheck'
+        ? 'typecheck'
+        : 'build';
   const command = buildWorkspaceScriptCommand(repoDir, scriptName);
   return {
     file: command.file,

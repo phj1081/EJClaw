@@ -73,7 +73,7 @@ User message
             ├─ Arbiter enabled → Arbiter judges → PROCEED/REVISE/RESET/ESCALATE
             └─ Arbiter disabled → Escalate to user → @user ⚠️
       → Owner BLOCKED/NEEDS_CONTEXT → Arbiter (same path as reviewer)
-      → Deadlock (3+ round trips without progress)
+      → Deadlock (2+ round trips without progress)
           → Arbiter summoned → binding verdict → loop resumes
 ```
 

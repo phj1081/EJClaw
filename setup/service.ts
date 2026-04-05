@@ -11,7 +11,12 @@ import os from 'os';
 import path from 'path';
 
 import { logger } from '../src/logger.js';
-import { getPlatform, getNodePath, getServiceManager } from './platform.js';
+import {
+  ensureLinuxReadonlySandboxAppArmorSupport,
+  getPlatform,
+  getNodePath,
+  getServiceManager,
+} from './platform.js';
 import {
   detectLegacyServiceIssues,
   formatLegacyServiceFailureMessage,
@@ -32,6 +37,22 @@ export async function run(_args: string[]): Promise<void> {
   const serviceManager = getServiceManager();
 
   logger.info({ platform, nodePath, projectRoot }, 'Setting up service');
+
+  const readonlySandboxAppArmorSetup =
+    ensureLinuxReadonlySandboxAppArmorSupport();
+  if (readonlySandboxAppArmorSetup === 'configured') {
+    logger.info(
+      'Configured AppArmor user namespace sysctl for EJClaw readonly sandbox support',
+    );
+  } else if (readonlySandboxAppArmorSetup === 'failed') {
+    logger.warn(
+      'Failed to apply AppArmor user namespace sysctl for EJClaw readonly sandbox support',
+    );
+  } else if (readonlySandboxAppArmorSetup === 'requires-root') {
+    logger.warn(
+      'Readonly sandbox strict mode requires root setup to disable AppArmor unprivileged userns restriction',
+    );
+  }
 
   const legacyServiceIssues = detectLegacyServiceIssues(
     projectRoot,

@@ -57,7 +57,10 @@ describe('workspace package manager helpers', () => {
       JSON.stringify({ packageManager: 'bun@1.3.11' }),
     );
     fs.writeFileSync(path.join(mixedRepo, 'bun.lock'), '');
-    fs.writeFileSync(path.join(mixedRepo, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+    fs.writeFileSync(
+      path.join(mixedRepo, 'pnpm-lock.yaml'),
+      'lockfileVersion: 9.0\n',
+    );
 
     expect(detectWorkspacePackageManager(pnpmRepo)).toBe('pnpm');
     expect(detectWorkspacePackageManager(bunRepo)).toBe('bun');
@@ -118,7 +121,10 @@ describe('workspace package manager helpers', () => {
         scripts: { typecheck: 'tsc --noEmit' },
       }),
     );
-    fs.writeFileSync(path.join(repoDir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+    fs.writeFileSync(
+      path.join(repoDir, 'pnpm-lock.yaml'),
+      'lockfileVersion: 9.0\n',
+    );
 
     execFileSyncMock.mockImplementation((_file, _args, options) => {
       const cwd = (options as { cwd: string }).cwd;

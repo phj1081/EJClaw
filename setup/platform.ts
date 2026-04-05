@@ -7,6 +7,12 @@ import os from 'os';
 
 export type Platform = 'macos' | 'linux' | 'unknown';
 export type ServiceManager = 'launchd' | 'systemd' | 'none';
+export type LinuxReadonlySandboxAppArmorSetupResult =
+  | 'not-linux'
+  | 'not-needed'
+  | 'requires-root'
+  | 'failed'
+  | 'configured';
 
 export function getPlatform(): Platform {
   const platform = os.platform();
@@ -112,6 +118,110 @@ export function commandExists(name: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+export function canUseLinuxBubblewrapReadonlySandbox(
+  platform: Platform = getPlatform(),
+  commandExistsFn: (name: string) => boolean = commandExists,
+  execFn: typeof execSync = execSync,
+): boolean {
+  if (platform !== 'linux') return false;
+  if (!commandExistsFn('bwrap')) return false;
+
+  try {
+    execFn('bwrap --ro-bind / / /bin/true', { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readProcSysValue(
+  procPath: string,
+  readFileSyncFn: typeof fs.readFileSync = fs.readFileSync,
+): string | null {
+  try {
+    return readFileSyncFn(procPath, 'utf-8').trim();
+  } catch {
+    return null;
+  }
+}
+
+export function getAppArmorRestrictUnprivilegedUsernsValue(
+  readFileSyncFn: typeof fs.readFileSync = fs.readFileSync,
+): string | null {
+  return readProcSysValue(
+    '/proc/sys/kernel/apparmor_restrict_unprivileged_userns',
+    readFileSyncFn,
+  );
+}
+
+export function ensureLinuxReadonlySandboxAppArmorSupport(options?: {
+  platform?: Platform;
+  isRootUser?: boolean;
+  apparmorRestrictUnprivilegedUserns?: string | null;
+  sandboxCapable?: boolean;
+  readFileSyncFn?: typeof fs.readFileSync;
+  mkdirSyncFn?: typeof fs.mkdirSync;
+  writeFileSyncFn?: typeof fs.writeFileSync;
+  execFn?: typeof execSync;
+}): LinuxReadonlySandboxAppArmorSetupResult {
+  const platform = options?.platform ?? getPlatform();
+  if (platform !== 'linux') return 'not-linux';
+  const readFileSyncFn = options?.readFileSyncFn ?? fs.readFileSync;
+
+  const apparmorRestrictUnprivilegedUserns =
+    options?.apparmorRestrictUnprivilegedUserns ??
+    getAppArmorRestrictUnprivilegedUsernsValue(readFileSyncFn);
+  const sandboxCapable =
+    options?.sandboxCapable ?? canUseLinuxBubblewrapReadonlySandbox(platform);
+
+  if (
+    apparmorRestrictUnprivilegedUserns !== '1' ||
+    sandboxCapable
+  ) {
+    return 'not-needed';
+  }
+
+  const isRootUser = options?.isRootUser ?? isRoot();
+  if (!isRootUser) return 'requires-root';
+
+  const mkdirSyncFn = options?.mkdirSyncFn ?? fs.mkdirSync;
+  const writeFileSyncFn = options?.writeFileSyncFn ?? fs.writeFileSync;
+  const execFn = options?.execFn ?? execSync;
+  const sysctlPath = '/etc/sysctl.d/90-ejclaw-sandbox.conf';
+  const sysctlContents =
+    '# Managed by EJClaw setup to allow bubblewrap readonly sandboxing.\n' +
+    'kernel.apparmor_restrict_unprivileged_userns=0\n';
+  let existingContents: string | null = null;
+
+  try {
+    existingContents = readFileSyncFn(sysctlPath, 'utf-8');
+  } catch {
+    existingContents = null;
+  }
+
+  try {
+    mkdirSyncFn('/etc/sysctl.d', { recursive: true });
+    if (existingContents !== sysctlContents) {
+      writeFileSyncFn(sysctlPath, sysctlContents);
+    }
+    execFn('sysctl -w kernel.apparmor_restrict_unprivileged_userns=0', {
+      stdio: 'ignore',
+    });
+
+    const appliedValue = getAppArmorRestrictUnprivilegedUsernsValue(
+      readFileSyncFn,
+    );
+    if (appliedValue !== '0') {
+      throw new Error(
+        `kernel.apparmor_restrict_unprivileged_userns remained ${appliedValue ?? 'unavailable'} after sysctl apply`,
+      );
+    }
+    return 'configured';
+  } catch {
+    return 'failed';
   }
 }
 

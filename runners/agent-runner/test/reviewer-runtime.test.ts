@@ -3,14 +3,43 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   assertReadonlyWorkspaceRepoConnectivity,
+  buildClaudeReadonlySandboxSettings,
   buildReviewerGitGuardEnv,
+  getClaudeReadonlySandboxMode,
+  isClaudeReadonlyReviewerRuntime,
   isReviewerMutatingShellCommand,
   isReviewerRuntime,
 } from '../src/reviewer-runtime.js';
+
+const ORIGINAL_CLAUDE_REVIEWER_READONLY =
+  process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
+const ORIGINAL_UNSAFE_HOST_PAIRED_MODE =
+  process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+
+afterEach(() => {
+  if (ORIGINAL_CLAUDE_REVIEWER_READONLY == null) {
+    delete process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
+  } else {
+    process.env.EJCLAW_CLAUDE_REVIEWER_READONLY =
+      ORIGINAL_CLAUDE_REVIEWER_READONLY;
+  }
+
+  if (ORIGINAL_UNSAFE_HOST_PAIRED_MODE == null) {
+    delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+  } else {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE =
+      ORIGINAL_UNSAFE_HOST_PAIRED_MODE;
+  }
+});
+
+beforeEach(() => {
+  delete process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
+  delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+});
 
 function createTempRepo(prefix: string): string {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -54,6 +83,76 @@ describe('claude reviewer runtime guard', () => {
         failoverOwner: false,
       }),
     ).toBe(true);
+  });
+
+  it('detects claude host reviewer read-only mode from env + role', () => {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+    process.env.EJCLAW_CLAUDE_REVIEWER_READONLY = '1';
+
+    expect(
+      isClaudeReadonlyReviewerRuntime({
+        serviceId: 'claude',
+        role: 'reviewer',
+        ownerServiceId: 'codex-main',
+        reviewerServiceId: 'claude',
+        failoverOwner: false,
+      }),
+    ).toBe(true);
+    expect(
+      isClaudeReadonlyReviewerRuntime({
+        serviceId: 'claude',
+        role: 'owner',
+        ownerServiceId: 'codex-main',
+        reviewerServiceId: 'claude',
+        failoverOwner: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('builds a read-only sandbox with normalized protected paths', () => {
+    const sandbox = buildClaudeReadonlySandboxSettings([
+      '/repo/work',
+      '/repo/work',
+      '/repo/owner/../owner',
+    ], 'linux', 'strict');
+
+    expect(sandbox).toMatchObject({
+      enabled: true,
+      failIfUnavailable: true,
+      autoAllowBashIfSandboxed: true,
+      allowUnsandboxedCommands: false,
+      filesystem: {
+        denyWrite: ['/repo/work', '/repo/owner'],
+      },
+    });
+  });
+
+  it('uses best-effort sandbox mode when linux capability probe fails', () => {
+    expect(getClaudeReadonlySandboxMode('linux', () => false)).toBe(
+      'best-effort',
+    );
+
+    const sandbox = buildClaudeReadonlySandboxSettings(
+      ['/repo/work'],
+      'linux',
+      'best-effort',
+    );
+
+    expect(sandbox.failIfUnavailable).toBe(false);
+  });
+
+  it('keeps non-linux reviewers in best-effort sandbox mode', () => {
+    expect(getClaudeReadonlySandboxMode('darwin', () => true)).toBe(
+      'best-effort',
+    );
+
+    const sandbox = buildClaudeReadonlySandboxSettings(
+      ['/repo/work'],
+      'darwin',
+      'best-effort',
+    );
+
+    expect(sandbox.failIfUnavailable).toBe(false);
   });
 
   it('flags mutating shell commands', () => {

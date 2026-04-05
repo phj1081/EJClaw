@@ -12,21 +12,30 @@ vi.mock('./logger.js', () => ({
 vi.mock('./token-rotation.js', () => ({
   rotateToken: vi.fn(() => false),
   getTokenCount: vi.fn(() => 1),
+  getCurrentTokenIndex: vi.fn(() => 0),
   markTokenHealthy: vi.fn(),
+}));
+
+vi.mock('./token-refresh.js', () => ({
+  forceRefreshToken: vi.fn(async () => null),
 }));
 
 import { runClaudeRotationLoop } from './provider-retry.js';
 import {
+  getCurrentTokenIndex,
   getTokenCount,
   markTokenHealthy,
   rotateToken,
 } from './token-rotation.js';
+import { forceRefreshToken } from './token-refresh.js';
 
 describe('runClaudeRotationLoop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getTokenCount).mockReturnValue(1);
+    vi.mocked(getCurrentTokenIndex).mockReturnValue(0);
     vi.mocked(rotateToken).mockReturnValue(false);
+    vi.mocked(forceRefreshToken).mockResolvedValue(null);
   });
 
   it('rotates and succeeds after an org-access-denied trigger', async () => {
@@ -83,6 +92,60 @@ describe('runClaudeRotationLoop', () => {
       type: 'error',
       trigger: { reason: 'success-null-result' },
     });
+  });
+
+  it('force-refreshes the active token before rotating on auth-expired', async () => {
+    vi.mocked(forceRefreshToken).mockResolvedValueOnce('new-access-token');
+
+    const outcome = await runClaudeRotationLoop(
+      { reason: 'auth-expired' },
+      async () => ({
+        output: { status: 'success', result: 'ok' },
+        sawOutput: true,
+      }),
+      { runId: 'force-refresh-auth-expired' },
+    );
+
+    expect(outcome).toEqual({ type: 'success', sawOutput: true });
+    expect(forceRefreshToken).toHaveBeenCalledWith(0);
+    expect(rotateToken).not.toHaveBeenCalled();
+    expect(markTokenHealthy).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to rotation when force refresh does not recover auth-expired', async () => {
+    vi.mocked(getTokenCount).mockReturnValue(2);
+    vi.mocked(forceRefreshToken).mockResolvedValueOnce('new-access-token');
+    vi.mocked(rotateToken).mockReturnValueOnce(true);
+
+    let attempts = 0;
+    const outcome = await runClaudeRotationLoop(
+      { reason: 'auth-expired' },
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            output: {
+              status: 'error',
+              result: null,
+              error:
+                'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+            },
+            sawOutput: false,
+          };
+        }
+
+        return {
+          output: { status: 'success', result: 'ok' },
+          sawOutput: true,
+        };
+      },
+      { runId: 'force-refresh-then-rotate' },
+    );
+
+    expect(outcome).toEqual({ type: 'success', sawOutput: true });
+    expect(forceRefreshToken).toHaveBeenCalledWith(0);
+    expect(rotateToken).toHaveBeenCalledTimes(1);
+    expect(markTokenHealthy).toHaveBeenCalledTimes(1);
   });
 
   it('uses structured public output text as the next rotation message', async () => {

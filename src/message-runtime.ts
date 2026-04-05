@@ -270,6 +270,30 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     return `User request:\n---\n${userMessage}\n---\n\nReview the latest owner changes in the workspace.`;
   };
 
+  const buildOwnerPendingPrompt = (
+    task: PairedTask,
+    chatJid: string,
+    timezone: string,
+  ): string => {
+    const turnOutputs = getPairedTurnOutputs(task.id);
+    if (turnOutputs.length > 0) {
+      const humanMessages = getRecentChatMessages(chatJid, 20).filter(
+        (message) => !message.is_bot_message,
+      );
+      return formatMessages(
+        mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),
+        timezone,
+      );
+    }
+
+    const userMessage = getLastHumanMessageContent(chatJid);
+    if (!userMessage) {
+      return 'Continue the owner turn using the latest reviewer or arbiter feedback.';
+    }
+
+    return `User request:\n---\n${userMessage}\n---\n\nContinue the owner turn using the latest reviewer or arbiter feedback.`;
+  };
+
   const buildArbiterPromptForTask = (
     task: PairedTask,
     chatJid: string,
@@ -823,6 +847,22 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           channel: resolveChannel(taskStatus),
           cursor,
         };
+      }
+
+      if (taskStatus === 'active') {
+        const turnOutputs = getPairedTurnOutputs(task.id);
+        const lastTurnOutput = turnOutputs[turnOutputs.length - 1];
+        if (
+          lastTurnOutput &&
+          (lastTurnOutput.role === 'reviewer' ||
+            lastTurnOutput.role === 'arbiter')
+        ) {
+          return {
+            prompt: buildOwnerPendingPrompt(task, chatJid, deps.timezone),
+            channel: resolveChannel(taskStatus),
+            cursor,
+          };
+        }
       }
 
       return null;
