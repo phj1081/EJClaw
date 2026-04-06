@@ -28,10 +28,11 @@ export function createInitialStreamedOutputState(): StreamedOutputState {
 export function createEvaluatedOutputHandler(args: {
   agentType: EvaluateStreamedOutputOptions['agentType'];
   provider: string;
-  evaluationOptions?: Omit<EvaluateStreamedOutputOptions, 'agentType' | 'provider'>;
-  onEvaluatedOutput?: (
-    output: EvaluatedAgentOutput,
-  ) => Promise<void> | void;
+  evaluationOptions?: Omit<
+    EvaluateStreamedOutputOptions,
+    'agentType' | 'provider'
+  >;
+  onEvaluatedOutput?: (output: EvaluatedAgentOutput) => Promise<void> | void;
 }): {
   handleOutput: (output: AgentOutput) => Promise<void>;
   getState: () => StreamedOutputState;

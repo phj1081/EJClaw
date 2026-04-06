@@ -51,8 +51,12 @@ export function buildPendingPairedTurn(args: {
   timezone: string;
   task: PairedTask;
   rawMissedMessages: Array<{ seq?: number | null; timestamp?: string | null }>;
-  recentHumanMessages: Parameters<typeof buildReviewerPendingPrompt>[0]['recentHumanMessages'];
-  labeledRecentMessages: Parameters<typeof buildArbiterPromptForTask>[0]['labeledRecentMessages'];
+  recentHumanMessages: Parameters<
+    typeof buildReviewerPendingPrompt
+  >[0]['recentHumanMessages'];
+  labeledRecentMessages: Parameters<
+    typeof buildArbiterPromptForTask
+  >[0]['labeledRecentMessages'];
   resolveChannel: (taskStatus?: string | null) => Channel | null;
 }): PendingPairedTurn {
   const {
@@ -215,7 +219,8 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
     return { kind: 'none' };
   }
 
-  const cursor = pendingCursorSource?.seq ?? pendingCursorSource?.timestamp ?? null;
+  const cursor =
+    pendingCursorSource?.seq ?? pendingCursorSource?.timestamp ?? null;
   const lastTurnOutput = getPairedTurnOutputs(task.id).at(-1);
   const nextTurnAction = resolveNextTurnAction({
     taskStatus: task.status,

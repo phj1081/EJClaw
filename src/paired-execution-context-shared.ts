@@ -17,8 +17,7 @@ export function classifyVerdict(summary: string | null | undefined): Verdict {
   if (!cleaned) return 'continue';
   const firstLine = cleaned.split('\n')[0].trim();
   if (/^\*{0,2}BLOCKED\*{0,2}\b/i.test(firstLine)) return 'blocked';
-  if (/^\*{0,2}NEEDS_CONTEXT\*{0,2}\b/i.test(firstLine))
-    return 'needs_context';
+  if (/^\*{0,2}NEEDS_CONTEXT\*{0,2}\b/i.test(firstLine)) return 'needs_context';
   if (/^\*{0,2}DONE_WITH_CONCERNS\*{0,2}\b/i.test(firstLine))
     return 'done_with_concerns';
   if (/^\*{0,2}DONE\*{0,2}\b/i.test(firstLine)) return 'done';

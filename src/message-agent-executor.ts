@@ -3,9 +3,7 @@ import path from 'path';
 
 import { getErrorMessage } from './utils.js';
 
-import {
-  getAgentOutputText,
-} from './agent-output.js';
+import { getAgentOutputText } from './agent-output.js';
 import { createEvaluatedOutputHandler } from './agent-attempt.js';
 import {
   AgentOutput,
@@ -493,7 +491,11 @@ export async function runAgentForGroup(
         ) {
           pairedExecutionSummary = output.error.slice(0, 500);
         }
-        if (evaluation.newTrigger && outputText && output.status === 'success') {
+        if (
+          evaluation.newTrigger &&
+          outputText &&
+          output.status === 'success'
+        ) {
           log.warn(
             {
               reason: evaluation.newTrigger.reason,
@@ -501,10 +503,7 @@ export async function runAgentForGroup(
             },
             'Detected Claude rotation trigger in successful output',
           );
-        } else if (
-          evaluation.newTrigger &&
-          typeof output.error === 'string'
-        ) {
+        } else if (evaluation.newTrigger && typeof output.error === 'string') {
           log.warn(
             {
               reason: evaluation.newTrigger.reason,
