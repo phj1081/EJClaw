@@ -518,6 +518,60 @@ describe('paired execution context', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('re-triggers review once when owner reports DONE_WITH_CONCERNS during finalize', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+        round_trip_count: 1,
+      }),
+    );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', '/tmp/paired/task-1/owner'),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'DONE_WITH_CONCERNS\n\nneeds another reviewer pass',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'active',
+      }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
+    const returnToActiveOrder = vi.mocked(db.updatePairedTask).mock.calls.findIndex(
+      ([id, patch]) => id === 'task-1' && patch.status === 'active',
+    );
+    const reopenReviewOrder = vi.mocked(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).mock.invocationCallOrder[0];
+    expect(returnToActiveOrder).toBeGreaterThanOrEqual(0);
+    expect(
+      vi.mocked(db.updatePairedTask).mock.invocationCallOrder[returnToActiveOrder],
+    ).toBeLessThan(reopenReviewOrder);
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        round_trip_count: 2,
+      }),
+    );
+  });
+
   it('re-triggers review when owner changed code after approval', () => {
     const repoDir = createCanonicalRepoWithCommit('reviewed');
     const approvedSourceRef = resolveTreeRef(repoDir);
@@ -561,6 +615,25 @@ describe('paired execution context', () => {
     expect(
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).toHaveBeenCalledWith('task-1');
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledTimes(1);
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'active',
+      }),
+    );
+    const returnToActiveOrder = vi.mocked(db.updatePairedTask).mock.calls.findIndex(
+      ([id, patch]) => id === 'task-1' && patch.status === 'active',
+    );
+    const reopenReviewOrder = vi.mocked(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).mock.invocationCallOrder[0];
+    expect(returnToActiveOrder).toBeGreaterThanOrEqual(0);
+    expect(
+      vi.mocked(db.updatePairedTask).mock.invocationCallOrder[returnToActiveOrder],
+    ).toBeLessThan(reopenReviewOrder);
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({

@@ -2,10 +2,7 @@ import {
   ARBITER_DEADLOCK_THRESHOLD,
   PAIRED_MAX_ROUND_TRIPS,
 } from './config.js';
-import {
-  getPairedWorkspace,
-  hasActiveCiWatcherForChat,
-} from './db.js';
+import { getPairedWorkspace, hasActiveCiWatcherForChat } from './db.js';
 import { logger } from './logger.js';
 import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
 import {
@@ -17,6 +14,8 @@ import {
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import type { PairedTask } from './types.js';
+
+type OwnerFinalizeOutcome = 'stop' | 're_review';
 
 export function handleFailedOwnerExecution(args: {
   task: PairedTask;
@@ -43,7 +42,7 @@ function handleOwnerFinalizeCompletion(args: {
   taskId: string;
   summary?: string | null;
   now: string;
-}): boolean {
+}): OwnerFinalizeOutcome {
   const { task, taskId, summary, now } = args;
   const ownerVerdict = classifyVerdict(summary);
 
@@ -60,7 +59,7 @@ function handleOwnerFinalizeCompletion(args: {
         summary: summary?.slice(0, 100),
       },
     });
-    return true;
+    return 'stop';
   }
 
   if (ownerVerdict === 'done_with_concerns') {
@@ -77,7 +76,7 @@ function handleOwnerFinalizeCompletion(args: {
           roundTrips: task.round_trip_count,
         },
       });
-      return true;
+      return 'stop';
     }
     transitionPairedTaskStatus({
       taskId,
@@ -93,7 +92,7 @@ function handleOwnerFinalizeCompletion(args: {
       },
       'Owner raised concerns during finalize — task set back to active',
     );
-    return false;
+    return 're_review';
   }
 
   const workspace = getPairedWorkspace(task.id, 'owner');
@@ -117,17 +116,23 @@ function handleOwnerFinalizeCompletion(args: {
           hasNewChanges,
         },
       });
-      return true;
+      return 'stop';
     }
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus: task.status,
+      nextStatus: 'active',
+      updatedAt: now,
+    });
     logger.info(
       {
         taskId,
         sourceRef: task.source_ref,
         hasNewChanges,
       },
-      'Owner made changes after reviewer approval — re-triggering review',
+      'Owner made changes after reviewer approval — task set back to active before re-review',
     );
-    return false;
+    return 're_review';
   }
 
   transitionPairedTaskStatus({
@@ -143,28 +148,16 @@ function handleOwnerFinalizeCompletion(args: {
     { taskId, hasNewChanges, summary: summary?.slice(0, 100) },
     'Owner finalized after reviewer approval — task completed',
   );
-  return true;
+  return 'stop';
 }
 
-export function handleOwnerCompletion(args: {
+function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
   task: PairedTask;
   taskId: string;
-  summary?: string | null;
+  now: string;
+  logMessage: string;
 }): void {
-  const { task, taskId, summary } = args;
-  const now = new Date().toISOString();
-
-  if (task.status === 'merge_ready') {
-    const shouldStop = handleOwnerFinalizeCompletion({
-      task,
-      taskId,
-      summary,
-      now,
-    });
-    if (shouldStop) {
-      return;
-    }
-  }
+  const { task, taskId, now, logMessage } = args;
 
   if (hasActiveCiWatcherForChat(task.chat_jid)) {
     logger.info(
@@ -172,25 +165,6 @@ export function handleOwnerCompletion(args: {
       'Active CI watcher found, deferring auto-review until watcher completes',
     );
     return;
-  }
-
-  if (task.status !== 'merge_ready') {
-    const ownerVerdict = classifyVerdict(summary);
-    if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
-      requestArbiterOrEscalate({
-        taskId,
-        currentStatus: task.status,
-        now,
-        arbiterLogMessage: 'Owner blocked/needs_context — requesting arbiter',
-        escalateLogMessage: 'Owner blocked/needs_context — escalating to user',
-        logContext: {
-          taskId,
-          ownerVerdict,
-          summary: summary?.slice(0, 100),
-        },
-      });
-      return;
-    }
   }
 
   if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
@@ -214,9 +188,58 @@ export function handleOwnerCompletion(args: {
         round_trip_count: task.round_trip_count + 1,
       },
     });
-    logger.info(
-      { taskId, roundTrip: task.round_trip_count + 1 },
-      'Auto-triggered reviewer after owner completion',
-    );
+    logger.info({ taskId, roundTrip: task.round_trip_count + 1 }, logMessage);
   }
+}
+
+export function handleOwnerCompletion(args: {
+  task: PairedTask;
+  taskId: string;
+  summary?: string | null;
+}): void {
+  const { task, taskId, summary } = args;
+  const now = new Date().toISOString();
+
+  if (task.status === 'merge_ready') {
+    const finalizeOutcome = handleOwnerFinalizeCompletion({
+      task,
+      taskId,
+      summary,
+      now,
+    });
+    if (finalizeOutcome === 're_review') {
+      maybeAutoTriggerReviewerAfterOwnerCompletion({
+        task,
+        taskId,
+        now,
+        logMessage:
+          'Auto-triggered reviewer after owner finalize required re-review',
+      });
+    }
+    return;
+  }
+
+  const ownerVerdict = classifyVerdict(summary);
+  if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
+    requestArbiterOrEscalate({
+      taskId,
+      currentStatus: task.status,
+      now,
+      arbiterLogMessage: 'Owner blocked/needs_context — requesting arbiter',
+      escalateLogMessage: 'Owner blocked/needs_context — escalating to user',
+      logContext: {
+        taskId,
+        ownerVerdict,
+        summary: summary?.slice(0, 100),
+      },
+    });
+    return;
+  }
+
+  maybeAutoTriggerReviewerAfterOwnerCompletion({
+    task,
+    taskId,
+    now,
+    logMessage: 'Auto-triggered reviewer after owner completion',
+  });
 }

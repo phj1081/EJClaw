@@ -28,7 +28,8 @@ function createRootLogger(): Logger {
 }
 
 export const logger =
-  globalState.__ejclawLogger ?? (globalState.__ejclawLogger = createRootLogger());
+  globalState.__ejclawLogger ??
+  (globalState.__ejclawLogger = createRootLogger());
 
 type LogBindings = Record<string, unknown>;
 

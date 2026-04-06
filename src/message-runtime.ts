@@ -1156,10 +1156,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         await channel
           .setTyping?.(chatJid, true)
           ?.catch((err) =>
-            logger.warn(
-              { chatJid, err },
-              'Failed to set typing indicator',
-            ),
+            logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
           );
       }
       return;

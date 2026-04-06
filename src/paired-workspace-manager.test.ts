@@ -278,9 +278,9 @@ describe('paired workspace manager', () => {
       db.getPairedTaskById('paired-task-no-owner-workspace')
         ?.review_requested_at,
     ).toBeNull();
-    expect(
-      db.getPairedTaskById('paired-task-no-owner-workspace')?.status,
-    ).toBe('active');
+    expect(db.getPairedTaskById('paired-task-no-owner-workspace')?.status).toBe(
+      'active',
+    );
   });
 
   it('uses the shared DB owner workspace across service-local data dirs', async () => {
