@@ -44,16 +44,14 @@ import { resolveRoleAgentPlan } from './role-agent-plan.js';
 // Reviewer verdict detection
 // ---------------------------------------------------------------------------
 
-type ReviewerVerdict =
+type Verdict =
   | 'done'
   | 'done_with_concerns'
   | 'blocked'
   | 'needs_context'
   | 'continue';
 
-function classifyReviewerVerdict(
-  summary: string | null | undefined,
-): ReviewerVerdict {
+function classifyVerdict(summary: string | null | undefined): Verdict {
   if (!summary) return 'continue';
   // Strip <internal>...</internal> tags — these are internal reasoning, not the verdict
   const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
@@ -144,6 +142,33 @@ function hasCodeChangesSinceRef(
     }
     return null;
   }
+}
+
+function requestArbiterOrEscalate(args: {
+  taskId: string;
+  now: string;
+  arbiterLogMessage: string;
+  escalateLogMessage: string;
+  logContext?: Record<string, unknown>;
+}): void {
+  const { taskId, now, arbiterLogMessage, escalateLogMessage, logContext } =
+    args;
+  if (isArbiterEnabled()) {
+    updatePairedTask(taskId, {
+      status: 'arbiter_requested',
+      arbiter_requested_at: now,
+      updated_at: now,
+    });
+    logger.info(logContext ?? { taskId }, arbiterLogMessage);
+    return;
+  }
+
+  updatePairedTask(taskId, {
+    status: 'completed',
+    completion_reason: 'escalated',
+    updated_at: now,
+  });
+  logger.info(logContext ?? { taskId }, escalateLogMessage);
 }
 
 function ensurePairedProject(
@@ -423,6 +448,396 @@ export function preparePairedExecutionContext(args: {
 // completePairedExecutionContext
 // ---------------------------------------------------------------------------
 
+function handleFailedReviewerExecution(args: {
+  task: PairedTask;
+  taskId: string;
+  summary?: string | null;
+}): void {
+  const { task, taskId, summary } = args;
+  const now = new Date().toISOString();
+
+  if (summary) {
+    const verdict = classifyVerdict(summary);
+    if (
+      verdict === 'done' ||
+      verdict === 'blocked' ||
+      verdict === 'needs_context'
+    ) {
+      const ownerWs =
+        verdict === 'done' ? getPairedWorkspace(taskId, 'owner') : null;
+      const approvedSourceRef =
+        verdict === 'done' && ownerWs?.workspace_dir
+          ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
+          : task.source_ref;
+      updatePairedTask(taskId, {
+        status: verdict === 'done' ? 'merge_ready' : 'completed',
+        ...(verdict === 'done' ? { source_ref: approvedSourceRef } : {}),
+        ...(verdict !== 'done' ? { completion_reason: 'escalated' } : {}),
+        updated_at: now,
+      });
+      logger.info(
+        {
+          taskId,
+          verdict,
+          approvedSourceRef,
+          summary: summary.slice(0, 100),
+        },
+        'Reviewer verdict detected from failed execution — stopping ping-pong',
+      );
+      return;
+    }
+  }
+
+  const fallbackStatus =
+    task.status === 'in_review' || task.status === 'review_ready'
+      ? 'review_ready'
+      : task.status;
+  if (fallbackStatus !== task.status) {
+    updatePairedTask(taskId, { status: fallbackStatus, updated_at: now });
+    logger.warn(
+      {
+        taskId,
+        role: 'reviewer',
+        previousStatus: task.status,
+        nextStatus: fallbackStatus,
+      },
+      'Preserved reviewer task in review-ready state after failed execution',
+    );
+  }
+}
+
+function handleFailedArbiterExecution(args: {
+  task: PairedTask;
+  taskId: string;
+}): void {
+  const { task, taskId } = args;
+  const now = new Date().toISOString();
+  const fallbackStatus =
+    task.status === 'in_arbitration' || task.status === 'arbiter_requested'
+      ? 'arbiter_requested'
+      : task.status;
+  if (fallbackStatus !== task.status) {
+    updatePairedTask(taskId, { status: fallbackStatus, updated_at: now });
+    logger.warn(
+      {
+        taskId,
+        role: 'arbiter',
+        previousStatus: task.status,
+        nextStatus: fallbackStatus,
+      },
+      'Preserved arbiter task in arbitration-requested state after failed execution',
+    );
+  }
+}
+
+function handleFailedOwnerExecution(args: {
+  task: PairedTask;
+  taskId: string;
+}): void {
+  const { task, taskId } = args;
+  if (task.status !== 'active') {
+    const now = new Date().toISOString();
+    updatePairedTask(taskId, { status: 'active', updated_at: now });
+    logger.info(
+      { taskId, role: 'owner', previousStatus: task.status },
+      'Reset task to active after failed execution',
+    );
+  }
+}
+
+function handleOwnerFinalizeCompletion(args: {
+  task: PairedTask;
+  taskId: string;
+  summary?: string | null;
+  now: string;
+}): boolean {
+  const { task, taskId, summary, now } = args;
+  const ownerVerdict = classifyVerdict(summary);
+
+  if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
+    requestArbiterOrEscalate({
+      taskId,
+      now,
+      arbiterLogMessage: 'Owner blocked during finalize — requesting arbiter',
+      escalateLogMessage: 'Owner blocked during finalize — escalating to user',
+      logContext: {
+        taskId,
+        ownerVerdict,
+        summary: summary?.slice(0, 100),
+      },
+    });
+    return true;
+  }
+
+  if (ownerVerdict === 'done_with_concerns') {
+    if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
+      requestArbiterOrEscalate({
+        taskId,
+        now,
+        arbiterLogMessage: 'Owner finalize loop detected — requesting arbiter',
+        escalateLogMessage:
+          'Owner finalize loop detected — escalating to user',
+        logContext: {
+          taskId,
+          ownerVerdict,
+          roundTrips: task.round_trip_count,
+        },
+      });
+      return true;
+    }
+    updatePairedTask(taskId, { status: 'active', updated_at: now });
+    logger.info(
+      {
+        taskId,
+        ownerVerdict,
+        summary: summary?.slice(0, 100),
+      },
+      'Owner raised concerns during finalize — task set back to active',
+    );
+    return false;
+  }
+
+  const workspace = getPairedWorkspace(task.id, 'owner');
+  const hasNewChanges = workspace?.workspace_dir
+    ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
+    : null;
+
+  if (hasNewChanges === true) {
+    if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
+      requestArbiterOrEscalate({
+        taskId,
+        now,
+        arbiterLogMessage:
+          'Owner finalize DONE loop detected — requesting arbiter',
+        escalateLogMessage:
+          'Owner finalize DONE loop detected — escalating to user',
+        logContext: {
+          taskId,
+          roundTrips: task.round_trip_count,
+          hasNewChanges,
+        },
+      });
+      return true;
+    }
+    logger.info(
+      {
+        taskId,
+        sourceRef: task.source_ref,
+        hasNewChanges,
+      },
+      'Owner made changes after reviewer approval — re-triggering review',
+    );
+    return false;
+  }
+
+  updatePairedTask(taskId, {
+    status: 'completed',
+    completion_reason: 'done',
+    updated_at: now,
+  });
+  logger.info(
+    { taskId, hasNewChanges, summary: summary?.slice(0, 100) },
+    'Owner finalized after reviewer approval — task completed',
+  );
+  return true;
+}
+
+function handleOwnerCompletion(args: {
+  task: PairedTask;
+  taskId: string;
+  summary?: string | null;
+}): void {
+  const { task, taskId, summary } = args;
+  const now = new Date().toISOString();
+
+  if (task.status === 'merge_ready') {
+    const shouldStop = handleOwnerFinalizeCompletion({
+      task,
+      taskId,
+      summary,
+      now,
+    });
+    if (shouldStop) {
+      return;
+    }
+  }
+
+  if (hasActiveCiWatcherForChat(task.chat_jid)) {
+    logger.info(
+      { taskId, chatJid: task.chat_jid },
+      'Active CI watcher found, deferring auto-review until watcher completes',
+    );
+    return;
+  }
+
+  if (task.status !== 'merge_ready') {
+    const ownerVerdict = classifyVerdict(summary);
+    if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
+      requestArbiterOrEscalate({
+        taskId,
+        now,
+        arbiterLogMessage: 'Owner blocked/needs_context — requesting arbiter',
+        escalateLogMessage: 'Owner blocked/needs_context — escalating to user',
+        logContext: {
+          taskId,
+          ownerVerdict,
+          summary: summary?.slice(0, 100),
+        },
+      });
+      return;
+    }
+  }
+
+  if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
+    logger.info(
+      {
+        taskId,
+        roundTrips: task.round_trip_count,
+        max: PAIRED_MAX_ROUND_TRIPS,
+      },
+      'Round trip limit reached, skipping auto-review',
+    );
+    return;
+  }
+
+  const result = markPairedTaskReviewReady(taskId);
+  if (result) {
+    updatePairedTask(taskId, {
+      round_trip_count: task.round_trip_count + 1,
+      review_requested_at: now,
+      updated_at: now,
+    });
+    logger.info(
+      { taskId, roundTrip: task.round_trip_count + 1 },
+      'Auto-triggered reviewer after owner completion',
+    );
+  }
+}
+
+function handleReviewerCompletion(args: {
+  task: PairedTask;
+  taskId: string;
+  summary?: string | null;
+}): void {
+  const { task, taskId, summary } = args;
+  const now = new Date().toISOString();
+  const verdict = classifyVerdict(summary);
+
+  switch (verdict) {
+    case 'done': {
+      const ownerWs = getPairedWorkspace(taskId, 'owner');
+      const approvedSourceRef = ownerWs?.workspace_dir
+        ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
+        : task.source_ref;
+      updatePairedTask(taskId, {
+        status: 'merge_ready',
+        source_ref: approvedSourceRef,
+        updated_at: now,
+      });
+      logger.info(
+        {
+          taskId,
+          verdict,
+          approvedSourceRef,
+          summary: summary?.slice(0, 100),
+        },
+        'Reviewer approved — owner gets final turn to finalize',
+      );
+      return;
+    }
+
+    case 'blocked':
+    case 'needs_context':
+      requestArbiterOrEscalate({
+        taskId,
+        now,
+        arbiterLogMessage:
+          'Reviewer blocked/needs_context — requesting arbiter before escalating',
+        escalateLogMessage: 'Reviewer escalated to user — ping-pong stopped',
+        logContext: { taskId, verdict, summary: summary?.slice(0, 100) },
+      });
+      return;
+
+    case 'done_with_concerns':
+    case 'continue':
+    default:
+      if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
+        requestArbiterOrEscalate({
+          taskId,
+          now,
+          arbiterLogMessage:
+            'Deadlock detected — requesting arbiter intervention',
+          escalateLogMessage:
+            'Stopped ping-pong — escalating to user (arbiter not configured)',
+          logContext: {
+            taskId,
+            verdict,
+            roundTrips: task.round_trip_count,
+          },
+        });
+        return;
+      }
+      updatePairedTask(taskId, { status: 'active', updated_at: now });
+      logger.info(
+        { taskId, verdict },
+        'Reviewer has feedback, task set back to active for owner',
+      );
+      return;
+  }
+}
+
+function handleArbiterCompletion(args: {
+  taskId: string;
+  summary?: string | null;
+}): void {
+  const { taskId, summary } = args;
+  const now = new Date().toISOString();
+  const arbiterVerdict = classifyArbiterVerdict(summary);
+
+  logger.info(
+    { taskId, arbiterVerdict, summary: summary?.slice(0, 200) },
+    'Arbiter verdict rendered',
+  );
+
+  switch (arbiterVerdict) {
+    case 'proceed':
+    case 'revise':
+    case 'reset':
+      updatePairedTask(taskId, {
+        status: 'active',
+        round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
+        arbiter_verdict: arbiterVerdict,
+        updated_at: now,
+      });
+      logger.info(
+        { taskId, arbiterVerdict },
+        'Arbiter resolved deadlock — resuming ping-pong',
+      );
+      return;
+    case 'escalate':
+      updatePairedTask(taskId, {
+        status: 'completed',
+        arbiter_verdict: 'escalate',
+        completion_reason: 'arbiter_escalated',
+        updated_at: now,
+      });
+      logger.info({ taskId }, 'Arbiter escalated to user — task completed');
+      return;
+    default:
+      updatePairedTask(taskId, {
+        status: 'active',
+        round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
+        arbiter_verdict: 'unknown',
+        updated_at: now,
+      });
+      logger.warn(
+        { taskId, summary: summary?.slice(0, 200) },
+        'Arbiter verdict unrecognized — falling back to proceed',
+      );
+      return;
+  }
+}
+
 export function completePairedExecutionContext(args: {
   taskId: string;
   role: PairedRoomRole;
@@ -455,444 +870,34 @@ export function completePairedExecutionContext(args: {
     return;
   }
 
-  // On failure: for reviewers, still check verdict from summary — output may
-  // have been delivered even though the executor classified it as failed
-  // (e.g. intermediate buffer → null result). This prevents infinite loops.
   if (status !== 'succeeded') {
-    if (role === 'reviewer' && args.summary) {
-      const verdict = classifyReviewerVerdict(args.summary);
-      if (
-        verdict === 'done' ||
-        verdict === 'blocked' ||
-        verdict === 'needs_context'
-      ) {
-        const now = new Date().toISOString();
-        const ownerWs =
-          verdict === 'done' ? getPairedWorkspace(taskId, 'owner') : null;
-        const approvedSourceRef =
-          verdict === 'done' && ownerWs?.workspace_dir
-            ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
-            : task.source_ref;
-        updatePairedTask(taskId, {
-          status: verdict === 'done' ? 'merge_ready' : 'completed',
-          ...(verdict === 'done' ? { source_ref: approvedSourceRef } : {}),
-          ...(verdict !== 'done' ? { completion_reason: 'escalated' } : {}),
-          updated_at: now,
-        });
-        logger.info(
-          {
-            taskId,
-            verdict,
-            approvedSourceRef,
-            summary: args.summary?.slice(0, 100),
-          },
-          'Reviewer verdict detected from failed execution — stopping ping-pong',
-        );
-        return;
-      }
-    }
-    const now = new Date().toISOString();
     if (role === 'reviewer') {
-      const fallbackStatus =
-        task.status === 'in_review' || task.status === 'review_ready'
-          ? 'review_ready'
-          : task.status;
-      if (fallbackStatus !== task.status) {
-        updatePairedTask(taskId, { status: fallbackStatus, updated_at: now });
-        logger.warn(
-          {
-            taskId,
-            role,
-            previousStatus: task.status,
-            nextStatus: fallbackStatus,
-          },
-          'Preserved reviewer task in review-ready state after failed execution',
-        );
-      }
+      handleFailedReviewerExecution({
+        task,
+        taskId,
+        summary: args.summary,
+      });
       return;
     }
     if (role === 'arbiter') {
-      const fallbackStatus =
-        task.status === 'in_arbitration' || task.status === 'arbiter_requested'
-          ? 'arbiter_requested'
-          : task.status;
-      if (fallbackStatus !== task.status) {
-        updatePairedTask(taskId, { status: fallbackStatus, updated_at: now });
-        logger.warn(
-          {
-            taskId,
-            role,
-            previousStatus: task.status,
-            nextStatus: fallbackStatus,
-          },
-          'Preserved arbiter task in arbitration-requested state after failed execution',
-        );
-      }
+      handleFailedArbiterExecution({ task, taskId });
       return;
     }
-    if (task.status !== 'active') {
-      updatePairedTask(taskId, { status: 'active', updated_at: now });
-      logger.info(
-        { taskId, role, previousStatus: task.status },
-        'Reset task to active after failed execution',
-      );
-    }
+    handleFailedOwnerExecution({ task, taskId });
     return;
   }
 
-  // Owner finished
   if (role === 'owner') {
-    const now = new Date().toISOString();
-
-    // merge_ready → reviewer already approved. Check owner verdict and
-    // whether owner made additional changes that need re-review.
-    if (task.status === 'merge_ready') {
-      // Owner can raise concerns even during finalize (e.g. push failed,
-      // detached HEAD, discovered issue). Respect the owner's verdict.
-      const ownerVerdict = classifyReviewerVerdict(args.summary);
-      if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
-        if (isArbiterEnabled()) {
-          updatePairedTask(taskId, {
-            status: 'arbiter_requested',
-            arbiter_requested_at: now,
-            updated_at: now,
-          });
-          logger.info(
-            {
-              taskId,
-              ownerVerdict,
-              summary: args.summary?.slice(0, 100),
-            },
-            'Owner blocked during finalize — requesting arbiter',
-          );
-        } else {
-          updatePairedTask(taskId, {
-            status: 'completed',
-            completion_reason: 'escalated',
-            updated_at: now,
-          });
-          logger.info(
-            {
-              taskId,
-              ownerVerdict,
-              summary: args.summary?.slice(0, 100),
-            },
-            'Owner blocked during finalize — escalating to user',
-          );
-        }
-        return;
-      }
-
-      if (ownerVerdict === 'done_with_concerns') {
-        // Check deadlock threshold before looping back — prevents
-        // merge_ready ↔ active infinite oscillation.
-        if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
-          if (isArbiterEnabled()) {
-            updatePairedTask(taskId, {
-              status: 'arbiter_requested',
-              arbiter_requested_at: now,
-              updated_at: now,
-            });
-            logger.info(
-              { taskId, ownerVerdict, roundTrips: task.round_trip_count },
-              'Owner finalize loop detected — requesting arbiter',
-            );
-          } else {
-            updatePairedTask(taskId, {
-              status: 'completed',
-              completion_reason: 'escalated',
-              updated_at: now,
-            });
-            logger.info(
-              { taskId, ownerVerdict, roundTrips: task.round_trip_count },
-              'Owner finalize loop detected — escalating to user',
-            );
-          }
-          return;
-        }
-        updatePairedTask(taskId, { status: 'active', updated_at: now });
-        logger.info(
-          {
-            taskId,
-            ownerVerdict,
-            summary: args.summary?.slice(0, 100),
-          },
-          'Owner raised concerns during finalize — task set back to active',
-        );
-        // Fall through to auto-trigger reviewer for the new concern
-      } else {
-        const workspace = getPairedWorkspace(task.id, 'owner');
-        const hasNewChanges = workspace?.workspace_dir
-          ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
-          : null;
-
-        if (hasNewChanges === true) {
-          if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
-            if (isArbiterEnabled()) {
-              updatePairedTask(taskId, {
-                status: 'arbiter_requested',
-                arbiter_requested_at: now,
-                updated_at: now,
-              });
-              logger.info(
-                { taskId, roundTrips: task.round_trip_count, hasNewChanges },
-                'Owner finalize DONE loop detected — requesting arbiter',
-              );
-            } else {
-              updatePairedTask(taskId, {
-                status: 'completed',
-                completion_reason: 'escalated',
-                updated_at: now,
-              });
-              logger.info(
-                { taskId, roundTrips: task.round_trip_count, hasNewChanges },
-                'Owner finalize DONE loop detected — escalating to user',
-              );
-            }
-            return;
-          }
-          // Owner made changes after approval → needs re-review
-          logger.info(
-            {
-              taskId,
-              sourceRef: task.source_ref,
-              hasNewChanges,
-            },
-            'Owner made changes after reviewer approval — re-triggering review',
-          );
-        } else {
-          // No code changes (false) or unable to determine (null) →
-          // finalize complete. Treating null as "no changes" prevents
-          // infinite DONE↔DONE loops when source_ref is from a different
-          // repo or the workspace has no matching ref.
-          updatePairedTask(taskId, {
-            status: 'completed',
-            completion_reason: 'done',
-            updated_at: now,
-          });
-          logger.info(
-            { taskId, hasNewChanges, summary: args.summary?.slice(0, 100) },
-            'Owner finalized after reviewer approval — task completed',
-          );
-          return;
-        }
-      }
-    }
-
-    // Active CI watcher → skip auto-review until watcher completes.
-    // The watcher result will be posted via reviewer bot, triggering
-    // the owner to act on it, which then resumes the review loop.
-    if (hasActiveCiWatcherForChat(task.chat_jid)) {
-      logger.info(
-        { taskId, chatJid: task.chat_jid },
-        'Active CI watcher found, deferring auto-review until watcher completes',
-      );
-      return;
-    }
-
-    // Owner blocked/needs_context → request arbiter (same as reviewer path).
-    // Without this, only reviewer verdicts can summon the arbiter, leaving
-    // owner-side deadlocks (e.g. owner can't implement reviewer's request)
-    // without a resolution mechanism.
-    if (task.status !== 'merge_ready') {
-      const normalOwnerVerdict = classifyReviewerVerdict(args.summary);
-      if (
-        (normalOwnerVerdict === 'blocked' ||
-          normalOwnerVerdict === 'needs_context') &&
-        isArbiterEnabled()
-      ) {
-        updatePairedTask(taskId, {
-          status: 'arbiter_requested',
-          arbiter_requested_at: now,
-          updated_at: now,
-        });
-        logger.info(
-          {
-            taskId,
-            ownerVerdict: normalOwnerVerdict,
-            summary: args.summary?.slice(0, 100),
-          },
-          'Owner blocked/needs_context — requesting arbiter',
-        );
-        return;
-      }
-    }
-
-    // Normal turn → auto-trigger reviewer (if within round trip limit)
-    if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
-      logger.info(
-        {
-          taskId,
-          roundTrips: task.round_trip_count,
-          max: PAIRED_MAX_ROUND_TRIPS,
-        },
-        'Round trip limit reached, skipping auto-review',
-      );
-      return;
-    }
-
-    const result = markPairedTaskReviewReady(taskId);
-    if (result) {
-      updatePairedTask(taskId, {
-        round_trip_count: task.round_trip_count + 1,
-        review_requested_at: now,
-        updated_at: now,
-      });
-      logger.info(
-        { taskId, roundTrip: task.round_trip_count + 1 },
-        'Auto-triggered reviewer after owner completion',
-      );
-    }
+    handleOwnerCompletion({ task, taskId, summary: args.summary });
+    return;
   }
 
-  // Reviewer finished → classify verdict and route accordingly
   if (role === 'reviewer') {
-    const now = new Date().toISOString();
-    const verdict = classifyReviewerVerdict(args.summary);
-
-    switch (verdict) {
-      case 'done': {
-        // Approved → owner gets final turn to commit/push.
-        // Record the current HEAD as source_ref so the finalize turn
-        // can detect if the owner made additional code changes.
-        const ownerWs = getPairedWorkspace(taskId, 'owner');
-        const approvedSourceRef = ownerWs?.workspace_dir
-          ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
-          : task.source_ref;
-        updatePairedTask(taskId, {
-          status: 'merge_ready',
-          source_ref: approvedSourceRef,
-          updated_at: now,
-        });
-        logger.info(
-          {
-            taskId,
-            verdict,
-            approvedSourceRef,
-            summary: args.summary?.slice(0, 100),
-          },
-          'Reviewer approved — owner gets final turn to finalize',
-        );
-        break;
-      }
-
-      case 'blocked':
-      case 'needs_context':
-        // If arbiter is enabled, let arbiter judge before escalating to user.
-        // Arbiter may resolve the block (e.g. owner can fix it, info exists in context).
-        if (isArbiterEnabled()) {
-          updatePairedTask(taskId, {
-            status: 'arbiter_requested',
-            arbiter_requested_at: now,
-            updated_at: now,
-          });
-          logger.info(
-            { taskId, verdict, summary: args.summary?.slice(0, 100) },
-            'Reviewer blocked/needs_context — requesting arbiter before escalating',
-          );
-        } else {
-          updatePairedTask(taskId, {
-            status: 'completed',
-            completion_reason: 'escalated',
-            updated_at: now,
-          });
-          logger.info(
-            { taskId, verdict, summary: args.summary?.slice(0, 100) },
-            'Reviewer escalated to user — ping-pong stopped',
-          );
-        }
-        break;
-
-      case 'done_with_concerns':
-      case 'continue':
-      default:
-        // If both sides keep echoing DONE_WITH_CONCERNS without progress,
-        // request arbiter intervention (or escalate to user if arbiter not configured).
-        if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
-          if (isArbiterEnabled()) {
-            updatePairedTask(taskId, {
-              status: 'arbiter_requested',
-              arbiter_requested_at: now,
-              updated_at: now,
-            });
-            logger.info(
-              { taskId, verdict, roundTrips: task.round_trip_count },
-              'Deadlock detected — requesting arbiter intervention',
-            );
-          } else {
-            updatePairedTask(taskId, {
-              status: 'completed',
-              completion_reason: 'escalated',
-              updated_at: now,
-            });
-            logger.info(
-              { taskId, verdict, roundTrips: task.round_trip_count },
-              'Stopped ping-pong — escalating to user (arbiter not configured)',
-            );
-          }
-          break;
-        }
-        // Owner needs to address feedback — ping-pong continues
-        updatePairedTask(taskId, { status: 'active', updated_at: now });
-        logger.info(
-          { taskId, verdict },
-          'Reviewer has feedback, task set back to active for owner',
-        );
-        break;
-    }
+    handleReviewerCompletion({ task, taskId, summary: args.summary });
+    return;
   }
 
-  // Arbiter finished → classify verdict and route accordingly
   if (role === 'arbiter') {
-    const now = new Date().toISOString();
-    const arbiterVerdict = classifyArbiterVerdict(args.summary);
-
-    logger.info(
-      { taskId, arbiterVerdict, summary: args.summary?.slice(0, 200) },
-      'Arbiter verdict rendered',
-    );
-
-    switch (arbiterVerdict) {
-      case 'proceed':
-      case 'revise':
-      case 'reset':
-        // Non-escalate: resume ping-pong with reduced headroom.
-        // Set to threshold-1 so agents get one more round before
-        // re-triggering the arbiter — prevents infinite arbiter loops.
-        updatePairedTask(taskId, {
-          status: 'active',
-          round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
-          arbiter_verdict: arbiterVerdict,
-          updated_at: now,
-        });
-        logger.info(
-          { taskId, arbiterVerdict },
-          'Arbiter resolved deadlock — resuming ping-pong',
-        );
-        break;
-      case 'escalate':
-        updatePairedTask(taskId, {
-          status: 'completed',
-          arbiter_verdict: 'escalate',
-          completion_reason: 'arbiter_escalated',
-          updated_at: now,
-        });
-        logger.info({ taskId }, 'Arbiter escalated to user — task completed');
-        break;
-      default:
-        // Unknown verdict — fallback to proceed so the loop continues.
-        // Stopping the task on a parse failure is worse than letting it run.
-        updatePairedTask(taskId, {
-          status: 'active',
-          round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
-          arbiter_verdict: 'unknown',
-          updated_at: now,
-        });
-        logger.warn(
-          { taskId, summary: args.summary?.slice(0, 200) },
-          'Arbiter verdict unrecognized — falling back to proceed',
-        );
-        break;
-    }
+    handleArbiterCompletion({ taskId, summary: args.summary });
   }
 }

@@ -647,6 +647,38 @@ describe('paired execution context', () => {
     },
   );
 
+  it.each(['BLOCKED', 'NEEDS_CONTEXT'])(
+    'escalates immediately when owner reports %s during a normal turn without arbiter',
+    (summary) => {
+      vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(false);
+
+      vi.mocked(db.getPairedTaskById).mockReturnValue(
+        buildPairedTask({
+          status: 'active',
+          round_trip_count: 0,
+        }),
+      );
+
+      completePairedExecutionContext({
+        taskId: 'task-1',
+        role: 'owner',
+        status: 'succeeded',
+        summary,
+      });
+
+      expect(db.updatePairedTask).toHaveBeenCalledWith(
+        'task-1',
+        expect.objectContaining({
+          status: 'completed',
+          completion_reason: 'escalated',
+        }),
+      );
+      expect(
+        pairedWorkspaceManager.markPairedTaskReviewReady,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
   it('records source_ref when reviewer verdict DONE arrives via failed fallback', () => {
     const repoDir = createCanonicalRepoWithCommit('reviewed');
     const approvedSourceRef = resolveTreeRef(repoDir);
