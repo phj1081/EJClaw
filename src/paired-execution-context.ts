@@ -19,7 +19,6 @@ import {
   getPairedTaskById,
   getPairedWorkspace,
   hasActiveCiWatcherForChat,
-  updatePairedTask,
   upsertPairedProject,
 } from './db.js';
 import { logger } from './logger.js';
@@ -36,8 +35,10 @@ import {
   handleReviewerCompletion,
 } from './paired-execution-context-reviewer.js';
 import {
+  applyPairedTaskPatch,
   resolveCanonicalSourceRef,
   requestArbiterOrEscalate,
+  transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import {
   markPairedTaskReviewReady,
@@ -226,11 +227,25 @@ export function preparePairedExecutionContext(args: {
       latestTask.status === 'review_ready' ||
       latestTask.status === 'in_review';
     if (hasHuman || needsStatusReset) {
-      updatePairedTask(latestTask.id, {
-        ...(hasHuman ? { round_trip_count: 0 } : {}),
-        ...(needsStatusReset ? { status: 'active' as const } : {}),
-        updated_at: now,
-      });
+      if (needsStatusReset) {
+        transitionPairedTaskStatus({
+          taskId: latestTask.id,
+          currentStatus: latestTask.status,
+          nextStatus: 'active',
+          updatedAt: now,
+          patch: {
+            ...(hasHuman ? { round_trip_count: 0 } : {}),
+          },
+        });
+      } else {
+        applyPairedTaskPatch({
+          taskId: latestTask.id,
+          updatedAt: now,
+          patch: {
+            ...(hasHuman ? { round_trip_count: 0 } : {}),
+          },
+        });
+      }
     }
     // Use a stable per-channel worktree (not per-task) so the Claude SDK
     // session persists across tasks. Different channels still get isolation.
@@ -241,9 +256,12 @@ export function preparePairedExecutionContext(args: {
     if (workspace?.workspace_dir && latestTask.status === 'active') {
       const wsRef = resolveCanonicalSourceRef(workspace.workspace_dir);
       if (wsRef !== latestTask.source_ref) {
-        updatePairedTask(latestTask.id, {
-          source_ref: wsRef,
-          updated_at: now,
+        applyPairedTaskPatch({
+          taskId: latestTask.id,
+          updatedAt: now,
+          patch: {
+            source_ref: wsRef,
+          },
         });
       }
     }
@@ -253,9 +271,11 @@ export function preparePairedExecutionContext(args: {
     blockMessage = reviewerWorkspace.blockMessage;
     const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
     if (workspace && refreshedTask.status === 'review_ready') {
-      updatePairedTask(latestTask.id, {
-        status: 'in_review',
-        updated_at: now,
+      transitionPairedTaskStatus({
+        taskId: latestTask.id,
+        currentStatus: refreshedTask.status,
+        nextStatus: 'in_review',
+        updatedAt: now,
       });
     }
   } else if (roomRoleContext.role === 'arbiter') {
@@ -265,9 +285,11 @@ export function preparePairedExecutionContext(args: {
     blockMessage = reviewerWorkspace.blockMessage;
     const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
     if (workspace && refreshedTask.status === 'arbiter_requested') {
-      updatePairedTask(latestTask.id, {
-        status: 'in_arbitration',
-        updated_at: now,
+      transitionPairedTaskStatus({
+        taskId: latestTask.id,
+        currentStatus: refreshedTask.status,
+        nextStatus: 'in_arbitration',
+        updatedAt: now,
       });
     }
   }

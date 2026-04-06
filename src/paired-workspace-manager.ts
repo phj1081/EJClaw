@@ -8,11 +8,11 @@ import {
   getPairedProject,
   getPairedTaskById,
   getPairedWorkspace,
-  updatePairedTask,
   upsertPairedWorkspace,
 } from './db.js';
 import { resolvePairedTaskWorkspacePath } from './group-folder.js';
 import { logger } from './logger.js';
+import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
 import type { PairedTask, PairedWorkspace } from './types.js';
 import { ensureWorkspaceDependenciesInstalled } from './workspace-package-manager.js';
 
@@ -757,10 +757,6 @@ export function markPairedTaskReviewReady(taskId: string): {
   reviewerWorkspace: PairedWorkspace;
 } | null {
   const requestedAt = new Date().toISOString();
-  updatePairedTask(taskId, {
-    review_requested_at: requestedAt,
-    updated_at: requestedAt,
-  });
 
   const ownerWorkspace = getPairedWorkspace(taskId, 'owner');
   if (!ownerWorkspace) {
@@ -797,10 +793,18 @@ export function markPairedTaskReviewReady(taskId: string): {
     'Reviewer will mount owner workspace directly',
   );
 
-  const now = new Date().toISOString();
-  updatePairedTask(taskId, {
-    status: 'review_ready',
-    updated_at: now,
+  const task = getPairedTaskById(taskId);
+  if (!task) {
+    return null;
+  }
+  transitionPairedTaskStatus({
+    taskId,
+    currentStatus: task.status,
+    nextStatus: 'review_ready',
+    updatedAt: requestedAt,
+    patch: {
+      review_requested_at: requestedAt,
+    },
   });
 
   return { ownerWorkspace, reviewerWorkspace };

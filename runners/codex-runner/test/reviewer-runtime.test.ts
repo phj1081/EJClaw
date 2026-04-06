@@ -3,13 +3,29 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   assertReadonlyWorkspaceRepoConnectivity,
   buildReviewerGitGuardEnv,
   isReviewerRuntime,
 } from '../src/reviewer-runtime.js';
+
+const ORIGINAL_UNSAFE_HOST_PAIRED_MODE =
+  process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+
+afterEach(() => {
+  if (ORIGINAL_UNSAFE_HOST_PAIRED_MODE == null) {
+    delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+  } else {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE =
+      ORIGINAL_UNSAFE_HOST_PAIRED_MODE;
+  }
+});
+
+beforeEach(() => {
+  delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+});
 
 function createTempRepo(prefix: string): string {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), prefix));

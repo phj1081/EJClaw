@@ -6,6 +6,12 @@ import { getErrorMessage } from './utils.js';
 import { getAgentOutputText } from './agent-output.js';
 import { createEvaluatedOutputHandler } from './agent-attempt.js';
 import {
+  executeAttemptRetryAction,
+  runClaudeAttemptWithRotation,
+  runCodexAttemptWithRotation,
+} from './agent-attempt-orchestration.js';
+import { isRetryableClaudeSessionFailureAttempt } from './agent-attempt-retry.js';
+import {
   AgentOutput,
   runAgentProcess,
   writeGroupsSnapshot,
@@ -30,18 +36,9 @@ import {
 } from './paired-execution-context.js';
 import { resolveCodexFallbackHandoff } from './paired-turn-fallback.js';
 import { resolveExecutionTarget } from './message-runtime-rules.js';
-import {
-  isRetryableClaudeSessionFailureAttempt,
-  resolveClaudeRetryTrigger,
-  resolveCodexRetryTrigger,
-  resolvePairedFollowUpQueueAction,
-} from './message-agent-executor-rules.js';
+import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import { type AgentTriggerReason } from './agent-error-detection.js';
-import {
-  runClaudeRotationLoop,
-  runCodexRotationLoop,
-} from './provider-retry.js';
 import {
   shouldResetSessionOnAgentFailure,
   shouldRetryFreshSessionOnAgentFailure,
@@ -650,27 +647,17 @@ export async function runAgentForGroup(
     initialTrigger: { reason: CodexRotationReason },
     rotationMessage?: string,
   ): Promise<'success' | 'error'> => {
-    const outcome = await runCodexRotationLoop(
+    return runCodexAttemptWithRotation({
       initialTrigger,
-      async () => {
-        const attempt = await runAttempt('codex');
-        return {
-          output: attempt.output,
-          thrownError: attempt.error,
-          sawOutput: attempt.sawOutput,
-          streamedTriggerReason: attempt.streamedTriggerReason,
-        };
-      },
-      {
+      runAttempt: () => runAttempt('codex'),
+      logContext: {
         chatJid,
         group: group.name,
         groupFolder: group.folder,
         runId,
       },
       rotationMessage,
-    );
-
-    return outcome.type === 'success' ? 'success' : 'error';
+    });
   };
 
   type AgentAttempt = Awaited<ReturnType<typeof runAttempt>>;
@@ -689,78 +676,63 @@ export async function runAgentForGroup(
       runId,
     };
 
-    const outcome = await runClaudeRotationLoop(
+    return runClaudeAttemptWithRotation({
       initialTrigger,
-      async () => {
-        const attempt = await runAttempt('claude');
-        return {
-          output: attempt.output,
-          thrownError: attempt.error,
-          sawOutput: attempt.sawOutput,
-          sawSuccessNullResult: attempt.sawSuccessNullResultWithoutOutput,
-          streamedTriggerReason: attempt.streamedTriggerReason,
-        };
-      },
-      logCtx,
+      runAttempt: () => runAttempt('claude'),
+      logContext: logCtx,
       rotationMessage,
-    );
-
-    switch (outcome.type) {
-      case 'success':
-        pairedSawOutput = outcome.sawOutput;
-        return 'success';
-      case 'error':
-        return 'error';
-    }
+      onSuccess: ({ sawOutput }) => {
+        pairedSawOutput = sawOutput;
+      },
+    });
   };
 
   const retryClaudeAttemptIfNeeded = async (
     attempt: AgentAttempt,
     rotationMessage?: string | null,
   ): Promise<'success' | 'error' | null> => {
-    const trigger = resolveClaudeRetryTrigger({
-      canRetryClaudeCredentials,
+    const retryAction = await executeAttemptRetryAction({
       provider,
+      canRetryClaudeCredentials,
+      canRetryCodex: false,
       attempt,
-      fallbackMessage: rotationMessage,
+      rotationMessage,
+      runClaude: retryClaudeWithRotation,
+      runCodex: retryCodexWithRotation,
     });
-    if (!trigger) {
+    if (retryAction.kind !== 'claude') {
       return null;
     }
 
-    const result = await retryClaudeWithRotation(
-      trigger,
-      rotationMessage ?? undefined,
-    );
-    if (result === 'error') {
-      return maybeHandoffAfterError(trigger.reason, attempt);
+    if (retryAction.result === 'error') {
+      return maybeHandoffAfterError(retryAction.trigger.reason, attempt);
     }
 
     pairedExecutionStatus = 'succeeded';
-    return result;
+    return retryAction.result;
   };
 
   const retryCodexAttemptIfNeeded = async (
     attempt: AgentAttempt,
     rotationMessage?: string | null,
   ): Promise<'success' | 'error' | null> => {
-    const trigger = resolveCodexRetryTrigger({
+    const retryAction = await executeAttemptRetryAction({
+      provider,
+      canRetryClaudeCredentials: false,
       canRetryCodex: !isClaudeCodeAgent && getCodexAccountCount() > 1,
       attempt,
       rotationMessage,
+      runClaude: retryClaudeWithRotation,
+      runCodex: retryCodexWithRotation,
     });
-    if (!trigger) {
+    if (retryAction.kind !== 'codex') {
       return null;
     }
 
-    const result = await retryCodexWithRotation(
-      { reason: trigger.reason },
-      rotationMessage ?? undefined,
-    );
-    if (result === 'success') {
+    if (retryAction.result === 'success') {
       pairedExecutionStatus = 'succeeded';
     }
-    return result;
+    return retryAction.result;
   };
 
   const maybeHandoffAfterError = (

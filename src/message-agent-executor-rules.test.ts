@@ -23,6 +23,7 @@ import { classifyRotationTrigger } from './agent-error-detection.js';
 import { detectCodexRotationTrigger } from './codex-token-rotation.js';
 import {
   isRetryableClaudeSessionFailureAttempt,
+  resolveAttemptRetryAction,
   resolveClaudeRetryTrigger,
   resolveCodexRetryTrigger,
   resolvePairedFollowUpQueueAction,
@@ -86,6 +87,47 @@ describe('message-agent-executor-rules', () => {
       }),
     ).toBeNull();
     expect(detectCodexRotationTrigger).not.toHaveBeenCalled();
+  });
+
+  it('resolves a shared Claude retry action from fallback output text', () => {
+    vi.mocked(classifyRotationTrigger).mockReturnValue({
+      shouldRetry: true,
+      reason: '429',
+      retryAfterMs: 30000,
+    });
+
+    expect(
+      resolveAttemptRetryAction({
+        provider: 'claude',
+        canRetryClaudeCredentials: true,
+        canRetryCodex: false,
+        attempt: { sawOutput: false },
+        rotationMessage: '429 rate limit',
+      }),
+    ).toEqual({
+      kind: 'claude',
+      trigger: { reason: '429', retryAfterMs: 30000 },
+      rotationMessage: '429 rate limit',
+    });
+  });
+
+  it('resolves a shared Codex retry action from streamed state', () => {
+    expect(
+      resolveAttemptRetryAction({
+        provider: 'codex',
+        canRetryClaudeCredentials: false,
+        canRetryCodex: true,
+        attempt: {
+          sawOutput: false,
+          streamedTriggerReason: { reason: 'auth-expired' },
+        },
+        rotationMessage: 'oauth token expired',
+      }),
+    ).toEqual({
+      kind: 'codex',
+      trigger: { reason: 'auth-expired' },
+      rotationMessage: 'oauth token expired',
+    });
   });
 
   it('detects retryable Claude session failures from either flag or classifier', () => {

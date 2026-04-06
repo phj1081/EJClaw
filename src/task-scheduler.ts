@@ -3,6 +3,11 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import { getAgentOutputText } from './agent-output.js';
 import { createEvaluatedOutputHandler } from './agent-attempt.js';
+import {
+  executeAttemptRetryAction,
+  runClaudeAttemptWithRotation,
+  runCodexAttemptWithRotation,
+} from './agent-attempt-orchestration.js';
 import { getErrorMessage } from './utils.js';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
@@ -29,10 +34,6 @@ import {
 import { createScopedLogger, logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import {
-  runClaudeRotationLoop,
-  runCodexRotationLoop,
-} from './provider-retry.js';
-import {
   detectCodexRotationTrigger,
   rotateCodexToken,
   getCodexAccountCount,
@@ -42,7 +43,6 @@ import {
   classifyRotationTrigger,
   type AgentTriggerReason,
   type CodexRotationReason,
-  isCodexRotationReason,
 } from './agent-error-detection.js';
 import {
   getTokenCount,
@@ -447,69 +447,53 @@ async function runTask(
         retryAfterMs?: number;
       },
       rotationMessage?: string,
-    ): Promise<void> => {
-      const logCtx = {
+    ): Promise<'success' | 'error'> => {
+      const logContext = {
         taskId: task.id,
         group: context.group.name,
         groupFolder: task.group_folder,
       };
 
-      const outcome = await runClaudeRotationLoop(
+      const outcome = await runClaudeAttemptWithRotation({
         initialTrigger,
-        async () => {
-          const attempt = await runTaskAttempt('claude');
+        runAttempt: () => runTaskAttempt('claude'),
+        logContext,
+        rotationMessage,
+        afterAttempt: (attempt) => {
           result = attempt.attemptResult;
           error = attempt.attemptError;
-          return {
-            output: attempt.output,
-            sawOutput: attempt.sawOutput,
-            streamedTriggerReason: attempt.streamedTriggerReason,
-          };
         },
-        logCtx,
-        rotationMessage,
-      );
+      });
 
-      switch (outcome.type) {
-        case 'success':
-          error = null;
-          return;
-        case 'error':
-          if (outcome.trigger) {
-            error = `Claude ${outcome.trigger.reason}`;
-          }
-          return;
+      if (outcome === 'success') {
+        error = null;
       }
+      return outcome;
     };
 
     const retryCodexTaskWithRotation = async (
       initialTrigger: { reason: CodexRotationReason },
       rotationMessage?: string,
-    ): Promise<void> => {
-      const outcome = await runCodexRotationLoop(
+    ): Promise<'success' | 'error'> => {
+      const outcome = await runCodexAttemptWithRotation({
         initialTrigger,
-        async () => {
-          const retryAttempt = await runTaskAttempt('codex');
-          result = retryAttempt.attemptResult;
-          error = retryAttempt.attemptError;
-          return {
-            output: retryAttempt.output,
-            thrownError: null,
-            sawOutput: retryAttempt.sawOutput,
-            streamedTriggerReason: retryAttempt.streamedTriggerReason,
-          };
-        },
-        {
+        runAttempt: () => runTaskAttempt('codex'),
+        logContext: {
           taskId: task.id,
           group: context.group.name,
           groupFolder: task.group_folder,
         },
         rotationMessage,
-      );
+        afterAttempt: (attempt) => {
+          result = attempt.attemptResult;
+          error = attempt.attemptError;
+        },
+      });
 
-      if (outcome.type === 'success') {
+      if (outcome === 'success') {
         error = null;
       }
+      return outcome;
     };
 
     const provider = context.taskAgentType === 'codex' ? 'codex' : 'claude';
@@ -519,56 +503,17 @@ async function runTask(
       result = attempt.attemptResult;
       error = attempt.attemptError;
 
-      if (
-        provider === 'claude' &&
-        attempt.streamedTriggerReason &&
-        !attempt.sawOutput
-      ) {
-        await retryClaudeTaskWithRotation(attempt.streamedTriggerReason);
-      } else if (
-        provider === 'codex' &&
-        attempt.streamedTriggerReason &&
-        !attempt.sawOutput &&
-        isCodexRotationReason(attempt.streamedTriggerReason.reason)
-      ) {
-        await retryCodexTaskWithRotation(
-          {
-            reason: attempt.streamedTriggerReason.reason,
-          },
-          typeof attempt.output.error === 'string'
-            ? attempt.output.error
-            : undefined,
-        );
-      } else if (attempt.output.status === 'error' && provider === 'claude') {
-        const trigger = attempt.streamedTriggerReason
-          ? {
-              shouldRetry: true,
-              reason: attempt.streamedTriggerReason.reason,
-              retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
-            }
-          : classifyRotationTrigger(error);
-        if (trigger.shouldRetry) {
-          await retryClaudeTaskWithRotation({
-            reason: trigger.reason,
-            retryAfterMs: trigger.retryAfterMs,
-          });
-        }
-      } else if (attempt.output.status === 'error' && provider === 'codex') {
-        const trigger =
-          attempt.streamedTriggerReason &&
-          isCodexRotationReason(attempt.streamedTriggerReason.reason)
-            ? {
-                shouldRotate: true as const,
-                reason: attempt.streamedTriggerReason.reason,
-              }
-            : detectCodexRotationTrigger(error);
-        if (trigger.shouldRotate) {
-          await retryCodexTaskWithRotation(
-            { reason: trigger.reason },
-            error || undefined,
-          );
-        }
-      } else if (attempt.output.status === 'error') {
+      const retryAction = await executeAttemptRetryAction({
+        provider,
+        canRetryClaudeCredentials: provider === 'claude' && getTokenCount() > 0,
+        canRetryCodex: provider === 'codex' && getCodexAccountCount() > 1,
+        attempt,
+        rotationMessage: error,
+        runClaude: retryClaudeTaskWithRotation,
+        runCodex: retryCodexTaskWithRotation,
+      });
+
+      if (retryAction.kind === 'none' && attempt.output.status === 'error') {
         error = attempt.attemptError || 'Unknown error';
       }
     } // end else (non-exhausted path)
