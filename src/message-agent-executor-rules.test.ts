@@ -129,4 +129,26 @@ describe('message-agent-executor-rules', () => {
       }),
     ).toBe('pending');
   });
+
+  it('does not request a generic follow-up after successful owner output moved the task to review_ready', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'owner',
+        executionStatus: 'succeeded',
+        sawOutput: true,
+        taskStatus: 'review_ready',
+      }),
+    ).toBe('none');
+  });
+
+  it('does not request a generic follow-up after successful reviewer output moved the task back to active', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'reviewer',
+        executionStatus: 'succeeded',
+        sawOutput: true,
+        taskStatus: 'active',
+      }),
+    ).toBe('none');
+  });
 });

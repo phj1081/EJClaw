@@ -1238,6 +1238,171 @@ describe('runAgentForGroup room memory', () => {
     expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
+  it('does not enqueue a generic follow-up when owner output already moved the task to review_ready', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const deps = makeDeps();
+
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-owner-review-ready',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: null,
+        status: 'active',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-owner-review-ready',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: null,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nowner complete',
+          output: {
+            visibility: 'public',
+            text: 'DONE_WITH_CONCERNS\nowner complete',
+          },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nowner complete',
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'please implement',
+      chatJid: 'group@test',
+      runId: 'run-owner-review-ready',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+
+  it('does not enqueue a generic follow-up when reviewer output already returned the task to active', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const deps = makeDeps();
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-reviewer-active',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 1,
+        review_requested_at: '2026-03-31T00:00:00.000Z',
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-reviewer-active',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 1,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nreview complete',
+          output: {
+            visibility: 'public',
+            text: 'DONE_WITH_CONCERNS\nreview complete',
+          },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nreview complete',
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-reviewer-active',
+      forcedRole: 'reviewer',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+
   it('re-enqueues the group when a reviewer fails and the task remains review_ready', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     const deps = makeDeps();

@@ -127,9 +127,7 @@ export function resolvePairedFollowUpQueueAction(args: {
     return args.completedRole === 'reviewer' &&
       args.taskStatus === 'merge_ready'
       ? 'skip-inline-finalize'
-      : args.taskStatus !== 'completed'
-        ? 'generic'
-        : 'none';
+      : 'none';
   }
 
   const shouldRequeuePendingPairedTurn =
