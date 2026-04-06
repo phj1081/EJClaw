@@ -42,6 +42,13 @@ import {
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
 import { runAgentForGroup } from './message-agent-executor.js';
+import {
+  buildPendingPairedTurn,
+  executeBotOnlyPairedFollowUpAction,
+  executePendingPairedTurn,
+  resolveBotOnlyPairedFollowUpAction,
+  shouldSkipGenericFollowUpAfterDeliveryRetry,
+} from './message-runtime-flow.js';
 import { MessageTurnController } from './message-turn-controller.js';
 import {
   buildArbiterPromptForTask,
@@ -207,157 +214,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     messages.every(
       (message) => message.is_from_me === true || !!message.is_bot_message,
     );
-
-  type BotOnlyPairedFollowUpAction =
-    | { kind: 'none' }
-    | {
-        kind: 'inline-finalize';
-        task: PairedTask;
-        cursor: string | number | null;
-      }
-    | {
-        kind: 'requeue-pending-turn';
-        task: PairedTask;
-        cursor: string | number | null;
-        cursorKey: string;
-        nextRole: 'owner' | 'reviewer' | 'arbiter';
-      };
-
-  const resolveBotOnlyPairedFollowUpAction = (args: {
-    chatJid: string;
-    task: PairedTask | null | undefined;
-    isBotOnlyPairedFollowUp: boolean;
-    pendingCursorSource: NewMessage | undefined;
-  }): BotOnlyPairedFollowUpAction => {
-    const { chatJid, task, isBotOnlyPairedFollowUp, pendingCursorSource } =
-      args;
-    if (!task || !isBotOnlyPairedFollowUp) {
-      return { kind: 'none' };
-    }
-
-    const cursor =
-      pendingCursorSource?.seq ?? pendingCursorSource?.timestamp ?? null;
-    const lastTurnOutput = getPairedTurnOutputs(task.id).at(-1);
-
-    const nextTurnAction = resolveNextTurnAction({
-      taskStatus: task.status,
-      lastTurnOutputRole: lastTurnOutput?.role ?? null,
-    });
-
-    if (nextTurnAction.kind === 'finalize-owner-turn') {
-      return {
-        kind: 'inline-finalize',
-        task,
-        cursor,
-      };
-    }
-
-    if (
-      nextTurnAction.kind === 'owner-follow-up' ||
-      nextTurnAction.kind === 'reviewer-turn' ||
-      nextTurnAction.kind === 'arbiter-turn'
-    ) {
-      return {
-        kind: 'requeue-pending-turn',
-        task,
-        cursor,
-        cursorKey: resolveCursorKey(chatJid, task.status),
-        nextRole:
-          nextTurnAction.kind === 'owner-follow-up'
-            ? 'owner'
-            : nextTurnAction.kind === 'arbiter-turn'
-              ? 'arbiter'
-              : 'reviewer',
-      };
-    }
-
-    return { kind: 'none' };
-  };
-
-  const executeBotOnlyPairedFollowUpAction = async (args: {
-    action: BotOnlyPairedFollowUpAction;
-    chatJid: string;
-    group: RegisteredGroup;
-    runId: string;
-    channel: Channel;
-    log: typeof logger;
-    enqueueGroupMessageCheck: () => void;
-  }): Promise<boolean> => {
-    const {
-      action,
-      chatJid,
-      group,
-      runId,
-      channel,
-      log,
-      enqueueGroupMessageCheck,
-    } = args;
-
-    if (action.kind === 'none') {
-      return false;
-    }
-
-    if (action.cursor != null) {
-      advanceLastAgentCursor(
-        deps.getLastAgentTimestamps(),
-        deps.saveState,
-        chatJid,
-        action.cursor,
-        action.kind === 'requeue-pending-turn' ? action.cursorKey : undefined,
-      );
-    }
-
-    if (action.kind === 'inline-finalize') {
-      log.info(
-        {
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          taskId: action.task.id,
-          taskStatus: action.task.status,
-          handoffMode: 'inline-finalize',
-          nextRole: 'owner',
-          cursor: action.cursor,
-        },
-        'Executing merge_ready finalize turn inline after bot-only reviewer follow-up',
-      );
-      const { deliverySucceeded } = await executeTurn({
-        group,
-        prompt: buildFinalizePendingPrompt({
-          turnOutputs: getPairedTurnOutputs(action.task.id),
-        }),
-        chatJid,
-        runId,
-        channel,
-        startSeq: null,
-        endSeq: null,
-      });
-      if (!deliverySucceeded) {
-        enqueueGroupMessageCheck();
-      }
-      return true;
-    }
-
-    deps.queue.closeStdin(chatJid, {
-      reason: 'paired-pending-turn-follow-up',
-    });
-    enqueueGroupMessageCheck();
-    log.info(
-      {
-        chatJid,
-        group: group.name,
-        groupFolder: group.folder,
-        taskId: action.task.id,
-        taskStatus: action.task.status,
-        handoffMode: 'requeue',
-        nextRole: action.nextRole,
-        cursor: action.cursor,
-        cursorKey: action.cursorKey,
-      },
-      'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent',
-    );
-    return true;
-  };
 
   const enqueueScopedGroupMessageCheck = (
     chatJid: string,
@@ -832,152 +688,22 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return role === 'owner' ? channel : roleToChannel[role];
     };
 
-    const buildPendingPairedTurn = (
-      task: PairedTask,
-      rawMissedMessages: NewMessage[],
-    ): {
-      prompt: string;
-      channel: Channel | null;
-      cursor: string | number | null;
-      cursorKey?: string;
-      role?: 'reviewer' | 'arbiter';
-    } | null => {
-      const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
-      const cursor = lastRaw?.seq ?? lastRaw?.timestamp ?? null;
-      const taskStatus = task.status;
-      const turnOutputs = getPairedTurnOutputs(task.id);
-      const lastTurnOutput = turnOutputs[turnOutputs.length - 1];
-      const nextTurnAction = resolveNextTurnAction({
-        taskStatus,
-        lastTurnOutputRole: lastTurnOutput?.role ?? null,
-      });
-      const recentMessages = getRecentChatMessages(chatJid, 20);
-      const recentHumanMessages = recentMessages.filter(
-        (message) => !message.is_bot_message,
-      );
-      const lastHumanMessage = getLastHumanMessageContent(chatJid);
-
-      if (nextTurnAction.kind === 'reviewer-turn') {
-        return {
-          prompt: buildReviewerPendingPrompt({
-            chatJid,
-            timezone: deps.timezone,
-            turnOutputs,
-            recentHumanMessages,
-            lastHumanMessage,
-          }),
-          channel: resolveChannel(taskStatus),
-          cursor,
-          cursorKey: resolveCursorKey(chatJid, taskStatus),
-          role: 'reviewer',
-        };
-      }
-
-      if (nextTurnAction.kind === 'arbiter-turn') {
-        return {
-          prompt: buildArbiterPromptForTask({
-            task,
-            chatJid,
-            timezone: deps.timezone,
-            turnOutputs,
-            recentMessages,
-            labeledRecentMessages: labelPairedSenders(chatJid, recentMessages),
-          }),
-          channel: resolveChannel(taskStatus),
-          cursor,
-          cursorKey: resolveCursorKey(chatJid, taskStatus),
-          role: 'arbiter',
-        };
-      }
-
-      if (nextTurnAction.kind === 'finalize-owner-turn') {
-        return {
-          prompt: buildFinalizePendingPrompt({ turnOutputs }),
-          channel: resolveChannel(taskStatus),
-          cursor,
-        };
-      }
-
-      if (nextTurnAction.kind === 'owner-follow-up') {
-        return {
-          prompt: buildOwnerPendingPrompt({
-            chatJid,
-            timezone: deps.timezone,
-            turnOutputs,
-            recentHumanMessages,
-            lastHumanMessage,
-          }),
-          channel: resolveChannel(taskStatus),
-          cursor,
-        };
-      }
-
-      return null;
-    };
-
-    const executePendingPairedTurn = async (args: {
-      prompt: string;
-      channel: Channel | null;
-      cursor: string | number | null;
-      cursorKey?: string;
-      role?: 'reviewer' | 'arbiter';
-    }): Promise<boolean> => {
-      if (!args.channel) {
-        const missingRole = args.role ?? 'reviewer';
-        log.error(
-          {
-            role: missingRole,
-            requiredChannel: getFixedRoleChannelName(missingRole),
-          },
-          'Skipping paired turn because the dedicated Discord role channel is not configured',
-        );
-        return false;
-      }
-
-      if (args.cursor != null) {
-        advanceLastAgentCursor(
-          deps.getLastAgentTimestamps(),
-          deps.saveState,
-          chatJid,
-          args.cursor,
-          args.cursorKey,
-        );
-      }
-
-      const { deliverySucceeded } = await executeTurn({
-        group,
-        prompt: args.prompt,
-        chatJid,
-        runId,
-        channel: args.channel,
-        deliveryRole: args.role,
-        startSeq: null,
-        endSeq: null,
-      });
-
-      return deliverySucceeded;
-    };
-
     const enqueueGroupMessageCheck = (): void => {
       enqueueScopedGroupMessageCheck(chatJid, group.folder);
     };
-
-    const shouldSkipGenericFollowUpAfterDeliveryRetry = (args: {
-      deliveryRole: PairedRoomRole;
-      pendingTask: PairedTask | null | undefined;
-    }): boolean =>
-      hasReviewerLease(chatJid) &&
-      args.deliveryRole === 'reviewer' &&
-      resolveNextTurnAction({
-        taskStatus: args.pendingTask?.status ?? null,
-      }).kind === 'finalize-owner-turn';
 
     const enqueueGenericFollowUpAfterDeliveryRetry = (args: {
       deliveryRole: PairedRoomRole;
       pendingTask: PairedTask | null | undefined;
       workItemId: string | number;
     }): void => {
-      if (shouldSkipGenericFollowUpAfterDeliveryRetry(args)) {
+      if (
+        shouldSkipGenericFollowUpAfterDeliveryRetry({
+          chatJid,
+          deliveryRole: args.deliveryRole,
+          pendingTask: args.pendingTask,
+        })
+      ) {
         log.info(
           {
             workItemId: args.workItemId,
@@ -1074,10 +800,33 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           ? getLatestOpenPairedTaskForChat(chatJid)
           : null;
         const pendingTurn = pendingReviewTask
-          ? buildPendingPairedTurn(pendingReviewTask, rawMissedMessages)
+          ? buildPendingPairedTurn({
+              chatJid,
+              timezone: deps.timezone,
+              task: pendingReviewTask,
+              rawMissedMessages,
+              recentHumanMessages: getRecentChatMessages(chatJid, 20).filter(
+                (message) => !message.is_bot_message,
+              ),
+              labeledRecentMessages: labelPairedSenders(
+                chatJid,
+                getRecentChatMessages(chatJid, 20),
+              ),
+              resolveChannel,
+            })
           : null;
         if (pendingTurn) {
-          return executePendingPairedTurn(pendingTurn);
+          return executePendingPairedTurn({
+            pendingTurn,
+            chatJid,
+            group,
+            runId,
+            log,
+            saveState: deps.saveState,
+            lastAgentTimestamps: deps.getLastAgentTimestamps(),
+            executeTurn,
+            getFixedRoleChannelName,
+          });
         }
 
         const lastIgnored = rawMissedMessages[rawMissedMessages.length - 1];
@@ -1097,10 +846,33 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         : null;
       const botOnlyPendingTurn =
         botOnlyPendingTask && isBotOnlyPairedRoomTurn(chatJid, missedMessages)
-          ? buildPendingPairedTurn(botOnlyPendingTask, rawMissedMessages)
+          ? buildPendingPairedTurn({
+              chatJid,
+              timezone: deps.timezone,
+              task: botOnlyPendingTask,
+              rawMissedMessages,
+              recentHumanMessages: getRecentChatMessages(chatJid, 20).filter(
+                (message) => !message.is_bot_message,
+              ),
+              labeledRecentMessages: labelPairedSenders(
+                chatJid,
+                getRecentChatMessages(chatJid, 20),
+              ),
+              resolveChannel,
+            })
           : null;
       if (botOnlyPendingTurn) {
-        return executePendingPairedTurn(botOnlyPendingTurn);
+        return executePendingPairedTurn({
+          pendingTurn: botOnlyPendingTurn,
+          chatJid,
+          group,
+          runId,
+          log,
+          saveState: deps.saveState,
+          lastAgentTimestamps: deps.getLastAgentTimestamps(),
+          executeTurn,
+          getFixedRoleChannelName,
+        });
       }
 
       if (shouldSkipBotOnlyCollaboration(chatJid, missedMessages)) {
@@ -1483,8 +1255,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 runId: `loop-merge-ready-${Date.now().toString(36)}`,
                 channel,
                 log: logger,
+                saveState: deps.saveState,
+                lastAgentTimestamps: deps.getLastAgentTimestamps(),
+                executeTurn,
                 enqueueGroupMessageCheck: () =>
                   enqueueScopedGroupMessageCheck(chatJid, group.folder),
+                closeStdin: () =>
+                  deps.queue.closeStdin(chatJid, {
+                    reason: 'paired-pending-turn-follow-up',
+                  }),
               })
             ) {
               continue;

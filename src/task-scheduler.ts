@@ -2,6 +2,7 @@ import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import { getAgentOutputText } from './agent-output.js';
+import { createEvaluatedOutputHandler } from './agent-attempt.js';
 import { getErrorMessage } from './utils.js';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
@@ -53,10 +54,6 @@ import {
   formatSuspensionNotice,
   suspendTask,
 } from './task-suspension.js';
-import {
-  evaluateStreamedOutput,
-  type StreamedOutputState,
-} from './streamed-output-evaluator.js';
 import {
   extractWatchCiTarget,
   getTaskQueueJid,
@@ -339,58 +336,31 @@ async function runTask(
       attemptResult: string | null;
       attemptError: string | null;
     }> => {
-      let streamedState: StreamedOutputState = {
-        sawOutput: false,
-        sawVisibleOutput: false,
-        sawSuccessNullResultWithoutOutput: false,
-      };
       let attemptResult: string | null = null;
       let attemptError: string | null = null;
-
-      const output = await runAgentProcess(
-        context.group,
-        {
-          prompt: task.prompt,
-          sessionId: context.sessionId,
-          groupFolder: task.group_folder,
-          chatJid: task.chat_jid,
-          isMain: context.isMain,
-          isScheduledTask: true,
-          runtimeTaskId: context.runtimeTaskId,
-          useTaskScopedSession: context.useTaskScopedSession,
-          assistantName: ASSISTANT_NAME,
+      const streamedOutputHandler = createEvaluatedOutputHandler({
+        agentType: isClaudeAgent ? 'claude-code' : 'codex',
+        provider,
+        evaluationOptions: {
+          shortCircuitTriggeredErrors: true,
         },
-        (proc, processName) =>
-          deps.onProcess(
-            context.queueJid,
-            proc,
-            processName,
-            context.runtimeIpcDir,
-          ),
-        async (streamedOutput: AgentOutput) => {
+        onEvaluatedOutput: async ({
+          output: streamedOutput,
+          outputText,
+          evaluation,
+        }) => {
           if (streamedOutput.phase === 'progress') {
             return;
           }
-          const evaluation = evaluateStreamedOutput(
-            streamedOutput,
-            streamedState,
-            {
-              agentType: isClaudeAgent ? 'claude-code' : 'codex',
-              provider,
-              shortCircuitTriggeredErrors: true,
-            },
-          );
-          streamedState = evaluation.state;
-
           if (
             evaluation.newTrigger &&
-            typeof streamedOutput.result === 'string' &&
+            outputText &&
             streamedOutput.status === 'success'
           ) {
             log.warn(
               {
                 reason: evaluation.newTrigger.reason,
-                resultPreview: streamedOutput.result.slice(0, 120),
+                resultPreview: outputText.slice(0, 120),
               },
               'Detected Claude rotation trigger during scheduled task output',
             );
@@ -416,7 +386,6 @@ async function runTask(
             return;
           }
 
-          const outputText = getAgentOutputText(streamedOutput);
           if (outputText) {
             attemptResult = outputText;
             // Paired-room scheduler output must use the reviewer bot slot.
@@ -427,6 +396,29 @@ async function runTask(
             attemptError = streamedOutput.error || 'Unknown error';
           }
         },
+      });
+
+      const output = await runAgentProcess(
+        context.group,
+        {
+          prompt: task.prompt,
+          sessionId: context.sessionId,
+          groupFolder: task.group_folder,
+          chatJid: task.chat_jid,
+          isMain: context.isMain,
+          isScheduledTask: true,
+          runtimeTaskId: context.runtimeTaskId,
+          useTaskScopedSession: context.useTaskScopedSession,
+          assistantName: ASSISTANT_NAME,
+        },
+        (proc, processName) =>
+          deps.onProcess(
+            context.queueJid,
+            proc,
+            processName,
+            context.runtimeIpcDir,
+          ),
+        streamedOutputHandler.handleOutput,
         undefined,
       );
 
@@ -439,6 +431,7 @@ async function runTask(
         }
       }
 
+      const streamedState = streamedOutputHandler.getState();
       return {
         output,
         sawOutput: streamedState.sawOutput,

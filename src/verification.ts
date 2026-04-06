@@ -1,5 +1,4 @@
 import { execFile, execFileSync } from 'child_process';
-import { createHash } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -18,6 +17,11 @@ import {
   detectPnpmStorePath,
   hasInstalledNodeModules,
 } from './workspace-package-manager.js';
+import {
+  computeVerificationSnapshotId,
+  isVerificationSnapshotExcludedName,
+  resolveVerificationResponsesDir,
+} from '../shared/verification-snapshot.js';
 
 export const VERIFICATION_PROFILES = ['test', 'typecheck', 'build'] as const;
 
@@ -58,7 +62,6 @@ interface VerificationCommandSpec {
 }
 
 const PRIMARY_PROJECT_MOUNT = '/workspace/project';
-const SNAPSHOT_EXCLUDE_NAMES = new Set(['.git', 'node_modules', '.env']);
 const MAX_OUTPUT_CHARS = 24_000;
 const COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
@@ -92,47 +95,14 @@ export function buildVerificationCommand(
 }
 
 function shouldExcludePath(name: string): boolean {
-  return SNAPSHOT_EXCLUDE_NAMES.has(name);
-}
-
-function updateSnapshotHash(
-  hash: ReturnType<typeof createHash>,
-  repoDir: string,
-  currentPath: string,
-): void {
-  const relPath = path.relative(repoDir, currentPath) || '.';
-  const stat = fs.lstatSync(currentPath);
-
-  if (stat.isDirectory()) {
-    if (relPath !== '.') {
-      hash.update(`dir\0${relPath}\0`);
-    }
-    for (const entry of fs.readdirSync(currentPath).sort()) {
-      if (shouldExcludePath(entry)) continue;
-      updateSnapshotHash(hash, repoDir, path.join(currentPath, entry));
-    }
-    return;
-  }
-
-  if (stat.isSymbolicLink()) {
-    hash.update(`symlink\0${relPath}\0${fs.readlinkSync(currentPath)}\0`);
-    return;
-  }
-
-  if (stat.isFile()) {
-    hash.update(`file\0${relPath}\0`);
-    hash.update(fs.readFileSync(currentPath));
-    hash.update('\0');
-  }
+  return isVerificationSnapshotExcludedName(name);
 }
 
 export function computeVerificationSnapshot(
   repoDir: string,
 ): VerificationSnapshot {
-  const hash = createHash('sha256');
-  updateSnapshotHash(hash, repoDir, repoDir);
   return {
-    snapshotId: `fs:${hash.digest('hex').slice(0, 24)}`,
+    snapshotId: computeVerificationSnapshotId(repoDir),
   };
 }
 
@@ -403,7 +373,7 @@ export async function runVerificationRequest(
 }
 
 export function resolveVerificationResponseDir(groupFolder: string): string {
-  return path.join(resolveGroupIpcPath(groupFolder), 'verification-responses');
+  return resolveVerificationResponsesDir(resolveGroupIpcPath(groupFolder));
 }
 
 export function writeVerificationResponse(
