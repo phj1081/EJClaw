@@ -939,13 +939,6 @@ export async function runAgentForGroup(
         !pairedSawOutput
           ? 'failed'
           : completionStatus;
-      completePairedExecutionContext({
-        taskId: pairedExecutionContext.task.id,
-        role: completedRole,
-        status: effectiveStatus,
-        summary: pairedExecutionSummary,
-      });
-
       // Store full output for direct inter-agent data passing (Discord-independent).
       if (pairedFullOutput && effectiveStatus === 'succeeded') {
         try {
@@ -964,6 +957,13 @@ export async function runAgentForGroup(
           );
         }
       }
+
+      completePairedExecutionContext({
+        taskId: pairedExecutionContext.task.id,
+        role: completedRole,
+        status: effectiveStatus,
+        summary: pairedExecutionSummary,
+      });
     }
 
     // Notify user when paired task reaches a terminal state that requires attention.
