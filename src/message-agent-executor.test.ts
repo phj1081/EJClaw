@@ -1318,6 +1318,7 @@ describe('runAgentForGroup room memory', () => {
   it('stores reviewer turn output before transitioning the paired task back to active', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     const deps = makeDeps();
+    const onOutput = vi.fn(async () => {});
 
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: 'group@test',
@@ -1397,7 +1398,7 @@ describe('runAgentForGroup room memory', () => {
       chatJid: 'group@test',
       runId: 'run-reviewer-output-order',
       forcedRole: 'reviewer',
-      onOutput: async () => {},
+      onOutput,
     });
 
     expect(result).toBe('success');
@@ -1406,6 +1407,11 @@ describe('runAgentForGroup room memory', () => {
       1,
       'reviewer',
       'DONE_WITH_CONCERNS\nreviewer feedback',
+    );
+    expect(
+      vi.mocked(db.insertPairedTurnOutput).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      onOutput.mock.invocationCallOrder[0],
     );
     expect(
       vi.mocked(db.insertPairedTurnOutput).mock.invocationCallOrder[0],
