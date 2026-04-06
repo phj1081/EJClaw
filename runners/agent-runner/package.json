@@ -2,7 +2,7 @@
   "name": "ejclaw-agent-runner",
   "version": "1.0.0",
   "type": "module",
-  "description": "Container-side agent runner for EJClaw",
+  "description": "Agent runner subprocess for EJClaw",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

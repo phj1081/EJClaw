@@ -13,7 +13,7 @@ import {
   IDLE_TIMEOUT,
 } from './config.js';
 import {
-  prepareContainerSessionEnvironment,
+  prepareReadonlySessionEnvironment,
   prepareGroupEnvironment,
 } from './agent-runner-environment.js';
 import { getEnv } from './env.js';
@@ -99,7 +99,7 @@ export async function runAgentProcess(
     (input.roomRoleContext?.role === 'reviewer' ||
       input.roomRoleContext?.role === 'arbiter')
   ) {
-    prepareContainerSessionEnvironment({
+    prepareReadonlySessionEnvironment({
       sessionDir: envOverrides.CLAUDE_CONFIG_DIR,
       chatJid: input.chatJid,
       isMain: input.isMain,

@@ -1237,6 +1237,83 @@ describe('runAgentForGroup room memory', () => {
     expect(result).toBe('success');
     expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
   });
+
+  it('re-enqueues the group when a reviewer fails and the task remains review_ready', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const deps = makeDeps();
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-review-ready',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 1,
+        review_requested_at: '2026-03-31T00:00:00.000Z',
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-review-ready',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 1,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'error',
+      result: null,
+      error: 'SDK crashed with exit code 1',
+    });
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-review-ready-requeue',
+      forcedRole: 'reviewer',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('error');
+    expect(deps.queue.enqueueMessageCheck).toHaveBeenCalledWith('group@test');
+  });
 });
 
 describe('runAgentForGroup Claude rotation', () => {

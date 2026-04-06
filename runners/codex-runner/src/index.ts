@@ -4,7 +4,7 @@
  * App-server only runtime.
  *
  * Input protocol:
- *   Stdin: Full ContainerInput JSON (read until EOF)
+ *   Stdin: Full RunnerInput JSON (read until EOF)
  *   IPC:   Follow-up messages as JSON files in $EJCLAW_IPC_DIR/input/
  *          Sentinel: _close — signals session end
  *
@@ -31,7 +31,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────
 
-interface ContainerInput {
+interface RunnerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
@@ -43,7 +43,7 @@ interface ContainerInput {
   roomRoleContext?: RoomRoleContext;
 }
 
-interface ContainerOutput {
+interface RunnerOutput {
   status: 'success' | 'error';
   result: string | null;
   output?: {
@@ -77,7 +77,7 @@ let closeRequested = false;
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function writeOutput(output: ContainerOutput): void {
+function writeOutput(output: RunnerOutput): void {
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
   console.log(OUTPUT_END_MARKER);
@@ -85,7 +85,7 @@ function writeOutput(output: ContainerOutput): void {
 
 function normalizeStructuredOutput(result: string | null): {
   result: string | null;
-  output?: ContainerOutput['output'];
+  output?: RunnerOutput['output'];
 } {
   if (typeof result !== 'string' || result.length === 0) {
     return { result };
@@ -400,12 +400,12 @@ async function runAppServerCompact(
 }
 
 async function runAppServerSession(
-  containerInput: ContainerInput,
+  runnerInput: RunnerInput,
   prompt: string,
 ): Promise<void> {
   const reviewerRuntime =
     process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
-    isReviewerRuntime(containerInput.roomRoleContext);
+    isReviewerRuntime(runnerInput.roomRoleContext);
   const readonlyRuntime =
     reviewerRuntime || process.env.EJCLAW_ARBITER_RUNTIME === '1';
   const clientEnv = buildReviewerGitGuardEnv(process.env, reviewerRuntime);
@@ -421,17 +421,17 @@ async function runAppServerSession(
   let threadId: string | undefined;
   try {
     try {
-      threadId = await client.startOrResumeThread(containerInput.sessionId, {
+      threadId = await client.startOrResumeThread(runnerInput.sessionId, {
         cwd: EFFECTIVE_CWD,
         model: CODEX_MODEL || undefined,
       });
       log(
-        containerInput.sessionId
+        runnerInput.sessionId
           ? `App-server thread resumed (${threadId})`
           : `App-server thread started (${threadId})`,
       );
     } catch (err) {
-      if (!containerInput.sessionId) throw err;
+      if (!runnerInput.sessionId) throw err;
       log(
         `App-server resume failed, retrying with new thread: ${
           err instanceof Error ? err.message : String(err)
@@ -483,17 +483,17 @@ async function runAppServerSession(
 // ── Main ──────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  let containerInput: ContainerInput;
+  let runnerInput: RunnerInput;
 
   try {
     const stdinData = await readStdin();
-    containerInput = JSON.parse(stdinData);
+    runnerInput = JSON.parse(stdinData);
     try {
       fs.unlinkSync('/tmp/input.json');
     } catch {
       /* may not exist */
     }
-    log(`Received input for group: ${containerInput.groupFolder}`);
+    log(`Received input for group: ${runnerInput.groupFolder}`);
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -513,9 +513,9 @@ async function main(): Promise<void> {
     /* ignore */
   }
 
-  const rawPrompt = containerInput.prompt;
+  const rawPrompt = runnerInput.prompt;
   let prompt = rawPrompt;
-  if (containerInput.isScheduledTask) {
+  if (runnerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK]\n\n${prompt}`;
   }
   const pending = drainIpcInput();
@@ -526,12 +526,12 @@ async function main(): Promise<void> {
   // so /compact is not masked by the header prefix.
   const isSessionCommand = rawPrompt.trim() === '/compact';
   if (!isSessionCommand) {
-    prompt = prependRoomRoleHeader(prompt, containerInput.roomRoleContext);
+    prompt = prependRoomRoleHeader(prompt, runnerInput.roomRoleContext);
   }
 
   try {
     log('Runtime selected: app-server');
-    await runAppServerSession(containerInput, prompt);
+    await runAppServerSession(runnerInput, prompt);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Runner error: ${errorMessage}`);

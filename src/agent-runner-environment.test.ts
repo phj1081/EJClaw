@@ -79,7 +79,7 @@ vi.mock('os', async () => {
 });
 
 import {
-  prepareContainerSessionEnvironment,
+  prepareReadonlySessionEnvironment,
   prepareGroupEnvironment,
 } from './agent-runner-environment.js';
 import * as config from './config.js';
@@ -341,12 +341,12 @@ describe('prepareGroupEnvironment codex auth handling', () => {
   });
 });
 
-describe('prepareContainerSessionEnvironment codex compatibility', () => {
+describe('prepareReadonlySessionEnvironment codex compatibility', () => {
   let tempRoot: string;
   let previousCwd: string;
 
   beforeEach(() => {
-    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-container-env-'));
+    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-readonly-env-'));
     previousCwd = process.cwd();
     process.chdir(tempRoot);
 
@@ -369,7 +369,7 @@ describe('prepareContainerSessionEnvironment codex compatibility', () => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
   });
 
-  it('writes matching AGENTS.md and copies host codex auth/config into the container session', () => {
+  it('writes matching AGENTS.md and copies host codex auth/config into the role-scoped session', () => {
     vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
 
     const promptsDir = path.join(tempRoot, 'prompts');
@@ -404,8 +404,8 @@ args = ["other.js"]
 `,
     );
 
-    const sessionDir = path.join(tempRoot, 'container-reviewer-session');
-    prepareContainerSessionEnvironment({
+    const sessionDir = path.join(tempRoot, 'readonly-reviewer-session');
+    prepareReadonlySessionEnvironment({
       sessionDir,
       chatJid: 'dc:test',
       isMain: false,
