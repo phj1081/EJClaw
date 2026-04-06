@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./agent-error-detection.js', () => ({
-  classifyRotationTrigger: vi.fn(() => ({
-    shouldRetry: false,
-    reason: '',
-  })),
-}));
+vi.mock('./agent-error-detection.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('./agent-error-detection.js')>();
+  return {
+    ...actual,
+    classifyRotationTrigger: vi.fn(() => ({
+      shouldRetry: false,
+      reason: '',
+    })),
+  };
+});
 
 vi.mock('./codex-token-rotation.js', () => ({
   detectCodexRotationTrigger: vi.fn(() => ({
@@ -69,6 +74,18 @@ describe('message-agent-executor-rules', () => {
         rotationMessage: '401 oauth token has expired',
       }),
     ).toEqual({ reason: 'auth-expired' });
+  });
+
+  it('ignores streamed reasons that are not valid Codex rotation triggers', () => {
+    expect(
+      resolveCodexRetryTrigger({
+        canRetryCodex: true,
+        attempt: {
+          streamedTriggerReason: { reason: 'usage-exhausted' },
+        },
+      }),
+    ).toBeNull();
+    expect(detectCodexRotationTrigger).not.toHaveBeenCalled();
   });
 
   it('detects retryable Claude session failures from either flag or classifier', () => {

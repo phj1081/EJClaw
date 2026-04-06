@@ -126,6 +126,18 @@ export function shouldRotateClaudeToken(
   );
 }
 
+export function isCodexRotationReason(
+  reason: AgentTriggerReason,
+): reason is CodexRotationReason {
+  return (
+    reason === '429' ||
+    reason === 'auth-expired' ||
+    reason === 'org-access-denied' ||
+    reason === 'overloaded' ||
+    reason === 'network-error'
+  );
+}
+
 // ── Rotation trigger classification ─────────────────────────────
 
 export type RotationTriggerResult =
