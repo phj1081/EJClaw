@@ -30,6 +30,7 @@ import {
   completePairedExecutionContext,
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
+import { resolveCodexFallbackHandoff } from './paired-turn-fallback.js';
 import {
   resolveActiveRole,
   resolveConfiguredRoleAgentPlan,
@@ -50,7 +51,6 @@ import {
   ARBITER_AGENT_TYPE,
   CODEX_REVIEW_SERVICE_ID,
   REVIEWER_AGENT_TYPE,
-  SERVICE_SESSION_SCOPE,
   TIMEZONE,
   isClaudeService,
   getRoleModelConfig,
@@ -154,6 +154,10 @@ export async function runAgentForGroup(
     process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
   const forceFreshClaudeReviewerSession =
     reviewerMode && isClaudeCodeAgent && unsafeHostPairedMode;
+  const shouldPersistSession =
+    activeRole !== 'arbiter' &&
+    !args.forcedAgentType &&
+    !forceFreshClaudeReviewerSession;
   const storedSessionId = sessions[sessionFolder];
   if (forceFreshClaudeReviewerSession && storedSessionId) {
     deps.clearSession(sessionFolder);
@@ -321,103 +325,44 @@ export async function runAgentForGroup(
   let pairedExecutionCompleted = false;
   let pairedSawOutput = false;
 
-  const shouldHandoffToCodex = (
-    reason: AgentTriggerReason,
-    sawVisibleOutput: boolean,
-  ): boolean => {
-    if (sawVisibleOutput) {
-      return false;
-    }
-    return (
-      reason === '429' ||
-      reason === 'usage-exhausted' ||
-      reason === 'auth-expired' ||
-      reason === 'org-access-denied' ||
-      reason === 'session-failure'
-    );
-  };
-
   const maybeHandoffToCodex = (
     reason: AgentTriggerReason,
     sawVisibleOutput: boolean,
   ): boolean => {
     if (!isClaudeCodeAgent) return false;
-    if (!shouldHandoffToCodex(reason, sawVisibleOutput)) {
-      return false;
-    }
-    if (currentLease.reviewer_agent_type === null) {
-      return false;
-    }
-    // Per-role fallback toggle
-    const roleConfig = getRoleModelConfig(activeRole);
-    if (!roleConfig.fallbackEnabled) {
-      log.info({ reason }, 'Fallback disabled for role, skipping handoff');
+    const handoffResolution = resolveCodexFallbackHandoff({
+      activeRole,
+      effectiveAgentType,
+      hasReviewer: currentLease.reviewer_agent_type !== null,
+      fallbackEnabled: getRoleModelConfig(activeRole).fallbackEnabled,
+      reason,
+      sawVisibleOutput,
+      prompt,
+      startSeq,
+      endSeq,
+    });
+
+    if (handoffResolution.type === 'none') {
       return false;
     }
 
-    if (arbiterMode) {
-      // Arbiter failed (e.g. Claude 401/429) — re-trigger arbitration with codex
-      createServiceHandoff({
-        chat_jid: chatJid,
-        group_folder: group.folder,
-        source_role: activeRole,
-        target_role: 'arbiter',
-        source_agent_type: effectiveAgentType,
-        target_agent_type: 'codex',
-        prompt,
-        start_seq: startSeq ?? null,
-        end_seq: endSeq ?? null,
-        reason: `arbiter-claude-${reason}`,
-        intended_role: 'arbiter',
-      });
-      log.warn(
-        { reason },
-        'Claude arbiter unavailable, handed off arbiter turn to codex',
+    if (handoffResolution.type === 'skip') {
+      log.info({ reason }, handoffResolution.logMessage);
+      return false;
+    }
+
+    if (handoffResolution.plan.activateOwnerFailoverReason) {
+      activateCodexFailover(
+        chatJid,
+        handoffResolution.plan.activateOwnerFailoverReason,
       );
-      return true;
     }
-
-    if (reviewerMode) {
-      // Reviewer failed (e.g. Claude 401/429) — re-trigger review with codex
-      // instead of swapping owner/reviewer roles.
-      createServiceHandoff({
-        chat_jid: chatJid,
-        group_folder: group.folder,
-        source_role: activeRole,
-        target_role: 'reviewer',
-        source_agent_type: effectiveAgentType,
-        target_agent_type: 'codex',
-        prompt,
-        start_seq: startSeq ?? null,
-        end_seq: endSeq ?? null,
-        reason: `reviewer-claude-${reason}`,
-        intended_role: 'reviewer',
-      });
-      log.warn(
-        { reason },
-        'Claude reviewer unavailable, handed off review turn to codex-review',
-      );
-      return true;
-    }
-
-    activateCodexFailover(chatJid, `claude-${reason}`);
     createServiceHandoff({
       chat_jid: chatJid,
       group_folder: group.folder,
-      source_role: activeRole,
-      target_role: activeRole,
-      source_agent_type: effectiveAgentType,
-      target_agent_type: 'codex',
-      prompt,
-      start_seq: startSeq ?? null,
-      end_seq: endSeq ?? null,
-      reason: `claude-${reason}`,
-      intended_role: activeRole,
+      ...handoffResolution.plan.handoff,
     });
-    log.warn(
-      { reason },
-      'Claude unavailable, handed off current owner turn to codex fallback',
-    );
+    log.warn({ reason }, handoffResolution.plan.logMessage);
     return true;
   };
 
@@ -480,8 +425,7 @@ export async function runAgentForGroup(
       sawVisibleOutput: false,
       sawSuccessNullResultWithoutOutput: false,
     };
-    const attemptSessionId =
-      provider === 'claude' ? currentSessionId : undefined;
+    const attemptSessionId = currentSessionId;
 
     const wrappedOnOutput = onOutput
       ? async (output: AgentOutput) => {
@@ -528,10 +472,9 @@ export async function runAgentForGroup(
             resetSessionRequested = true;
           }
           if (
-            provider === 'claude' &&
             output.newSessionId &&
             !resetSessionRequested &&
-            !forceFreshClaudeReviewerSession
+            shouldPersistSession
           ) {
             deps.persistSession(sessionFolder, output.newSessionId);
             currentSessionId = output.newSessionId;
@@ -642,11 +585,7 @@ export async function runAgentForGroup(
         pairedExecutionContext?.envOverrides,
       );
 
-      if (
-        provider === 'claude' &&
-        output.newSessionId &&
-        !forceFreshClaudeReviewerSession
-      ) {
+      if (output.newSessionId && shouldPersistSession) {
         deps.persistSession(sessionFolder, output.newSessionId);
         currentSessionId = output.newSessionId;
       }
@@ -939,7 +878,7 @@ export async function runAgentForGroup(
     return shouldRequeuePendingPairedTurn ? 'pending' : 'none';
   };
 
-  const provider = 'claude';
+  const provider = isClaudeCodeAgent ? 'claude' : 'codex';
 
   try {
     let primaryAttempt = await runAttempt(provider);
