@@ -36,6 +36,12 @@ export type PendingPairedTurn = {
 export type BotOnlyPairedFollowUpAction =
   | { kind: 'none' }
   | {
+      kind: 'consume-stale-bot-message';
+      task: PairedTask;
+      cursor: string | number | null;
+      currentStatus: PairedTask['status'];
+    }
+  | {
       kind: 'inline-finalize';
       task: PairedTask;
       cursor: string | number | null;
@@ -249,6 +255,15 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
     lastTurnOutputRole: lastTurnOutput?.role ?? null,
   });
 
+  if (nextTurnAction.kind === 'none') {
+    return {
+      kind: 'consume-stale-bot-message',
+      task,
+      cursor,
+      currentStatus: task.status,
+    };
+  }
+
   if (nextTurnAction.kind === 'finalize-owner-turn') {
     return {
       kind: 'inline-finalize',
@@ -326,6 +341,21 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
       action.cursor,
       action.kind === 'requeue-pending-turn' ? action.cursorKey : undefined,
     );
+  }
+
+  if (action.kind === 'consume-stale-bot-message') {
+    log.info(
+      {
+        chatJid,
+        group: group.name,
+        groupFolder: group.folder,
+        taskId: action.task.id,
+        taskStatus: action.currentStatus,
+        cursor: action.cursor,
+      },
+      'Consumed stale bot-only paired message because no follow-up turn is pending',
+    );
+    return true;
   }
 
   if (action.kind === 'inline-finalize') {

@@ -49,6 +49,24 @@ describe('message-runtime-rules', () => {
     ).toEqual({ kind: 'finalize-owner-turn' });
   });
 
+  it('does not schedule a second reviewer turn when the latest turn already belongs to the reviewer', () => {
+    expect(
+      resolveNextTurnAction({
+        taskStatus: 'review_ready',
+        lastTurnOutputRole: 'reviewer',
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('does not schedule a second finalize turn when the latest turn already belongs to the owner', () => {
+    expect(
+      resolveNextTurnAction({
+        taskStatus: 'merge_ready',
+        lastTurnOutputRole: 'owner',
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
   it('maps active tasks with reviewer output to an owner follow-up', () => {
     expect(
       resolveNextTurnAction({

@@ -75,12 +75,18 @@ export function resolveNextTurnAction(args: {
   switch (args.taskStatus) {
     case 'review_ready':
     case 'in_review':
-      return { kind: 'reviewer-turn' };
+      return args.lastTurnOutputRole === 'reviewer'
+        ? { kind: 'none' }
+        : { kind: 'reviewer-turn' };
     case 'arbiter_requested':
     case 'in_arbitration':
-      return { kind: 'arbiter-turn' };
+      return args.lastTurnOutputRole === 'arbiter'
+        ? { kind: 'none' }
+        : { kind: 'arbiter-turn' };
     case 'merge_ready':
-      return { kind: 'finalize-owner-turn' };
+      return args.lastTurnOutputRole === 'owner'
+        ? { kind: 'none' }
+        : { kind: 'finalize-owner-turn' };
     case 'active':
       return args.lastTurnOutputRole === 'reviewer' ||
         args.lastTurnOutputRole === 'arbiter'

@@ -213,6 +213,10 @@ import {
   resolveHandoffCursorKey,
   resolveHandoffRoleOverride,
 } from './message-runtime.js';
+import {
+  buildPendingPairedTurn,
+  resolveBotOnlyPairedFollowUpAction,
+} from './message-runtime-flow.js';
 import * as config from './config.js';
 import { logger } from './logger.js';
 import * as serviceRouting from './service-routing.js';
@@ -1562,6 +1566,160 @@ describe('createMessageRuntime', () => {
     expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '최종 정리 완료');
     expect(lastAgentTimestamps[chatJid]).toBe('42');
     expect(saveState).toHaveBeenCalled();
+  });
+
+  it('does not build a second reviewer pending turn once the latest persisted turn already belongs to the reviewer', () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    const task = {
+      id: 'task-stale-reviewer-bot-message',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-stale-reviewer-bot-message',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'owner 응답',
+        created_at: '2026-03-30T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-stale-reviewer-bot-message',
+        turn_number: 2,
+        role: 'reviewer',
+        output_text: 'reviewer 승인',
+        created_at: '2026-03-30T00:00:02.000Z',
+      },
+    ]);
+
+    expect(
+      buildPendingPairedTurn({
+        chatJid,
+        timezone: 'UTC',
+        task,
+        rawMissedMessages: [
+          {
+            seq: 42,
+            timestamp: '2026-03-30T00:00:04.000Z',
+          },
+        ],
+        recentHumanMessages: [],
+        labeledRecentMessages: [],
+        resolveChannel: () => makeChannel(chatJid, 'discord-review', false),
+      }),
+    ).toBeNull();
+
+    expect(
+      resolveBotOnlyPairedFollowUpAction({
+        chatJid,
+        task,
+        isBotOnlyPairedFollowUp: true,
+        pendingCursorSource: {
+          seq: 42,
+          timestamp: '2026-03-30T00:00:04.000Z',
+        },
+      }),
+    ).toEqual({
+      kind: 'consume-stale-bot-message',
+      task,
+      cursor: 42,
+      currentStatus: 'review_ready',
+    });
+  });
+
+  it('consumes stale bot-only owner messages once the finalize turn output is already persisted', () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    const task = {
+      id: 'task-stale-owner-bot-message',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'merge_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-stale-owner-bot-message',
+        turn_number: 1,
+        role: 'reviewer',
+        output_text: 'reviewer 승인',
+        created_at: '2026-03-30T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-stale-owner-bot-message',
+        turn_number: 2,
+        role: 'owner',
+        output_text: 'owner 최종 보고',
+        created_at: '2026-03-30T00:00:02.000Z',
+      },
+    ]);
+
+    expect(
+      buildPendingPairedTurn({
+        chatJid,
+        timezone: 'UTC',
+        task,
+        rawMissedMessages: [
+          {
+            seq: 43,
+            timestamp: '2026-03-30T00:00:04.000Z',
+          },
+        ],
+        recentHumanMessages: [],
+        labeledRecentMessages: [],
+        resolveChannel: () => makeChannel(chatJid),
+      }),
+    ).toBeNull();
+
+    expect(
+      resolveBotOnlyPairedFollowUpAction({
+        chatJid,
+        task,
+        isBotOnlyPairedFollowUp: true,
+        pendingCursorSource: {
+          seq: 43,
+          timestamp: '2026-03-30T00:00:04.000Z',
+        },
+      }),
+    ).toEqual({
+      kind: 'consume-stale-bot-message',
+      task,
+      cursor: 43,
+      currentStatus: 'merge_ready',
+    });
   });
 
   it('runs merge_ready bot-only reviewer follow-ups inline in the message loop', async () => {
