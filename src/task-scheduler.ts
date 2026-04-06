@@ -27,7 +27,10 @@ import {
 } from './group-folder.js';
 import { createScopedLogger, logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
-import { runClaudeRotationLoop, runCodexRotationLoop } from './provider-retry.js';
+import {
+  runClaudeRotationLoop,
+  runCodexRotationLoop,
+} from './provider-retry.js';
 import {
   detectCodexRotationTrigger,
   rotateCodexToken,
