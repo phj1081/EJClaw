@@ -774,6 +774,8 @@ export async function runAgentForGroup(
     return 'error';
   };
 
+  type AgentAttempt = Awaited<ReturnType<typeof runAttempt>>;
+
   const retryClaudeWithRotation = async (
     initialTrigger: {
       reason: AgentTriggerReason;
@@ -813,14 +815,127 @@ export async function runAgentForGroup(
     }
   };
 
+  const resolveClaudeRetryTrigger = (
+    attempt: AgentAttempt,
+    fallbackMessage?: string | null,
+  ): { reason: AgentTriggerReason; retryAfterMs?: number } | null => {
+    if (
+      !(
+        canRetryClaudeCredentials &&
+        provider === 'claude' &&
+        !attempt.sawOutput
+      )
+    ) {
+      return null;
+    }
+
+    if (attempt.streamedTriggerReason) {
+      return {
+        reason: attempt.streamedTriggerReason.reason,
+        retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
+      };
+    }
+
+    const trigger = classifyRotationTrigger(fallbackMessage);
+    if (!trigger.shouldRetry) {
+      return null;
+    }
+
+    return {
+      reason: trigger.reason,
+      retryAfterMs: trigger.retryAfterMs,
+    };
+  };
+
+  const retryClaudeAttemptIfNeeded = async (
+    attempt: AgentAttempt,
+    rotationMessage?: string | null,
+  ): Promise<'success' | 'error' | null> => {
+    const trigger = resolveClaudeRetryTrigger(attempt, rotationMessage);
+    if (!trigger) {
+      return null;
+    }
+
+    const result = await retryClaudeWithRotation(
+      trigger,
+      rotationMessage ?? undefined,
+    );
+    if (result === 'error') {
+      return maybeHandoffAfterError(trigger.reason, attempt);
+    }
+
+    pairedExecutionStatus = 'succeeded';
+    return result;
+  };
+
+  const retryCodexAttemptIfNeeded = async (
+    attempt: AgentAttempt,
+    rotationMessage?: string | null,
+  ): Promise<'success' | 'error' | null> => {
+    if (isClaudeCodeAgent || getCodexAccountCount() <= 1) {
+      return null;
+    }
+
+    const trigger = attempt.streamedTriggerReason
+      ? {
+          shouldRotate: true,
+          reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
+        }
+      : detectCodexRotationTrigger(rotationMessage);
+    if (!trigger.shouldRotate) {
+      return null;
+    }
+
+    const result = await retryCodexWithRotation(
+      { reason: trigger.reason },
+      rotationMessage ?? undefined,
+    );
+    if (result === 'success') {
+      pairedExecutionStatus = 'succeeded';
+    }
+    return result;
+  };
+
   const maybeHandoffAfterError = (
     reason: AgentTriggerReason,
-    attempt: Awaited<ReturnType<typeof runAttempt>>,
+    attempt: AgentAttempt,
   ): 'success' | 'error' => {
     if (maybeHandoffToCodex(reason, attempt.sawVisibleOutput)) {
       return 'success';
     }
     return 'error';
+  };
+
+  type PairedFollowUpQueueAction =
+    | 'generic'
+    | 'pending'
+    | 'skip-inline-finalize'
+    | 'none';
+  type PairedTaskStatus =
+    NonNullable<ReturnType<typeof getPairedTaskById>>['status'];
+
+  const resolvePairedFollowUpQueueAction = (
+    completedRole: PairedRoomRole,
+    executionStatus: 'succeeded' | 'failed',
+    sawOutput: boolean,
+    taskStatus: PairedTaskStatus | null,
+  ): PairedFollowUpQueueAction => {
+    if (executionStatus === 'succeeded' && sawOutput) {
+      return completedRole === 'reviewer' && taskStatus === 'merge_ready'
+        ? 'skip-inline-finalize'
+        : taskStatus !== 'completed'
+          ? 'generic'
+          : 'none';
+    }
+
+    const shouldRequeuePendingPairedTurn =
+      (completedRole === 'reviewer' || completedRole === 'arbiter') &&
+      (taskStatus === 'review_ready' ||
+        taskStatus === 'in_review' ||
+        taskStatus === 'arbiter_requested' ||
+        taskStatus === 'in_arbitration' ||
+        taskStatus === 'merge_ready');
+    return shouldRequeuePendingPairedTurn ? 'pending' : 'none';
   };
 
   const provider = 'claude';
@@ -864,50 +979,21 @@ export async function runAgentForGroup(
     }
 
     if (primaryAttempt.error) {
-      if (
-        canRetryClaudeCredentials &&
-        provider === 'claude' &&
-        !primaryAttempt.sawOutput
-      ) {
-        const errMsg = getErrorMessage(primaryAttempt.error);
-        const trigger = primaryAttempt.streamedTriggerReason
-          ? {
-              shouldRetry: true,
-              reason: primaryAttempt.streamedTriggerReason.reason,
-              retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
-            }
-          : classifyRotationTrigger(errMsg);
-        if (trigger.shouldRetry) {
-          const result = await retryClaudeWithRotation(
-            {
-              reason: trigger.reason,
-              retryAfterMs: trigger.retryAfterMs,
-            },
-            errMsg,
-          );
-          if (result === 'error') {
-            return maybeHandoffAfterError(trigger.reason, primaryAttempt);
-          }
-          if (result === 'success') {
-            pairedExecutionStatus = 'succeeded';
-          }
-          return result;
-        }
+      const errMsg = getErrorMessage(primaryAttempt.error);
+      const claudeRetryResult = await retryClaudeAttemptIfNeeded(
+        primaryAttempt,
+        errMsg,
+      );
+      if (claudeRetryResult) {
+        return claudeRetryResult;
       }
 
-      if (!isClaudeCodeAgent) {
-        const errMsg = getErrorMessage(primaryAttempt.error);
-        const trigger = detectCodexRotationTrigger(errMsg);
-        if (trigger.shouldRotate && getCodexAccountCount() > 1) {
-          const result = await retryCodexWithRotation(
-            { reason: trigger.reason },
-            errMsg,
-          );
-          if (result === 'success') {
-            pairedExecutionStatus = 'succeeded';
-          }
-          return result;
-        }
+      const codexRetryResult = await retryCodexAttemptIfNeeded(
+        primaryAttempt,
+        errMsg,
+      );
+      if (codexRetryResult) {
+        return codexRetryResult;
       }
 
       log.error(
@@ -937,24 +1023,11 @@ export async function runAgentForGroup(
           : null);
     }
 
-    if (
-      canRetryClaudeCredentials &&
-      provider === 'claude' &&
-      !primaryAttempt.sawOutput &&
-      primaryAttempt.streamedTriggerReason &&
-      output.status !== 'error'
-    ) {
-      const result = await retryClaudeWithRotation({
-        reason: primaryAttempt.streamedTriggerReason.reason,
-        retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
-      });
-      if (result === 'error') {
-        return maybeHandoffAfterError(
-          primaryAttempt.streamedTriggerReason.reason,
-          primaryAttempt,
-        );
+    if (!primaryAttempt.sawOutput && output.status !== 'error') {
+      const claudeRetryResult = await retryClaudeAttemptIfNeeded(primaryAttempt);
+      if (claudeRetryResult) {
+        return claudeRetryResult;
       }
-      return result;
     }
 
     if (
@@ -969,48 +1042,20 @@ export async function runAgentForGroup(
     }
 
     if (output.status === 'error') {
-      if (
-        canRetryClaudeCredentials &&
-        provider === 'claude' &&
-        !primaryAttempt.sawOutput
-      ) {
-        const trigger = primaryAttempt.streamedTriggerReason
-          ? {
-              shouldRetry: true,
-              reason: primaryAttempt.streamedTriggerReason.reason,
-              retryAfterMs: primaryAttempt.streamedTriggerReason.retryAfterMs,
-            }
-          : classifyRotationTrigger(output.error);
-        if (trigger.shouldRetry) {
-          const result = await retryClaudeWithRotation(
-            {
-              reason: trigger.reason,
-              retryAfterMs: trigger.retryAfterMs,
-            },
-            output.error ?? undefined,
-          );
-          if (result === 'error') {
-            return maybeHandoffAfterError(trigger.reason, primaryAttempt);
-          }
-          if (result === 'success') {
-            pairedExecutionStatus = 'succeeded';
-          }
-          return result;
-        }
+      const claudeRetryResult = await retryClaudeAttemptIfNeeded(
+        primaryAttempt,
+        output.error,
+      );
+      if (claudeRetryResult) {
+        return claudeRetryResult;
       }
 
-      if (!isClaudeCodeAgent && getCodexAccountCount() > 1) {
-        const trigger = detectCodexRotationTrigger(output.error);
-        if (trigger.shouldRotate) {
-          const result = await retryCodexWithRotation(
-            { reason: trigger.reason },
-            output.error ?? undefined,
-          );
-          if (result === 'success') {
-            pairedExecutionStatus = 'succeeded';
-          }
-          return result;
-        }
+      const codexRetryResult = await retryCodexAttemptIfNeeded(
+        primaryAttempt,
+        output.error,
+      );
+      if (codexRetryResult) {
+        return codexRetryResult;
       }
 
       log.error(
@@ -1023,22 +1068,12 @@ export async function runAgentForGroup(
       return 'error';
     }
 
-    if (
-      !isClaudeCodeAgent &&
-      primaryAttempt.streamedTriggerReason &&
-      getCodexAccountCount() > 1
-    ) {
-      const result = await retryCodexWithRotation(
-        {
-          reason: primaryAttempt.streamedTriggerReason
-            .reason as CodexRotationReason,
-        },
-        output.error ?? output.result ?? undefined,
-      );
-      if (result === 'success') {
-        pairedExecutionStatus = 'succeeded';
-      }
-      return result;
+    const codexRetryResult = await retryCodexAttemptIfNeeded(
+      primaryAttempt,
+      output.error ?? output.result,
+    );
+    if (codexRetryResult) {
+      return codexRetryResult;
     }
 
     // Unresolved streamed trigger — rotation was unavailable or output was
@@ -1144,16 +1179,18 @@ export async function runAgentForGroup(
     // After owner/reviewer completes, enqueue the next turn so
     // the message loop picks it up without waiting for a new message.
     // Skip if: no output (interrupted), or task already completed (ESCALATE, done, etc.)
-    if (
-      pairedExecutionContext &&
-      pairedExecutionStatus === 'succeeded' &&
-      pairedSawOutput
-    ) {
+    if (pairedExecutionContext) {
       const completedRole = roomRoleContext?.role ?? 'owner';
       const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);
-      const skipGenericFollowUpForInlineFinalize =
-        completedRole === 'reviewer' && finishedCheck?.status === 'merge_ready';
-      if (skipGenericFollowUpForInlineFinalize) {
+      const queueAction = resolvePairedFollowUpQueueAction(
+        completedRole,
+        pairedExecutionStatus,
+        pairedSawOutput,
+        finishedCheck?.status ?? null,
+      );
+      if (queueAction === 'generic') {
+        deps.queue.enqueueMessageCheck(chatJid);
+      } else if (queueAction === 'skip-inline-finalize') {
         log.info(
           {
             taskId: pairedExecutionContext.task.id,
@@ -1162,20 +1199,7 @@ export async function runAgentForGroup(
           },
           'Skipping generic follow-up after reviewer approval because inline finalize will handle the owner handoff',
         );
-      } else if (finishedCheck?.status !== 'completed') {
-        deps.queue.enqueueMessageCheck(chatJid);
-      }
-    } else if (pairedExecutionContext) {
-      const completedRole = roomRoleContext?.role ?? 'owner';
-      const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);
-      const shouldRequeuePendingPairedTurn =
-        (completedRole === 'reviewer' || completedRole === 'arbiter') &&
-        (finishedCheck?.status === 'review_ready' ||
-          finishedCheck?.status === 'in_review' ||
-          finishedCheck?.status === 'arbiter_requested' ||
-          finishedCheck?.status === 'in_arbitration' ||
-          finishedCheck?.status === 'merge_ready');
-      if (shouldRequeuePendingPairedTurn) {
+      } else if (queueAction === 'pending') {
         deps.queue.enqueueMessageCheck(chatJid);
         log.info(
           {
