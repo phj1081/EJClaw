@@ -554,15 +554,19 @@ describe('paired execution context', () => {
     expect(
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).toHaveBeenCalledWith('task-1');
-    const returnToActiveOrder = vi.mocked(db.updatePairedTask).mock.calls.findIndex(
-      ([id, patch]) => id === 'task-1' && patch.status === 'active',
-    );
+    const returnToActiveOrder = vi
+      .mocked(db.updatePairedTask)
+      .mock.calls.findIndex(
+        ([id, patch]) => id === 'task-1' && patch.status === 'active',
+      );
     const reopenReviewOrder = vi.mocked(
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).mock.invocationCallOrder[0];
     expect(returnToActiveOrder).toBeGreaterThanOrEqual(0);
     expect(
-      vi.mocked(db.updatePairedTask).mock.invocationCallOrder[returnToActiveOrder],
+      vi.mocked(db.updatePairedTask).mock.invocationCallOrder[
+        returnToActiveOrder
+      ],
     ).toBeLessThan(reopenReviewOrder);
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
@@ -624,15 +628,19 @@ describe('paired execution context', () => {
         status: 'active',
       }),
     );
-    const returnToActiveOrder = vi.mocked(db.updatePairedTask).mock.calls.findIndex(
-      ([id, patch]) => id === 'task-1' && patch.status === 'active',
-    );
+    const returnToActiveOrder = vi
+      .mocked(db.updatePairedTask)
+      .mock.calls.findIndex(
+        ([id, patch]) => id === 'task-1' && patch.status === 'active',
+      );
     const reopenReviewOrder = vi.mocked(
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).mock.invocationCallOrder[0];
     expect(returnToActiveOrder).toBeGreaterThanOrEqual(0);
     expect(
-      vi.mocked(db.updatePairedTask).mock.invocationCallOrder[returnToActiveOrder],
+      vi.mocked(db.updatePairedTask).mock.invocationCallOrder[
+        returnToActiveOrder
+      ],
     ).toBeLessThan(reopenReviewOrder);
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
