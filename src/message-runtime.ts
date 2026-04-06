@@ -340,6 +340,153 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       (message) => message.is_from_me === true || !!message.is_bot_message,
     );
 
+  type BotOnlyPairedFollowUpAction =
+    | { kind: 'none' }
+    | {
+        kind: 'inline-finalize';
+        task: PairedTask;
+        cursor: string | number | null;
+      }
+    | {
+        kind: 'requeue-pending-turn';
+        task: PairedTask;
+        cursor: string | number | null;
+        cursorKey: string;
+        nextRole: 'reviewer' | 'arbiter';
+      };
+
+  const resolveBotOnlyPairedFollowUpAction = (args: {
+    chatJid: string;
+    task: PairedTask | null | undefined;
+    isBotOnlyPairedFollowUp: boolean;
+    pendingCursorSource: NewMessage | undefined;
+  }): BotOnlyPairedFollowUpAction => {
+    const { chatJid, task, isBotOnlyPairedFollowUp, pendingCursorSource } =
+      args;
+    if (!task || !isBotOnlyPairedFollowUp) {
+      return { kind: 'none' };
+    }
+
+    const cursor =
+      pendingCursorSource?.seq ?? pendingCursorSource?.timestamp ?? null;
+
+    if (task.status === 'merge_ready') {
+      return {
+        kind: 'inline-finalize',
+        task,
+        cursor,
+      };
+    }
+
+    if (
+      task.status === 'review_ready' ||
+      task.status === 'in_review' ||
+      task.status === 'arbiter_requested' ||
+      task.status === 'in_arbitration'
+    ) {
+      const nextRole = resolveActiveRole(task.status);
+      return {
+        kind: 'requeue-pending-turn',
+        task,
+        cursor,
+        cursorKey: resolveCursorKey(chatJid, task.status),
+        nextRole: nextRole === 'arbiter' ? 'arbiter' : 'reviewer',
+      };
+    }
+
+    return { kind: 'none' };
+  };
+
+  const executeBotOnlyPairedFollowUpAction = async (args: {
+    action: BotOnlyPairedFollowUpAction;
+    chatJid: string;
+    group: RegisteredGroup;
+    runId: string;
+    channel: Channel;
+    log: typeof logger;
+    enqueueGroupMessageCheck: () => void;
+  }): Promise<boolean> => {
+    const {
+      action,
+      chatJid,
+      group,
+      runId,
+      channel,
+      log,
+      enqueueGroupMessageCheck,
+    } = args;
+
+    if (action.kind === 'none') {
+      return false;
+    }
+
+    if (action.cursor != null) {
+      advanceLastAgentCursor(
+        deps.getLastAgentTimestamps(),
+        deps.saveState,
+        chatJid,
+        action.cursor,
+        action.kind === 'requeue-pending-turn' ? action.cursorKey : undefined,
+      );
+    }
+
+    if (action.kind === 'inline-finalize') {
+      log.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          taskId: action.task.id,
+          taskStatus: action.task.status,
+          handoffMode: 'inline-finalize',
+          nextRole: 'owner',
+          cursor: action.cursor,
+        },
+        'Executing merge_ready finalize turn inline after bot-only reviewer follow-up',
+      );
+      const { deliverySucceeded } = await executeTurn({
+        group,
+        prompt: buildFinalizePendingPrompt(action.task),
+        chatJid,
+        runId,
+        channel,
+        startSeq: null,
+        endSeq: null,
+      });
+      if (!deliverySucceeded) {
+        enqueueGroupMessageCheck();
+      }
+      return true;
+    }
+
+    deps.queue.closeStdin(chatJid, {
+      reason: 'paired-pending-turn-follow-up',
+    });
+    enqueueGroupMessageCheck();
+    log.info(
+      {
+        chatJid,
+        group: group.name,
+        groupFolder: group.folder,
+        taskId: action.task.id,
+        taskStatus: action.task.status,
+        handoffMode: 'requeue',
+        nextRole: action.nextRole,
+        cursor: action.cursor,
+        cursorKey: action.cursorKey,
+      },
+      'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent',
+    );
+    return true;
+  };
+
+  const enqueueScopedGroupMessageCheck = (
+    chatJid: string,
+    groupFolder: string,
+  ): void => {
+    deps.queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder));
+  };
+
   /**
    * Check if a message is a duplicate of the last bot final message in a paired room.
    * Returns true if duplicate (should be suppressed).
@@ -911,6 +1058,38 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return deliverySucceeded;
     };
 
+    const enqueueGroupMessageCheck = (): void => {
+      enqueueScopedGroupMessageCheck(chatJid, group.folder);
+    };
+
+    const shouldSkipGenericFollowUpAfterDeliveryRetry = (args: {
+      deliveryRole: PairedRoomRole;
+      pendingTask: PairedTask | null | undefined;
+    }): boolean =>
+      hasReviewerLease(chatJid) &&
+      args.deliveryRole === 'reviewer' &&
+      args.pendingTask?.status === 'merge_ready';
+
+    const enqueueGenericFollowUpAfterDeliveryRetry = (args: {
+      deliveryRole: PairedRoomRole;
+      pendingTask: PairedTask | null | undefined;
+      workItemId: string | number;
+    }): void => {
+      if (shouldSkipGenericFollowUpAfterDeliveryRetry(args)) {
+        log.info(
+          {
+            workItemId: args.workItemId,
+            chatJid,
+            deliveryRole: args.deliveryRole,
+            pendingTaskStatus: args.pendingTask?.status ?? null,
+          },
+          'Skipping queued follow-up after reviewer merge_ready delivery because inline finalize will handle the handoff',
+        );
+        return;
+      }
+      deps.queue.enqueueMessageCheck(chatJid);
+    };
+
     if (hasReviewerLease(chatJid)) {
       log.info(
         {
@@ -965,30 +1144,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         openWorkItem,
       );
       if (!delivered) return false;
-      const skipQueuedFollowUpForInlineFinalize =
-        hasReviewerLease(chatJid) &&
-        deliveryRole === 'reviewer' &&
-        pendingTask?.status === 'merge_ready';
-      // Keep stale final delivery isolated from the next conversational turn.
-      // A follow-up run will pick up any queued user messages or paired-room
-      // auto-review/finalize transitions after this retry succeeds.
-      //
-      // merge_ready is special: the delivered reviewer bot message itself
-      // triggers the inline finalize path. Queueing a generic follow-up here
-      // can race with that path and produce a second owner finalize turn.
-      if (skipQueuedFollowUpForInlineFinalize) {
-        log.info(
-          {
-            workItemId: openWorkItem.id,
-            chatJid,
-            deliveryRole,
-            pendingTaskStatus: pendingTask?.status ?? null,
-          },
-          'Skipping queued follow-up after reviewer merge_ready delivery because inline finalize will handle the handoff',
-        );
-      } else {
-        deps.queue.enqueueMessageCheck(chatJid);
-      }
+      enqueueGenericFollowUpAfterDeliveryRetry({
+        deliveryRole,
+        pendingTask,
+        workItemId: openWorkItem.id,
+      });
       return true;
     }
 
@@ -1396,110 +1556,24 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               rawPendingMessages.length > 0
                 ? rawPendingMessages[rawPendingMessages.length - 1]
                 : messagesToSend[messagesToSend.length - 1];
+            const botOnlyFollowUpAction = resolveBotOnlyPairedFollowUpAction({
+              chatJid,
+              task: loopPendingTask,
+              isBotOnlyPairedFollowUp,
+              pendingCursorSource,
+            });
             if (
-              loopPendingTask &&
-              isBotOnlyPairedFollowUp &&
-              loopPendingTask.status === 'merge_ready'
-            ) {
-              const inlineRunId = `loop-merge-ready-${Date.now().toString(36)}`;
-              const mergeReadyCursor =
-                pendingCursorSource?.seq ??
-                pendingCursorSource?.timestamp ??
-                null;
-              if (mergeReadyCursor != null) {
-                advanceLastAgentCursor(
-                  deps.getLastAgentTimestamps(),
-                  deps.saveState,
-                  chatJid,
-                  mergeReadyCursor,
-                );
-              }
-              logger.info(
-                {
-                  chatJid,
-                  group: group.name,
-                  groupFolder: group.folder,
-                  taskId: loopPendingTask?.id ?? null,
-                  taskStatus: loopPendingTask?.status ?? null,
-                  handoffMode: 'inline-finalize',
-                  nextRole: 'owner',
-                  cursor: mergeReadyCursor,
-                },
-                'Executing merge_ready finalize turn inline after bot-only reviewer follow-up',
-              );
-              const { deliverySucceeded } = await executeTurn({
+              await executeBotOnlyPairedFollowUpAction({
+                action: botOnlyFollowUpAction,
+                chatJid,
                 group,
-                prompt: buildFinalizePendingPrompt(loopPendingTask),
-                chatJid,
-                runId: inlineRunId,
+                runId: `loop-merge-ready-${Date.now().toString(36)}`,
                 channel,
-                startSeq: null,
-                endSeq: null,
-              });
-              if (!deliverySucceeded) {
-                deps.queue.enqueueMessageCheck(
-                  chatJid,
-                  resolveGroupIpcPath(group.folder),
-                );
-              }
-              continue;
-            }
-            const botOnlyPendingTurn =
-              loopPendingTask &&
-              isBotOnlyPairedFollowUp &&
-              (loopPendingTask.status === 'review_ready' ||
-                loopPendingTask.status === 'in_review' ||
-                loopPendingTask.status === 'arbiter_requested' ||
-                loopPendingTask.status === 'in_arbitration')
-                ? {
-                    cursor:
-                      pendingCursorSource?.seq ??
-                      pendingCursorSource?.timestamp ??
-                      null,
-                    cursorKey: resolveCursorKey(
-                      chatJid,
-                      loopPendingTask.status,
-                    ),
-                  }
-                : null;
-
-            if (botOnlyPendingTurn) {
-              if (botOnlyPendingTurn.cursor != null) {
-                advanceLastAgentCursor(
-                  deps.getLastAgentTimestamps(),
-                  deps.saveState,
-                  chatJid,
-                  botOnlyPendingTurn.cursor,
-                  botOnlyPendingTurn.cursorKey,
-                );
-              }
-              deps.queue.closeStdin(chatJid, {
-                reason: 'paired-pending-turn-follow-up',
-              });
-              deps.queue.enqueueMessageCheck(
-                chatJid,
-                resolveGroupIpcPath(group.folder),
-              );
-              logger.info(
-                {
-                  chatJid,
-                  group: group.name,
-                  groupFolder: group.folder,
-                  taskId: loopPendingTask?.id ?? null,
-                  taskStatus: loopPendingTask?.status ?? null,
-                  handoffMode: 'requeue',
-                  nextRole:
-                    loopPendingTask?.status === 'review_ready'
-                      ? 'reviewer'
-                      : loopPendingTask?.status === 'arbiter_requested' ||
-                          loopPendingTask?.status === 'in_arbitration'
-                        ? 'arbiter'
-                        : 'reviewer',
-                  cursor: botOnlyPendingTurn.cursor,
-                  cursorKey: botOnlyPendingTurn.cursorKey,
-                },
-                'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent',
-              );
+                log: logger,
+                enqueueGroupMessageCheck: () =>
+                  enqueueScopedGroupMessageCheck(chatJid, group.folder),
+              })
+            ) {
               continue;
             }
 
@@ -1539,10 +1613,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               continue;
             }
 
-            deps.queue.enqueueMessageCheck(
-              chatJid,
-              resolveGroupIpcPath(group.folder),
-            );
+            enqueueScopedGroupMessageCheck(chatJid, group.folder);
           }
         }
       } catch (err) {
@@ -1561,10 +1632,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           { chatJid, group: group.name, workItemId: openWorkItem.id },
           'Recovery: found open work item awaiting delivery',
         );
-        deps.queue.enqueueMessageCheck(
-          chatJid,
-          resolveGroupIpcPath(group.folder),
-        );
+        enqueueScopedGroupMessageCheck(chatJid, group.folder);
         continue;
       }
 
@@ -1585,10 +1653,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           { group: group.name, pendingCount: pending.length },
           'Recovery: found unprocessed messages',
         );
-        deps.queue.enqueueMessageCheck(
-          chatJid,
-          resolveGroupIpcPath(group.folder),
-        );
+        enqueueScopedGroupMessageCheck(chatJid, group.folder);
         continue;
       } else if (rawPending.length > 0) {
         const endSeq = rawPending[rawPending.length - 1].seq;
