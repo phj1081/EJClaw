@@ -318,9 +318,9 @@ describe('agent-runner timeout behavior', () => {
   it('uses host IPC and workdir in unsafe host paired mode reviewer sessions', async () => {
     vi.useRealTimers();
     fakeProc = createFakeProcess();
-    const prepareContainerSessionEnvironmentSpy = vi.spyOn(
+    const prepareReadonlySessionEnvironmentSpy = vi.spyOn(
       agentRunnerEnvironment,
-      'prepareContainerSessionEnvironment',
+      'prepareReadonlySessionEnvironment',
     );
 
     vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
@@ -356,7 +356,7 @@ describe('agent-runner timeout behavior', () => {
     fakeProc.emit('close', 0);
     const result = await resultPromise;
     expect(result.status).toBe('success');
-    expect(prepareContainerSessionEnvironmentSpy).toHaveBeenCalledWith(
+    expect(prepareReadonlySessionEnvironmentSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionDir: '/tmp/host-reviewer-session',
         ipcDir: '/tmp/ejclaw-test-data/ipc/test-group',

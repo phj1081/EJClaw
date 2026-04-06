@@ -34,7 +34,7 @@ import {
 } from './reviewer-runtime.js';
 import { selectCompactMemoriesFromSummary } from './memory-selection.js';
 
-interface ContainerInput {
+interface RunnerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
@@ -47,7 +47,7 @@ interface ContainerInput {
 }
 
 /** Mirrors AgentOutput in src/agent-runner.ts (separate package, can't import directly). */
-interface ContainerOutput {
+interface RunnerOutput {
   status: 'success' | 'error';
   phase?: 'progress' | 'final' | 'tool-activity' | 'intermediate';
   agentId?: string;
@@ -199,7 +199,7 @@ async function readStdin(): Promise<string> {
 const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 
-function writeOutput(output: ContainerOutput): void {
+function writeOutput(output: RunnerOutput): void {
   console.log(OUTPUT_START_MARKER);
   console.log(JSON.stringify(output));
   console.log(OUTPUT_END_MARKER);
@@ -207,7 +207,7 @@ function writeOutput(output: ContainerOutput): void {
 
 function normalizeStructuredOutput(result: string | null): {
   result: string | null;
-  output?: ContainerOutput['output'];
+  output?: RunnerOutput['output'];
 } {
   if (typeof result !== 'string' || result.length === 0) {
     return { result };
@@ -545,7 +545,7 @@ async function runQuery(
   prompt: string,
   sessionId: string | undefined,
   mcpServerPath: string,
-  containerInput: ContainerInput,
+  runnerInput: RunnerInput,
   sdkEnv: Record<string, string | undefined>,
   reviewerRuntime: boolean,
   claudeReadonlyReviewerRuntime: boolean,
@@ -698,12 +698,12 @@ async function runQuery(
           command: 'node',
           args: [mcpServerPath],
           env: {
-            EJCLAW_CHAT_JID: containerInput.chatJid,
-            EJCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            EJCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            EJCLAW_CHAT_JID: runnerInput.chatJid,
+            EJCLAW_GROUP_FOLDER: runnerInput.groupFolder,
+            EJCLAW_IS_MAIN: runnerInput.isMain ? '1' : '0',
             EJCLAW_AGENT_TYPE:
               process.env.EJCLAW_AGENT_TYPE || 'claude-code',
-            EJCLAW_ROOM_ROLE: containerInput.roomRoleContext?.role || '',
+            EJCLAW_ROOM_ROLE: runnerInput.roomRoleContext?.role || '',
             ...(process.env.EJCLAW_IPC_DIR && {
               EJCLAW_IPC_DIR: process.env.EJCLAW_IPC_DIR,
             }),
@@ -714,7 +714,7 @@ async function runQuery(
         },
       },
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+        PreCompact: [{ hooks: [createPreCompactHook(runnerInput.assistantName)] }],
         PreToolUse: [
           {
             matcher: 'Bash',
@@ -958,14 +958,14 @@ async function runQuery(
 }
 
 async function main(): Promise<void> {
-  let containerInput: ContainerInput;
+  let runnerInput: RunnerInput;
 
   try {
     const stdinData = await readStdin();
-    containerInput = JSON.parse(stdinData);
+    runnerInput = JSON.parse(stdinData);
     // Delete the temp file the entrypoint wrote — it contains secrets
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
-    log(`Received input for group: ${containerInput.groupFolder}`);
+    log(`Received input for group: ${runnerInput.groupFolder}`);
   } catch (err) {
     writeOutput({
       status: 'error',
@@ -978,14 +978,14 @@ async function main(): Promise<void> {
   // Build SDK env: merge secrets into process.env for the SDK only.
   // Secrets never touch process.env itself, so Bash subprocesses can't see them.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
-  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
+  for (const [key, value] of Object.entries(runnerInput.secrets || {})) {
     sdkEnv[key] = value;
   }
   const reviewerRuntime =
     process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
-    isReviewerRuntime(containerInput.roomRoleContext);
+    isReviewerRuntime(runnerInput.roomRoleContext);
   const claudeReadonlyReviewerRuntime =
-    isClaudeReadonlyReviewerRuntime(containerInput.roomRoleContext);
+    isClaudeReadonlyReviewerRuntime(runnerInput.roomRoleContext);
   const claudeReadonlySandboxMode = claudeReadonlyReviewerRuntime
     ? getClaudeReadonlySandboxMode()
     : null;
@@ -1002,18 +1002,18 @@ async function main(): Promise<void> {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
-  let sessionId = containerInput.sessionId;
+  let sessionId = runnerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  // Clean up stale _close sentinel from previous container runs
+  // Clean up stale _close sentinel from previous runner sessions
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
 
   // Effective working directory (WORK_DIR overrides GROUP_DIR)
   const mainEffectiveCwd = WORK_DIR || GROUP_DIR;
 
   // Build initial prompt (drain any pending IPC messages too)
-  let prompt = containerInput.prompt;
-  if (containerInput.isScheduledTask) {
+  let prompt = runnerInput.prompt;
+  if (runnerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
   const pending = drainIpcInput();
@@ -1024,10 +1024,10 @@ async function main(): Promise<void> {
   // --- Slash command handling ---
   // Check BEFORE prepending room role header so /compact isn't masked.
   const KNOWN_SESSION_COMMANDS = new Set(['/compact']);
-  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(containerInput.prompt.trim());
+  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(runnerInput.prompt.trim());
 
   if (!isSessionSlashCommand) {
-    prompt = prependRoomRoleHeader(prompt, containerInput.roomRoleContext);
+    prompt = prependRoomRoleHeader(prompt, runnerInput.roomRoleContext);
   }
   const trimmedPrompt = prompt.trim();
 
@@ -1052,7 +1052,7 @@ async function main(): Promise<void> {
           settingSources: ['project', 'user'] as const,
           abortController: agentAbortController,
           hooks: {
-            PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+            PreCompact: [{ hooks: [createPreCompactHook(runnerInput.assistantName)] }],
           },
         },
       })) {
@@ -1133,7 +1133,7 @@ async function main(): Promise<void> {
       prompt,
       sessionId,
       mcpServerPath,
-      containerInput,
+      runnerInput,
       guardedSdkEnv,
       reviewerRuntime,
       claudeReadonlyReviewerRuntime,

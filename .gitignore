@@ -11,6 +11,7 @@ store-*/
 data/
 data-*/
 logs/
+.ejclaw-reviewer-runtime/
 
 # Groups - only track base structure and specific CLAUDE.md files
 groups-*/

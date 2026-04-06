@@ -1165,6 +1165,28 @@ export async function runAgentForGroup(
       } else if (finishedCheck?.status !== 'completed') {
         deps.queue.enqueueMessageCheck(chatJid);
       }
+    } else if (pairedExecutionContext) {
+      const completedRole = roomRoleContext?.role ?? 'owner';
+      const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);
+      const shouldRequeuePendingPairedTurn =
+        (completedRole === 'reviewer' || completedRole === 'arbiter') &&
+        (finishedCheck?.status === 'review_ready' ||
+          finishedCheck?.status === 'in_review' ||
+          finishedCheck?.status === 'arbiter_requested' ||
+          finishedCheck?.status === 'in_arbitration' ||
+          finishedCheck?.status === 'merge_ready');
+      if (shouldRequeuePendingPairedTurn) {
+        deps.queue.enqueueMessageCheck(chatJid);
+        log.info(
+          {
+            taskId: pairedExecutionContext.task.id,
+            role: completedRole,
+            pairedExecutionStatus,
+            taskStatus: finishedCheck?.status ?? null,
+          },
+          'Queued paired follow-up after failed reviewer/arbiter execution left a pending task state',
+        );
+      }
     }
   }
 }

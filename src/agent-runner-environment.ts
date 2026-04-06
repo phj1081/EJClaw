@@ -487,7 +487,7 @@ export function prepareGroupEnvironment(
       : undefined;
   // Owner CLAUDE.md: platform rules + owner paired room rules.
   // Reviewer paired room rules are NOT included — those belong to the
-  // container reviewer only (via prepareContainerSessionEnvironment).
+  // Read-only reviewer/arbiter session only (via prepareReadonlySessionEnvironment).
   const sessionClaudeMd = [
     ownerCommonPlatformPrompt,
     claudePlatformPrompt,
@@ -558,14 +558,15 @@ export function prepareGroupEnvironment(
 }
 
 /**
- * Prepare the Claude session directory for a container-based reviewer.
+ * Prepare a role-scoped session directory for a host-based read-only reviewer
+ * or arbiter run.
  *
  * Writes CLAUDE.md (platform + paired room prompts + global memory + briefing),
  * syncs skills, and ensures settings.json exist — the same steps that
- * `prepareGroupEnvironment` does for host-mode agents, but targeted at an
- * externally provided session directory (the one mounted into the container).
+ * `prepareGroupEnvironment` does for regular host-mode agents, but targeted at
+ * an externally provided session directory.
  */
-export function prepareContainerSessionEnvironment(args: {
+export function prepareReadonlySessionEnvironment(args: {
   sessionDir: string;
   chatJid: string;
   isMain: boolean;
@@ -665,7 +666,7 @@ export function prepareContainerSessionEnvironment(args: {
         hasGlobalMemory: !!globalClaudeMemory,
         hasMemoryBriefing: !!memoryBriefing,
       },
-      'Container session CLAUDE.md written',
+      'Readonly session CLAUDE.md written',
     );
   } else if (fs.existsSync(sessionClaudeMdPath)) {
     fs.unlinkSync(sessionClaudeMdPath);
