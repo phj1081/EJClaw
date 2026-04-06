@@ -87,7 +87,11 @@ describe('message-runtime-rules', () => {
 
   it('honors an arbiter forced role only when arbiter is configured', () => {
     const resolution = resolveExecutionTarget({
-      lease: { ...baseLease, arbiter_agent_type: null, arbiter_service_id: null },
+      lease: {
+        ...baseLease,
+        arbiter_agent_type: null,
+        arbiter_service_id: null,
+      },
       pairedTaskStatus: 'active',
       groupFolder: 'group-1',
       groupAgentType: 'claude-code',
@@ -122,11 +126,11 @@ describe('message-runtime-rules', () => {
   });
 
   it('always gives arbiter a dedicated session folder', () => {
-    expect(
-      resolveSessionFolder('group-1', 'arbiter', 'claude-code'),
-    ).toBe('group-1:arbiter');
-    expect(
-      resolveSessionFolder('group-1', 'arbiter', 'codex'),
-    ).toBe('group-1:arbiter');
+    expect(resolveSessionFolder('group-1', 'arbiter', 'claude-code')).toBe(
+      'group-1:arbiter',
+    );
+    expect(resolveSessionFolder('group-1', 'arbiter', 'codex')).toBe(
+      'group-1:arbiter',
+    );
   });
 });

@@ -23,9 +23,10 @@ function mergeHumanAndTurnOutputMessages(
   humanMessages: NewMessage[],
   turnOutputs: PairedTurnOutput[],
 ): NewMessage[] {
-  return [...humanMessages, ...turnOutputsToMessages(turnOutputs, chatJid)].sort(
-    (a, b) => a.timestamp.localeCompare(b.timestamp),
-  );
+  return [
+    ...humanMessages,
+    ...turnOutputsToMessages(turnOutputs, chatJid),
+  ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
 export function buildPairedTurnPrompt(args: {
@@ -40,7 +41,9 @@ export function buildPairedTurnPrompt(args: {
     return formatMessages(args.labeledFallbackMessages, args.timezone);
   }
 
-  const humanMessages = args.missedMessages.filter((message) => !message.is_bot_message);
+  const humanMessages = args.missedMessages.filter(
+    (message) => !message.is_bot_message,
+  );
   return formatMessages(
     mergeHumanAndTurnOutputMessages(
       args.chatJid,

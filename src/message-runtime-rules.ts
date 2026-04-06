@@ -162,8 +162,8 @@ export function resolveExecutionTarget(args: {
   const inferredRole = resolveActiveRole(args.pairedTaskStatus);
   const canHonorForcedRole = Boolean(
     args.forcedRole === 'owner' ||
-      (args.forcedRole === 'reviewer' && args.lease.reviewer_agent_type) ||
-      (args.forcedRole === 'arbiter' && args.lease.arbiter_agent_type),
+    (args.forcedRole === 'reviewer' && args.lease.reviewer_agent_type) ||
+    (args.forcedRole === 'arbiter' && args.lease.arbiter_agent_type),
   );
   const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
   const effectiveServiceId = resolveLeaseServiceId(args.lease, activeRole);
