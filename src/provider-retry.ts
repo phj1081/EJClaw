@@ -10,6 +10,7 @@ import { getAgentOutputText } from './agent-output.js';
 import {
   classifyRotationTrigger,
   type CodexRotationReason,
+  isCodexRotationReason,
   shouldRotateClaudeToken,
   type AgentTriggerReason,
 } from './agent-error-detection.js';
@@ -210,22 +211,35 @@ function evaluateCodexAttempt(
     attempt.streamedTriggerReason &&
     output.status !== 'error'
   ) {
+    if (!isCodexRotationReason(attempt.streamedTriggerReason.reason)) {
+      logger.error(
+        {
+          ...logContext,
+          provider: 'codex',
+          reason: attempt.streamedTriggerReason.reason,
+        },
+        'Unexpected non-Codex streamed trigger while rotating Codex account',
+      );
+      return { type: 'error' };
+    }
     return {
       type: 'continue',
       trigger: {
-        reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
+        reason: attempt.streamedTriggerReason.reason,
       },
       rotationMessage: getAgentOutputText(output) ?? undefined,
     };
   }
 
   if (output.status === 'error') {
-    const retryTrigger = attempt.streamedTriggerReason
-      ? {
-          shouldRotate: true,
-          reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
-        }
-      : detectCodexRotationTrigger(output.error);
+    const retryTrigger =
+      attempt.streamedTriggerReason &&
+      isCodexRotationReason(attempt.streamedTriggerReason.reason)
+        ? {
+            shouldRotate: true as const,
+            reason: attempt.streamedTriggerReason.reason,
+          }
+        : detectCodexRotationTrigger(output.error);
     if (retryTrigger.shouldRotate) {
       return {
         type: 'continue',

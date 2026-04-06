@@ -2,6 +2,7 @@ import {
   classifyRotationTrigger,
   type AgentTriggerReason,
   type CodexRotationReason,
+  isCodexRotationReason,
 } from './agent-error-detection.js';
 import { detectCodexRotationTrigger } from './codex-token-rotation.js';
 import type { PairedRoomRole, PairedTaskStatus } from './types.js';
@@ -94,8 +95,11 @@ export function resolveCodexRetryTrigger(args: {
   }
 
   if (args.attempt.streamedTriggerReason) {
+    if (!isCodexRotationReason(args.attempt.streamedTriggerReason.reason)) {
+      return null;
+    }
     return {
-      reason: args.attempt.streamedTriggerReason.reason as CodexRotationReason,
+      reason: args.attempt.streamedTriggerReason.reason,
     };
   }
 

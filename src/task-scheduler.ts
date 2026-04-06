@@ -27,7 +27,7 @@ import {
 } from './group-folder.js';
 import { createScopedLogger, logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
-import { runClaudeRotationLoop } from './provider-retry.js';
+import { runClaudeRotationLoop, runCodexRotationLoop } from './provider-retry.js';
 import {
   detectCodexRotationTrigger,
   rotateCodexToken,
@@ -38,6 +38,7 @@ import {
   classifyRotationTrigger,
   type AgentTriggerReason,
   type CodexRotationReason,
+  isCodexRotationReason,
 } from './agent-error-detection.js';
 import {
   getTokenCount,
@@ -489,65 +490,29 @@ async function runTask(
       initialTrigger: { reason: CodexRotationReason },
       rotationMessage?: string,
     ): Promise<void> => {
-      let trigger = initialTrigger;
-      let lastRotationMessage = rotationMessage;
-
-      while (
-        getCodexAccountCount() > 1 &&
-        rotateCodexToken(lastRotationMessage)
-      ) {
-        log.info(
-          {
-            reason: trigger.reason,
-          },
-          'Codex account unhealthy, retrying scheduled task with rotated account',
-        );
-
-        const retryAttempt = await runTaskAttempt('codex');
-        result = retryAttempt.attemptResult;
-        error = retryAttempt.attemptError;
-
-        if (
-          !retryAttempt.sawOutput &&
-          retryAttempt.streamedTriggerReason &&
-          retryAttempt.output.status !== 'error'
-        ) {
-          trigger = {
-            reason: retryAttempt.streamedTriggerReason
-              .reason as CodexRotationReason,
+      const outcome = await runCodexRotationLoop(
+        initialTrigger,
+        async () => {
+          const retryAttempt = await runTaskAttempt('codex');
+          result = retryAttempt.attemptResult;
+          error = retryAttempt.attemptError;
+          return {
+            output: retryAttempt.output,
+            thrownError: null,
+            sawOutput: retryAttempt.sawOutput,
+            streamedTriggerReason: retryAttempt.streamedTriggerReason,
           };
-          lastRotationMessage =
-            typeof retryAttempt.output.result === 'string'
-              ? retryAttempt.output.result
-              : undefined;
-          continue;
-        }
+        },
+        {
+          taskId: task.id,
+          group: context.group.name,
+          groupFolder: task.group_folder,
+        },
+        rotationMessage,
+      );
 
-        if (retryAttempt.output.status === 'error') {
-          const retryTrigger = retryAttempt.streamedTriggerReason
-            ? {
-                shouldRotate: true,
-                reason: retryAttempt.streamedTriggerReason
-                  .reason as CodexRotationReason,
-              }
-            : detectCodexRotationTrigger(
-                retryAttempt.attemptError || retryAttempt.output.error,
-              );
-
-          if (retryTrigger.shouldRotate) {
-            trigger = { reason: retryTrigger.reason };
-            lastRotationMessage =
-              retryAttempt.attemptError ||
-              retryAttempt.output.error ||
-              undefined;
-            continue;
-          }
-          return;
-        }
-
-        markCodexTokenHealthy();
+      if (outcome.type === 'success') {
         error = null;
-        return;
       }
     };
 
@@ -567,11 +532,12 @@ async function runTask(
       } else if (
         provider === 'codex' &&
         attempt.streamedTriggerReason &&
-        !attempt.sawOutput
+        !attempt.sawOutput &&
+        isCodexRotationReason(attempt.streamedTriggerReason.reason)
       ) {
         await retryCodexTaskWithRotation(
           {
-            reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
+            reason: attempt.streamedTriggerReason.reason,
           },
           typeof attempt.output.error === 'string'
             ? attempt.output.error
@@ -592,13 +558,14 @@ async function runTask(
           });
         }
       } else if (attempt.output.status === 'error' && provider === 'codex') {
-        const trigger = attempt.streamedTriggerReason
-          ? {
-              shouldRotate: true,
-              reason: attempt.streamedTriggerReason
-                .reason as CodexRotationReason,
-            }
-          : detectCodexRotationTrigger(error);
+        const trigger =
+          attempt.streamedTriggerReason &&
+          isCodexRotationReason(attempt.streamedTriggerReason.reason)
+            ? {
+                shouldRotate: true as const,
+                reason: attempt.streamedTriggerReason.reason,
+              }
+            : detectCodexRotationTrigger(error);
         if (trigger.shouldRotate) {
           await retryCodexTaskWithRotation(
             { reason: trigger.reason },
