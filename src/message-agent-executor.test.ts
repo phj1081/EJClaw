@@ -1553,7 +1553,9 @@ describe('runAgentForGroup Claude rotation', () => {
     });
 
     expect(result).toBe('success');
-    expect(pairedExecutionContext.completePairedExecutionContext).toHaveBeenCalledWith(
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         taskId: 'paired-task-claude-rotation-success',
         role: 'owner',
