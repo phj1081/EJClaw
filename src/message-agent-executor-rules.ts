@@ -124,6 +124,13 @@ export function resolvePairedFollowUpQueueAction(args: {
   taskStatus: PairedTaskStatus | null;
 }): PairedFollowUpQueueAction {
   if (args.executionStatus === 'succeeded' && args.sawOutput) {
+    if (
+      args.completedRole === 'owner' &&
+      args.taskStatus === 'review_ready'
+    ) {
+      return 'generic';
+    }
+
     return args.completedRole === 'reviewer' &&
       args.taskStatus === 'merge_ready'
       ? 'skip-inline-finalize'

@@ -1238,7 +1238,7 @@ describe('runAgentForGroup room memory', () => {
     expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
-  it('does not enqueue a generic follow-up when owner output already moved the task to review_ready', async () => {
+  it('enqueues a generic follow-up when owner output moved the task to review_ready', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     const deps = makeDeps();
 
@@ -1311,7 +1311,8 @@ describe('runAgentForGroup room memory', () => {
     });
 
     expect(result).toBe('success');
-    expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(deps.queue.enqueueMessageCheck).toHaveBeenCalledTimes(1);
+    expect(deps.queue.enqueueMessageCheck).toHaveBeenCalledWith('group@test');
   });
 
   it('does not enqueue a generic follow-up when reviewer output already returned the task to active', async () => {

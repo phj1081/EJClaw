@@ -130,7 +130,7 @@ describe('message-agent-executor-rules', () => {
     ).toBe('pending');
   });
 
-  it('does not request a generic follow-up after successful owner output moved the task to review_ready', () => {
+  it('requests a generic follow-up after successful owner output moved the task to review_ready', () => {
     expect(
       resolvePairedFollowUpQueueAction({
         completedRole: 'owner',
@@ -138,7 +138,7 @@ describe('message-agent-executor-rules', () => {
         sawOutput: true,
         taskStatus: 'review_ready',
       }),
-    ).toBe('none');
+    ).toBe('generic');
   });
 
   it('does not request a generic follow-up after successful reviewer output moved the task back to active', () => {
