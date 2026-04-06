@@ -31,9 +31,7 @@ import {
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
 import { resolveCodexFallbackHandoff } from './paired-turn-fallback.js';
-import {
-  resolveExecutionTarget,
-} from './message-runtime-rules.js';
+import { resolveExecutionTarget } from './message-runtime-rules.js';
 import {
   isRetryableClaudeSessionFailureAttempt,
   resolveClaudeRetryTrigger,
