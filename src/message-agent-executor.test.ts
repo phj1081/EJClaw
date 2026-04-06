@@ -1485,6 +1485,83 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(outputs).toEqual(['force refresh 뒤 Claude 응답입니다.']);
   });
 
+  it('marks paired execution as succeeded when Claude rotation recovers after a streamed auth-expired trigger', async () => {
+    vi.mocked(tokenRotation.getTokenCount).mockReturnValue(2);
+    vi.mocked(tokenRotation.rotateToken).mockReturnValueOnce(true);
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-claude-rotation-success',
+        chat_jid: 'group@test',
+        group_folder: 'test-claude',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: null,
+        status: 'active',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-06T00:00:00.000Z',
+        updated_at: '2026-04-06T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'intermediate',
+          result:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+        });
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result:
+            'Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"Invalid authentication credentials"}}',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      })
+      .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: '회전 복구 후 paired success',
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group: makeGroup(),
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-paired-auth-expired-success',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(pairedExecutionContext.completePairedExecutionContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'paired-task-claude-rotation-success',
+        role: 'owner',
+        status: 'succeeded',
+      }),
+    );
+  });
+
   it('suppresses Claude 502 HTML and returns error when no rotation is available', async () => {
     const outputs: string[] = [];
 
