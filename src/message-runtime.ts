@@ -851,7 +851,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 chatJid,
                 getRecentChatMessages(chatJid, 20),
               ),
-              lastDeliveredMessages: labelPairedSenders(chatJid, missedMessages),
+              lastDeliveredMessages: labelPairedSenders(
+                chatJid,
+                missedMessages,
+              ),
               resolveChannel,
             })
           : null;

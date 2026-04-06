@@ -141,10 +141,7 @@ export function transitionPairedTaskStatus(args: {
   currentStatus: PairedTaskStatus;
   nextStatus: PairedTaskStatus;
   updatedAt: string;
-  patch?: Omit<
-    Parameters<typeof updatePairedTask>[1],
-    'status' | 'updated_at'
-  >;
+  patch?: Omit<Parameters<typeof updatePairedTask>[1], 'status' | 'updated_at'>;
 }): void {
   assertPairedTaskStatusTransition({
     currentStatus: args.currentStatus,

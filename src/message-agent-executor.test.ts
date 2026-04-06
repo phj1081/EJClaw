@@ -1410,9 +1410,8 @@ describe('runAgentForGroup room memory', () => {
     expect(
       vi.mocked(db.insertPairedTurnOutput).mock.invocationCallOrder[0],
     ).toBeLessThan(
-      vi.mocked(
-        pairedExecutionContext.completePairedExecutionContext,
-      ).mock.invocationCallOrder[0],
+      vi.mocked(pairedExecutionContext.completePairedExecutionContext).mock
+        .invocationCallOrder[0],
     );
   });
 

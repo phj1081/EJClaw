@@ -512,34 +512,34 @@ async function runTask(
       }
     };
 
-      const provider = context.taskAgentType === 'codex' ? 'codex' : 'claude';
+    const provider = context.taskAgentType === 'codex' ? 'codex' : 'claude';
 
-      {
-        const attempt = await runTaskAttempt(provider);
-        result = attempt.attemptResult;
-        error = attempt.attemptError;
+    {
+      const attempt = await runTaskAttempt(provider);
+      result = attempt.attemptResult;
+      error = attempt.attemptError;
 
-        const retryAction = resolveAttemptRetryAction({
-          provider,
-          canRetryClaudeCredentials: provider === 'claude' && getTokenCount() > 0,
-          canRetryCodex: provider === 'codex' && getCodexAccountCount() > 1,
-          attempt,
-          rotationMessage: error,
-        });
+      const retryAction = resolveAttemptRetryAction({
+        provider,
+        canRetryClaudeCredentials: provider === 'claude' && getTokenCount() > 0,
+        canRetryCodex: provider === 'codex' && getCodexAccountCount() > 1,
+        attempt,
+        rotationMessage: error,
+      });
 
-        if (retryAction.kind === 'claude') {
-          await retryClaudeTaskWithRotation(
-            retryAction.trigger,
-            retryAction.rotationMessage,
-          );
-        } else if (retryAction.kind === 'codex') {
-          await retryCodexTaskWithRotation(
-            retryAction.trigger,
-            retryAction.rotationMessage,
-          );
-        } else if (attempt.output.status === 'error') {
-          error = attempt.attemptError || 'Unknown error';
-        }
+      if (retryAction.kind === 'claude') {
+        await retryClaudeTaskWithRotation(
+          retryAction.trigger,
+          retryAction.rotationMessage,
+        );
+      } else if (retryAction.kind === 'codex') {
+        await retryCodexTaskWithRotation(
+          retryAction.trigger,
+          retryAction.rotationMessage,
+        );
+      } else if (attempt.output.status === 'error') {
+        error = attempt.attemptError || 'Unknown error';
+      }
     } // end else (non-exhausted path)
 
     log.info(

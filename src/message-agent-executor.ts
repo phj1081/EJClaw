@@ -34,9 +34,7 @@ import {
 } from './paired-execution-context.js';
 import { resolveCodexFallbackHandoff } from './paired-turn-fallback.js';
 import { resolveExecutionTarget } from './message-runtime-rules.js';
-import {
-  resolvePairedFollowUpQueueAction,
-} from './message-agent-executor-rules.js';
+import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import { type AgentTriggerReason } from './agent-error-detection.js';
 import {
