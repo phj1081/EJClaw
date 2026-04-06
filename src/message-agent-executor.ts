@@ -44,9 +44,7 @@ import {
   resolvePairedFollowUpQueueAction,
 } from './message-agent-executor-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
-import {
-  type AgentTriggerReason,
-} from './agent-error-detection.js';
+import { type AgentTriggerReason } from './agent-error-detection.js';
 import {
   runClaudeRotationLoop,
   runCodexRotationLoop,
@@ -759,9 +757,7 @@ export async function runAgentForGroup(
   const getPairedExecutionStatus = (): 'succeeded' | 'failed' =>
     pairedExecutionStatus;
 
-  const isRetryableClaudeSessionFailure = (
-    attempt: AgentAttempt,
-  ): boolean =>
+  const isRetryableClaudeSessionFailure = (attempt: AgentAttempt): boolean =>
     isRetryableClaudeSessionFailureAttempt({
       attempt,
       isClaudeCodeAgent,
@@ -771,7 +767,10 @@ export async function runAgentForGroup(
 
   const recoverRetryableClaudeSessionFailure = async (
     attempt: AgentAttempt,
-  ): Promise<{ attempt: AgentAttempt; resolved: 'success' | 'error' | null }> => {
+  ): Promise<{
+    attempt: AgentAttempt;
+    resolved: 'success' | 'error' | null;
+  }> => {
     if (!isRetryableClaudeSessionFailure(attempt)) {
       return { attempt, resolved: null };
     }
@@ -916,7 +915,9 @@ export async function runAgentForGroup(
     // success-null-result with no visible output — agent returned nothing useful.
     // But if output was already delivered to Discord (sawOutput), treat as success.
     if (attempt.sawSuccessNullResultWithoutOutput && !attempt.sawOutput) {
-      log.error('Agent returned success with null result and no visible output');
+      log.error(
+        'Agent returned success with null result and no visible output',
+      );
       return 'error';
     }
 
