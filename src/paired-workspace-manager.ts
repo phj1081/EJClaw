@@ -13,6 +13,7 @@ import {
 } from './db.js';
 import { resolvePairedTaskWorkspacePath } from './group-folder.js';
 import { logger } from './logger.js';
+import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
 import type { PairedTask, PairedWorkspace } from './types.js';
 import { ensureWorkspaceDependenciesInstalled } from './workspace-package-manager.js';
 
@@ -798,9 +799,15 @@ export function markPairedTaskReviewReady(taskId: string): {
   );
 
   const now = new Date().toISOString();
-  updatePairedTask(taskId, {
-    status: 'review_ready',
-    updated_at: now,
+  const task = getPairedTaskById(taskId);
+  if (!task) {
+    return null;
+  }
+  transitionPairedTaskStatus({
+    taskId,
+    currentStatus: task.status,
+    nextStatus: 'review_ready',
+    updatedAt: now,
   });
 
   return { ownerWorkspace, reviewerWorkspace };

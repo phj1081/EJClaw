@@ -8,6 +8,7 @@ import {
   buildArbiterPromptForTask,
   buildFinalizePendingPrompt,
   buildOwnerPendingPrompt,
+  buildPairedTurnPrompt,
   buildReviewerPendingPrompt,
 } from './message-runtime-prompts.js';
 import {
@@ -46,6 +47,26 @@ export type BotOnlyPairedFollowUpAction =
       cursorKey: string;
       nextRole: 'owner' | 'reviewer' | 'arbiter';
     };
+
+export type QueuedTurnDispatch = {
+  formatted: string;
+  botOnlyFollowUpAction: BotOnlyPairedFollowUpAction;
+  isBotOnlyPairedFollowUp: boolean;
+  loopCursorKey: string;
+  endSeq: number | null;
+};
+
+export function isBotOnlyPairedRoomTurn(
+  chatJid: string,
+  messages: NewMessage[],
+): boolean {
+  return (
+    hasReviewerLease(chatJid) &&
+    messages.every(
+      (message) => message.is_from_me === true || !!message.is_bot_message,
+    )
+  );
+}
 
 export function resolveLastDeliveredBotRole(
   messages: NewMessage[],
@@ -382,6 +403,54 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
     'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent',
   );
   return true;
+}
+
+export function buildQueuedTurnDispatch(args: {
+  chatJid: string;
+  timezone: string;
+  loopPendingTask: PairedTask | null | undefined;
+  rawPendingMessages: NewMessage[];
+  messagesToSend: NewMessage[];
+  labeledMessagesToSend: NewMessage[];
+  formatMessages: (messages: NewMessage[], timezone: string) => string;
+}): QueuedTurnDispatch {
+  const loopCursorKey = resolveCursorKey(
+    args.chatJid,
+    args.loopPendingTask?.status,
+  );
+  const formatted = args.loopPendingTask
+    ? buildPairedTurnPrompt({
+        taskId: args.loopPendingTask.id,
+        chatJid: args.chatJid,
+        timezone: args.timezone,
+        missedMessages: args.messagesToSend,
+        labeledFallbackMessages: args.labeledMessagesToSend,
+        turnOutputs: getPairedTurnOutputs(args.loopPendingTask.id),
+      })
+    : args.formatMessages(args.labeledMessagesToSend, args.timezone);
+  const isBotOnlyPairedFollowUp = isBotOnlyPairedRoomTurn(
+    args.chatJid,
+    args.messagesToSend,
+  );
+  const pendingCursorSource =
+    args.rawPendingMessages.length > 0
+      ? args.rawPendingMessages[args.rawPendingMessages.length - 1]
+      : args.messagesToSend[args.messagesToSend.length - 1];
+  const botOnlyFollowUpAction = resolveBotOnlyPairedFollowUpAction({
+    chatJid: args.chatJid,
+    task: args.loopPendingTask,
+    isBotOnlyPairedFollowUp,
+    lastDeliveredMessages: args.labeledMessagesToSend,
+    pendingCursorSource,
+  });
+
+  return {
+    formatted,
+    botOnlyFollowUpAction,
+    isBotOnlyPairedFollowUp,
+    loopCursorKey,
+    endSeq: args.messagesToSend[args.messagesToSend.length - 1]?.seq ?? null,
+  };
 }
 
 export function shouldSkipGenericFollowUpAfterDeliveryRetry(args: {

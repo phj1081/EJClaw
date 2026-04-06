@@ -1,116 +1,14 @@
-import {
-  classifyRotationTrigger,
-  type AgentTriggerReason,
-  type CodexRotationReason,
-  isCodexRotationReason,
-} from './agent-error-detection.js';
-import { detectCodexRotationTrigger } from './codex-token-rotation.js';
 import { resolveNextTurnAction } from './message-runtime-rules.js';
 import type { PairedRoomRole, PairedTaskStatus } from './types.js';
-import { getErrorMessage } from './utils.js';
-
-export interface ExecutorStreamedTrigger {
-  reason: AgentTriggerReason;
-  retryAfterMs?: number;
-}
-
-export interface ExecutorAttemptState {
-  sawOutput: boolean;
-  retryableSessionFailureDetected?: boolean;
-  streamedTriggerReason?: ExecutorStreamedTrigger;
-  error?: unknown;
-}
-
-export function isRetryableClaudeSessionFailureAttempt(args: {
-  attempt: ExecutorAttemptState;
-  isClaudeCodeAgent: boolean;
-  provider: 'claude' | 'codex';
-  shouldRetryFreshSessionOnAgentFailure: (args: {
-    result: null;
-    error: string;
-  }) => boolean;
-}): boolean {
-  if (
-    !args.isClaudeCodeAgent ||
-    args.provider !== 'claude' ||
-    args.attempt.sawOutput
-  ) {
-    return false;
-  }
-
-  if (args.attempt.retryableSessionFailureDetected === true) {
-    return true;
-  }
-
-  if (args.attempt.error == null) {
-    return false;
-  }
-
-  return args.shouldRetryFreshSessionOnAgentFailure({
-    result: null,
-    error: getErrorMessage(args.attempt.error),
-  });
-}
-
-export function resolveClaudeRetryTrigger(args: {
-  canRetryClaudeCredentials: boolean;
-  provider: 'claude' | 'codex';
-  attempt: Pick<ExecutorAttemptState, 'sawOutput' | 'streamedTriggerReason'>;
-  fallbackMessage?: string | null;
-}): { reason: AgentTriggerReason; retryAfterMs?: number } | null {
-  if (
-    !(
-      args.canRetryClaudeCredentials &&
-      args.provider === 'claude' &&
-      !args.attempt.sawOutput
-    )
-  ) {
-    return null;
-  }
-
-  if (args.attempt.streamedTriggerReason) {
-    return {
-      reason: args.attempt.streamedTriggerReason.reason,
-      retryAfterMs: args.attempt.streamedTriggerReason.retryAfterMs,
-    };
-  }
-
-  const trigger = classifyRotationTrigger(args.fallbackMessage);
-  if (!trigger.shouldRetry) {
-    return null;
-  }
-
-  return {
-    reason: trigger.reason,
-    retryAfterMs: trigger.retryAfterMs,
-  };
-}
-
-export function resolveCodexRetryTrigger(args: {
-  canRetryCodex: boolean;
-  attempt: Pick<ExecutorAttemptState, 'streamedTriggerReason'>;
-  rotationMessage?: string | null;
-}): { reason: CodexRotationReason } | null {
-  if (!args.canRetryCodex) {
-    return null;
-  }
-
-  if (args.attempt.streamedTriggerReason) {
-    if (!isCodexRotationReason(args.attempt.streamedTriggerReason.reason)) {
-      return null;
-    }
-    return {
-      reason: args.attempt.streamedTriggerReason.reason,
-    };
-  }
-
-  const trigger = detectCodexRotationTrigger(args.rotationMessage);
-  if (!trigger.shouldRotate) {
-    return null;
-  }
-
-  return { reason: trigger.reason };
-}
+export {
+  isRetryableClaudeSessionFailureAttempt,
+  resolveAttemptRetryAction,
+  resolveClaudeRetryTrigger,
+  resolveCodexRetryTrigger,
+  type AttemptRetryAction,
+  type AttemptRetryState as ExecutorAttemptState,
+  type AttemptStreamedTrigger as ExecutorStreamedTrigger,
+} from './agent-attempt-retry.js';
 
 export type PairedFollowUpQueueAction =
   | 'generic'

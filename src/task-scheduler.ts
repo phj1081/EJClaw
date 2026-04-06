@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import fs from 'fs';
 import { getAgentOutputText } from './agent-output.js';
 import { createEvaluatedOutputHandler } from './agent-attempt.js';
+import { resolveAttemptRetryAction } from './agent-attempt-retry.js';
 import { getErrorMessage } from './utils.js';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
@@ -42,7 +43,6 @@ import {
   classifyRotationTrigger,
   type AgentTriggerReason,
   type CodexRotationReason,
-  isCodexRotationReason,
 } from './agent-error-detection.js';
 import {
   getTokenCount,
@@ -512,65 +512,34 @@ async function runTask(
       }
     };
 
-    const provider = context.taskAgentType === 'codex' ? 'codex' : 'claude';
+      const provider = context.taskAgentType === 'codex' ? 'codex' : 'claude';
 
-    {
-      const attempt = await runTaskAttempt(provider);
-      result = attempt.attemptResult;
-      error = attempt.attemptError;
+      {
+        const attempt = await runTaskAttempt(provider);
+        result = attempt.attemptResult;
+        error = attempt.attemptError;
 
-      if (
-        provider === 'claude' &&
-        attempt.streamedTriggerReason &&
-        !attempt.sawOutput
-      ) {
-        await retryClaudeTaskWithRotation(attempt.streamedTriggerReason);
-      } else if (
-        provider === 'codex' &&
-        attempt.streamedTriggerReason &&
-        !attempt.sawOutput &&
-        isCodexRotationReason(attempt.streamedTriggerReason.reason)
-      ) {
-        await retryCodexTaskWithRotation(
-          {
-            reason: attempt.streamedTriggerReason.reason,
-          },
-          typeof attempt.output.error === 'string'
-            ? attempt.output.error
-            : undefined,
-        );
-      } else if (attempt.output.status === 'error' && provider === 'claude') {
-        const trigger = attempt.streamedTriggerReason
-          ? {
-              shouldRetry: true,
-              reason: attempt.streamedTriggerReason.reason,
-              retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
-            }
-          : classifyRotationTrigger(error);
-        if (trigger.shouldRetry) {
-          await retryClaudeTaskWithRotation({
-            reason: trigger.reason,
-            retryAfterMs: trigger.retryAfterMs,
-          });
-        }
-      } else if (attempt.output.status === 'error' && provider === 'codex') {
-        const trigger =
-          attempt.streamedTriggerReason &&
-          isCodexRotationReason(attempt.streamedTriggerReason.reason)
-            ? {
-                shouldRotate: true as const,
-                reason: attempt.streamedTriggerReason.reason,
-              }
-            : detectCodexRotationTrigger(error);
-        if (trigger.shouldRotate) {
-          await retryCodexTaskWithRotation(
-            { reason: trigger.reason },
-            error || undefined,
+        const retryAction = resolveAttemptRetryAction({
+          provider,
+          canRetryClaudeCredentials: provider === 'claude' && getTokenCount() > 0,
+          canRetryCodex: provider === 'codex' && getCodexAccountCount() > 1,
+          attempt,
+          rotationMessage: error,
+        });
+
+        if (retryAction.kind === 'claude') {
+          await retryClaudeTaskWithRotation(
+            retryAction.trigger,
+            retryAction.rotationMessage,
           );
+        } else if (retryAction.kind === 'codex') {
+          await retryCodexTaskWithRotation(
+            retryAction.trigger,
+            retryAction.rotationMessage,
+          );
+        } else if (attempt.output.status === 'error') {
+          error = attempt.attemptError || 'Unknown error';
         }
-      } else if (attempt.output.status === 'error') {
-        error = attempt.attemptError || 'Unknown error';
-      }
     } // end else (non-exhausted path)
 
     log.info(

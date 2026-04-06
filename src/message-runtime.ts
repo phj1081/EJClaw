@@ -43,11 +43,11 @@ import {
 } from './message-runtime-rules.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import {
+  buildQueuedTurnDispatch,
   buildPendingPairedTurn,
   executeBotOnlyPairedFollowUpAction,
   executePendingPairedTurn,
-  resolveBotOnlyPairedFollowUpAction,
-  resolveLastDeliveredBotRole,
+  isBotOnlyPairedRoomTurn,
   shouldSkipGenericFollowUpAfterDeliveryRetry,
 } from './message-runtime-flow.js';
 import { MessageTurnController } from './message-turn-controller.js';
@@ -58,6 +58,7 @@ import {
   buildPairedTurnPrompt,
   buildReviewerPendingPrompt,
 } from './message-runtime-prompts.js';
+import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
@@ -206,15 +207,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return role ? { ...msg, sender_name: role } : msg;
     });
   };
-
-  const isBotOnlyPairedRoomTurn = (
-    chatJid: string,
-    messages: NewMessage[],
-  ): boolean =>
-    hasReviewerLease(chatJid) &&
-    messages.every(
-      (message) => message.is_from_me === true || !!message.is_bot_message,
-    );
 
   const enqueueScopedGroupMessageCheck = (
     chatJid: string,
@@ -937,10 +929,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             if (hasReviewerLease(chatJid)) {
               const task = getLatestOpenPairedTaskForChat(chatJid);
               if (task) {
-                updatePairedTask(task.id, {
-                  status: 'completed',
-                  completion_reason: 'stopped',
-                  updated_at: new Date().toISOString(),
+                const now = new Date().toISOString();
+                transitionPairedTaskStatus({
+                  taskId: task.id,
+                  currentStatus: task.status,
+                  nextStatus: 'completed',
+                  updatedAt: now,
+                  patch: {
+                    completion_reason: 'stopped',
+                  },
                 });
               }
             }
@@ -1223,30 +1220,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               chatJid,
               messagesToSend,
             );
-            const formatted = loopPendingTask
-              ? buildPairedTurnPrompt({
-                  taskId: loopPendingTask.id,
-                  chatJid,
-                  timezone: deps.timezone,
-                  missedMessages: messagesToSend,
-                  labeledFallbackMessages: labeledMessagesToSend,
-                  turnOutputs: getPairedTurnOutputs(loopPendingTask.id),
-                })
-              : formatMessages(labeledMessagesToSend, deps.timezone);
-            const isBotOnlyPairedFollowUp = isBotOnlyPairedRoomTurn(
-              chatJid,
-              messagesToSend,
-            );
-            const pendingCursorSource =
-              rawPendingMessages.length > 0
-                ? rawPendingMessages[rawPendingMessages.length - 1]
-                : messagesToSend[messagesToSend.length - 1];
-            const botOnlyFollowUpAction = resolveBotOnlyPairedFollowUpAction({
-              chatJid,
-              task: loopPendingTask,
+            const {
+              formatted,
+              botOnlyFollowUpAction,
               isBotOnlyPairedFollowUp,
-              lastDeliveredMessages: labeledMessagesToSend,
-              pendingCursorSource,
+              loopCursorKey: dispatchCursorKey,
+              endSeq,
+            } = buildQueuedTurnDispatch({
+              chatJid,
+              timezone: deps.timezone,
+              loopPendingTask,
+              rawPendingMessages,
+              messagesToSend,
+              labeledMessagesToSend,
+              formatMessages,
             });
             if (
               await executeBotOnlyPairedFollowUpAction({
@@ -1271,14 +1258,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             }
 
             if (deps.queue.sendMessage(chatJid, formatted)) {
-              const endSeq = messagesToSend[messagesToSend.length - 1]?.seq;
               if (endSeq != null) {
                 advanceLastAgentCursor(
                   deps.getLastAgentTimestamps(),
                   deps.saveState,
                   chatJid,
                   endSeq,
-                  loopCursorKey,
+                  dispatchCursorKey,
                 );
               }
               logger.debug(

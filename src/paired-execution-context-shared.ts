@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 import { isArbiterEnabled } from './config.js';
 import { updatePairedTask } from './db.js';
 import { logger } from './logger.js';
+import type { PairedTaskStatus } from './types.js';
 
 export type Verdict =
   | 'done'
@@ -93,29 +94,108 @@ export function hasCodeChangesSinceRef(
   }
 }
 
+const ALLOWED_PAIRED_STATUS_TRANSITIONS: Record<
+  PairedTaskStatus,
+  ReadonlySet<PairedTaskStatus>
+> = {
+  active: new Set(['review_ready', 'arbiter_requested', 'completed']),
+  review_ready: new Set([
+    'active',
+    'in_review',
+    'arbiter_requested',
+    'completed',
+  ]),
+  in_review: new Set([
+    'active',
+    'review_ready',
+    'merge_ready',
+    'arbiter_requested',
+    'completed',
+  ]),
+  merge_ready: new Set(['active', 'arbiter_requested', 'completed']),
+  completed: new Set(),
+  arbiter_requested: new Set(['in_arbitration', 'completed']),
+  in_arbitration: new Set(['active', 'arbiter_requested', 'completed']),
+};
+
+export function assertPairedTaskStatusTransition(args: {
+  currentStatus: PairedTaskStatus;
+  nextStatus: PairedTaskStatus;
+}): void {
+  const { currentStatus, nextStatus } = args;
+  if (currentStatus === nextStatus) {
+    return;
+  }
+
+  if (ALLOWED_PAIRED_STATUS_TRANSITIONS[currentStatus].has(nextStatus)) {
+    return;
+  }
+
+  throw new Error(
+    `Invalid paired task status transition: ${currentStatus} -> ${nextStatus}`,
+  );
+}
+
+export function transitionPairedTaskStatus(args: {
+  taskId: string;
+  currentStatus: PairedTaskStatus;
+  nextStatus: PairedTaskStatus;
+  updatedAt: string;
+  patch?: Omit<
+    Parameters<typeof updatePairedTask>[1],
+    'status' | 'updated_at'
+  >;
+}): void {
+  assertPairedTaskStatusTransition({
+    currentStatus: args.currentStatus,
+    nextStatus: args.nextStatus,
+  });
+
+  updatePairedTask(args.taskId, {
+    ...args.patch,
+    status: args.nextStatus,
+    updated_at: args.updatedAt,
+  });
+}
+
 export function requestArbiterOrEscalate(args: {
   taskId: string;
+  currentStatus: PairedTaskStatus;
   now: string;
   arbiterLogMessage: string;
   escalateLogMessage: string;
   logContext?: Record<string, unknown>;
 }): void {
-  const { taskId, now, arbiterLogMessage, escalateLogMessage, logContext } =
-    args;
+  const {
+    taskId,
+    currentStatus,
+    now,
+    arbiterLogMessage,
+    escalateLogMessage,
+    logContext,
+  } = args;
   if (isArbiterEnabled()) {
-    updatePairedTask(taskId, {
-      status: 'arbiter_requested',
-      arbiter_requested_at: now,
-      updated_at: now,
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus,
+      nextStatus: 'arbiter_requested',
+      updatedAt: now,
+      patch: {
+        arbiter_requested_at: now,
+      },
     });
     logger.info(logContext ?? { taskId }, arbiterLogMessage);
     return;
   }
 
-  updatePairedTask(taskId, {
-    status: 'completed',
-    completion_reason: 'escalated',
-    updated_at: now,
+  transitionPairedTaskStatus({
+    taskId,
+    currentStatus,
+    nextStatus: 'completed',
+    updatedAt: now,
+    patch: {
+      completion_reason: 'escalated',
+    },
   });
   logger.info(logContext ?? { taskId }, escalateLogMessage);
 }

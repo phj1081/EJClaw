@@ -5,6 +5,7 @@ import {
   classifyVerdict,
   requestArbiterOrEscalate,
   resolveCanonicalSourceRef,
+  transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import type { PairedTask } from './types.js';
 
@@ -29,11 +30,15 @@ export function handleFailedReviewerExecution(args: {
         verdict === 'done' && ownerWs?.workspace_dir
           ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
           : task.source_ref;
-      updatePairedTask(taskId, {
-        status: verdict === 'done' ? 'merge_ready' : 'completed',
-        ...(verdict === 'done' ? { source_ref: approvedSourceRef } : {}),
-        ...(verdict !== 'done' ? { completion_reason: 'escalated' } : {}),
-        updated_at: now,
+      transitionPairedTaskStatus({
+        taskId,
+        currentStatus: task.status,
+        nextStatus: verdict === 'done' ? 'merge_ready' : 'completed',
+        updatedAt: now,
+        patch: {
+          ...(verdict === 'done' ? { source_ref: approvedSourceRef } : {}),
+          ...(verdict !== 'done' ? { completion_reason: 'escalated' } : {}),
+        },
       });
       logger.info(
         {
@@ -53,7 +58,12 @@ export function handleFailedReviewerExecution(args: {
       ? 'review_ready'
       : task.status;
   if (fallbackStatus !== task.status) {
-    updatePairedTask(taskId, { status: fallbackStatus, updated_at: now });
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus: task.status,
+      nextStatus: fallbackStatus,
+      updatedAt: now,
+    });
     logger.warn(
       {
         taskId,
@@ -81,10 +91,14 @@ export function handleReviewerCompletion(args: {
       const approvedSourceRef = ownerWs?.workspace_dir
         ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
         : task.source_ref;
-      updatePairedTask(taskId, {
-        status: 'merge_ready',
-        source_ref: approvedSourceRef,
-        updated_at: now,
+      transitionPairedTaskStatus({
+        taskId,
+        currentStatus: task.status,
+        nextStatus: 'merge_ready',
+        updatedAt: now,
+        patch: {
+          source_ref: approvedSourceRef,
+        },
       });
       logger.info(
         {
@@ -102,6 +116,7 @@ export function handleReviewerCompletion(args: {
     case 'needs_context':
       requestArbiterOrEscalate({
         taskId,
+        currentStatus: task.status,
         now,
         arbiterLogMessage:
           'Reviewer blocked/needs_context — requesting arbiter before escalating',
@@ -116,6 +131,7 @@ export function handleReviewerCompletion(args: {
       if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
         requestArbiterOrEscalate({
           taskId,
+          currentStatus: task.status,
           now,
           arbiterLogMessage:
             'Deadlock detected — requesting arbiter intervention',
@@ -129,7 +145,12 @@ export function handleReviewerCompletion(args: {
         });
         return;
       }
-      updatePairedTask(taskId, { status: 'active', updated_at: now });
+      transitionPairedTaskStatus({
+        taskId,
+        currentStatus: task.status,
+        nextStatus: 'active',
+        updatedAt: now,
+      });
       logger.info(
         { taskId, verdict },
         'Reviewer has feedback, task set back to active for owner',

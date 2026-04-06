@@ -38,6 +38,7 @@ import {
 import {
   resolveCanonicalSourceRef,
   requestArbiterOrEscalate,
+  transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import {
   markPairedTaskReviewReady,
@@ -226,11 +227,22 @@ export function preparePairedExecutionContext(args: {
       latestTask.status === 'review_ready' ||
       latestTask.status === 'in_review';
     if (hasHuman || needsStatusReset) {
-      updatePairedTask(latestTask.id, {
-        ...(hasHuman ? { round_trip_count: 0 } : {}),
-        ...(needsStatusReset ? { status: 'active' as const } : {}),
-        updated_at: now,
-      });
+      if (needsStatusReset) {
+        transitionPairedTaskStatus({
+          taskId: latestTask.id,
+          currentStatus: latestTask.status,
+          nextStatus: 'active',
+          updatedAt: now,
+          patch: {
+            ...(hasHuman ? { round_trip_count: 0 } : {}),
+          },
+        });
+      } else {
+        updatePairedTask(latestTask.id, {
+          ...(hasHuman ? { round_trip_count: 0 } : {}),
+          updated_at: now,
+        });
+      }
     }
     // Use a stable per-channel worktree (not per-task) so the Claude SDK
     // session persists across tasks. Different channels still get isolation.
@@ -253,9 +265,11 @@ export function preparePairedExecutionContext(args: {
     blockMessage = reviewerWorkspace.blockMessage;
     const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
     if (workspace && refreshedTask.status === 'review_ready') {
-      updatePairedTask(latestTask.id, {
-        status: 'in_review',
-        updated_at: now,
+      transitionPairedTaskStatus({
+        taskId: latestTask.id,
+        currentStatus: refreshedTask.status,
+        nextStatus: 'in_review',
+        updatedAt: now,
       });
     }
   } else if (roomRoleContext.role === 'arbiter') {
@@ -265,9 +279,11 @@ export function preparePairedExecutionContext(args: {
     blockMessage = reviewerWorkspace.blockMessage;
     const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
     if (workspace && refreshedTask.status === 'arbiter_requested') {
-      updatePairedTask(latestTask.id, {
-        status: 'in_arbitration',
-        updated_at: now,
+      transitionPairedTaskStatus({
+        taskId: latestTask.id,
+        currentStatus: refreshedTask.status,
+        nextStatus: 'in_arbitration',
+        updatedAt: now,
       });
     }
   }

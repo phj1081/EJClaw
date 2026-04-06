@@ -14,6 +14,7 @@ import {
   hasCodeChangesSinceRef,
   requestArbiterOrEscalate,
   resolveCanonicalSourceRef,
+  transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import type { PairedTask } from './types.js';
 
@@ -24,7 +25,12 @@ export function handleFailedOwnerExecution(args: {
   const { task, taskId } = args;
   if (task.status !== 'active') {
     const now = new Date().toISOString();
-    updatePairedTask(taskId, { status: 'active', updated_at: now });
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus: task.status,
+      nextStatus: 'active',
+      updatedAt: now,
+    });
     logger.info(
       { taskId, role: 'owner', previousStatus: task.status },
       'Reset task to active after failed execution',
@@ -44,6 +50,7 @@ function handleOwnerFinalizeCompletion(args: {
   if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
     requestArbiterOrEscalate({
       taskId,
+      currentStatus: task.status,
       now,
       arbiterLogMessage: 'Owner blocked during finalize — requesting arbiter',
       escalateLogMessage: 'Owner blocked during finalize — escalating to user',
@@ -60,6 +67,7 @@ function handleOwnerFinalizeCompletion(args: {
     if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
       requestArbiterOrEscalate({
         taskId,
+        currentStatus: task.status,
         now,
         arbiterLogMessage: 'Owner finalize loop detected — requesting arbiter',
         escalateLogMessage: 'Owner finalize loop detected — escalating to user',
@@ -71,7 +79,12 @@ function handleOwnerFinalizeCompletion(args: {
       });
       return true;
     }
-    updatePairedTask(taskId, { status: 'active', updated_at: now });
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus: task.status,
+      nextStatus: 'active',
+      updatedAt: now,
+    });
     logger.info(
       {
         taskId,
@@ -92,6 +105,7 @@ function handleOwnerFinalizeCompletion(args: {
     if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
       requestArbiterOrEscalate({
         taskId,
+        currentStatus: task.status,
         now,
         arbiterLogMessage:
           'Owner finalize DONE loop detected — requesting arbiter',
@@ -116,10 +130,14 @@ function handleOwnerFinalizeCompletion(args: {
     return false;
   }
 
-  updatePairedTask(taskId, {
-    status: 'completed',
-    completion_reason: 'done',
-    updated_at: now,
+  transitionPairedTaskStatus({
+    taskId,
+    currentStatus: task.status,
+    nextStatus: 'completed',
+    updatedAt: now,
+    patch: {
+      completion_reason: 'done',
+    },
   });
   logger.info(
     { taskId, hasNewChanges, summary: summary?.slice(0, 100) },
@@ -161,6 +179,7 @@ export function handleOwnerCompletion(args: {
     if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
       requestArbiterOrEscalate({
         taskId,
+        currentStatus: task.status,
         now,
         arbiterLogMessage: 'Owner blocked/needs_context — requesting arbiter',
         escalateLogMessage: 'Owner blocked/needs_context — escalating to user',
