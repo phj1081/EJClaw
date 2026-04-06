@@ -1238,7 +1238,7 @@ describe('runAgentForGroup room memory', () => {
     expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
-  it('enqueues a generic follow-up when owner output moved the task to review_ready', async () => {
+  it('does not enqueue an executor-side follow-up when owner output moved the task to review_ready', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     const deps = makeDeps();
 
@@ -1311,8 +1311,7 @@ describe('runAgentForGroup room memory', () => {
     });
 
     expect(result).toBe('success');
-    expect(deps.queue.enqueueMessageCheck).toHaveBeenCalledTimes(1);
-    expect(deps.queue.enqueueMessageCheck).toHaveBeenCalledWith('group@test');
+    expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
   it('stores reviewer turn output before transitioning the paired task back to active', async () => {
@@ -1407,6 +1406,110 @@ describe('runAgentForGroup room memory', () => {
       1,
       'reviewer',
       'DONE_WITH_CONCERNS\nreviewer feedback',
+    );
+    expect(
+      vi.mocked(db.insertPairedTurnOutput).mock.invocationCallOrder[0],
+    ).toBeLessThan(onOutput.mock.invocationCallOrder[0]);
+    expect(
+      vi.mocked(db.insertPairedTurnOutput).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(pairedExecutionContext.completePairedExecutionContext).mock
+        .invocationCallOrder[0],
+    );
+  });
+
+  it('stores reviewer approval output before transitioning the paired task to merge_ready', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const deps = makeDeps();
+    const onOutput = vi.fn(async () => {});
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-reviewer-approval-order',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 1,
+        review_requested_at: '2026-03-31T00:00:00.000Z',
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-reviewer-approval-order',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 1,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'merge_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'DONE\nreviewer approval',
+          output: {
+            visibility: 'public',
+            text: 'DONE\nreviewer approval',
+          },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: 'DONE\nreviewer approval',
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-reviewer-approval-order',
+      forcedRole: 'reviewer',
+      onOutput,
+    });
+
+    expect(result).toBe('success');
+    expect(db.insertPairedTurnOutput).toHaveBeenCalledWith(
+      'paired-task-reviewer-approval-order',
+      1,
+      'reviewer',
+      'DONE\nreviewer approval',
     );
     expect(
       vi.mocked(db.insertPairedTurnOutput).mock.invocationCallOrder[0],

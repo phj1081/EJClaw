@@ -991,9 +991,9 @@ export async function runAgentForGroup(
       }
     }
 
-    // After owner/reviewer completes, enqueue the next turn so
-    // the message loop picks it up without waiting for a new message.
-    // Skip if: no output (interrupted), or task already completed (ESCALATE, done, etc.)
+    // Failed reviewer/arbiter runs can leave a pending paired task without a
+    // visible bot message. Requeue only those recovery cases here; successful
+    // paired handoffs are driven by the delivered bot message itself.
     if (pairedExecutionContext) {
       const completedRole = roomRoleContext?.role ?? 'owner';
       const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);
@@ -1003,18 +1003,7 @@ export async function runAgentForGroup(
         sawOutput: pairedSawOutput,
         taskStatus: finishedCheck?.status ?? null,
       });
-      if (queueAction === 'generic') {
-        deps.queue.enqueueMessageCheck(chatJid);
-      } else if (queueAction === 'skip-inline-finalize') {
-        log.info(
-          {
-            taskId: pairedExecutionContext.task.id,
-            role: completedRole,
-            taskStatus: finishedCheck?.status ?? null,
-          },
-          'Skipping generic follow-up after reviewer approval because inline finalize will handle the owner handoff',
-        );
-      } else if (queueAction === 'pending') {
+      if (queueAction === 'pending') {
         deps.queue.enqueueMessageCheck(chatJid);
         log.info(
           {

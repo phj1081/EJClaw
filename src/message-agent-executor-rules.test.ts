@@ -172,7 +172,7 @@ describe('message-agent-executor-rules', () => {
     ).toBe('pending');
   });
 
-  it('requests a generic follow-up after successful owner output moved the task to review_ready', () => {
+  it('does not request an executor-side follow-up after successful owner output moved the task to review_ready', () => {
     expect(
       resolvePairedFollowUpQueueAction({
         completedRole: 'owner',
@@ -180,10 +180,10 @@ describe('message-agent-executor-rules', () => {
         sawOutput: true,
         taskStatus: 'review_ready',
       }),
-    ).toBe('generic');
+    ).toBe('none');
   });
 
-  it('skips generic requeue when reviewer success moved the task to merge_ready for inline finalize', () => {
+  it('does not request an executor-side follow-up when reviewer success moved the task to merge_ready', () => {
     expect(
       resolvePairedFollowUpQueueAction({
         completedRole: 'reviewer',
@@ -191,7 +191,7 @@ describe('message-agent-executor-rules', () => {
         sawOutput: true,
         taskStatus: 'merge_ready',
       }),
-    ).toBe('skip-inline-finalize');
+    ).toBe('none');
   });
 
   it('does not request a generic follow-up after successful reviewer output moved the task back to active', () => {
