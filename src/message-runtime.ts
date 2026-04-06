@@ -220,7 +220,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         task: PairedTask;
         cursor: string | number | null;
         cursorKey: string;
-        nextRole: 'reviewer' | 'arbiter';
+        nextRole: 'owner' | 'reviewer' | 'arbiter';
       };
 
   const resolveBotOnlyPairedFollowUpAction = (args: {
@@ -237,9 +237,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     const cursor =
       pendingCursorSource?.seq ?? pendingCursorSource?.timestamp ?? null;
+    const lastTurnOutput = getPairedTurnOutputs(task.id).at(-1);
 
     const nextTurnAction = resolveNextTurnAction({
       taskStatus: task.status,
+      lastTurnOutputRole: lastTurnOutput?.role ?? null,
     });
 
     if (nextTurnAction.kind === 'finalize-owner-turn') {
@@ -251,6 +253,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
 
     if (
+      nextTurnAction.kind === 'owner-follow-up' ||
       nextTurnAction.kind === 'reviewer-turn' ||
       nextTurnAction.kind === 'arbiter-turn'
     ) {
@@ -260,7 +263,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         cursor,
         cursorKey: resolveCursorKey(chatJid, task.status),
         nextRole:
-          nextTurnAction.kind === 'arbiter-turn' ? 'arbiter' : 'reviewer',
+          nextTurnAction.kind === 'owner-follow-up'
+            ? 'owner'
+            : nextTurnAction.kind === 'arbiter-turn'
+              ? 'arbiter'
+              : 'reviewer',
       };
     }
 
