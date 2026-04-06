@@ -37,12 +37,20 @@ import {
   resolveEffectiveAgentType,
   resolveSessionFolder,
 } from './message-runtime-rules.js';
+import {
+  isRetryableClaudeSessionFailureAttempt,
+  resolveClaudeRetryTrigger,
+  resolveCodexRetryTrigger,
+  resolvePairedFollowUpQueueAction,
+} from './message-agent-executor-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import {
-  classifyRotationTrigger,
   type AgentTriggerReason,
 } from './agent-error-detection.js';
-import { runClaudeRotationLoop } from './provider-retry.js';
+import {
+  runClaudeRotationLoop,
+  runCodexRotationLoop,
+} from './provider-retry.js';
 import {
   shouldResetSessionOnAgentFailure,
   shouldRetryFreshSessionOnAgentFailure,
@@ -69,9 +77,7 @@ import {
 } from './streamed-output-evaluator.js';
 import {
   detectCodexRotationTrigger,
-  rotateCodexToken,
   getCodexAccountCount,
-  markCodexTokenHealthy,
 } from './codex-token-rotation.js';
 import type { CodexRotationReason } from './agent-error-detection.js';
 import { getTokenCount } from './token-rotation.js';
@@ -169,6 +175,7 @@ export async function runAgentForGroup(
     forceFreshClaudeReviewerSession
       ? undefined
       : storedSessionId;
+  const provider = isClaudeCodeAgent ? 'claude' : 'codex';
   const memoryBriefing = currentSessionId
     ? undefined
     : await buildRoomMemoryBriefing({
@@ -626,91 +633,27 @@ export async function runAgentForGroup(
     initialTrigger: { reason: CodexRotationReason },
     rotationMessage?: string,
   ): Promise<'success' | 'error'> => {
-    let trigger = initialTrigger;
-    let lastRotationMessage = rotationMessage;
-
-    while (
-      getCodexAccountCount() > 1 &&
-      rotateCodexToken(lastRotationMessage)
-    ) {
-      log.info(
-        { reason: trigger.reason },
-        'Codex account unhealthy, retrying with rotated account',
-      );
-
-      const retryAttempt = await runAttempt('codex');
-
-      if (retryAttempt.error) {
-        const errMsg = getErrorMessage(retryAttempt.error);
-        const retryTrigger = detectCodexRotationTrigger(errMsg);
-        if (retryTrigger.shouldRotate) {
-          trigger = { reason: retryTrigger.reason };
-          lastRotationMessage = errMsg;
-          continue;
-        }
-
-        log.error(
-          { provider: 'codex', err: retryAttempt.error },
-          'Rotated Codex account also threw',
-        );
-        return 'error';
-      }
-
-      const retryOutput = retryAttempt.output;
-      if (!retryOutput) {
-        log.error(
-          { provider: 'codex' },
-          'Rotated Codex account produced no output object',
-        );
-        return 'error';
-      }
-
-      if (
-        !retryAttempt.sawOutput &&
-        retryAttempt.streamedTriggerReason &&
-        retryOutput.status !== 'error'
-      ) {
-        trigger = {
-          reason: retryAttempt.streamedTriggerReason
-            .reason as CodexRotationReason,
+    const outcome = await runCodexRotationLoop(
+      initialTrigger,
+      async () => {
+        const attempt = await runAttempt('codex');
+        return {
+          output: attempt.output,
+          thrownError: attempt.error,
+          sawOutput: attempt.sawOutput,
+          streamedTriggerReason: attempt.streamedTriggerReason,
         };
-        lastRotationMessage =
-          typeof retryOutput.result === 'string'
-            ? retryOutput.result
-            : undefined;
-        continue;
-      }
+      },
+      {
+        chatJid,
+        group: group.name,
+        groupFolder: group.folder,
+        runId,
+      },
+      rotationMessage,
+    );
 
-      if (retryOutput.status === 'error') {
-        const retryTrigger = retryAttempt.streamedTriggerReason
-          ? {
-              shouldRotate: true,
-              reason: retryAttempt.streamedTriggerReason
-                .reason as CodexRotationReason,
-            }
-          : detectCodexRotationTrigger(retryOutput.error);
-
-        if (retryTrigger.shouldRotate) {
-          trigger = { reason: retryTrigger.reason };
-          lastRotationMessage = retryOutput.error ?? undefined;
-          continue;
-        }
-
-        log.error(
-          {
-            provider: 'codex',
-            error: retryOutput.error,
-          },
-          'Rotated Codex account failed',
-        );
-        return 'error';
-      }
-
-      markCodexTokenHealthy();
-      return 'success';
-    }
-
-    return 'error';
+    return outcome.type === 'success' ? 'success' : 'error';
   };
 
   type AgentAttempt = Awaited<ReturnType<typeof runAttempt>>;
@@ -754,43 +697,16 @@ export async function runAgentForGroup(
     }
   };
 
-  const resolveClaudeRetryTrigger = (
-    attempt: AgentAttempt,
-    fallbackMessage?: string | null,
-  ): { reason: AgentTriggerReason; retryAfterMs?: number } | null => {
-    if (
-      !(
-        canRetryClaudeCredentials &&
-        provider === 'claude' &&
-        !attempt.sawOutput
-      )
-    ) {
-      return null;
-    }
-
-    if (attempt.streamedTriggerReason) {
-      return {
-        reason: attempt.streamedTriggerReason.reason,
-        retryAfterMs: attempt.streamedTriggerReason.retryAfterMs,
-      };
-    }
-
-    const trigger = classifyRotationTrigger(fallbackMessage);
-    if (!trigger.shouldRetry) {
-      return null;
-    }
-
-    return {
-      reason: trigger.reason,
-      retryAfterMs: trigger.retryAfterMs,
-    };
-  };
-
   const retryClaudeAttemptIfNeeded = async (
     attempt: AgentAttempt,
     rotationMessage?: string | null,
   ): Promise<'success' | 'error' | null> => {
-    const trigger = resolveClaudeRetryTrigger(attempt, rotationMessage);
+    const trigger = resolveClaudeRetryTrigger({
+      canRetryClaudeCredentials,
+      provider,
+      attempt,
+      fallbackMessage: rotationMessage,
+    });
     if (!trigger) {
       return null;
     }
@@ -811,17 +727,12 @@ export async function runAgentForGroup(
     attempt: AgentAttempt,
     rotationMessage?: string | null,
   ): Promise<'success' | 'error' | null> => {
-    if (isClaudeCodeAgent || getCodexAccountCount() <= 1) {
-      return null;
-    }
-
-    const trigger = attempt.streamedTriggerReason
-      ? {
-          shouldRotate: true,
-          reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
-        }
-      : detectCodexRotationTrigger(rotationMessage);
-    if (!trigger.shouldRotate) {
+    const trigger = resolveCodexRetryTrigger({
+      canRetryCodex: !isClaudeCodeAgent && getCodexAccountCount() > 1,
+      attempt,
+      rotationMessage,
+    });
+    if (!trigger) {
       return null;
     }
 
@@ -845,108 +756,93 @@ export async function runAgentForGroup(
     return 'error';
   };
 
-  type PairedFollowUpQueueAction =
-    | 'generic'
-    | 'pending'
-    | 'skip-inline-finalize'
-    | 'none';
-  type PairedTaskStatus = NonNullable<
-    ReturnType<typeof getPairedTaskById>
-  >['status'];
+  const getPairedExecutionStatus = (): 'succeeded' | 'failed' =>
+    pairedExecutionStatus;
 
-  const resolvePairedFollowUpQueueAction = (
-    completedRole: PairedRoomRole,
-    executionStatus: 'succeeded' | 'failed',
-    sawOutput: boolean,
-    taskStatus: PairedTaskStatus | null,
-  ): PairedFollowUpQueueAction => {
-    if (executionStatus === 'succeeded' && sawOutput) {
-      return completedRole === 'reviewer' && taskStatus === 'merge_ready'
-        ? 'skip-inline-finalize'
-        : taskStatus !== 'completed'
-          ? 'generic'
-          : 'none';
+  const isRetryableClaudeSessionFailure = (
+    attempt: AgentAttempt,
+  ): boolean =>
+    isRetryableClaudeSessionFailureAttempt({
+      attempt,
+      isClaudeCodeAgent,
+      provider,
+      shouldRetryFreshSessionOnAgentFailure,
+    });
+
+  const recoverRetryableClaudeSessionFailure = async (
+    attempt: AgentAttempt,
+  ): Promise<{ attempt: AgentAttempt; resolved: 'success' | 'error' | null }> => {
+    if (!isRetryableClaudeSessionFailure(attempt)) {
+      return { attempt, resolved: null };
     }
 
-    const shouldRequeuePendingPairedTurn =
-      (completedRole === 'reviewer' || completedRole === 'arbiter') &&
-      (taskStatus === 'review_ready' ||
-        taskStatus === 'in_review' ||
-        taskStatus === 'arbiter_requested' ||
-        taskStatus === 'in_arbitration' ||
-        taskStatus === 'merge_ready');
-    return shouldRequeuePendingPairedTurn ? 'pending' : 'none';
+    currentSessionId = undefined;
+    deps.clearSession(sessionFolder);
+    clearRoleSdkSessions();
+    log.warn(
+      'Cleared poisoned Claude session before visible output, retrying fresh session',
+    );
+
+    const freshAttempt = await runAttempt('claude');
+    if (!isRetryableClaudeSessionFailure(freshAttempt)) {
+      return { attempt: freshAttempt, resolved: null };
+    }
+
+    currentSessionId = undefined;
+    deps.clearSession(sessionFolder);
+    log.warn('Fresh Claude retry also hit a retryable session failure');
+    log.error('Retryable Claude session failure persisted after fresh retry');
+    return {
+      attempt: freshAttempt,
+      resolved: maybeHandoffAfterError('session-failure', freshAttempt),
+    };
   };
 
-  const provider = isClaudeCodeAgent ? 'claude' : 'codex';
-
-  try {
-    let primaryAttempt = await runAttempt(provider);
-
-    const isRetryableClaudeSessionFailure = (
-      attempt: Awaited<ReturnType<typeof runAttempt>>,
-    ): boolean =>
-      isClaudeCodeAgent &&
-      provider === 'claude' &&
-      !attempt.sawOutput &&
-      (attempt.retryableSessionFailureDetected === true ||
-        (attempt.error != null &&
-          shouldRetryFreshSessionOnAgentFailure({
-            result: null,
-            error: getErrorMessage(attempt.error),
-          })));
-
-    if (isRetryableClaudeSessionFailure(primaryAttempt)) {
-      currentSessionId = undefined;
-      deps.clearSession(sessionFolder);
-      clearRoleSdkSessions();
-      log.warn(
-        'Cleared poisoned Claude session before visible output, retrying fresh session',
-      );
-
-      primaryAttempt = await runAttempt('claude');
-
-      if (isRetryableClaudeSessionFailure(primaryAttempt)) {
-        currentSessionId = undefined;
-        deps.clearSession(sessionFolder);
-        log.warn('Fresh Claude retry also hit a retryable session failure');
-
-        log.error(
-          'Retryable Claude session failure persisted after fresh retry',
-        );
-        return maybeHandoffAfterError('session-failure', primaryAttempt);
-      }
+  const handlePrimaryAttemptFailure = async (
+    attempt: AgentAttempt,
+    rotationMessage: string,
+  ): Promise<'success' | 'error'> => {
+    const claudeRetryResult = await retryClaudeAttemptIfNeeded(
+      attempt,
+      rotationMessage,
+    );
+    if (claudeRetryResult) {
+      return claudeRetryResult;
     }
 
-    if (primaryAttempt.error) {
-      const errMsg = getErrorMessage(primaryAttempt.error);
-      const claudeRetryResult = await retryClaudeAttemptIfNeeded(
-        primaryAttempt,
-        errMsg,
-      );
-      if (claudeRetryResult) {
-        return claudeRetryResult;
-      }
+    const codexRetryResult = await retryCodexAttemptIfNeeded(
+      attempt,
+      rotationMessage,
+    );
+    if (codexRetryResult) {
+      return codexRetryResult;
+    }
 
-      const codexRetryResult = await retryCodexAttemptIfNeeded(
-        primaryAttempt,
-        errMsg,
-      );
-      if (codexRetryResult) {
-        return codexRetryResult;
-      }
-
+    if (attempt.error) {
       log.error(
         {
           provider,
-          err: primaryAttempt.error,
+          err: attempt.error,
         },
         'Agent error',
       );
       return 'error';
     }
 
-    const output = primaryAttempt.output;
+    log.error(
+      {
+        provider,
+        error: attempt.output?.error,
+      },
+      'Agent process error',
+    );
+    return 'error';
+  };
+
+  const finalizePrimaryAttempt = async (
+    attempt: AgentAttempt,
+  ): Promise<'success' | 'error'> => {
+    const output = attempt.output;
     if (!output) {
       log.error({ provider }, 'Agent produced no output object');
       return 'error';
@@ -963,9 +859,8 @@ export async function runAgentForGroup(
           : null);
     }
 
-    if (!primaryAttempt.sawOutput && output.status !== 'error') {
-      const claudeRetryResult =
-        await retryClaudeAttemptIfNeeded(primaryAttempt);
+    if (!attempt.sawOutput && output.status !== 'error') {
+      const claudeRetryResult = await retryClaudeAttemptIfNeeded(attempt);
       if (claudeRetryResult) {
         return claudeRetryResult;
       }
@@ -983,34 +878,14 @@ export async function runAgentForGroup(
     }
 
     if (output.status === 'error') {
-      const claudeRetryResult = await retryClaudeAttemptIfNeeded(
-        primaryAttempt,
-        output.error,
+      return handlePrimaryAttemptFailure(
+        attempt,
+        output.error ?? 'Agent process error',
       );
-      if (claudeRetryResult) {
-        return claudeRetryResult;
-      }
-
-      const codexRetryResult = await retryCodexAttemptIfNeeded(
-        primaryAttempt,
-        output.error,
-      );
-      if (codexRetryResult) {
-        return codexRetryResult;
-      }
-
-      log.error(
-        {
-          provider,
-          error: output.error,
-        },
-        'Agent process error',
-      );
-      return 'error';
     }
 
     const codexRetryResult = await retryCodexAttemptIfNeeded(
-      primaryAttempt,
+      attempt,
       output.error ?? output.result,
     );
     if (codexRetryResult) {
@@ -1018,20 +893,20 @@ export async function runAgentForGroup(
     }
 
     // Unresolved streamed trigger — rotation was unavailable or output was
-    // already forwarded.  Surfaces as an error since there is no alternative provider.
-    if (primaryAttempt.streamedTriggerReason) {
+    // already forwarded. Surfaces as an error since there is no alternative provider.
+    if (attempt.streamedTriggerReason) {
       if (
         isClaudeCodeAgent &&
         maybeHandoffToCodex(
-          primaryAttempt.streamedTriggerReason.reason,
-          primaryAttempt.sawVisibleOutput,
+          attempt.streamedTriggerReason.reason,
+          attempt.sawVisibleOutput,
         )
       ) {
         return 'success';
       }
       log.error(
         {
-          reason: primaryAttempt.streamedTriggerReason.reason,
+          reason: attempt.streamedTriggerReason.reason,
         },
         'Agent trigger detected but could not be resolved',
       );
@@ -1040,30 +915,45 @@ export async function runAgentForGroup(
 
     // success-null-result with no visible output — agent returned nothing useful.
     // But if output was already delivered to Discord (sawOutput), treat as success.
-    if (
-      primaryAttempt.sawSuccessNullResultWithoutOutput &&
-      !primaryAttempt.sawOutput
-    ) {
-      log.error(
-        'Agent returned success with null result and no visible output',
-      );
+    if (attempt.sawSuccessNullResultWithoutOutput && !attempt.sawOutput) {
+      log.error('Agent returned success with null result and no visible output');
       return 'error';
     }
 
     pairedExecutionStatus = 'succeeded';
-    pairedSawOutput = primaryAttempt.sawOutput;
+    pairedSawOutput = attempt.sawOutput;
     return 'success';
+  };
+
+  try {
+    let primaryAttempt = await runAttempt(provider);
+    const recoveredSessionAttempt =
+      await recoverRetryableClaudeSessionFailure(primaryAttempt);
+    if (recoveredSessionAttempt.resolved) {
+      return recoveredSessionAttempt.resolved;
+    }
+    primaryAttempt = recoveredSessionAttempt.attempt;
+
+    if (primaryAttempt.error) {
+      return await handlePrimaryAttemptFailure(
+        primaryAttempt,
+        getErrorMessage(primaryAttempt.error),
+      );
+    }
+
+    return await finalizePrimaryAttempt(primaryAttempt);
   } finally {
     if (pairedExecutionContext && !pairedExecutionCompleted) {
       const completedRole = roomRoleContext?.role ?? 'owner';
+      const completionStatus = getPairedExecutionStatus();
       // Owner was interrupted without producing output (e.g. /stop) —
       // treat as failed so reviewer is not auto-triggered.
       const effectiveStatus =
         completedRole === 'owner' &&
-        pairedExecutionStatus === 'succeeded' &&
+        completionStatus === 'succeeded' &&
         !pairedSawOutput
           ? 'failed'
-          : pairedExecutionStatus;
+          : completionStatus;
       completePairedExecutionContext({
         taskId: pairedExecutionContext.task.id,
         role: completedRole,
@@ -1123,12 +1013,12 @@ export async function runAgentForGroup(
     if (pairedExecutionContext) {
       const completedRole = roomRoleContext?.role ?? 'owner';
       const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);
-      const queueAction = resolvePairedFollowUpQueueAction(
+      const queueAction = resolvePairedFollowUpQueueAction({
         completedRole,
-        pairedExecutionStatus,
-        pairedSawOutput,
-        finishedCheck?.status ?? null,
-      );
+        executionStatus: pairedExecutionStatus,
+        sawOutput: pairedSawOutput,
+        taskStatus: finishedCheck?.status ?? null,
+      });
       if (queueAction === 'generic') {
         deps.queue.enqueueMessageCheck(chatJid);
       } else if (queueAction === 'skip-inline-finalize') {

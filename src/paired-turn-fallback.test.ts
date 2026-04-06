@@ -115,4 +115,32 @@ describe('resolveCodexFallbackHandoff', () => {
       logMessage: 'Fallback disabled for role, skipping handoff',
     });
   });
+
+  it('returns none when visible output was already emitted', () => {
+    const result = resolveCodexFallbackHandoff({
+      activeRole: 'reviewer',
+      effectiveAgentType: 'claude-code',
+      hasReviewer: true,
+      fallbackEnabled: true,
+      reason: 'auth-expired',
+      sawVisibleOutput: true,
+      prompt: 'please review',
+    });
+
+    expect(result).toEqual({ type: 'none' });
+  });
+
+  it('returns none when no reviewer is configured for the room', () => {
+    const result = resolveCodexFallbackHandoff({
+      activeRole: 'owner',
+      effectiveAgentType: 'claude-code',
+      hasReviewer: false,
+      fallbackEnabled: true,
+      reason: '429',
+      sawVisibleOutput: false,
+      prompt: 'please continue',
+    });
+
+    expect(result).toEqual({ type: 'none' });
+  });
 });
