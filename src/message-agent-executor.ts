@@ -911,8 +911,9 @@ export async function runAgentForGroup(
     | 'pending'
     | 'skip-inline-finalize'
     | 'none';
-  type PairedTaskStatus =
-    NonNullable<ReturnType<typeof getPairedTaskById>>['status'];
+  type PairedTaskStatus = NonNullable<
+    ReturnType<typeof getPairedTaskById>
+  >['status'];
 
   const resolvePairedFollowUpQueueAction = (
     completedRole: PairedRoomRole,
@@ -1024,7 +1025,8 @@ export async function runAgentForGroup(
     }
 
     if (!primaryAttempt.sawOutput && output.status !== 'error') {
-      const claudeRetryResult = await retryClaudeAttemptIfNeeded(primaryAttempt);
+      const claudeRetryResult =
+        await retryClaudeAttemptIfNeeded(primaryAttempt);
       if (claudeRetryResult) {
         return claudeRetryResult;
       }

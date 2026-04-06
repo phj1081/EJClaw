@@ -575,8 +575,7 @@ function handleOwnerFinalizeCompletion(args: {
         taskId,
         now,
         arbiterLogMessage: 'Owner finalize loop detected — requesting arbiter',
-        escalateLogMessage:
-          'Owner finalize loop detected — escalating to user',
+        escalateLogMessage: 'Owner finalize loop detected — escalating to user',
         logContext: {
           taskId,
           ownerVerdict,
