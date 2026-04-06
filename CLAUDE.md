@@ -37,7 +37,8 @@ Run commands directly—don't tell the user to run them.
 ```bash
 bun run build                              # Build main project
 bun run build:runners                      # Install + build both runners
-bun run build:container                    # Rebuild reviewer Docker image
+bun run build:runtime                      # Build host runtime only
+bun run build:container                    # Optional: rebuild reviewer Docker image
 bun run dev                                # Dev mode with hot reload
 ```
 
@@ -52,6 +53,9 @@ Deploy:
 ```bash
 bun run deploy
 ```
+
+`deploy` rebuilds only the host runtime. Rebuild the reviewer Docker image
+separately with `bun run build:container` only when you need the container path.
 
 ## Service Stack Architecture
 
