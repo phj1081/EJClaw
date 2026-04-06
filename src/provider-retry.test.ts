@@ -229,7 +229,9 @@ describe('runCodexRotationLoop', () => {
 
   it('continues rotation when streamed trigger arrives before visible output', async () => {
     vi.mocked(getCodexAccountCount).mockReturnValue(2);
-    vi.mocked(rotateCodexToken).mockReturnValueOnce(true).mockReturnValueOnce(false);
+    vi.mocked(rotateCodexToken)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
 
     let attempts = 0;
     const outcome = await runCodexRotationLoop(

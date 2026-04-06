@@ -344,10 +344,7 @@ export async function runCodexRotationLoop(
   let trigger = initialTrigger;
   let lastRotationMessage = rotationMessage;
 
-  while (
-    getCodexAccountCount() > 1 &&
-    rotateCodexToken(lastRotationMessage)
-  ) {
+  while (getCodexAccountCount() > 1 && rotateCodexToken(lastRotationMessage)) {
     logger.info(
       { ...logContext, reason: trigger.reason },
       'Codex account unhealthy, retrying with rotated account',
