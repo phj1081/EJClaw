@@ -1570,6 +1570,7 @@ describe('createMessageRuntime', () => {
     const channel = makeChannel(chatJid);
     const enqueueMessageCheck = vi.fn();
     const closeStdin = vi.fn();
+    const sendMessage = vi.fn(() => false);
     const setLastTimestamp = vi.fn();
     const stopLoop = new Error('stop-message-loop');
 
@@ -1648,7 +1649,7 @@ describe('createMessageRuntime', () => {
         closeStdin,
         enqueueMessageCheck,
         notifyIdle: vi.fn(),
-        sendMessage: vi.fn(() => false),
+        sendMessage,
       } as any,
       getRegisteredGroups: () => ({ [chatJid]: group }),
       getSessions: () => ({}),
@@ -1702,6 +1703,128 @@ describe('createMessageRuntime', () => {
       }),
       'Executing merge_ready finalize turn inline after bot-only reviewer follow-up',
     );
+  });
+
+  it('requeues owner follow-ups from reviewer bot-only messages instead of piping them into the active run', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const enqueueMessageCheck = vi.fn();
+    const closeStdin = vi.fn();
+    const sendMessage = vi.fn(() => false);
+    const setLastTimestamp = vi.fn();
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+    const stopLoop = new Error('stop-message-loop');
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-active-owner-follow-up-loop',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-active-owner-follow-up-loop',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'owner 초안',
+        created_at: '2026-03-30T00:00:01.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-active-owner-follow-up-loop',
+        turn_number: 2,
+        role: 'reviewer',
+        output_text: 'reviewer 수정 요청',
+        created_at: '2026-03-30T00:00:02.000Z',
+      },
+    ]);
+    vi.mocked(db.getNewMessages).mockReturnValue({
+      messages: [
+        {
+          id: 'reviewer-bot-message-owner-follow-up-loop',
+          chat_jid: chatJid,
+          sender: 'reviewer-bot@test',
+          sender_name: '리뷰어',
+          content: 'DONE_WITH_CONCERNS\n\nreviewer direct message',
+          timestamp: '2026-03-30T00:00:04.000Z',
+          seq: 42,
+          is_bot_message: true,
+        } as any,
+      ],
+      newTimestamp: '42',
+    });
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 60_000,
+      pollInterval: 123,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin,
+        enqueueMessageCheck,
+        notifyIdle: vi.fn(),
+        sendMessage,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp,
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const originalSetTimeout = global.setTimeout;
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout').mockImplementation(((
+      handler: any,
+      timeout?: number,
+      ...args: any[]
+    ) => {
+      if (timeout === 123) {
+        throw stopLoop;
+      }
+      return (originalSetTimeout as any)(handler, timeout, ...args);
+    }) as typeof setTimeout);
+
+    try {
+      await expect(runtime.startMessageLoop()).rejects.toThrow(
+        stopLoop.message,
+      );
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+
+    expect(setLastTimestamp).toHaveBeenCalledWith('42');
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+    expect(closeStdin).toHaveBeenCalledWith(
+      chatJid,
+      expect.objectContaining({ reason: 'paired-pending-turn-follow-up' }),
+    );
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(
+      chatJid,
+      resolveGroupIpcPath(group.folder),
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('auto-runs an owner follow-up when a task returns to active after reviewer feedback', async () => {
