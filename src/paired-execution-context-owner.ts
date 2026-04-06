@@ -2,10 +2,7 @@ import {
   ARBITER_DEADLOCK_THRESHOLD,
   PAIRED_MAX_ROUND_TRIPS,
 } from './config.js';
-import {
-  getPairedWorkspace,
-  hasActiveCiWatcherForChat,
-} from './db.js';
+import { getPairedWorkspace, hasActiveCiWatcherForChat } from './db.js';
 import { logger } from './logger.js';
 import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
 import {
