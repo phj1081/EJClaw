@@ -5,6 +5,7 @@ import {
   isCodexRotationReason,
 } from './agent-error-detection.js';
 import { detectCodexRotationTrigger } from './codex-token-rotation.js';
+import { resolveNextTurnAction } from './message-runtime-rules.js';
 import type { PairedRoomRole, PairedTaskStatus } from './types.js';
 import { getErrorMessage } from './utils.js';
 
@@ -123,26 +124,29 @@ export function resolvePairedFollowUpQueueAction(args: {
   sawOutput: boolean;
   taskStatus: PairedTaskStatus | null;
 }): PairedFollowUpQueueAction {
+  const nextTurnAction = resolveNextTurnAction({
+    taskStatus: args.taskStatus,
+    lastTurnOutputRole:
+      args.executionStatus === 'succeeded' && args.sawOutput
+        ? args.completedRole
+        : null,
+  });
+
   if (args.executionStatus === 'succeeded' && args.sawOutput) {
-    if (
-      args.completedRole === 'owner' &&
-      args.taskStatus === 'review_ready'
-    ) {
+    if (nextTurnAction.kind === 'reviewer-turn') {
       return 'generic';
     }
 
     return args.completedRole === 'reviewer' &&
-      args.taskStatus === 'merge_ready'
+      nextTurnAction.kind === 'finalize-owner-turn'
       ? 'skip-inline-finalize'
       : 'none';
   }
 
   const shouldRequeuePendingPairedTurn =
     (args.completedRole === 'reviewer' || args.completedRole === 'arbiter') &&
-    (args.taskStatus === 'review_ready' ||
-      args.taskStatus === 'in_review' ||
-      args.taskStatus === 'arbiter_requested' ||
-      args.taskStatus === 'in_arbitration' ||
-      args.taskStatus === 'merge_ready');
+    (nextTurnAction.kind === 'reviewer-turn' ||
+      nextTurnAction.kind === 'arbiter-turn' ||
+      nextTurnAction.kind === 'finalize-owner-turn');
   return shouldRequeuePendingPairedTurn ? 'pending' : 'none';
 }

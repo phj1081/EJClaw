@@ -33,6 +33,7 @@ import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import {
   advanceLastAgentCursor,
   createImplicitContinuationTracker,
+  resolveNextTurnAction,
   resolveActiveRole,
   resolveCursorKey,
   filterLoopingPairedBotMessages,
@@ -40,9 +41,15 @@ import {
   hasAllowedTrigger,
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
-import { buildArbiterContextPrompt } from './arbiter-context.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
+import {
+  buildArbiterPromptForTask,
+  buildFinalizePendingPrompt,
+  buildOwnerPendingPrompt,
+  buildPairedTurnPrompt,
+  buildReviewerPendingPrompt,
+} from './message-runtime-prompts.js';
 import {
   extractSessionCommand,
   handleSessionCommand,
@@ -56,7 +63,6 @@ import {
   type PairedRoomRole,
   RegisteredGroup,
   type PairedTask,
-  type PairedTurnOutput,
 } from './types.js';
 import { createScopedLogger, logger } from './logger.js';
 import { resolveGroupIpcPath } from './group-folder.js';
@@ -193,144 +199,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     });
   };
 
-  /** Convert paired turn outputs to NewMessage format for formatMessages(). */
-  const turnOutputsToMessages = (
-    outputs: PairedTurnOutput[],
-    chatJid: string,
-  ): NewMessage[] =>
-    outputs.map((t) => ({
-      id: `turn-${t.task_id}-${t.turn_number}`,
-      chat_jid: chatJid,
-      sender: t.role,
-      sender_name: t.role,
-      content: t.output_text,
-      timestamp: t.created_at,
-      is_bot_message: true as const,
-      is_from_me: false as const,
-    }));
-
-  const mergeHumanAndTurnOutputMessages = (
-    chatJid: string,
-    humanMessages: NewMessage[],
-    turnOutputs: PairedTurnOutput[],
-  ): NewMessage[] =>
-    [...humanMessages, ...turnOutputsToMessages(turnOutputs, chatJid)].sort(
-      (a, b) => a.timestamp.localeCompare(b.timestamp),
-    );
-
-  /**
-   * Build a prompt from paired_turn_outputs (Discord-independent) + human messages.
-   * Falls back to the legacy labelPairedSenders path when no turn outputs exist.
-   */
-  const buildPairedTurnPrompt = (
-    taskId: string,
-    chatJid: string,
-    timezone: string,
-    missedMessages: NewMessage[],
-  ): string => {
-    const turnOutputs = getPairedTurnOutputs(taskId);
-    if (turnOutputs.length === 0) {
-      // No stored outputs yet — fall back to Discord messages
-      return formatMessages(
-        labelPairedSenders(chatJid, missedMessages),
-        timezone,
-      );
-    }
-
-    // Human messages from the missed messages (exclude bot messages)
-    const humanMessages = missedMessages.filter((m) => !m.is_bot_message);
-
-    return formatMessages(
-      mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),
-      timezone,
-    );
-  };
-
-  const buildReviewerPendingPrompt = (
-    task: PairedTask,
-    chatJid: string,
-    timezone: string,
-  ): string => {
-    const turnOutputs = getPairedTurnOutputs(task.id);
-    if (turnOutputs.length > 0) {
-      const humanMessages = getRecentChatMessages(chatJid, 20).filter(
-        (message) => !message.is_bot_message,
-      );
-      return formatMessages(
-        mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),
-        timezone,
-      );
-    }
-
-    const userMessage = getLastHumanMessageContent(chatJid);
-    if (!userMessage) {
-      return 'Review the latest owner changes in the workspace.';
-    }
-
-    return `User request:\n---\n${userMessage}\n---\n\nReview the latest owner changes in the workspace.`;
-  };
-
-  const buildOwnerPendingPrompt = (
-    task: PairedTask,
-    chatJid: string,
-    timezone: string,
-  ): string => {
-    const turnOutputs = getPairedTurnOutputs(task.id);
-    if (turnOutputs.length > 0) {
-      const humanMessages = getRecentChatMessages(chatJid, 20).filter(
-        (message) => !message.is_bot_message,
-      );
-      return formatMessages(
-        mergeHumanAndTurnOutputMessages(chatJid, humanMessages, turnOutputs),
-        timezone,
-      );
-    }
-
-    const userMessage = getLastHumanMessageContent(chatJid);
-    if (!userMessage) {
-      return 'Continue the owner turn using the latest reviewer or arbiter feedback.';
-    }
-
-    return `User request:\n---\n${userMessage}\n---\n\nContinue the owner turn using the latest reviewer or arbiter feedback.`;
-  };
-
-  const buildArbiterPromptForTask = (
-    task: PairedTask,
-    chatJid: string,
-    timezone: string,
-  ): string => {
-    const turnOutputs = getPairedTurnOutputs(task.id);
-    const recentMessages = getRecentChatMessages(chatJid, 20);
-    const arbiterMessages =
-      turnOutputs.length > 0
-        ? mergeHumanAndTurnOutputMessages(
-            chatJid,
-            recentMessages.filter((message) => !message.is_bot_message),
-            turnOutputs,
-          )
-        : labelPairedSenders(chatJid, recentMessages);
-
-    return buildArbiterContextPrompt({
-      chatJid,
-      taskId: task.id,
-      roundTripCount: task.round_trip_count,
-      timezone,
-      messages: arbiterMessages,
-    });
-  };
-
-  const buildFinalizePendingPrompt = (task: PairedTask): string => {
-    const turnOutputs = getPairedTurnOutputs(task.id);
-    const lastReviewerOutput = [...turnOutputs]
-      .reverse()
-      .find((output) => output.role === 'reviewer');
-    const reviewerSummary = lastReviewerOutput?.output_text
-      ? `\n\nReviewer's final assessment:\n${lastReviewerOutput.output_text.slice(0, 2000)}`
-      : '';
-
-    return `The reviewer approved your work (DONE). Finalize and report the result.${reviewerSummary}`;
-  };
-
   const isBotOnlyPairedRoomTurn = (
     chatJid: string,
     messages: NewMessage[],
@@ -370,7 +238,11 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const cursor =
       pendingCursorSource?.seq ?? pendingCursorSource?.timestamp ?? null;
 
-    if (task.status === 'merge_ready') {
+    const nextTurnAction = resolveNextTurnAction({
+      taskStatus: task.status,
+    });
+
+    if (nextTurnAction.kind === 'finalize-owner-turn') {
       return {
         kind: 'inline-finalize',
         task,
@@ -379,18 +251,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
 
     if (
-      task.status === 'review_ready' ||
-      task.status === 'in_review' ||
-      task.status === 'arbiter_requested' ||
-      task.status === 'in_arbitration'
+      nextTurnAction.kind === 'reviewer-turn' ||
+      nextTurnAction.kind === 'arbiter-turn'
     ) {
-      const nextRole = resolveActiveRole(task.status);
       return {
         kind: 'requeue-pending-turn',
         task,
         cursor,
         cursorKey: resolveCursorKey(chatJid, task.status),
-        nextRole: nextRole === 'arbiter' ? 'arbiter' : 'reviewer',
+        nextRole:
+          nextTurnAction.kind === 'arbiter-turn' ? 'arbiter' : 'reviewer',
       };
     }
 
@@ -446,7 +316,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       );
       const { deliverySucceeded } = await executeTurn({
         group,
-        prompt: buildFinalizePendingPrompt(action.task),
+        prompt: buildFinalizePendingPrompt({
+          turnOutputs: getPairedTurnOutputs(action.task.id),
+        }),
         chatJid,
         runId,
         channel,
@@ -966,11 +838,27 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const lastRaw = rawMissedMessages[rawMissedMessages.length - 1];
       const cursor = lastRaw?.seq ?? lastRaw?.timestamp ?? null;
       const taskStatus = task.status;
-      const pendingRole = resolveActiveRole(taskStatus);
+      const turnOutputs = getPairedTurnOutputs(task.id);
+      const lastTurnOutput = turnOutputs[turnOutputs.length - 1];
+      const nextTurnAction = resolveNextTurnAction({
+        taskStatus,
+        lastTurnOutputRole: lastTurnOutput?.role ?? null,
+      });
+      const recentMessages = getRecentChatMessages(chatJid, 20);
+      const recentHumanMessages = recentMessages.filter(
+        (message) => !message.is_bot_message,
+      );
+      const lastHumanMessage = getLastHumanMessageContent(chatJid);
 
-      if (pendingRole === 'reviewer') {
+      if (nextTurnAction.kind === 'reviewer-turn') {
         return {
-          prompt: buildReviewerPendingPrompt(task, chatJid, deps.timezone),
+          prompt: buildReviewerPendingPrompt({
+            chatJid,
+            timezone: deps.timezone,
+            turnOutputs,
+            recentHumanMessages,
+            lastHumanMessage,
+          }),
           channel: resolveChannel(taskStatus),
           cursor,
           cursorKey: resolveCursorKey(chatJid, taskStatus),
@@ -978,9 +866,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         };
       }
 
-      if (pendingRole === 'arbiter') {
+      if (nextTurnAction.kind === 'arbiter-turn') {
         return {
-          prompt: buildArbiterPromptForTask(task, chatJid, deps.timezone),
+          prompt: buildArbiterPromptForTask({
+            task,
+            chatJid,
+            timezone: deps.timezone,
+            turnOutputs,
+            recentMessages,
+            labeledRecentMessages: labelPairedSenders(chatJid, recentMessages),
+          }),
           channel: resolveChannel(taskStatus),
           cursor,
           cursorKey: resolveCursorKey(chatJid, taskStatus),
@@ -988,28 +883,26 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         };
       }
 
-      if (taskStatus === 'merge_ready') {
+      if (nextTurnAction.kind === 'finalize-owner-turn') {
         return {
-          prompt: buildFinalizePendingPrompt(task),
+          prompt: buildFinalizePendingPrompt({ turnOutputs }),
           channel: resolveChannel(taskStatus),
           cursor,
         };
       }
 
-      if (taskStatus === 'active') {
-        const turnOutputs = getPairedTurnOutputs(task.id);
-        const lastTurnOutput = turnOutputs[turnOutputs.length - 1];
-        if (
-          lastTurnOutput &&
-          (lastTurnOutput.role === 'reviewer' ||
-            lastTurnOutput.role === 'arbiter')
-        ) {
-          return {
-            prompt: buildOwnerPendingPrompt(task, chatJid, deps.timezone),
-            channel: resolveChannel(taskStatus),
-            cursor,
-          };
-        }
+      if (nextTurnAction.kind === 'owner-follow-up') {
+        return {
+          prompt: buildOwnerPendingPrompt({
+            chatJid,
+            timezone: deps.timezone,
+            turnOutputs,
+            recentHumanMessages,
+            lastHumanMessage,
+          }),
+          channel: resolveChannel(taskStatus),
+          cursor,
+        };
       }
 
       return null;
@@ -1068,7 +961,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }): boolean =>
       hasReviewerLease(chatJid) &&
       args.deliveryRole === 'reviewer' &&
-      args.pendingTask?.status === 'merge_ready';
+      resolveNextTurnAction({
+        taskStatus: args.pendingTask?.status ?? null,
+      }).kind === 'finalize-owner-turn';
 
     const enqueueGenericFollowUpAfterDeliveryRetry = (args: {
       deliveryRole: PairedRoomRole;
@@ -1301,18 +1196,24 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const turnRole = resolveActiveRole(taskStatus);
       let prompt: string;
       if (turnRole === 'arbiter' && pendingTaskForChannel) {
-        prompt = buildArbiterPromptForTask(
-          pendingTaskForChannel,
+        const recentMessages = getRecentChatMessages(chatJid, 20);
+        prompt = buildArbiterPromptForTask({
+          task: pendingTaskForChannel,
           chatJid,
-          deps.timezone,
-        );
+          timezone: deps.timezone,
+          turnOutputs: getPairedTurnOutputs(pendingTaskForChannel.id),
+          recentMessages,
+          labeledRecentMessages: labelPairedSenders(chatJid, recentMessages),
+        });
       } else if (pendingTaskForChannel) {
-        prompt = buildPairedTurnPrompt(
-          pendingTaskForChannel.id,
+        prompt = buildPairedTurnPrompt({
+          taskId: pendingTaskForChannel.id,
           chatJid,
-          deps.timezone,
+          timezone: deps.timezone,
           missedMessages,
-        );
+          labeledFallbackMessages: labelPairedSenders(chatJid, missedMessages),
+          turnOutputs: getPairedTurnOutputs(pendingTaskForChannel.id),
+        });
       } else {
         prompt = formatMessages(
           labelPairedSenders(chatJid, missedMessages),
@@ -1538,12 +1439,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 ? pendingMessages
                 : processableGroupMessages;
             const formatted = loopPendingTask
-              ? buildPairedTurnPrompt(
-                  loopPendingTask.id,
+              ? buildPairedTurnPrompt({
+                  taskId: loopPendingTask.id,
                   chatJid,
-                  deps.timezone,
-                  messagesToSend,
-                )
+                  timezone: deps.timezone,
+                  missedMessages: messagesToSend,
+                  labeledFallbackMessages: labelPairedSenders(
+                    chatJid,
+                    messagesToSend,
+                  ),
+                  turnOutputs: getPairedTurnOutputs(loopPendingTask.id),
+                })
               : formatMessages(
                   labelPairedSenders(chatJid, messagesToSend),
                   deps.timezone,

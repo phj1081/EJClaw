@@ -141,10 +141,32 @@ describe('message-agent-executor-rules', () => {
     ).toBe('generic');
   });
 
+  it('skips generic requeue when reviewer success moved the task to merge_ready for inline finalize', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'reviewer',
+        executionStatus: 'succeeded',
+        sawOutput: true,
+        taskStatus: 'merge_ready',
+      }),
+    ).toBe('skip-inline-finalize');
+  });
+
   it('does not request a generic follow-up after successful reviewer output moved the task back to active', () => {
     expect(
       resolvePairedFollowUpQueueAction({
         completedRole: 'reviewer',
+        executionStatus: 'succeeded',
+        sawOutput: true,
+        taskStatus: 'active',
+      }),
+    ).toBe('none');
+  });
+
+  it('returns none after successful output when no next-turn action is needed', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'owner',
         executionStatus: 'succeeded',
         sawOutput: true,
         taskStatus: 'active',
