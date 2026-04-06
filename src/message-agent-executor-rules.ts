@@ -10,9 +10,7 @@ export {
   type AttemptStreamedTrigger as ExecutorStreamedTrigger,
 } from './agent-attempt-retry.js';
 
-export type PairedFollowUpQueueAction =
-  | 'pending'
-  | 'none';
+export type PairedFollowUpQueueAction = 'pending' | 'none';
 
 export function resolvePairedFollowUpQueueAction(args: {
   completedRole: PairedRoomRole;
