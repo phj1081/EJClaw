@@ -32,10 +32,7 @@ import {
 } from './paired-execution-context.js';
 import { resolveCodexFallbackHandoff } from './paired-turn-fallback.js';
 import {
-  resolveActiveRole,
-  resolveConfiguredRoleAgentPlan,
-  resolveEffectiveAgentType,
-  resolveSessionFolder,
+  resolveExecutionTarget,
 } from './message-runtime-rules.js';
 import {
   isRetryableClaudeSessionFailureAttempt,
@@ -67,7 +64,6 @@ import { readArbiterPrompt } from './platform-prompts.js';
 import {
   activateCodexFailover,
   getEffectiveChannelLease,
-  resolveLeaseServiceId,
 } from './service-routing.js';
 import {
   evaluateStreamedOutput,
@@ -119,41 +115,33 @@ export async function runAgentForGroup(
   const pairedTask = currentLease.reviewer_agent_type
     ? getLatestOpenPairedTaskForChat(chatJid)
     : null;
-  const inferredRole = resolveActiveRole(pairedTask?.status);
-  const canHonorForcedRole = Boolean(
-    args.forcedRole === 'owner' ||
-    (args.forcedRole === 'reviewer' && currentLease.reviewer_agent_type) ||
-    (args.forcedRole === 'arbiter' && currentLease.arbiter_agent_type),
-  );
-  const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
-  const effectiveServiceId = resolveLeaseServiceId(currentLease, activeRole);
-  if (!effectiveServiceId) {
-    throw new Error(`Missing runtime service id for ${activeRole} lease`);
-  }
+  const executionTarget = resolveExecutionTarget({
+    lease: currentLease,
+    pairedTaskStatus: pairedTask?.status,
+    groupFolder: group.folder,
+    groupAgentType: group.agentType,
+    forcedRole: args.forcedRole,
+    forcedAgentType: args.forcedAgentType,
+  });
+  const {
+    inferredRole,
+    canHonorForcedRole,
+    activeRole,
+    effectiveServiceId,
+    reviewerServiceId,
+    arbiterServiceId,
+    roleAgentPlan,
+    configuredAgentType,
+    effectiveAgentType,
+    sessionFolder,
+  } = executionTarget;
   const reviewerMode = activeRole === 'reviewer';
   const arbiterMode = activeRole === 'arbiter';
-  const reviewerServiceId = resolveLeaseServiceId(currentLease, 'reviewer');
-  const arbiterServiceId = resolveLeaseServiceId(currentLease, 'arbiter');
-  const roleAgentPlan = resolveConfiguredRoleAgentPlan(
-    currentLease.reviewer_agent_type != null,
-    group.agentType,
-  );
-
-  const configuredAgentType = resolveEffectiveAgentType(
-    activeRole,
-    group.agentType,
-  );
-  const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
   const effectiveGroup =
     effectiveAgentType !== roleAgentPlan.ownerAgentType
       ? { ...group, agentType: effectiveAgentType }
       : group;
   const isClaudeCodeAgent = effectiveAgentType === 'claude-code';
-  const sessionFolder = resolveSessionFolder(
-    group.folder,
-    activeRole,
-    group.agentType,
-  );
   const unsafeHostPairedMode =
     process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
   const forceFreshClaudeReviewerSession =

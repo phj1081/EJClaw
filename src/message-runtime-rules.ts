@@ -4,7 +4,11 @@ import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isTaskStatusControlMessage } from './task-watch-status.js';
 import { ARBITER_AGENT_TYPE, REVIEWER_AGENT_TYPE } from './config.js';
-import { hasReviewerLease } from './service-routing.js';
+import {
+  hasReviewerLease,
+  resolveLeaseServiceId,
+  type EffectiveChannelLease,
+} from './service-routing.js';
 import {
   resolveAgentTypeForRole,
   resolveRoleAgentPlan,
@@ -14,6 +18,8 @@ import {
   type AgentType,
   type Channel,
   type NewMessage,
+  type PairedRoomRole,
+  type PairedTaskStatus,
   type RegisteredGroup,
 } from './types.js';
 
@@ -52,6 +58,36 @@ export function resolveActiveRole(
       return 'arbiter';
     default:
       return 'owner';
+  }
+}
+
+export type NextTurnAction =
+  | { kind: 'none' }
+  | { kind: 'reviewer-turn' }
+  | { kind: 'arbiter-turn' }
+  | { kind: 'owner-follow-up' }
+  | { kind: 'finalize-owner-turn' };
+
+export function resolveNextTurnAction(args: {
+  taskStatus?: PairedTaskStatus | null;
+  lastTurnOutputRole?: PairedRoomRole | null;
+}): NextTurnAction {
+  switch (args.taskStatus) {
+    case 'review_ready':
+    case 'in_review':
+      return { kind: 'reviewer-turn' };
+    case 'arbiter_requested':
+    case 'in_arbitration':
+      return { kind: 'arbiter-turn' };
+    case 'merge_ready':
+      return { kind: 'finalize-owner-turn' };
+    case 'active':
+      return args.lastTurnOutputRole === 'reviewer' ||
+        args.lastTurnOutputRole === 'arbiter'
+        ? { kind: 'owner-follow-up' }
+        : { kind: 'none' };
+    default:
+      return { kind: 'none' };
   }
 }
 
@@ -100,6 +136,69 @@ export function resolveSessionFolder(
   const groupDefault = plan.ownerAgentType;
   if (effectiveType === groupDefault) return groupFolder;
   return `${groupFolder}:${role}`;
+}
+
+export interface ExecutionTargetResolution {
+  inferredRole: PairedRoomRole;
+  canHonorForcedRole: boolean;
+  activeRole: PairedRoomRole;
+  effectiveServiceId: string;
+  reviewerServiceId: string | null;
+  arbiterServiceId: string | null;
+  roleAgentPlan: RoleAgentPlan;
+  configuredAgentType: AgentType;
+  effectiveAgentType: AgentType;
+  sessionFolder: string;
+}
+
+export function resolveExecutionTarget(args: {
+  lease: EffectiveChannelLease;
+  pairedTaskStatus?: PairedTaskStatus | null;
+  groupFolder: string;
+  groupAgentType?: AgentType;
+  forcedRole?: PairedRoomRole;
+  forcedAgentType?: AgentType;
+}): ExecutionTargetResolution {
+  const inferredRole = resolveActiveRole(args.pairedTaskStatus);
+  const canHonorForcedRole = Boolean(
+    args.forcedRole === 'owner' ||
+      (args.forcedRole === 'reviewer' && args.lease.reviewer_agent_type) ||
+      (args.forcedRole === 'arbiter' && args.lease.arbiter_agent_type),
+  );
+  const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
+  const effectiveServiceId = resolveLeaseServiceId(args.lease, activeRole);
+  if (!effectiveServiceId) {
+    throw new Error(`Missing runtime service id for ${activeRole} lease`);
+  }
+
+  const reviewerServiceId = resolveLeaseServiceId(args.lease, 'reviewer');
+  const arbiterServiceId = resolveLeaseServiceId(args.lease, 'arbiter');
+  const roleAgentPlan = resolveConfiguredRoleAgentPlan(
+    args.lease.reviewer_agent_type != null,
+    args.groupAgentType,
+  );
+  const configuredAgentType = resolveEffectiveAgentType(
+    activeRole,
+    args.groupAgentType,
+  );
+  const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
+
+  return {
+    inferredRole,
+    canHonorForcedRole,
+    activeRole,
+    effectiveServiceId,
+    reviewerServiceId,
+    arbiterServiceId,
+    roleAgentPlan,
+    configuredAgentType,
+    effectiveAgentType,
+    sessionFolder: resolveSessionFolder(
+      args.groupFolder,
+      activeRole,
+      args.groupAgentType,
+    ),
+  };
 }
 
 export function createImplicitContinuationTracker(idleTimeout: number) {
