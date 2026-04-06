@@ -8,7 +8,6 @@ import {
   getPairedProject,
   getPairedTaskById,
   getPairedWorkspace,
-  updatePairedTask,
   upsertPairedWorkspace,
 } from './db.js';
 import { resolvePairedTaskWorkspacePath } from './group-folder.js';
@@ -758,10 +757,6 @@ export function markPairedTaskReviewReady(taskId: string): {
   reviewerWorkspace: PairedWorkspace;
 } | null {
   const requestedAt = new Date().toISOString();
-  updatePairedTask(taskId, {
-    review_requested_at: requestedAt,
-    updated_at: requestedAt,
-  });
 
   const ownerWorkspace = getPairedWorkspace(taskId, 'owner');
   if (!ownerWorkspace) {
@@ -798,7 +793,6 @@ export function markPairedTaskReviewReady(taskId: string): {
     'Reviewer will mount owner workspace directly',
   );
 
-  const now = new Date().toISOString();
   const task = getPairedTaskById(taskId);
   if (!task) {
     return null;
@@ -807,7 +801,10 @@ export function markPairedTaskReviewReady(taskId: string): {
     taskId,
     currentStatus: task.status,
     nextStatus: 'review_ready',
-    updatedAt: now,
+    updatedAt: requestedAt,
+    patch: {
+      review_requested_at: requestedAt,
+    },
   });
 
   return { ownerWorkspace, reviewerWorkspace };

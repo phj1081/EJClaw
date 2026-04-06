@@ -565,7 +565,6 @@ describe('paired execution context', () => {
       'task-1',
       expect.objectContaining({
         round_trip_count: 2,
-        review_requested_at: expect.any(String),
       }),
     );
   });

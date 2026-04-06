@@ -155,6 +155,17 @@ export function transitionPairedTaskStatus(args: {
   });
 }
 
+export function applyPairedTaskPatch(args: {
+  taskId: string;
+  updatedAt: string;
+  patch: Omit<Parameters<typeof updatePairedTask>[1], 'updated_at'>;
+}): void {
+  updatePairedTask(args.taskId, {
+    ...args.patch,
+    updated_at: args.updatedAt,
+  });
+}
+
 export function requestArbiterOrEscalate(args: {
   taskId: string;
   currentStatus: PairedTaskStatus;

@@ -851,10 +851,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 chatJid,
                 getRecentChatMessages(chatJid, 20),
               ),
-              lastDeliveredMessages: labelPairedSenders(
-                chatJid,
-                missedMessages,
-              ),
               resolveChannel,
             })
           : null;
@@ -1072,6 +1068,191 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
   };
 
+  const processQueuedGroupDispatch = async (args: {
+    chatJid: string;
+    group: RegisteredGroup;
+    channel: Channel;
+    processableGroupMessages: NewMessage[];
+  }): Promise<void> => {
+    const { chatJid, group, channel, processableGroupMessages } = args;
+    const loopPendingTask = hasReviewerLease(chatJid)
+      ? getLatestOpenPairedTaskForChat(chatJid)
+      : null;
+    const loopCursorKey = resolveCursorKey(chatJid, loopPendingTask?.status);
+    const rawPendingMessages = getMessagesSinceSeq(
+      chatJid,
+      deps.getLastAgentTimestamps()[loopCursorKey] || '0',
+      deps.assistantName,
+    );
+    const pendingMessages = filterLoopingPairedBotMessages(
+      chatJid,
+      getProcessableMessages(chatJid, rawPendingMessages, channel),
+      FAILURE_FINAL_TEXT,
+    );
+    const messagesToSend =
+      pendingMessages.length > 0 ? pendingMessages : processableGroupMessages;
+    const labeledMessagesToSend = labelPairedSenders(chatJid, messagesToSend);
+    const {
+      formatted,
+      botOnlyFollowUpAction,
+      isBotOnlyPairedFollowUp,
+      loopCursorKey: dispatchCursorKey,
+      endSeq,
+    } = buildQueuedTurnDispatch({
+      chatJid,
+      timezone: deps.timezone,
+      loopPendingTask,
+      rawPendingMessages,
+      messagesToSend,
+      labeledMessagesToSend,
+      formatMessages,
+    });
+
+    if (
+      await executeBotOnlyPairedFollowUpAction({
+        action: botOnlyFollowUpAction,
+        chatJid,
+        group,
+        runId: `loop-merge-ready-${Date.now().toString(36)}`,
+        channel,
+        log: logger,
+        saveState: deps.saveState,
+        lastAgentTimestamps: deps.getLastAgentTimestamps(),
+        executeTurn,
+        enqueueGroupMessageCheck: () =>
+          enqueueScopedGroupMessageCheck(chatJid, group.folder),
+        closeStdin: () =>
+          deps.queue.closeStdin(chatJid, {
+            reason: 'paired-pending-turn-follow-up',
+          }),
+      })
+    ) {
+      return;
+    }
+
+    if (deps.queue.sendMessage(chatJid, formatted)) {
+      if (endSeq != null) {
+        advanceLastAgentCursor(
+          deps.getLastAgentTimestamps(),
+          deps.saveState,
+          chatJid,
+          endSeq,
+          dispatchCursorKey,
+        );
+      }
+      logger.debug(
+        {
+          transition: 'typing:on',
+          source: 'follow-up-queued',
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          endSeq: endSeq ?? null,
+          suppressed: isBotOnlyPairedFollowUp,
+        },
+        'Typing indicator transition',
+      );
+      if (!isBotOnlyPairedFollowUp) {
+        await channel
+          .setTyping?.(chatJid, true)
+          ?.catch((err) =>
+            logger.warn(
+              { chatJid, err },
+              'Failed to set typing indicator',
+            ),
+          );
+      }
+      return;
+    }
+
+    enqueueScopedGroupMessageCheck(chatJid, group.folder);
+  };
+
+  const processLoopGroupMessages = async (args: {
+    chatJid: string;
+    group: RegisteredGroup;
+    groupMessages: NewMessage[];
+    channel: Channel;
+  }): Promise<void> => {
+    const { chatJid, group, groupMessages, channel } = args;
+    const isMainGroup = group.isMain === true;
+    const processableGroupMessages = getProcessableMessages(
+      chatJid,
+      groupMessages,
+      channel,
+    );
+
+    if (processableGroupMessages.length === 0) {
+      const lastIgnored = groupMessages[groupMessages.length - 1];
+      if (lastIgnored?.seq != null) {
+        advanceLastAgentCursor(
+          deps.getLastAgentTimestamps(),
+          deps.saveState,
+          chatJid,
+          lastIgnored.seq,
+        );
+      }
+      return;
+    }
+
+    if (shouldSkipBotOnlyCollaboration(chatJid, processableGroupMessages)) {
+      const lastIgnored =
+        processableGroupMessages[processableGroupMessages.length - 1];
+      if (lastIgnored?.seq != null) {
+        advanceLastAgentCursor(
+          deps.getLastAgentTimestamps(),
+          deps.saveState,
+          chatJid,
+          lastIgnored.seq,
+        );
+      }
+      logger.info(
+        { chatJid, group: group.name, groupFolder: group.folder },
+        'Bot-collaboration timeout: no recent human message, skipping',
+      );
+      return;
+    }
+
+    const loopCmdMsg = groupMessages.find(
+      (msg) => extractSessionCommand(msg.content, deps.triggerPattern) !== null,
+    );
+
+    if (loopCmdMsg) {
+      if (
+        isSessionCommandAllowed(
+          isMainGroup,
+          loopCmdMsg.is_from_me === true,
+          isSessionCommandSenderAllowed(loopCmdMsg.sender),
+        )
+      ) {
+        deps.queue.closeStdin(chatJid, {
+          reason: 'session-command-detected',
+        });
+      }
+      deps.queue.enqueueMessageCheck(chatJid);
+      return;
+    }
+
+    if (
+      !hasAllowedTrigger({
+        chatJid,
+        messages: processableGroupMessages,
+        group,
+        triggerPattern: deps.triggerPattern,
+        hasImplicitContinuationWindow: continuationTracker.has,
+      })
+    ) {
+      return;
+    }
+
+    await processQueuedGroupDispatch({
+      chatJid,
+      group,
+      channel,
+      processableGroupMessages,
+    });
+  };
+
   const startMessageLoop = async (): Promise<void> => {
     if (messageLoopRunning) {
       logger.debug('Message loop already running, skipping duplicate start');
@@ -1120,182 +1301,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               );
               continue;
             }
-
-            const isMainGroup = group.isMain === true;
-            const processableGroupMessages = getProcessableMessages(
+            await processLoopGroupMessages({
               chatJid,
+              group,
               groupMessages,
               channel,
-            );
-
-            if (processableGroupMessages.length === 0) {
-              const lastIgnored = groupMessages[groupMessages.length - 1];
-              if (lastIgnored?.seq != null) {
-                advanceLastAgentCursor(
-                  deps.getLastAgentTimestamps(),
-                  deps.saveState,
-                  chatJid,
-                  lastIgnored.seq,
-                );
-              }
-              continue;
-            }
-
-            if (
-              shouldSkipBotOnlyCollaboration(chatJid, processableGroupMessages)
-            ) {
-              const lastIgnored =
-                processableGroupMessages[processableGroupMessages.length - 1];
-              if (lastIgnored?.seq != null) {
-                advanceLastAgentCursor(
-                  deps.getLastAgentTimestamps(),
-                  deps.saveState,
-                  chatJid,
-                  lastIgnored.seq,
-                );
-              }
-              logger.info(
-                { chatJid, group: group.name, groupFolder: group.folder },
-                'Bot-collaboration timeout: no recent human message, skipping',
-              );
-              continue;
-            }
-
-            const loopCmdMsg = groupMessages.find(
-              (msg) =>
-                extractSessionCommand(msg.content, deps.triggerPattern) !==
-                null,
-            );
-
-            if (loopCmdMsg) {
-              if (
-                isSessionCommandAllowed(
-                  isMainGroup,
-                  loopCmdMsg.is_from_me === true,
-                  isSessionCommandSenderAllowed(loopCmdMsg.sender),
-                )
-              ) {
-                deps.queue.closeStdin(chatJid, {
-                  reason: 'session-command-detected',
-                });
-              }
-              deps.queue.enqueueMessageCheck(chatJid);
-              continue;
-            }
-
-            if (
-              !hasAllowedTrigger({
-                chatJid,
-                messages: processableGroupMessages,
-                group,
-                triggerPattern: deps.triggerPattern,
-                hasImplicitContinuationWindow: continuationTracker.has,
-              })
-            ) {
-              continue;
-            }
-
-            // Use role-aware cursor for paired rooms so the reviewer
-            // always sees the owner's last messages and vice versa.
-            const loopPendingTask = hasReviewerLease(chatJid)
-              ? getLatestOpenPairedTaskForChat(chatJid)
-              : null;
-            const loopCursorKey = resolveCursorKey(
-              chatJid,
-              loopPendingTask?.status,
-            );
-
-            const rawPendingMessages = getMessagesSinceSeq(
-              chatJid,
-              deps.getLastAgentTimestamps()[loopCursorKey] || '0',
-              deps.assistantName,
-            );
-            const pendingMessages = filterLoopingPairedBotMessages(
-              chatJid,
-              getProcessableMessages(chatJid, rawPendingMessages, channel),
-              FAILURE_FINAL_TEXT,
-            );
-            const messagesToSend =
-              pendingMessages.length > 0
-                ? pendingMessages
-                : processableGroupMessages;
-            const labeledMessagesToSend = labelPairedSenders(
-              chatJid,
-              messagesToSend,
-            );
-            const {
-              formatted,
-              botOnlyFollowUpAction,
-              isBotOnlyPairedFollowUp,
-              loopCursorKey: dispatchCursorKey,
-              endSeq,
-            } = buildQueuedTurnDispatch({
-              chatJid,
-              timezone: deps.timezone,
-              loopPendingTask,
-              rawPendingMessages,
-              messagesToSend,
-              labeledMessagesToSend,
-              formatMessages,
             });
-            if (
-              await executeBotOnlyPairedFollowUpAction({
-                action: botOnlyFollowUpAction,
-                chatJid,
-                group,
-                runId: `loop-merge-ready-${Date.now().toString(36)}`,
-                channel,
-                log: logger,
-                saveState: deps.saveState,
-                lastAgentTimestamps: deps.getLastAgentTimestamps(),
-                executeTurn,
-                enqueueGroupMessageCheck: () =>
-                  enqueueScopedGroupMessageCheck(chatJid, group.folder),
-                closeStdin: () =>
-                  deps.queue.closeStdin(chatJid, {
-                    reason: 'paired-pending-turn-follow-up',
-                  }),
-              })
-            ) {
-              continue;
-            }
-
-            if (deps.queue.sendMessage(chatJid, formatted)) {
-              if (endSeq != null) {
-                advanceLastAgentCursor(
-                  deps.getLastAgentTimestamps(),
-                  deps.saveState,
-                  chatJid,
-                  endSeq,
-                  dispatchCursorKey,
-                );
-              }
-              logger.debug(
-                {
-                  transition: 'typing:on',
-                  source: 'follow-up-queued',
-                  chatJid,
-                  group: group.name,
-                  groupFolder: group.folder,
-                  endSeq: endSeq ?? null,
-                  suppressed: isBotOnlyPairedFollowUp,
-                },
-                'Typing indicator transition',
-              );
-              if (!isBotOnlyPairedFollowUp) {
-                await channel
-                  .setTyping?.(chatJid, true)
-                  ?.catch((err) =>
-                    logger.warn(
-                      { chatJid, err },
-                      'Failed to set typing indicator',
-                    ),
-                  );
-              }
-              continue;
-            }
-
-            enqueueScopedGroupMessageCheck(chatJid, group.folder);
           }
         }
       } catch (err) {

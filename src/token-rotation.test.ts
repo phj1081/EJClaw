@@ -65,4 +65,44 @@ describe('token-rotation runtime reselection', () => {
       rateLimited: 0,
     });
   });
+
+  it('reloads Claude rotation state from disk written by another service', async () => {
+    const mod = await import('./token-rotation.js');
+    const utils = await import('./utils.js');
+    const readJsonFile = vi.mocked(utils.readJsonFile);
+
+    readJsonFile.mockReturnValueOnce(null);
+    mod.initTokenRotation();
+    expect(mod.getCurrentToken()).toBe('token-1');
+
+    readJsonFile.mockReturnValueOnce({
+      currentIndex: 1,
+      rateLimits: [Date.now() + 60_000, null],
+    });
+    mod.reloadTokenRotationStateFromDisk();
+
+    expect(mod.getCurrentTokenIndex()).toBe(1);
+    expect(mod.getCurrentToken()).toBe('token-2');
+  });
+
+  it('warns when Claude rotation state cannot be persisted', async () => {
+    const mod = await import('./token-rotation.js');
+    const utils = await import('./utils.js');
+    const { logger } = await import('./logger.js');
+
+    vi.mocked(utils.writeJsonFile).mockImplementation(() => {
+      throw new Error('disk full');
+    });
+
+    mod.initTokenRotation();
+    expect(mod.rotateToken('rate limit')).toBe(true);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stateFile: '/tmp/ejclaw-claude-rot-data/token-rotation-state.json',
+        err: expect.any(Error),
+      }),
+      'Failed to persist Claude token rotation state',
+    );
+  });
 });

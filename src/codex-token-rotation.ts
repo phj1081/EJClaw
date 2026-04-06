@@ -138,8 +138,11 @@ function saveCodexState(): void {
       resetD7Ats: accounts.map((a) => a.resetD7At ?? null),
     };
     writeJsonFile(STATE_FILE, state);
-  } catch {
-    /* best effort */
+  } catch (err) {
+    logger.warn(
+      { stateFile: STATE_FILE, err },
+      'Failed to persist Codex rotation state',
+    );
   }
 }
 

@@ -121,4 +121,25 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
     expect(active).toBeDefined();
     expect(active!.index).toBe(1); // fallback picks next non-rate-limited
   });
+
+  it('warns when Codex rotation state cannot be persisted', async () => {
+    const mod = await import('./codex-token-rotation.js');
+    const utils = await import('./utils.js');
+    const { logger } = await import('./logger.js');
+
+    vi.mocked(utils.writeJsonFile).mockImplementation(() => {
+      throw new Error('disk full');
+    });
+
+    mod.initCodexTokenRotation();
+    expect(mod.rotateCodexToken('rate limit')).toBe(true);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stateFile: '/tmp/ejclaw-codex-rot-data/codex-rotation-state.json',
+        err: expect.any(Error),
+      }),
+      'Failed to persist Codex rotation state',
+    );
+  });
 });

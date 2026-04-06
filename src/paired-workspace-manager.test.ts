@@ -258,6 +258,31 @@ describe('paired workspace manager', () => {
     );
   });
 
+  it('leaves review_requested_at untouched when review handoff aborts before an owner workspace exists', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-no-owner-workspace',
+      groupFolder: 'no-owner-workspace-room',
+    });
+
+    const result = manager.markPairedTaskReviewReady(
+      'paired-task-no-owner-workspace',
+    );
+
+    expect(result).toBeNull();
+    expect(
+      db.getPairedTaskById('paired-task-no-owner-workspace')
+        ?.review_requested_at,
+    ).toBeNull();
+    expect(
+      db.getPairedTaskById('paired-task-no-owner-workspace')?.status,
+    ).toBe('active');
+  });
+
   it('uses the shared DB owner workspace across service-local data dirs', async () => {
     const canonicalDir = path.join(tempRoot, 'canonical');
     fs.mkdirSync(canonicalDir, { recursive: true });

@@ -19,7 +19,6 @@ import {
   getPairedTaskById,
   getPairedWorkspace,
   hasActiveCiWatcherForChat,
-  updatePairedTask,
   upsertPairedProject,
 } from './db.js';
 import { logger } from './logger.js';
@@ -36,6 +35,7 @@ import {
   handleReviewerCompletion,
 } from './paired-execution-context-reviewer.js';
 import {
+  applyPairedTaskPatch,
   resolveCanonicalSourceRef,
   requestArbiterOrEscalate,
   transitionPairedTaskStatus,
@@ -238,9 +238,12 @@ export function preparePairedExecutionContext(args: {
           },
         });
       } else {
-        updatePairedTask(latestTask.id, {
-          ...(hasHuman ? { round_trip_count: 0 } : {}),
-          updated_at: now,
+        applyPairedTaskPatch({
+          taskId: latestTask.id,
+          updatedAt: now,
+          patch: {
+            ...(hasHuman ? { round_trip_count: 0 } : {}),
+          },
         });
       }
     }
@@ -253,9 +256,12 @@ export function preparePairedExecutionContext(args: {
     if (workspace?.workspace_dir && latestTask.status === 'active') {
       const wsRef = resolveCanonicalSourceRef(workspace.workspace_dir);
       if (wsRef !== latestTask.source_ref) {
-        updatePairedTask(latestTask.id, {
-          source_ref: wsRef,
-          updated_at: now,
+        applyPairedTaskPatch({
+          taskId: latestTask.id,
+          updatedAt: now,
+          patch: {
+            source_ref: wsRef,
+          },
         });
       }
     }

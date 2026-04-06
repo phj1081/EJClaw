@@ -69,12 +69,15 @@ function saveState(): void {
       rateLimits: tokens.map((t) => t.rateLimitedUntil),
     };
     writeJsonFile(STATE_FILE, state);
-  } catch {
-    /* best effort */
+  } catch (err) {
+    logger.warn(
+      { stateFile: STATE_FILE, err },
+      'Failed to persist Claude token rotation state',
+    );
   }
 }
 
-function loadState(): void {
+function loadState(quiet = false): void {
   const state = readJsonFile<{
     currentIndex?: number;
     rateLimits?: (number | null)[];
@@ -93,13 +96,27 @@ function loadState(): void {
       const until = state.rateLimits[i];
       if (typeof until === 'number' && until > now) {
         tokens[i].rateLimitedUntil = until;
+      } else {
+        tokens[i].rateLimitedUntil = null;
       }
     }
   }
-  logger.info(
-    { currentIndex, tokenCount: tokens.length },
-    'Token rotation state restored',
-  );
+  if (!quiet) {
+    logger.info(
+      { currentIndex, tokenCount: tokens.length },
+      'Token rotation state restored',
+    );
+  }
+}
+
+/**
+ * Re-read the on-disk rotation state (written by any service).
+ * Call before dashboard renders so the renderer picks up rotations
+ * performed by another Claude service process.
+ */
+export function reloadTokenRotationStateFromDisk(): void {
+  if (tokens.length <= 1) return;
+  loadState(true);
 }
 
 function refreshRuntimeTokenSelection(): void {

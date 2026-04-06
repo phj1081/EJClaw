@@ -5,11 +5,11 @@ import {
 import {
   getPairedWorkspace,
   hasActiveCiWatcherForChat,
-  updatePairedTask,
 } from './db.js';
 import { logger } from './logger.js';
 import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
 import {
+  applyPairedTaskPatch,
   classifyVerdict,
   hasCodeChangesSinceRef,
   requestArbiterOrEscalate,
@@ -207,10 +207,12 @@ export function handleOwnerCompletion(args: {
 
   const result = markPairedTaskReviewReady(taskId);
   if (result) {
-    updatePairedTask(taskId, {
-      round_trip_count: task.round_trip_count + 1,
-      review_requested_at: now,
-      updated_at: now,
+    applyPairedTaskPatch({
+      taskId,
+      updatedAt: now,
+      patch: {
+        round_trip_count: task.round_trip_count + 1,
+      },
     });
     logger.info(
       { taskId, roundTrip: task.round_trip_count + 1 },
