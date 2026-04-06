@@ -9,9 +9,16 @@ import type { AgentOutput } from './agent-runner.js';
 import { getAgentOutputText } from './agent-output.js';
 import {
   classifyRotationTrigger,
+  type CodexRotationReason,
   shouldRotateClaudeToken,
   type AgentTriggerReason,
 } from './agent-error-detection.js';
+import {
+  detectCodexRotationTrigger,
+  getCodexAccountCount,
+  markCodexTokenHealthy,
+  rotateCodexToken,
+} from './codex-token-rotation.js';
 import { logger } from './logger.js';
 import { getErrorMessage } from './utils.js';
 import {
@@ -42,12 +49,30 @@ export type RotationOutcome =
   | { type: 'success'; sawOutput: boolean }
   | { type: 'error'; trigger?: TriggerInfo };
 
+export interface CodexRotationAttemptResult {
+  output?: Pick<AgentOutput, 'status' | 'result' | 'output' | 'error'>;
+  thrownError?: unknown;
+  sawOutput: boolean;
+  streamedTriggerReason?: TriggerInfo;
+}
+
+export type CodexRotationOutcome = { type: 'success' } | { type: 'error' };
+
 type AttemptOutcome =
   | { type: 'success'; sawOutput: boolean }
   | { type: 'error'; trigger?: TriggerInfo }
   | {
       type: 'continue';
       trigger: TriggerInfo;
+      rotationMessage?: string;
+    };
+
+type CodexAttemptOutcome =
+  | { type: 'success' }
+  | { type: 'error' }
+  | {
+      type: 'continue';
+      trigger: { reason: CodexRotationReason };
       rotationMessage?: string;
     };
 
@@ -149,6 +174,77 @@ function evaluateClaudeAttempt(
   return { type: 'success', sawOutput: attempt.sawOutput };
 }
 
+function evaluateCodexAttempt(
+  attempt: CodexRotationAttemptResult,
+  logContext: Record<string, unknown>,
+): CodexAttemptOutcome {
+  if (attempt.thrownError) {
+    const errMsg = getErrorMessage(attempt.thrownError);
+    const retryTrigger = detectCodexRotationTrigger(errMsg);
+    if (retryTrigger.shouldRotate) {
+      return {
+        type: 'continue',
+        trigger: { reason: retryTrigger.reason },
+        rotationMessage: errMsg,
+      };
+    }
+
+    logger.error(
+      { ...logContext, provider: 'codex', err: attempt.thrownError },
+      'Rotated Codex account also threw',
+    );
+    return { type: 'error' };
+  }
+
+  const output = attempt.output;
+  if (!output) {
+    logger.error(
+      { ...logContext, provider: 'codex' },
+      'Rotated Codex account produced no output object',
+    );
+    return { type: 'error' };
+  }
+
+  if (
+    !attempt.sawOutput &&
+    attempt.streamedTriggerReason &&
+    output.status !== 'error'
+  ) {
+    return {
+      type: 'continue',
+      trigger: {
+        reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
+      },
+      rotationMessage: getAgentOutputText(output) ?? undefined,
+    };
+  }
+
+  if (output.status === 'error') {
+    const retryTrigger = attempt.streamedTriggerReason
+      ? {
+          shouldRotate: true,
+          reason: attempt.streamedTriggerReason.reason as CodexRotationReason,
+        }
+      : detectCodexRotationTrigger(output.error);
+    if (retryTrigger.shouldRotate) {
+      return {
+        type: 'continue',
+        trigger: { reason: retryTrigger.reason },
+        rotationMessage: output.error ?? undefined,
+      };
+    }
+
+    logger.error(
+      { ...logContext, provider: 'codex', error: output.error },
+      'Rotated Codex account failed',
+    );
+    return { type: 'error' };
+  }
+
+  markCodexTokenHealthy();
+  return { type: 'success' };
+}
+
 // ── Shared rotation loop ─────────────────────────────────────────
 
 /**
@@ -237,4 +333,40 @@ export async function runClaudeRotationLoop(
     `All Claude tokens exhausted (${trigger.reason})`,
   );
   return { type: 'error', trigger };
+}
+
+export async function runCodexRotationLoop(
+  initialTrigger: { reason: CodexRotationReason },
+  runAttempt: () => Promise<CodexRotationAttemptResult>,
+  logContext: Record<string, unknown>,
+  rotationMessage?: string,
+): Promise<CodexRotationOutcome> {
+  let trigger = initialTrigger;
+  let lastRotationMessage = rotationMessage;
+
+  while (
+    getCodexAccountCount() > 1 &&
+    rotateCodexToken(lastRotationMessage)
+  ) {
+    logger.info(
+      { ...logContext, reason: trigger.reason },
+      'Codex account unhealthy, retrying with rotated account',
+    );
+
+    const rotatedAttemptOutcome = evaluateCodexAttempt(
+      await runAttempt(),
+      logContext,
+    );
+    if (rotatedAttemptOutcome.type === 'success') {
+      return rotatedAttemptOutcome;
+    }
+    if (rotatedAttemptOutcome.type === 'error') {
+      return rotatedAttemptOutcome;
+    }
+
+    trigger = rotatedAttemptOutcome.trigger;
+    lastRotationMessage = rotatedAttemptOutcome.rotationMessage;
+  }
+
+  return { type: 'error' };
 }

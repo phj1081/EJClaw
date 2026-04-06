@@ -9,6 +9,16 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
+vi.mock('./codex-token-rotation.js', () => ({
+  detectCodexRotationTrigger: vi.fn(() => ({
+    shouldRotate: false,
+    reason: '',
+  })),
+  getCodexAccountCount: vi.fn(() => 1),
+  markCodexTokenHealthy: vi.fn(),
+  rotateCodexToken: vi.fn(() => false),
+}));
+
 vi.mock('./token-rotation.js', () => ({
   rotateToken: vi.fn(() => false),
   getTokenCount: vi.fn(() => 1),
@@ -21,6 +31,13 @@ vi.mock('./token-refresh.js', () => ({
 }));
 
 import { runClaudeRotationLoop } from './provider-retry.js';
+import { runCodexRotationLoop } from './provider-retry.js';
+import {
+  detectCodexRotationTrigger,
+  getCodexAccountCount,
+  markCodexTokenHealthy,
+  rotateCodexToken,
+} from './codex-token-rotation.js';
 import {
   getCurrentTokenIndex,
   getTokenCount,
@@ -182,5 +199,83 @@ describe('runClaudeRotationLoop', () => {
       trigger: { reason: 'usage-exhausted' },
     });
     expect(rotateToken).toHaveBeenNthCalledWith(2, 'retry with next token');
+  });
+});
+
+describe('runCodexRotationLoop', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getCodexAccountCount).mockReturnValue(1);
+    vi.mocked(rotateCodexToken).mockReturnValue(false);
+  });
+
+  it('rotates and succeeds after a Codex auth trigger', async () => {
+    vi.mocked(getCodexAccountCount).mockReturnValue(2);
+    vi.mocked(rotateCodexToken).mockReturnValueOnce(true);
+
+    const outcome = await runCodexRotationLoop(
+      { reason: 'auth-expired' },
+      async () => ({
+        output: { status: 'success', result: 'ok' },
+        sawOutput: true,
+      }),
+      { runId: 'rotate-codex-auth' },
+    );
+
+    expect(outcome).toEqual({ type: 'success' });
+    expect(rotateCodexToken).toHaveBeenCalledTimes(1);
+    expect(markCodexTokenHealthy).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues rotation when streamed trigger arrives before visible output', async () => {
+    vi.mocked(getCodexAccountCount).mockReturnValue(2);
+    vi.mocked(rotateCodexToken).mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+    let attempts = 0;
+    const outcome = await runCodexRotationLoop(
+      { reason: 'auth-expired' },
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            output: { status: 'success', result: 'rotate next' },
+            sawOutput: false,
+            streamedTriggerReason: { reason: 'auth-expired' },
+          };
+        }
+
+        return {
+          output: { status: 'success', result: 'ok' },
+          sawOutput: true,
+        };
+      },
+      { runId: 'rotate-codex-streamed' },
+    );
+
+    expect(outcome).toEqual({ type: 'error' });
+    expect(rotateCodexToken).toHaveBeenNthCalledWith(2, 'rotate next');
+  });
+
+  it('uses the Codex detector for thrown errors', async () => {
+    vi.mocked(getCodexAccountCount).mockReturnValue(2);
+    vi.mocked(rotateCodexToken).mockReturnValueOnce(true);
+    vi.mocked(detectCodexRotationTrigger).mockReturnValue({
+      shouldRotate: true,
+      reason: 'auth-expired',
+    });
+
+    const outcome = await runCodexRotationLoop(
+      { reason: 'auth-expired' },
+      async () => ({
+        thrownError: new Error('OAuth token expired'),
+        sawOutput: false,
+      }),
+      { runId: 'rotate-codex-error' },
+    );
+
+    expect(outcome).toEqual({ type: 'error' });
+    expect(detectCodexRotationTrigger).toHaveBeenCalledWith(
+      'OAuth token expired',
+    );
   });
 });
