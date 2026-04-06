@@ -47,6 +47,7 @@ import {
   executeBotOnlyPairedFollowUpAction,
   executePendingPairedTurn,
   resolveBotOnlyPairedFollowUpAction,
+  resolveLastDeliveredBotRole,
   shouldSkipGenericFollowUpAfterDeliveryRetry,
 } from './message-runtime-flow.js';
 import { MessageTurnController } from './message-turn-controller.js';
@@ -858,6 +859,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                 chatJid,
                 getRecentChatMessages(chatJid, 20),
               ),
+              lastDeliveredMessages: labelPairedSenders(chatJid, missedMessages),
               resolveChannel,
             })
           : null;
@@ -1217,22 +1219,20 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               pendingMessages.length > 0
                 ? pendingMessages
                 : processableGroupMessages;
+            const labeledMessagesToSend = labelPairedSenders(
+              chatJid,
+              messagesToSend,
+            );
             const formatted = loopPendingTask
               ? buildPairedTurnPrompt({
                   taskId: loopPendingTask.id,
                   chatJid,
                   timezone: deps.timezone,
                   missedMessages: messagesToSend,
-                  labeledFallbackMessages: labelPairedSenders(
-                    chatJid,
-                    messagesToSend,
-                  ),
+                  labeledFallbackMessages: labeledMessagesToSend,
                   turnOutputs: getPairedTurnOutputs(loopPendingTask.id),
                 })
-              : formatMessages(
-                  labelPairedSenders(chatJid, messagesToSend),
-                  deps.timezone,
-                );
+              : formatMessages(labeledMessagesToSend, deps.timezone);
             const isBotOnlyPairedFollowUp = isBotOnlyPairedRoomTurn(
               chatJid,
               messagesToSend,
@@ -1245,6 +1245,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               chatJid,
               task: loopPendingTask,
               isBotOnlyPairedFollowUp,
+              lastDeliveredMessages: labeledMessagesToSend,
               pendingCursorSource,
             });
             if (

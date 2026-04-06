@@ -18,6 +18,7 @@ import {
 import { hasReviewerLease } from './service-routing.js';
 import type {
   Channel,
+  NewMessage,
   PairedTask,
   PairedRoomRole,
   RegisteredGroup,
@@ -46,6 +47,25 @@ export type BotOnlyPairedFollowUpAction =
       nextRole: 'owner' | 'reviewer' | 'arbiter';
     };
 
+export function resolveLastDeliveredBotRole(
+  messages: NewMessage[],
+): PairedRoomRole | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message?.is_bot_message) {
+      continue;
+    }
+    if (
+      message.sender_name === 'owner' ||
+      message.sender_name === 'reviewer' ||
+      message.sender_name === 'arbiter'
+    ) {
+      return message.sender_name;
+    }
+  }
+  return null;
+}
+
 export function buildPendingPairedTurn(args: {
   chatJid: string;
   timezone: string;
@@ -57,6 +77,7 @@ export function buildPendingPairedTurn(args: {
   labeledRecentMessages: Parameters<
     typeof buildArbiterPromptForTask
   >[0]['labeledRecentMessages'];
+  lastDeliveredMessages?: NewMessage[];
   resolveChannel: (taskStatus?: string | null) => Channel | null;
 }): PendingPairedTurn {
   const {
@@ -75,7 +96,10 @@ export function buildPendingPairedTurn(args: {
   const lastTurnOutput = turnOutputs[turnOutputs.length - 1];
   const nextTurnAction = resolveNextTurnAction({
     taskStatus,
-    lastTurnOutputRole: lastTurnOutput?.role ?? null,
+    lastTurnOutputRole:
+      resolveLastDeliveredBotRole(args.lastDeliveredMessages ?? []) ??
+      lastTurnOutput?.role ??
+      null,
   });
   const recentMessages = getRecentChatMessages(chatJid, 20);
   const lastHumanMessage = getLastHumanMessageContent(chatJid);
@@ -210,6 +234,7 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
   chatJid: string;
   task: PairedTask | null | undefined;
   isBotOnlyPairedFollowUp: boolean;
+  lastDeliveredMessages?: NewMessage[];
   pendingCursorSource:
     | { seq?: number | null; timestamp?: string | null }
     | undefined;
@@ -224,7 +249,10 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
   const lastTurnOutput = getPairedTurnOutputs(task.id).at(-1);
   const nextTurnAction = resolveNextTurnAction({
     taskStatus: task.status,
-    lastTurnOutputRole: lastTurnOutput?.role ?? null,
+    lastTurnOutputRole:
+      resolveLastDeliveredBotRole(args.lastDeliveredMessages ?? []) ??
+      lastTurnOutput?.role ??
+      null,
   });
 
   if (nextTurnAction.kind === 'finalize-owner-turn') {
