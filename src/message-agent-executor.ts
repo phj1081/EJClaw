@@ -5,8 +5,8 @@ import { getErrorMessage } from './utils.js';
 
 import {
   getAgentOutputText,
-  getStructuredAgentOutput,
 } from './agent-output.js';
+import { createEvaluatedOutputHandler } from './agent-attempt.js';
 import {
   AgentOutput,
   runAgentProcess,
@@ -63,10 +63,6 @@ import {
   activateCodexFailover,
   getEffectiveChannelLease,
 } from './service-routing.js';
-import {
-  evaluateStreamedOutput,
-  type StreamedOutputState,
-} from './streamed-output-evaluator.js';
 import {
   detectCodexRotationTrigger,
   getCodexAccountCount,
@@ -290,21 +286,31 @@ export async function runAgentForGroup(
     const systemPrompt =
       readArbiterPrompt(process.cwd()) || 'You are an arbiter.';
 
-    const references = await collectMoaReferences({
-      config: moaConfig,
-      systemPrompt,
-      contextPrompt: prompt,
-    });
+    try {
+      const references = await collectMoaReferences({
+        config: moaConfig,
+        systemPrompt,
+        contextPrompt: prompt,
+      });
 
-    const moaSection = formatMoaReferencesForPrompt(references);
-    if (moaSection) {
-      moaEnrichedPrompt = prompt + '\n' + moaSection;
-      log.info(
+      const moaSection = formatMoaReferencesForPrompt(references);
+      if (moaSection) {
+        moaEnrichedPrompt = prompt + '\n' + moaSection;
+        log.info(
+          {
+            successCount: references.filter((r) => !r.error).length,
+            totalCount: references.length,
+          },
+          'MoA: injected reference opinions into arbiter prompt',
+        );
+      }
+    } catch (err) {
+      log.warn(
         {
-          successCount: references.filter((r) => !r.error).length,
-          totalCount: references.length,
+          err,
+          models: moaConfig.referenceModels.map((m) => m.name),
         },
-        'MoA: injected reference opinions into arbiter prompt',
+        'MoA: failed to collect reference opinions; continuing without enrichment',
       );
     }
   }
@@ -411,151 +417,142 @@ export async function runAgentForGroup(
       retryAfterMs?: number;
     };
   }> => {
-    let streamedState: StreamedOutputState = {
-      sawOutput: false,
-      sawVisibleOutput: false,
-      sawSuccessNullResultWithoutOutput: false,
-    };
     const attemptSessionId = currentSessionId;
+    const streamedOutputHandler = createEvaluatedOutputHandler({
+      agentType: isClaudeCodeAgent ? 'claude-code' : 'codex',
+      provider,
+      evaluationOptions: {
+        suppressClaudeAuthErrorOutput: provider === 'claude',
+        trackSuccessNullResult: true,
+        shortCircuitTriggeredErrors:
+          provider === 'claude'
+            ? canRetryClaudeCredentials
+            : getCodexAccountCount() > 1,
+      },
+      onEvaluatedOutput: async ({
+        output,
+        outputText,
+        structuredOutput,
+        evaluation,
+      }) => {
+        const outputPhase = output.phase ?? 'final';
+        if (outputPhase !== 'final') {
+          log.info(
+            {
+              provider,
+              outputPhase,
+              outputStatus: output.status,
+              visibility: structuredOutput?.visibility ?? null,
+              preview:
+                outputText && outputText.length > 0
+                  ? outputText.slice(0, 160)
+                  : null,
+              errorPreview:
+                typeof output.error === 'string' && output.error.length > 0
+                  ? output.error.slice(0, 160)
+                  : null,
+              activeRole,
+              effectiveServiceId,
+              effectiveAgentType,
+              sessionFolder,
+              resumedSession: attemptSessionId ?? null,
+              streamedSessionId: output.newSessionId ?? null,
+              roomRoleServiceId: roomRoleContext?.serviceId ?? null,
+              roomRole: roomRoleContext?.role ?? null,
+              pairedTaskId: pairedExecutionContext?.task.id ?? null,
+              workspaceDir:
+                pairedExecutionContext?.workspace?.workspace_dir ??
+                group.workDir ??
+                null,
+            },
+            'Observed streamed agent activity',
+          );
+        }
+        if (
+          isClaudeCodeAgent &&
+          provider === 'claude' &&
+          shouldResetSessionOnAgentFailure(output)
+        ) {
+          resetSessionRequested = true;
+        }
+        if (
+          output.newSessionId &&
+          !resetSessionRequested &&
+          shouldPersistSession
+        ) {
+          deps.persistSession(sessionFolder, output.newSessionId);
+          currentSessionId = output.newSessionId;
+        }
 
-    const wrappedOnOutput = onOutput
-      ? async (output: AgentOutput) => {
-          const outputPhase = output.phase ?? 'final';
-          const outputText = getAgentOutputText(output);
-          const structuredOutput = getStructuredAgentOutput(output);
-          if (outputPhase !== 'final') {
-            log.info(
-              {
-                provider,
-                outputPhase,
-                outputStatus: output.status,
-                visibility: structuredOutput?.visibility ?? null,
-                preview:
-                  typeof outputText === 'string' && outputText.length > 0
-                    ? outputText.slice(0, 160)
-                    : null,
-                errorPreview:
-                  typeof output.error === 'string' && output.error.length > 0
-                    ? output.error.slice(0, 160)
-                    : null,
-                activeRole,
-                effectiveServiceId,
-                effectiveAgentType,
-                sessionFolder,
-                resumedSession: attemptSessionId ?? null,
-                streamedSessionId: output.newSessionId ?? null,
-                roomRoleServiceId: roomRoleContext?.serviceId ?? null,
-                roomRole: roomRoleContext?.role ?? null,
-                pairedTaskId: pairedExecutionContext?.task.id ?? null,
-                workspaceDir:
-                  pairedExecutionContext?.workspace?.workspace_dir ??
-                  group.workDir ??
-                  null,
-              },
-              'Observed streamed agent activity',
-            );
-          }
-          if (
-            isClaudeCodeAgent &&
-            provider === 'claude' &&
-            shouldResetSessionOnAgentFailure(output)
-          ) {
-            resetSessionRequested = true;
-          }
-          if (
-            output.newSessionId &&
-            !resetSessionRequested &&
-            shouldPersistSession
-          ) {
-            deps.persistSession(sessionFolder, output.newSessionId);
-            currentSessionId = output.newSessionId;
-          }
-          const evaluation = evaluateStreamedOutput(output, streamedState, {
-            agentType: isClaudeCodeAgent ? 'claude-code' : 'codex',
-            provider,
-            suppressClaudeAuthErrorOutput: provider === 'claude',
-            trackSuccessNullResult: true,
-            shortCircuitTriggeredErrors:
-              provider === 'claude'
-                ? canRetryClaudeCredentials
-                : getCodexAccountCount() > 1,
-          });
-          streamedState = evaluation.state;
+        if (outputText && outputText.length > 0) {
+          pairedExecutionSummary = outputText.slice(0, 500);
+          pairedFullOutput = outputText;
+        } else if (
+          typeof output.error === 'string' &&
+          output.error.length > 0
+        ) {
+          pairedExecutionSummary = output.error.slice(0, 500);
+        }
+        if (evaluation.newTrigger && outputText && output.status === 'success') {
+          log.warn(
+            {
+              reason: evaluation.newTrigger.reason,
+              resultPreview: outputText.slice(0, 120),
+            },
+            'Detected Claude rotation trigger in successful output',
+          );
+        } else if (
+          evaluation.newTrigger &&
+          typeof output.error === 'string'
+        ) {
+          log.warn(
+            {
+              reason: evaluation.newTrigger.reason,
+              errorPreview: output.error.slice(0, 120),
+            },
+            provider === 'claude'
+              ? 'Detected Claude rotation trigger in streamed error output'
+              : 'Detected Codex rotation trigger in streamed error output',
+          );
+        }
 
-          if (typeof outputText === 'string' && outputText.length > 0) {
-            pairedExecutionSummary = outputText.slice(0, 500);
-            pairedFullOutput = outputText;
-          } else if (
-            typeof output.error === 'string' &&
-            output.error.length > 0
-          ) {
-            pairedExecutionSummary = output.error.slice(0, 500);
-          }
-          if (
-            evaluation.newTrigger &&
-            typeof outputText === 'string' &&
-            output.status === 'success'
-          ) {
-            log.warn(
-              {
-                reason: evaluation.newTrigger.reason,
-                resultPreview: outputText.slice(0, 120),
-              },
-              'Detected Claude rotation trigger in successful output',
-            );
-          } else if (
-            evaluation.newTrigger &&
-            typeof output.error === 'string'
-          ) {
-            log.warn(
-              {
-                reason: evaluation.newTrigger.reason,
-                errorPreview: output.error.slice(0, 120),
-              },
-              provider === 'claude'
-                ? 'Detected Claude rotation trigger in streamed error output'
-                : 'Detected Codex rotation trigger in streamed error output',
-            );
-          }
+        if (evaluation.suppressedAuthError) {
+          log.warn(
+            {
+              resultPreview: outputText ? outputText.slice(0, 120) : undefined,
+            },
+            'Suppressed Claude 401 auth error from chat output',
+          );
+          return;
+        }
 
-          if (evaluation.suppressedAuthError) {
-            log.warn(
-              {
-                resultPreview:
-                  typeof outputText === 'string'
-                    ? outputText.slice(0, 120)
-                    : undefined,
-              },
-              'Suppressed Claude 401 auth error from chat output',
-            );
-            return;
-          }
+        if (evaluation.suppressedRetryableSessionFailure) {
+          log.warn(
+            {
+              resultPreview: outputText
+                ? outputText.slice(0, 160)
+                : output.error?.slice(0, 160),
+            },
+            'Suppressed retryable Claude session failure from chat output',
+          );
+          return;
+        }
 
-          if (evaluation.suppressedRetryableSessionFailure) {
-            log.warn(
-              {
-                resultPreview:
-                  typeof outputText === 'string'
-                    ? outputText.slice(0, 160)
-                    : output.error?.slice(0, 160),
-              },
-              'Suppressed retryable Claude session failure from chat output',
-            );
-            return;
-          }
-
-          if (!evaluation.shouldForwardOutput) {
-            return;
-          }
-          if (typeof outputText === 'string' && outputText.length > 0) {
-            streamedState = {
-              ...evaluation.state,
-              sawVisibleOutput: true,
-            };
-          }
+        if (!evaluation.shouldForwardOutput) {
+          return;
+        }
+        if (outputText && outputText.length > 0) {
+          streamedOutputHandler.markVisibleOutput();
+        }
+        if (onOutput) {
           await onOutput(output);
         }
-      : undefined;
+      },
+    });
+
+    const wrappedOnOutput = async (output: AgentOutput) => {
+      await streamedOutputHandler.handleOutput(output);
+    };
 
     const providerLog = log.child({
       provider,
@@ -584,11 +581,12 @@ export async function runAgentForGroup(
       providerLog.info(
         {
           status: output.status,
-          sawOutput: streamedState.sawOutput,
+          sawOutput: streamedOutputHandler.getState().sawOutput,
         },
         `Provider response completed (provider: ${provider})`,
       );
 
+      const streamedState = streamedOutputHandler.getState();
       return {
         output,
         sawOutput: streamedState.sawOutput,
@@ -600,6 +598,7 @@ export async function runAgentForGroup(
         streamedTriggerReason: streamedState.streamedTriggerReason,
       };
     } catch (error) {
+      const streamedState = streamedOutputHandler.getState();
       return {
         error,
         sawOutput: streamedState.sawOutput,

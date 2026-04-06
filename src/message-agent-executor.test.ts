@@ -288,7 +288,7 @@ describe('runAgentForGroup room memory', () => {
         memoryBriefing: '## Shared Room Memory\n- remembered context',
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -317,7 +317,7 @@ describe('runAgentForGroup room memory', () => {
         memoryBriefing: undefined,
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -338,7 +338,7 @@ describe('runAgentForGroup room memory', () => {
         prompt: 'hello',
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -365,7 +365,7 @@ describe('runAgentForGroup room memory', () => {
         }),
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -398,7 +398,7 @@ describe('runAgentForGroup room memory', () => {
         prompt: 'hello',
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -455,7 +455,7 @@ describe('runAgentForGroup room memory', () => {
         }),
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -513,7 +513,7 @@ describe('runAgentForGroup room memory', () => {
         }),
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -578,7 +578,7 @@ describe('runAgentForGroup room memory', () => {
         sessionId: undefined,
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -635,7 +635,7 @@ describe('runAgentForGroup room memory', () => {
       }),
       expect.any(Object),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       {},
     );
   });
@@ -772,22 +772,22 @@ describe('runAgentForGroup room memory', () => {
         roomRoleContext: expect.any(Object),
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       expect.objectContaining({
         EJCLAW_WORK_DIR: '/tmp/paired/owner',
         EJCLAW_PAIRED_TASK_ID: 'paired-task-1',
         EJCLAW_PAIRED_ROLE: 'owner',
       }),
     );
-    // Owner produced no visible output (mock doesn't go through streamed
-    // evaluator) → treated as interrupted, status is 'failed' to prevent
-    // auto-triggering the reviewer.
+    // The shared attempt harness now routes runner output through the streamed
+    // evaluator, so a visible public result is treated as a successful owner
+    // turn.
     expect(
       pairedExecutionContext.completePairedExecutionContext,
     ).toHaveBeenCalledWith({
       taskId: 'paired-task-1',
       role: 'owner',
-      status: 'failed',
+      status: 'succeeded',
       summary: 'ok',
     });
   });
@@ -1045,7 +1045,7 @@ describe('runAgentForGroup room memory', () => {
         sessionId: 'reviewer-session',
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       undefined,
     );
   });
@@ -1144,7 +1144,7 @@ describe('runAgentForGroup room memory', () => {
         sessionId: undefined,
       }),
       expect.any(Function),
-      undefined,
+      expect.any(Function),
       expect.objectContaining({
         EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
       }),
