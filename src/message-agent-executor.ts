@@ -316,9 +316,29 @@ export async function runAgentForGroup(
   const effectivePrompt = moaEnrichedPrompt;
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
-  let pairedFullOutput: string | null = null;
+  let pairedFinalOutput: string | null = null;
   let pairedExecutionCompleted = false;
   let pairedSawOutput = false;
+  let pairedTurnOutputPersisted = false;
+
+  const persistPairedTurnOutputIfNeeded = (completedRole: PairedRoomRole) => {
+    if (
+      !pairedExecutionContext ||
+      pairedTurnOutputPersisted ||
+      !pairedFinalOutput ||
+      pairedFinalOutput.length === 0
+    ) {
+      return;
+    }
+    const turnNumber = getLatestTurnNumber(pairedExecutionContext.task.id) + 1;
+    insertPairedTurnOutput(
+      pairedExecutionContext.task.id,
+      turnNumber,
+      completedRole,
+      pairedFinalOutput,
+    );
+    pairedTurnOutputPersisted = true;
+  };
 
   const maybeHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -484,7 +504,6 @@ export async function runAgentForGroup(
 
         if (outputText && outputText.length > 0) {
           pairedExecutionSummary = outputText.slice(0, 500);
-          pairedFullOutput = outputText;
         } else if (
           typeof output.error === 'string' &&
           output.error.length > 0
@@ -542,6 +561,22 @@ export async function runAgentForGroup(
         }
         if (outputText && outputText.length > 0) {
           streamedOutputHandler.markVisibleOutput();
+        }
+        if (
+          outputPhase === 'final' &&
+          output.status === 'success' &&
+          outputText &&
+          outputText.length > 0
+        ) {
+          pairedFinalOutput = outputText;
+          try {
+            persistPairedTurnOutputIfNeeded(roomRoleContext?.role ?? 'owner');
+          } catch (err) {
+            log.warn(
+              { pairedTaskId: pairedExecutionContext?.task.id ?? null, err },
+              'Failed to persist paired turn output before delivery',
+            );
+          }
         }
         if (onOutput) {
           await onOutput(output);
@@ -939,17 +974,9 @@ export async function runAgentForGroup(
         !pairedSawOutput
           ? 'failed'
           : completionStatus;
-      // Store full output for direct inter-agent data passing (Discord-independent).
-      if (pairedFullOutput && effectiveStatus === 'succeeded') {
+      if (effectiveStatus === 'succeeded') {
         try {
-          const turnNumber =
-            getLatestTurnNumber(pairedExecutionContext.task.id) + 1;
-          insertPairedTurnOutput(
-            pairedExecutionContext.task.id,
-            turnNumber,
-            completedRole,
-            pairedFullOutput,
-          );
+          persistPairedTurnOutputIfNeeded(completedRole);
         } catch (err) {
           log.warn(
             { pairedTaskId: pairedExecutionContext.task.id, err },
