@@ -1066,6 +1066,7 @@ describe('createMessageRuntime', () => {
         registerProcess: vi.fn(),
         closeStdin: vi.fn(),
         notifyIdle: vi.fn(),
+        enqueueMessageCheck: vi.fn(),
       } as any,
       getRegisteredGroups: () => ({ [chatJid]: group }),
       getSessions: () => ({}),
@@ -1803,6 +1804,95 @@ describe('createMessageRuntime', () => {
     );
   });
 
+  it('routes fresh human input to owner even when the latest task is review_ready', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-human-owner-override',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any);
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-override-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '새로 다시 진행해줘',
+        timestamp: '2026-03-30T00:00:01.000Z',
+        seq: 1,
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE_WITH_CONCERNS\nowner handled fresh input',
+          newSessionId: 'session-human-owner-override',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nowner handled fresh input',
+          newSessionId: 'session-human-owner-override',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck: vi.fn(),
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-human-owner-override',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(ownerChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE_WITH_CONCERNS\nowner handled fresh input',
+    );
+    expect(reviewerChannel.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('consumes stale bot-only owner messages once the finalize turn output is already persisted', () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -2492,7 +2582,7 @@ describe('createMessageRuntime', () => {
     );
   });
 
-  it('fails closed for pending reviewer turns when the reviewer channel is missing', async () => {
+  it('fails closed for in-review turns when the reviewer channel is missing', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const ownerChannel = makeChannel(chatJid);
@@ -2511,7 +2601,7 @@ describe('createMessageRuntime', () => {
       plan_notes: null,
       review_requested_at: '2026-03-30T00:00:00.000Z',
       round_trip_count: 0,
-      status: 'review_ready',
+      status: 'in_review',
       arbiter_verdict: null,
       arbiter_requested_at: null,
       completion_reason: null,

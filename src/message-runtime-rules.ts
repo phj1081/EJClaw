@@ -61,6 +61,17 @@ export function resolveActiveRole(
   }
 }
 
+export function resolveQueuedTurnRole(args: {
+  taskStatus?: PairedTaskStatus | null;
+  hasHumanMessage: boolean;
+}): 'owner' | 'reviewer' | 'arbiter' {
+  if (args.hasHumanMessage && args.taskStatus === 'review_ready') {
+    return 'owner';
+  }
+
+  return resolveActiveRole(args.taskStatus);
+}
+
 export type NextTurnAction =
   | { kind: 'none' }
   | { kind: 'reviewer-turn' }
@@ -104,7 +115,15 @@ export function resolveCursorKey(
 ): string {
   if (!hasReviewerLease(chatJid)) return chatJid;
   const role = resolveActiveRole(taskStatus);
-  return role === 'owner' ? chatJid : `${chatJid}:${role}`;
+  return resolveCursorKeyForRole(chatJid, role);
+}
+
+export function resolveCursorKeyForRole(
+  chatJid: string,
+  role: 'owner' | 'reviewer' | 'arbiter',
+): string {
+  if (!hasReviewerLease(chatJid) || role === 'owner') return chatJid;
+  return `${chatJid}:${role}`;
 }
 
 /** Resolve the effective agent type for a role, considering per-role overrides. */

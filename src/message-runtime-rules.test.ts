@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   resolveExecutionTarget,
   resolveNextTurnAction,
+  resolveQueuedTurnRole,
   resolveSessionFolder,
 } from './message-runtime-rules.js';
 import {
@@ -83,6 +84,27 @@ describe('message-runtime-rules', () => {
         lastTurnOutputRole: 'owner',
       }),
     ).toEqual({ kind: 'none' });
+  });
+
+  it('routes fresh human input to owner even while review is pending', () => {
+    expect(
+      resolveQueuedTurnRole({
+        taskStatus: 'review_ready',
+        hasHumanMessage: true,
+      }),
+    ).toBe('owner');
+    expect(
+      resolveQueuedTurnRole({
+        taskStatus: 'in_review',
+        hasHumanMessage: true,
+      }),
+    ).toBe('reviewer');
+    expect(
+      resolveQueuedTurnRole({
+        taskStatus: 'review_ready',
+        hasHumanMessage: false,
+      }),
+    ).toBe('reviewer');
   });
 
   it('resolves reviewer execution target from review_ready task status', () => {

@@ -35,7 +35,9 @@ import {
   createImplicitContinuationTracker,
   resolveNextTurnAction,
   resolveActiveRole,
+  resolveCursorKeyForRole,
   resolveCursorKey,
+  resolveQueuedTurnRole,
   filterLoopingPairedBotMessages,
   getProcessableMessages,
   hasAllowedTrigger,
@@ -484,7 +486,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         await turnController.finish(outputStatus);
 
       if (deliverySucceeded && pairedRoom && resolvedDeliveryRole === 'owner') {
-        const pendingTaskAfterDelivery = getLatestOpenPairedTaskForChat(chatJid);
+        const pendingTaskAfterDelivery =
+          getLatestOpenPairedTaskForChat(chatJid);
         const nextTurnAction = resolveNextTurnAction({
           taskStatus: pendingTaskAfterDelivery?.status,
           lastTurnOutputRole: 'owner',
@@ -697,10 +700,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       reviewer: foundReviewerChannel || null,
       arbiter: foundArbiterChannel || null,
     };
-    const resolveChannel = (taskStatus?: string | null): Channel | null => {
-      const role = resolveActiveRole(taskStatus);
+    const resolveChannelForRole = (
+      role: 'owner' | 'reviewer' | 'arbiter',
+    ): Channel | null => {
       return role === 'owner' ? channel : roleToChannel[role];
     };
+    const resolveChannel = (taskStatus?: string | null): Channel | null =>
+      resolveChannelForRole(resolveActiveRole(taskStatus));
 
     const enqueueGroupMessageCheck = (): void => {
       enqueueScopedGroupMessageCheck(chatJid, group.folder);
@@ -987,11 +993,22 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         ? getLatestOpenPairedTaskForChat(chatJid)
         : null;
       const taskStatus = pendingTaskForChannel?.status;
-      const turnChannel = resolveChannel(taskStatus);
-      const cursorKey = resolveCursorKey(chatJid, taskStatus);
+      const hasHumanMsg = !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
+      const turnRole = pendingTaskForChannel
+        ? resolveQueuedTurnRole({
+            taskStatus,
+            hasHumanMessage: hasHumanMsg,
+          })
+        : 'owner';
+      const turnChannel = resolveChannelForRole(turnRole);
+      const cursorKey = resolveCursorKeyForRole(chatJid, turnRole);
+      const forcedRole =
+        pendingTaskForChannel &&
+        turnRole !== resolveActiveRole(taskStatus)
+          ? turnRole
+          : undefined;
 
       // Arbiter turns use a dedicated context prompt; regular turns use formatted messages.
-      const turnRole = resolveActiveRole(taskStatus);
       let prompt: string;
       if (turnRole === 'arbiter' && pendingTaskForChannel) {
         const recentMessages = getRecentChatMessages(chatJid, 20);
@@ -1052,7 +1069,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         );
       }
 
-      const hasHumanMsg = !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
       const { deliverySucceeded, visiblePhase } = await executeTurn({
         group,
         prompt,
@@ -1063,6 +1079,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         startSeq,
         endSeq,
         hasHumanMessage: hasHumanMsg,
+        forcedRole,
       });
 
       if (!deliverySucceeded) {
