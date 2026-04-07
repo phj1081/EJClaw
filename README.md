@@ -156,7 +156,7 @@ bun run build
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — Data flow, room model, verification isolation, key files
+- [Architecture](docs/architecture.md) — Data flow, room model, verification execution, key files
 - [Configuration](docs/configuration.md) — Full `.env` reference, debugging paths
 
 ### Environment

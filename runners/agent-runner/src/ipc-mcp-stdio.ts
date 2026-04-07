@@ -422,7 +422,7 @@ server.tool(
 
 server.tool(
   'run_verification',
-  'Run a fixed verification profile against the current repo snapshot using an isolated scratch workspace and the reviewer runtime image. Use this instead of broad shell write access for test/typecheck/build verification.',
+  'Run a fixed verification profile directly on the host against the current repo snapshot using a restricted environment and snapshot checks. Use this instead of broad shell write access for test/typecheck/build verification.',
   {
     profile: z
       .enum(VERIFICATION_PROFILES)

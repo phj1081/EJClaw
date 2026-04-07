@@ -77,7 +77,7 @@ User message
           → Arbiter summoned → binding verdict → loop resumes
 ```
 
-## Verification Isolation
+## Verification Execution
 
 Reviewer and arbiter now run as host processes with role-scoped read-only
 guards and sandbox settings. Verification profiles run directly on the host with
