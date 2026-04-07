@@ -377,7 +377,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             },
             scheduled
               ? 'Queued paired follow-up after successful owner delivery'
-              : 'Skipped duplicate paired follow-up after successful owner delivery in the same run',
+              : 'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged',
           );
         }
       }

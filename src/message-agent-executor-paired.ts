@@ -216,7 +216,7 @@ export function createPairedExecutionLifecycle(args: {
 
       const nextTurnAction = resolveNextTurnAction({
         taskStatus: finishedTask.status,
-        lastTurnOutputRole: null,
+        lastTurnOutputRole: pairedSawOutput ? completedRole : null,
       });
       if (nextTurnAction.kind === 'none') {
         return;
@@ -240,7 +240,7 @@ export function createPairedExecutionLifecycle(args: {
         },
         scheduled
           ? 'Queued paired follow-up after failed reviewer/arbiter execution left a pending task state'
-          : 'Skipped duplicate paired follow-up after failed reviewer/arbiter execution in the same run',
+          : 'Skipped duplicate paired follow-up after failed reviewer/arbiter execution while task state was unchanged',
       );
     },
   };

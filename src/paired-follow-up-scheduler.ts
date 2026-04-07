@@ -48,7 +48,6 @@ export function schedulePairedFollowUpOnce(args: {
 
   const key = [
     args.chatJid,
-    args.runId,
     buildPairedFollowUpKey({
       taskId: args.task.id,
       taskStatus: args.task.status,

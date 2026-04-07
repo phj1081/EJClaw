@@ -13,7 +13,7 @@ describe('paired follow-up scheduler', () => {
     vi.useRealTimers();
   });
 
-  it('deduplicates the same follow-up intent within one run', () => {
+  it('deduplicates the same follow-up intent while task state is unchanged', () => {
     const enqueue = vi.fn();
     const task = {
       id: 'task-1',
@@ -31,6 +31,34 @@ describe('paired follow-up scheduler', () => {
     const second = schedulePairedFollowUpOnce({
       chatJid: 'group@test',
       runId: 'run-1',
+      task,
+      intentKind: 'reviewer-turn',
+      enqueue,
+    });
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('deduplicates the same follow-up intent across different runs', () => {
+    const enqueue = vi.fn();
+    const task = {
+      id: 'task-1',
+      status: 'review_ready',
+      round_trip_count: 1,
+    } as const;
+
+    const first = schedulePairedFollowUpOnce({
+      chatJid: 'group@test',
+      runId: 'run-1',
+      task,
+      intentKind: 'reviewer-turn',
+      enqueue,
+    });
+    const second = schedulePairedFollowUpOnce({
+      chatJid: 'group@test',
+      runId: 'run-2',
       task,
       intentKind: 'reviewer-turn',
       enqueue,

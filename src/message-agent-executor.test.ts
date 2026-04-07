@@ -1866,7 +1866,7 @@ describe('runAgentForGroup room memory', () => {
         intentKind: 'reviewer-turn',
         scheduled: false,
       }),
-      'Skipped duplicate paired follow-up after failed reviewer/arbiter execution in the same run',
+      'Skipped duplicate paired follow-up after failed reviewer/arbiter execution while task state was unchanged',
     );
   });
 });

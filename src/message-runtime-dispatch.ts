@@ -100,7 +100,7 @@ export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
         taskStatus: args.pendingTask?.status ?? null,
         intentKind: nextTurnAction.kind,
       },
-      'Skipped duplicate paired follow-up enqueue after delivery retry in the same run',
+      'Skipped duplicate paired follow-up enqueue after delivery retry while task state was unchanged',
     );
   }
 }

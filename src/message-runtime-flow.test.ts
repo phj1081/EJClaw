@@ -114,7 +114,7 @@ describe('executeBotOnlyPairedFollowUpAction', () => {
         intentKind: 'owner-follow-up',
         scheduled: false,
       }),
-      'Skipped duplicate paired pending turn requeue in the same run',
+      'Skipped duplicate paired pending turn requeue while task state was unchanged',
     );
   });
 });

@@ -153,7 +153,7 @@ describe('message-runtime-rules', () => {
     });
   });
 
-  it('routes fresh human input to owner even while review is pending', () => {
+  it('routes fresh human input to owner while review is pending or running', () => {
     expect(
       resolveQueuedTurnRole({
         taskStatus: 'review_ready',
@@ -165,7 +165,7 @@ describe('message-runtime-rules', () => {
         taskStatus: 'in_review',
         hasHumanMessage: true,
       }),
-    ).toBe('reviewer');
+    ).toBe('owner');
     expect(
       resolveQueuedTurnRole({
         taskStatus: 'review_ready',

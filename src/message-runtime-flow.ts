@@ -418,7 +418,7 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
     },
     scheduled
       ? 'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent'
-      : 'Skipped duplicate paired pending turn requeue in the same run',
+      : 'Skipped duplicate paired pending turn requeue while task state was unchanged',
   );
   return true;
 }

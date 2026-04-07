@@ -65,7 +65,10 @@ export function resolveQueuedTurnRole(args: {
   taskStatus?: PairedTaskStatus | null;
   hasHumanMessage: boolean;
 }): 'owner' | 'reviewer' | 'arbiter' {
-  if (args.hasHumanMessage && args.taskStatus === 'review_ready') {
+  if (
+    args.hasHumanMessage &&
+    (args.taskStatus === 'review_ready' || args.taskStatus === 'in_review')
+  ) {
     return 'owner';
   }
 

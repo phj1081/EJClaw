@@ -23,10 +23,7 @@ export function resolvePairedFollowUpQueueAction(args: {
 }): PairedFollowUpQueueAction {
   const nextTurnAction = resolveNextTurnAction({
     taskStatus: args.taskStatus,
-    lastTurnOutputRole:
-      args.executionStatus === 'succeeded' && args.sawOutput
-        ? args.completedRole
-        : null,
+    lastTurnOutputRole: args.sawOutput ? args.completedRole : null,
   });
   const dispatch = resolveFollowUpDispatch({
     source: 'executor-recovery',
