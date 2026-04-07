@@ -7,8 +7,6 @@ import { describe, expect, it } from 'vitest';
 import {
   computeVerificationSnapshotId,
   formatVerificationResponse,
-  resolveVerificationResponsesDir,
-  waitForVerificationResponse,
 } from '../src/verification.js';
 
 describe('runner verification helpers', () => {
@@ -24,39 +22,6 @@ describe('runner verification helpers', () => {
     const second = computeVerificationSnapshotId(repoDir);
 
     expect(second).toBe(first);
-  });
-
-  it('reads and removes the verification response file', async () => {
-    const ipcDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'ejclaw-verification-ipc-'),
-    );
-    const responseDir = resolveVerificationResponsesDir(ipcDir);
-    fs.mkdirSync(responseDir, { recursive: true });
-
-    const responsePath = path.join(responseDir, 'req-1.json');
-    fs.writeFileSync(
-      responsePath,
-      JSON.stringify({
-        requestId: 'req-1',
-        ok: true,
-        profile: 'typecheck',
-        command: 'npm run typecheck',
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-        snapshotId: 'fs:abc123',
-        runtimeVersion: 'host:bun@test',
-      }),
-    );
-
-    const response = await waitForVerificationResponse(responseDir, 'req-1', {
-      timeoutMs: 100,
-      pollMs: 10,
-    });
-
-    expect(response.ok).toBe(true);
-    expect(response.snapshotId).toBe('fs:abc123');
-    expect(fs.existsSync(responsePath)).toBe(false);
   });
 
   it('formats the response into a compact MCP-friendly text block', () => {

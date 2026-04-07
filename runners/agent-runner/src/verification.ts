@@ -1,8 +1,8 @@
-import fs from 'fs';
+import { execFile } from 'child_process';
 import path from 'path';
+import { pathToFileURL } from 'url';
 export {
   computeVerificationSnapshotId,
-  resolveVerificationResponsesDir,
 } from '../../../shared/verification-snapshot.js';
 
 export const VERIFICATION_PROFILES = [
@@ -12,6 +12,45 @@ export const VERIFICATION_PROFILES = [
 ] as const;
 
 export type VerificationProfile = (typeof VERIFICATION_PROFILES)[number];
+
+type VerificationHelperEnvKey =
+  | 'PATH'
+  | 'HOME'
+  | 'USER'
+  | 'LOGNAME'
+  | 'SHELL'
+  | 'LANG'
+  | 'LC_ALL'
+  | 'LC_CTYPE'
+  | 'NODE_PATH'
+  | 'NODE_OPTIONS'
+  | 'TERM'
+  | 'COLORTERM'
+  | 'FORCE_COLOR';
+
+const VERIFICATION_HELPER_ENV_KEYS: readonly VerificationHelperEnvKey[] = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'NODE_PATH',
+  'NODE_OPTIONS',
+  'TERM',
+  'COLORTERM',
+  'FORCE_COLOR',
+];
+const HELPER_TIMEOUT_MS = 20 * 60 * 1000;
+const HELPER_MAX_BUFFER = 20 * 1024 * 1024;
+
+export interface VerificationRequest {
+  requestId: string;
+  profile: VerificationProfile;
+  expectedSnapshotId?: string;
+}
 
 export interface VerificationResponse {
   requestId: string;
@@ -36,33 +75,87 @@ export function isVerificationProfile(
   );
 }
 
-export async function waitForVerificationResponse(
-  responseDir: string,
-  requestId: string,
-  options?: {
-    timeoutMs?: number;
-    pollMs?: number;
-  },
-): Promise<VerificationResponse> {
-  const timeoutMs = options?.timeoutMs ?? 20 * 60 * 1000;
-  const pollMs = options?.pollMs ?? 100;
-  const responsePath = path.join(responseDir, `${requestId}.json`);
-  const deadline = Date.now() + timeoutMs;
+function buildVerificationHelperEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    TZ: 'Asia/Seoul',
+    CI: '1',
+  };
 
-  while (Date.now() <= deadline) {
-    if (fs.existsSync(responsePath)) {
-      const response = JSON.parse(
-        fs.readFileSync(responsePath, 'utf-8'),
-      ) as VerificationResponse;
-      fs.unlinkSync(responsePath);
-      return response;
+  for (const key of VERIFICATION_HELPER_ENV_KEYS) {
+    const value = process.env[key];
+    if (value) {
+      env[key] = value;
     }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
 
-  throw new Error(
-    `Timed out waiting for verification response: ${requestId}`,
+  return env;
+}
+
+function execFileCapture(
+  file: string,
+  args: string[],
+  options?: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+  },
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      args,
+      {
+        encoding: 'utf8',
+        timeout: HELPER_TIMEOUT_MS,
+        maxBuffer: HELPER_MAX_BUFFER,
+        cwd: options?.cwd,
+        env: options?.env,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(
+            Object.assign(error, {
+              stdout,
+              stderr,
+            }),
+          );
+          return;
+        }
+
+        resolve({ stdout, stderr });
+      },
+    );
+  });
+}
+
+export async function runVerificationRequestDirect(
+  repoRoot: string,
+  request: VerificationRequest,
+): Promise<VerificationResponse> {
+  const helperPath = path.join(
+    repoRoot,
+    'shared',
+    'verification-request-runner.js',
   );
+  const helperEnv = buildVerificationHelperEnv();
+  const { stdout, stderr } = await execFileCapture(
+    'bun',
+    [helperPath, repoRoot, JSON.stringify(request)],
+    {
+      cwd: repoRoot,
+      env: helperEnv,
+    },
+  );
+
+  try {
+    return JSON.parse(stdout) as VerificationResponse;
+  } catch (error) {
+    const detail = stderr.trim() || stdout.trim();
+    throw new Error(
+      `Failed to parse verification response from ${pathToFileURL(helperPath).href}: ${
+        error instanceof Error ? error.message : String(error)
+      }${detail ? `\n${detail}` : ''}`,
+    );
+  }
 }
 
 export function formatVerificationResponse(

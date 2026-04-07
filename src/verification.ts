@@ -4,16 +4,12 @@ import os from 'os';
 import path from 'path';
 
 import { TIMEZONE } from './config.js';
-import { resolveGroupIpcPath } from './group-folder.js';
 import {
   buildWorkspaceScriptCommand,
   ensureWorkspaceDependenciesInstalled,
   hasInstalledNodeModules,
 } from './workspace-package-manager.js';
-import {
-  computeVerificationSnapshotId,
-  resolveVerificationResponsesDir,
-} from '../shared/verification-snapshot.js';
+import { computeVerificationSnapshotId } from '../shared/verification-snapshot.js';
 
 export const VERIFICATION_PROFILES = ['test', 'typecheck', 'build'] as const;
 
@@ -36,10 +32,6 @@ export interface VerificationResult {
   runtimeVersion: string;
   workdir?: string;
   error?: string;
-}
-
-export interface VerificationResponse extends VerificationResult {
-  requestId: string;
 }
 
 export interface VerificationSnapshot {
@@ -392,22 +384,4 @@ export async function runVerificationRequest(
   } finally {
     fs.rmSync(directExecution.tempRoot, { recursive: true, force: true });
   }
-}
-
-export function resolveVerificationResponseDir(groupFolder: string): string {
-  return resolveVerificationResponsesDir(resolveGroupIpcPath(groupFolder));
-}
-
-export function writeVerificationResponse(
-  groupFolder: string,
-  response: VerificationResponse,
-): string {
-  const responseDir = resolveVerificationResponseDir(groupFolder);
-  fs.mkdirSync(responseDir, { recursive: true });
-
-  const outputPath = path.join(responseDir, `${response.requestId}.json`);
-  const tempPath = `${outputPath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(response, null, 2));
-  fs.renameSync(tempPath, outputPath);
-  return outputPath;
 }

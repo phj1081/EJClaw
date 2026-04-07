@@ -25,9 +25,8 @@ import {
 import {
   computeVerificationSnapshotId,
   formatVerificationResponse,
-  resolveVerificationResponsesDir,
+  runVerificationRequestDirect,
   VERIFICATION_PROFILES,
-  waitForVerificationResponse,
 } from './verification.js';
 import { resolveIpcDirectories } from './ipc-paths.js';
 import { buildSendMessageIpcPayload } from './ipc-message.js';
@@ -38,8 +37,6 @@ const MESSAGES_DIR = path.join(HOST_IPC_DIR, 'messages');
 const TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
 const HOST_EVIDENCE_RESPONSES_DIR =
   resolveHostEvidenceResponsesDir(HOST_IPC_DIR);
-const VERIFICATION_RESPONSES_DIR =
-  resolveVerificationResponsesDir(HOST_IPC_DIR);
 const REPO_ROOT = process.env.EJCLAW_WORK_DIR || process.cwd();
 
 // Context from environment variables (set by the agent runner)
@@ -453,20 +450,12 @@ server.tool(
       .toString(36)
       .slice(2, 8)}`;
 
-    writeIpcFile(TASKS_DIR, {
-      type: 'verification_request',
-      requestId,
-      profile: args.profile,
-      expected_snapshot_id: snapshotId,
-      groupFolder,
-      timestamp: new Date().toISOString(),
-    });
-
     try {
-      const response = await waitForVerificationResponse(
-        VERIFICATION_RESPONSES_DIR,
+      const response = await runVerificationRequestDirect(REPO_ROOT, {
         requestId,
-      );
+        profile: args.profile,
+        expectedSnapshotId: snapshotId,
+      });
       return {
         content: [
           {

@@ -9,11 +9,6 @@ import {
   runHostEvidenceRequest,
   writeHostEvidenceResponse,
 } from './host-evidence.js';
-import {
-  isVerificationProfile,
-  runVerificationRequest,
-  writeVerificationResponse,
-} from './verification.js';
 import { readJsonFile } from './utils.js';
 import { AvailableGroup } from './agent-runner.js';
 import {
@@ -638,65 +633,6 @@ export async function processTaskIpc(
             exitCode: result.exitCode,
           },
           'Processed host evidence request via IPC',
-        );
-      }
-      break;
-
-    case 'verification_request':
-      if (!data.requestId) {
-        logger.warn(
-          { sourceGroup },
-          'Ignoring verification_request without requestId',
-        );
-        break;
-      }
-
-      if (!isVerificationProfile(data.profile)) {
-        writeVerificationResponse(sourceGroup, {
-          requestId: data.requestId,
-          ok: false,
-          profile: 'test',
-          command: '',
-          stdout: '',
-          stderr: '',
-          exitCode: 1,
-          snapshotId: 'unknown',
-          runtimeVersion: '',
-          workdir: process.cwd(),
-          error: `Unsupported verification profile: ${String(data.profile)}`,
-        });
-        logger.warn(
-          { sourceGroup, requestId: data.requestId, profile: data.profile },
-          'Rejected unsupported verification profile',
-        );
-        break;
-      }
-
-      {
-        const result = await runVerificationRequest({
-          requestId: data.requestId,
-          profile: data.profile,
-          expectedSnapshotId:
-            typeof data.expected_snapshot_id === 'string'
-              ? data.expected_snapshot_id
-              : undefined,
-        });
-
-        writeVerificationResponse(sourceGroup, {
-          requestId: data.requestId,
-          ...result,
-        });
-
-        logger.info(
-          {
-            sourceGroup,
-            requestId: data.requestId,
-            profile: data.profile,
-            ok: result.ok,
-            exitCode: result.exitCode,
-            snapshotId: result.snapshotId,
-          },
-          'Processed verification request via IPC',
         );
       }
       break;
