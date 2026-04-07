@@ -8,10 +8,6 @@
 
 Tribunal multi-agent AI assistant (Owner + Reviewer + Arbiter) over Discord with autonomous paired review and Mixture of Agents.
 
-Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw), now independently maintained as EJClaw.
-Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros) and [garrytan/gstack](https://github.com/garrytan/gstack), adapted for EJClaw's Discord and dual-service workflow.
-Tribunal arbiter system inspired by multi-agent consensus architectures.
-
 ## Overview
 
 A single unified service (`ejclaw`) runs a **Tribunal** of three roles while
@@ -159,47 +155,6 @@ bun run build
 - [Architecture](docs/architecture.md) — Data flow, room model, verification execution, key files
 - [Configuration](docs/configuration.md) — Full `.env` reference, debugging paths
 
-### Environment
-
-All configuration in a single `.env` file:
-
-```bash
-# Discord bots (canonical role-fixed names)
-DISCORD_OWNER_BOT_TOKEN=         # Owner bot
-DISCORD_REVIEWER_BOT_TOKEN=      # Reviewer bot
-DISCORD_ARBITER_BOT_TOKEN=       # Arbiter bot
-
-# Old service-based token names are no longer accepted.
-# Rename existing values to the canonical role-based keys above.
-
-# Agent types
-OWNER_AGENT_TYPE=codex            # codex | claude-code
-REVIEWER_AGENT_TYPE=claude-code   # claude-code | codex
-ARBITER_AGENT_TYPE=codex          # codex | claude-code (optional, enables 3rd agent)
-
-# Per-role model overrides
-OWNER_MODEL=gpt-5.4
-REVIEWER_MODEL=claude-opus-4-6
-ARBITER_MODEL=gpt-5.4
-
-# API keys
-CLAUDE_CODE_OAUTH_TOKEN=          # Claude Code OAuth token
-CLAUDE_CODE_OAUTH_TOKENS=         # Comma-separated for multi-account rotation
-GROQ_API_KEY=                     # Voice transcription (Groq Whisper)
-
-# Mixture of Agents (MoA)
-MOA_ENABLED=true
-MOA_REF_MODELS=kimi,glm
-MOA_KIMI_MODEL=kimi-k2.5
-MOA_KIMI_BASE_URL=https://api.kimi.com/coding
-MOA_KIMI_API_KEY=sk-kimi-xxx
-MOA_KIMI_API_FORMAT=anthropic
-MOA_GLM_MODEL=glm-5.1
-MOA_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
-MOA_GLM_API_KEY=xxx
-MOA_GLM_API_FORMAT=anthropic
-```
-
 ### Deploy
 
 ```bash
@@ -215,6 +170,11 @@ bun run dev                  # Dev mode with hot reload
 bun test                     # Run tests
 ```
 
+## Acknowledgments
+
+- Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw)
+- Prompt design inspired by [Q00/ouroboros](https://github.com/Q00/ouroboros) and [garrytan/gstack](https://github.com/garrytan/gstack)
+
 ## License
 
-MIT — Originally derived from [qwibitai/nanoclaw](https://github.com/qwibitai/nanoclaw)
+MIT
