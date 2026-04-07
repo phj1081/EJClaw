@@ -194,6 +194,27 @@ function hasRunnableNodeModulesTree(repoDir: string): boolean {
   }
 }
 
+function backfillInstallFingerprintIfPossible(
+  repoDir: string,
+  packageManager: WorkspacePackageManager,
+): boolean {
+  if (!hasRunnableNodeModulesTree(repoDir)) {
+    return false;
+  }
+
+  if (readInstallFingerprint(repoDir)) {
+    return false;
+  }
+
+  const expectedFingerprint = computeInstallFingerprint(repoDir);
+  if (!expectedFingerprint) {
+    return false;
+  }
+
+  writeInstallFingerprint(repoDir, packageManager, expectedFingerprint);
+  return true;
+}
+
 export function detectWorkspacePackageManager(
   repoDir: string,
 ): WorkspacePackageManager | null {
@@ -323,6 +344,10 @@ export function ensureWorkspaceDependenciesInstalled(
     return { installed: false, packageManager: null };
   }
   if (hasInstalledNodeModules(repoDir)) {
+    return { installed: false, packageManager };
+  }
+
+  if (backfillInstallFingerprintIfPossible(repoDir, packageManager)) {
     return { installed: false, packageManager };
   }
 

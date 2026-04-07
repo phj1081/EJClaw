@@ -15,6 +15,7 @@ import { resolveGroupIpcPath } from './group-folder.js';
 import {
   buildWorkspaceScriptCommand,
   detectPnpmStorePath,
+  ensureWorkspaceDependenciesInstalled,
   hasInstalledNodeModules,
 } from './workspace-package-manager.js';
 import {
@@ -269,6 +270,27 @@ export async function runVerificationRequest(
       runtimeVersion,
       error: `Verification profile "${request.profile}" is not configured in package.json scripts.`,
     };
+  }
+
+  if (!hasInstalledNodeModules(repoDir)) {
+    try {
+      ensureWorkspaceDependenciesInstalled(repoDir);
+    } catch (error) {
+      return {
+        ok: false,
+        profile: request.profile,
+        command: command.commandText,
+        stdout: '',
+        stderr: '',
+        exitCode: 1,
+        snapshotId: 'unknown',
+        runtimeVersion,
+        error:
+          error instanceof Error
+            ? error.message
+            : String(error),
+      };
+    }
   }
 
   if (!hasInstalledNodeModules(repoDir)) {

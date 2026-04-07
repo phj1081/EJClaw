@@ -181,4 +181,32 @@ describe('workspace package manager helpers', () => {
     );
     expect(hasInstalledNodeModules(repoDir)).toBe(false);
   });
+
+  it('backfills install state for a legacy runnable node_modules tree', () => {
+    const repoDir = path.join(tempRoot, 'legacy');
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        name: 'legacy',
+        packageManager: 'bun@1.3.11',
+        scripts: { test: 'vitest run' },
+      }),
+    );
+    fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
+    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'vitest'), '');
+
+    expect(hasInstalledNodeModules(repoDir)).toBe(false);
+
+    const result = ensureWorkspaceDependenciesInstalled(repoDir);
+
+    expect(result).toMatchObject({
+      installed: false,
+      packageManager: 'bun',
+    });
+    expect(hasInstalledNodeModules(repoDir)).toBe(true);
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+  });
 });
