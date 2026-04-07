@@ -1,15 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisteredGroup } from './types.js';
 
-const {
-  handleSessionCommandMock,
-  hasAllowedTriggerMock,
-  loggerInfoMock,
-} = vi.hoisted(() => ({
-  handleSessionCommandMock: vi.fn(),
-  hasAllowedTriggerMock: vi.fn(),
-  loggerInfoMock: vi.fn(),
-}));
+const { handleSessionCommandMock, hasAllowedTriggerMock, loggerInfoMock } =
+  vi.hoisted(() => ({
+    handleSessionCommandMock: vi.fn(),
+    hasAllowedTriggerMock: vi.fn(),
+    loggerInfoMock: vi.fn(),
+  }));
 
 vi.mock('./session-commands.js', () => ({
   handleSessionCommand: handleSessionCommandMock,

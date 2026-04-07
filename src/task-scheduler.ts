@@ -9,10 +9,7 @@ import {
 import { getErrorMessage } from './utils.js';
 
 import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
-import {
-  AgentOutput,
-  runAgentProcess,
-} from './agent-runner.js';
+import { AgentOutput, runAgentProcess } from './agent-runner.js';
 import {
   getAllTasks,
   deleteTask,
