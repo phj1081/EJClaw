@@ -49,9 +49,6 @@ function createExecutableWrapperDir(baseEnv: NodeJS.ProcessEnv): string {
   const candidateRoots = [
     baseEnv.EJCLAW_REVIEWER_GIT_WRAPPER_ROOT,
     baseEnv.HOME ? path.join(baseEnv.HOME, '.ejclaw-reviewer-runtime') : null,
-    process.cwd()
-      ? path.join(process.cwd(), '.ejclaw-reviewer-runtime')
-      : null,
     path.join(os.tmpdir(), '.ejclaw-reviewer-runtime'),
   ].filter((value): value is string => Boolean(value));
 

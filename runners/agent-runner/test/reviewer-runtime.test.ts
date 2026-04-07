@@ -175,7 +175,7 @@ describe('claude reviewer runtime guard', () => {
 
   it('prefers an executable HOME-scoped wrapper dir before tmp', () => {
     const homeDir = fs.mkdtempSync(
-      path.join(process.cwd(), '.ejclaw-reviewer-home-'),
+      path.join(os.tmpdir(), 'ejclaw-reviewer-home-'),
     );
     try {
       const env = buildReviewerGitGuardEnv(

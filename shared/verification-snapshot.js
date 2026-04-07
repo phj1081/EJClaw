@@ -77,7 +77,3 @@ export function computeVerificationSnapshotId(repoDir) {
   updateVerificationSnapshotHash(hash, repoDir, repoDir);
   return `fs:${hash.digest('hex').slice(0, 24)}`;
 }
-
-export function resolveVerificationResponsesDir(hostIpcDir) {
-  return path.join(hostIpcDir, 'verification-responses');
-}
