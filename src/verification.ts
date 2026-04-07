@@ -325,10 +325,14 @@ export async function runVerificationRequest(
 
   try {
     try {
-      const { stdout, stderr } = await execFileCapture(command.file, command.args, {
-        cwd: repoDir,
-        env: directExecution.env,
-      });
+      const { stdout, stderr } = await execFileCapture(
+        command.file,
+        command.args,
+        {
+          cwd: repoDir,
+          env: directExecution.env,
+        },
+      );
       const afterSnapshot = computeVerificationSnapshot(repoDir);
       if (afterSnapshot.snapshotId !== beforeSnapshot.snapshotId) {
         return {

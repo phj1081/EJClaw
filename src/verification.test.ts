@@ -73,11 +73,17 @@ describe('verification helpers', () => {
     );
     fs.mkdirSync(path.join(repoDir, 'dist'), { recursive: true });
     fs.writeFileSync(path.join(repoDir, '.env'), 'SECRET=1\n');
-    fs.writeFileSync(path.join(repoDir, 'dist', 'index.js'), 'export const x = 1;\n');
+    fs.writeFileSync(
+      path.join(repoDir, 'dist', 'index.js'),
+      'export const x = 1;\n',
+    );
 
     const first = computeVerificationSnapshot(repoDir).snapshotId;
     fs.writeFileSync(path.join(repoDir, '.env'), 'SECRET=2\n');
-    fs.writeFileSync(path.join(repoDir, 'dist', 'index.js'), 'export const x = 2;\n');
+    fs.writeFileSync(
+      path.join(repoDir, 'dist', 'index.js'),
+      'export const x = 2;\n',
+    );
     const second = computeVerificationSnapshot(repoDir).snapshotId;
     fs.writeFileSync(
       path.join(repoDir, 'src', 'index.ts'),
@@ -212,12 +218,15 @@ describe('verification helpers', () => {
         packageManager: 'bun@1.3.11',
         scripts: {
           typecheck:
-            'node -e "process.stdout.write(\'typecheck:\' + (process.env.CI || \'missing\'))"',
+            "node -e \"process.stdout.write('typecheck:' + (process.env.CI || 'missing'))\"",
         },
       }),
     );
     fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
-    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'placeholder'), '');
+    fs.writeFileSync(
+      path.join(repoDir, 'node_modules', '.bin', 'placeholder'),
+      '',
+    );
     fs.writeFileSync(
       path.join(repoDir, 'src', 'index.ts'),
       'export const value = 1;\n',
@@ -260,14 +269,18 @@ describe('verification helpers', () => {
       }),
     );
     fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
-    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'placeholder'), '');
+    fs.writeFileSync(
+      path.join(repoDir, 'node_modules', '.bin', 'placeholder'),
+      '',
+    );
     ensureWorkspaceDependenciesInstalled(repoDir);
 
     const previousSecret = process.env.EJCLAW_VERIFICATION_SECRET;
     process.env.EJCLAW_VERIFICATION_SECRET = 'top-secret';
 
     try {
-      const expectedSnapshotId = computeVerificationSnapshot(repoDir).snapshotId;
+      const expectedSnapshotId =
+        computeVerificationSnapshot(repoDir).snapshotId;
       const result = await runVerificationRequest(
         {
           requestId: 'req-direct-typecheck-secret',
@@ -303,12 +316,15 @@ describe('verification helpers', () => {
         name: 'verification-direct-mutate',
         packageManager: 'bun@1.3.11',
         scripts: {
-          test: 'node -e "require(\'node:fs\').writeFileSync(\'src/generated.txt\', \'x\\\\n\')"',
+          test: "node -e \"require('node:fs').writeFileSync('src/generated.txt', 'x\\\\n')\"",
         },
       }),
     );
     fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
-    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'placeholder'), '');
+    fs.writeFileSync(
+      path.join(repoDir, 'node_modules', '.bin', 'placeholder'),
+      '',
+    );
     fs.writeFileSync(
       path.join(repoDir, 'src', 'index.ts'),
       'export const value = 1;\n',
@@ -329,7 +345,9 @@ describe('verification helpers', () => {
     expect(result.exitCode).toBe(1);
     expect(result.error).toContain('Workspace changed during verification');
     expect(result.snapshotId).not.toBe(expectedSnapshotId);
-    expect(fs.existsSync(path.join(repoDir, 'src', 'generated.txt'))).toBe(true);
+    expect(fs.existsSync(path.join(repoDir, 'src', 'generated.txt'))).toBe(
+      true,
+    );
   });
 
   it('allows build verification to write excluded output directories', async () => {
@@ -346,12 +364,16 @@ describe('verification helpers', () => {
         name: 'verification-build-direct',
         packageManager: 'bun@1.3.11',
         scripts: {
-          build: 'node -e "require(\'node:fs\').mkdirSync(\'dist\', { recursive: true }); require(\'node:fs\').writeFileSync(\'dist/output.js\', \'ok\\\\n\')"',
+          build:
+            "node -e \"require('node:fs').mkdirSync('dist', { recursive: true }); require('node:fs').writeFileSync('dist/output.js', 'ok\\\\n')\"",
         },
       }),
     );
     fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
-    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'placeholder'), '');
+    fs.writeFileSync(
+      path.join(repoDir, 'node_modules', '.bin', 'placeholder'),
+      '',
+    );
     fs.writeFileSync(
       path.join(repoDir, 'src', 'index.ts'),
       'export const value = 1;\n',
@@ -372,8 +394,8 @@ describe('verification helpers', () => {
     expect(result.exitCode).toBe(0);
     expect(result.runtimeVersion).toMatch(/^host:bun@/);
     expect(result.snapshotId).toBe(expectedSnapshotId);
-    expect(fs.readFileSync(path.join(repoDir, 'dist', 'output.js'), 'utf-8')).toBe(
-      'ok\n',
-    );
+    expect(
+      fs.readFileSync(path.join(repoDir, 'dist', 'output.js'), 'utf-8'),
+    ).toBe('ok\n');
   });
 });
