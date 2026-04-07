@@ -1645,6 +1645,59 @@ describe('createMessageRuntime', () => {
     });
   });
 
+  it('requeues the reviewer follow-up once owner output is persisted under review_ready', () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const task = {
+      id: 'task-reviewer-follow-up-after-owner-output',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-reviewer-follow-up-after-owner-output',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'owner 응답',
+        created_at: '2026-03-30T00:00:01.000Z',
+      },
+    ]);
+
+    expect(
+      resolveBotOnlyPairedFollowUpAction({
+        chatJid,
+        task,
+        isBotOnlyPairedFollowUp: true,
+        pendingCursorSource: {
+          seq: 42,
+          timestamp: '2026-03-30T00:00:04.000Z',
+        },
+      }),
+    ).toEqual({
+      kind: 'requeue-pending-turn',
+      task,
+      cursor: 42,
+      cursorKey: `${chatJid}:reviewer`,
+      nextRole: 'reviewer',
+    });
+  });
+
   it('consumes stale bot-only owner messages once the finalize turn output is already persisted', () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');

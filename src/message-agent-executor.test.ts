@@ -1314,6 +1314,88 @@ describe('runAgentForGroup room memory', () => {
     expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
+  it('stores owner turn output and completes the paired task before delivery', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const deps = makeDeps();
+    const onOutput = vi.fn(async () => {});
+
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-owner-output-order',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: null,
+        status: 'active',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, forwardOutput) => {
+        await forwardOutput?.({
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nowner complete',
+          output: {
+            visibility: 'public',
+            text: 'DONE_WITH_CONCERNS\nowner complete',
+          },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nowner complete',
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'please implement',
+      chatJid: 'group@test',
+      runId: 'run-owner-output-order',
+      onOutput,
+    });
+
+    expect(result).toBe('success');
+    expect(db.insertPairedTurnOutput).toHaveBeenCalledWith(
+      'paired-task-owner-output-order',
+      1,
+      'owner',
+      'DONE_WITH_CONCERNS\nowner complete',
+    );
+    expect(
+      vi.mocked(db.insertPairedTurnOutput).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(pairedExecutionContext.completePairedExecutionContext).mock
+        .invocationCallOrder[0],
+    );
+    expect(
+      vi.mocked(pairedExecutionContext.completePairedExecutionContext).mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(onOutput.mock.invocationCallOrder[0]);
+    expect(
+      vi.mocked(pairedExecutionContext.completePairedExecutionContext),
+    ).toHaveBeenCalledWith({
+      taskId: 'paired-task-owner-output-order',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'DONE_WITH_CONCERNS\nowner complete',
+    });
+  });
+
   it('stores reviewer turn output before transitioning the paired task back to active', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
     const deps = makeDeps();

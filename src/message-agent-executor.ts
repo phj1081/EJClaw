@@ -337,6 +337,30 @@ export async function runAgentForGroup(
     pairedTurnOutputPersisted = true;
   };
 
+  const completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded = () => {
+    const completedRole = roomRoleContext?.role ?? 'owner';
+    if (
+      completedRole !== 'owner' ||
+      !pairedExecutionContext ||
+      pairedExecutionCompleted ||
+      !pairedFinalOutput ||
+      pairedFinalOutput.length === 0
+    ) {
+      return;
+    }
+
+    pairedExecutionStatus = 'succeeded';
+    pairedSawOutput = true;
+    persistPairedTurnOutputIfNeeded(completedRole);
+    completePairedExecutionContext({
+      taskId: pairedExecutionContext.task.id,
+      role: completedRole,
+      status: 'succeeded',
+      summary: pairedExecutionSummary,
+    });
+    pairedExecutionCompleted = true;
+  };
+
   const maybeHandoffToCodex = (
     reason: AgentTriggerReason,
     sawVisibleOutput: boolean,
@@ -567,11 +591,12 @@ export async function runAgentForGroup(
         ) {
           pairedFinalOutput = outputText;
           try {
+            completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded();
             persistPairedTurnOutputIfNeeded(roomRoleContext?.role ?? 'owner');
           } catch (err) {
             log.warn(
               { pairedTaskId: pairedExecutionContext?.task.id ?? null, err },
-              'Failed to persist paired turn output before delivery',
+              'Failed to persist paired turn output and status before delivery',
             );
           }
         }
