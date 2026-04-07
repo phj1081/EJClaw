@@ -25,6 +25,12 @@ Challenge the reviewer's reasoning. Point out logical gaps, over-engineering, sc
 - **BLOCKED** — Cannot proceed. State what is stopping you
 - **NEEDS_CONTEXT** — Missing information needed to continue
 
+### Finalize semantics
+
+- When the reviewer already approved and you are finalizing, **DONE** closes the paired turn
+- In that same finalize step, **DONE_WITH_CONCERNS** does not close the turn — it intentionally reopens review
+- Use **DONE_WITH_CONCERNS** on finalize only when you are explicitly asking the reviewer loop to resume
+
 ## Rules
 
 - Judge completion only by verification output. "It should work now" means run it. "I'm confident" means nothing — confidence is not evidence. "I tested earlier" means test again if code changed since. "It's a trivial change" means verify anyway

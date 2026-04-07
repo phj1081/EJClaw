@@ -1414,7 +1414,9 @@ describe('createMessageRuntime', () => {
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toBe(
-          `The reviewer approved your work (DONE). Finalize and report the result.\n\nReviewer's final assessment:\n${truncatedReviewerOutput}`,
+          `The reviewer approved your work (DONE). Finalize and report the result.
+If you intend to close this paired turn now, your first line must be DONE.
+If your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.\n\nReviewer's final assessment:\n${truncatedReviewerOutput}`,
         );
         expect(input.prompt).not.toContain(longReviewerOutput);
         expect(input.prompt).not.toContain('이전 reviewer 요약');
@@ -1518,7 +1520,7 @@ describe('createMessageRuntime', () => {
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toBe(
-          "The reviewer approved your work (DONE). Finalize and report the result.\n\nReviewer's final assessment:\n리뷰 승인 요약",
+          "The reviewer approved your work (DONE). Finalize and report the result.\nIf you intend to close this paired turn now, your first line must be DONE.\nIf your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.\n\nReviewer's final assessment:\n리뷰 승인 요약",
         );
         expect(input.prompt).not.toContain('DONE\n승인합니다.');
         await onOutput?.({
@@ -2027,7 +2029,7 @@ describe('createMessageRuntime', () => {
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toBe(
-          "The reviewer approved your work (DONE). Finalize and report the result.\n\nReviewer's final assessment:\n리뷰 승인 요약",
+          "The reviewer approved your work (DONE). Finalize and report the result.\nIf you intend to close this paired turn now, your first line must be DONE.\nIf your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.\n\nReviewer's final assessment:\n리뷰 승인 요약",
         );
         await onOutput?.({
           status: 'success',
