@@ -21,22 +21,19 @@ import { listAvailableGroups } from './available-groups.js';
 import {
   createServiceHandoff,
   getAllTasks,
-  getLastHumanMessageSender,
   getLatestOpenPairedTaskForChat,
-  getLatestTurnNumber,
-  getPairedTaskById,
-  insertPairedTurnOutput,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { createScopedLogger } from './logger.js';
 import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
 import {
-  completePairedExecutionContext,
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
 import { resolveCodexFallbackHandoff } from './paired-turn-fallback.js';
-import { resolveExecutionTarget } from './message-runtime-rules.js';
-import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
+import { createPairedExecutionLifecycle } from './message-agent-executor-paired.js';
+import {
+  resolveExecutionTarget,
+} from './message-runtime-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import { type AgentTriggerReason } from './agent-error-detection.js';
 import {
@@ -311,55 +308,15 @@ export async function runAgentForGroup(
   }
 
   const effectivePrompt = moaEnrichedPrompt;
-  let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
-  let pairedExecutionSummary: string | null = null;
-  let pairedFinalOutput: string | null = null;
-  let pairedExecutionCompleted = false;
-  let pairedSawOutput = false;
-  let pairedTurnOutputPersisted = false;
-
-  const persistPairedTurnOutputIfNeeded = (completedRole: PairedRoomRole) => {
-    if (
-      !pairedExecutionContext ||
-      pairedTurnOutputPersisted ||
-      !pairedFinalOutput ||
-      pairedFinalOutput.length === 0
-    ) {
-      return;
-    }
-    const turnNumber = getLatestTurnNumber(pairedExecutionContext.task.id) + 1;
-    insertPairedTurnOutput(
-      pairedExecutionContext.task.id,
-      turnNumber,
-      completedRole,
-      pairedFinalOutput,
-    );
-    pairedTurnOutputPersisted = true;
-  };
-
-  const completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded = () => {
-    const completedRole = roomRoleContext?.role ?? 'owner';
-    if (
-      completedRole !== 'owner' ||
-      !pairedExecutionContext ||
-      pairedExecutionCompleted ||
-      !pairedFinalOutput ||
-      pairedFinalOutput.length === 0
-    ) {
-      return;
-    }
-
-    pairedExecutionStatus = 'succeeded';
-    pairedSawOutput = true;
-    persistPairedTurnOutputIfNeeded(completedRole);
-    completePairedExecutionContext({
-      taskId: pairedExecutionContext.task.id,
-      role: completedRole,
-      status: 'succeeded',
-      summary: pairedExecutionSummary,
-    });
-    pairedExecutionCompleted = true;
-  };
+  const pairedExecutionLifecycle = createPairedExecutionLifecycle({
+    pairedExecutionContext,
+    completedRole: roomRoleContext?.role ?? 'owner',
+    chatJid,
+    runId,
+    enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
+    onOutput,
+    log,
+  });
 
   const maybeHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -415,7 +372,9 @@ export async function runAgentForGroup(
   };
 
   if (pairedExecutionContext?.blockMessage) {
-    pairedExecutionSummary = pairedExecutionContext.blockMessage.slice(0, 500);
+    pairedExecutionLifecycle.updateSummary({
+      outputText: pairedExecutionContext.blockMessage,
+    });
     log.warn(
       {
         roomRoleServiceId: roomRoleContext?.serviceId,
@@ -432,13 +391,7 @@ export async function runAgentForGroup(
       },
       phase: 'final',
     });
-    completePairedExecutionContext({
-      taskId: pairedExecutionContext.task.id,
-      role: roomRoleContext?.role ?? 'owner',
-      status: pairedExecutionStatus,
-      summary: pairedExecutionSummary,
-    });
-    pairedExecutionCompleted = true;
+    pairedExecutionLifecycle.completeImmediately({ status: 'failed' });
     return 'success';
   }
 
@@ -523,14 +476,10 @@ export async function runAgentForGroup(
           currentSessionId = output.newSessionId;
         }
 
-        if (outputText && outputText.length > 0) {
-          pairedExecutionSummary = outputText.slice(0, 500);
-        } else if (
-          typeof output.error === 'string' &&
-          output.error.length > 0
-        ) {
-          pairedExecutionSummary = output.error.slice(0, 500);
-        }
+        pairedExecutionLifecycle.updateSummary({
+          outputText,
+          errorText: typeof output.error === 'string' ? output.error : null,
+        });
         if (
           evaluation.newTrigger &&
           outputText &&
@@ -589,10 +538,8 @@ export async function runAgentForGroup(
           outputText &&
           outputText.length > 0
         ) {
-          pairedFinalOutput = outputText;
           try {
-            completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded();
-            persistPairedTurnOutputIfNeeded(roomRoleContext?.role ?? 'owner');
+            pairedExecutionLifecycle.recordFinalOutputBeforeDelivery(outputText);
           } catch (err) {
             log.warn(
               { pairedTaskId: pairedExecutionContext?.task.id ?? null, err },
@@ -701,13 +648,13 @@ export async function runAgentForGroup(
       runId,
     };
 
-    return runClaudeAttemptWithRotation({
+      return runClaudeAttemptWithRotation({
       initialTrigger,
       runAttempt: () => runAttempt('claude'),
       logContext: logCtx,
       rotationMessage,
       onSuccess: ({ sawOutput }) => {
-        pairedSawOutput = sawOutput;
+        pairedExecutionLifecycle.markSawOutput(sawOutput);
       },
     });
   };
@@ -733,7 +680,7 @@ export async function runAgentForGroup(
       return maybeHandoffAfterError(retryAction.trigger.reason, attempt);
     }
 
-    pairedExecutionStatus = 'succeeded';
+    pairedExecutionLifecycle.markStatus('succeeded');
     return retryAction.result;
   };
 
@@ -755,7 +702,7 @@ export async function runAgentForGroup(
     }
 
     if (retryAction.result === 'success') {
-      pairedExecutionStatus = 'succeeded';
+      pairedExecutionLifecycle.markStatus('succeeded');
     }
     return retryAction.result;
   };
@@ -769,9 +716,6 @@ export async function runAgentForGroup(
     }
     return 'error';
   };
-
-  const getPairedExecutionStatus = (): 'succeeded' | 'failed' =>
-    pairedExecutionStatus;
 
   const isRetryableClaudeSessionFailure = (attempt: AgentAttempt): boolean =>
     isRetryableClaudeSessionFailureAttempt({
@@ -863,15 +807,18 @@ export async function runAgentForGroup(
       return 'error';
     }
 
-    if (!pairedExecutionSummary) {
+    if (!pairedExecutionLifecycle.getSummary()) {
       const finalOutputText = getAgentOutputText(output);
-      pairedExecutionSummary =
+      pairedExecutionLifecycle.updateSummary({
+        outputText:
         (typeof finalOutputText === 'string' && finalOutputText.length > 0
-          ? finalOutputText.slice(0, 500)
-          : null) ??
-        (typeof output.error === 'string' && output.error.length > 0
-          ? output.error.slice(0, 500)
-          : null);
+          ? finalOutputText
+          : null),
+        errorText:
+          typeof output.error === 'string' && output.error.length > 0
+            ? output.error
+            : null,
+      });
     }
 
     if (!attempt.sawOutput && output.status !== 'error') {
@@ -937,8 +884,8 @@ export async function runAgentForGroup(
       return 'error';
     }
 
-    pairedExecutionStatus = 'succeeded';
-    pairedSawOutput = attempt.sawOutput;
+    pairedExecutionLifecycle.markStatus('succeeded');
+    pairedExecutionLifecycle.markSawOutput(attempt.sawOutput);
     return 'success';
   };
 
@@ -960,87 +907,6 @@ export async function runAgentForGroup(
 
     return await finalizePrimaryAttempt(primaryAttempt);
   } finally {
-    if (pairedExecutionContext && !pairedExecutionCompleted) {
-      const completedRole = roomRoleContext?.role ?? 'owner';
-      const completionStatus = getPairedExecutionStatus();
-      // Owner was interrupted without producing output (e.g. /stop) —
-      // treat as failed so reviewer is not auto-triggered.
-      const effectiveStatus =
-        completedRole === 'owner' &&
-        completionStatus === 'succeeded' &&
-        !pairedSawOutput
-          ? 'failed'
-          : completionStatus;
-      if (effectiveStatus === 'succeeded') {
-        try {
-          persistPairedTurnOutputIfNeeded(completedRole);
-        } catch (err) {
-          log.warn(
-            { pairedTaskId: pairedExecutionContext.task.id, err },
-            'Failed to store paired turn output',
-          );
-        }
-      }
-
-      completePairedExecutionContext({
-        taskId: pairedExecutionContext.task.id,
-        role: completedRole,
-        status: effectiveStatus,
-        summary: pairedExecutionSummary,
-      });
-    }
-
-    // Notify user when paired task reaches a terminal state that requires attention.
-    if (pairedExecutionContext) {
-      const finishedTask = getPairedTaskById(pairedExecutionContext.task.id);
-      if (
-        finishedTask?.status === 'completed' &&
-        finishedTask.completion_reason
-      ) {
-        const sender = getLastHumanMessageSender(chatJid);
-        const mention = sender ? `<@${sender}>` : '';
-        const notifications: Record<string, string> = {
-          done: `${mention} ✅ 작업 완료.`,
-          escalated: `${mention} ⚠️ 자동 해결 불가 — 확인이 필요합니다.`,
-          arbiter_escalated: `${mention} ⚠️ 중재자 판단: 사람 개입이 필요합니다.`,
-        };
-        const message = notifications[finishedTask.completion_reason];
-        if (message) {
-          await args.onOutput?.({
-            status: 'success',
-            result: message,
-            output: { visibility: 'public', text: message },
-            phase: 'final',
-          });
-        }
-      }
-    }
-
-    // Failed reviewer/arbiter runs can leave a pending paired task without a
-    // visible bot message. Requeue only those recovery cases here. Successful
-    // owner -> reviewer handoffs are queued by message-runtime after final
-    // delivery succeeds, which avoids waking reviewer off a failed send.
-    if (pairedExecutionContext) {
-      const completedRole = roomRoleContext?.role ?? 'owner';
-      const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);
-      const queueAction = resolvePairedFollowUpQueueAction({
-        completedRole,
-        executionStatus: pairedExecutionStatus,
-        sawOutput: pairedSawOutput,
-        taskStatus: finishedCheck?.status ?? null,
-      });
-      if (queueAction === 'pending') {
-        deps.queue.enqueueMessageCheck(chatJid);
-        log.info(
-          {
-            taskId: pairedExecutionContext.task.id,
-            role: completedRole,
-            pairedExecutionStatus,
-            taskStatus: finishedCheck?.status ?? null,
-          },
-          'Queued paired follow-up after failed reviewer/arbiter execution left a pending task state',
-        );
-      }
-    }
+    await pairedExecutionLifecycle.asyncFinalize();
   }
 }

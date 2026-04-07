@@ -7,9 +7,10 @@ import { logger } from './logger.js';
 import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
 import {
   applyPairedTaskPatch,
-  classifyVerdict,
   hasCodeChangesSinceRef,
+  parseVisibleVerdict,
   requestArbiterOrEscalate,
+  resolveOwnerCompletionSignal,
   resolveCanonicalSourceRef,
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
@@ -44,93 +45,68 @@ function handleOwnerFinalizeCompletion(args: {
   now: string;
 }): OwnerFinalizeOutcome {
   const { task, taskId, summary, now } = args;
-  const ownerVerdict = classifyVerdict(summary);
+  const ownerVerdict = parseVisibleVerdict(summary);
+  const workspace = getPairedWorkspace(task.id, 'owner');
+  const hasNewChanges = workspace?.workspace_dir
+    ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
+    : null;
+  const signal = resolveOwnerCompletionSignal({
+    phase: 'finalize',
+    visibleVerdict: ownerVerdict,
+    hasChangesSinceApproval: hasNewChanges,
+    roundTripCount: task.round_trip_count,
+    deadlockThreshold: ARBITER_DEADLOCK_THRESHOLD,
+  });
 
-  if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
+  if (signal.kind === 'request_arbiter') {
+    const arbiterLogMessage =
+      ownerVerdict === 'blocked' || ownerVerdict === 'needs_context'
+        ? 'Owner blocked during finalize — requesting arbiter'
+        : ownerVerdict === 'done_with_concerns'
+          ? 'Owner finalize loop detected — requesting arbiter'
+          : 'Owner finalize DONE loop detected — requesting arbiter';
+    const escalateLogMessage =
+      ownerVerdict === 'blocked' || ownerVerdict === 'needs_context'
+        ? 'Owner blocked during finalize — escalating to user'
+        : ownerVerdict === 'done_with_concerns'
+          ? 'Owner finalize loop detected — escalating to user'
+          : 'Owner finalize DONE loop detected — escalating to user';
     requestArbiterOrEscalate({
       taskId,
       currentStatus: task.status,
       now,
-      arbiterLogMessage: 'Owner blocked during finalize — requesting arbiter',
-      escalateLogMessage: 'Owner blocked during finalize — escalating to user',
+      arbiterLogMessage,
+      escalateLogMessage,
       logContext: {
         taskId,
         ownerVerdict,
+        roundTrips: task.round_trip_count,
+        hasNewChanges,
         summary: summary?.slice(0, 100),
       },
     });
     return 'stop';
   }
 
-  if (ownerVerdict === 'done_with_concerns') {
-    if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
-      requestArbiterOrEscalate({
+  if (signal.kind === 'request_reviewer') {
+    if (signal.resetStatusToActive) {
+      transitionPairedTaskStatus({
         taskId,
         currentStatus: task.status,
-        now,
-        arbiterLogMessage: 'Owner finalize loop detected — requesting arbiter',
-        escalateLogMessage: 'Owner finalize loop detected — escalating to user',
-        logContext: {
-          taskId,
-          ownerVerdict,
-          roundTrips: task.round_trip_count,
-        },
+        nextStatus: 'active',
+        updatedAt: now,
       });
-      return 'stop';
     }
-    transitionPairedTaskStatus({
-      taskId,
-      currentStatus: task.status,
-      nextStatus: 'active',
-      updatedAt: now,
-    });
     logger.info(
       {
         taskId,
         ownerVerdict,
+        hasNewChanges,
         summary: summary?.slice(0, 100),
       },
-      'Owner raised concerns during finalize — task set back to active',
-    );
-    return 're_review';
-  }
-
-  const workspace = getPairedWorkspace(task.id, 'owner');
-  const hasNewChanges = workspace?.workspace_dir
-    ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
-    : null;
-
-  if (hasNewChanges === true) {
-    if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
-      requestArbiterOrEscalate({
-        taskId,
-        currentStatus: task.status,
-        now,
-        arbiterLogMessage:
-          'Owner finalize DONE loop detected — requesting arbiter',
-        escalateLogMessage:
-          'Owner finalize DONE loop detected — escalating to user',
-        logContext: {
-          taskId,
-          roundTrips: task.round_trip_count,
-          hasNewChanges,
-        },
-      });
-      return 'stop';
-    }
-    transitionPairedTaskStatus({
-      taskId,
-      currentStatus: task.status,
-      nextStatus: 'active',
-      updatedAt: now,
-    });
-    logger.info(
-      {
-        taskId,
-        sourceRef: task.source_ref,
-        hasNewChanges,
-      },
-      'Owner made changes after reviewer approval — task set back to active before re-review',
+      ownerVerdict === 'done_with_concerns'
+        ? 'Owner raised concerns during finalize — task set back to active'
+        : 'Owner made changes after reviewer approval — task set back to active before re-review',
     );
     return 're_review';
   }
@@ -219,8 +195,13 @@ export function handleOwnerCompletion(args: {
     return;
   }
 
-  const ownerVerdict = classifyVerdict(summary);
-  if (ownerVerdict === 'blocked' || ownerVerdict === 'needs_context') {
+  const ownerVerdict = parseVisibleVerdict(summary);
+  const signal = resolveOwnerCompletionSignal({
+    phase: 'normal',
+    visibleVerdict: ownerVerdict,
+  });
+
+  if (signal.kind === 'request_arbiter') {
     requestArbiterOrEscalate({
       taskId,
       currentStatus: task.status,

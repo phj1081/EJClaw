@@ -1,4 +1,7 @@
-import { resolveNextTurnAction } from './message-runtime-rules.js';
+import {
+  resolveFollowUpDispatch,
+  resolveNextTurnAction,
+} from './message-runtime-rules.js';
 import type { PairedRoomRole, PairedTaskStatus } from './types.js';
 export {
   isRetryableClaudeSessionFailureAttempt,
@@ -25,15 +28,15 @@ export function resolvePairedFollowUpQueueAction(args: {
         ? args.completedRole
         : null,
   });
-
-  if (args.executionStatus === 'succeeded' && args.sawOutput) {
-    return 'none';
-  }
-
-  const shouldRequeuePendingPairedTurn =
-    (args.completedRole === 'reviewer' || args.completedRole === 'arbiter') &&
-    (nextTurnAction.kind === 'reviewer-turn' ||
-      nextTurnAction.kind === 'arbiter-turn' ||
-      nextTurnAction.kind === 'finalize-owner-turn');
-  return shouldRequeuePendingPairedTurn ? 'pending' : 'none';
+  const dispatch = resolveFollowUpDispatch({
+    source: 'executor-recovery',
+    nextTurnAction,
+    completedRole: args.completedRole,
+    executionStatus: args.executionStatus,
+    sawOutput: args.sawOutput,
+  });
+  return dispatch.kind === 'enqueue' &&
+    dispatch.queueKind === 'paired-follow-up'
+    ? 'pending'
+    : 'none';
 }

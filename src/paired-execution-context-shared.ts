@@ -5,14 +5,24 @@ import { updatePairedTask } from './db.js';
 import { logger } from './logger.js';
 import type { PairedTaskStatus } from './types.js';
 
-export type Verdict =
+export type VisibleVerdict =
   | 'done'
   | 'done_with_concerns'
   | 'blocked'
   | 'needs_context'
   | 'continue';
 
-export function classifyVerdict(summary: string | null | undefined): Verdict {
+export type CompletionSignal =
+  | { kind: 'request_reviewer'; resetStatusToActive: boolean }
+  | { kind: 'request_owner_finalize' }
+  | { kind: 'request_owner_changes' }
+  | { kind: 'request_arbiter' }
+  | { kind: 'complete'; completionReason: 'done' | 'escalated' }
+  | { kind: 'preserve_review_ready' };
+
+export function parseVisibleVerdict(
+  summary: string | null | undefined,
+): VisibleVerdict {
   if (!summary) return 'continue';
   const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
   if (!cleaned) return 'continue';
@@ -25,6 +35,95 @@ export function classifyVerdict(summary: string | null | undefined): Verdict {
   if (/^\*{0,2}Approved\.?\*{0,2}/i.test(firstLine)) return 'done';
   if (/^\*{0,2}LGTM\*{0,2}/i.test(firstLine)) return 'done';
   return 'continue';
+}
+
+export function resolveOwnerCompletionSignal(args: {
+  phase: 'normal' | 'finalize';
+  visibleVerdict: VisibleVerdict;
+  hasChangesSinceApproval?: boolean | null;
+  roundTripCount?: number;
+  deadlockThreshold?: number;
+}): CompletionSignal {
+  const {
+    phase,
+    visibleVerdict,
+    hasChangesSinceApproval = false,
+    roundTripCount = 0,
+    deadlockThreshold = Number.POSITIVE_INFINITY,
+  } = args;
+
+  if (visibleVerdict === 'blocked' || visibleVerdict === 'needs_context') {
+    return { kind: 'request_arbiter' };
+  }
+
+  if (phase === 'normal') {
+    return {
+      kind: 'request_reviewer',
+      resetStatusToActive: false,
+    };
+  }
+
+  const needsReReview =
+    visibleVerdict === 'done_with_concerns' || hasChangesSinceApproval === true;
+
+  if (needsReReview) {
+    if (roundTripCount >= deadlockThreshold) {
+      return { kind: 'request_arbiter' };
+    }
+    return {
+      kind: 'request_reviewer',
+      resetStatusToActive: true,
+    };
+  }
+
+  return {
+    kind: 'complete',
+    completionReason: 'done',
+  };
+}
+
+export function resolveReviewerCompletionSignal(args: {
+  visibleVerdict: VisibleVerdict;
+  roundTripCount: number;
+  deadlockThreshold: number;
+}): CompletionSignal {
+  const { visibleVerdict, roundTripCount, deadlockThreshold } = args;
+
+  switch (visibleVerdict) {
+    case 'done':
+      return { kind: 'request_owner_finalize' };
+    case 'blocked':
+    case 'needs_context':
+      return { kind: 'request_arbiter' };
+    case 'done_with_concerns':
+    case 'continue':
+    default:
+      if (roundTripCount >= deadlockThreshold) {
+        return { kind: 'request_arbiter' };
+      }
+      return { kind: 'request_owner_changes' };
+  }
+}
+
+export function resolveReviewerFailureSignal(args: {
+  visibleVerdict: VisibleVerdict;
+}): CompletionSignal {
+  const { visibleVerdict } = args;
+
+  switch (visibleVerdict) {
+    case 'done':
+      return { kind: 'request_owner_finalize' };
+    case 'blocked':
+    case 'needs_context':
+      return {
+        kind: 'complete',
+        completionReason: 'escalated',
+      };
+    case 'done_with_concerns':
+    case 'continue':
+    default:
+      return { kind: 'preserve_review_ready' };
+  }
 }
 
 export type ArbiterVerdictResult =

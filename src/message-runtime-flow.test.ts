@@ -1,0 +1,120 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { executeBotOnlyPairedFollowUpAction } from './message-runtime-flow.js';
+import {
+  resetPairedFollowUpScheduleState,
+  schedulePairedFollowUpOnce,
+  type ScheduledPairedFollowUpIntentKind,
+} from './paired-follow-up-scheduler.js';
+import type { PairedTask } from './types.js';
+
+describe('executeBotOnlyPairedFollowUpAction', () => {
+  beforeEach(() => {
+    resetPairedFollowUpScheduleState();
+  });
+
+  it('deduplicates bot-only requeue follow-ups within the same run', async () => {
+    const task: PairedTask = {
+      id: 'task-bot-only-dedup',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    };
+    const enqueue = vi.fn();
+    const closeStdin = vi.fn();
+    const log = {
+      info: vi.fn(),
+    } as any;
+    const schedulePairedFollowUp = (
+      scheduledTask: PairedTask,
+      intentKind: ScheduledPairedFollowUpIntentKind,
+    ) =>
+      schedulePairedFollowUpOnce({
+        chatJid: 'group@test',
+        runId: 'run-bot-only-dedup',
+        task: scheduledTask,
+        intentKind,
+        enqueue,
+      });
+
+    const action = {
+      kind: 'requeue-pending-turn' as const,
+      task,
+      cursor: 42,
+      cursorKey: 'group@test',
+      intentKind: 'owner-follow-up' as const,
+      nextRole: 'owner' as const,
+    };
+
+    const first = await executeBotOnlyPairedFollowUpAction({
+      action,
+      chatJid: 'group@test',
+      group: {
+        name: 'Test Group',
+        folder: 'test-group',
+        trigger: '@Andy',
+        added_at: '2026-03-30T00:00:00.000Z',
+        requiresTrigger: false,
+        agentType: 'codex',
+      },
+      runId: 'run-bot-only-dedup',
+      channel: {} as any,
+      log,
+      saveState: vi.fn(),
+      lastAgentTimestamps: {},
+      executeTurn: vi.fn(),
+      schedulePairedFollowUp,
+      closeStdin,
+    });
+
+    const second = await executeBotOnlyPairedFollowUpAction({
+      action,
+      chatJid: 'group@test',
+      group: {
+        name: 'Test Group',
+        folder: 'test-group',
+        trigger: '@Andy',
+        added_at: '2026-03-30T00:00:00.000Z',
+        requiresTrigger: false,
+        agentType: 'codex',
+      },
+      runId: 'run-bot-only-dedup',
+      channel: {} as any,
+      log,
+      saveState: vi.fn(),
+      lastAgentTimestamps: {},
+      executeTurn: vi.fn(),
+      schedulePairedFollowUp,
+      closeStdin,
+    });
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    expect(closeStdin).toHaveBeenCalledTimes(2);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid: 'group@test',
+        taskId: 'task-bot-only-dedup',
+        taskStatus: 'active',
+        handoffMode: 'requeue',
+        nextRole: 'owner',
+        intentKind: 'owner-follow-up',
+        scheduled: false,
+      }),
+      'Skipped duplicate paired pending turn requeue in the same run',
+    );
+  });
+});

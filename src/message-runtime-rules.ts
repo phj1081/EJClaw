@@ -79,6 +79,11 @@ export type NextTurnAction =
   | { kind: 'owner-follow-up' }
   | { kind: 'finalize-owner-turn' };
 
+export type FollowUpDispatch =
+  | { kind: 'none' }
+  | { kind: 'inline' }
+  | { kind: 'enqueue'; queueKind: 'paired-follow-up' | 'message-check' };
+
 export function resolveNextTurnAction(args: {
   taskStatus?: PairedTaskStatus | null;
   lastTurnOutputRole?: PairedRoomRole | null;
@@ -105,6 +110,62 @@ export function resolveNextTurnAction(args: {
         : { kind: 'none' };
     default:
       return { kind: 'none' };
+  }
+}
+
+export function resolveFollowUpDispatch(args: {
+  source:
+    | 'owner-delivery-success'
+    | 'delivery-retry'
+    | 'bot-only-follow-up'
+    | 'executor-recovery';
+  nextTurnAction: NextTurnAction;
+  completedRole?: PairedRoomRole;
+  executionStatus?: 'succeeded' | 'failed';
+  sawOutput?: boolean;
+}): FollowUpDispatch {
+  switch (args.source) {
+    case 'owner-delivery-success':
+      return args.nextTurnAction.kind === 'reviewer-turn'
+        ? { kind: 'enqueue', queueKind: 'paired-follow-up' }
+        : { kind: 'none' };
+
+    case 'delivery-retry':
+      if (
+        args.completedRole === 'reviewer' &&
+        args.nextTurnAction.kind === 'finalize-owner-turn'
+      ) {
+        return { kind: 'none' };
+      }
+      if (args.nextTurnAction.kind === 'none') {
+        return { kind: 'enqueue', queueKind: 'message-check' };
+      }
+      return { kind: 'enqueue', queueKind: 'paired-follow-up' };
+
+    case 'bot-only-follow-up':
+      if (args.nextTurnAction.kind === 'none') {
+        return { kind: 'none' };
+      }
+      if (args.nextTurnAction.kind === 'finalize-owner-turn') {
+        return { kind: 'inline' };
+      }
+      return { kind: 'enqueue', queueKind: 'paired-follow-up' };
+
+    case 'executor-recovery':
+      if (args.executionStatus === 'succeeded' && args.sawOutput) {
+        return { kind: 'none' };
+      }
+      if (
+        args.completedRole !== 'reviewer' &&
+        args.completedRole !== 'arbiter'
+      ) {
+        return { kind: 'none' };
+      }
+      return args.nextTurnAction.kind === 'reviewer-turn' ||
+        args.nextTurnAction.kind === 'arbiter-turn' ||
+        args.nextTurnAction.kind === 'finalize-owner-turn'
+        ? { kind: 'enqueue', queueKind: 'paired-follow-up' }
+        : { kind: 'none' };
   }
 }
 
