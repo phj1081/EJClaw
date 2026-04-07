@@ -1,6 +1,4 @@
-import { ChildProcess } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
-import fs from 'fs';
 import { getAgentOutputText } from './agent-output.js';
 import { createEvaluatedOutputHandler } from './agent-attempt.js';
 import {
@@ -14,7 +12,6 @@ import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   AgentOutput,
   runAgentProcess,
-  writeTasksSnapshot,
 } from './agent-runner.js';
 import {
   getAllTasks,
@@ -25,12 +22,6 @@ import {
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
-import { GroupQueue } from './group-queue.js';
-import {
-  resolveGroupFolderPath,
-  resolveGroupIpcPath,
-  resolveTaskRuntimeIpcPath,
-} from './group-folder.js';
 import { createScopedLogger, logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import {
@@ -57,19 +48,20 @@ import {
 import {
   extractWatchCiTarget,
   getTaskQueueJid,
-  getTaskRuntimeTaskId,
   isGitHubCiTask,
-  shouldUseTaskScopedSession,
 } from './task-watch-status.js';
-import { AgentType, RegisteredGroup, ScheduledTask } from './types.js';
-import { hasReviewerLease } from './service-routing.js';
+import { ScheduledTask } from './types.js';
 import {
-  checkGitHubActionsRun,
-  computeGitHubWatcherDelayMs,
-  MAX_GITHUB_CONSECUTIVE_ERRORS,
-  parseGitHubCiMetadata,
-  serializeGitHubCiMetadata,
-} from './github-ci.js';
+  hasTaskExceededMaxDuration,
+  resolveTaskExecutionContext,
+  sendScheduledMessage,
+  writeTaskSnapshotForGroup,
+} from './task-scheduler-runtime.js';
+import { runGithubCiTask } from './task-scheduler-github.js';
+import type {
+  SchedulerDependencies,
+  TaskExecutionContext,
+} from './task-scheduler-types.js';
 export {
   extractWatchCiTarget,
   getTaskQueueJid,
@@ -79,6 +71,7 @@ export {
   renderWatchCiStatusMessage,
   shouldUseTaskScopedSession,
 } from './task-watch-status.js';
+export type { SchedulerDependencies } from './task-scheduler-types.js';
 
 /**
  * Compute the next run time for a recurring task, anchored to the
@@ -119,146 +112,6 @@ export function computeNextRun(task: ScheduledTask): string | null {
   }
 
   return null;
-}
-
-function hasTaskExceededMaxDuration(
-  task: Pick<ScheduledTask, 'id' | 'created_at' | 'max_duration_ms'>,
-  nowMs: number,
-): boolean {
-  if (
-    task.max_duration_ms === null ||
-    task.max_duration_ms === undefined ||
-    !Number.isFinite(task.max_duration_ms) ||
-    task.max_duration_ms <= 0
-  ) {
-    return false;
-  }
-
-  const createdAtMs = new Date(task.created_at).getTime();
-  if (!Number.isFinite(createdAtMs)) {
-    logger.warn(
-      { taskId: task.id, createdAt: task.created_at },
-      'Task has invalid created_at for max duration enforcement',
-    );
-    return false;
-  }
-
-  return nowMs - createdAtMs >= task.max_duration_ms;
-}
-
-export interface SchedulerDependencies {
-  serviceAgentType?: AgentType;
-  registeredGroups: () => Record<string, RegisteredGroup>;
-  getSessions: () => Record<string, string>;
-  queue: GroupQueue;
-  onProcess: (
-    groupJid: string,
-    proc: ChildProcess,
-    processName: string,
-    ipcDir: string,
-  ) => void;
-  sendMessage: (jid: string, text: string) => Promise<void>;
-  /** Send a message via the reviewer bot identity so the owner treats it as a peer request. */
-  sendMessageViaReviewerBot?: (jid: string, text: string) => Promise<void>;
-  sendTrackedMessage?: (jid: string, text: string) => Promise<string | null>;
-  editTrackedMessage?: (
-    jid: string,
-    messageId: string,
-    text: string,
-  ) => Promise<void>;
-}
-
-interface TaskExecutionContext {
-  group: RegisteredGroup;
-  groupDir: string;
-  isMain: boolean;
-  queueJid: string;
-  runtimeIpcDir: string;
-  runtimeTaskId?: string;
-  sessionId?: string;
-  useTaskScopedSession: boolean;
-  taskAgentType: AgentType;
-}
-
-async function sendScheduledMessage(
-  deps: SchedulerDependencies,
-  chatJid: string,
-  text: string,
-): Promise<void> {
-  if (!hasReviewerLease(chatJid)) {
-    await deps.sendMessage(chatJid, text);
-    return;
-  }
-
-  if (!deps.sendMessageViaReviewerBot) {
-    throw new Error(
-      'Paired-room scheduled output requires a configured reviewer Discord bot',
-    );
-  }
-
-  await deps.sendMessageViaReviewerBot(chatJid, text);
-}
-
-function resolveTaskExecutionContext(
-  task: ScheduledTask,
-  deps: SchedulerDependencies,
-): TaskExecutionContext {
-  const groupDir = resolveGroupFolderPath(task.group_folder);
-  fs.mkdirSync(groupDir, { recursive: true });
-
-  const groups = deps.registeredGroups();
-  const group = Object.values(groups).find(
-    (registeredGroup) => registeredGroup.folder === task.group_folder,
-  );
-  if (!group) {
-    throw new Error(`Group not found: ${task.group_folder}`);
-  }
-
-  const isMain = group.isMain === true;
-  const taskAgentType =
-    task.agent_type || deps.serviceAgentType || 'claude-code';
-  const sessions = deps.getSessions();
-  const runtimeTaskId = getTaskRuntimeTaskId(task);
-  const useTaskScopedSession = shouldUseTaskScopedSession(task);
-  const runtimeIpcDir = runtimeTaskId
-    ? resolveTaskRuntimeIpcPath(task.group_folder, runtimeTaskId)
-    : resolveGroupIpcPath(task.group_folder);
-
-  return {
-    group,
-    groupDir,
-    isMain,
-    queueJid: getTaskQueueJid(task),
-    runtimeIpcDir,
-    runtimeTaskId,
-    sessionId:
-      task.context_mode === 'group' ? sessions[task.group_folder] : undefined,
-    useTaskScopedSession,
-    taskAgentType,
-  };
-}
-
-function writeTaskSnapshotForGroup(
-  taskAgentType: AgentType,
-  groupFolder: string,
-  isMain: boolean,
-  runtimeTaskId?: string,
-): void {
-  const tasks = getAllTasks(taskAgentType);
-  writeTasksSnapshot(
-    groupFolder,
-    isMain,
-    tasks.map((task) => ({
-      id: task.id,
-      groupFolder: task.group_folder,
-      prompt: task.prompt,
-      schedule_type: task.schedule_type,
-      schedule_value: task.schedule_value,
-      status: task.status,
-      next_run: task.next_run,
-    })),
-    runtimeTaskId,
-  );
 }
 
 async function runTask(
@@ -627,143 +480,6 @@ async function runTask(
       ? result.slice(0, 200)
       : 'Completed';
   updateTaskAfterRun(task.id, nextRun, resultSummary);
-}
-
-async function runGithubCiTask(
-  task: ScheduledTask,
-  deps: SchedulerDependencies,
-): Promise<void> {
-  const startTime = Date.now();
-  const runAtIso = new Date().toISOString();
-  let result: string | null = null;
-  let error: string | null = null;
-  let completedAndDeleted = false;
-  let paused = false;
-  const statusTracker = createTaskStatusTracker(task, {
-    sendTrackedMessage: deps.sendTrackedMessage,
-    editTrackedMessage: deps.editTrackedMessage,
-  });
-  const parsedMetadata = parseGitHubCiMetadata(task.ci_metadata);
-  const metadata = parsedMetadata
-    ? {
-        ...parsedMetadata,
-        poll_count: (parsedMetadata.poll_count ?? 0) + 1,
-        last_checked_at: runAtIso,
-      }
-    : null;
-
-  try {
-    await statusTracker.update('checking');
-
-    const check = await checkGitHubActionsRun(task);
-    result = check.resultSummary;
-
-    if (metadata) {
-      metadata.consecutive_errors = 0;
-    }
-
-    if (check.terminal) {
-      await statusTracker.update('completed');
-      if (check.completionMessage) {
-        await sendScheduledMessage(
-          deps,
-          task.chat_jid,
-          check.completionMessage,
-        );
-      }
-      deleteTask(task.id);
-      completedAndDeleted = true;
-      logger.info(
-        {
-          taskId: task.id,
-          groupFolder: task.group_folder,
-          durationMs: Date.now() - startTime,
-        },
-        'GitHub CI watcher completed and deleted',
-      );
-    } else {
-      logger.info(
-        {
-          taskId: task.id,
-          groupFolder: task.group_folder,
-          result,
-        },
-        'GitHub CI watcher checked non-terminal run',
-      );
-    }
-  } catch (err) {
-    error = getErrorMessage(err);
-    if (metadata) {
-      metadata.consecutive_errors = (metadata.consecutive_errors ?? 0) + 1;
-    }
-    logger.error({ taskId: task.id, error }, 'GitHub CI watcher failed');
-  }
-
-  const durationMs = Date.now() - startTime;
-  const currentTask = getTaskById(task.id);
-  const nextRun = currentTask
-    ? new Date(
-        Date.now() + computeGitHubWatcherDelayMs(currentTask, Date.now()),
-      ).toISOString()
-    : null;
-
-  if (!currentTask) {
-    if (!completedAndDeleted) {
-      await statusTracker.update('completed');
-    }
-    logger.debug(
-      { taskId: task.id },
-      'GitHub CI watcher deleted during execution, skipping persistence',
-    );
-    return;
-  }
-
-  if (metadata) {
-    updateTask(task.id, { ci_metadata: serializeGitHubCiMetadata(metadata) });
-  }
-
-  if (
-    error &&
-    metadata &&
-    (metadata.consecutive_errors ?? 0) >= MAX_GITHUB_CONSECUTIVE_ERRORS
-  ) {
-    paused = true;
-    updateTask(task.id, { status: 'paused' });
-    await deps.sendMessage(
-      task.chat_jid,
-      [
-        `CI 감시 일시정지: ${extractWatchCiTarget(task.prompt) || task.id}`,
-        `- 사유: gh api 연속 ${metadata.consecutive_errors}회 실패`,
-        `- 마지막 오류: ${error.slice(0, 200)}`,
-        `- 태스크 ID: \`${task.id}\``,
-      ].join('\n'),
-    );
-  }
-
-  if (error && !paused) {
-    await statusTracker.update('retrying', nextRun);
-  } else if (paused) {
-    // Paused tasks keep their current status message state; the pause notice is sent separately.
-  } else if (nextRun) {
-    await statusTracker.update('waiting', nextRun);
-  } else {
-    await statusTracker.update('completed');
-  }
-
-  logTaskRun({
-    task_id: task.id,
-    run_at: new Date().toISOString(),
-    duration_ms: durationMs,
-    status: error ? 'error' : 'success',
-    result,
-    error,
-  });
-
-  updateTaskAfterRun(
-    task.id,
-    nextRun,
-    error ? `Error: ${error}` : result || 'Completed',
-  );
 }
 
 /**

@@ -16,36 +16,15 @@ import {
   resolveQueuedTurnRole,
 } from './message-runtime-rules.js';
 import type {
-  AgentType,
+  ExecuteTurnFn,
+  RoleToChannelMap,
+} from './message-runtime-types.js';
+import type {
   Channel,
   NewMessage,
-  PairedRoomRole,
   PairedTask,
   RegisteredGroup,
 } from './types.js';
-
-type ExecuteTurnFn = (args: {
-  group: RegisteredGroup;
-  prompt: string;
-  chatJid: string;
-  runId: string;
-  channel: Channel;
-  startSeq: number | null;
-  endSeq: number | null;
-  deliveryRole?: PairedRoomRole;
-  hasHumanMessage?: boolean;
-  forcedRole?: PairedRoomRole;
-  forcedAgentType?: AgentType;
-}) => Promise<{
-  outputStatus: 'success' | 'error';
-  deliverySucceeded: boolean;
-  visiblePhase: unknown;
-}>;
-
-type RoleToChannelMap = Record<
-  'owner' | 'reviewer' | 'arbiter',
-  Channel | null
->;
 
 export async function runPendingPairedTurnIfNeeded(args: {
   chatJid: string;

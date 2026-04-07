@@ -14,29 +14,11 @@ import {
   resolveHandoffCursorKey,
   resolveHandoffRoleOverride,
 } from './message-runtime-shared.js';
+import type { ExecuteTurnFn } from './message-runtime-types.js';
 import type {
-  AgentType,
   Channel,
-  PairedRoomRole,
   RegisteredGroup,
 } from './types.js';
-
-type ExecuteTurnFn = (args: {
-  group: RegisteredGroup;
-  prompt: string;
-  chatJid: string;
-  runId: string;
-  channel: Channel;
-  startSeq: number | null;
-  endSeq: number | null;
-  deliveryRole?: PairedRoomRole;
-  forcedRole?: PairedRoomRole;
-  forcedAgentType?: AgentType;
-}) => Promise<{
-  outputStatus: 'success' | 'error';
-  deliverySucceeded: boolean;
-  visiblePhase: unknown;
-}>;
 
 export function enqueuePendingHandoffs(args: {
   enqueueTask: (
