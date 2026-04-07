@@ -1017,8 +1017,9 @@ export async function runAgentForGroup(
     }
 
     // Failed reviewer/arbiter runs can leave a pending paired task without a
-    // visible bot message. Requeue only those recovery cases here; successful
-    // paired handoffs are driven by the delivered bot message itself.
+    // visible bot message. Requeue only those recovery cases here. Successful
+    // owner -> reviewer handoffs are queued by message-runtime after final
+    // delivery succeeds, which avoids waking reviewer off a failed send.
     if (pairedExecutionContext) {
       const completedRole = roomRoleContext?.role ?? 'owner';
       const finishedCheck = getPairedTaskById(pairedExecutionContext.task.id);

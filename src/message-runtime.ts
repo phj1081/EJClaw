@@ -403,6 +403,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const isClaudeCodeAgent =
       (args.forcedAgentType ?? group.agentType ?? 'claude-code') ===
       'claude-code';
+    const pairedRoom = hasReviewerLease(chatJid);
+    const resolvedDeliveryRole =
+      args.deliveryRole ?? args.forcedRole ?? (pairedRoom ? 'owner' : null);
     const turnController = new MessageTurnController({
       chatJid,
       group,
@@ -416,10 +419,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         deps.queue.closeStdin(chatJid, { runId, reason }),
       deliverFinalText: async (text) => {
         try {
-          const persistedDeliveryRole =
-            args.deliveryRole ??
-            args.forcedRole ??
-            (hasReviewerLease(chatJid) ? 'owner' : null);
+          const persistedDeliveryRole = resolvedDeliveryRole;
           if (
             (persistedDeliveryRole === 'reviewer' ||
               persistedDeliveryRole === 'arbiter') &&
@@ -482,6 +482,27 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
       const { deliverySucceeded, visiblePhase } =
         await turnController.finish(outputStatus);
+
+      if (deliverySucceeded && pairedRoom && resolvedDeliveryRole === 'owner') {
+        const pendingTaskAfterDelivery = getLatestOpenPairedTaskForChat(chatJid);
+        const nextTurnAction = resolveNextTurnAction({
+          taskStatus: pendingTaskAfterDelivery?.status,
+          lastTurnOutputRole: 'owner',
+        });
+        if (nextTurnAction.kind === 'reviewer-turn') {
+          deps.queue.enqueueMessageCheck(chatJid);
+          logger.info(
+            {
+              chatJid,
+              runId,
+              completedRole: resolvedDeliveryRole,
+              taskId: pendingTaskAfterDelivery?.id ?? null,
+              taskStatus: pendingTaskAfterDelivery?.status ?? null,
+            },
+            'Queued paired follow-up after successful owner delivery',
+          );
+        }
+      }
 
       return {
         outputStatus,
