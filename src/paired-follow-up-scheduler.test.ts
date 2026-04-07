@@ -68,7 +68,6 @@ describe('paired follow-up scheduler', () => {
     expect(second).toBe(false);
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
-
   it('keeps different round trips schedulable', () => {
     const enqueue = vi.fn();
 
