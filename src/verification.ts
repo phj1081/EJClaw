@@ -285,10 +285,7 @@ export async function runVerificationRequest(
         exitCode: 1,
         snapshotId: 'unknown',
         runtimeVersion,
-        error:
-          error instanceof Error
-            ? error.message
-            : String(error),
+        error: error instanceof Error ? error.message : String(error),
       };
     }
   }
