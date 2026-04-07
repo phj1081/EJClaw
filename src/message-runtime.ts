@@ -1003,8 +1003,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const turnChannel = resolveChannelForRole(turnRole);
       const cursorKey = resolveCursorKeyForRole(chatJid, turnRole);
       const forcedRole =
-        pendingTaskForChannel &&
-        turnRole !== resolveActiveRole(taskStatus)
+        pendingTaskForChannel && turnRole !== resolveActiveRole(taskStatus)
           ? turnRole
           : undefined;
 
