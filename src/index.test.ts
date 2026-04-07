@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   editFormattedTrackedChannelMessage,
+  isTerminalStatusMessage,
   sendFormattedChannelMessage,
   sendFormattedTrackedChannelMessage,
 } from './index.js';
@@ -21,6 +22,16 @@ function makeChannel(overrides: Partial<Channel> = {}): Channel {
 }
 
 describe('index scheduler messaging helpers', () => {
+  it('uses the paired verdict parser to detect terminal status messages', () => {
+    expect(isTerminalStatusMessage('DONE\nfinished')).toBe(true);
+    expect(isTerminalStatusMessage('**DONE_WITH_CONCERNS**\nneed follow-up')).toBe(
+      true,
+    );
+    expect(isTerminalStatusMessage('Approved.\nlooks good')).toBe(true);
+    expect(isTerminalStatusMessage('LGTM\nship it')).toBe(true);
+    expect(isTerminalStatusMessage('random prose only')).toBe(false);
+  });
+
   it('sends formatted tracked messages through sendAndTrack', async () => {
     const sendAndTrack = vi.fn(async () => 'msg-123');
     const channel = makeChannel({ sendAndTrack });

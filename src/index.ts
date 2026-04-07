@@ -75,12 +75,10 @@ import {
   hasAvailableClaudeToken,
   initTokenRotation,
 } from './token-rotation.js';
+import { parseVisibleVerdict } from './paired-execution-context-shared.js';
 
-function isTerminalStatusMessage(text: string): boolean {
-  const trimmed = text.trimStart();
-  return /^(?:\*\*)?(DONE(?:_WITH_CONCERNS)?|BLOCKED|NEEDS_CONTEXT)\b/.test(
-    trimmed,
-  );
+export function isTerminalStatusMessage(text: string): boolean {
+  return parseVisibleVerdict(text) !== 'continue';
 }
 import {
   startTokenRefreshLoop,

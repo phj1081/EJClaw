@@ -20,9 +20,9 @@ import {
 } from './session-commands.js';
 import { isSessionCommandSenderAllowed } from './config.js';
 import { hasReviewerLease } from './service-routing.js';
+import type { ExecuteTurnFn } from './message-runtime-types.js';
 import type { ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import type {
-  AgentType,
   Channel,
   NewMessage,
   PairedTask,
@@ -31,24 +31,6 @@ import type {
 } from './types.js';
 
 type RuntimeLog = Pick<typeof logger, 'info' | 'debug'>;
-
-type ExecuteTurnFn = (args: {
-  group: RegisteredGroup;
-  prompt: string;
-  chatJid: string;
-  runId: string;
-  channel: Channel;
-  startSeq: number | null;
-  endSeq: number | null;
-  deliveryRole?: PairedRoomRole;
-  hasHumanMessage?: boolean;
-  forcedRole?: PairedRoomRole;
-  forcedAgentType?: AgentType;
-}) => Promise<{
-  outputStatus: 'success' | 'error';
-  deliverySucceeded: boolean;
-  visiblePhase: unknown;
-}>;
 
 export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
   chatJid: string;
