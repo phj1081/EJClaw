@@ -56,24 +56,27 @@ RUN curl -fsSL https://bun.sh/install | bash
 # Create app directory
 WORKDIR /app
 
+# Copy shared verification snapshot helper used by agent-runner
+COPY shared/verification-snapshot.* ./shared/
+
 # Copy agent-runner (Claude Code)
-COPY runners/agent-runner/package*.json ./agent/
-RUN bun install --cwd ./agent
-COPY runners/agent-runner/ ./agent/
-RUN bun run --cwd ./agent build
+COPY runners/agent-runner/package*.json ./runners/agent-runner/
+RUN bun install --cwd ./runners/agent-runner
+COPY runners/agent-runner/ ./runners/agent-runner/
+RUN bun run --cwd ./runners/agent-runner build
 
 # Copy codex-runner
-COPY runners/codex-runner/package*.json ./codex/
-RUN bun install --cwd ./codex
-COPY runners/codex-runner/ ./codex/
-RUN bun run --cwd ./codex build
+COPY runners/codex-runner/package*.json ./runners/codex-runner/
+RUN bun install --cwd ./runners/codex-runner
+COPY runners/codex-runner/ ./runners/codex-runner/
+RUN bun run --cwd ./runners/codex-runner build
 
 # Create workspace directories
 RUN mkdir -p /workspace/project /workspace/group /workspace/global \
     /workspace/ipc/messages /workspace/ipc/input
 
 # Entrypoint (fallback — persistent containers use docker exec with explicit runner path)
-RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nbun /app/agent/dist/index.js < /tmp/input.json\n' \
+RUN printf '#!/bin/bash\nset -e\ncat > /tmp/input.json\nbun /app/runners/agent-runner/dist/index.js < /tmp/input.json\n' \
     > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root)

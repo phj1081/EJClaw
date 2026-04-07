@@ -2200,7 +2200,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     });
 
     expect(result).toBe(true);
-  expect(ownerChannel.sendMessage).toHaveBeenCalledWith(
+    expect(ownerChannel.sendMessage).toHaveBeenCalledWith(
       chatJid,
       'DONE_WITH_CONCERNS\nowner handled fresh in_review input',
     );

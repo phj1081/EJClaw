@@ -1,0 +1,11 @@
+*
+!container/
+!container/Dockerfile
+!shared/
+!shared/verification-snapshot.d.ts
+!shared/verification-snapshot.js
+!runners/
+!runners/agent-runner/
+!runners/agent-runner/**
+!runners/codex-runner/
+!runners/codex-runner/**
