@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  resolveFollowUpDispatch,
   resolveExecutionTarget,
   resolveNextTurnAction,
   resolveQueuedTurnRole,
@@ -84,6 +85,72 @@ describe('message-runtime-rules', () => {
         lastTurnOutputRole: 'owner',
       }),
     ).toEqual({ kind: 'none' });
+  });
+
+  it('dispatches owner delivery success through a paired follow-up enqueue only for reviewer turns', () => {
+    expect(
+      resolveFollowUpDispatch({
+        source: 'owner-delivery-success',
+        nextTurnAction: { kind: 'reviewer-turn' },
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'owner-delivery-success',
+        nextTurnAction: { kind: 'none' },
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('dispatches delivery retry follow-ups through either generic message checks or paired follow-up enqueue', () => {
+    expect(
+      resolveFollowUpDispatch({
+        source: 'delivery-retry',
+        nextTurnAction: { kind: 'none' },
+        completedRole: 'owner',
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'message-check',
+    });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'delivery-retry',
+        nextTurnAction: { kind: 'reviewer-turn' },
+        completedRole: 'owner',
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'delivery-retry',
+        nextTurnAction: { kind: 'finalize-owner-turn' },
+        completedRole: 'reviewer',
+      }),
+    ).toEqual({ kind: 'none' });
+  });
+
+  it('dispatches bot-only follow-ups through inline finalize or paired enqueue', () => {
+    expect(
+      resolveFollowUpDispatch({
+        source: 'bot-only-follow-up',
+        nextTurnAction: { kind: 'finalize-owner-turn' },
+      }),
+    ).toEqual({ kind: 'inline' });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'bot-only-follow-up',
+        nextTurnAction: { kind: 'owner-follow-up' },
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
   });
 
   it('routes fresh human input to owner even while review is pending', () => {

@@ -14,8 +14,10 @@ import {
 import {
   advanceLastAgentCursor,
   resolveCursorKey,
+  resolveFollowUpDispatch,
   resolveNextTurnAction,
 } from './message-runtime-rules.js';
+import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { hasReviewerLease } from './service-routing.js';
 import type {
   Channel,
@@ -51,6 +53,7 @@ export type BotOnlyPairedFollowUpAction =
       task: PairedTask;
       cursor: string | number | null;
       cursorKey: string;
+      intentKind: ScheduledPairedFollowUpIntentKind;
       nextRole: 'owner' | 'reviewer' | 'arbiter';
     };
 
@@ -254,8 +257,12 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
     taskStatus: task.status,
     lastTurnOutputRole: lastTurnOutput?.role ?? null,
   });
+  const dispatch = resolveFollowUpDispatch({
+    source: 'bot-only-follow-up',
+    nextTurnAction,
+  });
 
-  if (nextTurnAction.kind === 'none') {
+  if (dispatch.kind === 'none') {
     return {
       kind: 'consume-stale-bot-message',
       task,
@@ -264,7 +271,7 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
     };
   }
 
-  if (nextTurnAction.kind === 'finalize-owner-turn') {
+  if (dispatch.kind === 'inline') {
     return {
       kind: 'inline-finalize',
       task,
@@ -273,15 +280,16 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
   }
 
   if (
-    nextTurnAction.kind === 'owner-follow-up' ||
-    nextTurnAction.kind === 'reviewer-turn' ||
-    nextTurnAction.kind === 'arbiter-turn'
+    dispatch.kind === 'enqueue' &&
+    dispatch.queueKind === 'paired-follow-up' &&
+    nextTurnAction.kind !== 'none'
   ) {
     return {
       kind: 'requeue-pending-turn',
       task,
       cursor,
       cursorKey: resolveCursorKey(chatJid, task.status),
+      intentKind: nextTurnAction.kind,
       nextRole:
         nextTurnAction.kind === 'owner-follow-up'
           ? 'owner'
@@ -312,7 +320,10 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
     startSeq: number | null;
     endSeq: number | null;
   }) => Promise<{ deliverySucceeded: boolean }>;
-  enqueueGroupMessageCheck: () => void;
+  schedulePairedFollowUp: (
+    task: PairedTask,
+    intentKind: ScheduledPairedFollowUpIntentKind,
+  ) => boolean;
   closeStdin: () => void;
 }): Promise<boolean> {
   const {
@@ -325,7 +336,7 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
     saveState,
     lastAgentTimestamps,
     executeTurn,
-    enqueueGroupMessageCheck,
+    schedulePairedFollowUp,
     closeStdin,
   } = args;
 
@@ -384,13 +395,13 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
       endSeq: null,
     });
     if (!deliverySucceeded) {
-      enqueueGroupMessageCheck();
+      schedulePairedFollowUp(action.task, 'finalize-owner-turn');
     }
     return true;
   }
 
   closeStdin();
-  enqueueGroupMessageCheck();
+  const scheduled = schedulePairedFollowUp(action.task, action.intentKind);
   log.info(
     {
       chatJid,
@@ -400,10 +411,14 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
       taskStatus: action.task.status,
       handoffMode: 'requeue',
       nextRole: action.nextRole,
+      intentKind: action.intentKind,
       cursor: action.cursor,
       cursorKey: action.cursorKey,
+      scheduled,
     },
-    'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent',
+    scheduled
+      ? 'Queued fresh paired pending turn instead of piping bot-only follow-up into the active agent'
+      : 'Skipped duplicate paired pending turn requeue in the same run',
   );
   return true;
 }
@@ -453,18 +468,4 @@ export function buildQueuedTurnDispatch(args: {
     loopCursorKey,
     endSeq: args.messagesToSend[args.messagesToSend.length - 1]?.seq ?? null,
   };
-}
-
-export function shouldSkipGenericFollowUpAfterDeliveryRetry(args: {
-  chatJid: string;
-  deliveryRole: PairedRoomRole;
-  pendingTask: PairedTask | null | undefined;
-}): boolean {
-  return (
-    hasReviewerLease(args.chatJid) &&
-    args.deliveryRole === 'reviewer' &&
-    resolveNextTurnAction({
-      taskStatus: args.pendingTask?.status ?? null,
-    }).kind === 'finalize-owner-turn'
-  );
 }

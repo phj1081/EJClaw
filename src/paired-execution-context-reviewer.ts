@@ -2,8 +2,10 @@ import { ARBITER_DEADLOCK_THRESHOLD } from './config.js';
 import { getPairedWorkspace, updatePairedTask } from './db.js';
 import { logger } from './logger.js';
 import {
-  classifyVerdict,
+  parseVisibleVerdict,
   requestArbiterOrEscalate,
+  resolveReviewerCompletionSignal,
+  resolveReviewerFailureSignal,
   resolveCanonicalSourceRef,
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
@@ -18,26 +20,37 @@ export function handleFailedReviewerExecution(args: {
   const now = new Date().toISOString();
 
   if (summary) {
-    const verdict = classifyVerdict(summary);
+    const verdict = parseVisibleVerdict(summary);
+    const signal = resolveReviewerFailureSignal({
+      visibleVerdict: verdict,
+    });
     if (
-      verdict === 'done' ||
-      verdict === 'blocked' ||
-      verdict === 'needs_context'
+      signal.kind === 'request_owner_finalize' ||
+      signal.kind === 'complete'
     ) {
       const ownerWs =
-        verdict === 'done' ? getPairedWorkspace(taskId, 'owner') : null;
+        signal.kind === 'request_owner_finalize'
+          ? getPairedWorkspace(taskId, 'owner')
+          : null;
       const approvedSourceRef =
-        verdict === 'done' && ownerWs?.workspace_dir
+        signal.kind === 'request_owner_finalize' && ownerWs?.workspace_dir
           ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
           : task.source_ref;
       transitionPairedTaskStatus({
         taskId,
         currentStatus: task.status,
-        nextStatus: verdict === 'done' ? 'merge_ready' : 'completed',
+        nextStatus:
+          signal.kind === 'request_owner_finalize'
+            ? 'merge_ready'
+            : 'completed',
         updatedAt: now,
         patch: {
-          ...(verdict === 'done' ? { source_ref: approvedSourceRef } : {}),
-          ...(verdict !== 'done' ? { completion_reason: 'escalated' } : {}),
+          ...(signal.kind === 'request_owner_finalize'
+            ? { source_ref: approvedSourceRef }
+            : {}),
+          ...(signal.kind === 'complete'
+            ? { completion_reason: signal.completionReason }
+            : {}),
         },
       });
       logger.info(
@@ -83,10 +96,15 @@ export function handleReviewerCompletion(args: {
 }): void {
   const { task, taskId, summary } = args;
   const now = new Date().toISOString();
-  const verdict = classifyVerdict(summary);
+  const verdict = parseVisibleVerdict(summary);
+  const signal = resolveReviewerCompletionSignal({
+    visibleVerdict: verdict,
+    roundTripCount: task.round_trip_count,
+    deadlockThreshold: ARBITER_DEADLOCK_THRESHOLD,
+  });
 
-  switch (verdict) {
-    case 'done': {
+  switch (signal.kind) {
+    case 'request_owner_finalize': {
       const ownerWs = getPairedWorkspace(taskId, 'owner');
       const approvedSourceRef = ownerWs?.workspace_dir
         ? resolveCanonicalSourceRef(ownerWs.workspace_dir)
@@ -112,39 +130,26 @@ export function handleReviewerCompletion(args: {
       return;
     }
 
-    case 'blocked':
-    case 'needs_context':
+    case 'request_arbiter':
+      const arbiterLogMessage =
+        verdict === 'blocked' || verdict === 'needs_context'
+          ? 'Reviewer blocked/needs_context — requesting arbiter before escalating'
+          : 'Deadlock detected — requesting arbiter intervention';
+      const escalateLogMessage =
+        verdict === 'blocked' || verdict === 'needs_context'
+          ? 'Reviewer escalated to user — ping-pong stopped'
+          : 'Stopped ping-pong — escalating to user (arbiter not configured)';
       requestArbiterOrEscalate({
         taskId,
         currentStatus: task.status,
         now,
-        arbiterLogMessage:
-          'Reviewer blocked/needs_context — requesting arbiter before escalating',
-        escalateLogMessage: 'Reviewer escalated to user — ping-pong stopped',
+        arbiterLogMessage,
+        escalateLogMessage,
         logContext: { taskId, verdict, summary: summary?.slice(0, 100) },
       });
       return;
 
-    case 'done_with_concerns':
-    case 'continue':
-    default:
-      if (task.round_trip_count >= ARBITER_DEADLOCK_THRESHOLD) {
-        requestArbiterOrEscalate({
-          taskId,
-          currentStatus: task.status,
-          now,
-          arbiterLogMessage:
-            'Deadlock detected — requesting arbiter intervention',
-          escalateLogMessage:
-            'Stopped ping-pong — escalating to user (arbiter not configured)',
-          logContext: {
-            taskId,
-            verdict,
-            roundTrips: task.round_trip_count,
-          },
-        });
-        return;
-      }
+    case 'request_owner_changes':
       transitionPairedTaskStatus({
         taskId,
         currentStatus: task.status,
@@ -155,6 +160,8 @@ export function handleReviewerCompletion(args: {
         { taskId, verdict },
         'Reviewer has feedback, task set back to active for owner',
       );
+      return;
+    default:
       return;
   }
 }
