@@ -5,12 +5,16 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildDockerRunArgs,
   buildVerificationCommand,
   computeVerificationSnapshot,
   isVerificationProfile,
   runVerificationRequest,
 } from './verification.js';
-import { hasInstalledNodeModules } from './workspace-package-manager.js';
+import {
+  ensureWorkspaceDependenciesInstalled,
+  hasInstalledNodeModules,
+} from './workspace-package-manager.js';
 
 describe('verification helpers', () => {
   it('recognizes only fixed verification profiles', () => {
@@ -189,5 +193,39 @@ describe('verification helpers', () => {
     expect(hasInstalledNodeModules(repoDir)).toBe(true);
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Snapshot mismatch before verification');
+  });
+
+  it('runs verification commands via docker entrypoint override', () => {
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-docker-'),
+    );
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        name: 'verification-docker',
+        packageManager: 'bun@1.3.11',
+        scripts: {
+          typecheck: 'tsc --noEmit',
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
+    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'tsc'), '');
+    ensureWorkspaceDependenciesInstalled(repoDir);
+
+    const command = buildVerificationCommand('typecheck', repoDir);
+    const args = buildDockerRunArgs('/tmp/verify-workspace', repoDir, command);
+    const imageIndex = args.findIndex((value) => value === 'ejclaw-reviewer:latest');
+
+    expect(args).toContain('--entrypoint');
+    expect(args[args.indexOf('--entrypoint') + 1]).toBe(command.file);
+    expect(imageIndex).toBeGreaterThan(args.indexOf('--entrypoint'));
+    expect(args.slice(imageIndex + 1)).toEqual(command.args);
+    expect(args).toContain(
+      '/workspace/project/node_modules/.vite-temp:uid=1000,gid=1000,mode=1777',
+    );
   });
 });

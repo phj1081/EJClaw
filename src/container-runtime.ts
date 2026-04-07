@@ -54,8 +54,16 @@ export function writableMountArgs(
   return ['-v', `${hostPath}:${containerPath}`];
 }
 
-export function tmpfsMountArgs(containerPath: string): string[] {
-  return ['--tmpfs', containerPath];
+export function tmpfsMountArgs(
+  containerPath: string,
+  options?: string | string[],
+): string[] {
+  if (!options || (Array.isArray(options) && options.length === 0)) {
+    return ['--tmpfs', containerPath];
+  }
+
+  const optionText = Array.isArray(options) ? options.join(',') : options;
+  return ['--tmpfs', `${containerPath}:${optionText}`];
 }
 
 export function stopContainer(name: string): string {

@@ -152,9 +152,10 @@ function detectRuntimeVersion(): string {
   }
 }
 
-function buildDockerRunArgs(
+export function buildDockerRunArgs(
   scratchWorkspace: string,
   sourceRepoDir: string,
+  command: Pick<VerificationCommandSpec, 'file' | 'args'>,
 ): string[] {
   const args = [
     'run',
@@ -162,6 +163,8 @@ function buildDockerRunArgs(
     '-i',
     '--workdir',
     PRIMARY_PROJECT_MOUNT,
+    '--entrypoint',
+    command.file,
     '-e',
     `TZ=${TIMEZONE}`,
     '-e',
@@ -196,6 +199,12 @@ function buildDockerRunArgs(
         path.join(PRIMARY_PROJECT_MOUNT, 'node_modules'),
       ),
     );
+    args.push(
+      ...tmpfsMountArgs(
+        path.join(PRIMARY_PROJECT_MOUNT, 'node_modules', '.vite-temp'),
+        ['uid=1000', 'gid=1000', 'mode=1777'],
+      ),
+    );
   }
 
   const pnpmStore = detectPnpmStorePath(sourceRepoDir);
@@ -204,6 +213,7 @@ function buildDockerRunArgs(
   }
 
   args.push(...tmpfsMountArgs('/tmp'));
+  args.push(REVIEWER_CONTAINER_IMAGE, ...command.args);
 
   return args;
 }
@@ -346,8 +356,7 @@ export async function runVerificationRequest(
       };
     }
 
-    const dockerArgs = buildDockerRunArgs(scratchWorkspace, repoDir);
-    dockerArgs.push(REVIEWER_CONTAINER_IMAGE, command.file, ...command.args);
+    const dockerArgs = buildDockerRunArgs(scratchWorkspace, repoDir, command);
 
     try {
       const { stdout, stderr } = await execFileCapture(
