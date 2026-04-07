@@ -182,7 +182,10 @@ export function createPairedExecutionLifecycle(args: {
       }
 
       const finishedTask = getPairedTaskById(pairedExecutionContext.task.id);
-      if (finishedTask?.status === 'completed' && finishedTask.completion_reason) {
+      if (
+        finishedTask?.status === 'completed' &&
+        finishedTask.completion_reason
+      ) {
         const sender = getLastHumanMessageSender(chatJid);
         const mention = sender ? `<@${sender}>` : '';
         const notifications: Record<string, string> = {

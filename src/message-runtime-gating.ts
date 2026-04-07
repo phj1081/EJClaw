@@ -1,6 +1,9 @@
 import { logger } from './logger.js';
 import { hasAllowedTrigger } from './message-runtime-rules.js';
-import { handleSessionCommand, type SessionCommandDeps } from './session-commands.js';
+import {
+  handleSessionCommand,
+  type SessionCommandDeps,
+} from './session-commands.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
 
 export async function handleQueuedRunGates(args: {

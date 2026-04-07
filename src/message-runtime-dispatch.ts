@@ -1,8 +1,5 @@
 import { logger } from './logger.js';
-import {
-  getLatestOpenPairedTaskForChat,
-  getMessagesSinceSeq,
-} from './db.js';
+import { getLatestOpenPairedTaskForChat, getMessagesSinceSeq } from './db.js';
 import {
   buildQueuedTurnDispatch,
   executeBotOnlyPairedFollowUpAction,
@@ -17,7 +14,10 @@ import {
   resolveNextTurnAction,
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
-import { extractSessionCommand, isSessionCommandAllowed } from './session-commands.js';
+import {
+  extractSessionCommand,
+  isSessionCommandAllowed,
+} from './session-commands.js';
 import { isSessionCommandSenderAllowed } from './config.js';
 import { hasReviewerLease } from './service-routing.js';
 import type { ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
@@ -162,7 +162,10 @@ export async function processQueuedGroupDispatch(args: {
   );
   const messagesToSend =
     pendingMessages.length > 0 ? pendingMessages : processableGroupMessages;
-  const labeledMessagesToSend = args.labelPairedSenders(chatJid, messagesToSend);
+  const labeledMessagesToSend = args.labelPairedSenders(
+    chatJid,
+    messagesToSend,
+  );
   const {
     formatted,
     botOnlyFollowUpAction,

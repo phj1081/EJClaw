@@ -98,7 +98,10 @@ export async function deliverOpenWorkItem(args: {
       }),
       'Attempting to deliver produced work item as a new message',
     );
-    await args.channel.sendMessage(args.item.chat_jid, args.item.result_payload);
+    await args.channel.sendMessage(
+      args.item.chat_jid,
+      args.item.result_payload,
+    );
     markWorkItemDelivered(args.item.id);
     args.openContinuation(args.item.chat_jid);
     args.log.info(
