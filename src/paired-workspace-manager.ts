@@ -828,7 +828,7 @@ export function prepareReviewerWorkspaceForExecution(
     };
   }
 
-  // Container mode: reviewer mounts owner workspace directly as read-only.
+  // Reviewer uses the owner workspace directly in read-only mode.
   // No snapshot copy needed — just return the owner workspace as reviewer workspace.
   const reviewerWorkspace = getPairedWorkspace(task.id, 'reviewer') ?? null;
   if (reviewerWorkspace) {
