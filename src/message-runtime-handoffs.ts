@@ -15,10 +15,7 @@ import {
   resolveHandoffRoleOverride,
 } from './message-runtime-shared.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
-import type {
-  Channel,
-  RegisteredGroup,
-} from './types.js';
+import type { Channel, RegisteredGroup } from './types.js';
 
 export function enqueuePendingHandoffs(args: {
   enqueueTask: (
