@@ -1698,6 +1698,111 @@ describe('createMessageRuntime', () => {
     });
   });
 
+  it('re-enqueues reviewer after a successful owner delivery moves the task to review_ready', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'owner-bot@test'),
+    };
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const enqueueMessageCheck = vi.fn();
+    const pairedTask = {
+      id: 'task-owner-delivery-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
+      () => pairedTask,
+    );
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '이 구현 진행해줘',
+        timestamp: '2026-03-30T00:00:00.000Z',
+        seq: 1,
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        pairedTask.status = 'review_ready';
+        pairedTask.review_requested_at = '2026-03-30T00:00:01.000Z';
+        pairedTask.round_trip_count = 1;
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE_WITH_CONCERNS\nowner complete',
+          newSessionId: 'session-owner-delivery-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nowner complete',
+          newSessionId: 'session-owner-delivery-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-delivery-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        runId: 'run-owner-delivery-follow-up',
+        completedRole: 'owner',
+        taskId: 'task-owner-delivery-follow-up',
+        taskStatus: 'review_ready',
+      }),
+      'Queued paired follow-up after successful owner delivery',
+    );
+  });
+
   it('consumes stale bot-only owner messages once the finalize turn output is already persisted', () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
