@@ -1,4 +1,4 @@
-export type ServiceKind = 'primary' | 'legacy';
+export type ServiceKind = 'primary';
 
 export interface ServiceDef {
   /** Stable topology kind used by setup/verify logic */
@@ -35,23 +35,6 @@ const CURRENT_SERVICE_TEMPLATES: ServiceTemplate[] = [
   },
 ];
 
-const LEGACY_SERVICE_TEMPLATES: ServiceTemplate[] = [
-  {
-    kind: 'legacy',
-    name: 'ejclaw-codex',
-    launchdLabel: 'com.ejclaw-codex',
-    description: 'Legacy EJClaw Codex Assistant',
-    logName: 'ejclaw-codex',
-  },
-  {
-    kind: 'legacy',
-    name: 'ejclaw-review',
-    launchdLabel: 'com.ejclaw-review',
-    description: 'Legacy EJClaw Codex Review Assistant',
-    logName: 'ejclaw-review',
-  },
-];
-
 function materializeServiceDef(template: ServiceTemplate): ServiceDef {
   const environmentFile = undefined;
   const extraEnv =
@@ -79,17 +62,6 @@ export function getServiceDefs(projectRoot: string): ServiceDef[] {
   );
 }
 
-export function getLegacyServiceDefs(projectRoot: string): ServiceDef[] {
-  void projectRoot;
-  return LEGACY_SERVICE_TEMPLATES.map((template) =>
-    materializeServiceDef(template),
-  );
-}
-
 export function getConfiguredServiceNames(projectRoot: string): string[] {
   return getServiceDefs(projectRoot).map((def) => def.name);
-}
-
-export function getLegacyServiceNames(projectRoot: string): string[] {
-  return getLegacyServiceDefs(projectRoot).map((def) => def.name);
 }

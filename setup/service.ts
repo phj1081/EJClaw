@@ -17,10 +17,6 @@ import {
   getNodePath,
   getServiceManager,
 } from './platform.js';
-import {
-  detectLegacyServiceIssues,
-  formatLegacyServiceFailureMessage,
-} from './legacy-service-guard.js';
 import { getServiceDefs } from './service-defs.js';
 import { setupLaunchd, setupLinux } from './service-installers.js';
 import { emitStatus } from './status.js';
@@ -52,37 +48,6 @@ export async function run(_args: string[]): Promise<void> {
     logger.warn(
       'Readonly sandbox strict mode requires root setup to disable AppArmor unprivileged userns restriction',
     );
-  }
-
-  const legacyServiceIssues = detectLegacyServiceIssues(
-    projectRoot,
-    serviceManager,
-    homeDir,
-  );
-  if (legacyServiceIssues.length > 0) {
-    const errorMessage = formatLegacyServiceFailureMessage({
-      projectRoot,
-      serviceManager,
-      homeDir,
-      services: legacyServiceIssues,
-    });
-    logger.error(
-      { legacyServiceIssues, serviceManager },
-      'Legacy multi-service install detected during setup',
-    );
-    emitStatus('SETUP_SERVICE', {
-      SERVICE_TYPE: serviceManager,
-      NODE_PATH: nodePath,
-      PROJECT_PATH: projectRoot,
-      STATUS: 'failed',
-      ERROR: 'legacy_services_detected',
-      LEGACY_SERVICES: legacyServiceIssues
-        .map((service) => `${service.name}:${service.status}`)
-        .join(','),
-      LOG: 'logs/setup.log',
-    });
-    console.error(errorMessage);
-    process.exit(1);
   }
 
   // Build first

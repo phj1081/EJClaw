@@ -9,11 +9,7 @@ import {
   buildStackRestartSystemdUnit,
   buildSystemdUnit,
 } from './service-renderers.js';
-import {
-  getLegacyServiceDefs,
-  getServiceDefs,
-  type ServiceDef,
-} from './service-defs.js';
+import { getServiceDefs, type ServiceDef } from './service-defs.js';
 
 /**
  * Tests for service configuration generation.
@@ -187,19 +183,6 @@ describe('service definitions', () => {
     expect(defs[0]?.extraEnv).toMatchObject({
       EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
     });
-  });
-
-  it('keeps legacy service identities available for migration guards', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-stack-'));
-    tempRoots.push(tempRoot);
-
-    const defs = getLegacyServiceDefs(tempRoot);
-
-    expect(defs.map((def) => def.name)).toEqual([
-      'ejclaw-codex',
-      'ejclaw-review',
-    ]);
-    expect(defs.map((def) => def.kind)).toEqual(['legacy', 'legacy']);
   });
 
   it('generates a oneshot stack restart unit', () => {
