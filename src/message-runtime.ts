@@ -16,9 +16,7 @@ import {
   normalizeMessageForDedupe,
 } from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
-import {
-  enqueueGenericFollowUpAfterDeliveryRetry as enqueueDeliveryRetryFollowUp,
-} from './message-runtime-dispatch.js';
+import { enqueueGenericFollowUpAfterDeliveryRetry as enqueueDeliveryRetryFollowUp } from './message-runtime-dispatch.js';
 import {
   deliverOpenWorkItem,
   processOpenWorkItemDelivery,
@@ -458,7 +456,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     );
 
     // Resolve the correct Discord channel for a given task status.
-    const roleToChannel: Record<'owner' | 'reviewer' | 'arbiter', Channel | null> = {
+    const roleToChannel: Record<
+      'owner' | 'reviewer' | 'arbiter',
+      Channel | null
+    > = {
       owner: channel,
       reviewer: foundReviewerChannel || null,
       arbiter: foundArbiterChannel || null,

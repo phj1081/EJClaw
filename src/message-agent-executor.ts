@@ -26,14 +26,10 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { createScopedLogger } from './logger.js';
 import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
-import {
-  preparePairedExecutionContext,
-} from './paired-execution-context.js';
+import { preparePairedExecutionContext } from './paired-execution-context.js';
 import { resolveCodexFallbackHandoff } from './paired-turn-fallback.js';
 import { createPairedExecutionLifecycle } from './message-agent-executor-paired.js';
-import {
-  resolveExecutionTarget,
-} from './message-runtime-rules.js';
+import { resolveExecutionTarget } from './message-runtime-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import { type AgentTriggerReason } from './agent-error-detection.js';
 import {
@@ -539,7 +535,9 @@ export async function runAgentForGroup(
           outputText.length > 0
         ) {
           try {
-            pairedExecutionLifecycle.recordFinalOutputBeforeDelivery(outputText);
+            pairedExecutionLifecycle.recordFinalOutputBeforeDelivery(
+              outputText,
+            );
           } catch (err) {
             log.warn(
               { pairedTaskId: pairedExecutionContext?.task.id ?? null, err },
@@ -648,7 +646,7 @@ export async function runAgentForGroup(
       runId,
     };
 
-      return runClaudeAttemptWithRotation({
+    return runClaudeAttemptWithRotation({
       initialTrigger,
       runAttempt: () => runAttempt('claude'),
       logContext: logCtx,
@@ -811,9 +809,9 @@ export async function runAgentForGroup(
       const finalOutputText = getAgentOutputText(output);
       pairedExecutionLifecycle.updateSummary({
         outputText:
-        (typeof finalOutputText === 'string' && finalOutputText.length > 0
-          ? finalOutputText
-          : null),
+          typeof finalOutputText === 'string' && finalOutputText.length > 0
+            ? finalOutputText
+            : null,
         errorText:
           typeof output.error === 'string' && output.error.length > 0
             ? output.error

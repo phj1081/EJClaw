@@ -1,7 +1,4 @@
-import {
-  getPairedTurnOutputs,
-  getRecentChatMessages,
-} from './db.js';
+import { getPairedTurnOutputs, getRecentChatMessages } from './db.js';
 import { logger } from './logger.js';
 import {
   buildArbiterPromptForTask,
@@ -45,7 +42,10 @@ type ExecuteTurnFn = (args: {
   visiblePhase: unknown;
 }>;
 
-type RoleToChannelMap = Record<'owner' | 'reviewer' | 'arbiter', Channel | null>;
+type RoleToChannelMap = Record<
+  'owner' | 'reviewer' | 'arbiter',
+  Channel | null
+>;
 
 export async function runPendingPairedTurnIfNeeded(args: {
   chatJid: string;

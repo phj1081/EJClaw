@@ -63,7 +63,10 @@ export async function processMessageLoopTick(args: {
     intentKind: ScheduledPairedFollowUpIntentKind;
     enqueue: () => void;
   }) => boolean;
-  enqueueScopedGroupMessageCheck: (chatJid: string, groupFolder: string) => void;
+  enqueueScopedGroupMessageCheck: (
+    chatJid: string,
+    groupFolder: string,
+  ) => void;
   sendQueuedMessage: (chatJid: string, text: string) => boolean;
   closeStdin: (chatJid: string, reason: string) => void;
   labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
@@ -143,7 +146,10 @@ export function recoverPendingMessages(args: {
   getRegisteredGroups: () => Record<string, RegisteredGroup>;
   lastAgentTimestamps: Record<string, string>;
   saveState: () => void;
-  enqueueScopedGroupMessageCheck: (chatJid: string, groupFolder: string) => void;
+  enqueueScopedGroupMessageCheck: (
+    chatJid: string,
+    groupFolder: string,
+  ) => void;
 }): void {
   const registeredGroups = args.getRegisteredGroups();
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
