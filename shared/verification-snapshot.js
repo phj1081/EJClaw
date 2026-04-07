@@ -3,13 +3,44 @@ import fs from 'fs';
 import path from 'path';
 
 export const VERIFICATION_SNAPSHOT_EXCLUDE_NAMES = new Set([
-  '.git',
   'node_modules',
-  '.env',
 ]);
+
+const VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_NAMES = new Set([
+  '.git',
+  '.env',
+  'data',
+  'logs',
+  'cache',
+  '.ejclaw-reviewer-runtime',
+]);
+
+const VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_PREFIXES = [
+  'store.local-backup-',
+];
 
 export function isVerificationSnapshotExcludedName(name) {
   return VERIFICATION_SNAPSHOT_EXCLUDE_NAMES.has(name);
+}
+
+export function isVerificationSnapshotExcludedPath(repoDir, currentPath) {
+  const name = path.basename(currentPath);
+  if (isVerificationSnapshotExcludedName(name)) {
+    return true;
+  }
+
+  const relPath = path.relative(repoDir, currentPath);
+  const isRepoRootEntry = relPath !== '' && !relPath.includes(path.sep);
+  if (!isRepoRootEntry) {
+    return false;
+  }
+
+  return (
+    VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_NAMES.has(name) ||
+    VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_PREFIXES.some((prefix) =>
+      name.startsWith(prefix),
+    )
+  );
 }
 
 function updateVerificationSnapshotHash(hash, repoDir, currentPath) {
@@ -21,8 +52,9 @@ function updateVerificationSnapshotHash(hash, repoDir, currentPath) {
       hash.update(`dir\0${relPath}\0`);
     }
     for (const entry of fs.readdirSync(currentPath).sort()) {
-      if (isVerificationSnapshotExcludedName(entry)) continue;
-      updateVerificationSnapshotHash(hash, repoDir, path.join(currentPath, entry));
+      const nextPath = path.join(currentPath, entry);
+      if (isVerificationSnapshotExcludedPath(repoDir, nextPath)) continue;
+      updateVerificationSnapshotHash(hash, repoDir, nextPath);
     }
     return;
   }

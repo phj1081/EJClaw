@@ -20,7 +20,7 @@ import {
 } from './workspace-package-manager.js';
 import {
   computeVerificationSnapshotId,
-  isVerificationSnapshotExcludedName,
+  isVerificationSnapshotExcludedPath,
   resolveVerificationResponsesDir,
 } from '../shared/verification-snapshot.js';
 
@@ -95,8 +95,8 @@ export function buildVerificationCommand(
   };
 }
 
-function shouldExcludePath(name: string): boolean {
-  return isVerificationSnapshotExcludedName(name);
+function shouldExcludePath(repoDir: string, source: string): boolean {
+  return isVerificationSnapshotExcludedPath(repoDir, source);
 }
 
 export function computeVerificationSnapshot(
@@ -130,7 +130,7 @@ function copyWorkspaceToScratch(repoDir: string, scratchDir: string): void {
     recursive: true,
     filter: (source) => {
       if (source === repoDir) return true;
-      return !shouldExcludePath(path.basename(source));
+      return !shouldExcludePath(repoDir, source);
     },
   });
 }

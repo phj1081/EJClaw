@@ -83,6 +83,76 @@ describe('verification helpers', () => {
     expect(third).not.toBe(first);
   });
 
+  it('ignores runtime state directories and local backup folders', () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-snapshot-'));
+    fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(repoDir, 'data'), { recursive: true });
+    fs.mkdirSync(path.join(repoDir, 'logs'), { recursive: true });
+    fs.mkdirSync(path.join(repoDir, 'cache'), { recursive: true });
+    fs.mkdirSync(path.join(repoDir, '.ejclaw-reviewer-runtime'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(repoDir, 'store.local-backup-20260408_024500'), {
+      recursive: true,
+    });
+
+    fs.writeFileSync(
+      path.join(repoDir, 'src', 'index.ts'),
+      'export const x = 1;\n',
+    );
+    fs.writeFileSync(path.join(repoDir, 'data', 'state.json'), '{"x":1}\n');
+    fs.writeFileSync(path.join(repoDir, 'logs', 'service.log'), 'line-1\n');
+    fs.writeFileSync(path.join(repoDir, 'cache', 'tmp.txt'), 'cache-a\n');
+    fs.writeFileSync(
+      path.join(repoDir, '.ejclaw-reviewer-runtime', 'runtime.json'),
+      '{"ok":true}\n',
+    );
+    fs.writeFileSync(
+      path.join(repoDir, 'store.local-backup-20260408_024500', 'db.sqlite'),
+      'backup-a\n',
+    );
+
+    const first = computeVerificationSnapshot(repoDir).snapshotId;
+
+    fs.writeFileSync(path.join(repoDir, 'data', 'state.json'), '{"x":2}\n');
+    fs.writeFileSync(path.join(repoDir, 'logs', 'service.log'), 'line-2\n');
+    fs.writeFileSync(path.join(repoDir, 'cache', 'tmp.txt'), 'cache-b\n');
+    fs.writeFileSync(
+      path.join(repoDir, '.ejclaw-reviewer-runtime', 'runtime.json'),
+      '{"ok":false}\n',
+    );
+    fs.writeFileSync(
+      path.join(repoDir, 'store.local-backup-20260408_024500', 'db.sqlite'),
+      'backup-b\n',
+    );
+
+    const second = computeVerificationSnapshot(repoDir).snapshotId;
+
+    expect(second).toBe(first);
+  });
+
+  it('still includes nested source directories named like excluded roots', () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-snapshot-'));
+    fs.mkdirSync(path.join(repoDir, 'src', 'fixtures', 'data'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(repoDir, 'src', 'fixtures', 'data', 'sample.json'),
+      '{"v":1}\n',
+    );
+
+    const first = computeVerificationSnapshot(repoDir).snapshotId;
+
+    fs.writeFileSync(
+      path.join(repoDir, 'src', 'fixtures', 'data', 'sample.json'),
+      '{"v":2}\n',
+    );
+
+    const second = computeVerificationSnapshot(repoDir).snapshotId;
+
+    expect(second).not.toBe(first);
+  });
+
   it('backfills legacy node_modules state before verification', async () => {
     const repoDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-verification-legacy-'),
