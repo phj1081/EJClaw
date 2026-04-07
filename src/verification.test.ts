@@ -10,6 +10,7 @@ import {
   isVerificationProfile,
   runVerificationRequest,
 } from './verification.js';
+import { hasInstalledNodeModules } from './workspace-package-manager.js';
 
 describe('verification helpers', () => {
   it('recognizes only fixed verification profiles', () => {
@@ -82,16 +83,18 @@ describe('verification helpers', () => {
     expect(third).not.toBe(first);
   });
 
-  it('fails verification when node_modules contains only cache noise', async () => {
+  it('backfills legacy node_modules state before verification', async () => {
     const repoDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'ejclaw-verification-noise-'),
+      path.join(os.tmpdir(), 'ejclaw-verification-legacy-'),
     );
-    fs.mkdirSync(path.join(repoDir, 'node_modules', '.vite'), {
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
       recursive: true,
     });
     fs.writeFileSync(
       path.join(repoDir, 'package.json'),
       JSON.stringify({
+        name: 'verification-legacy',
+        packageManager: 'bun@1.3.11',
         scripts: {
           test: 'vitest run',
           typecheck: 'tsc --noEmit',
@@ -99,16 +102,22 @@ describe('verification helpers', () => {
         },
       }),
     );
+    fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
+    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'tsc'), '');
+
+    expect(hasInstalledNodeModules(repoDir)).toBe(false);
 
     const result = await runVerificationRequest(
       {
-        requestId: 'req-noise',
+        requestId: 'req-legacy-node-modules',
         profile: 'typecheck',
+        expectedSnapshotId: 'fs:mismatch',
       },
       { repoDir },
     );
 
+    expect(hasInstalledNodeModules(repoDir)).toBe(true);
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('installed node_modules tree');
+    expect(result.error).toContain('Snapshot mismatch before verification');
   });
 });
