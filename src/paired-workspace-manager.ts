@@ -778,7 +778,7 @@ export function markPairedTaskReviewReady(taskId: string): {
     );
   }
 
-  // Reviewer runs in a container with the owner workspace mounted read-only.
+  // Reviewer uses the owner workspace directly in read-only mode.
   // No file-level snapshot copy needed — just register the path.
   const reviewerWorkspace = makeWorkspaceRecord({
     taskId,

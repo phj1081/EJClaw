@@ -62,7 +62,7 @@ describe('verification IPC', () => {
       stderr: '',
       exitCode: 0,
       snapshotId: 'fs:abc123',
-      runtimeVersion: 'ejclaw-reviewer:latest@sha256:test',
+      runtimeVersion: 'host:bun@test',
     });
 
     await processTaskIpc(

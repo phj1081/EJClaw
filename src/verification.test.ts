@@ -5,7 +5,6 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildDockerRunArgs,
   buildVerificationCommand,
   computeVerificationSnapshot,
   isVerificationProfile,
@@ -72,10 +71,13 @@ describe('verification helpers', () => {
       path.join(repoDir, 'src', 'index.ts'),
       'export const x = 1;\n',
     );
+    fs.mkdirSync(path.join(repoDir, 'dist'), { recursive: true });
     fs.writeFileSync(path.join(repoDir, '.env'), 'SECRET=1\n');
+    fs.writeFileSync(path.join(repoDir, 'dist', 'index.js'), 'export const x = 1;\n');
 
     const first = computeVerificationSnapshot(repoDir).snapshotId;
     fs.writeFileSync(path.join(repoDir, '.env'), 'SECRET=2\n');
+    fs.writeFileSync(path.join(repoDir, 'dist', 'index.js'), 'export const x = 2;\n');
     const second = computeVerificationSnapshot(repoDir).snapshotId;
     fs.writeFileSync(
       path.join(repoDir, 'src', 'index.ts'),
@@ -195,9 +197,53 @@ describe('verification helpers', () => {
     expect(result.error).toContain('Snapshot mismatch before verification');
   });
 
-  it('runs verification commands via docker entrypoint override', () => {
+  it('runs typecheck directly on the host for non-build profiles', async () => {
     const repoDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'ejclaw-verification-docker-'),
+      path.join(os.tmpdir(), 'ejclaw-verification-direct-'),
+    );
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        name: 'verification-direct',
+        packageManager: 'bun@1.3.11',
+        scripts: {
+          typecheck:
+            'node -e "process.stdout.write(\'typecheck:\' + (process.env.CI || \'missing\'))"',
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
+    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'placeholder'), '');
+    fs.writeFileSync(
+      path.join(repoDir, 'src', 'index.ts'),
+      'export const value = 1;\n',
+    );
+    ensureWorkspaceDependenciesInstalled(repoDir);
+
+    const expectedSnapshotId = computeVerificationSnapshot(repoDir).snapshotId;
+    const result = await runVerificationRequest(
+      {
+        requestId: 'req-direct-typecheck',
+        profile: 'typecheck',
+        expectedSnapshotId,
+      },
+      { repoDir },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('typecheck:1');
+    expect(result.runtimeVersion).toMatch(/^host:bun@/);
+    expect(result.snapshotId).toBe(expectedSnapshotId);
+  });
+
+  it('does not leak host secrets into direct verification commands', async () => {
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-direct-secret-'),
     );
     fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
       recursive: true,
@@ -205,27 +251,129 @@ describe('verification helpers', () => {
     fs.writeFileSync(
       path.join(repoDir, 'package.json'),
       JSON.stringify({
-        name: 'verification-docker',
+        name: 'verification-direct-secret',
         packageManager: 'bun@1.3.11',
         scripts: {
-          typecheck: 'tsc --noEmit',
+          typecheck:
+            'node -e "process.stdout.write(process.env.EJCLAW_VERIFICATION_SECRET || \'missing\')"',
         },
       }),
     );
     fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
-    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'tsc'), '');
+    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'placeholder'), '');
     ensureWorkspaceDependenciesInstalled(repoDir);
 
-    const command = buildVerificationCommand('typecheck', repoDir);
-    const args = buildDockerRunArgs('/tmp/verify-workspace', repoDir, command);
-    const imageIndex = args.findIndex((value) => value === 'ejclaw-reviewer:latest');
+    const previousSecret = process.env.EJCLAW_VERIFICATION_SECRET;
+    process.env.EJCLAW_VERIFICATION_SECRET = 'top-secret';
 
-    expect(args).toContain('--entrypoint');
-    expect(args[args.indexOf('--entrypoint') + 1]).toBe(command.file);
-    expect(imageIndex).toBeGreaterThan(args.indexOf('--entrypoint'));
-    expect(args.slice(imageIndex + 1)).toEqual(command.args);
-    expect(args).toContain(
-      '/workspace/project/node_modules/.vite-temp:uid=1000,gid=1000,mode=1777',
+    try {
+      const expectedSnapshotId = computeVerificationSnapshot(repoDir).snapshotId;
+      const result = await runVerificationRequest(
+        {
+          requestId: 'req-direct-typecheck-secret',
+          profile: 'typecheck',
+          expectedSnapshotId,
+        },
+        { repoDir },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.stdout).toContain('missing');
+      expect(result.stdout).not.toContain('top-secret');
+    } finally {
+      if (previousSecret == null) {
+        delete process.env.EJCLAW_VERIFICATION_SECRET;
+      } else {
+        process.env.EJCLAW_VERIFICATION_SECRET = previousSecret;
+      }
+    }
+  });
+
+  it('fails direct verification if the command mutates the workspace', async () => {
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-direct-mutate-'),
+    );
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        name: 'verification-direct-mutate',
+        packageManager: 'bun@1.3.11',
+        scripts: {
+          test: 'node -e "require(\'node:fs\').writeFileSync(\'src/generated.txt\', \'x\\\\n\')"',
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
+    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'placeholder'), '');
+    fs.writeFileSync(
+      path.join(repoDir, 'src', 'index.ts'),
+      'export const value = 1;\n',
+    );
+    ensureWorkspaceDependenciesInstalled(repoDir);
+
+    const expectedSnapshotId = computeVerificationSnapshot(repoDir).snapshotId;
+    const result = await runVerificationRequest(
+      {
+        requestId: 'req-direct-test-mutate',
+        profile: 'test',
+        expectedSnapshotId,
+      },
+      { repoDir },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(1);
+    expect(result.error).toContain('Workspace changed during verification');
+    expect(result.snapshotId).not.toBe(expectedSnapshotId);
+    expect(fs.existsSync(path.join(repoDir, 'src', 'generated.txt'))).toBe(true);
+  });
+
+  it('allows build verification to write excluded output directories', async () => {
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-build-direct-'),
+    );
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        name: 'verification-build-direct',
+        packageManager: 'bun@1.3.11',
+        scripts: {
+          build: 'node -e "require(\'node:fs\').mkdirSync(\'dist\', { recursive: true }); require(\'node:fs\').writeFileSync(\'dist/output.js\', \'ok\\\\n\')"',
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
+    fs.writeFileSync(path.join(repoDir, 'node_modules', '.bin', 'placeholder'), '');
+    fs.writeFileSync(
+      path.join(repoDir, 'src', 'index.ts'),
+      'export const value = 1;\n',
+    );
+    ensureWorkspaceDependenciesInstalled(repoDir);
+
+    const expectedSnapshotId = computeVerificationSnapshot(repoDir).snapshotId;
+    const result = await runVerificationRequest(
+      {
+        requestId: 'req-direct-build',
+        profile: 'build',
+        expectedSnapshotId,
+      },
+      { repoDir },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.runtimeVersion).toMatch(/^host:bun@/);
+    expect(result.snapshotId).toBe(expectedSnapshotId);
+    expect(fs.readFileSync(path.join(repoDir, 'dist', 'output.js'), 'utf-8')).toBe(
+      'ok\n',
     );
   });
 });

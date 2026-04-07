@@ -45,7 +45,7 @@ describe('runner verification helpers', () => {
         stderr: '',
         exitCode: 0,
         snapshotId: 'fs:abc123',
-        runtimeVersion: 'ejclaw-reviewer:latest@sha256:test',
+        runtimeVersion: 'host:bun@test',
       }),
     );
 
@@ -69,13 +69,13 @@ describe('runner verification helpers', () => {
       stderr: 'build failed\n',
       exitCode: 1,
       snapshotId: 'fs:def456',
-      runtimeVersion: 'ejclaw-reviewer:latest@sha256:test',
+      runtimeVersion: 'host:bun@test',
       error: 'command failed',
     });
 
     expect(text).toContain('Verification profile: build');
     expect(text).toContain('Snapshot: fs:def456');
-    expect(text).toContain('Runtime: ejclaw-reviewer:latest@sha256:test');
+    expect(text).toContain('Runtime: host:bun@test');
     expect(text).toContain('Exit code: 1');
     expect(text).toContain('$ npm run build');
     expect(text).toContain('[stderr]');

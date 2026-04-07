@@ -2,13 +2,11 @@ import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { REVIEWER_CONTAINER_IMAGE } from './config.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 
 export const HOST_EVIDENCE_ACTIONS = [
   'ejclaw_service_status',
   'ejclaw_service_logs',
-  'reviewer_image_inspect',
 ] as const;
 
 export type HostEvidenceAction = (typeof HOST_EVIDENCE_ACTIONS)[number];
@@ -108,22 +106,6 @@ export function buildHostEvidenceCommand(
         file: 'journalctl',
         args,
         commandText: `journalctl ${args.join(' ')}`,
-      };
-    }
-    case 'reviewer_image_inspect': {
-      const args = [
-        'image',
-        'inspect',
-        REVIEWER_CONTAINER_IMAGE,
-        '--format',
-        'Id={{.Id}}\nRepoTags={{json .RepoTags}}\nCreated={{.Created}}\nSize={{.Size}}',
-      ];
-      return {
-        file: 'docker',
-        args,
-        commandText: `docker ${args
-          .map((part) => (part.includes(' ') ? JSON.stringify(part) : part))
-          .join(' ')}`,
       };
     }
   }

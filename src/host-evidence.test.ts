@@ -10,7 +10,6 @@ describe('host evidence helpers', () => {
   it('recognizes only allowlisted actions', () => {
     expect(isHostEvidenceAction('ejclaw_service_status')).toBe(true);
     expect(isHostEvidenceAction('ejclaw_service_logs')).toBe(true);
-    expect(isHostEvidenceAction('reviewer_image_inspect')).toBe(true);
     expect(isHostEvidenceAction('rm -rf /')).toBe(false);
   });
 
@@ -39,16 +38,5 @@ describe('host evidence helpers', () => {
     expect(logs.args).toEqual(
       expect.arrayContaining(['--user', '-u', 'ejclaw', '-n', '42']),
     );
-
-    const inspect = buildHostEvidenceCommand({
-      requestId: 'req-3',
-      action: 'reviewer_image_inspect',
-    });
-    expect(inspect.file).toBe('docker');
-    expect(inspect.args.slice(0, 3)).toEqual([
-      'image',
-      'inspect',
-      'ejclaw-reviewer:latest',
-    ]);
   });
 });

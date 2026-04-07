@@ -99,8 +99,7 @@ describe('credentials detection', () => {
 describe('platform command detection', () => {
   it('commandExists returns boolean', async () => {
     const { commandExists } = await import('./platform.js');
-    expect(typeof commandExists('docker')).toBe('boolean');
+    expect(typeof commandExists('git')).toBe('boolean');
     expect(typeof commandExists('nonexistent_binary_xyz')).toBe('boolean');
   });
 });
-

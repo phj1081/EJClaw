@@ -207,9 +207,6 @@ const rawMaxRoundTrips = getEnv('PAIRED_MAX_ROUND_TRIPS') || '1000';
 export const PAIRED_MAX_ROUND_TRIPS =
   rawMaxRoundTrips === '0' ? Infinity : parseInt(rawMaxRoundTrips, 10) || 1000;
 
-// ── Container isolation ───────────────────────────────────────────
-export const REVIEWER_CONTAINER_IMAGE =
-  getEnv('REVIEWER_CONTAINER_IMAGE') || 'ejclaw-reviewer:latest';
 export const RECOVERY_STAGGER_MS = parseInt(
   getEnv('RECOVERY_STAGGER_MS') || '2000',
   10,

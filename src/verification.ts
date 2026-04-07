@@ -3,24 +3,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { REVIEWER_CONTAINER_IMAGE, TIMEZONE } from './config.js';
-import {
-  CONTAINER_RUNTIME_BIN,
-  hostGatewayArgs,
-  readonlyMountArgs,
-  tmpfsMountArgs,
-  writableMountArgs,
-} from './container-runtime.js';
+import { TIMEZONE } from './config.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import {
   buildWorkspaceScriptCommand,
-  detectPnpmStorePath,
   ensureWorkspaceDependenciesInstalled,
   hasInstalledNodeModules,
 } from './workspace-package-manager.js';
 import {
   computeVerificationSnapshotId,
-  isVerificationSnapshotExcludedPath,
   resolveVerificationResponsesDir,
 } from '../shared/verification-snapshot.js';
 
@@ -61,11 +52,39 @@ interface VerificationCommandSpec {
   commandText: string;
   requiredScript: string;
 }
+type DirectExecutionEnvKey =
+  | 'PATH'
+  | 'HOME'
+  | 'USER'
+  | 'LOGNAME'
+  | 'SHELL'
+  | 'LANG'
+  | 'LC_ALL'
+  | 'LC_CTYPE'
+  | 'NODE_PATH'
+  | 'NODE_OPTIONS'
+  | 'TERM'
+  | 'COLORTERM'
+  | 'FORCE_COLOR';
 
-const PRIMARY_PROJECT_MOUNT = '/workspace/project';
 const MAX_OUTPUT_CHARS = 24_000;
 const COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const COMMAND_MAX_BUFFER = 20 * 1024 * 1024;
+const DIRECT_EXECUTION_ENV_KEYS: readonly DirectExecutionEnvKey[] = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'NODE_PATH',
+  'NODE_OPTIONS',
+  'TERM',
+  'COLORTERM',
+  'FORCE_COLOR',
+];
 
 export function isVerificationProfile(
   value: unknown,
@@ -95,10 +114,6 @@ export function buildVerificationCommand(
   };
 }
 
-function shouldExcludePath(repoDir: string, source: string): boolean {
-  return isVerificationSnapshotExcludedPath(repoDir, source);
-}
-
 export function computeVerificationSnapshot(
   repoDir: string,
 ): VerificationSnapshot {
@@ -125,102 +140,73 @@ function readPackageScripts(repoDir: string): Record<string, string> {
   return packageJson.scripts || {};
 }
 
-function copyWorkspaceToScratch(repoDir: string, scratchDir: string): void {
-  fs.cpSync(repoDir, scratchDir, {
-    recursive: true,
-    filter: (source) => {
-      if (source === repoDir) return true;
-      return !shouldExcludePath(repoDir, source);
-    },
-  });
-}
-
-function detectRuntimeVersion(): string {
+function detectDirectRuntimeVersion(
+  command: Pick<VerificationCommandSpec, 'file'>,
+): string {
   try {
-    const imageId = execFileSync(
-      CONTAINER_RUNTIME_BIN,
-      ['image', 'inspect', REVIEWER_CONTAINER_IMAGE, '--format', '{{.Id}}'],
-      {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 5000,
-      },
-    ).trim();
-    return `${REVIEWER_CONTAINER_IMAGE}@${imageId}`;
+    switch (command.file) {
+      case 'bun': {
+        const bunVersion = execFileSync('bun', ['--version'], {
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 5000,
+        }).trim();
+        return `host:bun@${bunVersion}`;
+      }
+      case 'node':
+        return `host:node@${process.version}`;
+      default:
+        return `host:${command.file}`;
+    }
   } catch {
-    return REVIEWER_CONTAINER_IMAGE;
+    return `host:${command.file}`;
   }
 }
 
-export function buildDockerRunArgs(
-  scratchWorkspace: string,
-  sourceRepoDir: string,
-  command: Pick<VerificationCommandSpec, 'file' | 'args'>,
-): string[] {
-  const args = [
-    'run',
-    '--rm',
-    '-i',
-    '--workdir',
-    PRIMARY_PROJECT_MOUNT,
-    '--entrypoint',
-    command.file,
-    '-e',
-    `TZ=${TIMEZONE}`,
-    '-e',
-    'CI=1',
-    '-e',
-    'VITEST_CACHE_DIR=/tmp/.vitest',
-    '-e',
-    'JEST_CACHE_DIR=/tmp/.jest',
-    '-e',
-    'npm_config_cache=/tmp/.npm',
-  ];
+function buildDirectExecutionEnvironment(): {
+  env: NodeJS.ProcessEnv;
+  tempRoot: string;
+} {
+  const tempRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'ejclaw-verification-runtime-'),
+  );
+  const env: NodeJS.ProcessEnv = {
+    TZ: TIMEZONE,
+    CI: '1',
+    TMPDIR: tempRoot,
+    TMP: tempRoot,
+    TEMP: tempRoot,
+    VITEST_CACHE_DIR: path.join(tempRoot, '.vitest'),
+    JEST_CACHE_DIR: path.join(tempRoot, '.jest'),
+    npm_config_cache: path.join(tempRoot, '.npm'),
+    npm_config_userconfig: path.join(tempRoot, '.npmrc'),
+    BUN_INSTALL_CACHE_DIR: path.join(tempRoot, '.bun'),
+    XDG_CACHE_HOME: path.join(tempRoot, '.cache'),
+    COREPACK_HOME: path.join(tempRoot, '.corepack'),
+    PNPM_HOME: path.join(tempRoot, '.pnpm-home'),
+    YARN_CACHE_FOLDER: path.join(tempRoot, '.yarn-cache'),
+  };
 
-  args.push(...hostGatewayArgs());
-
-  const hostUid = process.getuid?.();
-  const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-    args.push('--user', `${hostUid}:${hostGid}`);
-    args.push('-e', 'HOME=/home/node');
+  for (const key of DIRECT_EXECUTION_ENV_KEYS) {
+    const value = process.env[key];
+    if (value) {
+      env[key] = value;
+    }
   }
 
-  args.push(...writableMountArgs(scratchWorkspace, PRIMARY_PROJECT_MOUNT));
-
-  const sourceNodeModulesDir = path.join(sourceRepoDir, 'node_modules');
-  if (
-    hasInstalledNodeModules(sourceRepoDir) &&
-    fs.existsSync(sourceNodeModulesDir)
-  ) {
-    args.push(
-      ...readonlyMountArgs(
-        sourceNodeModulesDir,
-        path.join(PRIMARY_PROJECT_MOUNT, 'node_modules'),
-      ),
-    );
-    args.push(
-      ...tmpfsMountArgs(
-        path.join(PRIMARY_PROJECT_MOUNT, 'node_modules', '.vite-temp'),
-        ['uid=1000', 'gid=1000', 'mode=1777'],
-      ),
-    );
-  }
-
-  const pnpmStore = detectPnpmStorePath(sourceRepoDir);
-  if (pnpmStore) {
-    args.push(...readonlyMountArgs(pnpmStore, pnpmStore));
-  }
-
-  args.push(...tmpfsMountArgs('/tmp'));
-  args.push(REVIEWER_CONTAINER_IMAGE, ...command.args);
-
-  return args;
+  return {
+    tempRoot,
+    env,
+  };
 }
 
 function execFileCapture(
   file: string,
   args: string[],
+  options?: {
+    cwd?: string;
+    env?: NodeJS.ProcessEnv;
+  },
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -230,6 +216,8 @@ function execFileCapture(
         encoding: 'utf8',
         timeout: COMMAND_TIMEOUT_MS,
         maxBuffer: COMMAND_MAX_BUFFER,
+        cwd: options?.cwd,
+        env: options?.env,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -264,8 +252,8 @@ export async function runVerificationRequest(
   },
 ): Promise<VerificationResult> {
   const repoDir = options?.repoDir || process.cwd();
-  const runtimeVersion = detectRuntimeVersion();
   const command = buildVerificationCommand(request.profile, repoDir);
+  const runtimeVersion = detectDirectRuntimeVersion(command);
   const scripts = readPackageScripts(repoDir);
 
   if (!scripts[command.requiredScript]) {
@@ -333,36 +321,29 @@ export async function runVerificationRequest(
     };
   }
 
-  const scratchRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), 'ejclaw-verification-'),
-  );
-  const scratchWorkspace = path.join(scratchRoot, 'workspace');
+  const directExecution = buildDirectExecutionEnvironment();
 
   try {
-    copyWorkspaceToScratch(repoDir, scratchWorkspace);
-
-    const afterSnapshot = computeVerificationSnapshot(repoDir);
-    if (afterSnapshot.snapshotId !== beforeSnapshot.snapshotId) {
-      return {
-        ok: false,
-        profile: request.profile,
-        command: command.commandText,
-        stdout: '',
-        stderr: '',
-        exitCode: 1,
-        snapshotId: afterSnapshot.snapshotId,
-        runtimeVersion,
-        error: `Workspace changed while preparing verification scratch. expected=${beforeSnapshot.snapshotId} current=${afterSnapshot.snapshotId}`,
-      };
-    }
-
-    const dockerArgs = buildDockerRunArgs(scratchWorkspace, repoDir, command);
-
     try {
-      const { stdout, stderr } = await execFileCapture(
-        CONTAINER_RUNTIME_BIN,
-        dockerArgs,
-      );
+      const { stdout, stderr } = await execFileCapture(command.file, command.args, {
+        cwd: repoDir,
+        env: directExecution.env,
+      });
+      const afterSnapshot = computeVerificationSnapshot(repoDir);
+      if (afterSnapshot.snapshotId !== beforeSnapshot.snapshotId) {
+        return {
+          ok: false,
+          profile: request.profile,
+          command: command.commandText,
+          stdout: truncateOutput(stdout),
+          stderr: truncateOutput(stderr),
+          exitCode: 1,
+          snapshotId: afterSnapshot.snapshotId,
+          runtimeVersion,
+          error: `Workspace changed during verification. expected=${beforeSnapshot.snapshotId} current=${afterSnapshot.snapshotId}`,
+        };
+      }
+
       return {
         ok: true,
         profile: request.profile,
@@ -382,6 +363,9 @@ export async function runVerificationRequest(
         typeof error === 'object' && error !== null && 'stderr' in error
           ? String((error as { stderr?: unknown }).stderr ?? '')
           : '';
+      const afterSnapshot = computeVerificationSnapshot(repoDir);
+      const workspaceChanged =
+        afterSnapshot.snapshotId !== beforeSnapshot.snapshotId;
 
       return {
         ok: false,
@@ -390,13 +374,19 @@ export async function runVerificationRequest(
         stdout: truncateOutput(stdout),
         stderr: truncateOutput(stderr),
         exitCode: extractExitCode(error),
-        snapshotId: beforeSnapshot.snapshotId,
+        snapshotId: workspaceChanged
+          ? afterSnapshot.snapshotId
+          : beforeSnapshot.snapshotId,
         runtimeVersion,
-        error: error instanceof Error ? error.message : String(error),
+        error: workspaceChanged
+          ? `Workspace changed during verification. expected=${beforeSnapshot.snapshotId} current=${afterSnapshot.snapshotId}`
+          : error instanceof Error
+            ? error.message
+            : String(error),
       };
     }
   } finally {
-    fs.rmSync(scratchRoot, { recursive: true, force: true });
+    fs.rmSync(directExecution.tempRoot, { recursive: true, force: true });
   }
 }
 

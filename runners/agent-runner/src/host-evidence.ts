@@ -4,7 +4,6 @@ import path from 'path';
 export const HOST_EVIDENCE_ACTIONS = [
   'ejclaw_service_status',
   'ejclaw_service_logs',
-  'reviewer_image_inspect',
 ] as const;
 
 export type HostEvidenceAction = (typeof HOST_EVIDENCE_ACTIONS)[number];

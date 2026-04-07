@@ -357,12 +357,12 @@ server.tool(
 
 server.tool(
   'read_host_evidence',
-  'Read host-side deployment evidence through a narrow allowlist. Use this instead of broad shell access when reviewer/arbiter needs service status, recent logs, or reviewer image metadata.',
+  'Read host-side deployment evidence through a narrow allowlist. Use this instead of broad shell access when reviewer/arbiter needs service status or recent logs.',
   {
     action: z
       .enum(HOST_EVIDENCE_ACTIONS)
       .describe(
-        'ejclaw_service_status=systemctl --user show ejclaw, ejclaw_service_logs=recent journalctl lines, reviewer_image_inspect=docker image inspect for the reviewer image',
+        'ejclaw_service_status=systemctl --user show ejclaw, ejclaw_service_logs=recent journalctl lines',
       ),
     tail_lines: z
       .number()

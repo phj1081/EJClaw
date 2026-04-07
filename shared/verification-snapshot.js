@@ -9,6 +9,7 @@ export const VERIFICATION_SNAPSHOT_EXCLUDE_NAMES = new Set([
 const VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_NAMES = new Set([
   '.git',
   '.env',
+  'dist',
   'data',
   'logs',
   'cache',

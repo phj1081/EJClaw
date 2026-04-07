@@ -140,7 +140,6 @@ Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (ho
 
 - Linux (Ubuntu 22.04+) or macOS
 - [Bun](https://bun.sh/) 1.3+
-- Docker (currently used for isolated verification runs)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 - [Codex CLI](https://github.com/openai/codex) (`npm install -g @openai/codex`)
 - Discord bot tokens (3: owner, reviewer, arbiter)
@@ -153,7 +152,6 @@ cd EJClaw
 bun install
 bun run build:runners
 bun run build
-bun run build:container          # Build verification container image
 ```
 
 ## Documentation
@@ -213,7 +211,6 @@ bun run deploy
 ```bash
 bun run build                # Build main project
 bun run build:runners        # Install + build both runners
-bun run build:container      # Rebuild verification container image
 bun run dev                  # Dev mode with hot reload
 bun test                     # Run tests
 ```
