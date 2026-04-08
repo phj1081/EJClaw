@@ -28,6 +28,7 @@ import {
   getExplicitRoomMode,
   getLatestMessageSeqAtOrBefore,
   getLatestPairedTaskForChat,
+  getLatestTurnNumber,
   getLastRespondingAgentType,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
@@ -40,11 +41,13 @@ import {
   getNewMessages,
   getPairedProject,
   getPairedTaskById,
+  getPairedTurnOutputs,
   getPairedWorkspace,
   getRouterState,
   getSession,
   getStoredRoomSettings,
   getTaskById,
+  insertPairedTurnOutput,
   listPairedWorkspacesForTask,
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,
@@ -769,6 +772,48 @@ describe('paired task state', () => {
         (workspace) => workspace.workspace_dir,
       ),
     ).toEqual(['/tmp/reviewer-v2']);
+  });
+
+  it('stores paired turn outputs in order and truncates oversized text', () => {
+    createPairedTask({
+      id: 'paired-task-turn-output',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: null,
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: null,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    insertPairedTurnOutput(
+      'paired-task-turn-output',
+      2,
+      'reviewer',
+      'review turn',
+    );
+    insertPairedTurnOutput(
+      'paired-task-turn-output',
+      1,
+      'owner',
+      'x'.repeat(60_000),
+    );
+
+    const outputs = getPairedTurnOutputs('paired-task-turn-output');
+
+    expect(outputs.map((output) => output.turn_number)).toEqual([1, 2]);
+    expect(outputs[0].role).toBe('owner');
+    expect(outputs[0].output_text).toHaveLength(50_000);
+    expect(outputs[1].output_text).toBe('review turn');
+    expect(getLatestTurnNumber('paired-task-turn-output')).toBe(2);
   });
 
   it('normalizes paired task service shadow from persisted role agent types during init', () => {

@@ -50,6 +50,14 @@ import {
   openPersistentDatabase,
 } from './db/bootstrap.js';
 import {
+  clearChannelOwnerLeaseInDatabase,
+  getAllChannelOwnerLeasesFromDatabase,
+  getChannelOwnerLeaseFromDatabase,
+  setChannelOwnerLeaseInDatabase,
+  type ChannelOwnerLeaseRow,
+  type SetChannelOwnerLeaseInput,
+} from './db/channel-owner-leases.js';
+import {
   type MemoryRecord,
   type MemoryScopeKind,
   type MemorySourceKind,
@@ -88,6 +96,37 @@ import {
   markWorkItemDeliveryRetryInDatabase,
 } from './db/work-items.js';
 import {
+  type PairedTaskUpdates,
+  createPairedTaskInDatabase,
+  getLastBotFinalMessageFromDatabase,
+  getLatestOpenPairedTaskForChatFromDatabase,
+  getLatestPairedTaskForChatFromDatabase,
+  getPairedProjectFromDatabase,
+  getPairedTaskByIdFromDatabase,
+  getPairedWorkspaceFromDatabase,
+  listPairedWorkspacesForTaskFromDatabase,
+  updatePairedTaskInDatabase,
+  upsertPairedProjectInDatabase,
+  upsertPairedWorkspaceInDatabase,
+} from './db/paired-state.js';
+import {
+  getLatestTurnNumberFromDatabase,
+  getPairedTurnOutputsFromDatabase,
+  insertPairedTurnOutputInDatabase,
+} from './db/paired-turn-outputs.js';
+import {
+  type CompleteServiceHandoffCursorInput,
+  type CreateServiceHandoffInput,
+  type ServiceHandoff,
+  claimServiceHandoffInDatabase,
+  completeServiceHandoffAndAdvanceTargetCursorInDatabase,
+  completeServiceHandoffInDatabase,
+  createServiceHandoffInDatabase,
+  failServiceHandoffInDatabase,
+  getAllPendingServiceHandoffsFromDatabase,
+  getPendingServiceHandoffsFromDatabase,
+} from './db/service-handoffs.js';
+import {
   getLastRespondingAgentTypeFromDatabase,
   getRouterStateForServiceFromDatabase,
   getRouterStateFromDatabase,
@@ -105,7 +144,6 @@ import {
   rebuildServiceHandoffsCanonicalSchema,
   rebuildWorkItemsCanonicalSchema,
   resolveStablePairedTaskOwnerAgentType,
-  resolveStableReviewerAgentType,
   resolveStableRoomRoleAgentType,
 } from './db/legacy-rebuilds.js';
 import {
@@ -181,89 +219,8 @@ export type {
 } from './db/memories.js';
 export type { ChatInfo } from './db/messages.js';
 export type { WorkItem } from './db/work-items.js';
-
-export interface ChannelOwnerLeaseRow {
-  chat_jid: string;
-  owner_service_id: string;
-  reviewer_service_id: string | null;
-  arbiter_service_id: string | null;
-  owner_agent_type?: AgentType | null;
-  reviewer_agent_type?: AgentType | null;
-  arbiter_agent_type?: AgentType | null;
-  activated_at: string | null;
-  reason: string | null;
-}
-
-export interface ServiceHandoff {
-  id: number;
-  chat_jid: string;
-  group_folder: string;
-  source_service_id: string;
-  target_service_id: string;
-  source_role: PairedRoomRole | null;
-  source_agent_type?: AgentType | null;
-  target_role: PairedRoomRole | null;
-  target_agent_type: AgentType;
-  prompt: string;
-  status: 'pending' | 'claimed' | 'completed' | 'failed';
-  start_seq: number | null;
-  end_seq: number | null;
-  reason: string | null;
-  intended_role: PairedRoomRole | null;
-  created_at: string;
-  claimed_at: string | null;
-  completed_at: string | null;
-  last_error: string | null;
-}
-
-interface StoredChannelOwnerLeaseRow {
-  chat_jid: string;
-  owner_agent_type?: string | null;
-  reviewer_agent_type?: string | null;
-  arbiter_agent_type?: string | null;
-  activated_at: string | null;
-  reason: string | null;
-}
-
-interface LegacyChannelOwnerLeaseServiceRow extends StoredChannelOwnerLeaseRow {
-  owner_service_id?: string | null;
-  reviewer_service_id?: string | null;
-  arbiter_service_id?: string | null;
-}
-
-interface StoredServiceHandoffRow extends Omit<
-  ServiceHandoff,
-  | 'source_service_id'
-  | 'target_service_id'
-  | 'source_agent_type'
-  | 'target_agent_type'
-> {
-  source_agent_type?: string | null;
-  target_agent_type: string;
-}
-
-interface LegacyServiceHandoffServiceRow extends StoredServiceHandoffRow {
-  source_service_id?: string | null;
-  target_service_id?: string | null;
-}
-
-interface StoredPairedTaskRow extends Omit<
-  PairedTask,
-  | 'owner_service_id'
-  | 'reviewer_service_id'
-  | 'owner_agent_type'
-  | 'reviewer_agent_type'
-  | 'arbiter_agent_type'
-> {
-  owner_agent_type?: string | null;
-  reviewer_agent_type?: string | null;
-  arbiter_agent_type?: string | null;
-}
-
-interface LegacyPairedTaskServiceRow extends StoredPairedTaskRow {
-  owner_service_id?: string | null;
-  reviewer_service_id?: string | null;
-}
+export type { ChannelOwnerLeaseRow } from './db/channel-owner-leases.js';
+export type { ServiceHandoff } from './db/service-handoffs.js';
 
 function backfillMessageSeq(database: Database): void {
   const rows = database
@@ -315,108 +272,6 @@ function getSchemaMigrationHooks(): SchemaMigrationHooks {
     rebuildChannelOwnerCanonicalSchema,
     rebuildPairedTasksCanonicalSchema,
     rebuildServiceHandoffsCanonicalSchema,
-  };
-}
-
-function hydrateChannelOwnerLeaseRow(
-  row: StoredChannelOwnerLeaseRow,
-): ChannelOwnerLeaseRow {
-  const ownerAgentType =
-    normalizeStoredAgentType(row.owner_agent_type) ?? OWNER_AGENT_TYPE;
-  const reviewerAgentType =
-    row.reviewer_agent_type == null
-      ? null
-      : (normalizeStoredAgentType(row.reviewer_agent_type) ??
-        resolveStableReviewerAgentType(ownerAgentType, null));
-  const arbiterAgentType =
-    row.arbiter_agent_type == null
-      ? null
-      : (normalizeStoredAgentType(row.arbiter_agent_type) ??
-        ARBITER_AGENT_TYPE ??
-        null);
-
-  return {
-    chat_jid: row.chat_jid,
-    owner_service_id:
-      resolveRoleServiceShadow('owner', ownerAgentType) ?? CLAUDE_SERVICE_ID,
-    reviewer_service_id:
-      reviewerAgentType == null
-        ? null
-        : resolveRoleServiceShadow('reviewer', reviewerAgentType),
-    arbiter_service_id:
-      arbiterAgentType == null
-        ? null
-        : resolveRoleServiceShadow('arbiter', arbiterAgentType),
-    owner_agent_type: ownerAgentType,
-    reviewer_agent_type: reviewerAgentType,
-    arbiter_agent_type: arbiterAgentType,
-    activated_at: row.activated_at,
-    reason: row.reason,
-  };
-}
-
-function hydratePairedTaskRow(row: StoredPairedTaskRow): PairedTask {
-  const ownerAgentType = resolveStablePairedTaskOwnerAgentType(db, row);
-  const reviewerAgentType = resolveStableReviewerAgentType(
-    ownerAgentType,
-    row.reviewer_agent_type ?? null,
-  );
-  const arbiterAgentType =
-    normalizeStoredAgentType(row.arbiter_agent_type) ??
-    ARBITER_AGENT_TYPE ??
-    null;
-
-  return {
-    ...row,
-    owner_service_id:
-      resolveRoleServiceShadow('owner', ownerAgentType) ??
-      CODEX_MAIN_SERVICE_ID,
-    reviewer_service_id:
-      resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
-      CODEX_REVIEW_SERVICE_ID,
-    owner_agent_type: ownerAgentType ?? null,
-    reviewer_agent_type: reviewerAgentType ?? null,
-    arbiter_agent_type: arbiterAgentType,
-  };
-}
-
-function hydrateServiceHandoffRow(
-  row: StoredServiceHandoffRow,
-): ServiceHandoff {
-  const sourceAgentType =
-    normalizeStoredAgentType(row.source_agent_type) ??
-    (row.source_role
-      ? resolveStableRoomRoleAgentType(db, {
-          chatJid: row.chat_jid,
-          groupFolder: row.group_folder,
-          role: row.source_role,
-        })
-      : null);
-  const targetAgentType =
-    normalizeStoredAgentType(row.target_agent_type) ??
-    (row.target_role
-      ? resolveStableRoomRoleAgentType(db, {
-          chatJid: row.chat_jid,
-          groupFolder: row.group_folder,
-          role: row.target_role,
-        })
-      : null) ??
-    'claude-code';
-
-  return {
-    ...row,
-    source_agent_type: sourceAgentType ?? null,
-    target_agent_type: targetAgentType,
-    source_service_id:
-      row.source_role != null
-        ? (resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
-          SERVICE_SESSION_SCOPE)
-        : SERVICE_SESSION_SCOPE,
-    target_service_id:
-      row.target_role != null
-        ? (resolveRoleServiceShadow(row.target_role, targetAgentType) ??
-          SERVICE_SESSION_SCOPE)
-        : SERVICE_SESSION_SCOPE,
   };
 }
 
@@ -1198,244 +1053,50 @@ export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
 // --- Paired task/project/workspace state ---
 
 export function upsertPairedProject(project: PairedProject): void {
-  db.prepare(
-    `
-      INSERT INTO paired_projects (
-        chat_jid,
-        group_folder,
-        canonical_work_dir,
-        created_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(chat_jid) DO UPDATE SET
-        group_folder = excluded.group_folder,
-        canonical_work_dir = excluded.canonical_work_dir,
-        updated_at = excluded.updated_at
-    `,
-  ).run(
-    project.chat_jid,
-    project.group_folder,
-    project.canonical_work_dir,
-    project.created_at,
-    project.updated_at,
-  );
+  upsertPairedProjectInDatabase(db, project);
 }
 
 export function getPairedProject(chatJid: string): PairedProject | undefined {
-  return db
-    .prepare('SELECT * FROM paired_projects WHERE chat_jid = ?')
-    .get(chatJid) as PairedProject | undefined;
+  return getPairedProjectFromDatabase(db, chatJid);
 }
 
 export function createPairedTask(task: PairedTask): void {
-  db.prepare(
-    `
-      INSERT INTO paired_tasks (
-        id,
-        chat_jid,
-        group_folder,
-        owner_agent_type,
-        reviewer_agent_type,
-        arbiter_agent_type,
-        title,
-        source_ref,
-        plan_notes,
-        review_requested_at,
-        round_trip_count,
-        status,
-        arbiter_verdict,
-        arbiter_requested_at,
-        created_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `,
-  ).run(
-    task.id,
-    task.chat_jid,
-    task.group_folder,
-    task.owner_agent_type ?? null,
-    task.reviewer_agent_type ?? null,
-    task.arbiter_agent_type ?? null,
-    task.title,
-    task.source_ref,
-    task.plan_notes,
-    task.review_requested_at,
-    task.round_trip_count,
-    task.status,
-    task.arbiter_verdict,
-    task.arbiter_requested_at,
-    task.created_at,
-    task.updated_at,
-  );
+  createPairedTaskInDatabase(db, task);
 }
 
 export function getPairedTaskById(id: string): PairedTask | undefined {
-  const row = db.prepare('SELECT * FROM paired_tasks WHERE id = ?').get(id) as
-    | StoredPairedTaskRow
-    | undefined;
-  return row ? hydratePairedTaskRow(row) : undefined;
+  return getPairedTaskByIdFromDatabase(db, id);
 }
 
 export function getLatestPairedTaskForChat(
   chatJid: string,
 ): PairedTask | undefined {
-  const row = db
-    .prepare(
-      `
-        SELECT *
-          FROM paired_tasks
-         WHERE chat_jid = ?
-         ORDER BY updated_at DESC
-         LIMIT 1
-      `,
-    )
-    .get(chatJid) as StoredPairedTaskRow | undefined;
-  return row ? hydratePairedTaskRow(row) : undefined;
+  return getLatestPairedTaskForChatFromDatabase(db, chatJid);
 }
 
 export function getLatestOpenPairedTaskForChat(
   chatJid: string,
 ): PairedTask | undefined {
-  const row = db
-    .prepare(
-      `
-        SELECT *
-          FROM paired_tasks
-         WHERE chat_jid = ?
-           AND status NOT IN ('completed')
-         ORDER BY updated_at DESC
-         LIMIT 1
-      `,
-    )
-    .get(chatJid) as StoredPairedTaskRow | undefined;
-  return row ? hydratePairedTaskRow(row) : undefined;
+  return getLatestOpenPairedTaskForChatFromDatabase(db, chatJid);
 }
 
-export function updatePairedTask(
-  id: string,
-  updates: Partial<
-    Pick<
-      PairedTask,
-      | 'title'
-      | 'source_ref'
-      | 'plan_notes'
-      | 'review_requested_at'
-      | 'round_trip_count'
-      | 'status'
-      | 'arbiter_verdict'
-      | 'arbiter_requested_at'
-      | 'completion_reason'
-      | 'updated_at'
-    >
-  >,
-): void {
-  const fields: string[] = [];
-  const values: (string | number | null)[] = [];
-
-  if (updates.title !== undefined) {
-    fields.push('title = ?');
-    values.push(updates.title);
-  }
-  if (updates.source_ref !== undefined) {
-    fields.push('source_ref = ?');
-    values.push(updates.source_ref);
-  }
-  if (updates.plan_notes !== undefined) {
-    fields.push('plan_notes = ?');
-    values.push(updates.plan_notes);
-  }
-  if (updates.review_requested_at !== undefined) {
-    fields.push('review_requested_at = ?');
-    values.push(updates.review_requested_at);
-  }
-  if (updates.round_trip_count !== undefined) {
-    fields.push('round_trip_count = ?');
-    values.push(updates.round_trip_count);
-  }
-  if (updates.status !== undefined) {
-    fields.push('status = ?');
-    values.push(updates.status);
-  }
-  if (updates.arbiter_verdict !== undefined) {
-    fields.push('arbiter_verdict = ?');
-    values.push(updates.arbiter_verdict);
-  }
-  if (updates.arbiter_requested_at !== undefined) {
-    fields.push('arbiter_requested_at = ?');
-    values.push(updates.arbiter_requested_at);
-  }
-  if (updates.completion_reason !== undefined) {
-    fields.push('completion_reason = ?');
-    values.push(updates.completion_reason);
-  }
-  if (updates.updated_at !== undefined) {
-    fields.push('updated_at = ?');
-    values.push(updates.updated_at);
-  }
-
-  if (fields.length === 0) return;
-
-  values.push(id);
-  db.prepare(`UPDATE paired_tasks SET ${fields.join(', ')} WHERE id = ?`).run(
-    ...values,
-  );
+export function updatePairedTask(id: string, updates: PairedTaskUpdates): void {
+  updatePairedTaskInDatabase(db, id, updates);
 }
 
 export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
-  db.prepare(
-    `
-      INSERT INTO paired_workspaces (
-        id,
-        task_id,
-        role,
-        workspace_dir,
-        snapshot_source_dir,
-        snapshot_ref,
-        status,
-        snapshot_refreshed_at,
-        created_at,
-        updated_at
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        workspace_dir = excluded.workspace_dir,
-        snapshot_source_dir = excluded.snapshot_source_dir,
-        snapshot_ref = excluded.snapshot_ref,
-        status = excluded.status,
-        snapshot_refreshed_at = excluded.snapshot_refreshed_at,
-        updated_at = excluded.updated_at
-    `,
-  ).run(
-    workspace.id,
-    workspace.task_id,
-    workspace.role,
-    workspace.workspace_dir,
-    workspace.snapshot_source_dir,
-    workspace.snapshot_ref,
-    workspace.status,
-    workspace.snapshot_refreshed_at,
-    workspace.created_at,
-    workspace.updated_at,
-  );
+  upsertPairedWorkspaceInDatabase(db, workspace);
 }
 
 export function getPairedWorkspace(
   taskId: string,
   role: PairedWorkspace['role'],
 ): PairedWorkspace | undefined {
-  return db
-    .prepare('SELECT * FROM paired_workspaces WHERE task_id = ? AND role = ?')
-    .get(taskId, role) as PairedWorkspace | undefined;
+  return getPairedWorkspaceFromDatabase(db, taskId, role);
 }
 
 export function listPairedWorkspacesForTask(taskId: string): PairedWorkspace[] {
-  return db
-    .prepare(
-      'SELECT * FROM paired_workspaces WHERE task_id = ? ORDER BY created_at',
-    )
-    .all(taskId) as PairedWorkspace[];
+  return listPairedWorkspacesForTaskFromDatabase(db, taskId);
 }
 
 /**
@@ -1444,19 +1105,10 @@ export function listPairedWorkspacesForTask(taskId: string): PairedWorkspace[] {
  */
 export function getLastBotFinalMessage(
   chatJid: string,
-  _agentType: AgentType = 'claude-code',
+  agentType: AgentType = 'claude-code',
   limit: number = 1,
 ): Array<{ content: string; timestamp: string }> {
-  const rows = db
-    .prepare(
-      `SELECT content, timestamp
-       FROM messages
-       WHERE chat_jid = ? AND is_bot_message = 1
-       ORDER BY timestamp DESC, seq DESC
-       LIMIT ?`,
-    )
-    .all(chatJid, limit) as Array<{ content: string; timestamp: string }>;
-  return rows;
+  return getLastBotFinalMessageFromDatabase(db, chatJid, agentType, limit);
 }
 
 // --- Channel owner lease accessors ---
@@ -1464,307 +1116,56 @@ export function getLastBotFinalMessage(
 export function getChannelOwnerLease(
   chatJid: string,
 ): ChannelOwnerLeaseRow | undefined {
-  const row = db
-    .prepare(
-      `SELECT
-         chat_jid,
-         owner_agent_type,
-         reviewer_agent_type,
-         arbiter_agent_type,
-         activated_at,
-         reason
-       FROM channel_owner
-       WHERE chat_jid = ?`,
-    )
-    .get(chatJid) as StoredChannelOwnerLeaseRow | undefined;
-  return row ? hydrateChannelOwnerLeaseRow(row) : undefined;
+  return getChannelOwnerLeaseFromDatabase(db, chatJid);
 }
 
 export function getAllChannelOwnerLeases(): ChannelOwnerLeaseRow[] {
-  const rows = db
-    .prepare(
-      `SELECT
-         chat_jid,
-         owner_agent_type,
-         reviewer_agent_type,
-         arbiter_agent_type,
-         activated_at,
-         reason
-       FROM channel_owner`,
-    )
-    .all() as StoredChannelOwnerLeaseRow[];
-  return rows.map(hydrateChannelOwnerLeaseRow);
+  return getAllChannelOwnerLeasesFromDatabase(db);
 }
 
-export function setChannelOwnerLease(input: {
-  chat_jid: string;
-  owner_service_id?: string;
-  reviewer_service_id?: string | null;
-  arbiter_service_id?: string | null;
-  owner_agent_type?: AgentType | null;
-  reviewer_agent_type?: AgentType | null;
-  arbiter_agent_type?: AgentType | null;
-  activated_at?: string | null;
-  reason?: string | null;
-}): void {
-  const ownerAgentType =
-    normalizeStoredAgentType(input.owner_agent_type) ??
-    inferAgentTypeFromServiceShadow(input.owner_service_id) ??
-    OWNER_AGENT_TYPE;
-  const reviewerAgentType =
-    input.reviewer_service_id == null && input.reviewer_agent_type == null
-      ? null
-      : (normalizeStoredAgentType(input.reviewer_agent_type) ??
-        inferAgentTypeFromServiceShadow(input.reviewer_service_id ?? null) ??
-        resolveStableReviewerAgentType(ownerAgentType, null));
-  const arbiterAgentType =
-    input.arbiter_service_id == null && input.arbiter_agent_type == null
-      ? null
-      : (normalizeStoredAgentType(input.arbiter_agent_type) ??
-        inferAgentTypeFromServiceShadow(input.arbiter_service_id ?? null) ??
-        ARBITER_AGENT_TYPE ??
-        null);
-
-  db.prepare(
-    `INSERT OR REPLACE INTO channel_owner (
-      chat_jid,
-      owner_agent_type,
-      reviewer_agent_type,
-      arbiter_agent_type,
-      activated_at,
-      reason
-    ) VALUES (?, ?, ?, ?, ?, ?)`,
-  ).run(
-    input.chat_jid,
-    ownerAgentType ?? null,
-    reviewerAgentType ?? null,
-    arbiterAgentType ?? null,
-    input.activated_at ?? new Date().toISOString(),
-    input.reason ?? null,
-  );
+export function setChannelOwnerLease(input: SetChannelOwnerLeaseInput): void {
+  setChannelOwnerLeaseInDatabase(db, input);
 }
 
 export function clearChannelOwnerLease(chatJid: string): void {
-  db.prepare('DELETE FROM channel_owner WHERE chat_jid = ?').run(chatJid);
+  clearChannelOwnerLeaseInDatabase(db, chatJid);
 }
 
 // --- Cross-service handoff accessors ---
 
-export function createServiceHandoff(input: {
-  chat_jid: string;
-  group_folder: string;
-  source_service_id?: string;
-  target_service_id?: string;
-  source_role?: PairedRoomRole | null;
-  target_role?: PairedRoomRole | null;
-  source_agent_type?: AgentType | null;
-  target_agent_type: AgentType;
-  prompt: string;
-  start_seq?: number | null;
-  end_seq?: number | null;
-  reason?: string | null;
-  intended_role?: PairedRoomRole | null;
-}): ServiceHandoff {
-  const sourceRole = input.source_role ?? input.intended_role ?? null;
-  const targetRole = input.target_role ?? input.intended_role ?? null;
-  const sourceAgentType =
-    normalizeStoredAgentType(input.source_agent_type) ??
-    (sourceRole
-      ? resolveStableRoomRoleAgentType(db, {
-          chatJid: input.chat_jid,
-          groupFolder: input.group_folder,
-          role: sourceRole,
-        })
-      : null);
-
-  db.prepare(
-    `INSERT INTO service_handoffs (
-        chat_jid,
-        group_folder,
-        source_role,
-        source_agent_type,
-        target_role,
-        target_agent_type,
-        prompt,
-        start_seq,
-        end_seq,
-        reason,
-        intended_role
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    input.chat_jid,
-    input.group_folder,
-    sourceRole,
-    sourceAgentType ?? null,
-    targetRole,
-    input.target_agent_type,
-    input.prompt,
-    input.start_seq ?? null,
-    input.end_seq ?? null,
-    input.reason ?? null,
-    input.intended_role ?? null,
-  );
-
-  const lastId = (
-    db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
-  ).id;
-  return hydrateServiceHandoffRow(
-    db
-      .prepare('SELECT * FROM service_handoffs WHERE id = ?')
-      .get(lastId) as StoredServiceHandoffRow,
-  );
+export function createServiceHandoff(
+  input: CreateServiceHandoffInput,
+): ServiceHandoff {
+  return createServiceHandoffInDatabase(db, input);
 }
 
 export function getPendingServiceHandoffs(
   targetServiceId: string = SERVICE_SESSION_SCOPE,
 ): ServiceHandoff[] {
-  const handoffs = db
-    .prepare(
-      `SELECT *
-       FROM service_handoffs
-       WHERE status = 'pending'
-       ORDER BY created_at ASC, id ASC`,
-    )
-    .all() as StoredServiceHandoffRow[];
-  return handoffs
-    .map(hydrateServiceHandoffRow)
-    .filter(
-      (handoff) =>
-        normalizeServiceId(handoff.target_service_id) ===
-        normalizeServiceId(targetServiceId),
-    );
+  return getPendingServiceHandoffsFromDatabase(db, targetServiceId);
 }
 
 export function getAllPendingServiceHandoffs(): ServiceHandoff[] {
-  return (
-    db
-      .prepare(
-        `SELECT *
-       FROM service_handoffs
-       WHERE status = 'pending'
-       ORDER BY created_at ASC, id ASC`,
-      )
-      .all() as StoredServiceHandoffRow[]
-  ).map(hydrateServiceHandoffRow);
+  return getAllPendingServiceHandoffsFromDatabase(db);
 }
 
 export function claimServiceHandoff(id: number): boolean {
-  db.prepare(
-    `UPDATE service_handoffs
-       SET status = 'claimed',
-           claimed_at = datetime('now')
-       WHERE id = ?
-         AND status = 'pending'`,
-  ).run(id);
-  return (db.prepare('SELECT changes() as c').get() as { c: number }).c > 0;
+  return claimServiceHandoffInDatabase(db, id);
 }
 
 export function completeServiceHandoff(id: number): void {
-  db.prepare(
-    `UPDATE service_handoffs
-     SET status = 'completed',
-         completed_at = datetime('now'),
-         last_error = NULL
-     WHERE id = ?`,
-  ).run(id);
+  completeServiceHandoffInDatabase(db, id);
 }
 
 export function failServiceHandoff(id: number, error: string): void {
-  db.prepare(
-    `UPDATE service_handoffs
-     SET status = 'failed',
-         completed_at = datetime('now'),
-         last_error = ?
-     WHERE id = ?`,
-  ).run(error, id);
+  failServiceHandoffInDatabase(db, id, error);
 }
 
-function normalizeStoredLastAgentSeqCursor(
-  cursor: string | number | null | undefined,
-  chatJid: string,
-): number {
-  if (typeof cursor === 'number') {
-    return Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
-  }
-  if (!cursor) return 0;
-  const trimmed = cursor.trim();
-  if (/^\d+$/.test(trimmed)) {
-    return normalizeSeqCursor(trimmed);
-  }
-  return getLatestMessageSeqAtOrBefore(trimmed, chatJid);
+export function completeServiceHandoffAndAdvanceTargetCursor(
+  input: CompleteServiceHandoffCursorInput,
+): string | null {
+  return completeServiceHandoffAndAdvanceTargetCursorInDatabase(db, input);
 }
-
-function parseLastAgentSeqState(
-  raw: string | undefined,
-  serviceId: string,
-): Record<string, string> {
-  if (!raw) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `Invalid last_agent_seq JSON for ${serviceId}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(
-      `Invalid last_agent_seq JSON for ${serviceId}: not an object`,
-    );
-  }
-
-  const cursors: Record<string, string> = {};
-  for (const [chatJid, cursor] of Object.entries(parsed)) {
-    if (typeof cursor === 'string' || typeof cursor === 'number') {
-      cursors[chatJid] = String(cursor);
-    }
-  }
-  return cursors;
-}
-
-export function completeServiceHandoffAndAdvanceTargetCursor(input: {
-  id: number;
-  chat_jid: string;
-  cursor_key?: string;
-  end_seq?: number | null;
-}): string | null {
-  return db.transaction(() => {
-    let appliedCursor: string | null = null;
-
-    if (input.end_seq != null) {
-      const cursorKey = input.cursor_key ?? input.chat_jid;
-      const currentState = parseLastAgentSeqState(
-        getRouterState('last_agent_seq'),
-        'last_agent_seq',
-      );
-      const existingSeq = normalizeStoredLastAgentSeqCursor(
-        currentState[cursorKey],
-        input.chat_jid,
-      );
-      currentState[cursorKey] = String(Math.max(existingSeq, input.end_seq));
-      setRouterState('last_agent_seq', JSON.stringify(currentState));
-      appliedCursor = currentState[cursorKey];
-    }
-
-    db.prepare(
-      `UPDATE service_handoffs
-       SET status = 'completed',
-           completed_at = datetime('now'),
-           last_error = NULL
-       WHERE id = ?`,
-    ).run(input.id);
-
-    return appliedCursor;
-  })();
-}
-
-// ── Paired turn outputs ──────────────────────────────────────────
-
-const MAX_TURN_OUTPUT_CHARS = 50_000;
 
 export function insertPairedTurnOutput(
   taskId: string,
@@ -1772,48 +1173,13 @@ export function insertPairedTurnOutput(
   role: PairedRoomRole,
   outputText: string,
 ): void {
-  if (outputText.length > MAX_TURN_OUTPUT_CHARS) {
-    logger.warn(
-      {
-        taskId,
-        turnNumber,
-        role,
-        originalLen: outputText.length,
-        maxLen: MAX_TURN_OUTPUT_CHARS,
-      },
-      'Paired turn output truncated — agent output exceeds storage limit',
-    );
-  }
-  db.prepare(
-    `INSERT OR REPLACE INTO paired_turn_outputs
-       (task_id, turn_number, role, output_text, created_at)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(
-    taskId,
-    turnNumber,
-    role,
-    outputText.slice(0, MAX_TURN_OUTPUT_CHARS),
-    new Date().toISOString(),
-  );
+  insertPairedTurnOutputInDatabase(db, taskId, turnNumber, role, outputText);
 }
 
 export function getPairedTurnOutputs(taskId: string): PairedTurnOutput[] {
-  return db
-    .prepare(
-      `SELECT * FROM paired_turn_outputs
-        WHERE task_id = ?
-        ORDER BY turn_number ASC`,
-    )
-    .all(taskId) as PairedTurnOutput[];
+  return getPairedTurnOutputsFromDatabase(db, taskId);
 }
 
 export function getLatestTurnNumber(taskId: string): number {
-  const row = db
-    .prepare(
-      `SELECT MAX(turn_number) as max_turn
-        FROM paired_turn_outputs
-        WHERE task_id = ?`,
-    )
-    .get(taskId) as { max_turn: number | null } | undefined;
-  return row?.max_turn ?? 0;
+  return getLatestTurnNumberFromDatabase(db, taskId);
 }
