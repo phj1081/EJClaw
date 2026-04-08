@@ -20,7 +20,11 @@ import {
 
 interface StoredPairedTaskRow extends Omit<
   PairedTask,
-  'owner_service_id' | 'reviewer_service_id' | 'owner_agent_type' | 'reviewer_agent_type' | 'arbiter_agent_type'
+  | 'owner_service_id'
+  | 'reviewer_service_id'
+  | 'owner_agent_type'
+  | 'reviewer_agent_type'
+  | 'arbiter_agent_type'
 > {
   owner_agent_type?: string | null;
   reviewer_agent_type?: string | null;
