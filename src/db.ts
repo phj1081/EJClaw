@@ -115,6 +115,18 @@ import {
   insertPairedTurnOutputInDatabase,
 } from './db/paired-turn-outputs.js';
 import {
+  type CompleteServiceHandoffCursorInput,
+  type CreateServiceHandoffInput,
+  type ServiceHandoff,
+  claimServiceHandoffInDatabase,
+  completeServiceHandoffAndAdvanceTargetCursorInDatabase,
+  completeServiceHandoffInDatabase,
+  createServiceHandoffInDatabase,
+  failServiceHandoffInDatabase,
+  getAllPendingServiceHandoffsFromDatabase,
+  getPendingServiceHandoffsFromDatabase,
+} from './db/service-handoffs.js';
+import {
   getLastRespondingAgentTypeFromDatabase,
   getRouterStateForServiceFromDatabase,
   getRouterStateFromDatabase,
@@ -208,44 +220,7 @@ export type {
 export type { ChatInfo } from './db/messages.js';
 export type { WorkItem } from './db/work-items.js';
 export type { ChannelOwnerLeaseRow } from './db/channel-owner-leases.js';
-
-export interface ServiceHandoff {
-  id: number;
-  chat_jid: string;
-  group_folder: string;
-  source_service_id: string;
-  target_service_id: string;
-  source_role: PairedRoomRole | null;
-  source_agent_type?: AgentType | null;
-  target_role: PairedRoomRole | null;
-  target_agent_type: AgentType;
-  prompt: string;
-  status: 'pending' | 'claimed' | 'completed' | 'failed';
-  start_seq: number | null;
-  end_seq: number | null;
-  reason: string | null;
-  intended_role: PairedRoomRole | null;
-  created_at: string;
-  claimed_at: string | null;
-  completed_at: string | null;
-  last_error: string | null;
-}
-
-interface StoredServiceHandoffRow extends Omit<
-  ServiceHandoff,
-  | 'source_service_id'
-  | 'target_service_id'
-  | 'source_agent_type'
-  | 'target_agent_type'
-> {
-  source_agent_type?: string | null;
-  target_agent_type: string;
-}
-
-interface LegacyServiceHandoffServiceRow extends StoredServiceHandoffRow {
-  source_service_id?: string | null;
-  target_service_id?: string | null;
-}
+export type { ServiceHandoff } from './db/service-handoffs.js';
 
 function backfillMessageSeq(database: Database): void {
   const rows = database
@@ -297,46 +272,6 @@ function getSchemaMigrationHooks(): SchemaMigrationHooks {
     rebuildChannelOwnerCanonicalSchema,
     rebuildPairedTasksCanonicalSchema,
     rebuildServiceHandoffsCanonicalSchema,
-  };
-}
-
-function hydrateServiceHandoffRow(
-  row: StoredServiceHandoffRow,
-): ServiceHandoff {
-  const sourceAgentType =
-    normalizeStoredAgentType(row.source_agent_type) ??
-    (row.source_role
-      ? resolveStableRoomRoleAgentType(db, {
-          chatJid: row.chat_jid,
-          groupFolder: row.group_folder,
-          role: row.source_role,
-        })
-      : null);
-  const targetAgentType =
-    normalizeStoredAgentType(row.target_agent_type) ??
-    (row.target_role
-      ? resolveStableRoomRoleAgentType(db, {
-          chatJid: row.chat_jid,
-          groupFolder: row.group_folder,
-          role: row.target_role,
-        })
-      : null) ??
-    'claude-code';
-
-  return {
-    ...row,
-    source_agent_type: sourceAgentType ?? null,
-    target_agent_type: targetAgentType,
-    source_service_id:
-      row.source_role != null
-        ? (resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
-          SERVICE_SESSION_SCOPE)
-        : SERVICE_SESSION_SCOPE,
-    target_service_id:
-      row.target_role != null
-        ? (resolveRoleServiceShadow(row.target_role, targetAgentType) ??
-          SERVICE_SESSION_SCOPE)
-        : SERVICE_SESSION_SCOPE,
   };
 }
 
@@ -1198,216 +1133,38 @@ export function clearChannelOwnerLease(chatJid: string): void {
 
 // --- Cross-service handoff accessors ---
 
-export function createServiceHandoff(input: {
-  chat_jid: string;
-  group_folder: string;
-  source_service_id?: string;
-  target_service_id?: string;
-  source_role?: PairedRoomRole | null;
-  target_role?: PairedRoomRole | null;
-  source_agent_type?: AgentType | null;
-  target_agent_type: AgentType;
-  prompt: string;
-  start_seq?: number | null;
-  end_seq?: number | null;
-  reason?: string | null;
-  intended_role?: PairedRoomRole | null;
-}): ServiceHandoff {
-  const sourceRole = input.source_role ?? input.intended_role ?? null;
-  const targetRole = input.target_role ?? input.intended_role ?? null;
-  const sourceAgentType =
-    normalizeStoredAgentType(input.source_agent_type) ??
-    (sourceRole
-      ? resolveStableRoomRoleAgentType(db, {
-          chatJid: input.chat_jid,
-          groupFolder: input.group_folder,
-          role: sourceRole,
-        })
-      : null);
-
-  db.prepare(
-    `INSERT INTO service_handoffs (
-        chat_jid,
-        group_folder,
-        source_role,
-        source_agent_type,
-        target_role,
-        target_agent_type,
-        prompt,
-        start_seq,
-        end_seq,
-        reason,
-        intended_role
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    input.chat_jid,
-    input.group_folder,
-    sourceRole,
-    sourceAgentType ?? null,
-    targetRole,
-    input.target_agent_type,
-    input.prompt,
-    input.start_seq ?? null,
-    input.end_seq ?? null,
-    input.reason ?? null,
-    input.intended_role ?? null,
-  );
-
-  const lastId = (
-    db.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
-  ).id;
-  return hydrateServiceHandoffRow(
-    db
-      .prepare('SELECT * FROM service_handoffs WHERE id = ?')
-      .get(lastId) as StoredServiceHandoffRow,
-  );
+export function createServiceHandoff(
+  input: CreateServiceHandoffInput,
+): ServiceHandoff {
+  return createServiceHandoffInDatabase(db, input);
 }
 
 export function getPendingServiceHandoffs(
   targetServiceId: string = SERVICE_SESSION_SCOPE,
 ): ServiceHandoff[] {
-  const handoffs = db
-    .prepare(
-      `SELECT *
-       FROM service_handoffs
-       WHERE status = 'pending'
-       ORDER BY created_at ASC, id ASC`,
-    )
-    .all() as StoredServiceHandoffRow[];
-  return handoffs
-    .map(hydrateServiceHandoffRow)
-    .filter(
-      (handoff) =>
-        normalizeServiceId(handoff.target_service_id) ===
-        normalizeServiceId(targetServiceId),
-    );
+  return getPendingServiceHandoffsFromDatabase(db, targetServiceId);
 }
 
 export function getAllPendingServiceHandoffs(): ServiceHandoff[] {
-  return (
-    db
-      .prepare(
-        `SELECT *
-       FROM service_handoffs
-       WHERE status = 'pending'
-       ORDER BY created_at ASC, id ASC`,
-      )
-      .all() as StoredServiceHandoffRow[]
-  ).map(hydrateServiceHandoffRow);
+  return getAllPendingServiceHandoffsFromDatabase(db);
 }
 
 export function claimServiceHandoff(id: number): boolean {
-  db.prepare(
-    `UPDATE service_handoffs
-       SET status = 'claimed',
-           claimed_at = datetime('now')
-       WHERE id = ?
-         AND status = 'pending'`,
-  ).run(id);
-  return (db.prepare('SELECT changes() as c').get() as { c: number }).c > 0;
+  return claimServiceHandoffInDatabase(db, id);
 }
 
 export function completeServiceHandoff(id: number): void {
-  db.prepare(
-    `UPDATE service_handoffs
-     SET status = 'completed',
-         completed_at = datetime('now'),
-         last_error = NULL
-     WHERE id = ?`,
-  ).run(id);
+  completeServiceHandoffInDatabase(db, id);
 }
 
 export function failServiceHandoff(id: number, error: string): void {
-  db.prepare(
-    `UPDATE service_handoffs
-     SET status = 'failed',
-         completed_at = datetime('now'),
-         last_error = ?
-     WHERE id = ?`,
-  ).run(error, id);
+  failServiceHandoffInDatabase(db, id, error);
 }
 
-function normalizeStoredLastAgentSeqCursor(
-  cursor: string | number | null | undefined,
-  chatJid: string,
-): number {
-  if (typeof cursor === 'number') {
-    return Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
-  }
-  if (!cursor) return 0;
-  const trimmed = cursor.trim();
-  if (/^\d+$/.test(trimmed)) {
-    return normalizeSeqCursor(trimmed);
-  }
-  return getLatestMessageSeqAtOrBefore(trimmed, chatJid);
-}
-
-function parseLastAgentSeqState(
-  raw: string | undefined,
-  serviceId: string,
-): Record<string, string> {
-  if (!raw) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    throw new Error(
-      `Invalid last_agent_seq JSON for ${serviceId}: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-    );
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(
-      `Invalid last_agent_seq JSON for ${serviceId}: not an object`,
-    );
-  }
-
-  const cursors: Record<string, string> = {};
-  for (const [chatJid, cursor] of Object.entries(parsed)) {
-    if (typeof cursor === 'string' || typeof cursor === 'number') {
-      cursors[chatJid] = String(cursor);
-    }
-  }
-  return cursors;
-}
-
-export function completeServiceHandoffAndAdvanceTargetCursor(input: {
-  id: number;
-  chat_jid: string;
-  cursor_key?: string;
-  end_seq?: number | null;
-}): string | null {
-  return db.transaction(() => {
-    let appliedCursor: string | null = null;
-
-    if (input.end_seq != null) {
-      const cursorKey = input.cursor_key ?? input.chat_jid;
-      const currentState = parseLastAgentSeqState(
-        getRouterState('last_agent_seq'),
-        'last_agent_seq',
-      );
-      const existingSeq = normalizeStoredLastAgentSeqCursor(
-        currentState[cursorKey],
-        input.chat_jid,
-      );
-      currentState[cursorKey] = String(Math.max(existingSeq, input.end_seq));
-      setRouterState('last_agent_seq', JSON.stringify(currentState));
-      appliedCursor = currentState[cursorKey];
-    }
-
-    db.prepare(
-      `UPDATE service_handoffs
-       SET status = 'completed',
-           completed_at = datetime('now'),
-           last_error = NULL
-       WHERE id = ?`,
-    ).run(input.id);
-
-    return appliedCursor;
-  })();
+export function completeServiceHandoffAndAdvanceTargetCursor(
+  input: CompleteServiceHandoffCursorInput,
+): string | null {
+  return completeServiceHandoffAndAdvanceTargetCursorInDatabase(db, input);
 }
 
 export function insertPairedTurnOutput(
