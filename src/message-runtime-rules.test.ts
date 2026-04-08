@@ -105,6 +105,39 @@ describe('message-runtime-rules', () => {
     ).toEqual({ kind: 'none' });
   });
 
+  it('dispatches reviewer and arbiter delivery success through paired follow-up enqueue when a handoff is pending', () => {
+    expect(
+      resolveFollowUpDispatch({
+        source: 'delivery-success',
+        nextTurnAction: { kind: 'owner-follow-up' },
+        completedRole: 'reviewer',
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'delivery-success',
+        nextTurnAction: { kind: 'finalize-owner-turn' },
+        completedRole: 'reviewer',
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'delivery-success',
+        nextTurnAction: { kind: 'owner-follow-up' },
+        completedRole: 'arbiter',
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
+  });
+
   it('dispatches delivery retry follow-ups through either generic message checks or paired follow-up enqueue', () => {
     expect(
       resolveFollowUpDispatch({
@@ -132,7 +165,10 @@ describe('message-runtime-rules', () => {
         nextTurnAction: { kind: 'finalize-owner-turn' },
         completedRole: 'reviewer',
       }),
-    ).toEqual({ kind: 'none' });
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
   });
 
   it('dispatches bot-only follow-ups through inline finalize or paired enqueue', () => {
