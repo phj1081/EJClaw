@@ -13,6 +13,7 @@ vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/ejclaw-test-data',
   GROUPS_DIR: '/tmp/ejclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
+  LOG_LEVEL: 'info',
   SERVICE_ID: 'claude',
   SERVICE_SESSION_SCOPE: 'claude',
   TIMEZONE: 'America/Los_Angeles',

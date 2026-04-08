@@ -346,6 +346,108 @@ describe('task scheduler', () => {
     expect(enqueueTask.mock.calls[0][1]).toBe('task-single-tick');
   });
 
+  it('marks one-off tasks completed after a successful scheduler run', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-once-success-finalize',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: 'finalize once task',
+      schedule_type: 'once',
+      schedule_value: dueAt,
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    let execution: Promise<void> | null = null;
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        execution = fn();
+        return execution;
+      },
+    );
+
+    await runSchedulerTickOnce({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+    await execution;
+
+    const task = getTaskById('task-once-success-finalize');
+    expect(task?.status).toBe('completed');
+    expect(task?.next_run).toBeNull();
+    expect(task?.last_result).toBe('done');
+  });
+
+  it('keeps interval tasks active and reschedules them after an execution error', async () => {
+    const dueAt = new Date(Date.now() - 60_000).toISOString();
+    createTask({
+      id: 'task-interval-error-retry',
+      group_folder: 'shared-group',
+      chat_jid: 'shared@g.us',
+      agent_type: 'codex',
+      prompt: 'retry interval task',
+      schedule_type: 'interval',
+      schedule_value: '60000',
+      context_mode: 'isolated',
+      next_run: dueAt,
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    (runAgentProcessMock as any).mockResolvedValueOnce({
+      status: 'error',
+      error: 'scheduler boom',
+    });
+
+    let execution: Promise<void> | null = null;
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        execution = fn();
+        return execution;
+      },
+    );
+
+    await runSchedulerTickOnce({
+      serviceAgentType: 'codex',
+      registeredGroups: () => ({
+        'shared@g.us': {
+          name: 'Shared',
+          folder: 'shared-group',
+          trigger: '@Codex',
+          added_at: '2026-02-22T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      }),
+      getSessions: () => ({}),
+      queue: { enqueueTask } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    });
+    await execution;
+
+    const task = getTaskById('task-interval-error-retry');
+    expect(task?.status).toBe('active');
+    expect(task?.last_result).toBe('Error: scheduler boom');
+    expect(task?.next_run).not.toBe(dueAt);
+    expect(task?.next_run).not.toBeNull();
+  });
+
   it('uses the reviewer bot identity for paired-room scheduled output', async () => {
     const dueAt = new Date(Date.now() - 60_000).toISOString();
     createTask({

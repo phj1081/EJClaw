@@ -9,8 +9,11 @@ const { mockReadEnvFile, mockGetActiveCodexAuthPath } = vi.hoisted(() => ({
 }));
 
 vi.mock('./config.js', () => ({
+  ASSISTANT_NAME: 'Andy',
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   GROUPS_DIR: '/tmp/ejclaw-test-groups',
+  IS_TEST_ENV: true,
+  LOG_LEVEL: 'info',
   SERVICE_ID: 'codex-main',
   SERVICE_SESSION_SCOPE: 'codex-main',
   TIMEZONE: 'Asia/Seoul',

@@ -28,6 +28,7 @@ import {
   getExplicitRoomMode,
   getLatestMessageSeqAtOrBefore,
   getLatestPairedTaskForChat,
+  getLastRespondingAgentType,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
   getOpenWorkItem,
@@ -162,6 +163,31 @@ describe('storeMessage', () => {
       'Andy',
     );
     expect(messages).toHaveLength(1);
+  });
+
+  it('detects the most recent bot responder agent type', () => {
+    storeChatMetadata('group@g.us', '2024-01-01T00:00:00.000Z');
+
+    storeMessage({
+      id: 'bot-1',
+      chat_jid: 'group@g.us',
+      sender: 'claude-main',
+      sender_name: 'Claude',
+      content: 'first bot reply',
+      timestamp: '2024-01-01T00:00:01.000Z',
+      is_bot_message: true,
+    });
+    storeMessage({
+      id: 'bot-2',
+      chat_jid: 'group@g.us',
+      sender: 'codex-review',
+      sender_name: 'Codex',
+      content: 'second bot reply',
+      timestamp: '2024-01-01T00:00:02.000Z',
+      is_bot_message: true,
+    });
+
+    expect(getLastRespondingAgentType('group@g.us')).toBe('codex');
   });
 
   it('upserts on duplicate id+chat_jid', () => {
@@ -359,6 +385,39 @@ describe('session accessors', () => {
 
     deleteSession('group-a');
     expect(getSession('group-a')).toBeUndefined();
+  });
+
+  it('migrates legacy sessions table rows into the composite primary key schema', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-session-schema-migration-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE sessions (
+        group_folder TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL
+      );
+    `);
+    legacyDb
+      .prepare(
+        `INSERT INTO sessions (group_folder, session_id)
+         VALUES (?, ?)`,
+      )
+      .run('group-legacy-schema', 'legacy-schema-session-123');
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(getSession('group-legacy-schema', 'claude-code')).toBe(
+      'legacy-schema-session-123',
+    );
+
+    const migratedDb = new Database(dbPath, { readonly: true });
+    const sessionColumns = migratedDb
+      .prepare(`PRAGMA table_info(sessions)`)
+      .all() as Array<{ name: string }>;
+    expect(sessionColumns.some((col) => col.name === 'agent_type')).toBe(true);
+    migratedDb.close();
   });
 
   it('backfills legacy service-scoped sessions into canonical agent sessions during init', () => {
@@ -1519,6 +1578,34 @@ describe('room assignment writes', () => {
     expect(codexGroups['dc:assigned-room']).toMatchObject({
       name: 'Assigned Room',
       folder: 'assigned-room',
+      agentType: 'codex',
+    });
+  });
+
+  it('updates room_settings-backed metadata across tribunal projection rows', () => {
+    assignRoom('dc:projection-room', {
+      name: 'Projection Room',
+      roomMode: 'tribunal',
+      ownerAgentType: 'codex',
+      folder: 'projection-room',
+    });
+
+    updateRegisteredGroupName('dc:projection-room', 'Projection Room Renamed');
+
+    expect(getStoredRoomSettings('dc:projection-room')).toMatchObject({
+      chatJid: 'dc:projection-room',
+      name: 'Projection Room Renamed',
+      roomMode: 'tribunal',
+      ownerAgentType: 'codex',
+    });
+    expect(getAllRegisteredGroups('claude-code')['dc:projection-room']).toMatchObject({
+      name: 'Projection Room Renamed',
+      folder: 'projection-room',
+      agentType: 'claude-code',
+    });
+    expect(getAllRegisteredGroups('codex')['dc:projection-room']).toMatchObject({
+      name: 'Projection Room Renamed',
+      folder: 'projection-room',
       agentType: 'codex',
     });
   });

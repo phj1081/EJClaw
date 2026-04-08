@@ -1,4 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('./config.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('./config.js')>('./config.js');
+  return {
+    ...actual,
+    REVIEWER_AGENT_TYPE: actual.REVIEWER_AGENT_TYPE ?? 'claude-code',
+    ARBITER_AGENT_TYPE: undefined,
+  };
+});
 
 import {
   resolveFollowUpDispatch,
@@ -226,6 +236,46 @@ describe('message-runtime-rules', () => {
       sessionFolder: 'group-1',
     });
     expect(resolution.effectiveServiceId).toBe(resolution.reviewerServiceId);
+  });
+
+  it('resolves merge_ready execution target back to the owner/finalize path', () => {
+    const resolution = resolveExecutionTarget({
+      lease: baseLease,
+      pairedTaskStatus: 'merge_ready',
+      groupFolder: 'group-1',
+      groupAgentType: 'claude-code',
+    });
+
+    expect(resolution).toMatchObject({
+      inferredRole: 'owner',
+      activeRole: 'owner',
+      configuredAgentType: 'claude-code',
+      effectiveAgentType: 'claude-code',
+      sessionFolder: 'group-1',
+    });
+    expect(resolution.effectiveServiceId).toBe(
+      resolveLeaseServiceId(baseLease, 'owner'),
+    );
+  });
+
+  it('resolves arbiter execution target from arbiter_requested task status', () => {
+    const resolution = resolveExecutionTarget({
+      lease: baseLease,
+      pairedTaskStatus: 'arbiter_requested',
+      groupFolder: 'group-1',
+      groupAgentType: 'claude-code',
+    });
+
+    expect(resolution).toMatchObject({
+      inferredRole: 'arbiter',
+      activeRole: 'arbiter',
+      configuredAgentType: 'claude-code',
+      effectiveAgentType: 'claude-code',
+      sessionFolder: 'group-1:arbiter',
+    });
+    expect(resolution.effectiveServiceId).toBe(
+      resolveLeaseServiceId(baseLease, 'arbiter'),
+    );
   });
 
   it('honors an arbiter forced role only when arbiter is configured', () => {

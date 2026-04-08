@@ -11,6 +11,7 @@ import {
   AGENT_MAX_OUTPUT_SIZE,
   AGENT_TIMEOUT,
   IDLE_TIMEOUT,
+  LOG_LEVEL,
 } from './config.js';
 import {
   prepareReadonlySessionEnvironment,
@@ -411,8 +412,7 @@ export async function runAgentProcess(
         logsDir,
         `agent-${input.runId || 'adhoc'}-${timestamp}.log`,
       );
-      const isVerbose =
-        process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace';
+      const isVerbose = LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace';
 
       const logLines = [
         `=== Agent Run Log ===`,

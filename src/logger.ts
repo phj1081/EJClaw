@@ -1,8 +1,7 @@
 import pino, { type Logger } from 'pino';
+import { ASSISTANT_NAME, IS_TEST_ENV, LOG_LEVEL } from './config.js';
 
-const serviceName = (process.env.ASSISTANT_NAME || 'claude').toLowerCase();
-const isTestEnv =
-  process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
+const serviceName = ASSISTANT_NAME.toLowerCase();
 
 type LoggerGlobalState = typeof globalThis & {
   __ejclawLogger?: Logger;
@@ -13,11 +12,11 @@ const globalState = globalThis as LoggerGlobalState;
 
 function createRootLogger(): Logger {
   const baseOptions = {
-    level: process.env.LOG_LEVEL || 'info',
+    level: LOG_LEVEL,
     name: serviceName,
   };
 
-  if (isTestEnv) {
+  if (IS_TEST_ENV) {
     return pino(baseOptions);
   }
 

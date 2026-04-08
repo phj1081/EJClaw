@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { logger } from './logger.js';
 
 // ── Internal cache ──────────────────────────────────────────────
 
@@ -12,8 +11,7 @@ function parseEnvFile(): Record<string, string> {
   let content: string;
   try {
     content = fs.readFileSync(envFile, 'utf-8');
-  } catch (err) {
-    logger.debug({ err }, '.env file not found, using defaults');
+  } catch {
     return {};
   }
 
@@ -31,7 +29,7 @@ function parseEnvFile(): Record<string, string> {
     ) {
       value = value.slice(1, -1);
     }
-    if (value) result[key] = value;
+    result[key] = value;
   }
   return result;
 }
@@ -49,13 +47,13 @@ export function loadEnvFile(): void {
  */
 export function getEnv(key: string): string | undefined {
   if (!_cache) loadEnvFile();
-  return process.env[key] || _cache![key] || undefined;
-}
-
-/** Force-reload the .env file (e.g. after token refresh writes new values). */
-export function reloadEnvFile(): void {
-  _cache = null;
-  loadEnvFile();
+  if (Object.prototype.hasOwnProperty.call(process.env, key)) {
+    return process.env[key];
+  }
+  if (Object.prototype.hasOwnProperty.call(_cache!, key)) {
+    return _cache![key];
+  }
+  return undefined;
 }
 
 /**
