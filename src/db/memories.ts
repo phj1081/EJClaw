@@ -145,7 +145,10 @@ function queryFtsRowOrder(
   }
 }
 
-export function touchMemoriesInDatabase(database: Database, ids: number[]): void {
+export function touchMemoriesInDatabase(
+  database: Database,
+  ids: number[],
+): void {
   const uniqueIds = [
     ...new Set(ids.filter((id) => Number.isInteger(id) && id > 0)),
   ];

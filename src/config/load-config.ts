@@ -121,7 +121,9 @@ export function loadConfig(): AppConfig {
 
   const rawMaxRoundTrips = readText('PAIRED_MAX_ROUND_TRIPS');
   const maxRoundTrips =
-    rawMaxRoundTrips === '0' ? Infinity : readInteger('PAIRED_MAX_ROUND_TRIPS', 1000);
+    rawMaxRoundTrips === '0'
+      ? Infinity
+      : readInteger('PAIRED_MAX_ROUND_TRIPS', 1000);
 
   return {
     assistant: {
@@ -157,8 +159,7 @@ export function loadConfig(): AppConfig {
         readNonEmptyText('EJCLAW_DATA_DIR') ?? path.join(projectRoot, 'data'),
       ),
       cacheDir: path.resolve(
-        readNonEmptyText('EJCLAW_CACHE_DIR') ??
-          path.join(projectRoot, 'cache'),
+        readNonEmptyText('EJCLAW_CACHE_DIR') ?? path.join(projectRoot, 'cache'),
       ),
     },
     runtime: {
@@ -216,9 +217,11 @@ export function loadConfig(): AppConfig {
     },
     sessionCommands: {
       allowedSenders: new Set(
-        ((readText('SESSION_COMMAND_ALLOWED_SENDERS') ??
-          readText('SESSION_COMMAND_USER_IDS')) ??
-          '')
+        (
+          readText('SESSION_COMMAND_ALLOWED_SENDERS') ??
+          readText('SESSION_COMMAND_USER_IDS') ??
+          ''
+        )
           .split(',')
           .map((value) => value.trim())
           .filter(Boolean),

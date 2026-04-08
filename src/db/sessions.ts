@@ -87,7 +87,9 @@ export function deleteAllSessionsForGroupFromDatabase(
   database: Database,
   groupFolder: string,
 ): void {
-  database.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+  database
+    .prepare('DELETE FROM sessions WHERE group_folder = ?')
+    .run(groupFolder);
 }
 
 export function getAllSessionsForAgentTypeFromDatabase(

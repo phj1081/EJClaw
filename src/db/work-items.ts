@@ -140,8 +140,9 @@ export function createProducedWorkItemInDatabase(
     database.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
   ).id;
   return hydrateWorkItemRow(
-    database.prepare('SELECT * FROM work_items WHERE id = ?').get(lastId) as
-      | StoredWorkItemRow,
+    database
+      .prepare('SELECT * FROM work_items WHERE id = ?')
+      .get(lastId) as StoredWorkItemRow,
   );
 }
 

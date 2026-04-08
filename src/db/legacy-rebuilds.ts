@@ -339,29 +339,29 @@ export function backfillWorkItemServiceShadows(database: Database): void {
      WHERE id = ?`,
   );
 
-  const tx = database.transaction((workItemRows: WorkItemServiceShadowRow[]) => {
-    for (const row of workItemRows) {
-      const agentType = normalizeStoredAgentType(row.agent_type);
-      if (!agentType) {
-        continue;
+  const tx = database.transaction(
+    (workItemRows: WorkItemServiceShadowRow[]) => {
+      for (const row of workItemRows) {
+        const agentType = normalizeStoredAgentType(row.agent_type);
+        if (!agentType) {
+          continue;
+        }
+        const normalizedServiceId = resolveWorkItemServiceShadow(
+          agentType,
+          row.delivery_role,
+        );
+        if (normalizedServiceId === row.service_id) {
+          continue;
+        }
+        update.run(normalizedServiceId, row.id);
       }
-      const normalizedServiceId = resolveWorkItemServiceShadow(
-        agentType,
-        row.delivery_role,
-      );
-      if (normalizedServiceId === row.service_id) {
-        continue;
-      }
-      update.run(normalizedServiceId, row.id);
-    }
-  });
+    },
+  );
 
   tx(rows);
 }
 
-export function backfillServiceHandoffServiceShadows(
-  database: Database,
-): void {
+export function backfillServiceHandoffServiceShadows(database: Database): void {
   const rows = database
     .prepare(
       `SELECT

@@ -91,7 +91,10 @@ export function applySchemaMigrations(
     `ALTER TABLE room_settings ADD COLUMN mode_source TEXT NOT NULL DEFAULT 'explicit'`,
   );
   tryExecMigration(database, `ALTER TABLE room_settings ADD COLUMN name TEXT`);
-  tryExecMigration(database, `ALTER TABLE room_settings ADD COLUMN folder TEXT`);
+  tryExecMigration(
+    database,
+    `ALTER TABLE room_settings ADD COLUMN folder TEXT`,
+  );
   tryExecMigration(
     database,
     `ALTER TABLE room_settings ADD COLUMN trigger_pattern TEXT`,

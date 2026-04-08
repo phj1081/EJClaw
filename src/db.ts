@@ -672,9 +672,7 @@ export function markWorkItemDeliveryRetry(id: number, error: string): void {
   markWorkItemDeliveryRetryInDatabase(db, id, error);
 }
 
-export function createTask(
-  task: CreateScheduledTaskInput,
-): void {
+export function createTask(task: CreateScheduledTaskInput): void {
   createTaskInDatabase(db, task);
 }
 
@@ -705,10 +703,7 @@ export function getAllTasks(agentType?: AgentType): ScheduledTask[] {
   return getAllTasksFromDatabase(db, agentType);
 }
 
-export function updateTask(
-  id: string,
-  updates: ScheduledTaskUpdates,
-): void {
+export function updateTask(id: string, updates: ScheduledTaskUpdates): void {
   updateTaskInDatabase(db, id, updates);
 }
 
@@ -1199,7 +1194,6 @@ export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
     ? 'tribunal'
     : 'single';
 }
-
 
 // --- Paired task/project/workspace state ---
 

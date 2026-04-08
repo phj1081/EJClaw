@@ -44,9 +44,11 @@ describe('config/env loading', () => {
   it('preserves empty-string env values and still prefers process.env over .env', async () => {
     fs.writeFileSync(
       path.join(tempRoot, '.env'),
-      ['FROM_FILE=file-value', 'EMPTY_IN_FILE=', 'PROCESS_EMPTY=file-fallback'].join(
-        '\n',
-      ),
+      [
+        'FROM_FILE=file-value',
+        'EMPTY_IN_FILE=',
+        'PROCESS_EMPTY=file-fallback',
+      ].join('\n'),
     );
     process.env.FROM_FILE = 'process-value';
     process.env.PROCESS_EMPTY = '';

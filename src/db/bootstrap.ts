@@ -78,7 +78,10 @@ export function migrateJsonStateFromFiles(
     }
   }
 
-  const sessions = migrateFile('sessions.json') as Record<string, string> | null;
+  const sessions = migrateFile('sessions.json') as Record<
+    string,
+    string
+  > | null;
   if (sessions) {
     for (const [folder, sessionId] of Object.entries(sessions)) {
       hooks.setSession(folder, sessionId);

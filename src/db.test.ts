@@ -1598,16 +1598,20 @@ describe('room assignment writes', () => {
       roomMode: 'tribunal',
       ownerAgentType: 'codex',
     });
-    expect(getAllRegisteredGroups('claude-code')['dc:projection-room']).toMatchObject({
+    expect(
+      getAllRegisteredGroups('claude-code')['dc:projection-room'],
+    ).toMatchObject({
       name: 'Projection Room Renamed',
       folder: 'projection-room',
       agentType: 'claude-code',
     });
-    expect(getAllRegisteredGroups('codex')['dc:projection-room']).toMatchObject({
-      name: 'Projection Room Renamed',
-      folder: 'projection-room',
-      agentType: 'codex',
-    });
+    expect(getAllRegisteredGroups('codex')['dc:projection-room']).toMatchObject(
+      {
+        name: 'Projection Room Renamed',
+        folder: 'projection-room',
+        agentType: 'codex',
+      },
+    );
   });
 });
 
