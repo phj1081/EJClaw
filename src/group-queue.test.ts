@@ -6,7 +6,10 @@ import { GroupQueue, type GroupRunContext } from './group-queue.js';
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
+  ASSISTANT_NAME: 'Andy',
   DATA_DIR: '/tmp/ejclaw-test-data',
+  IS_TEST_ENV: true,
+  LOG_LEVEL: 'info',
   MAX_CONCURRENT_AGENTS: 2,
 }));
 

@@ -5,6 +5,8 @@ import os from 'os';
 import {
   ARBITER_AGENT_TYPE,
   ARBITER_MODEL_CONFIG,
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CODEX_MODEL,
   OWNER_AGENT_TYPE,
   OWNER_MODEL_CONFIG,
   REVIEWER_AGENT_TYPE,
@@ -597,15 +599,13 @@ function buildModelConfigSection(): string {
     if (!role.agentType && role.label === 'Arbiter') continue;
     const type = role.agentType || '—';
     const defaultModel =
-      type === 'codex'
-        ? process.env.CODEX_MODEL || 'codex'
-        : process.env.CLAUDE_MODEL || 'claude';
+      type === 'codex' ? DEFAULT_CODEX_MODEL : DEFAULT_CLAUDE_MODEL;
     const model = role.model || defaultModel;
 
     // Show fallback status for claude-code roles when global failover is active
     const isFallback = failover.active && type === 'claude-code';
     if (isFallback) {
-      const fallbackModel = process.env.CODEX_MODEL || 'codex';
+      const fallbackModel = DEFAULT_CODEX_MODEL;
       lines.push(`  **${role.label}** — codex \`${fallbackModel}\` (fallback)`);
     } else {
       lines.push(`  **${role.label}** — ${type} \`${model}\``);
