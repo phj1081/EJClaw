@@ -67,7 +67,7 @@ export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
         deliveryRole: args.deliveryRole,
         pendingTaskStatus: args.pendingTask?.status ?? null,
       },
-      'Skipping queued follow-up after reviewer merge_ready delivery because inline finalize will handle the handoff',
+      'No queued follow-up was required after delivery retry',
     );
     return;
   }
@@ -90,6 +90,21 @@ export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
     nextTurnAction.kind,
     args.runId,
   );
+  if (scheduled) {
+    args.log.info(
+      {
+        workItemId: args.workItemId,
+        chatJid: args.chatJid,
+        deliveryRole: args.deliveryRole,
+        taskId: args.pendingTask?.id ?? null,
+        pendingTaskStatus: args.pendingTask?.status ?? null,
+        taskStatus: args.pendingTask?.status ?? null,
+        intentKind: nextTurnAction.kind,
+      },
+      'Queued paired follow-up after delivery retry',
+    );
+    return;
+  }
   if (!scheduled) {
     args.log.info(
       {
@@ -97,6 +112,7 @@ export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
         chatJid: args.chatJid,
         deliveryRole: args.deliveryRole,
         taskId: args.pendingTask?.id ?? null,
+        pendingTaskStatus: args.pendingTask?.status ?? null,
         taskStatus: args.pendingTask?.status ?? null,
         intentKind: nextTurnAction.kind,
       },

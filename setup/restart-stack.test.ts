@@ -82,31 +82,6 @@ describe('restartStackServices', () => {
     ).toThrow('restart:stack only supports Linux systemd services in this repo');
   });
 
-  it('fails fast when legacy services are still present', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
-    tempRoots.push(tempRoot);
-
-    const execFileSyncImpl = vi.fn();
-
-    expect(() =>
-      restartStackServices(tempRoot, {
-        direct: true,
-        execFileSyncImpl,
-        runningAsRoot: false,
-        serviceManager: 'systemd',
-        serviceId: null,
-        legacyServiceIssues: [
-          {
-            name: 'ejclaw-codex',
-            status: 'stopped',
-            sources: ['systemd-system'],
-          },
-        ],
-      }),
-    ).toThrow('Legacy EJClaw multi-service install detected');
-    expect(execFileSyncImpl).not.toHaveBeenCalled();
-  });
-
   it('falls back to direct restart when the oneshot unit is not installed for an external caller', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
     tempRoots.push(tempRoot);

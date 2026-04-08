@@ -343,16 +343,17 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       const { deliverySucceeded, visiblePhase } =
         await turnController.finish(outputStatus);
 
-      if (deliverySucceeded && pairedRoom && resolvedDeliveryRole === 'owner') {
+      if (deliverySucceeded && pairedRoom && resolvedDeliveryRole) {
         const pendingTaskAfterDelivery =
           getLatestOpenPairedTaskForChat(chatJid);
         const nextTurnAction = resolveNextTurnAction({
           taskStatus: pendingTaskAfterDelivery?.status,
-          lastTurnOutputRole: 'owner',
+          lastTurnOutputRole: resolvedDeliveryRole,
         });
         const dispatch = resolveFollowUpDispatch({
-          source: 'owner-delivery-success',
+          source: 'delivery-success',
           nextTurnAction,
+          completedRole: resolvedDeliveryRole,
         });
         if (
           dispatch.kind === 'enqueue' &&
@@ -376,8 +377,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
               scheduled,
             },
             scheduled
-              ? 'Queued paired follow-up after successful owner delivery'
-              : 'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged',
+              ? resolvedDeliveryRole === 'owner'
+                ? 'Queued paired follow-up after successful owner delivery'
+                : 'Queued paired follow-up after successful reviewer/arbiter delivery'
+              : resolvedDeliveryRole === 'owner'
+                ? 'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged'
+                : 'Skipped duplicate paired follow-up after successful reviewer/arbiter delivery while task state was unchanged',
           );
         }
       }

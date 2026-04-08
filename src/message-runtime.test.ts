@@ -882,15 +882,17 @@ describe('createMessageRuntime', () => {
       'reviewer final retry',
     );
     expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
-    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         workItemId: 101,
         chatJid,
         deliveryRole: 'reviewer',
+        taskId: 'task-review-delivery-role',
         pendingTaskStatus: 'merge_ready',
+        intentKind: 'finalize-owner-turn',
       }),
-      'Skipping queued follow-up after reviewer merge_ready delivery because inline finalize will handle the handoff',
+      'Queued paired follow-up after delivery retry',
     );
   });
 
@@ -975,15 +977,17 @@ describe('createMessageRuntime', () => {
       'fallback reviewer final retry',
     );
     expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
-    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         workItemId: 102,
         chatJid,
         deliveryRole: 'reviewer',
+        taskId: 'task-fallback-review-delivery-role',
         pendingTaskStatus: 'merge_ready',
+        intentKind: 'finalize-owner-turn',
       }),
-      'Skipping queued follow-up after reviewer merge_ready delivery because inline finalize will handle the handoff',
+      'Queued paired follow-up after delivery retry',
     );
   });
 
@@ -1917,6 +1921,287 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         scheduled: false,
       }),
       'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged',
+    );
+  });
+
+  it('re-enqueues owner after a successful reviewer delivery moves the task back to active', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const enqueueMessageCheck = vi.fn();
+    const pairedTask = {
+      id: 'task-reviewer-delivery-owner-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
+      () => pairedTask,
+    );
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        pairedTask.status = 'active';
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE_WITH_CONCERNS\nreviewer follow-up needed',
+          newSessionId: 'session-reviewer-delivery-owner-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nreviewer follow-up needed',
+          newSessionId: 'session-reviewer-delivery-owner-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-reviewer-delivery-owner-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE_WITH_CONCERNS\nreviewer follow-up needed',
+    );
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        runId: 'run-reviewer-delivery-owner-follow-up',
+        completedRole: 'reviewer',
+        taskId: 'task-reviewer-delivery-owner-follow-up',
+        taskStatus: 'active',
+      }),
+      'Queued paired follow-up after successful reviewer/arbiter delivery',
+    );
+  });
+
+  it('re-enqueues finalize-owner after a successful reviewer delivery moves the task to merge_ready', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const enqueueMessageCheck = vi.fn();
+    const pairedTask = {
+      id: 'task-reviewer-delivery-finalize-owner',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
+      () => pairedTask,
+    );
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        pairedTask.status = 'merge_ready';
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE\nreview approved',
+          newSessionId: 'session-reviewer-delivery-finalize-owner',
+        });
+        return {
+          status: 'success',
+          result: 'DONE\nreview approved',
+          newSessionId: 'session-reviewer-delivery-finalize-owner',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-reviewer-delivery-finalize-owner',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE\nreview approved',
+    );
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        runId: 'run-reviewer-delivery-finalize-owner',
+        completedRole: 'reviewer',
+        taskId: 'task-reviewer-delivery-finalize-owner',
+        taskStatus: 'merge_ready',
+      }),
+      'Queued paired follow-up after successful reviewer/arbiter delivery',
+    );
+  });
+
+  it('re-enqueues owner after a successful arbiter delivery moves the task back to active', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const arbiterChannel = makeChannel(chatJid, 'discord-arbiter', false);
+    const enqueueMessageCheck = vi.fn();
+    const pairedTask = {
+      id: 'task-arbiter-delivery-owner-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      arbiter_service_id: 'claude-arbiter',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'arbiter_requested',
+      arbiter_verdict: null,
+      arbiter_requested_at: '2026-03-30T00:00:10.000Z',
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
+      () => pairedTask,
+    );
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        pairedTask.status = 'active';
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE_WITH_CONCERNS\narbiter says revise',
+          newSessionId: 'session-arbiter-delivery-owner-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\narbiter says revise',
+          newSessionId: 'session-arbiter-delivery-owner-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel, arbiterChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-arbiter-delivery-owner-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(arbiterChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE_WITH_CONCERNS\narbiter says revise',
+    );
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        runId: 'run-arbiter-delivery-owner-follow-up',
+        completedRole: 'arbiter',
+        taskId: 'task-arbiter-delivery-owner-follow-up',
+        taskStatus: 'active',
+      }),
+      'Queued paired follow-up after successful reviewer/arbiter delivery',
     );
   });
 

@@ -118,6 +118,7 @@ export function resolveNextTurnAction(args: {
 
 export function resolveFollowUpDispatch(args: {
   source:
+    | 'delivery-success'
     | 'owner-delivery-success'
     | 'delivery-retry'
     | 'bot-only-follow-up'
@@ -128,18 +129,21 @@ export function resolveFollowUpDispatch(args: {
   sawOutput?: boolean;
 }): FollowUpDispatch {
   switch (args.source) {
+    case 'delivery-success':
     case 'owner-delivery-success':
-      return args.nextTurnAction.kind === 'reviewer-turn'
-        ? { kind: 'enqueue', queueKind: 'paired-follow-up' }
-        : { kind: 'none' };
+      if (
+        args.source === 'owner-delivery-success' ||
+        args.completedRole === 'owner'
+      ) {
+        return args.nextTurnAction.kind === 'reviewer-turn'
+          ? { kind: 'enqueue', queueKind: 'paired-follow-up' }
+          : { kind: 'none' };
+      }
+      return args.nextTurnAction.kind === 'none'
+        ? { kind: 'none' }
+        : { kind: 'enqueue', queueKind: 'paired-follow-up' };
 
     case 'delivery-retry':
-      if (
-        args.completedRole === 'reviewer' &&
-        args.nextTurnAction.kind === 'finalize-owner-turn'
-      ) {
-        return { kind: 'none' };
-      }
       if (args.nextTurnAction.kind === 'none') {
         return { kind: 'enqueue', queueKind: 'message-check' };
       }

@@ -7,6 +7,3 @@ export declare function isVerificationSnapshotExcludedPath(
   currentPath: string,
 ): boolean;
 export declare function computeVerificationSnapshotId(repoDir: string): string;
-export declare function resolveVerificationResponsesDir(
-  hostIpcDir: string,
-): string;
