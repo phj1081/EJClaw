@@ -1012,7 +1012,7 @@ describe('createMessageRuntime', () => {
     });
 
     expect(result).toBe(true);
-    expect(db.getOpenWorkItemForChat).toHaveBeenCalledWith(chatJid);
+    expect(db.getOpenWorkItemForChat).toHaveBeenCalledWith(chatJid, 'claude');
     expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
       chatJid,
       'fallback reviewer final retry',
@@ -1137,7 +1137,10 @@ describe('createMessageRuntime', () => {
     expect(lastAgentTimestamps[`${chatJid}:reviewer`]).toBe('41');
     expect(saveState).toHaveBeenCalled();
     expect(db.createProducedWorkItem).toHaveBeenCalledWith(
-      expect.objectContaining({ delivery_role: 'reviewer' }),
+      expect.objectContaining({
+        delivery_role: 'reviewer',
+        service_id: 'codex-main',
+      }),
     );
     expect(reviewerChannel.sendMessage).toHaveBeenCalledWith(
       chatJid,
@@ -1324,6 +1327,7 @@ describe('createMessageRuntime', () => {
     expect(db.createProducedWorkItem).toHaveBeenCalledWith(
       expect.objectContaining({
         delivery_role: 'reviewer',
+        service_id: 'codex-main',
         result_payload: '**DONE**\n\n리뷰 승인',
       }),
     );
@@ -1514,7 +1518,10 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     expect(result).toBe(true);
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
     expect(db.createProducedWorkItem).toHaveBeenCalledWith(
-      expect.objectContaining({ delivery_role: 'owner' }),
+      expect.objectContaining({
+        delivery_role: 'owner',
+        service_id: 'claude',
+      }),
     );
     expect(channel.sendMessage).toHaveBeenCalledWith(chatJid, '최종 정리 완료');
   });
@@ -5078,7 +5085,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
 
     runtime.recoverPendingMessages();
 
-    expect(db.getOpenWorkItemForChat).toHaveBeenCalledWith(chatJid);
+    expect(db.getOpenWorkItemForChat).toHaveBeenCalledWith(chatJid, 'claude');
     expect(enqueueMessageCheck).toHaveBeenCalledWith(
       chatJid,
       resolveGroupIpcPath(group.folder),

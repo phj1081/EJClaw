@@ -12,7 +12,10 @@ import {
   resolveStableReviewerAgentType,
 } from './legacy-rebuilds.js';
 import { normalizeStoredAgentType } from './room-registration.js';
-import { resolveRoleServiceShadow } from '../role-service-shadow.js';
+import {
+  inferAgentTypeFromServiceShadow,
+  resolveRoleServiceShadow,
+} from '../role-service-shadow.js';
 import {
   AgentType,
   PairedProject,
@@ -31,6 +34,8 @@ interface StoredPairedTaskRow extends Omit<
   | 'reviewer_agent_type'
   | 'arbiter_agent_type'
 > {
+  owner_service_id?: string | null;
+  reviewer_service_id?: string | null;
   owner_agent_type?: string | null;
   reviewer_agent_type?: string | null;
   arbiter_agent_type?: string | null;
@@ -81,11 +86,32 @@ function hydratePairedTaskRow(
   database: Database,
   row: StoredPairedTaskRow,
 ): PairedTask {
-  const ownerAgentType = resolveStablePairedTaskOwnerAgentType(database, row);
-  const reviewerAgentType = resolveStableReviewerAgentType(
-    ownerAgentType,
+  const persistedOwnerAgentType = normalizeStoredAgentType(
+    row.owner_agent_type ?? null,
+  );
+  const persistedReviewerAgentType = normalizeStoredAgentType(
     row.reviewer_agent_type ?? null,
   );
+  const stableOwnerAgentType = resolveStablePairedTaskOwnerAgentType(
+    database,
+    row,
+  );
+  const ownerAgentType =
+    stableOwnerAgentType ??
+    (row.owner_service_id
+      ? inferAgentTypeFromServiceShadow(row.owner_service_id)
+      : undefined);
+  const stableReviewerAgentType = resolveStableReviewerAgentType(
+    stableOwnerAgentType,
+    row.reviewer_agent_type ?? null,
+  );
+  const reviewerAgentType =
+    persistedReviewerAgentType ??
+    stableReviewerAgentType ??
+    (row.reviewer_service_id
+      ? inferAgentTypeFromServiceShadow(row.reviewer_service_id)
+      : null) ??
+    resolveStableReviewerAgentType(ownerAgentType, null);
   const arbiterAgentType =
     normalizeStoredAgentType(row.arbiter_agent_type) ??
     ARBITER_AGENT_TYPE ??
@@ -94,9 +120,11 @@ function hydratePairedTaskRow(
   return {
     ...row,
     owner_service_id:
+      row.owner_service_id ??
       resolveRoleServiceShadow('owner', ownerAgentType) ??
       CODEX_MAIN_SERVICE_ID,
     reviewer_service_id:
+      row.reviewer_service_id ??
       resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
       CODEX_REVIEW_SERVICE_ID,
     owner_agent_type: ownerAgentType ?? null,
@@ -148,6 +176,27 @@ export function createPairedTaskInDatabase(
   database: Database,
   task: PairedTask,
 ): void {
+  const ownerAgentType =
+    normalizeStoredAgentType(task.owner_agent_type) ??
+    inferAgentTypeFromServiceShadow(task.owner_service_id) ??
+    null;
+  const reviewerAgentType =
+    normalizeStoredAgentType(task.reviewer_agent_type) ??
+    inferAgentTypeFromServiceShadow(task.reviewer_service_id) ??
+    resolveStableReviewerAgentType(ownerAgentType ?? undefined, null);
+  const arbiterAgentType =
+    normalizeStoredAgentType(task.arbiter_agent_type) ??
+    ARBITER_AGENT_TYPE ??
+    null;
+  const ownerServiceId =
+    task.owner_service_id ??
+    resolveRoleServiceShadow('owner', ownerAgentType) ??
+    CODEX_MAIN_SERVICE_ID;
+  const reviewerServiceId =
+    task.reviewer_service_id ??
+    resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
+    CODEX_REVIEW_SERVICE_ID;
+
   database
     .prepare(
       `
@@ -155,6 +204,8 @@ export function createPairedTaskInDatabase(
           id,
           chat_jid,
           group_folder,
+          owner_service_id,
+          reviewer_service_id,
           owner_agent_type,
           reviewer_agent_type,
           arbiter_agent_type,
@@ -166,19 +217,22 @@ export function createPairedTaskInDatabase(
           status,
           arbiter_verdict,
           arbiter_requested_at,
+          completion_reason,
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .run(
       task.id,
       task.chat_jid,
       task.group_folder,
-      task.owner_agent_type ?? null,
-      task.reviewer_agent_type ?? null,
-      task.arbiter_agent_type ?? null,
+      ownerServiceId,
+      reviewerServiceId,
+      ownerAgentType,
+      reviewerAgentType,
+      arbiterAgentType,
       task.title,
       task.source_ref,
       task.plan_notes,
@@ -187,6 +241,7 @@ export function createPairedTaskInDatabase(
       task.status,
       task.arbiter_verdict,
       task.arbiter_requested_at,
+      task.completion_reason,
       task.created_at,
       task.updated_at,
     );

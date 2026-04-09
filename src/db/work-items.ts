@@ -1,9 +1,12 @@
 import { Database } from 'bun:sqlite';
 
-import { SERVICE_SESSION_SCOPE } from '../config.js';
-import { inferRoleFromServiceShadow } from '../role-service-shadow.js';
+import { SERVICE_SESSION_SCOPE, normalizeServiceId } from '../config.js';
+import {
+  inferAgentTypeFromServiceShadow,
+  inferRoleFromServiceShadow,
+  resolveRoleServiceShadow,
+} from '../role-service-shadow.js';
 import { AgentType, PairedRoomRole } from '../types.js';
-import { resolveWorkItemServiceShadow } from './legacy-rebuilds.js';
 
 export interface WorkItem {
   id: number;
@@ -26,15 +29,17 @@ export interface WorkItem {
 
 interface StoredWorkItemRow extends Omit<
   WorkItem,
-  'service_id' | 'agent_type'
+  'agent_type' | 'service_id'
 > {
   agent_type: string;
+  service_id?: string | null;
 }
 
 export interface CreateProducedWorkItemInput {
   group_folder: string;
   chat_jid: string;
   agent_type?: AgentType;
+  service_id?: string;
   delivery_role?: PairedRoomRole | null;
   start_seq: number | null;
   end_seq: number | null;
@@ -48,13 +53,41 @@ function normalizeStoredAgentType(
   return undefined;
 }
 
+function resolveStoredWorkItemServiceId(args: {
+  agentType: AgentType;
+  deliveryRole?: PairedRoomRole | null;
+  serviceId?: string | null;
+}): string {
+  return (
+    (args.serviceId ? normalizeServiceId(args.serviceId) : null) ??
+    resolveRoleServiceShadow(args.deliveryRole ?? 'owner', args.agentType) ??
+    SERVICE_SESSION_SCOPE
+  );
+}
+
 function hydrateWorkItemRow(row: StoredWorkItemRow): WorkItem {
   const agentType = normalizeStoredAgentType(row.agent_type) ?? 'claude-code';
   return {
     ...row,
     agent_type: agentType,
-    service_id: resolveWorkItemServiceShadow(agentType, row.delivery_role),
+    service_id: resolveStoredWorkItemServiceId({
+      agentType,
+      deliveryRole: row.delivery_role,
+      serviceId: row.service_id,
+    }),
   };
+}
+
+function resolvePreferredWorkItemRole(
+  serviceId: string | null | undefined,
+): PairedRoomRole | null {
+  const normalizedServiceId = serviceId ? normalizeServiceId(serviceId) : null;
+  if (!normalizedServiceId) {
+    return null;
+  }
+
+  const inferredAgentType = inferAgentTypeFromServiceShadow(normalizedServiceId);
+  return inferRoleFromServiceShadow(inferredAgentType, normalizedServiceId);
 }
 
 export function getOpenWorkItemFromDatabase(
@@ -63,23 +96,42 @@ export function getOpenWorkItemFromDatabase(
   agentType: AgentType = 'claude-code',
   serviceId: string = SERVICE_SESSION_SCOPE,
 ): WorkItem | undefined {
-  const preferredRole = inferRoleFromServiceShadow(agentType, serviceId);
+  const normalizedServiceId = normalizeServiceId(serviceId);
+  const preferredRole = inferRoleFromServiceShadow(
+    agentType,
+    normalizedServiceId,
+  );
   const row = database
     .prepare(
       `SELECT *
        FROM work_items
        WHERE chat_jid = ? AND agent_type = ?
          AND status IN ('produced', 'delivery_retry')
+         AND (
+           service_id = ?
+           OR (? IS NOT NULL AND delivery_role = ?)
+           OR (? IS NULL AND delivery_role IS NULL)
+         )
        ORDER BY
          CASE
-           WHEN ? IS NOT NULL AND delivery_role = ? THEN 0
-           WHEN delivery_role IS NULL THEN 1
+           WHEN service_id = ? THEN 0
+           WHEN ? IS NOT NULL AND delivery_role = ? THEN 1
            ELSE 2
          END,
          id ASC
        LIMIT 1`,
     )
-    .get(chatJid, agentType, preferredRole, preferredRole) as
+    .get(
+      chatJid,
+      agentType,
+      normalizedServiceId,
+      preferredRole,
+      preferredRole,
+      preferredRole,
+      normalizedServiceId,
+      preferredRole,
+      preferredRole,
+    ) as
     | StoredWorkItemRow
     | undefined;
   return row ? hydrateWorkItemRow(row) : undefined;
@@ -88,17 +140,40 @@ export function getOpenWorkItemFromDatabase(
 export function getOpenWorkItemForChatFromDatabase(
   database: Database,
   chatJid: string,
+  serviceId: string = SERVICE_SESSION_SCOPE,
 ): WorkItem | undefined {
+  const normalizedServiceId = normalizeServiceId(serviceId);
+  const preferredRole = resolvePreferredWorkItemRole(normalizedServiceId);
   const row = database
     .prepare(
       `SELECT *
        FROM work_items
        WHERE chat_jid = ?
          AND status IN ('produced', 'delivery_retry')
-       ORDER BY id ASC
+         AND (
+           service_id = ?
+           OR (? IS NOT NULL AND delivery_role = ?)
+           OR (? IS NULL AND delivery_role IS NULL)
+         )
+       ORDER BY
+         CASE
+           WHEN service_id = ? THEN 0
+           WHEN ? IS NOT NULL AND delivery_role = ? THEN 1
+           ELSE 2
+         END,
+         id ASC
        LIMIT 1`,
     )
-    .get(chatJid) as StoredWorkItemRow | undefined;
+    .get(
+      chatJid,
+      normalizedServiceId,
+      preferredRole,
+      preferredRole,
+      preferredRole,
+      normalizedServiceId,
+      preferredRole,
+      preferredRole,
+    ) as StoredWorkItemRow | undefined;
   return row ? hydrateWorkItemRow(row) : undefined;
 }
 
@@ -108,26 +183,33 @@ export function createProducedWorkItemInDatabase(
 ): WorkItem {
   const now = new Date().toISOString();
   const agentType = input.agent_type || 'claude-code';
+  const serviceId = resolveStoredWorkItemServiceId({
+    agentType,
+    deliveryRole: input.delivery_role,
+    serviceId: input.service_id,
+  });
   database
     .prepare(
       `INSERT INTO work_items (
          group_folder,
          chat_jid,
          agent_type,
+         service_id,
          delivery_role,
          status,
          start_seq,
          end_seq,
-         result_payload,
-         delivery_attempts,
-         created_at,
-         updated_at
-       ) VALUES (?, ?, ?, ?, 'produced', ?, ?, ?, 0, ?, ?)`,
+       result_payload,
+       delivery_attempts,
+       created_at,
+       updated_at
+       ) VALUES (?, ?, ?, ?, ?, 'produced', ?, ?, ?, 0, ?, ?)`,
     )
     .run(
       input.group_folder,
       input.chat_jid,
       agentType,
+      serviceId,
       input.delivery_role ?? null,
       input.start_seq,
       input.end_seq,

@@ -7,7 +7,7 @@ import {
   getLastBotFinalMessage,
   getLatestOpenPairedTaskForChat,
 } from './db.js';
-import { isSessionCommandSenderAllowed } from './config.js';
+import { isSessionCommandSenderAllowed, SERVICE_SESSION_SCOPE } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
 import {
   findChannel,
@@ -59,7 +59,11 @@ import {
   type PairedTask,
 } from './types.js';
 import { createScopedLogger, logger } from './logger.js';
-import { hasReviewerLease } from './service-routing.js';
+import {
+  getEffectiveChannelLease,
+  hasReviewerLease,
+  resolveLeaseServiceId,
+} from './service-routing.js';
 export {
   resolveHandoffCursorKey,
   resolveHandoffRoleOverride,
@@ -270,6 +274,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       deliverFinalText: async (text) => {
         try {
           const persistedDeliveryRole = resolvedDeliveryRole;
+          const persistedDeliveryServiceId = resolveLeaseServiceId(
+            getEffectiveChannelLease(chatJid),
+            persistedDeliveryRole ?? 'owner',
+          );
           if (
             (persistedDeliveryRole === 'reviewer' ||
               persistedDeliveryRole === 'arbiter') &&
@@ -294,6 +302,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             chat_jid: chatJid,
             agent_type:
               args.forcedAgentType ?? group.agentType ?? 'claude-code',
+            service_id: persistedDeliveryServiceId ?? undefined,
             delivery_role: persistedDeliveryRole,
             start_seq: startSeq,
             end_seq: endSeq,
@@ -471,7 +480,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     // Delivery retries can come from forced fallback runs whose agent_type
     // differs from the room owner's registered agent type.
-    const openWorkItem = getOpenWorkItemForChat(chatJid);
+    const openWorkItem = getOpenWorkItemForChat(
+      chatJid,
+      SERVICE_SESSION_SCOPE,
+    );
     const openWorkItemOutcome = await processOpenWorkItemDelivery({
       chatJid,
       runId,

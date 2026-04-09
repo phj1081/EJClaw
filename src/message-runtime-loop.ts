@@ -10,6 +10,7 @@ import {
   advanceLastAgentCursor,
   getProcessableMessages,
 } from './message-runtime-rules.js';
+import { SERVICE_SESSION_SCOPE } from './config.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
 import type { ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { findChannel, formatMessages } from './router.js';
@@ -134,7 +135,10 @@ export function recoverPendingMessages(args: {
 }): void {
   const registeredGroups = args.getRegisteredGroups();
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
-    const openWorkItem = getOpenWorkItemForChat(chatJid);
+    const openWorkItem = getOpenWorkItemForChat(
+      chatJid,
+      SERVICE_SESSION_SCOPE,
+    );
     if (openWorkItem) {
       logger.info(
         { chatJid, group: group.name, workItemId: openWorkItem.id },

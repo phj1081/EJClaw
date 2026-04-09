@@ -70,6 +70,8 @@ interface StoredServiceHandoffRow extends Omit<
   | 'source_agent_type'
   | 'target_agent_type'
 > {
+  source_service_id?: string | null;
+  target_service_id?: string | null;
   source_agent_type?: string | null;
   target_agent_type: string;
 }
@@ -103,15 +105,17 @@ function hydrateServiceHandoffRow(
     source_agent_type: sourceAgentType ?? null,
     target_agent_type: targetAgentType,
     source_service_id:
-      row.source_role != null
+      row.source_service_id ??
+      (row.source_role != null
         ? (resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
           SERVICE_SESSION_SCOPE)
-        : SERVICE_SESSION_SCOPE,
+        : SERVICE_SESSION_SCOPE),
     target_service_id:
-      row.target_role != null
+      row.target_service_id ??
+      (row.target_role != null
         ? (resolveRoleServiceShadow(row.target_role, targetAgentType) ??
           SERVICE_SESSION_SCOPE)
-        : SERVICE_SESSION_SCOPE,
+        : SERVICE_SESSION_SCOPE),
   };
 }
 
@@ -191,12 +195,26 @@ export function createServiceHandoffInDatabase(
           role: sourceRole,
         })
       : null);
+  const sourceServiceId =
+    input.source_service_id ??
+    (sourceRole != null
+      ? (resolveRoleServiceShadow(sourceRole, sourceAgentType) ?? null)
+      : null) ??
+    SERVICE_SESSION_SCOPE;
+  const targetServiceId =
+    input.target_service_id ??
+    (targetRole != null
+      ? (resolveRoleServiceShadow(targetRole, input.target_agent_type) ?? null)
+      : null) ??
+    SERVICE_SESSION_SCOPE;
 
   database
     .prepare(
       `INSERT INTO service_handoffs (
           chat_jid,
           group_folder,
+          source_service_id,
+          target_service_id,
           source_role,
           source_agent_type,
           target_role,
@@ -206,11 +224,13 @@ export function createServiceHandoffInDatabase(
           end_seq,
           reason,
           intended_role
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.chat_jid,
       input.group_folder,
+      sourceServiceId,
+      targetServiceId,
       sourceRole,
       sourceAgentType ?? null,
       targetRole,
