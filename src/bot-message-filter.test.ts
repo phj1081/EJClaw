@@ -138,4 +138,41 @@ describe('filterProcessableMessages', () => {
     expect(result[0].id).toBe('human-1');
     expect(result[1].id).toBe('other-1');
   });
+
+  it('filters paired execution status control bot messages in paired rooms', () => {
+    const isOwn = (m: NewMessage) =>
+      m.is_bot_message === true && m.sender === OWN_BOT_ID;
+    const result = filterProcessableMessages(
+      [
+        makeMsg({ id: 'human-1', content: 'human' }),
+        makeMsg({
+          id: 'control-1',
+          sender: 'other-bot-456',
+          sender_name: 'OtherBot',
+          content: '<@216851709744513024> ✅ 작업 완료.',
+          is_bot_message: true,
+        }),
+        makeMsg({
+          id: 'control-2',
+          sender: 'other-bot-456',
+          sender_name: 'OtherBot',
+          content: '⚠️ 자동 해결 불가 — 확인이 필요합니다.',
+          is_bot_message: true,
+        }),
+        makeMsg({
+          id: 'other-1',
+          sender: 'other-bot-456',
+          sender_name: 'OtherBot',
+          content: 'partner response',
+          is_bot_message: true,
+        }),
+      ],
+      true,
+      isOwn,
+    );
+
+    expect(result).toHaveLength(2);
+    expect(result[0].id).toBe('human-1');
+    expect(result[1].id).toBe('other-1');
+  });
 });
