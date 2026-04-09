@@ -135,10 +135,7 @@ export function recoverPendingMessages(args: {
 }): void {
   const registeredGroups = args.getRegisteredGroups();
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
-    const openWorkItem = getOpenWorkItemForChat(
-      chatJid,
-      SERVICE_SESSION_SCOPE,
-    );
+    const openWorkItem = getOpenWorkItemForChat(chatJid, SERVICE_SESSION_SCOPE);
     if (openWorkItem) {
       logger.info(
         { chatJid, group: group.name, workItemId: openWorkItem.id },

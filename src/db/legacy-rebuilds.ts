@@ -1,9 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-import {
-  ARBITER_AGENT_TYPE,
-  REVIEWER_AGENT_TYPE,
-} from '../config.js';
+import { ARBITER_AGENT_TYPE, REVIEWER_AGENT_TYPE } from '../config.js';
 import {
   collectRegisteredAgentTypes,
   collectRegisteredAgentTypesForFolder,

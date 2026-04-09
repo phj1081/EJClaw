@@ -7,7 +7,10 @@ import {
   getLastBotFinalMessage,
   getLatestOpenPairedTaskForChat,
 } from './db.js';
-import { isSessionCommandSenderAllowed, SERVICE_SESSION_SCOPE } from './config.js';
+import {
+  isSessionCommandSenderAllowed,
+  SERVICE_SESSION_SCOPE,
+} from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
 import {
   findChannel,
@@ -480,10 +483,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     // Delivery retries can come from forced fallback runs whose agent_type
     // differs from the room owner's registered agent type.
-    const openWorkItem = getOpenWorkItemForChat(
-      chatJid,
-      SERVICE_SESSION_SCOPE,
-    );
+    const openWorkItem = getOpenWorkItemForChat(chatJid, SERVICE_SESSION_SCOPE);
     const openWorkItemOutcome = await processOpenWorkItemDelivery({
       chatJid,
       runId,

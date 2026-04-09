@@ -570,22 +570,25 @@ function backfillCanonicalWorkItemServiceIds(database: Database): void {
         SET service_id = ?
       WHERE id = ?`,
   );
-  const tx = database.transaction((workItemRows: StoredWorkItemServiceRow[]) => {
-    for (const row of workItemRows) {
-      const agentType = normalizeStoredAgentType(row.agent_type) ?? 'claude-code';
-      const deliveryRole = normalizePairedRole(row.delivery_role) ?? 'owner';
-      const serviceId =
-        (row.service_id ? normalizeServiceId(row.service_id) : null) ??
-        resolveRoleServiceShadow(deliveryRole, agentType) ??
-        SERVICE_SESSION_SCOPE;
+  const tx = database.transaction(
+    (workItemRows: StoredWorkItemServiceRow[]) => {
+      for (const row of workItemRows) {
+        const agentType =
+          normalizeStoredAgentType(row.agent_type) ?? 'claude-code';
+        const deliveryRole = normalizePairedRole(row.delivery_role) ?? 'owner';
+        const serviceId =
+          (row.service_id ? normalizeServiceId(row.service_id) : null) ??
+          resolveRoleServiceShadow(deliveryRole, agentType) ??
+          SERVICE_SESSION_SCOPE;
 
-      if (row.service_id === serviceId) {
-        continue;
+        if (row.service_id === serviceId) {
+          continue;
+        }
+
+        update.run(serviceId, row.id);
       }
-
-      update.run(serviceId, row.id);
-    }
-  });
+    },
+  );
 
   tx(rows);
 }
@@ -735,7 +738,10 @@ export function applySchemaMigrations(
     database,
     `ALTER TABLE work_items ADD COLUMN delivery_role TEXT`,
   );
-  tryExecMigration(database, `ALTER TABLE work_items ADD COLUMN service_id TEXT`);
+  tryExecMigration(
+    database,
+    `ALTER TABLE work_items ADD COLUMN service_id TEXT`,
+  );
 
   database.exec(
     `UPDATE service_handoffs
@@ -766,7 +772,10 @@ export function applySchemaMigrations(
     'reviewer_agent_type',
     'arbiter_agent_type',
   ]) {
-    tryExecMigration(database, `ALTER TABLE channel_owner ADD COLUMN ${column} TEXT`);
+    tryExecMigration(
+      database,
+      `ALTER TABLE channel_owner ADD COLUMN ${column} TEXT`,
+    );
   }
 
   backfillCanonicalPairedTaskServiceIds(database);
@@ -1127,5 +1136,4 @@ export function applySchemaMigrations(
   } catch {
     /* columns already exist */
   }
-
 }
