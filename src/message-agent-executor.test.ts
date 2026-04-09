@@ -837,6 +837,180 @@ describe('runAgentForGroup room memory', () => {
     });
   });
 
+  it('does not emit an extra public done notification after owner finalization completes the paired task', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      workDir: '/repo/canonical',
+    };
+    const outputs: string[] = [];
+
+    vi.mocked(db.getLastHumanMessageSender).mockReturnValue(
+      '216851709744513024',
+    );
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-final-done',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-main',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 1,
+        review_requested_at: '2026-04-09T00:00:00.000Z',
+        status: 'merge_ready',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-09T00:00:00.000Z',
+        updated_at: '2026-04-09T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-final-done',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 1,
+      review_requested_at: '2026-04-09T00:00:00.000Z',
+      status: 'completed',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: 'done',
+      created_at: '2026-04-09T00:00:00.000Z',
+      updated_at: '2026-04-09T00:00:01.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'DONE\nfinalized',
+          output: { visibility: 'public', text: 'DONE\nfinalized' },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: 'DONE\nfinalized',
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'finalize',
+      chatJid: 'group@test',
+      runId: 'run-final-done',
+      onOutput: async (output) => {
+        if (output.output?.visibility === 'public' && output.output.text) {
+          outputs.push(output.output.text);
+        }
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(outputs).toEqual(['DONE\nfinalized']);
+  });
+
+  it('still emits escalation notifications when the paired task completes with human intervention required', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      workDir: '/repo/canonical',
+    };
+    const outputs: string[] = [];
+
+    vi.mocked(db.getLastHumanMessageSender).mockReturnValue(
+      '216851709744513024',
+    );
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-final-escalated',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-main',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 1,
+        review_requested_at: '2026-04-09T00:00:00.000Z',
+        status: 'merge_ready',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-09T00:00:00.000Z',
+        updated_at: '2026-04-09T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-final-escalated',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 1,
+      review_requested_at: '2026-04-09T00:00:00.000Z',
+      status: 'completed',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: 'escalated',
+      created_at: '2026-04-09T00:00:00.000Z',
+      updated_at: '2026-04-09T00:00:01.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'BLOCKED\nhuman intervention required',
+          output: {
+            visibility: 'public',
+            text: 'BLOCKED\nhuman intervention required',
+          },
+          phase: 'final',
+        });
+        return {
+          status: 'success',
+          result: 'BLOCKED\nhuman intervention required',
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'finalize',
+      chatJid: 'group@test',
+      runId: 'run-final-escalated',
+      onOutput: async (output) => {
+        if (output.output?.visibility === 'public' && output.output.text) {
+          outputs.push(output.output.text);
+        }
+      },
+    });
+
+    expect(result).toBe('success');
+    expect(outputs).toEqual([
+      'BLOCKED\nhuman intervention required',
+      '<@216851709744513024> ⚠️ 자동 해결 불가 — 확인이 필요합니다.',
+    ]);
+  });
+
   it('logs streamed activity with resolved execution attribution', async () => {
     const group = {
       ...makeGroup(),

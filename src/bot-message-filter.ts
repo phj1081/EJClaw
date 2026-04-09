@@ -1,6 +1,13 @@
 import { isSessionCommandControlMessage } from './session-commands.js';
 import { NewMessage } from './types.js';
 
+const PAIRED_EXECUTION_CONTROL_MESSAGE_PATTERN =
+  /^(?:<@\d+>\s+)?(?:✅ 작업 완료\.|⚠️ 자동 해결 불가 — 확인이 필요합니다\.|⚠️ 중재자 판단: 사람 개입이 필요합니다\.)$/;
+
+function isPairedExecutionControlMessage(content: string): boolean {
+  return PAIRED_EXECUTION_CONTROL_MESSAGE_PATTERN.test(content.trim());
+}
+
 /**
  * Filter messages before processing.
  * - Normal rooms: drop all bot messages.
@@ -16,7 +23,8 @@ export function filterProcessableMessages(
     (message) =>
       !(
         message.is_bot_message &&
-        isSessionCommandControlMessage(message.content)
+        (isSessionCommandControlMessage(message.content) ||
+          isPairedExecutionControlMessage(message.content))
       ),
   );
 
