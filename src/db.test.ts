@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   _initTestDatabaseFromFile,
+  _deleteStoredRoomSettingsForTests,
   _setMemoryTimestampsForTests,
   _setRegisteredGroupForTests,
   assignRoom,
@@ -30,6 +31,7 @@ import {
   getLatestPairedTaskForChat,
   getLatestTurnNumber,
   getLastRespondingAgentType,
+  getRegisteredGroup,
   getMessagesSinceSeq,
   getNewMessagesBySeq,
   getOpenWorkItem,
@@ -1658,6 +1660,328 @@ describe('room assignment writes', () => {
       },
     );
   });
+
+  it('recreates inferred room_settings when renaming a legacy projection-only room', () => {
+    _setRegisteredGroupForTests('dc:legacy-rename', {
+      name: 'Legacy Rename',
+      folder: 'legacy-rename',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    _setRegisteredGroupForTests('dc:legacy-rename', {
+      name: 'Legacy Rename',
+      folder: 'legacy-rename',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+
+    _deleteStoredRoomSettingsForTests('dc:legacy-rename');
+    expect(getStoredRoomSettings('dc:legacy-rename')).toBeUndefined();
+
+    updateRegisteredGroupName('dc:legacy-rename', 'Legacy Rename Updated');
+
+    expect(getStoredRoomSettings('dc:legacy-rename')).toMatchObject({
+      chatJid: 'dc:legacy-rename',
+      roomMode: 'tribunal',
+      modeSource: 'inferred',
+      name: 'Legacy Rename Updated',
+      folder: 'legacy-rename',
+    });
+    expect(
+      getAllRegisteredGroups('claude-code')['dc:legacy-rename'],
+    ).toMatchObject({
+      name: 'Legacy Rename Updated',
+      agentType: 'claude-code',
+    });
+    expect(getAllRegisteredGroups('codex')['dc:legacy-rename']).toMatchObject({
+      name: 'Legacy Rename Updated',
+      agentType: 'codex',
+    });
+  });
+
+  it('ignores stale registered_groups capability rows once room_settings exists', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-room-ssot-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE room_settings (
+        chat_jid TEXT PRIMARY KEY,
+        room_mode TEXT NOT NULL DEFAULT 'single',
+        mode_source TEXT NOT NULL DEFAULT 'explicit',
+        name TEXT,
+        folder TEXT,
+        trigger_pattern TEXT,
+        requires_trigger INTEGER,
+        is_main INTEGER,
+        owner_agent_type TEXT,
+        work_dir TEXT,
+        updated_at TEXT
+      );
+
+      CREATE TABLE registered_groups (
+        jid TEXT NOT NULL,
+        name TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        trigger_pattern TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        agent_config TEXT,
+        requires_trigger INTEGER,
+        is_main INTEGER,
+        agent_type TEXT,
+        work_dir TEXT,
+        PRIMARY KEY (jid, agent_type),
+        UNIQUE (folder, agent_type)
+      );
+    `);
+
+    legacyDb
+      .prepare(
+        `INSERT INTO room_settings (
+          chat_jid,
+          room_mode,
+          mode_source,
+          name,
+          folder,
+          trigger_pattern,
+          requires_trigger,
+          is_main,
+          owner_agent_type,
+          work_dir,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'dc:ssot-room',
+        'single',
+        'explicit',
+        'SSOT Room',
+        'ssot-room',
+        '@Andy',
+        1,
+        0,
+        'codex',
+        null,
+        '2026-04-08T00:00:00.000Z',
+      );
+
+    legacyDb
+      .prepare(
+        `INSERT INTO registered_groups (
+          jid,
+          name,
+          folder,
+          trigger_pattern,
+          added_at,
+          agent_config,
+          requires_trigger,
+          is_main,
+          agent_type,
+          work_dir
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'dc:ssot-room',
+        'Stale Projection',
+        'ssot-room',
+        '@Codex',
+        '2026-04-08T00:00:00.000Z',
+        null,
+        1,
+        0,
+        'codex',
+        null,
+      );
+
+    legacyDb
+      .prepare(
+        `INSERT OR REPLACE INTO registered_groups (
+          jid,
+          name,
+          folder,
+          trigger_pattern,
+          added_at,
+          agent_config,
+          requires_trigger,
+          is_main,
+          agent_type,
+          work_dir
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'dc:ssot-room',
+        'Stale Projection',
+        'ssot-room',
+        '@Claude',
+        '2026-04-08T00:00:00.000Z',
+        null,
+        1,
+        0,
+        'claude-code',
+        null,
+      );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(getRegisteredGroup('dc:ssot-room')).toMatchObject({
+      folder: 'ssot-room',
+      agentType: 'codex',
+    });
+    expect(getRegisteredGroup('dc:ssot-room', 'claude-code')).toBeUndefined();
+    expect(
+      getAllRegisteredGroups('claude-code')['dc:ssot-room'],
+    ).toBeUndefined();
+    expect(getRegisteredAgentTypesForJid('dc:ssot-room')).toEqual(['codex']);
+  });
+
+  it('re-materializes explicit room_settings writes back into the projection rows', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-room-writeback-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE room_settings (
+        chat_jid TEXT PRIMARY KEY,
+        room_mode TEXT NOT NULL DEFAULT 'single',
+        mode_source TEXT NOT NULL DEFAULT 'explicit',
+        name TEXT,
+        folder TEXT,
+        trigger_pattern TEXT,
+        requires_trigger INTEGER,
+        is_main INTEGER,
+        owner_agent_type TEXT,
+        work_dir TEXT,
+        updated_at TEXT
+      );
+
+      CREATE TABLE registered_groups (
+        jid TEXT NOT NULL,
+        name TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        trigger_pattern TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        agent_config TEXT,
+        requires_trigger INTEGER,
+        is_main INTEGER,
+        agent_type TEXT,
+        work_dir TEXT,
+        PRIMARY KEY (jid, agent_type),
+        UNIQUE (folder, agent_type)
+      );
+    `);
+
+    legacyDb
+      .prepare(
+        `INSERT INTO room_settings (
+          chat_jid,
+          room_mode,
+          mode_source,
+          name,
+          folder,
+          trigger_pattern,
+          requires_trigger,
+          is_main,
+          owner_agent_type,
+          work_dir,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'dc:ssot-writeback',
+        'single',
+        'explicit',
+        'Explicit Writeback',
+        'ssot-writeback',
+        '@Codex',
+        1,
+        0,
+        'codex',
+        null,
+        '2026-04-08T00:00:00.000Z',
+      );
+
+    const insertProjection = legacyDb.prepare(
+      `INSERT INTO registered_groups (
+        jid,
+        name,
+        folder,
+        trigger_pattern,
+        added_at,
+        agent_config,
+        requires_trigger,
+        is_main,
+        agent_type,
+        work_dir
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+
+    insertProjection.run(
+      'dc:ssot-writeback',
+      'Stale Projection',
+      'ssot-writeback',
+      '@Codex',
+      '2026-04-08T00:00:00.000Z',
+      null,
+      1,
+      0,
+      'codex',
+      null,
+    );
+    insertProjection.run(
+      'dc:ssot-writeback',
+      'Stale Projection',
+      'ssot-writeback',
+      '@Claude',
+      '2026-04-08T00:00:00.000Z',
+      null,
+      1,
+      0,
+      'claude-code',
+      null,
+    );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    updateRegisteredGroupName('dc:ssot-writeback', 'SSOT Writeback Renamed');
+
+    expect(getStoredRoomSettings('dc:ssot-writeback')).toMatchObject({
+      chatJid: 'dc:ssot-writeback',
+      roomMode: 'single',
+      modeSource: 'explicit',
+      name: 'SSOT Writeback Renamed',
+      ownerAgentType: 'codex',
+    });
+
+    const rawDb = new Database(dbPath);
+    const projectionRows = rawDb
+      .prepare(
+        `SELECT agent_type, name
+         FROM registered_groups
+         WHERE jid = ?
+         ORDER BY agent_type`,
+      )
+      .all('dc:ssot-writeback') as Array<{
+      agent_type: string | null;
+      name: string;
+    }>;
+    rawDb.close();
+
+    expect(projectionRows).toEqual([
+      {
+        agent_type: 'codex',
+        name: 'SSOT Writeback Renamed',
+      },
+    ]);
+
+    clearExplicitRoomMode('dc:ssot-writeback');
+
+    expect(getExplicitRoomMode('dc:ssot-writeback')).toBeUndefined();
+    expect(getEffectiveRoomMode('dc:ssot-writeback')).toBe('single');
+  });
 });
 
 describe('paired room registration', () => {
@@ -1936,6 +2260,36 @@ describe('paired room registration', () => {
     expect(getExplicitRoomMode('dc:explicit-single')).toBe('single');
     expect(getEffectiveRoomMode('dc:explicit-single')).toBe('single');
     expect(getEffectiveRuntimeRoomMode('dc:explicit-single')).toBe('single');
+  });
+
+  it('restores inferred paired mode when clearing an explicit single override', () => {
+    _setRegisteredGroupForTests('dc:explicit-single-clear', {
+      name: 'Explicit Single Clear',
+      folder: 'explicit-single-clear',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    _setRegisteredGroupForTests('dc:explicit-single-clear', {
+      name: 'Explicit Single Clear',
+      folder: 'explicit-single-clear',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+
+    setExplicitRoomMode('dc:explicit-single-clear', 'single');
+
+    expect(getExplicitRoomMode('dc:explicit-single-clear')).toBe('single');
+    expect(getEffectiveRoomMode('dc:explicit-single-clear')).toBe('single');
+
+    clearExplicitRoomMode('dc:explicit-single-clear');
+
+    expect(getExplicitRoomMode('dc:explicit-single-clear')).toBeUndefined();
+    expect(getEffectiveRoomMode('dc:explicit-single-clear')).toBe('tribunal');
+    expect(getEffectiveRuntimeRoomMode('dc:explicit-single-clear')).toBe(
+      'tribunal',
+    );
   });
 
   it('lets explicit tribunal become runnable when the configured reviewer can run on the solo registration', () => {

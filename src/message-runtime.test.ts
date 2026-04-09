@@ -219,7 +219,10 @@ import {
 } from './message-runtime-flow.js';
 import * as config from './config.js';
 import { logger } from './logger.js';
-import { resetPairedFollowUpScheduleState } from './paired-follow-up-scheduler.js';
+import {
+  resetPairedFollowUpScheduleState,
+  schedulePairedFollowUpOnce,
+} from './paired-follow-up-scheduler.js';
 import * as serviceRouting from './service-routing.js';
 import type { Channel, RegisteredGroup } from './types.js';
 
@@ -2200,6 +2203,120 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         completedRole: 'arbiter',
         taskId: 'task-arbiter-delivery-owner-follow-up',
         taskStatus: 'active',
+      }),
+      'Queued paired follow-up after successful reviewer/arbiter delivery',
+    );
+  });
+
+  it('re-enqueues owner after arbiter delivery even when a stale owner follow-up key exists for the prior task revision', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel = makeChannel(chatJid);
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const arbiterChannel = makeChannel(chatJid, 'discord-arbiter', false);
+    const enqueueMessageCheck = vi.fn();
+    const staleOwnerFollowUpEnqueue = vi.fn();
+    const pairedTask = {
+      id: 'task-arbiter-delivery-owner-follow-up-stale-key',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      arbiter_service_id: 'claude-arbiter',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'arbiter_requested',
+      arbiter_verdict: null,
+      arbiter_requested_at: '2026-03-30T00:00:10.000Z',
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:10.000Z',
+    } as any;
+
+    schedulePairedFollowUpOnce({
+      chatJid,
+      runId: 'run-stale-owner-follow-up',
+      task: {
+        id: pairedTask.id,
+        status: 'active',
+        round_trip_count: 1,
+        updated_at: '2026-03-30T00:00:05.000Z',
+      },
+      intentKind: 'owner-follow-up',
+      enqueue: staleOwnerFollowUpEnqueue,
+    });
+
+    expect(staleOwnerFollowUpEnqueue).toHaveBeenCalledTimes(1);
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
+      () => pairedTask,
+    );
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        pairedTask.status = 'active';
+        pairedTask.arbiter_verdict = 'revise';
+        pairedTask.updated_at = '2026-03-30T00:00:20.000Z';
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE_WITH_CONCERNS\narbiter says revise',
+          newSessionId: 'session-arbiter-delivery-owner-follow-up-stale-key',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\narbiter says revise',
+          newSessionId: 'session-arbiter-delivery-owner-follow-up-stale-key',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel, arbiterChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-arbiter-delivery-owner-follow-up-stale-key',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(arbiterChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'DONE_WITH_CONCERNS\narbiter says revise',
+    );
+    expect(ownerChannel.sendMessage).not.toHaveBeenCalled();
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        runId: 'run-arbiter-delivery-owner-follow-up-stale-key',
+        completedRole: 'arbiter',
+        taskId: 'task-arbiter-delivery-owner-follow-up-stale-key',
+        taskStatus: 'active',
+        scheduled: true,
       }),
       'Queued paired follow-up after successful reviewer/arbiter delivery',
     );

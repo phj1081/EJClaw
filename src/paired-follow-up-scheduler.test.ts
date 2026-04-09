@@ -19,6 +19,7 @@ describe('paired follow-up scheduler', () => {
       id: 'task-1',
       status: 'review_ready',
       round_trip_count: 1,
+      updated_at: '2026-03-30T00:00:00.000Z',
     } as const;
 
     const first = schedulePairedFollowUpOnce({
@@ -47,6 +48,7 @@ describe('paired follow-up scheduler', () => {
       id: 'task-1',
       status: 'review_ready',
       round_trip_count: 1,
+      updated_at: '2026-03-30T00:00:00.000Z',
     } as const;
 
     const first = schedulePairedFollowUpOnce({
@@ -78,6 +80,7 @@ describe('paired follow-up scheduler', () => {
         id: 'task-1',
         status: 'review_ready',
         round_trip_count: 1,
+        updated_at: '2026-03-30T00:00:00.000Z',
       } as const,
       intentKind: 'reviewer-turn',
       enqueue,
@@ -89,6 +92,7 @@ describe('paired follow-up scheduler', () => {
         id: 'task-1',
         status: 'review_ready',
         round_trip_count: 2,
+        updated_at: '2026-03-30T00:00:01.000Z',
       } as const,
       intentKind: 'reviewer-turn',
       enqueue,
@@ -105,9 +109,43 @@ describe('paired follow-up scheduler', () => {
         taskId: 'task-1',
         taskStatus: 'review_ready',
         roundTripCount: 3,
+        taskUpdatedAt: '2026-03-30T00:00:00.000Z',
         intentKind: 'reviewer-turn',
       }),
-    ).toBe('task-1:review_ready:3:reviewer-turn');
+    ).toBe('task-1:review_ready:3:2026-03-30T00:00:00.000Z:reviewer-turn');
+  });
+
+  it('keeps different task revisions schedulable even when status and round trip are unchanged', () => {
+    const enqueue = vi.fn();
+
+    const first = schedulePairedFollowUpOnce({
+      chatJid: 'group@test',
+      runId: 'run-1',
+      task: {
+        id: 'task-1',
+        status: 'active',
+        round_trip_count: 1,
+        updated_at: '2026-03-30T00:00:00.000Z',
+      } as const,
+      intentKind: 'owner-follow-up',
+      enqueue,
+    });
+    const second = schedulePairedFollowUpOnce({
+      chatJid: 'group@test',
+      runId: 'run-2',
+      task: {
+        id: 'task-1',
+        status: 'active',
+        round_trip_count: 1,
+        updated_at: '2026-03-30T00:00:10.000Z',
+      } as const,
+      intentKind: 'owner-follow-up',
+      enqueue,
+    });
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    expect(enqueue).toHaveBeenCalledTimes(2);
   });
 
   it('allows the same follow-up again after the TTL expires', () => {
@@ -119,6 +157,7 @@ describe('paired follow-up scheduler', () => {
       id: 'task-1',
       status: 'review_ready',
       round_trip_count: 1,
+      updated_at: '2026-03-30T00:00:00.000Z',
     } as const;
 
     const first = schedulePairedFollowUpOnce({

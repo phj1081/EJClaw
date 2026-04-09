@@ -400,8 +400,10 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
     return true;
   }
 
-  closeStdin();
   const scheduled = schedulePairedFollowUp(action.task, action.intentKind);
+  if (scheduled) {
+    closeStdin();
+  }
   log.info(
     {
       chatJid,

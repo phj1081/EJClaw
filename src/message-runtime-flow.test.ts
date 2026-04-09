@@ -102,7 +102,8 @@ describe('executeBotOnlyPairedFollowUpAction', () => {
 
     expect(first).toBe(true);
     expect(second).toBe(true);
-    expect(closeStdin).toHaveBeenCalledTimes(2);
+    expect(closeStdin).toHaveBeenCalledTimes(1);
+    expect(closeStdin).toHaveBeenCalledWith();
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(log.info).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -39,6 +39,7 @@ import {
   normalizeRoomModeSource,
   normalizeStoredAgentType,
   parseRegisteredGroupRow,
+  resolveStoredRoomCapabilityTypes,
   resolveAssignedRoomFolder,
   updateStoredRoomMetadata,
 } from './db/room-registration.js';
@@ -311,6 +312,14 @@ export function _setStoredRoomOwnerAgentTypeForTests(
          updated_at = ?
      WHERE chat_jid = ?`,
   ).run(ownerAgentType, new Date().toISOString(), chatJid);
+}
+
+/** @internal - for tests only. */
+export function _deleteStoredRoomSettingsForTests(chatJid: string): void {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+  db.prepare('DELETE FROM room_settings WHERE chat_jid = ?').run(chatJid);
 }
 
 /** @internal - for tests only. */
@@ -749,12 +758,11 @@ export function getRegisteredGroup(
   const requestedAgentType = normalizeStoredAgentType(agentType);
   const stored = getStoredRoomSettingsRowFromDatabase(db, jid);
   if (stored) {
-    const group = buildRegisteredGroupFromStoredSettings(
+    return buildRegisteredGroupFromStoredSettings(
       db,
       stored,
       requestedAgentType,
     );
-    if (group) return group;
   }
   return getLegacyRegisteredGroup(db, jid, agentType);
 }
@@ -763,31 +771,58 @@ function writeLegacyRegisteredGroupAndSyncRoomSettings(
   jid: string,
   group: RegisteredGroup,
 ): void {
+  const existingStored = getStoredRoomSettingsRowFromDatabase(db, jid);
   const existingRoomMode = getStoredRoomModeRow(jid);
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
   const tx = db.transaction(() => {
-    db.prepare(
-      `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, agent_config, requires_trigger, is_main, agent_type, work_dir)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      jid,
-      group.name,
-      group.folder,
-      group.trigger,
-      group.added_at,
-      group.agentConfig ? JSON.stringify(group.agentConfig) : null,
-      group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
-      group.isMain ? 1 : 0,
-      group.agentType || 'claude-code',
-      group.workDir || null,
-    );
+    const seededAgentType = group.agentType || 'claude-code';
+    const agentTypes = new Set<AgentType>(collectRegisteredAgentTypes(db, jid));
+    agentTypes.add(seededAgentType);
+    const inferredRoomMode = inferRoomModeFromRegisteredAgentTypes([
+      ...agentTypes,
+    ]);
+    const roomMode =
+      existingRoomMode?.source === 'explicit'
+        ? existingRoomMode.roomMode
+        : inferredRoomMode;
+    const ownerAgentType =
+      existingStored?.modeSource === 'explicit' && existingStored.ownerAgentType
+        ? existingStored.ownerAgentType
+        : inferOwnerAgentTypeFromRegisteredAgentTypes([...agentTypes]);
+    const snapshot: RoomRegistrationSnapshot = {
+      name: group.name,
+      folder: group.folder,
+      triggerPattern:
+        existingStored?.modeSource === 'explicit' && existingStored.trigger
+          ? existingStored.trigger
+          : group.trigger,
+      requiresTrigger:
+        group.requiresTrigger ?? existingStored?.requiresTrigger ?? true,
+      isMain: group.isMain ?? existingStored?.isMain ?? false,
+      ownerAgentType,
+      workDir: group.workDir ?? existingStored?.workDir ?? null,
+    };
 
-    syncStoredRoomRegistrationSnapshotForJid(jid);
-    if (!existingRoomMode || existingRoomMode.source === 'inferred') {
-      syncInferredRoomModeForJid(jid);
+    if (existingStored) {
+      updateStoredRoomMetadata(db, jid, snapshot);
+      if (!existingRoomMode || existingRoomMode.source === 'inferred') {
+        upsertStoredRoomMode(jid, roomMode, 'inferred');
+      }
+    } else {
+      insertStoredRoomSettings(db, jid, roomMode, 'inferred', snapshot);
     }
+
+    materializeRegisteredGroupsForRoom(
+      db,
+      jid,
+      snapshot,
+      roomMode,
+      ownerAgentType,
+      seededAgentType === ownerAgentType ? group.agentConfig : undefined,
+      group.added_at,
+    );
   });
   tx();
 }
@@ -874,18 +909,30 @@ export function assignRoom(
 }
 
 export function updateRegisteredGroupName(jid: string, name: string): void {
-  db.prepare(
-    `UPDATE room_settings
-     SET name = ?, updated_at = ?
-     WHERE chat_jid = ?`,
-  ).run(name, new Date().toISOString(), jid);
-  db.prepare('UPDATE registered_groups SET name = ? WHERE jid = ?').run(
-    name,
-    jid,
-  );
-  if (!getStoredRoomSettingsRowFromDatabase(db, jid)) {
-    syncStoredRoomRegistrationSnapshotForJid(jid);
+  const plan = buildRoomRegistrationPlanForJid(jid, { name });
+  if (!plan) {
+    return;
   }
+  db.transaction(() => {
+    if (plan.hasStoredRoom) {
+      updateStoredRoomMetadata(db, jid, plan.snapshot);
+    } else {
+      insertStoredRoomSettings(
+        db,
+        jid,
+        plan.roomMode,
+        'inferred',
+        plan.snapshot,
+      );
+    }
+    materializeRegisteredGroupsForRoom(
+      db,
+      jid,
+      plan.snapshot,
+      plan.roomMode,
+      plan.snapshot.ownerAgentType,
+    );
+  })();
 }
 
 export function getAllRegisteredGroups(
@@ -921,6 +968,10 @@ export function getAllRegisteredGroups(
 
 export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
   if (!db) return [];
+  const stored = getStoredRoomSettingsRowFromDatabase(db, jid);
+  if (stored) {
+    return resolveStoredRoomCapabilityTypes(db, stored);
+  }
   return collectRegisteredAgentTypes(db, jid);
 }
 
@@ -977,6 +1028,63 @@ function syncStoredRoomRegistrationSnapshotForJid(chatJid: string): void {
   updateStoredRoomMetadata(db, chatJid, snapshot);
 }
 
+function buildRoomRegistrationSnapshotFromStoredRoom(
+  stored: StoredRoomSettings,
+  overrides?: Partial<Pick<RoomRegistrationSnapshot, 'name'>>,
+): RoomRegistrationSnapshot {
+  const capabilityTypes = resolveStoredRoomCapabilityTypes(db, stored);
+  const ownerAgentType =
+    stored.ownerAgentType ||
+    (capabilityTypes.length > 0
+      ? inferOwnerAgentTypeFromRegisteredAgentTypes(capabilityTypes)
+      : OWNER_AGENT_TYPE);
+  const name = overrides?.name ?? stored.name ?? stored.chatJid;
+
+  return {
+    name,
+    folder: resolveAssignedRoomFolder(db, stored.chatJid, name, stored.folder),
+    triggerPattern: stored.trigger || `@${ASSISTANT_NAME}`,
+    requiresTrigger: stored.requiresTrigger ?? true,
+    isMain: stored.isMain ?? false,
+    ownerAgentType,
+    workDir: stored.workDir ?? null,
+  };
+}
+
+function buildRoomRegistrationPlanForJid(
+  chatJid: string,
+  overrides?: Partial<Pick<RoomRegistrationSnapshot, 'name'>>,
+):
+  | {
+      snapshot: RoomRegistrationSnapshot;
+      roomMode: RoomMode;
+      hasStoredRoom: boolean;
+    }
+  | undefined {
+  const stored = getStoredRoomSettingsRowFromDatabase(db, chatJid);
+  if (stored) {
+    return {
+      snapshot: buildRoomRegistrationSnapshotFromStoredRoom(stored, overrides),
+      roomMode: stored.roomMode,
+      hasStoredRoom: true,
+    };
+  }
+
+  const snapshot = collectRoomRegistrationSnapshot(db, chatJid);
+  if (!snapshot) return undefined;
+
+  return {
+    snapshot: {
+      ...snapshot,
+      name: overrides?.name ?? snapshot.name,
+    },
+    roomMode: inferRoomModeFromRegisteredAgentTypes(
+      collectRegisteredAgentTypes(db, chatJid),
+    ),
+    hasStoredRoom: false,
+  };
+}
+
 function upsertStoredRoomMode(
   chatJid: string,
   roomMode: RoomMode,
@@ -1010,7 +1118,7 @@ export function setExplicitRoomMode(chatJid: string, roomMode: RoomMode): void {
 }
 
 export function clearExplicitRoomMode(chatJid: string): void {
-  const agentTypes = getRegisteredAgentTypesForJid(chatJid);
+  const agentTypes = collectRegisteredAgentTypes(db, chatJid);
   if (agentTypes.length === 0) {
     db.prepare('DELETE FROM room_settings WHERE chat_jid = ?').run(chatJid);
     return;
