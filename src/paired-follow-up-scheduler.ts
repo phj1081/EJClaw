@@ -8,7 +8,7 @@ export type ScheduledPairedFollowUpIntentKind =
 
 type ScheduledPairedFollowUpTask = Pick<
   PairedTask,
-  'id' | 'status' | 'round_trip_count'
+  'id' | 'status' | 'round_trip_count' | 'updated_at'
 >;
 
 export const SCHEDULED_PAIRED_FOLLOW_UP_TTL_MS = 10 * 60 * 1000;
@@ -26,12 +26,14 @@ export function buildPairedFollowUpKey(args: {
   taskId: string;
   taskStatus: PairedTaskStatus | null;
   roundTripCount: number;
+  taskUpdatedAt: string | null | undefined;
   intentKind: ScheduledPairedFollowUpIntentKind;
 }): string {
   return [
     args.taskId,
     args.taskStatus ?? 'unknown',
     String(args.roundTripCount),
+    args.taskUpdatedAt ?? 'unknown',
     args.intentKind,
   ].join(':');
 }
@@ -52,6 +54,7 @@ export function schedulePairedFollowUpOnce(args: {
       taskId: args.task.id,
       taskStatus: args.task.status,
       roundTripCount: args.task.round_trip_count,
+      taskUpdatedAt: args.task.updated_at,
       intentKind: args.intentKind,
     }),
   ].join(':');
