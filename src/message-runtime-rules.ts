@@ -82,7 +82,10 @@ export type NextTurnAction =
   | { kind: 'owner-follow-up' }
   | { kind: 'finalize-owner-turn' };
 
-export type ScheduledNextTurnActionKind = Exclude<NextTurnAction['kind'], 'none'>;
+export type ScheduledNextTurnActionKind = Exclude<
+  NextTurnAction['kind'],
+  'none'
+>;
 
 export type FollowUpDispatch =
   | { kind: 'none' }

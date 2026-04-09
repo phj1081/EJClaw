@@ -619,13 +619,7 @@ export function refreshPairedTaskExecutionLeaseInDatabase(
            AND expires_at >= ?
       `,
     )
-    .run(
-      now,
-      computeExecutionLeaseExpiry(now),
-      args.taskId,
-      args.runId,
-      now,
-    );
+    .run(now, computeExecutionLeaseExpiry(now), args.taskId, args.runId, now);
   return result.changes > 0;
 }
 

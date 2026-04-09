@@ -195,9 +195,7 @@ describe('paired follow-up scheduler', () => {
       intentKind: 'reviewer-turn',
     });
 
-    expect(first).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
-    );
+    expect(first).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
     expect(second).toBeNull();
     expect(getPairedTaskById(task.id)?.updated_at).toBe(first);
   });
@@ -238,9 +236,7 @@ describe('paired follow-up scheduler', () => {
         task,
         intentKind: 'reviewer-turn',
       });
-      expect(first).toMatch(
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
-      );
+      expect(first).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 
       _initTestDatabaseFromFile(dbPath);
       const freshTask = getPairedTaskById(task.id);
@@ -272,11 +268,7 @@ describe('paired follow-up scheduler', () => {
              WHERE task_id = ?
           `,
         )
-        .run(
-          '2020-01-01T00:00:00.000Z',
-          '2020-01-01T00:00:00.000Z',
-          task.id,
-        );
+        .run('2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z', task.id);
       rawDatabase.close();
 
       _initTestDatabaseFromFile(dbPath);

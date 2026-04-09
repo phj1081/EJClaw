@@ -73,12 +73,7 @@ vi.mock('./db.js', () => {
     taskUpdatedAt: string;
     intentKind: string;
   }) =>
-    [
-      args.chatJid,
-      args.taskId,
-      args.taskUpdatedAt,
-      args.intentKind,
-    ].join(':');
+    [args.chatJid, args.taskId, args.taskUpdatedAt, args.intentKind].join(':');
 
   return {
     claimServiceHandoff: vi.fn(() => true),
@@ -2012,21 +2007,22 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
       () => pairedTask,
     );
-    vi.mocked(db.getMessagesSince).mockImplementation((_chatJid, sinceCursor) =>
-      sinceCursor && sinceCursor !== '0'
-        ? []
-        : ([
-            {
-              id: 'human-dedup-1',
-              chat_jid: chatJid,
-              sender: 'user@test',
-              sender_name: 'User',
-              content: '이 구현 진행해줘',
-              timestamp: '2026-03-30T00:00:00.000Z',
-              seq: 1,
-              is_bot_message: false,
-            },
-          ] as any),
+    vi.mocked(db.getMessagesSince).mockImplementation(
+      (_chatJid, sinceCursor) =>
+        sinceCursor && sinceCursor !== '0'
+          ? []
+          : ([
+              {
+                id: 'human-dedup-1',
+                chat_jid: chatJid,
+                sender: 'user@test',
+                sender_name: 'User',
+                content: '이 구현 진행해줘',
+                timestamp: '2026-03-30T00:00:00.000Z',
+                seq: 1,
+                is_bot_message: false,
+              },
+            ] as any),
     );
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
@@ -2513,21 +2509,22 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
       () => pairedTask,
     );
-    vi.mocked(db.getMessagesSince).mockImplementation((_chatJid, sinceCursor) =>
-      sinceCursor && sinceCursor !== '0'
-        ? []
-        : ([
-            {
-              id: 'human-dedup-across-runs-1',
-              chat_jid: chatJid,
-              sender: 'user@test',
-              sender_name: 'User',
-              content: '이 구현 진행해줘',
-              timestamp: '2026-03-30T00:00:00.000Z',
-              seq: 1,
-              is_bot_message: false,
-            },
-          ] as any),
+    vi.mocked(db.getMessagesSince).mockImplementation(
+      (_chatJid, sinceCursor) =>
+        sinceCursor && sinceCursor !== '0'
+          ? []
+          : ([
+              {
+                id: 'human-dedup-across-runs-1',
+                chat_jid: chatJid,
+                sender: 'user@test',
+                sender_name: 'User',
+                content: '이 구현 진행해줘',
+                timestamp: '2026-03-30T00:00:00.000Z',
+                seq: 1,
+                is_bot_message: false,
+              },
+            ] as any),
     );
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {

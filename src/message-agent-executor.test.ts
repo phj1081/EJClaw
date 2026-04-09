@@ -57,12 +57,7 @@ vi.mock('./db.js', () => {
     taskUpdatedAt: string;
     intentKind: string;
   }) =>
-    [
-      args.chatJid,
-      args.taskId,
-      args.taskUpdatedAt,
-      args.intentKind,
-    ].join(':');
+    [args.chatJid, args.taskId, args.taskUpdatedAt, args.intentKind].join(':');
 
   return {
     createServiceHandoff: vi.fn(),

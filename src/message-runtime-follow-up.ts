@@ -84,10 +84,10 @@ export function resolvePairedFollowUpDecision(args: {
 export function schedulePairedFollowUpIntent(args: {
   chatJid: string;
   runId: string;
-  task: Pick<
-    PairedTask,
-    'id' | 'status' | 'round_trip_count' | 'updated_at'
-  > | null | undefined;
+  task:
+    | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
+    | null
+    | undefined;
   intentKind: ScheduledPairedFollowUpIntentKind;
   enqueue: () => void;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
@@ -126,10 +126,10 @@ export function schedulePairedFollowUpIntent(args: {
 export function schedulePairedFollowUpWithMessageCheck(args: {
   chatJid: string;
   runId: string;
-  task: Pick<
-    PairedTask,
-    'id' | 'status' | 'round_trip_count' | 'updated_at'
-  > | null | undefined;
+  task:
+    | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
+    | null
+    | undefined;
   intentKind: ScheduledPairedFollowUpIntentKind;
   enqueueMessageCheck: () => void;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
@@ -149,10 +149,10 @@ export function schedulePairedFollowUpWithMessageCheck(args: {
 export function dispatchPairedFollowUpForEvent(args: {
   chatJid: string;
   runId: string;
-  task: Pick<
-    PairedTask,
-    'id' | 'status' | 'round_trip_count' | 'updated_at'
-  > | null | undefined;
+  task:
+    | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
+    | null
+    | undefined;
   source: PairedFollowUpSource;
   completedRole?: PairedRoomRole;
   executionStatus?: 'succeeded' | 'failed';
@@ -212,10 +212,10 @@ export function dispatchPairedFollowUpForEvent(args: {
 export function enqueuePairedFollowUpAfterEvent(args: {
   chatJid: string;
   runId: string;
-  task: Pick<
-    PairedTask,
-    'id' | 'status' | 'round_trip_count' | 'updated_at'
-  > | null | undefined;
+  task:
+    | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
+    | null
+    | undefined;
   source: PairedFollowUpSource;
   completedRole?: PairedRoomRole;
   executionStatus?: 'succeeded' | 'failed';
