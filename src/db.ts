@@ -98,6 +98,7 @@ import {
 } from './db/work-items.js';
 import {
   claimPairedTurnReservationInDatabase,
+  clearPairedTaskExecutionLeasesForServiceInDatabase,
   clearExpiredPairedTaskExecutionLeasesInDatabase,
   clearPairedTaskExecutionLeasesInDatabase,
   clearPairedTurnReservationsInDatabase,
@@ -288,6 +289,10 @@ function getSchemaMigrationHooks(): SchemaMigrationHooks {
 export function initDatabase(): void {
   db = openPersistentDatabase();
   initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  clearPairedTaskExecutionLeasesForServiceInDatabase(
+    db,
+    normalizeServiceId(SERVICE_ID),
+  );
   clearExpiredPairedTaskExecutionLeasesInDatabase(db);
   migrateJsonStateFromFiles({
     setRouterState,
@@ -300,6 +305,10 @@ export function initDatabase(): void {
 export function _initTestDatabase(): void {
   db = openInMemoryDatabase();
   initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  clearPairedTaskExecutionLeasesForServiceInDatabase(
+    db,
+    normalizeServiceId(SERVICE_ID),
+  );
   clearExpiredPairedTaskExecutionLeasesInDatabase(db);
 }
 
@@ -307,6 +316,10 @@ export function _initTestDatabase(): void {
 export function _initTestDatabaseFromFile(dbPath: string): void {
   db = openDatabaseFromFile(dbPath);
   initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  clearPairedTaskExecutionLeasesForServiceInDatabase(
+    db,
+    normalizeServiceId(SERVICE_ID),
+  );
   clearExpiredPairedTaskExecutionLeasesInDatabase(db);
 }
 
@@ -1235,7 +1248,6 @@ export function claimPairedTurnReservation(args: {
   taskStatus: PairedTask['status'];
   roundTripCount: number;
   taskUpdatedAt: string;
-  nextTaskUpdatedAt: string;
   intentKind: PairedTurnReservationIntentKind;
   runId: string;
 }): boolean {

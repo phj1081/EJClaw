@@ -202,6 +202,7 @@ export function applyBaseSchema(database: Database): void {
       role TEXT NOT NULL,
       intent_kind TEXT NOT NULL,
       claimed_run_id TEXT NOT NULL,
+      claimed_service_id TEXT NOT NULL,
       task_status TEXT NOT NULL,
       task_updated_at TEXT NOT NULL,
       claimed_at TEXT NOT NULL,

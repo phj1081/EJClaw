@@ -4,6 +4,8 @@ import {
   ARBITER_AGENT_TYPE,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
+  SERVICE_ID,
+  normalizeServiceId,
 } from '../config.js';
 import {
   resolveStablePairedTaskOwnerAgentType,
@@ -51,6 +53,7 @@ export type PairedTaskUpdates = Partial<
 >;
 
 export const PAIRED_TASK_EXECUTION_LEASE_TTL_MS = 10 * 60_000;
+const CURRENT_SERVICE_ID = normalizeServiceId(SERVICE_ID);
 
 function computeExecutionLeaseExpiry(now: string): string {
   return new Date(
@@ -414,13 +417,12 @@ export function claimPairedTurnReservationInDatabase(
     taskStatus: PairedTaskStatus;
     roundTripCount: number;
     taskUpdatedAt: string;
-    nextTaskUpdatedAt: string;
     intentKind: PairedTurnReservationIntentKind;
     runId: string;
   },
 ): boolean {
   const tx = database.transaction(() => {
-    const now = args.nextTaskUpdatedAt;
+    const now = new Date().toISOString();
     const expiresAt = computeExecutionLeaseExpiry(now);
     const leaseRole = resolveExecutionLeaseRole(args.intentKind);
     const existingLease = database
@@ -434,6 +436,7 @@ export function claimPairedTurnReservationInDatabase(
       .get(args.taskId) as
       | {
           claimed_run_id: string;
+          claimed_service_id: string;
           updated_at: string;
           expires_at: string;
         }
@@ -449,13 +452,14 @@ export function claimPairedTurnReservationInDatabase(
               role,
               intent_kind,
               claimed_run_id,
+              claimed_service_id,
               task_status,
               task_updated_at,
               claimed_at,
               updated_at,
               expires_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
@@ -464,6 +468,7 @@ export function claimPairedTurnReservationInDatabase(
           leaseRole,
           args.intentKind,
           args.runId,
+          CURRENT_SERVICE_ID,
           args.taskStatus,
           args.taskUpdatedAt,
           now,
@@ -485,6 +490,7 @@ export function claimPairedTurnReservationInDatabase(
                    role = ?,
                    intent_kind = ?,
                    claimed_run_id = ?,
+                   claimed_service_id = ?,
                    task_status = ?,
                    task_updated_at = ?,
                    claimed_at = ?,
@@ -501,6 +507,7 @@ export function claimPairedTurnReservationInDatabase(
           leaseRole,
           args.intentKind,
           args.runId,
+          CURRENT_SERVICE_ID,
           args.taskStatus,
           args.taskUpdatedAt,
           now,
@@ -546,18 +553,13 @@ export function claimPairedTurnReservationInDatabase(
       .prepare(
         `
           UPDATE paired_tasks
-             SET updated_at = ?
+             SET updated_at = updated_at
            WHERE id = ?
              AND updated_at = ?
              AND status = ?
         `,
       )
-      .run(
-        args.nextTaskUpdatedAt,
-        args.taskId,
-        args.taskUpdatedAt,
-        args.taskStatus,
-      );
+      .run(args.taskId, args.taskUpdatedAt, args.taskStatus);
 
     if (claimedTask.changes === 0) {
       throw new PairedTurnReservationClaimError();
@@ -593,10 +595,11 @@ export function releasePairedTaskExecutionLeaseInDatabase(
       `
         DELETE FROM paired_task_execution_leases
          WHERE task_id = ?
+           AND claimed_service_id = ?
            AND claimed_run_id = ?
       `,
     )
-    .run(args.taskId, args.runId);
+    .run(args.taskId, CURRENT_SERVICE_ID, args.runId);
 }
 
 export function refreshPairedTaskExecutionLeaseInDatabase(
@@ -615,12 +618,34 @@ export function refreshPairedTaskExecutionLeaseInDatabase(
            SET updated_at = ?,
                expires_at = ?
          WHERE task_id = ?
+           AND claimed_service_id = ?
            AND claimed_run_id = ?
            AND expires_at >= ?
       `,
     )
-    .run(now, computeExecutionLeaseExpiry(now), args.taskId, args.runId, now);
+    .run(
+      now,
+      computeExecutionLeaseExpiry(now),
+      args.taskId,
+      CURRENT_SERVICE_ID,
+      args.runId,
+      now,
+    );
   return result.changes > 0;
+}
+
+export function clearPairedTaskExecutionLeasesForServiceInDatabase(
+  database: Database,
+  serviceId: string = CURRENT_SERVICE_ID,
+): number {
+  return database
+    .prepare(
+      `
+        DELETE FROM paired_task_execution_leases
+         WHERE claimed_service_id = ?
+      `,
+    )
+    .run(serviceId).changes;
 }
 
 export function clearExpiredPairedTaskExecutionLeasesInDatabase(

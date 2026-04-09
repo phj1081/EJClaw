@@ -14,6 +14,7 @@ import {
   matchesExpectedPairedFollowUpIntent,
   resolveFollowUpDispatch,
   resolveExecutionTarget,
+  resolveQueuedPairedTurnRole,
   resolveNextTurnAction,
   resolveQueuedTurnRole,
   resolveSessionFolder,
@@ -251,6 +252,23 @@ describe('message-runtime-rules', () => {
       resolveQueuedTurnRole({
         taskStatus: 'review_ready',
         hasHumanMessage: false,
+      }),
+    ).toBe('reviewer');
+  });
+
+  it('suppresses queued reviewer reruns when the latest persisted turn already belongs to the reviewer', () => {
+    expect(
+      resolveQueuedPairedTurnRole({
+        taskStatus: 'review_ready',
+        hasHumanMessage: false,
+        lastTurnOutputRole: 'reviewer',
+      }),
+    ).toBeNull();
+    expect(
+      resolveQueuedPairedTurnRole({
+        taskStatus: 'review_ready',
+        hasHumanMessage: false,
+        lastTurnOutputRole: 'owner',
       }),
     ).toBe('reviewer');
   });
