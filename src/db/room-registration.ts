@@ -147,9 +147,28 @@ export function getLegacyRegisteredGroupRows(
   return (
     agentTypeFilter
       ? database
-          .prepare('SELECT * FROM registered_groups WHERE agent_type = ?')
+          .prepare(
+            `SELECT *
+             FROM registered_groups
+             WHERE agent_type = ?
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM room_settings
+                 WHERE chat_jid = registered_groups.jid
+               )`,
+          )
           .all(agentTypeFilter)
-      : database.prepare('SELECT * FROM registered_groups').all()
+      : database
+          .prepare(
+            `SELECT *
+             FROM registered_groups
+             WHERE NOT EXISTS (
+               SELECT 1
+               FROM room_settings
+               WHERE chat_jid = registered_groups.jid
+             )`,
+          )
+          .all()
   ) as RegisteredGroupDatabaseRow[];
 }
 
@@ -158,6 +177,10 @@ export function getLegacyRegisteredGroup(
   jid: string,
   agentType?: string,
 ): (RegisteredGroup & { jid: string }) | undefined {
+  if (getStoredRoomSettingsRowFromDatabase(database, jid)) {
+    return undefined;
+  }
+
   const row = (
     agentType
       ? database
@@ -276,7 +299,7 @@ export function buildRegisteredGroupFromStoredSettings(
   stored: StoredRoomSettings,
   requestedAgentType?: AgentType,
 ): (RegisteredGroup & { jid: string }) | undefined {
-  const capabilityTypes = collectRegisteredAgentTypes(database, stored.chatJid);
+  const capabilityTypes = resolveStoredRoomCapabilityTypes(database, stored);
   const resolvedAgentType = requestedAgentType
     ? capabilityTypes.includes(requestedAgentType)
       ? requestedAgentType
@@ -313,6 +336,27 @@ export function buildRegisteredGroupFromStoredSettings(
     agentType: resolvedAgentType,
     workDir: stored.workDir,
   };
+}
+
+export function resolveStoredRoomCapabilityTypes(
+  database: Database,
+  stored: StoredRoomSettings,
+): AgentType[] {
+  const projectedTypes = collectRegisteredAgentTypes(database, stored.chatJid);
+  if (stored.modeSource !== 'explicit') {
+    return projectedTypes;
+  }
+
+  const ownerAgentType =
+    stored.ownerAgentType ||
+    (projectedTypes.length > 0
+      ? inferOwnerAgentTypeFromRegisteredAgentTypes(projectedTypes)
+      : OWNER_AGENT_TYPE);
+  const types = new Set<AgentType>([ownerAgentType]);
+  if (stored.roomMode === 'tribunal') {
+    types.add(REVIEWER_AGENT_TYPE);
+  }
+  return [...types];
 }
 
 function detectChannelPrefixForFolder(chatJid: string): string {
