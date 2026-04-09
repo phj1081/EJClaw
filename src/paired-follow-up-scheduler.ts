@@ -66,20 +66,16 @@ export function claimPairedTurnExecution(args: {
   runId: string;
   task: ScheduledPairedFollowUpTask;
   intentKind: PairedTurnReservationIntentKind;
-}): string | null {
-  const nextTaskUpdatedAt = new Date().toISOString();
-  const claimed = claimPairedTurnReservation({
+}): boolean {
+  return claimPairedTurnReservation({
     chatJid: args.chatJid,
     taskId: args.task.id,
     taskStatus: args.task.status,
     roundTripCount: args.task.round_trip_count,
     taskUpdatedAt: args.task.updated_at,
-    nextTaskUpdatedAt,
     intentKind: args.intentKind,
     runId: args.runId,
   });
-
-  return claimed ? nextTaskUpdatedAt : null;
 }
 
 export function resetPairedFollowUpScheduleState(): void {

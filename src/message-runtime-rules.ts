@@ -75,6 +75,36 @@ export function resolveQueuedTurnRole(args: {
   return resolveActiveRole(args.taskStatus);
 }
 
+export function resolveQueuedPairedTurnRole(args: {
+  taskStatus?: PairedTaskStatus | null;
+  hasHumanMessage: boolean;
+  lastTurnOutputRole?: PairedRoomRole | null;
+}): 'owner' | 'reviewer' | 'arbiter' | null {
+  if (args.hasHumanMessage) {
+    return resolveQueuedTurnRole({
+      taskStatus: args.taskStatus,
+      hasHumanMessage: true,
+    });
+  }
+
+  const nextTurnAction = resolveNextTurnAction({
+    taskStatus: args.taskStatus,
+    lastTurnOutputRole: args.lastTurnOutputRole,
+  });
+
+  switch (nextTurnAction.kind) {
+    case 'reviewer-turn':
+      return 'reviewer';
+    case 'arbiter-turn':
+      return 'arbiter';
+    case 'owner-follow-up':
+    case 'finalize-owner-turn':
+      return 'owner';
+    default:
+      return null;
+  }
+}
+
 export type NextTurnAction =
   | { kind: 'none' }
   | { kind: 'reviewer-turn' }

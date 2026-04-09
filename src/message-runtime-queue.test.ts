@@ -4,6 +4,7 @@ import {
   _initTestDatabase,
   createPairedTask,
   getPairedTaskById,
+  insertPairedTurnOutput,
   updatePairedTaskIfUnchanged,
 } from './db.js';
 import { claimPairedTurnExecution } from './paired-follow-up-scheduler.js';
@@ -76,7 +77,7 @@ describe('message-runtime-queue', () => {
         task,
         intentKind: 'reviewer-turn',
       }),
-    ).not.toBeNull();
+    ).toBe(true);
 
     const executeTurn = vi.fn();
     const freshTask = getPairedTaskById(task.id);
@@ -126,7 +127,7 @@ describe('message-runtime-queue', () => {
       task,
       intentKind: 'reviewer-turn',
     });
-    expect(reviewerClaim).not.toBeNull();
+    expect(reviewerClaim).toBe(true);
 
     const reviewTask = getPairedTaskById(task.id);
     expect(reviewTask).toBeDefined();
@@ -161,6 +162,49 @@ describe('message-runtime-queue', () => {
         },
       ],
       task: freshTask,
+      roleToChannel: {
+        owner: null,
+        reviewer: makeChannel(),
+        arbiter: null,
+      },
+      ownerChannel: makeChannel(),
+      lastAgentTimestamps: {},
+      saveState: vi.fn(),
+      executeTurn,
+      getFixedRoleChannelName: () => 'discord-review',
+      labelPairedSenders: (_chatJid, messages) => messages,
+      formatMessages: () => 'formatted prompt',
+    });
+
+    expect(outcome).toBe(true);
+    expect(executeTurn).not.toHaveBeenCalled();
+  });
+
+  it('skips a queued reviewer rerun when the latest persisted turn already belongs to the reviewer', async () => {
+    const task = makeTask();
+    createPairedTask(task);
+    insertPairedTurnOutput(task.id, 1, 'reviewer', 'DONE\nreview finished');
+
+    const executeTurn = vi.fn();
+    const outcome = await runQueuedGroupTurn({
+      chatJid: task.chat_jid,
+      group: makeGroup(),
+      runId: 'run-stale-reviewer-rerun',
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
+      timezone: 'UTC',
+      missedMessages: [
+        {
+          id: 'bot-1',
+          chat_jid: task.chat_jid,
+          sender: 'reviewer-bot@test',
+          sender_name: 'reviewer',
+          content: '추가 상태 메시지',
+          timestamp: '2026-03-30T00:00:02.000Z',
+          seq: 44,
+          is_bot_message: true,
+        },
+      ],
+      task,
       roleToChannel: {
         owner: null,
         reviewer: makeChannel(),

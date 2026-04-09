@@ -13,6 +13,7 @@ import {
   advanceLastAgentCursor,
   resolveActiveRole,
   resolveCursorKeyForRole,
+  resolveQueuedPairedTurnRole,
   resolveQueuedTurnRole,
 } from './message-runtime-rules.js';
 import { claimPairedTurnExecution } from './paired-follow-up-scheduler.js';
@@ -102,13 +103,13 @@ export async function runPendingPairedTurnIfNeeded(args: {
   }
 
   if (pendingTurn.channel) {
-    const claimedUpdatedAt = claimPairedTurnExecution({
+    const claimed = claimPairedTurnExecution({
       chatJid,
       runId: args.runId,
       task,
       intentKind: pendingTurn.intentKind,
     });
-    if (!claimedUpdatedAt) {
+    if (!claimed) {
       args.log.info(
         {
           chatJid,
@@ -121,7 +122,6 @@ export async function runPendingPairedTurnIfNeeded(args: {
       );
       return true;
     }
-    task.updated_at = claimedUpdatedAt;
   }
 
   return executePendingPairedTurn({
@@ -157,13 +157,48 @@ export async function runQueuedGroupTurn(args: {
   const { chatJid, group, runId, log, missedMessages, task, roleToChannel } =
     args;
   const taskStatus = task?.status;
-  const hasHumanMsg = !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
+  const hasHumanMsg = task
+    ? !missedMessages.every(
+        (message) => message.is_from_me === true || !!message.is_bot_message,
+      )
+    : !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
+  const lastTurnOutputRole = task
+    ? (getPairedTurnOutputs(task.id).at(-1)?.role ?? null)
+    : null;
   const turnRole = task
-    ? resolveQueuedTurnRole({
-        taskStatus,
-        hasHumanMessage: hasHumanMsg,
-      })
+    ? hasHumanMsg
+      ? resolveQueuedTurnRole({
+          taskStatus,
+          hasHumanMessage: true,
+        })
+      : resolveQueuedPairedTurnRole({
+          taskStatus,
+          hasHumanMessage: false,
+          lastTurnOutputRole,
+        })
     : 'owner';
+  if (!turnRole) {
+    const endSeq = missedMessages[missedMessages.length - 1]?.seq ?? null;
+    if (endSeq !== null) {
+      advanceLastAgentCursor(
+        args.lastAgentTimestamps,
+        args.saveState,
+        chatJid,
+        endSeq,
+        resolveCursorKeyForRole(chatJid, resolveActiveRole(taskStatus)),
+      );
+    }
+    log.info(
+      {
+        chatJid,
+        taskId: task?.id ?? null,
+        taskStatus,
+        lastTurnOutputRole,
+      },
+      'Skipped queued paired turn because the latest persisted turn already closed the pending handoff',
+    );
+    return true;
+  }
   const turnChannel =
     turnRole === 'owner' ? args.ownerChannel : roleToChannel[turnRole];
   const cursorKey = resolveCursorKeyForRole(chatJid, turnRole);
@@ -227,13 +262,13 @@ export async function runQueuedGroupTurn(args: {
       turnRole,
       hasHumanMessage: hasHumanMsg,
     });
-    const claimedUpdatedAt = claimPairedTurnExecution({
+    const claimed = claimPairedTurnExecution({
       chatJid,
       runId,
       task,
       intentKind,
     });
-    if (!claimedUpdatedAt) {
+    if (!claimed) {
       log.info(
         {
           taskId: task.id,
@@ -246,7 +281,6 @@ export async function runQueuedGroupTurn(args: {
       );
       return true;
     }
-    task.updated_at = claimedUpdatedAt;
   }
 
   if (endSeq !== null) {

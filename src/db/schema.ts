@@ -1,6 +1,10 @@
 import { Database } from 'bun:sqlite';
 
-import { inferAgentTypeFromServiceShadow } from '../role-service-shadow.js';
+import { normalizeServiceId } from '../config.js';
+import {
+  inferAgentTypeFromServiceShadow,
+  resolveRoleServiceShadow,
+} from '../role-service-shadow.js';
 import {
   backfillLegacyServiceSessions,
   dropLegacyServiceSessionsTable,
@@ -42,6 +46,134 @@ function tryExecMigration(database: Database, sql: string): void {
   } catch {
     /* column already exists */
   }
+}
+
+interface LegacyExecutionLeaseServiceRow {
+  rowid: number;
+  role: string;
+  owner_service_id?: string | null;
+  reviewer_service_id?: string | null;
+  arbiter_service_id?: string | null;
+  owner_agent_type?: string | null;
+  reviewer_agent_type?: string | null;
+  arbiter_agent_type?: string | null;
+}
+
+function normalizePairedAgentType(
+  agentType: string | null | undefined,
+): 'codex' | 'claude-code' | null {
+  if (agentType === 'codex' || agentType === 'claude-code') {
+    return agentType;
+  }
+  return null;
+}
+
+function inferLegacyExecutionLeaseServiceId(
+  row: LegacyExecutionLeaseServiceRow,
+): string | null {
+  switch (row.role) {
+    case 'owner': {
+      const ownerAgentType = normalizePairedAgentType(row.owner_agent_type);
+      return (
+        (row.owner_service_id ? normalizeServiceId(row.owner_service_id) : null) ??
+        resolveRoleServiceShadow('owner', ownerAgentType)
+      );
+    }
+    case 'reviewer': {
+      const reviewerAgentType = normalizePairedAgentType(
+        row.reviewer_agent_type,
+      );
+      return (
+        (row.reviewer_service_id
+          ? normalizeServiceId(row.reviewer_service_id)
+          : null) ??
+        resolveRoleServiceShadow('reviewer', reviewerAgentType)
+      );
+    }
+    case 'arbiter': {
+      const arbiterAgentType = normalizePairedAgentType(row.arbiter_agent_type);
+      return (
+        (row.arbiter_service_id
+          ? normalizeServiceId(row.arbiter_service_id)
+          : null) ??
+        resolveRoleServiceShadow('arbiter', arbiterAgentType)
+      );
+    }
+    default:
+      return null;
+  }
+}
+
+function backfillLegacyExecutionLeaseServiceShadows(database: Database): void {
+  if (
+    !tableHasColumn(database, 'paired_task_execution_leases', 'claimed_service_id')
+  ) {
+    return;
+  }
+
+  const pairedTasksTable = database
+    .prepare(
+      `
+        SELECT 1
+          FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'paired_tasks'
+      `,
+    )
+    .get();
+  if (!pairedTasksTable) {
+    return;
+  }
+
+  const pairedTaskColumns = getTableColumns(database, 'paired_tasks');
+  const selectPairedTaskColumn = (columnName: string): string =>
+    pairedTaskColumns.includes(columnName)
+      ? `paired_tasks.${columnName} AS ${columnName}`
+      : `NULL AS ${columnName}`;
+
+  const rows = database
+    .prepare(
+      `
+        SELECT
+          paired_task_execution_leases.rowid AS rowid,
+          paired_task_execution_leases.role AS role,
+          ${selectPairedTaskColumn('owner_service_id')},
+          ${selectPairedTaskColumn('reviewer_service_id')},
+          ${selectPairedTaskColumn('arbiter_service_id')},
+          ${selectPairedTaskColumn('owner_agent_type')},
+          ${selectPairedTaskColumn('reviewer_agent_type')},
+          ${selectPairedTaskColumn('arbiter_agent_type')}
+        FROM paired_task_execution_leases
+        LEFT JOIN paired_tasks
+          ON paired_tasks.id = paired_task_execution_leases.task_id
+       WHERE paired_task_execution_leases.claimed_service_id IS NULL
+      `,
+    )
+    .all() as LegacyExecutionLeaseServiceRow[];
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const update = database.prepare(
+    `
+      UPDATE paired_task_execution_leases
+         SET claimed_service_id = ?
+       WHERE rowid = ?
+         AND claimed_service_id IS NULL
+    `,
+  );
+  const tx = database.transaction((leaseRows: LegacyExecutionLeaseServiceRow[]) => {
+    for (const row of leaseRows) {
+      const claimedServiceId = inferLegacyExecutionLeaseServiceId(row);
+      if (!claimedServiceId) {
+        continue;
+      }
+      update.run(claimedServiceId, row.rowid);
+    }
+  });
+
+  tx(rows);
 }
 
 export function applySchemaMigrations(
@@ -149,6 +281,10 @@ export function applySchemaMigrations(
     database,
     `ALTER TABLE paired_task_execution_leases ADD COLUMN expires_at TEXT`,
   );
+  tryExecMigration(
+    database,
+    `ALTER TABLE paired_task_execution_leases ADD COLUMN claimed_service_id TEXT`,
+  );
   database.exec(`
     UPDATE paired_task_execution_leases
        SET expires_at = COALESCE(
@@ -156,6 +292,11 @@ export function applySchemaMigrations(
          strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+10 minutes')
        )
   `);
+  // Legacy lease rows predate claimed_service_id. Infer the original service
+  // from paired-task role metadata when possible instead of blanket-marking
+  // everything as the current service, which would let startup cleanup delete
+  // leases that belong to another runtime.
+  backfillLegacyExecutionLeaseServiceShadows(database);
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_paired_task_execution_leases_expires_at
       ON paired_task_execution_leases(expires_at)

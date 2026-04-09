@@ -6,6 +6,13 @@ import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  CLAUDE_SERVICE_ID,
+  CODEX_MAIN_SERVICE_ID,
+  CODEX_REVIEW_SERVICE_ID,
+  SERVICE_ID,
+  normalizeServiceId,
+} from './config.js';
+import {
   _initTestDatabase,
   _initTestDatabaseFromFile,
   createPairedTask,
@@ -17,6 +24,159 @@ import {
   resetPairedFollowUpScheduleState,
   schedulePairedFollowUpOnce,
 } from './paired-follow-up-scheduler.js';
+
+const CURRENT_SERVICE_ID = normalizeServiceId(SERVICE_ID);
+const CURRENT_AGENT_TYPE =
+  CURRENT_SERVICE_ID === CLAUDE_SERVICE_ID ? 'claude-code' : 'codex';
+const OTHER_SERVICE_ID =
+  CURRENT_SERVICE_ID === CLAUDE_SERVICE_ID
+    ? CODEX_MAIN_SERVICE_ID
+    : CLAUDE_SERVICE_ID;
+const OTHER_AGENT_TYPE =
+  OTHER_SERVICE_ID === CLAUDE_SERVICE_ID ? 'claude-code' : 'codex';
+
+function createLegacyLeaseDatabase(args: {
+  dbPath: string;
+  taskId: string;
+  role?: 'owner' | 'reviewer' | 'arbiter';
+  intentKind?:
+    | 'owner-turn'
+    | 'reviewer-turn'
+    | 'arbiter-turn'
+    | 'owner-follow-up'
+    | 'finalize-owner-turn';
+  claimedRunId?: string;
+  taskStatus?: string;
+  reviewerServiceId: string;
+  reviewerAgentType: 'codex' | 'claude-code';
+  ownerServiceId?: string;
+  ownerAgentType?: 'codex' | 'claude-code';
+  arbiterServiceId?: string;
+  arbiterAgentType?: 'codex' | 'claude-code';
+}): void {
+  const legacyDb = new Database(args.dbPath);
+  legacyDb.exec(`
+    CREATE TABLE paired_tasks (
+      id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      group_folder TEXT NOT NULL,
+      owner_service_id TEXT NOT NULL,
+      reviewer_service_id TEXT NOT NULL,
+      arbiter_service_id TEXT,
+      owner_agent_type TEXT,
+      reviewer_agent_type TEXT,
+      arbiter_agent_type TEXT,
+      title TEXT,
+      source_ref TEXT,
+      plan_notes TEXT,
+      review_requested_at TEXT,
+      round_trip_count INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      arbiter_verdict TEXT,
+      arbiter_requested_at TEXT,
+      completion_reason TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE paired_task_execution_leases (
+      task_id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      role TEXT NOT NULL,
+      intent_kind TEXT NOT NULL,
+      claimed_run_id TEXT NOT NULL,
+      task_status TEXT NOT NULL,
+      task_updated_at TEXT NOT NULL,
+      claimed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      CHECK (role IN ('owner', 'reviewer', 'arbiter')),
+      CHECK (
+        intent_kind IN (
+          'owner-turn',
+          'reviewer-turn',
+          'arbiter-turn',
+          'owner-follow-up',
+          'finalize-owner-turn'
+        )
+      )
+    );
+  `);
+  legacyDb
+    .prepare(
+      `INSERT INTO paired_tasks (
+        id,
+        chat_jid,
+        group_folder,
+        owner_service_id,
+        reviewer_service_id,
+        arbiter_service_id,
+        owner_agent_type,
+        reviewer_agent_type,
+        arbiter_agent_type,
+        title,
+        source_ref,
+        plan_notes,
+        review_requested_at,
+        round_trip_count,
+        status,
+        arbiter_verdict,
+        arbiter_requested_at,
+        completion_reason,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      args.taskId,
+      'group@test',
+      'test-group',
+      args.ownerServiceId ?? OTHER_SERVICE_ID,
+      args.reviewerServiceId,
+      args.arbiterServiceId ?? null,
+      args.ownerAgentType ?? OTHER_AGENT_TYPE,
+      args.reviewerAgentType,
+      args.arbiterAgentType ?? null,
+      null,
+      'HEAD',
+      null,
+      null,
+      1,
+      'review_ready',
+      null,
+      null,
+      null,
+      '2026-03-30T00:00:00.000Z',
+      '2026-03-30T00:00:00.000Z',
+    );
+  legacyDb
+    .prepare(
+      `INSERT INTO paired_task_execution_leases (
+        task_id,
+        chat_jid,
+        role,
+        intent_kind,
+        claimed_run_id,
+        task_status,
+        task_updated_at,
+        claimed_at,
+        updated_at,
+        expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      args.taskId,
+      'group@test',
+      args.role ?? 'reviewer',
+      args.intentKind ?? 'reviewer-turn',
+      args.claimedRunId ?? `legacy-run-${args.role ?? 'reviewer'}`,
+      args.taskStatus ?? 'review_ready',
+      '2026-03-30T00:00:00.000Z',
+      '2026-03-30T00:00:00.000Z',
+      '2026-03-30T00:00:00.000Z',
+      '2099-03-30T00:10:00.000Z',
+    );
+  legacyDb.close();
+}
 
 describe('paired follow-up scheduler', () => {
   beforeEach(() => {
@@ -160,6 +320,60 @@ describe('paired follow-up scheduler', () => {
     expect(enqueue).toHaveBeenCalledTimes(2);
   });
 
+  it('does not create a fresh reviewer handoff identity after a pure claim leaves the semantic task revision unchanged', () => {
+    const enqueue = vi.fn();
+    const task = {
+      id: 'task-semantic-reviewer-handoff',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      status: 'review_ready',
+      round_trip_count: 1,
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as const;
+    createPairedTask(task as any);
+
+    expect(
+      schedulePairedFollowUpOnce({
+        chatJid: task.chat_jid,
+        runId: 'run-reviewer-schedule-1',
+        task,
+        intentKind: 'reviewer-turn',
+        enqueue,
+      }),
+    ).toBe(true);
+    expect(
+      claimPairedTurnExecution({
+        chatJid: task.chat_jid,
+        runId: 'run-reviewer-claim-1',
+        task,
+        intentKind: 'reviewer-turn',
+      }),
+    ).toBe(true);
+
+    const freshRefetch = getPairedTaskById(task.id);
+    expect(freshRefetch?.updated_at).toBe(task.updated_at);
+    expect(
+      schedulePairedFollowUpOnce({
+        chatJid: task.chat_jid,
+        runId: 'run-reviewer-schedule-2',
+        task: freshRefetch ?? task,
+        intentKind: 'reviewer-turn',
+        enqueue,
+      }),
+    ).toBe(false);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
   it('blocks a fresh-refetched task revision from reclaiming the same turn while the execution lease is active', () => {
     const task = {
       id: 'task-1',
@@ -195,9 +409,9 @@ describe('paired follow-up scheduler', () => {
       intentKind: 'reviewer-turn',
     });
 
-    expect(first).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-    expect(second).toBeNull();
-    expect(getPairedTaskById(task.id)?.updated_at).toBe(first);
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect(getPairedTaskById(task.id)?.updated_at).toBe(task.updated_at);
   });
 
   it('reclaims an expired execution lease after restart while blocking fresh claims before expiry', () => {
@@ -236,30 +450,42 @@ describe('paired follow-up scheduler', () => {
         task,
         intentKind: 'reviewer-turn',
       });
-      expect(first).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(first).toBe(true);
+
+      const rawDatabase = new Database(dbPath);
+      rawDatabase
+        .prepare(
+          `
+            UPDATE paired_task_execution_leases
+               SET claimed_service_id = ?
+             WHERE task_id = ?
+          `,
+        )
+        .run('other-service', task.id);
+      rawDatabase.close();
 
       _initTestDatabaseFromFile(dbPath);
-      const freshTask = getPairedTaskById(task.id);
-      expect(freshTask).toBeDefined();
+      const crossServiceTask = getPairedTaskById(task.id);
+      expect(crossServiceTask).toBeDefined();
       expect(
         claimPairedTurnExecution({
           chatJid: task.chat_jid,
           runId: 'run-before-expiry-reviewer',
-          task: freshTask ?? task,
+          task: crossServiceTask ?? task,
           intentKind: 'reviewer-turn',
         }),
-      ).toBeNull();
+      ).toBe(false);
       expect(
         claimPairedTurnExecution({
           chatJid: task.chat_jid,
           runId: 'run-before-expiry-owner',
-          task: freshTask ?? task,
+          task: crossServiceTask ?? task,
           intentKind: 'owner-turn',
         }),
-      ).toBeNull();
+      ).toBe(false);
 
-      const rawDatabase = new Database(dbPath);
-      rawDatabase
+      const expiryDatabase = new Database(dbPath);
+      expiryDatabase
         .prepare(
           `
             UPDATE paired_task_execution_leases
@@ -269,7 +495,7 @@ describe('paired follow-up scheduler', () => {
           `,
         )
         .run('2020-01-01T00:00:00.000Z', '2020-01-01T00:00:00.000Z', task.id);
-      rawDatabase.close();
+      expiryDatabase.close();
 
       _initTestDatabaseFromFile(dbPath);
       const recoveredTask = getPairedTaskById(task.id);
@@ -281,7 +507,150 @@ describe('paired follow-up scheduler', () => {
           task: recoveredTask ?? task,
           intentKind: 'reviewer-turn',
         }),
-      ).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      ).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+      resetPairedFollowUpScheduleState();
+    }
+  });
+
+  it('clears same-service legacy execution leases during startup so an interrupted turn can be reclaimed immediately after restart', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-paired-lease-startup-'),
+    );
+    const dbPath = path.join(tempDir, 'paired-state.db');
+
+    try {
+      createLegacyLeaseDatabase({
+        dbPath,
+        taskId: 'task-restart-cleanup',
+        reviewerServiceId: CURRENT_SERVICE_ID,
+        reviewerAgentType: CURRENT_AGENT_TYPE,
+      });
+      resetPairedFollowUpScheduleState();
+
+      _initTestDatabaseFromFile(dbPath);
+      const migratedDb = new Database(dbPath, { readonly: true });
+      const leaseCount = (
+        migratedDb
+          .prepare(
+            'SELECT COUNT(*) AS count FROM paired_task_execution_leases WHERE task_id = ?',
+          )
+          .get('task-restart-cleanup') as { count: number }
+      ).count;
+      migratedDb.close();
+
+      expect(leaseCount).toBe(0);
+
+      const recoveredTask = getPairedTaskById('task-restart-cleanup');
+      expect(recoveredTask).toBeDefined();
+      expect(
+        claimPairedTurnExecution({
+          chatJid: 'group@test',
+          runId: 'run-after-restart',
+          task: recoveredTask!,
+          intentKind: 'reviewer-turn',
+        }),
+      ).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+      resetPairedFollowUpScheduleState();
+    }
+  });
+
+  it('preserves legacy execution leases that belong to another service during startup cleanup', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-paired-lease-preserve-'),
+    );
+    const dbPath = path.join(tempDir, 'paired-state.db');
+
+    try {
+      createLegacyLeaseDatabase({
+        dbPath,
+        taskId: 'task-cross-service-legacy-lease',
+        reviewerServiceId: OTHER_SERVICE_ID,
+        reviewerAgentType: OTHER_AGENT_TYPE,
+      });
+      resetPairedFollowUpScheduleState();
+
+      _initTestDatabaseFromFile(dbPath);
+
+      const migratedDb = new Database(dbPath, { readonly: true });
+      const leaseRow = migratedDb
+        .prepare(
+          `
+            SELECT claimed_service_id
+              FROM paired_task_execution_leases
+             WHERE task_id = ?
+          `,
+        )
+        .get('task-cross-service-legacy-lease') as
+        | { claimed_service_id: string | null }
+        | undefined;
+      migratedDb.close();
+
+      expect(leaseRow).toEqual({
+        claimed_service_id: OTHER_SERVICE_ID,
+      });
+
+      const task = getPairedTaskById('task-cross-service-legacy-lease');
+      expect(task).toBeDefined();
+      expect(
+        claimPairedTurnExecution({
+          chatJid: 'group@test',
+          runId: 'run-cross-service-reclaim',
+          task: task!,
+          intentKind: 'reviewer-turn',
+        }),
+      ).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+      resetPairedFollowUpScheduleState();
+    }
+  });
+
+  it('preserves the raw runtime service id for legacy owner leases instead of canonicalizing to the owner shadow', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-paired-lease-owner-failover-'),
+    );
+    const dbPath = path.join(tempDir, 'paired-state.db');
+
+    try {
+      createLegacyLeaseDatabase({
+        dbPath,
+        taskId: 'task-owner-failover-legacy-lease',
+        role: 'owner',
+        intentKind: 'owner-turn',
+        taskStatus: 'active',
+        ownerServiceId: CODEX_REVIEW_SERVICE_ID,
+        ownerAgentType: 'codex',
+        reviewerServiceId: CLAUDE_SERVICE_ID,
+        reviewerAgentType: 'claude-code',
+      });
+      resetPairedFollowUpScheduleState();
+
+      _initTestDatabaseFromFile(dbPath);
+
+      const migratedDb = new Database(dbPath, { readonly: true });
+      const leaseRow = migratedDb
+        .prepare(
+          `
+            SELECT claimed_service_id
+              FROM paired_task_execution_leases
+             WHERE task_id = ?
+          `,
+        )
+        .get('task-owner-failover-legacy-lease') as
+        | { claimed_service_id: string | null }
+        | undefined;
+      migratedDb.close();
+
+      expect(leaseRow).toEqual({
+        claimed_service_id: CODEX_REVIEW_SERVICE_ID,
+      });
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
       _initTestDatabase();
