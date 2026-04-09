@@ -169,6 +169,57 @@ export function applyBaseSchema(database: Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_paired_turn_outputs_task
       ON paired_turn_outputs(task_id, turn_number);
+    CREATE TABLE IF NOT EXISTS paired_turn_reservations (
+      chat_jid TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      task_status TEXT NOT NULL,
+      round_trip_count INTEGER NOT NULL DEFAULT 0,
+      task_updated_at TEXT NOT NULL,
+      intent_kind TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      scheduled_run_id TEXT,
+      consumed_run_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      consumed_at TEXT,
+      PRIMARY KEY (chat_jid, task_id, task_updated_at, intent_kind),
+      CHECK (status IN ('pending', 'completed')),
+      CHECK (
+        intent_kind IN (
+          'owner-turn',
+          'reviewer-turn',
+          'arbiter-turn',
+          'owner-follow-up',
+          'finalize-owner-turn'
+        )
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_turn_reservations_task
+      ON paired_turn_reservations(task_id, task_updated_at, status);
+    CREATE TABLE IF NOT EXISTS paired_task_execution_leases (
+      task_id TEXT PRIMARY KEY,
+      chat_jid TEXT NOT NULL,
+      role TEXT NOT NULL,
+      intent_kind TEXT NOT NULL,
+      claimed_run_id TEXT NOT NULL,
+      task_status TEXT NOT NULL,
+      task_updated_at TEXT NOT NULL,
+      claimed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      CHECK (role IN ('owner', 'reviewer', 'arbiter')),
+      CHECK (
+        intent_kind IN (
+          'owner-turn',
+          'reviewer-turn',
+          'arbiter-turn',
+          'owner-follow-up',
+          'finalize-owner-turn'
+        )
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_task_execution_leases_expires_at
+      ON paired_task_execution_leases(expires_at);
     CREATE TABLE IF NOT EXISTS channel_owner (
       chat_jid TEXT PRIMARY KEY,
       owner_agent_type TEXT,

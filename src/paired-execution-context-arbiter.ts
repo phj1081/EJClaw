@@ -21,6 +21,7 @@ export function handleFailedArbiterExecution(args: {
       taskId,
       currentStatus: task.status,
       nextStatus: fallbackStatus,
+      expectedUpdatedAt: task.updated_at,
       updatedAt: now,
     });
     logger.warn(
@@ -36,10 +37,11 @@ export function handleFailedArbiterExecution(args: {
 }
 
 export function handleArbiterCompletion(args: {
+  task: PairedTask;
   taskId: string;
   summary?: string | null;
 }): void {
-  const { taskId, summary } = args;
+  const { task, taskId, summary } = args;
   const now = new Date().toISOString();
   const arbiterVerdict = classifyArbiterVerdict(summary);
 
@@ -56,6 +58,7 @@ export function handleArbiterCompletion(args: {
         taskId,
         currentStatus: 'in_arbitration',
         nextStatus: 'active',
+        expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
           round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
@@ -72,6 +75,7 @@ export function handleArbiterCompletion(args: {
         taskId,
         currentStatus: 'in_arbitration',
         nextStatus: 'completed',
+        expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
           arbiter_verdict: 'escalate',
@@ -85,6 +89,7 @@ export function handleArbiterCompletion(args: {
         taskId,
         currentStatus: 'in_arbitration',
         nextStatus: 'active',
+        expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
           round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),

@@ -145,6 +145,21 @@ export function applySchemaMigrations(
     database,
     `ALTER TABLE paired_tasks ADD COLUMN arbiter_agent_type TEXT`,
   );
+  tryExecMigration(
+    database,
+    `ALTER TABLE paired_task_execution_leases ADD COLUMN expires_at TEXT`,
+  );
+  database.exec(`
+    UPDATE paired_task_execution_leases
+       SET expires_at = COALESCE(
+         expires_at,
+         strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+10 minutes')
+       )
+  `);
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_paired_task_execution_leases_expires_at
+      ON paired_task_execution_leases(expires_at)
+  `);
 
   tryExecMigration(
     database,

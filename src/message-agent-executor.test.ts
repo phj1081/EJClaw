@@ -48,15 +48,62 @@ vi.mock('./platform-prompts.js', () => ({
   readArbiterPrompt: vi.fn(() => ''),
 }));
 
-vi.mock('./db.js', () => ({
-  createServiceHandoff: vi.fn(),
-  getAllTasks: vi.fn(() => []),
-  getLastHumanMessageSender: vi.fn(() => null),
-  getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
-  getLatestTurnNumber: vi.fn(() => 0),
-  getPairedTaskById: vi.fn(() => undefined),
-  insertPairedTurnOutput: vi.fn(),
-}));
+vi.mock('./db.js', () => {
+  const pairedTurnReservations = new Set<string>();
+  const claimedTaskRevisions = new Set<string>();
+  const buildReservationKey = (args: {
+    chatJid: string;
+    taskId: string;
+    taskUpdatedAt: string;
+    intentKind: string;
+  }) =>
+    [
+      args.chatJid,
+      args.taskId,
+      args.taskUpdatedAt,
+      args.intentKind,
+    ].join(':');
+
+  return {
+    createServiceHandoff: vi.fn(),
+    getAllTasks: vi.fn(() => []),
+    getLastHumanMessageSender: vi.fn(() => null),
+    getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
+    getLatestTurnNumber: vi.fn(() => 0),
+    getPairedTaskById: vi.fn(() => undefined),
+    getPairedTurnOutputs: vi.fn(() => []),
+    insertPairedTurnOutput: vi.fn(),
+    refreshPairedTaskExecutionLease: vi.fn(() => true),
+    reservePairedTurnReservation: vi.fn((args) => {
+      const key = buildReservationKey(args);
+      if (pairedTurnReservations.has(key)) {
+        return false;
+      }
+      pairedTurnReservations.add(key);
+      return true;
+    }),
+    claimPairedTurnReservation: vi.fn((args) => {
+      const revisionKey = [args.taskId, args.taskUpdatedAt].join(':');
+      if (claimedTaskRevisions.has(revisionKey)) {
+        return false;
+      }
+      claimedTaskRevisions.add(revisionKey);
+      pairedTurnReservations.add(
+        buildReservationKey({
+          chatJid: args.chatJid,
+          taskId: args.taskId,
+          taskUpdatedAt: args.taskUpdatedAt,
+          intentKind: args.intentKind,
+        }),
+      );
+      return true;
+    }),
+    _clearPairedTurnReservationsForTests: vi.fn(() => {
+      pairedTurnReservations.clear();
+      claimedTaskRevisions.clear();
+    }),
+  };
+});
 
 vi.mock('./service-routing.js', () => ({
   activateCodexFailover: vi.fn(),
@@ -789,6 +836,7 @@ describe('runAgentForGroup room memory', () => {
     ).toHaveBeenCalledWith({
       taskId: 'paired-task-1',
       role: 'owner',
+      runId: 'run-room-role',
       status: 'succeeded',
       summary: 'ok',
     });
@@ -982,6 +1030,7 @@ describe('runAgentForGroup room memory', () => {
     ).toHaveBeenCalledWith({
       taskId: 'paired-task-1',
       role: 'owner',
+      runId: 'run-blocked-reviewer',
       status: 'failed',
       summary:
         'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.',
@@ -1396,6 +1445,7 @@ describe('runAgentForGroup room memory', () => {
     ).toHaveBeenCalledWith({
       taskId: 'paired-task-owner-output-order',
       role: 'owner',
+      runId: 'run-owner-output-order',
       status: 'succeeded',
       summary: 'DONE_WITH_CONCERNS\nowner complete',
     });

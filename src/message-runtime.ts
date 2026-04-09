@@ -38,18 +38,17 @@ import {
 import {
   advanceLastAgentCursor,
   createImplicitContinuationTracker,
-  resolveNextTurnAction,
-  resolveFollowUpDispatch,
   filterLoopingPairedBotMessages,
   getProcessableMessages,
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
+import {
+  enqueuePairedFollowUpAfterEvent,
+  schedulePairedFollowUpWithMessageCheck,
+} from './message-runtime-follow-up.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
-import {
-  schedulePairedFollowUpOnce,
-  type ScheduledPairedFollowUpIntentKind,
-} from './paired-follow-up-scheduler.js';
+import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
 import {
   Channel,
@@ -168,18 +167,16 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     task: PairedTask | null | undefined;
     intentKind: ScheduledPairedFollowUpIntentKind;
     enqueue: () => void;
-  }): boolean => {
-    if (!args.task) {
-      return false;
-    }
-    return schedulePairedFollowUpOnce({
+    fallbackLastTurnOutputRole?: PairedRoomRole | null;
+  }): boolean =>
+    schedulePairedFollowUpWithMessageCheck({
       chatJid: args.chatJid,
       runId: args.runId,
       task: args.task,
       intentKind: args.intentKind,
-      enqueue: args.enqueue,
+      enqueueMessageCheck: args.enqueue,
+      fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
     });
-  };
 
   /**
    * Check if a message is a duplicate of the last bot final message in a paired room.
@@ -346,37 +343,27 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       if (deliverySucceeded && pairedRoom && resolvedDeliveryRole) {
         const pendingTaskAfterDelivery =
           getLatestOpenPairedTaskForChat(chatJid);
-        const nextTurnAction = resolveNextTurnAction({
-          taskStatus: pendingTaskAfterDelivery?.status,
-          lastTurnOutputRole: resolvedDeliveryRole,
-        });
-        const dispatch = resolveFollowUpDispatch({
+        const followUpResult = enqueuePairedFollowUpAfterEvent({
+          chatJid,
+          runId,
+          task: pendingTaskAfterDelivery,
           source: 'delivery-success',
-          nextTurnAction,
           completedRole: resolvedDeliveryRole,
+          fallbackLastTurnOutputRole: resolvedDeliveryRole,
+          enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
         });
-        if (
-          dispatch.kind === 'enqueue' &&
-          dispatch.queueKind === 'paired-follow-up' &&
-          nextTurnAction.kind !== 'none'
-        ) {
-          const scheduled = scheduleQueuedPairedFollowUp({
-            chatJid,
-            runId,
-            task: pendingTaskAfterDelivery,
-            intentKind: nextTurnAction.kind,
-            enqueue: () => deps.queue.enqueueMessageCheck(chatJid),
-          });
+        if (followUpResult.kind === 'paired-follow-up') {
           logger.info(
             {
               chatJid,
               runId,
               completedRole: resolvedDeliveryRole,
-              taskId: pendingTaskAfterDelivery?.id ?? null,
-              taskStatus: pendingTaskAfterDelivery?.status ?? null,
-              scheduled,
+              taskId: followUpResult.taskId,
+              taskStatus: followUpResult.taskStatus,
+              intentKind: followUpResult.intentKind,
+              scheduled: followUpResult.scheduled,
             },
-            scheduled
+            followUpResult.scheduled
               ? resolvedDeliveryRole === 'owner'
                 ? 'Queued paired follow-up after successful owner delivery'
                 : 'Queued paired follow-up after successful reviewer/arbiter delivery'
@@ -513,14 +500,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           workItemId,
           log,
           enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
-          schedulePairedFollowUp: (task, intentKind, followUpRunId) =>
-            scheduleQueuedPairedFollowUp({
-              chatJid,
-              runId: followUpRunId,
-              task,
-              intentKind,
-              enqueue: () => deps.queue.enqueueMessageCheck(chatJid),
-            }),
         }),
     });
     if (openWorkItemOutcome === 'failed') {
@@ -668,6 +647,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
                   taskId: task.id,
                   currentStatus: task.status,
                   nextStatus: 'completed',
+                  expectedUpdatedAt: task.updated_at,
                   updatedAt: now,
                   patch: {
                     completion_reason: 'stopped',

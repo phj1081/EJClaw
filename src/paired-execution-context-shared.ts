@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process';
 
 import { isArbiterEnabled } from './config.js';
-import { updatePairedTask } from './db.js';
+import { updatePairedTaskIfUnchanged } from './db.js';
 import { logger } from './logger.js';
 import type { PairedTaskStatus } from './types.js';
 
@@ -239,70 +239,134 @@ export function transitionPairedTaskStatus(args: {
   taskId: string;
   currentStatus: PairedTaskStatus;
   nextStatus: PairedTaskStatus;
+  expectedUpdatedAt: string;
   updatedAt: string;
-  patch?: Omit<Parameters<typeof updatePairedTask>[1], 'status' | 'updated_at'>;
-}): void {
+  patch?: {
+    title?: string | null;
+    source_ref?: string | null;
+    plan_notes?: string | null;
+    review_requested_at?: string | null;
+    round_trip_count?: number;
+    arbiter_verdict?: string | null;
+    arbiter_requested_at?: string | null;
+    completion_reason?: string | null;
+  };
+}): boolean {
   assertPairedTaskStatusTransition({
     currentStatus: args.currentStatus,
     nextStatus: args.nextStatus,
   });
 
-  updatePairedTask(args.taskId, {
-    ...args.patch,
-    status: args.nextStatus,
-    updated_at: args.updatedAt,
-  });
+  const updated = updatePairedTaskIfUnchanged(
+    args.taskId,
+    args.expectedUpdatedAt,
+    {
+      ...args.patch,
+      status: args.nextStatus,
+      updated_at: args.updatedAt,
+    },
+  );
+  if (!updated) {
+    logger.warn(
+      {
+        taskId: args.taskId,
+        currentStatus: args.currentStatus,
+        nextStatus: args.nextStatus,
+        expectedUpdatedAt: args.expectedUpdatedAt,
+      },
+      'Skipped stale paired task status transition because the task revision changed',
+    );
+  }
+  return updated;
 }
 
 export function applyPairedTaskPatch(args: {
   taskId: string;
+  expectedUpdatedAt: string;
   updatedAt: string;
-  patch: Omit<Parameters<typeof updatePairedTask>[1], 'updated_at'>;
-}): void {
-  updatePairedTask(args.taskId, {
-    ...args.patch,
-    updated_at: args.updatedAt,
-  });
+  patch: {
+    title?: string | null;
+    source_ref?: string | null;
+    plan_notes?: string | null;
+    review_requested_at?: string | null;
+    round_trip_count?: number;
+    status?: PairedTaskStatus;
+    arbiter_verdict?: string | null;
+    arbiter_requested_at?: string | null;
+    completion_reason?: string | null;
+  };
+}): boolean {
+  const updated = updatePairedTaskIfUnchanged(
+    args.taskId,
+    args.expectedUpdatedAt,
+    {
+      ...args.patch,
+      updated_at: args.updatedAt,
+    },
+  );
+  if (!updated) {
+    logger.warn(
+      {
+        taskId: args.taskId,
+        expectedUpdatedAt: args.expectedUpdatedAt,
+      },
+      'Skipped stale paired task patch because the task revision changed',
+    );
+  }
+  return updated;
 }
 
 export function requestArbiterOrEscalate(args: {
   taskId: string;
   currentStatus: PairedTaskStatus;
+  expectedUpdatedAt: string;
   now: string;
   arbiterLogMessage: string;
   escalateLogMessage: string;
   logContext?: Record<string, unknown>;
-}): void {
+}): boolean {
   const {
     taskId,
     currentStatus,
+    expectedUpdatedAt,
     now,
     arbiterLogMessage,
     escalateLogMessage,
     logContext,
   } = args;
   if (isArbiterEnabled()) {
-    transitionPairedTaskStatus({
+    const transitioned = transitionPairedTaskStatus({
       taskId,
       currentStatus,
       nextStatus: 'arbiter_requested',
+      expectedUpdatedAt,
       updatedAt: now,
       patch: {
         arbiter_requested_at: now,
       },
     });
-    logger.info(logContext ?? { taskId }, arbiterLogMessage);
-    return;
+    if (transitioned) {
+      logger.info(logContext ?? { taskId }, arbiterLogMessage);
+    }
+    return transitioned;
   }
 
-  transitionPairedTaskStatus({
+  const transitioned = transitionPairedTaskStatus({
     taskId,
     currentStatus,
     nextStatus: 'completed',
+    expectedUpdatedAt,
     updatedAt: now,
     patch: {
       completion_reason: 'escalated',
     },
   });
-  logger.info(logContext ?? { taskId }, escalateLogMessage);
+  if (transitioned) {
+    logger.info(logContext ?? { taskId }, escalateLogMessage);
+  }
+  return transitioned;
 }
+
+export type TransitionPairedTaskStatusFn = typeof transitionPairedTaskStatus;
+export type ApplyPairedTaskPatchFn = typeof applyPairedTaskPatch;
+export type RequestArbiterOrEscalateFn = typeof requestArbiterOrEscalate;

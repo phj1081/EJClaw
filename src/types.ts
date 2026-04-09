@@ -35,6 +35,13 @@ export type PairedTaskStatus =
   | 'arbiter_requested'
   | 'in_arbitration';
 
+export type PairedTurnReservationIntentKind =
+  | 'owner-turn'
+  | 'reviewer-turn'
+  | 'arbiter-turn'
+  | 'owner-follow-up'
+  | 'finalize-owner-turn';
+
 export type ArbiterVerdict = 'proceed' | 'revise' | 'reset' | 'escalate';
 
 export type PairedWorkspaceRole = 'owner' | 'reviewer';

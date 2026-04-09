@@ -10,10 +10,9 @@ import {
   getProcessableMessages,
   hasAllowedTrigger,
   resolveCursorKey,
-  resolveFollowUpDispatch,
-  resolveNextTurnAction,
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
+import { enqueuePairedFollowUpAfterEvent } from './message-runtime-follow-up.js';
 import {
   extractSessionCommand,
   isSessionCommandAllowed,
@@ -40,81 +39,59 @@ export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
   workItemId: string | number;
   log: RuntimeLog;
   enqueueMessageCheck: () => void;
-  schedulePairedFollowUp: (
-    task: PairedTask | null | undefined,
-    intentKind: ScheduledPairedFollowUpIntentKind,
-    runId: string,
-  ) => boolean;
 }): void {
-  const nextTurnAction =
-    args.pendingTask == null
-      ? { kind: 'none' as const }
-      : resolveNextTurnAction({
-          taskStatus: args.pendingTask.status,
-          lastTurnOutputRole: args.deliveryRole,
-        });
-  const dispatch = resolveFollowUpDispatch({
+  const followUpResult = enqueuePairedFollowUpAfterEvent({
+    chatJid: args.chatJid,
+    runId: args.runId,
+    task: args.pendingTask,
     source: 'delivery-retry',
-    nextTurnAction,
     completedRole: args.deliveryRole,
+    fallbackLastTurnOutputRole: args.deliveryRole,
+    enqueueMessageCheck: args.enqueueMessageCheck,
   });
 
-  if (dispatch.kind === 'none') {
+  if (followUpResult.kind === 'none') {
     args.log.info(
       {
         workItemId: args.workItemId,
         chatJid: args.chatJid,
         deliveryRole: args.deliveryRole,
-        pendingTaskStatus: args.pendingTask?.status ?? null,
+        pendingTaskStatus: followUpResult.taskStatus,
       },
       'No queued follow-up was required after delivery retry',
     );
     return;
   }
 
-  if (dispatch.kind === 'enqueue' && dispatch.queueKind === 'message-check') {
-    args.enqueueMessageCheck();
+  if (followUpResult.kind === 'message-check') {
     return;
   }
 
-  if (
-    dispatch.kind !== 'enqueue' ||
-    dispatch.queueKind !== 'paired-follow-up' ||
-    nextTurnAction.kind === 'none'
-  ) {
-    return;
-  }
-
-  const scheduled = args.schedulePairedFollowUp(
-    args.pendingTask,
-    nextTurnAction.kind,
-    args.runId,
-  );
-  if (scheduled) {
+  if (followUpResult.scheduled) {
     args.log.info(
       {
         workItemId: args.workItemId,
         chatJid: args.chatJid,
         deliveryRole: args.deliveryRole,
-        taskId: args.pendingTask?.id ?? null,
-        pendingTaskStatus: args.pendingTask?.status ?? null,
-        taskStatus: args.pendingTask?.status ?? null,
-        intentKind: nextTurnAction.kind,
+        taskId: followUpResult.taskId,
+        pendingTaskStatus: followUpResult.taskStatus,
+        taskStatus: followUpResult.taskStatus,
+        intentKind: followUpResult.intentKind,
       },
       'Queued paired follow-up after delivery retry',
     );
     return;
   }
-  if (!scheduled) {
+  if (!followUpResult.scheduled) {
     args.log.info(
       {
         workItemId: args.workItemId,
         chatJid: args.chatJid,
         deliveryRole: args.deliveryRole,
-        taskId: args.pendingTask?.id ?? null,
-        pendingTaskStatus: args.pendingTask?.status ?? null,
-        taskStatus: args.pendingTask?.status ?? null,
-        intentKind: nextTurnAction.kind,
+        taskId: followUpResult.taskId,
+        pendingTaskStatus: followUpResult.taskStatus,
+        taskStatus: followUpResult.taskStatus,
+        intentKind: followUpResult.intentKind,
       },
       'Skipped duplicate paired follow-up enqueue after delivery retry while task state was unchanged',
     );

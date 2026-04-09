@@ -97,6 +97,10 @@ import {
   markWorkItemDeliveryRetryInDatabase,
 } from './db/work-items.js';
 import {
+  claimPairedTurnReservationInDatabase,
+  clearExpiredPairedTaskExecutionLeasesInDatabase,
+  clearPairedTaskExecutionLeasesInDatabase,
+  clearPairedTurnReservationsInDatabase,
   type PairedTaskUpdates,
   createPairedTaskInDatabase,
   getLastBotFinalMessageFromDatabase,
@@ -106,6 +110,10 @@ import {
   getPairedTaskByIdFromDatabase,
   getPairedWorkspaceFromDatabase,
   listPairedWorkspacesForTaskFromDatabase,
+  refreshPairedTaskExecutionLeaseInDatabase,
+  releasePairedTaskExecutionLeaseInDatabase,
+  reservePairedTurnReservationInDatabase,
+  updatePairedTaskIfUnchangedInDatabase,
   updatePairedTaskInDatabase,
   upsertPairedProjectInDatabase,
   upsertPairedWorkspaceInDatabase,
@@ -184,6 +192,7 @@ import {
   PairedRoomRole,
   RoomMode,
   PairedTask,
+  PairedTurnReservationIntentKind,
   PairedTurnOutput,
   PairedWorkspace,
   RegisteredGroup,
@@ -279,6 +288,7 @@ function getSchemaMigrationHooks(): SchemaMigrationHooks {
 export function initDatabase(): void {
   db = openPersistentDatabase();
   initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  clearExpiredPairedTaskExecutionLeasesInDatabase(db);
   migrateJsonStateFromFiles({
     setRouterState,
     setSession,
@@ -290,12 +300,14 @@ export function initDatabase(): void {
 export function _initTestDatabase(): void {
   db = openInMemoryDatabase();
   initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  clearExpiredPairedTaskExecutionLeasesInDatabase(db);
 }
 
 /** @internal - for tests only. Opens an existing database file and runs schema/migrations. */
 export function _initTestDatabaseFromFile(dbPath: string): void {
   db = openDatabaseFromFile(dbPath);
   initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  clearExpiredPairedTaskExecutionLeasesInDatabase(db);
 }
 
 /** @internal - for tests only. */
@@ -1192,6 +1204,59 @@ export function updatePairedTask(id: string, updates: PairedTaskUpdates): void {
   updatePairedTaskInDatabase(db, id, updates);
 }
 
+export function updatePairedTaskIfUnchanged(
+  id: string,
+  expectedUpdatedAt: string,
+  updates: PairedTaskUpdates,
+): boolean {
+  return updatePairedTaskIfUnchangedInDatabase(
+    db,
+    id,
+    expectedUpdatedAt,
+    updates,
+  );
+}
+
+export function reservePairedTurnReservation(args: {
+  chatJid: string;
+  taskId: string;
+  taskStatus: PairedTask['status'];
+  roundTripCount: number;
+  taskUpdatedAt: string;
+  intentKind: PairedTurnReservationIntentKind;
+  runId: string;
+}): boolean {
+  return reservePairedTurnReservationInDatabase(db, args);
+}
+
+export function claimPairedTurnReservation(args: {
+  chatJid: string;
+  taskId: string;
+  taskStatus: PairedTask['status'];
+  roundTripCount: number;
+  taskUpdatedAt: string;
+  nextTaskUpdatedAt: string;
+  intentKind: PairedTurnReservationIntentKind;
+  runId: string;
+}): boolean {
+  return claimPairedTurnReservationInDatabase(db, args);
+}
+
+export function releasePairedTaskExecutionLease(args: {
+  taskId: string;
+  runId: string;
+}): void {
+  releasePairedTaskExecutionLeaseInDatabase(db, args);
+}
+
+export function refreshPairedTaskExecutionLease(args: {
+  taskId: string;
+  runId: string;
+  now?: string;
+}): boolean {
+  return refreshPairedTaskExecutionLeaseInDatabase(db, args);
+}
+
 export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
   upsertPairedWorkspaceInDatabase(db, workspace);
 }
@@ -1205,6 +1270,15 @@ export function getPairedWorkspace(
 
 export function listPairedWorkspacesForTask(taskId: string): PairedWorkspace[] {
   return listPairedWorkspacesForTaskFromDatabase(db, taskId);
+}
+
+/** @internal - for tests only. */
+export function _clearPairedTurnReservationsForTests(): void {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+  clearPairedTurnReservationsInDatabase(db);
+  clearPairedTaskExecutionLeasesInDatabase(db);
 }
 
 /**

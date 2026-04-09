@@ -14,7 +14,10 @@ import { resolveRoleServiceShadow } from '../role-service-shadow.js';
 import {
   AgentType,
   PairedProject,
+  PairedRoomRole,
   PairedTask,
+  PairedTaskStatus,
+  PairedTurnReservationIntentKind,
   PairedWorkspace,
 } from '../types.js';
 
@@ -46,6 +49,30 @@ export type PairedTaskUpdates = Partial<
     | 'updated_at'
   >
 >;
+
+export const PAIRED_TASK_EXECUTION_LEASE_TTL_MS = 10 * 60_000;
+
+function computeExecutionLeaseExpiry(now: string): string {
+  return new Date(
+    new Date(now).getTime() + PAIRED_TASK_EXECUTION_LEASE_TTL_MS,
+  ).toISOString();
+}
+
+function resolveExecutionLeaseRole(
+  intentKind: PairedTurnReservationIntentKind,
+): PairedRoomRole {
+  switch (intentKind) {
+    case 'reviewer-turn':
+      return 'reviewer';
+    case 'arbiter-turn':
+      return 'arbiter';
+    case 'owner-turn':
+    case 'owner-follow-up':
+    case 'finalize-owner-turn':
+    default:
+      return 'owner';
+  }
+}
 
 function hydratePairedTaskRow(
   database: Database,
@@ -213,7 +240,7 @@ export function updatePairedTaskInDatabase(
   database: Database,
   id: string,
   updates: PairedTaskUpdates,
-): void {
+): boolean {
   const fields: string[] = [];
   const values: (string | number | null)[] = [];
 
@@ -258,12 +285,368 @@ export function updatePairedTaskInDatabase(
     values.push(updates.updated_at);
   }
 
-  if (fields.length === 0) return;
+  if (fields.length === 0) return false;
 
   values.push(id);
-  database
+  const result = database
     .prepare(`UPDATE paired_tasks SET ${fields.join(', ')} WHERE id = ?`)
     .run(...values);
+  return result.changes > 0;
+}
+
+export function updatePairedTaskIfUnchangedInDatabase(
+  database: Database,
+  id: string,
+  expectedUpdatedAt: string,
+  updates: PairedTaskUpdates,
+): boolean {
+  const fields: string[] = [];
+  const values: (string | number | null)[] = [];
+
+  if (updates.title !== undefined) {
+    fields.push('title = ?');
+    values.push(updates.title);
+  }
+  if (updates.source_ref !== undefined) {
+    fields.push('source_ref = ?');
+    values.push(updates.source_ref);
+  }
+  if (updates.plan_notes !== undefined) {
+    fields.push('plan_notes = ?');
+    values.push(updates.plan_notes);
+  }
+  if (updates.review_requested_at !== undefined) {
+    fields.push('review_requested_at = ?');
+    values.push(updates.review_requested_at);
+  }
+  if (updates.round_trip_count !== undefined) {
+    fields.push('round_trip_count = ?');
+    values.push(updates.round_trip_count);
+  }
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.arbiter_verdict !== undefined) {
+    fields.push('arbiter_verdict = ?');
+    values.push(updates.arbiter_verdict);
+  }
+  if (updates.arbiter_requested_at !== undefined) {
+    fields.push('arbiter_requested_at = ?');
+    values.push(updates.arbiter_requested_at);
+  }
+  if (updates.completion_reason !== undefined) {
+    fields.push('completion_reason = ?');
+    values.push(updates.completion_reason);
+  }
+  if (updates.updated_at !== undefined) {
+    fields.push('updated_at = ?');
+    values.push(updates.updated_at);
+  }
+
+  if (fields.length === 0) return false;
+
+  values.push(id, expectedUpdatedAt);
+  const result = database
+    .prepare(
+      `UPDATE paired_tasks SET ${fields.join(', ')} WHERE id = ? AND updated_at = ?`,
+    )
+    .run(...values);
+  return result.changes > 0;
+}
+
+export function reservePairedTurnReservationInDatabase(
+  database: Database,
+  args: {
+    chatJid: string;
+    taskId: string;
+    taskStatus: PairedTaskStatus;
+    roundTripCount: number;
+    taskUpdatedAt: string;
+    intentKind: PairedTurnReservationIntentKind;
+    runId: string;
+  },
+): boolean {
+  const now = new Date().toISOString();
+  const result = database
+    .prepare(
+      `
+        INSERT INTO paired_turn_reservations (
+          chat_jid,
+          task_id,
+          task_status,
+          round_trip_count,
+          task_updated_at,
+          intent_kind,
+          status,
+          scheduled_run_id,
+          consumed_run_id,
+          created_at,
+          updated_at,
+          consumed_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL, ?, ?, NULL)
+        ON CONFLICT(chat_jid, task_id, task_updated_at, intent_kind) DO NOTHING
+      `,
+    )
+    .run(
+      args.chatJid,
+      args.taskId,
+      args.taskStatus,
+      args.roundTripCount,
+      args.taskUpdatedAt,
+      args.intentKind,
+      args.runId,
+      now,
+      now,
+    );
+
+  return result.changes > 0;
+}
+
+class PairedTurnReservationClaimError extends Error {}
+
+export function claimPairedTurnReservationInDatabase(
+  database: Database,
+  args: {
+    chatJid: string;
+    taskId: string;
+    taskStatus: PairedTaskStatus;
+    roundTripCount: number;
+    taskUpdatedAt: string;
+    nextTaskUpdatedAt: string;
+    intentKind: PairedTurnReservationIntentKind;
+    runId: string;
+  },
+): boolean {
+  const tx = database.transaction(() => {
+    const now = args.nextTaskUpdatedAt;
+    const expiresAt = computeExecutionLeaseExpiry(now);
+    const leaseRole = resolveExecutionLeaseRole(args.intentKind);
+    const existingLease = database
+      .prepare(
+        `
+          SELECT claimed_run_id, updated_at, expires_at
+            FROM paired_task_execution_leases
+           WHERE task_id = ?
+        `,
+      )
+      .get(args.taskId) as
+      | {
+          claimed_run_id: string;
+          updated_at: string;
+          expires_at: string;
+        }
+      | undefined;
+
+    if (!existingLease) {
+      const insertedLease = database
+        .prepare(
+          `
+            INSERT INTO paired_task_execution_leases (
+              task_id,
+              chat_jid,
+              role,
+              intent_kind,
+              claimed_run_id,
+              task_status,
+              task_updated_at,
+              claimed_at,
+              updated_at,
+              expires_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          args.taskId,
+          args.chatJid,
+          leaseRole,
+          args.intentKind,
+          args.runId,
+          args.taskStatus,
+          args.taskUpdatedAt,
+          now,
+          now,
+          expiresAt,
+        );
+
+      if (insertedLease.changes === 0) {
+        throw new PairedTurnReservationClaimError();
+      }
+    } else if (existingLease.expires_at > now) {
+      throw new PairedTurnReservationClaimError();
+    } else {
+      const tookOverLease = database
+        .prepare(
+          `
+            UPDATE paired_task_execution_leases
+               SET chat_jid = ?,
+                   role = ?,
+                   intent_kind = ?,
+                   claimed_run_id = ?,
+                   task_status = ?,
+                   task_updated_at = ?,
+                   claimed_at = ?,
+                   updated_at = ?,
+                   expires_at = ?
+             WHERE task_id = ?
+               AND claimed_run_id = ?
+               AND updated_at = ?
+               AND expires_at = ?
+          `,
+        )
+        .run(
+          args.chatJid,
+          leaseRole,
+          args.intentKind,
+          args.runId,
+          args.taskStatus,
+          args.taskUpdatedAt,
+          now,
+          now,
+          expiresAt,
+          args.taskId,
+          existingLease.claimed_run_id,
+          existingLease.updated_at,
+          existingLease.expires_at,
+        );
+
+      if (tookOverLease.changes === 0) {
+        throw new PairedTurnReservationClaimError();
+      }
+    }
+
+    database
+      .prepare(
+        `
+          UPDATE paired_turn_reservations
+             SET status = 'completed',
+                 consumed_run_id = ?,
+                 updated_at = ?,
+                 consumed_at = ?
+           WHERE chat_jid = ?
+             AND task_id = ?
+             AND task_updated_at = ?
+             AND intent_kind = ?
+             AND status = 'pending'
+        `,
+      )
+      .run(
+        args.runId,
+        now,
+        now,
+        args.chatJid,
+        args.taskId,
+        args.taskUpdatedAt,
+        args.intentKind,
+      );
+
+    const claimedTask = database
+      .prepare(
+        `
+          UPDATE paired_tasks
+             SET updated_at = ?
+           WHERE id = ?
+             AND updated_at = ?
+             AND status = ?
+        `,
+      )
+      .run(
+        args.nextTaskUpdatedAt,
+        args.taskId,
+        args.taskUpdatedAt,
+        args.taskStatus,
+      );
+
+    if (claimedTask.changes === 0) {
+      throw new PairedTurnReservationClaimError();
+    }
+  });
+
+  try {
+    tx();
+    return true;
+  } catch (error) {
+    if (error instanceof PairedTurnReservationClaimError) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export function clearPairedTurnReservationsInDatabase(
+  database: Database,
+): void {
+  database.prepare('DELETE FROM paired_turn_reservations').run();
+}
+
+export function releasePairedTaskExecutionLeaseInDatabase(
+  database: Database,
+  args: {
+    taskId: string;
+    runId: string;
+  },
+): void {
+  database
+    .prepare(
+      `
+        DELETE FROM paired_task_execution_leases
+         WHERE task_id = ?
+           AND claimed_run_id = ?
+      `,
+    )
+    .run(args.taskId, args.runId);
+}
+
+export function refreshPairedTaskExecutionLeaseInDatabase(
+  database: Database,
+  args: {
+    taskId: string;
+    runId: string;
+    now?: string;
+  },
+): boolean {
+  const now = args.now ?? new Date().toISOString();
+  const result = database
+    .prepare(
+      `
+        UPDATE paired_task_execution_leases
+           SET updated_at = ?,
+               expires_at = ?
+         WHERE task_id = ?
+           AND claimed_run_id = ?
+           AND expires_at >= ?
+      `,
+    )
+    .run(
+      now,
+      computeExecutionLeaseExpiry(now),
+      args.taskId,
+      args.runId,
+      now,
+    );
+  return result.changes > 0;
+}
+
+export function clearExpiredPairedTaskExecutionLeasesInDatabase(
+  database: Database,
+  now: string = new Date().toISOString(),
+): number {
+  return database
+    .prepare(
+      `
+        DELETE FROM paired_task_execution_leases
+         WHERE expires_at <= ?
+      `,
+    )
+    .run(now).changes;
+}
+
+export function clearPairedTaskExecutionLeasesInDatabase(
+  database: Database,
+): void {
+  database.prepare('DELETE FROM paired_task_execution_leases').run();
 }
 
 export function upsertPairedWorkspaceInDatabase(

@@ -65,6 +65,20 @@ vi.mock('./db.js', () => {
       ...message,
       seq: typeof message.seq === 'number' ? message.seq : index + 1,
     }));
+  const pairedTurnReservations = new Set<string>();
+  const claimedTaskRevisions = new Set<string>();
+  const buildReservationKey = (args: {
+    chatJid: string;
+    taskId: string;
+    taskUpdatedAt: string;
+    intentKind: string;
+  }) =>
+    [
+      args.chatJid,
+      args.taskId,
+      args.taskUpdatedAt,
+      args.intentKind,
+    ].join(':');
 
   return {
     claimServiceHandoff: vi.fn(() => true),
@@ -149,6 +163,34 @@ vi.mock('./db.js', () => {
     markWorkItemDelivered: vi.fn(),
     markWorkItemDeliveryRetry: vi.fn(),
     getLastBotFinalMessage: vi.fn(() => []),
+    reservePairedTurnReservation: vi.fn((args) => {
+      const key = buildReservationKey(args);
+      if (pairedTurnReservations.has(key)) {
+        return false;
+      }
+      pairedTurnReservations.add(key);
+      return true;
+    }),
+    claimPairedTurnReservation: vi.fn((args) => {
+      const revisionKey = [args.taskId, args.taskUpdatedAt].join(':');
+      if (claimedTaskRevisions.has(revisionKey)) {
+        return false;
+      }
+      claimedTaskRevisions.add(revisionKey);
+      pairedTurnReservations.add(
+        buildReservationKey({
+          chatJid: args.chatJid,
+          taskId: args.taskId,
+          taskUpdatedAt: args.taskUpdatedAt,
+          intentKind: args.intentKind,
+        }),
+      );
+      return true;
+    }),
+    _clearPairedTurnReservationsForTests: vi.fn(() => {
+      pairedTurnReservations.clear();
+      claimedTaskRevisions.clear();
+    }),
   };
 });
 
@@ -573,6 +615,7 @@ describe('createMessageRuntime', () => {
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
     const enqueueMessageCheck = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
 
     vi.mocked(db.getOpenWorkItem).mockReturnValue({
       id: 99,
@@ -619,7 +662,7 @@ describe('createMessageRuntime', () => {
       getSessions: () => ({}),
       getLastTimestamp: () => '',
       setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
       saveState: vi.fn(),
       persistSession: vi.fn(),
       clearSession: vi.fn(),
@@ -1154,6 +1197,7 @@ describe('createMessageRuntime', () => {
         };
       },
     );
+    const lastAgentTimestamps: Record<string, string> = {};
 
     const runtime = createMessageRuntime({
       assistantName: 'Andy',
@@ -1178,7 +1222,7 @@ describe('createMessageRuntime', () => {
       getSessions: () => ({}),
       getLastTimestamp: () => '',
       setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => ({}),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
       saveState: vi.fn(),
       persistSession: vi.fn(),
       clearSession: vi.fn(),
@@ -1818,6 +1862,124 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     );
   });
 
+  it('skips a stale reviewer follow-up after owner delivery when the latest persisted turn already belongs to the reviewer', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'owner-bot@test'),
+    };
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const enqueueMessageCheck = vi.fn();
+    const pairedTask = {
+      id: 'task-owner-delivery-stale-reviewer-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+    let persistedTurnOutputs: any[] = [];
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
+      () => pairedTask,
+    );
+    vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) =>
+      taskId === pairedTask.id ? persistedTurnOutputs : [],
+    );
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-stale-reviewer-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '이 구현 진행해줘',
+        timestamp: '2026-03-30T00:00:00.000Z',
+        seq: 1,
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        pairedTask.status = 'review_ready';
+        pairedTask.review_requested_at = '2026-03-30T00:00:01.000Z';
+        pairedTask.round_trip_count = 1;
+        pairedTask.updated_at = '2026-03-30T00:00:02.000Z';
+        persistedTurnOutputs = [
+          {
+            id: 1,
+            task_id: pairedTask.id,
+            turn_number: 1,
+            role: 'owner',
+            output_text: 'owner 응답',
+            created_at: '2026-03-30T00:00:01.000Z',
+          },
+          {
+            id: 2,
+            task_id: pairedTask.id,
+            turn_number: 2,
+            role: 'reviewer',
+            output_text: 'reviewer 승인',
+            created_at: '2026-03-30T00:00:02.000Z',
+          },
+        ];
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE_WITH_CONCERNS\nowner complete',
+          newSessionId: 'session-owner-delivery-stale-reviewer-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'DONE_WITH_CONCERNS\nowner complete',
+          newSessionId: 'session-owner-delivery-stale-reviewer-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRegisteredGroups: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-delivery-stale-reviewer-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+
   it('does not enqueue the same reviewer follow-up twice within the same run', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -1850,18 +2012,22 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
       () => pairedTask,
     );
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'human-dedup-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: '이 구현 진행해줘',
-        timestamp: '2026-03-30T00:00:00.000Z',
-        seq: 1,
-        is_bot_message: false,
-      } as any,
-    ]);
+    vi.mocked(db.getMessagesSince).mockImplementation((_chatJid, sinceCursor) =>
+      sinceCursor && sinceCursor !== '0'
+        ? []
+        : ([
+            {
+              id: 'human-dedup-1',
+              chat_jid: chatJid,
+              sender: 'user@test',
+              sender_name: 'User',
+              content: '이 구현 진행해줘',
+              timestamp: '2026-03-30T00:00:00.000Z',
+              seq: 1,
+              is_bot_message: false,
+            },
+          ] as any),
+    );
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
         pairedTask.status = 'review_ready';
@@ -1908,23 +2074,16 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
       runId: 'run-owner-delivery-dedup',
       reason: 'messages',
     });
-    await runtime.processGroupMessages(chatJid, {
+    const secondScheduled = schedulePairedFollowUpOnce({
+      chatJid,
       runId: 'run-owner-delivery-dedup',
-      reason: 'messages',
+      task: pairedTask,
+      intentKind: 'reviewer-turn',
+      enqueue: enqueueMessageCheck,
     });
 
     expect(enqueueMessageCheck).toHaveBeenCalledTimes(1);
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chatJid,
-        runId: 'run-owner-delivery-dedup',
-        completedRole: 'owner',
-        taskId: 'task-owner-delivery-dedup',
-        taskStatus: 'review_ready',
-        scheduled: false,
-      }),
-      'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged',
-    );
+    expect(secondScheduled).toBe(false);
   });
 
   it('re-enqueues owner after a successful reviewer delivery moves the task back to active', async () => {
@@ -2354,18 +2513,22 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
       () => pairedTask,
     );
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'human-dedup-across-runs-1',
-        chat_jid: chatJid,
-        sender: 'user@test',
-        sender_name: 'User',
-        content: '이 구현 진행해줘',
-        timestamp: '2026-03-30T00:00:00.000Z',
-        seq: 1,
-        is_bot_message: false,
-      } as any,
-    ]);
+    vi.mocked(db.getMessagesSince).mockImplementation((_chatJid, sinceCursor) =>
+      sinceCursor && sinceCursor !== '0'
+        ? []
+        : ([
+            {
+              id: 'human-dedup-across-runs-1',
+              chat_jid: chatJid,
+              sender: 'user@test',
+              sender_name: 'User',
+              content: '이 구현 진행해줘',
+              timestamp: '2026-03-30T00:00:00.000Z',
+              seq: 1,
+              is_bot_message: false,
+            },
+          ] as any),
+    );
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
         pairedTask.status = 'review_ready';
@@ -2412,23 +2575,16 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
       runId: 'run-owner-delivery-dedup-1',
       reason: 'messages',
     });
-    await runtime.processGroupMessages(chatJid, {
+    const secondScheduled = schedulePairedFollowUpOnce({
+      chatJid,
       runId: 'run-owner-delivery-dedup-2',
-      reason: 'drain',
+      task: pairedTask,
+      intentKind: 'reviewer-turn',
+      enqueue: enqueueMessageCheck,
     });
 
     expect(enqueueMessageCheck).toHaveBeenCalledTimes(1);
-    expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chatJid,
-        runId: 'run-owner-delivery-dedup-2',
-        completedRole: 'owner',
-        taskId: 'task-owner-delivery-dedup-across-runs',
-        taskStatus: 'review_ready',
-        scheduled: false,
-      }),
-      'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged',
-    );
+    expect(secondScheduled).toBe(false);
   });
 
   it('routes fresh human input to owner even when the latest task is review_ready', async () => {
