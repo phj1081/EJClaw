@@ -559,11 +559,7 @@ export function claimPairedTurnReservationInDatabase(
              AND status = ?
         `,
       )
-      .run(
-        args.taskId,
-        args.taskUpdatedAt,
-        args.taskStatus,
-      );
+      .run(args.taskId, args.taskUpdatedAt, args.taskStatus);
 
     if (claimedTask.changes === 0) {
       throw new PairedTurnReservationClaimError();

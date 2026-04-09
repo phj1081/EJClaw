@@ -75,8 +75,9 @@ function inferLegacyExecutionLeaseServiceId(
     case 'owner': {
       const ownerAgentType = normalizePairedAgentType(row.owner_agent_type);
       return (
-        (row.owner_service_id ? normalizeServiceId(row.owner_service_id) : null) ??
-        resolveRoleServiceShadow('owner', ownerAgentType)
+        (row.owner_service_id
+          ? normalizeServiceId(row.owner_service_id)
+          : null) ?? resolveRoleServiceShadow('owner', ownerAgentType)
       );
     }
     case 'reviewer': {
@@ -86,8 +87,7 @@ function inferLegacyExecutionLeaseServiceId(
       return (
         (row.reviewer_service_id
           ? normalizeServiceId(row.reviewer_service_id)
-          : null) ??
-        resolveRoleServiceShadow('reviewer', reviewerAgentType)
+          : null) ?? resolveRoleServiceShadow('reviewer', reviewerAgentType)
       );
     }
     case 'arbiter': {
@@ -95,8 +95,7 @@ function inferLegacyExecutionLeaseServiceId(
       return (
         (row.arbiter_service_id
           ? normalizeServiceId(row.arbiter_service_id)
-          : null) ??
-        resolveRoleServiceShadow('arbiter', arbiterAgentType)
+          : null) ?? resolveRoleServiceShadow('arbiter', arbiterAgentType)
       );
     }
     default:
@@ -106,7 +105,11 @@ function inferLegacyExecutionLeaseServiceId(
 
 function backfillLegacyExecutionLeaseServiceShadows(database: Database): void {
   if (
-    !tableHasColumn(database, 'paired_task_execution_leases', 'claimed_service_id')
+    !tableHasColumn(
+      database,
+      'paired_task_execution_leases',
+      'claimed_service_id',
+    )
   ) {
     return;
   }
@@ -163,15 +166,17 @@ function backfillLegacyExecutionLeaseServiceShadows(database: Database): void {
          AND claimed_service_id IS NULL
     `,
   );
-  const tx = database.transaction((leaseRows: LegacyExecutionLeaseServiceRow[]) => {
-    for (const row of leaseRows) {
-      const claimedServiceId = inferLegacyExecutionLeaseServiceId(row);
-      if (!claimedServiceId) {
-        continue;
+  const tx = database.transaction(
+    (leaseRows: LegacyExecutionLeaseServiceRow[]) => {
+      for (const row of leaseRows) {
+        const claimedServiceId = inferLegacyExecutionLeaseServiceId(row);
+        if (!claimedServiceId) {
+          continue;
+        }
+        update.run(claimedServiceId, row.rowid);
       }
-      update.run(claimedServiceId, row.rowid);
-    }
-  });
+    },
+  );
 
   tx(rows);
 }
