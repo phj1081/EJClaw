@@ -845,7 +845,9 @@ describe('runAgentForGroup room memory', () => {
     };
     const outputs: string[] = [];
 
-    vi.mocked(db.getLastHumanMessageSender).mockReturnValue('216851709744513024');
+    vi.mocked(db.getLastHumanMessageSender).mockReturnValue(
+      '216851709744513024',
+    );
     vi.mocked(
       pairedExecutionContext.preparePairedExecutionContext,
     ).mockReturnValue({
@@ -927,7 +929,9 @@ describe('runAgentForGroup room memory', () => {
     };
     const outputs: string[] = [];
 
-    vi.mocked(db.getLastHumanMessageSender).mockReturnValue('216851709744513024');
+    vi.mocked(db.getLastHumanMessageSender).mockReturnValue(
+      '216851709744513024',
+    );
     vi.mocked(
       pairedExecutionContext.preparePairedExecutionContext,
     ).mockReturnValue({
