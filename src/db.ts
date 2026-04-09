@@ -758,7 +758,11 @@ export function getRegisteredGroup(
   const requestedAgentType = normalizeStoredAgentType(agentType);
   const stored = getStoredRoomSettingsRowFromDatabase(db, jid);
   if (stored) {
-    return buildRegisteredGroupFromStoredSettings(db, stored, requestedAgentType);
+    return buildRegisteredGroupFromStoredSettings(
+      db,
+      stored,
+      requestedAgentType,
+    );
   }
   return getLegacyRegisteredGroup(db, jid, agentType);
 }
@@ -913,7 +917,13 @@ export function updateRegisteredGroupName(jid: string, name: string): void {
     if (plan.hasStoredRoom) {
       updateStoredRoomMetadata(db, jid, plan.snapshot);
     } else {
-      insertStoredRoomSettings(db, jid, plan.roomMode, 'inferred', plan.snapshot);
+      insertStoredRoomSettings(
+        db,
+        jid,
+        plan.roomMode,
+        'inferred',
+        plan.snapshot,
+      );
     }
     materializeRegisteredGroupsForRoom(
       db,

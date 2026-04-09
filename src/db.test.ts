@@ -1831,7 +1831,9 @@ describe('room assignment writes', () => {
       agentType: 'codex',
     });
     expect(getRegisteredGroup('dc:ssot-room', 'claude-code')).toBeUndefined();
-    expect(getAllRegisteredGroups('claude-code')['dc:ssot-room']).toBeUndefined();
+    expect(
+      getAllRegisteredGroups('claude-code')['dc:ssot-room'],
+    ).toBeUndefined();
     expect(getRegisteredAgentTypesForJid('dc:ssot-room')).toEqual(['codex']);
   });
 
