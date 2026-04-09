@@ -1,4 +1,13 @@
-import type { PairedTask, PairedTaskStatus } from './types.js';
+import {
+  _clearPairedTurnReservationsForTests,
+  claimPairedTurnReservation,
+  reservePairedTurnReservation,
+} from './db.js';
+import type {
+  PairedTask,
+  PairedTaskStatus,
+  PairedTurnReservationIntentKind,
+} from './types.js';
 
 export type ScheduledPairedFollowUpIntentKind =
   | 'reviewer-turn'
@@ -10,17 +19,6 @@ type ScheduledPairedFollowUpTask = Pick<
   PairedTask,
   'id' | 'status' | 'round_trip_count' | 'updated_at'
 >;
-
-export const SCHEDULED_PAIRED_FOLLOW_UP_TTL_MS = 10 * 60 * 1000;
-const scheduledPairedFollowUps = new Map<string, number>();
-
-function pruneExpiredScheduledPairedFollowUps(now: number): void {
-  for (const [key, scheduledAt] of scheduledPairedFollowUps) {
-    if (now - scheduledAt > SCHEDULED_PAIRED_FOLLOW_UP_TTL_MS) {
-      scheduledPairedFollowUps.delete(key);
-    }
-  }
-}
 
 export function buildPairedFollowUpKey(args: {
   taskId: string;
@@ -45,29 +43,45 @@ export function schedulePairedFollowUpOnce(args: {
   intentKind: ScheduledPairedFollowUpIntentKind;
   enqueue: () => void;
 }): boolean {
-  const now = Date.now();
-  pruneExpiredScheduledPairedFollowUps(now);
+  const reserved = reservePairedTurnReservation({
+    chatJid: args.chatJid,
+    taskId: args.task.id,
+    taskStatus: args.task.status,
+    roundTripCount: args.task.round_trip_count,
+    taskUpdatedAt: args.task.updated_at,
+    intentKind: args.intentKind,
+    runId: args.runId,
+  });
 
-  const key = [
-    args.chatJid,
-    buildPairedFollowUpKey({
-      taskId: args.task.id,
-      taskStatus: args.task.status,
-      roundTripCount: args.task.round_trip_count,
-      taskUpdatedAt: args.task.updated_at,
-      intentKind: args.intentKind,
-    }),
-  ].join(':');
-
-  if (scheduledPairedFollowUps.has(key)) {
+  if (!reserved) {
     return false;
   }
 
-  scheduledPairedFollowUps.set(key, now);
   args.enqueue();
   return true;
 }
 
+export function claimPairedTurnExecution(args: {
+  chatJid: string;
+  runId: string;
+  task: ScheduledPairedFollowUpTask;
+  intentKind: PairedTurnReservationIntentKind;
+}): string | null {
+  const nextTaskUpdatedAt = new Date().toISOString();
+  const claimed = claimPairedTurnReservation({
+    chatJid: args.chatJid,
+    taskId: args.task.id,
+    taskStatus: args.task.status,
+    roundTripCount: args.task.round_trip_count,
+    taskUpdatedAt: args.task.updated_at,
+    nextTaskUpdatedAt,
+    intentKind: args.intentKind,
+    runId: args.runId,
+  });
+
+  return claimed ? nextTaskUpdatedAt : null;
+}
+
 export function resetPairedFollowUpScheduleState(): void {
-  scheduledPairedFollowUps.clear();
+  _clearPairedTurnReservationsForTests();
 }

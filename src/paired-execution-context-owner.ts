@@ -2,7 +2,11 @@ import {
   ARBITER_DEADLOCK_THRESHOLD,
   PAIRED_MAX_ROUND_TRIPS,
 } from './config.js';
-import { getPairedWorkspace, hasActiveCiWatcherForChat } from './db.js';
+import {
+  getPairedTaskById,
+  getPairedWorkspace,
+  hasActiveCiWatcherForChat,
+} from './db.js';
 import { logger } from './logger.js';
 import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
 import {
@@ -29,6 +33,7 @@ export function handleFailedOwnerExecution(args: {
       taskId,
       currentStatus: task.status,
       nextStatus: 'active',
+      expectedUpdatedAt: task.updated_at,
       updatedAt: now,
     });
     logger.info(
@@ -74,6 +79,7 @@ function handleOwnerFinalizeCompletion(args: {
     requestArbiterOrEscalate({
       taskId,
       currentStatus: task.status,
+      expectedUpdatedAt: task.updated_at,
       now,
       arbiterLogMessage,
       escalateLogMessage,
@@ -94,6 +100,7 @@ function handleOwnerFinalizeCompletion(args: {
         taskId,
         currentStatus: task.status,
         nextStatus: 'active',
+        expectedUpdatedAt: task.updated_at,
         updatedAt: now,
       });
     }
@@ -115,6 +122,7 @@ function handleOwnerFinalizeCompletion(args: {
     taskId,
     currentStatus: task.status,
     nextStatus: 'completed',
+    expectedUpdatedAt: task.updated_at,
     updatedAt: now,
     patch: {
       completion_reason: 'done',
@@ -157,8 +165,13 @@ function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
 
   const result = markPairedTaskReviewReady(taskId);
   if (result) {
+    const reviewReadyTask = getPairedTaskById(taskId);
+    if (!reviewReadyTask) {
+      return;
+    }
     applyPairedTaskPatch({
       taskId,
+      expectedUpdatedAt: reviewReadyTask.updated_at,
       updatedAt: now,
       patch: {
         round_trip_count: task.round_trip_count + 1,
@@ -205,6 +218,7 @@ export function handleOwnerCompletion(args: {
     requestArbiterOrEscalate({
       taskId,
       currentStatus: task.status,
+      expectedUpdatedAt: task.updated_at,
       now,
       arbiterLogMessage: 'Owner blocked/needs_context — requesting arbiter',
       escalateLogMessage: 'Owner blocked/needs_context — escalating to user',

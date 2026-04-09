@@ -5,16 +5,24 @@ import path from 'path';
 
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./db.js', () => ({
-  createPairedTask: vi.fn(),
-  getLatestPairedTaskForChat: vi.fn(),
-  getLatestOpenPairedTaskForChat: vi.fn(),
-  getPairedTaskById: vi.fn(),
-  getPairedWorkspace: vi.fn(),
-  updatePairedTask: vi.fn(),
-  upsertPairedProject: vi.fn(),
-  hasActiveCiWatcherForChat: vi.fn(() => false),
-}));
+vi.mock('./db.js', () => {
+  const updatePairedTask = vi.fn();
+  return {
+    createPairedTask: vi.fn(),
+    getLatestPairedTaskForChat: vi.fn(),
+    getLatestOpenPairedTaskForChat: vi.fn(),
+    getPairedTaskById: vi.fn(),
+    getPairedWorkspace: vi.fn(),
+    updatePairedTask,
+    updatePairedTaskIfUnchanged: vi.fn((id, _expectedUpdatedAt, updates) => {
+      updatePairedTask(id, updates);
+      return true;
+    }),
+    upsertPairedProject: vi.fn(),
+    hasActiveCiWatcherForChat: vi.fn(() => false),
+    releasePairedTaskExecutionLease: vi.fn(),
+  };
+});
 
 vi.mock('./paired-workspace-manager.js', () => ({
   markPairedTaskReviewReady: vi.fn(),
@@ -856,5 +864,31 @@ describe('paired execution context', () => {
         updated_at: expect.any(String),
       }),
     );
+  });
+
+  it('releases the execution lease even when a completion handler throws', () => {
+    const transitionError = new Error('transition failed');
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+      }),
+    );
+    vi.mocked(db.updatePairedTaskIfUnchanged).mockImplementationOnce(() => {
+      throw transitionError;
+    });
+
+    expect(() =>
+      completePairedExecutionContext({
+        taskId: 'task-1',
+        role: 'owner',
+        status: 'failed',
+        runId: 'run-lease-release',
+        summary: 'push failed',
+      }),
+    ).toThrow('transition failed');
+    expect(db.releasePairedTaskExecutionLease).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      runId: 'run-lease-release',
+    });
   });
 });

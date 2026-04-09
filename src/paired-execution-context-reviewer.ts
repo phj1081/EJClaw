@@ -1,5 +1,5 @@
 import { ARBITER_DEADLOCK_THRESHOLD } from './config.js';
-import { getPairedWorkspace, updatePairedTask } from './db.js';
+import { getPairedWorkspace } from './db.js';
 import { logger } from './logger.js';
 import {
   parseVisibleVerdict,
@@ -43,6 +43,7 @@ export function handleFailedReviewerExecution(args: {
           signal.kind === 'request_owner_finalize'
             ? 'merge_ready'
             : 'completed',
+        expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
           ...(signal.kind === 'request_owner_finalize'
@@ -75,6 +76,7 @@ export function handleFailedReviewerExecution(args: {
       taskId,
       currentStatus: task.status,
       nextStatus: fallbackStatus,
+      expectedUpdatedAt: task.updated_at,
       updatedAt: now,
     });
     logger.warn(
@@ -113,6 +115,7 @@ export function handleReviewerCompletion(args: {
         taskId,
         currentStatus: task.status,
         nextStatus: 'merge_ready',
+        expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
           source_ref: approvedSourceRef,
@@ -142,6 +145,7 @@ export function handleReviewerCompletion(args: {
       requestArbiterOrEscalate({
         taskId,
         currentStatus: task.status,
+        expectedUpdatedAt: task.updated_at,
         now,
         arbiterLogMessage,
         escalateLogMessage,
@@ -154,6 +158,7 @@ export function handleReviewerCompletion(args: {
         taskId,
         currentStatus: task.status,
         nextStatus: 'active',
+        expectedUpdatedAt: task.updated_at,
         updatedAt: now,
       });
       logger.info(

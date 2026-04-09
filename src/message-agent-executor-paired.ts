@@ -4,18 +4,20 @@ import {
   getLatestTurnNumber,
   getPairedTaskById,
   insertPairedTurnOutput,
+  refreshPairedTaskExecutionLease,
 } from './db.js';
 import { logger } from './logger.js';
 import {
   completePairedExecutionContext,
   type PreparedPairedExecutionContext,
 } from './paired-execution-context.js';
-import { resolveNextTurnAction } from './message-runtime-rules.js';
 import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
-import { schedulePairedFollowUpOnce } from './paired-follow-up-scheduler.js';
+import { enqueuePairedFollowUpAfterEvent } from './message-runtime-follow-up.js';
 import type { PairedRoomRole } from './types.js';
 
 type ExecutorLog = Pick<typeof logger, 'info' | 'warn'>;
+
+const PAIRED_TASK_EXECUTION_LEASE_HEARTBEAT_MS = 30_000;
 
 export interface PairedExecutionLifecycle {
   updateSummary(args: {
@@ -55,6 +57,52 @@ export function createPairedExecutionLifecycle(args: {
   let pairedExecutionCompleted = false;
   let pairedSawOutput = false;
   let pairedTurnOutputPersisted = false;
+  let leaseHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  const clearLeaseHeartbeat = () => {
+    if (!leaseHeartbeatTimer) {
+      return;
+    }
+    clearInterval(leaseHeartbeatTimer);
+    leaseHeartbeatTimer = null;
+  };
+  const heartbeatLeaseIfNeeded = () => {
+    if (!pairedExecutionContext) {
+      return;
+    }
+    try {
+      const refreshed = refreshPairedTaskExecutionLease({
+        taskId: pairedExecutionContext.task.id,
+        runId,
+      });
+      if (!refreshed) {
+        log.warn(
+          {
+            pairedTaskId: pairedExecutionContext.task.id,
+            runId,
+          },
+          'Skipped paired execution lease heartbeat because this run no longer owns the lease',
+        );
+      }
+    } catch (err) {
+      log.warn(
+        {
+          pairedTaskId: pairedExecutionContext.task.id,
+          runId,
+          err,
+        },
+        'Failed to refresh paired execution lease heartbeat',
+      );
+    }
+  };
+
+  if (pairedExecutionContext) {
+    leaseHeartbeatTimer = setInterval(
+      heartbeatLeaseIfNeeded,
+      PAIRED_TASK_EXECUTION_LEASE_HEARTBEAT_MS,
+    );
+    leaseHeartbeatTimer.unref?.();
+  }
 
   const persistPairedTurnOutputIfNeeded = () => {
     if (
@@ -90,10 +138,12 @@ export function createPairedExecutionLifecycle(args: {
     pairedExecutionStatus = 'succeeded';
     pairedSawOutput = true;
     persistPairedTurnOutputIfNeeded();
+    clearLeaseHeartbeat();
     completePairedExecutionContext({
       taskId: pairedExecutionContext.task.id,
       role: completedRole,
       status: 'succeeded',
+      runId,
       summary: pairedExecutionSummary,
     });
     pairedExecutionCompleted = true;
@@ -127,10 +177,12 @@ export function createPairedExecutionLifecycle(args: {
         persistPairedTurnOutputIfNeeded();
       }
 
+      clearLeaseHeartbeat();
       completePairedExecutionContext({
         taskId: pairedExecutionContext.task.id,
         role: completedRole,
         status,
+        runId,
         summary: pairedExecutionSummary,
       });
       pairedExecutionCompleted = true;
@@ -149,6 +201,8 @@ export function createPairedExecutionLifecycle(args: {
     },
 
     async asyncFinalize() {
+      clearLeaseHeartbeat();
+
       if (pairedExecutionContext && !pairedExecutionCompleted) {
         const effectiveStatus =
           completedRole === 'owner' &&
@@ -172,6 +226,7 @@ export function createPairedExecutionLifecycle(args: {
           taskId: pairedExecutionContext.task.id,
           role: completedRole,
           status: effectiveStatus,
+          runId,
           summary: pairedExecutionSummary,
         });
         pairedExecutionCompleted = true;
@@ -214,31 +269,30 @@ export function createPairedExecutionLifecycle(args: {
         return;
       }
 
-      const nextTurnAction = resolveNextTurnAction({
-        taskStatus: finishedTask.status,
-        lastTurnOutputRole: pairedSawOutput ? completedRole : null,
-      });
-      if (nextTurnAction.kind === 'none') {
-        return;
-      }
-
-      const scheduled = schedulePairedFollowUpOnce({
+      const followUpResult = enqueuePairedFollowUpAfterEvent({
         chatJid,
         runId,
         task: finishedTask,
-        intentKind: nextTurnAction.kind,
-        enqueue: enqueueMessageCheck,
+        source: 'executor-recovery',
+        completedRole,
+        executionStatus: pairedExecutionStatus,
+        sawOutput: pairedSawOutput,
+        fallbackLastTurnOutputRole: pairedSawOutput ? completedRole : null,
+        enqueueMessageCheck,
       });
+      if (followUpResult.kind !== 'paired-follow-up') {
+        return;
+      }
       log.info(
         {
           taskId: pairedExecutionContext.task.id,
           role: completedRole,
           pairedExecutionStatus,
           taskStatus: finishedTask.status,
-          intentKind: nextTurnAction.kind,
-          scheduled,
+          intentKind: followUpResult.intentKind,
+          scheduled: followUpResult.scheduled,
         },
-        scheduled
+        followUpResult.scheduled
           ? 'Queued paired follow-up after failed reviewer/arbiter execution left a pending task state'
           : 'Skipped duplicate paired follow-up after failed reviewer/arbiter execution while task state was unchanged',
       );

@@ -801,6 +801,7 @@ export function markPairedTaskReviewReady(taskId: string): {
     taskId,
     currentStatus: task.status,
     nextStatus: 'review_ready',
+    expectedUpdatedAt: task.updated_at,
     updatedAt: requestedAt,
     patch: {
       review_requested_at: requestedAt,

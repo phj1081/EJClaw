@@ -82,6 +82,11 @@ export type NextTurnAction =
   | { kind: 'owner-follow-up' }
   | { kind: 'finalize-owner-turn' };
 
+export type ScheduledNextTurnActionKind = Exclude<
+  NextTurnAction['kind'],
+  'none'
+>;
+
 export type FollowUpDispatch =
   | { kind: 'none' }
   | { kind: 'inline' }
@@ -114,6 +119,19 @@ export function resolveNextTurnAction(args: {
     default:
       return { kind: 'none' };
   }
+}
+
+export function matchesExpectedPairedFollowUpIntent(args: {
+  taskStatus?: PairedTaskStatus | null;
+  lastTurnOutputRole?: PairedRoomRole | null;
+  intentKind: ScheduledNextTurnActionKind;
+}): boolean {
+  return (
+    resolveNextTurnAction({
+      taskStatus: args.taskStatus,
+      lastTurnOutputRole: args.lastTurnOutputRole,
+    }).kind === args.intentKind
+  );
 }
 
 export function resolveFollowUpDispatch(args: {

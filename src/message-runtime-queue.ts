@@ -15,6 +15,7 @@ import {
   resolveCursorKeyForRole,
   resolveQueuedTurnRole,
 } from './message-runtime-rules.js';
+import { claimPairedTurnExecution } from './paired-follow-up-scheduler.js';
 import type {
   ExecuteTurnFn,
   RoleToChannelMap,
@@ -23,8 +24,29 @@ import type {
   Channel,
   NewMessage,
   PairedTask,
+  PairedTurnReservationIntentKind,
   RegisteredGroup,
 } from './types.js';
+
+function resolveQueuedTurnReservationIntent(args: {
+  task: PairedTask;
+  turnRole: 'owner' | 'reviewer' | 'arbiter';
+  hasHumanMessage: boolean;
+}): PairedTurnReservationIntentKind {
+  if (args.turnRole === 'reviewer') {
+    return 'reviewer-turn';
+  }
+  if (args.turnRole === 'arbiter') {
+    return 'arbiter-turn';
+  }
+  if (args.hasHumanMessage) {
+    return 'owner-turn';
+  }
+  if (args.task.status === 'merge_ready') {
+    return 'finalize-owner-turn';
+  }
+  return 'owner-follow-up';
+}
 
 export async function runPendingPairedTurnIfNeeded(args: {
   chatJid: string;
@@ -77,6 +99,29 @@ export async function runPendingPairedTurnIfNeeded(args: {
 
   if (!pendingTurn) {
     return null;
+  }
+
+  if (pendingTurn.channel) {
+    const claimedUpdatedAt = claimPairedTurnExecution({
+      chatJid,
+      runId: args.runId,
+      task,
+      intentKind: pendingTurn.intentKind,
+    });
+    if (!claimedUpdatedAt) {
+      args.log.info(
+        {
+          chatJid,
+          taskId: task.id,
+          taskStatus: task.status,
+          taskUpdatedAt: task.updated_at,
+          intentKind: pendingTurn.intentKind,
+        },
+        'Skipped paired pending turn because the task revision was already claimed elsewhere',
+      );
+      return true;
+    }
+    task.updated_at = claimedUpdatedAt;
   }
 
   return executePendingPairedTurn({
@@ -174,6 +219,34 @@ export async function runQueuedGroupTurn(args: {
       'Skipping paired-room run because the dedicated Discord role channel is not configured',
     );
     return false;
+  }
+
+  if (task) {
+    const intentKind = resolveQueuedTurnReservationIntent({
+      task,
+      turnRole,
+      hasHumanMessage: hasHumanMsg,
+    });
+    const claimedUpdatedAt = claimPairedTurnExecution({
+      chatJid,
+      runId,
+      task,
+      intentKind,
+    });
+    if (!claimedUpdatedAt) {
+      log.info(
+        {
+          taskId: task.id,
+          taskStatus,
+          taskUpdatedAt: task.updated_at,
+          intentKind,
+          turnRole,
+        },
+        'Skipped queued paired turn because the task revision was already claimed elsewhere',
+      );
+      return true;
+    }
+    task.updated_at = claimedUpdatedAt;
   }
 
   if (endSeq !== null) {

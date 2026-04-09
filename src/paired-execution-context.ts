@@ -19,6 +19,7 @@ import {
   getPairedTaskById,
   getPairedWorkspace,
   hasActiveCiWatcherForChat,
+  releasePairedTaskExecutionLease,
   upsertPairedProject,
 } from './db.js';
 import { logger } from './logger.js';
@@ -232,6 +233,7 @@ export function preparePairedExecutionContext(args: {
           taskId: latestTask.id,
           currentStatus: latestTask.status,
           nextStatus: 'active',
+          expectedUpdatedAt: latestTask.updated_at,
           updatedAt: now,
           patch: {
             ...(hasHuman ? { round_trip_count: 0 } : {}),
@@ -240,6 +242,7 @@ export function preparePairedExecutionContext(args: {
       } else {
         applyPairedTaskPatch({
           taskId: latestTask.id,
+          expectedUpdatedAt: latestTask.updated_at,
           updatedAt: now,
           patch: {
             ...(hasHuman ? { round_trip_count: 0 } : {}),
@@ -258,6 +261,7 @@ export function preparePairedExecutionContext(args: {
       if (wsRef !== latestTask.source_ref) {
         applyPairedTaskPatch({
           taskId: latestTask.id,
+          expectedUpdatedAt: latestTask.updated_at,
           updatedAt: now,
           patch: {
             source_ref: wsRef,
@@ -275,6 +279,7 @@ export function preparePairedExecutionContext(args: {
         taskId: latestTask.id,
         currentStatus: refreshedTask.status,
         nextStatus: 'in_review',
+        expectedUpdatedAt: refreshedTask.updated_at,
         updatedAt: now,
       });
     }
@@ -289,6 +294,7 @@ export function preparePairedExecutionContext(args: {
         taskId: latestTask.id,
         currentStatus: refreshedTask.status,
         nextStatus: 'in_arbitration',
+        expectedUpdatedAt: refreshedTask.updated_at,
         updatedAt: now,
       });
     }
@@ -353,9 +359,11 @@ export function completePairedExecutionContext(args: {
   taskId: string;
   role: PairedRoomRole;
   status: 'succeeded' | 'failed';
+  runId?: string;
   summary?: string | null;
 }): void {
   const { taskId, role, status } = args;
+  let completionError: unknown;
   logger.info(
     {
       taskId,
@@ -366,49 +374,76 @@ export function completePairedExecutionContext(args: {
     'Paired execution completed',
   );
 
-  const task = getPairedTaskById(taskId);
-  if (!task) return;
-  if (task.status === 'completed') {
-    logger.info(
-      {
-        taskId,
-        role,
-        status,
-        completionReason: task.completion_reason ?? null,
-      },
-      'Ignoring late paired execution completion for an already completed task',
-    );
-    return;
-  }
+  try {
+    const task = getPairedTaskById(taskId);
+    if (!task) {
+      return;
+    }
+    if (task.status === 'completed') {
+      logger.info(
+        {
+          taskId,
+          role,
+          status,
+          completionReason: task.completion_reason ?? null,
+        },
+        'Ignoring late paired execution completion for an already completed task',
+      );
+      return;
+    }
 
-  if (status !== 'succeeded') {
+    if (status !== 'succeeded') {
+      if (role === 'reviewer') {
+        handleFailedReviewerExecution({
+          task,
+          taskId,
+          summary: args.summary,
+        });
+        return;
+      }
+      if (role === 'arbiter') {
+        handleFailedArbiterExecution({ task, taskId });
+        return;
+      }
+      handleFailedOwnerExecution({ task, taskId });
+      return;
+    }
+
+    if (role === 'owner') {
+      handleOwnerCompletion({ task, taskId, summary: args.summary });
+      return;
+    }
+
     if (role === 'reviewer') {
-      handleFailedReviewerExecution({
-        task,
-        taskId,
-        summary: args.summary,
-      });
+      handleReviewerCompletion({ task, taskId, summary: args.summary });
       return;
     }
+
     if (role === 'arbiter') {
-      handleFailedArbiterExecution({ task, taskId });
+      handleArbiterCompletion({ task, taskId, summary: args.summary });
+    }
+  } catch (error) {
+    completionError = error;
+    throw error;
+  } finally {
+    if (!args.runId) {
       return;
     }
-    handleFailedOwnerExecution({ task, taskId });
-    return;
-  }
-
-  if (role === 'owner') {
-    handleOwnerCompletion({ task, taskId, summary: args.summary });
-    return;
-  }
-
-  if (role === 'reviewer') {
-    handleReviewerCompletion({ task, taskId, summary: args.summary });
-    return;
-  }
-
-  if (role === 'arbiter') {
-    handleArbiterCompletion({ taskId, summary: args.summary });
+    try {
+      releasePairedTaskExecutionLease({ taskId, runId: args.runId });
+    } catch (releaseError) {
+      logger.error(
+        {
+          taskId,
+          role,
+          runId: args.runId,
+          releaseError,
+        },
+        'Failed to release paired task execution lease after completion',
+      );
+      if (!completionError) {
+        throw releaseError;
+      }
+    }
   }
 }

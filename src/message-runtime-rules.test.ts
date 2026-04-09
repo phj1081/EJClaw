@@ -11,6 +11,7 @@ vi.mock('./config.js', async () => {
 });
 
 import {
+  matchesExpectedPairedFollowUpIntent,
   resolveFollowUpDispatch,
   resolveExecutionTarget,
   resolveNextTurnAction,
@@ -77,6 +78,40 @@ describe('message-runtime-rules', () => {
         lastTurnOutputRole: 'owner',
       }),
     ).toEqual({ kind: 'none' });
+  });
+
+  it('rejects stale reviewer and finalize follow-ups once the latest persisted turn already closed that handoff', () => {
+    expect(
+      matchesExpectedPairedFollowUpIntent({
+        taskStatus: 'review_ready',
+        lastTurnOutputRole: 'reviewer',
+        intentKind: 'reviewer-turn',
+      }),
+    ).toBe(false);
+    expect(
+      matchesExpectedPairedFollowUpIntent({
+        taskStatus: 'merge_ready',
+        lastTurnOutputRole: 'owner',
+        intentKind: 'finalize-owner-turn',
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps owner follow-ups schedulable when reviewer or arbiter is still the latest persisted turn', () => {
+    expect(
+      matchesExpectedPairedFollowUpIntent({
+        taskStatus: 'active',
+        lastTurnOutputRole: 'reviewer',
+        intentKind: 'owner-follow-up',
+      }),
+    ).toBe(true);
+    expect(
+      matchesExpectedPairedFollowUpIntent({
+        taskStatus: 'active',
+        lastTurnOutputRole: 'arbiter',
+        intentKind: 'owner-follow-up',
+      }),
+    ).toBe(true);
   });
 
   it('maps active tasks with reviewer output to an owner follow-up', () => {

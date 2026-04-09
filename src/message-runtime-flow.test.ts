@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { _initTestDatabase } from './db.js';
 import { executeBotOnlyPairedFollowUpAction } from './message-runtime-flow.js';
 import {
   resetPairedFollowUpScheduleState,
@@ -10,6 +11,7 @@ import type { PairedTask } from './types.js';
 
 describe('executeBotOnlyPairedFollowUpAction', () => {
   beforeEach(() => {
+    _initTestDatabase();
     resetPairedFollowUpScheduleState();
   });
 

@@ -12,9 +12,12 @@ import {
   buildReviewerPendingPrompt,
 } from './message-runtime-prompts.js';
 import {
+  requeuePendingPairedTurn,
+  resolvePairedFollowUpDecision,
+} from './message-runtime-follow-up.js';
+import {
   advanceLastAgentCursor,
   resolveCursorKey,
-  resolveFollowUpDispatch,
   resolveNextTurnAction,
 } from './message-runtime-rules.js';
 import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
@@ -24,6 +27,7 @@ import type {
   NewMessage,
   PairedTask,
   PairedRoomRole,
+  PairedTurnReservationIntentKind,
   RegisteredGroup,
 } from './types.js';
 
@@ -31,6 +35,7 @@ export type PendingPairedTurn = {
   prompt: string;
   channel: Channel | null;
   cursor: string | number | null;
+  intentKind: PairedTurnReservationIntentKind;
   cursorKey?: string;
   role?: 'reviewer' | 'arbiter';
 } | null;
@@ -122,6 +127,7 @@ export function buildPendingPairedTurn(args: {
       }),
       channel: resolveChannel(taskStatus),
       cursor,
+      intentKind: 'reviewer-turn',
       cursorKey: resolveCursorKey(chatJid, taskStatus),
       role: 'reviewer',
     };
@@ -139,6 +145,7 @@ export function buildPendingPairedTurn(args: {
       }),
       channel: resolveChannel(taskStatus),
       cursor,
+      intentKind: 'arbiter-turn',
       cursorKey: resolveCursorKey(chatJid, taskStatus),
       role: 'arbiter',
     };
@@ -149,6 +156,7 @@ export function buildPendingPairedTurn(args: {
       prompt: buildFinalizePendingPrompt({ turnOutputs }),
       channel: resolveChannel(taskStatus),
       cursor,
+      intentKind: 'finalize-owner-turn',
     };
   }
 
@@ -163,6 +171,7 @@ export function buildPendingPairedTurn(args: {
       }),
       channel: resolveChannel(taskStatus),
       cursor,
+      intentKind: 'owner-follow-up',
     };
   }
 
@@ -252,14 +261,9 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
 
   const cursor =
     pendingCursorSource?.seq ?? pendingCursorSource?.timestamp ?? null;
-  const lastTurnOutput = getPairedTurnOutputs(task.id).at(-1);
-  const nextTurnAction = resolveNextTurnAction({
-    taskStatus: task.status,
-    lastTurnOutputRole: lastTurnOutput?.role ?? null,
-  });
-  const dispatch = resolveFollowUpDispatch({
+  const { nextTurnAction, dispatch } = resolvePairedFollowUpDecision({
+    task,
     source: 'bot-only-follow-up',
-    nextTurnAction,
   });
 
   if (dispatch.kind === 'none') {
@@ -400,10 +404,11 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
     return true;
   }
 
-  const scheduled = schedulePairedFollowUp(action.task, action.intentKind);
-  if (scheduled) {
-    closeStdin();
-  }
+  const scheduled = requeuePendingPairedTurn({
+    schedulePairedFollowUp: () =>
+      schedulePairedFollowUp(action.task, action.intentKind),
+    closeStdin,
+  });
   log.info(
     {
       chatJid,
