@@ -86,7 +86,8 @@ function resolvePreferredWorkItemRole(
     return null;
   }
 
-  const inferredAgentType = inferAgentTypeFromServiceShadow(normalizedServiceId);
+  const inferredAgentType =
+    inferAgentTypeFromServiceShadow(normalizedServiceId);
   return inferRoleFromServiceShadow(inferredAgentType, normalizedServiceId);
 }
 
@@ -131,9 +132,7 @@ export function getOpenWorkItemFromDatabase(
       normalizedServiceId,
       preferredRole,
       preferredRole,
-    ) as
-    | StoredWorkItemRow
-    | undefined;
+    ) as StoredWorkItemRow | undefined;
   return row ? hydrateWorkItemRow(row) : undefined;
 }
 

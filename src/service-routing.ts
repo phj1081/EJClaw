@@ -76,7 +76,9 @@ function normalizeLeaseRow(
     reviewer_agent_type: reviewerAgentType,
     arbiter_agent_type: arbiterAgentType,
     owner_service_id:
-      (row.owner_service_id ? normalizeServiceId(row.owner_service_id) : null) ??
+      (row.owner_service_id
+        ? normalizeServiceId(row.owner_service_id)
+        : null) ??
       resolveRoleServiceShadow('owner', ownerAgentType) ??
       normalizeServiceId(SERVICE_ID),
     reviewer_service_id:

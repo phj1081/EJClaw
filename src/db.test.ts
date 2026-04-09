@@ -469,7 +469,6 @@ describe('session accessors', () => {
     expect(hasServiceSessions).toBe(false);
     migratedDb.close();
   });
-
 });
 
 // --- storeChatMetadata ---
@@ -1181,7 +1180,9 @@ describe('paired task state', () => {
   });
 
   it('preserves stored reviewer service ids during init even when reviewer agent metadata exists', () => {
-    const tempDir = fs.mkdtempSync('/tmp/ejclaw-channel-owner-stored-reviewer-');
+    const tempDir = fs.mkdtempSync(
+      '/tmp/ejclaw-channel-owner-stored-reviewer-',
+    );
     const dbPath = path.join(tempDir, 'messages.db');
     const legacyDb = new Database(dbPath);
 
@@ -2858,7 +2859,6 @@ describe('service handoff completion', () => {
       }),
     ]);
   });
-
 });
 
 describe('message seq cursors', () => {
@@ -3029,10 +3029,12 @@ describe('message seq cursors', () => {
     _initTestDatabaseFromFile(dbPath);
 
     expect(
-      getMessagesSinceSeq('dc:legacy-partial-seq', 0, 'Andy').map((message) => ({
-        id: message.id,
-        seq: message.seq,
-      })),
+      getMessagesSinceSeq('dc:legacy-partial-seq', 0, 'Andy').map(
+        (message) => ({
+          id: message.id,
+          seq: message.seq,
+        }),
+      ),
     ).toEqual([
       { id: 'legacy-existing-seq', seq: 1 },
       { id: 'legacy-missing-seq', seq: 2 },
@@ -3309,7 +3311,9 @@ describe('legacy schema writes after init', () => {
   });
 
   it('creates channel owner leases after init on a canonical channel_owner schema without service id columns', () => {
-    const tempDir = fs.mkdtempSync('/tmp/ejclaw-canonical-channel-owner-write-');
+    const tempDir = fs.mkdtempSync(
+      '/tmp/ejclaw-canonical-channel-owner-write-',
+    );
     const dbPath = path.join(tempDir, 'messages.db');
     const legacyDb = new Database(dbPath);
 
@@ -3594,9 +3598,15 @@ describe('work items', () => {
     });
 
     expect(
-      getOpenWorkItem('dc:stored-service-mismatch', 'codex', CODEX_MAIN_SERVICE_ID),
+      getOpenWorkItem(
+        'dc:stored-service-mismatch',
+        'codex',
+        CODEX_MAIN_SERVICE_ID,
+      ),
     ).toBeUndefined();
-    expect(getOpenWorkItemForChat('dc:stored-service-mismatch')).toBeUndefined();
+    expect(
+      getOpenWorkItemForChat('dc:stored-service-mismatch'),
+    ).toBeUndefined();
   });
 
   it('allows a current-service open work item even when a stale-service open row already exists', () => {
@@ -3611,7 +3621,9 @@ describe('work items', () => {
       result_payload: 'stale reviewer output',
     });
 
-    expect(getOpenWorkItemForChat('dc:repro', CODEX_MAIN_SERVICE_ID)).toBeUndefined();
+    expect(
+      getOpenWorkItemForChat('dc:repro', CODEX_MAIN_SERVICE_ID),
+    ).toBeUndefined();
 
     const currentItem = createProducedWorkItem({
       group_folder: 'discord_test',
@@ -3624,9 +3636,9 @@ describe('work items', () => {
       result_payload: 'current reviewer output',
     });
 
-    expect(
-      getOpenWorkItemForChat('dc:repro', CODEX_MAIN_SERVICE_ID)?.id,
-    ).toBe(currentItem.id);
+    expect(getOpenWorkItemForChat('dc:repro', CODEX_MAIN_SERVICE_ID)?.id).toBe(
+      currentItem.id,
+    );
   });
 
   it('backfills work item service ids during init on a canonical work_items schema without service_id columns', () => {
