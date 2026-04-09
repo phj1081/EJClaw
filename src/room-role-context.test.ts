@@ -28,7 +28,7 @@ describe('buildRoomRoleContext', () => {
     });
   });
 
-  it('prefers the canonical reviewer shadow over a stale compatibility field', () => {
+  it('uses the stored reviewer service id from the lease row as-is', () => {
     expect(
       buildRoomRoleContext(
         {
@@ -43,13 +43,13 @@ describe('buildRoomRoleContext', () => {
           reason: null,
           explicit: true,
         },
-        'codex-review',
+        'stale-reviewer-shadow',
       ),
     ).toEqual({
-      serviceId: 'codex-review',
+      serviceId: 'stale-reviewer-shadow',
       role: 'reviewer',
       ownerServiceId: 'claude',
-      reviewerServiceId: 'codex-review',
+      reviewerServiceId: 'stale-reviewer-shadow',
       ownerAgentType: 'claude-code',
       reviewerAgentType: 'codex',
       failoverOwner: false,

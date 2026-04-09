@@ -47,6 +47,59 @@ export function migrateSessionsTableToCompositePk(
   `);
 }
 
+export function backfillLegacyServiceSessions(
+  database: Database,
+  resolveAgentTypeFromServiceId: ServiceShadowAgentTypeResolver,
+): void {
+  if (!hasLegacyServiceSessionsTable(database)) {
+    return;
+  }
+
+  const rows = database
+    .prepare(
+      `SELECT group_folder, service_id, session_id
+       FROM service_sessions`,
+    )
+    .all() as Array<{
+    group_folder: string;
+    service_id: string;
+    session_id: string;
+  }>;
+
+  const upsert = database.prepare(
+    `INSERT OR IGNORE INTO sessions (group_folder, agent_type, session_id)
+     VALUES (?, ?, ?)`,
+  );
+
+  const tx = database.transaction(
+    (
+      sessionRows: Array<{
+        group_folder: string;
+        service_id: string;
+        session_id: string;
+      }>,
+    ) => {
+      for (const row of sessionRows) {
+        const agentType = resolveAgentTypeFromServiceId(row.service_id);
+        if (!agentType) {
+          continue;
+        }
+        upsert.run(row.group_folder, agentType, row.session_id);
+      }
+    },
+  );
+
+  tx(rows);
+}
+
+export function dropLegacyServiceSessionsTable(database: Database): void {
+  if (!hasLegacyServiceSessionsTable(database)) {
+    return;
+  }
+
+  database.exec(`DROP TABLE service_sessions`);
+}
+
 export function getSessionFromDatabase(
   database: Database,
   groupFolder: string,
@@ -109,57 +162,4 @@ export function getAllSessionsForAgentTypeFromDatabase(
     result[row.group_folder] = row.session_id;
   }
   return result;
-}
-
-export function backfillLegacyServiceSessions(
-  database: Database,
-  resolveAgentTypeFromServiceId: ServiceShadowAgentTypeResolver,
-): void {
-  if (!hasLegacyServiceSessionsTable(database)) {
-    return;
-  }
-
-  const rows = database
-    .prepare(
-      `SELECT group_folder, service_id, session_id
-       FROM service_sessions`,
-    )
-    .all() as Array<{
-    group_folder: string;
-    service_id: string;
-    session_id: string;
-  }>;
-
-  const upsert = database.prepare(
-    `INSERT OR IGNORE INTO sessions (group_folder, agent_type, session_id)
-     VALUES (?, ?, ?)`,
-  );
-
-  const tx = database.transaction(
-    (
-      sessionRows: Array<{
-        group_folder: string;
-        service_id: string;
-        session_id: string;
-      }>,
-    ) => {
-      for (const row of sessionRows) {
-        const agentType = resolveAgentTypeFromServiceId(row.service_id);
-        if (!agentType) {
-          continue;
-        }
-        upsert.run(row.group_folder, agentType, row.session_id);
-      }
-    },
-  );
-
-  tx(rows);
-}
-
-export function dropLegacyServiceSessionsTable(database: Database): void {
-  if (!hasLegacyServiceSessionsTable(database)) {
-    return;
-  }
-
-  database.exec(`DROP TABLE service_sessions`);
 }

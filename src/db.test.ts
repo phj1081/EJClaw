@@ -59,6 +59,7 @@ import {
   rememberMemory,
   storeChatMetadata,
   storeMessage,
+  setChannelOwnerLease,
   updateRegisteredGroupName,
   updatePairedTask,
   upsertPairedProject,
@@ -70,6 +71,7 @@ import {
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
+  SERVICE_SESSION_SCOPE,
 } from './config.js';
 import {
   resolveTaskRuntimeIpcPath,
@@ -425,17 +427,15 @@ describe('session accessors', () => {
     migratedDb.close();
   });
 
-  it('backfills legacy service-scoped sessions into canonical agent sessions during init', () => {
-    const tempDir = fs.mkdtempSync('/tmp/ejclaw-session-backfill-');
+  it('backfills legacy service_sessions rows into sessions during init', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-service-sessions-backfill-');
     const dbPath = path.join(tempDir, 'messages.db');
     const legacyDb = new Database(dbPath);
 
     legacyDb.exec(`
       CREATE TABLE sessions (
-        group_folder TEXT NOT NULL,
-        agent_type TEXT NOT NULL DEFAULT 'claude-code',
-        session_id TEXT NOT NULL,
-        PRIMARY KEY (group_folder, agent_type)
+        group_folder TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL
       );
       CREATE TABLE service_sessions (
         group_folder TEXT NOT NULL,
@@ -449,25 +449,27 @@ describe('session accessors', () => {
         `INSERT INTO service_sessions (group_folder, service_id, session_id)
          VALUES (?, ?, ?)`,
       )
-      .run('group-legacy', CLAUDE_SERVICE_ID, 'legacy-session-123');
+      .run('group-legacy', CLAUDE_SERVICE_ID, 'legacy-service-session-123');
     legacyDb.close();
 
     _initTestDatabaseFromFile(dbPath);
 
     expect(getSession('group-legacy', 'claude-code')).toBe(
-      'legacy-session-123',
+      'legacy-service-session-123',
     );
 
     const migratedDb = new Database(dbPath, { readonly: true });
-    expect(
+    const hasServiceSessions = Boolean(
       migratedDb
         .prepare(
-          `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'service_sessions'`,
+          `SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'service_sessions'`,
         )
         .get(),
-    ).toBeUndefined();
+    );
+    expect(hasServiceSessions).toBe(false);
     migratedDb.close();
   });
+
 });
 
 // --- storeChatMetadata ---
@@ -905,8 +907,94 @@ describe('paired task state', () => {
     });
   });
 
-  it('backfills paired task role metadata from stable room metadata for pre-column legacy rows', () => {
-    const tempDir = fs.mkdtempSync('/tmp/ejclaw-paired-task-legacy-shadow-');
+  it('preserves raw legacy paired task service ids during init when failover created the task', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-paired-task-legacy-failover-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE paired_tasks (
+        id TEXT PRIMARY KEY,
+        chat_jid TEXT NOT NULL,
+        group_folder TEXT NOT NULL,
+        owner_service_id TEXT NOT NULL,
+        reviewer_service_id TEXT NOT NULL,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
+        title TEXT,
+        source_ref TEXT,
+        plan_notes TEXT,
+        review_requested_at TEXT,
+        round_trip_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        arbiter_verdict TEXT,
+        arbiter_requested_at TEXT,
+        completion_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+
+    legacyDb
+      .prepare(
+        `INSERT INTO paired_tasks (
+          id,
+          chat_jid,
+          group_folder,
+          owner_service_id,
+          reviewer_service_id,
+          owner_agent_type,
+          reviewer_agent_type,
+          arbiter_agent_type,
+          title,
+          source_ref,
+          plan_notes,
+          review_requested_at,
+          round_trip_count,
+          status,
+          arbiter_verdict,
+          arbiter_requested_at,
+          completion_reason,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'paired-legacy-failover',
+        'dc:paired-failover',
+        'paired-failover-room',
+        CODEX_REVIEW_SERVICE_ID,
+        CLAUDE_SERVICE_ID,
+        null,
+        null,
+        null,
+        'legacy failover task',
+        null,
+        null,
+        null,
+        0,
+        'active',
+        null,
+        null,
+        null,
+        '2026-03-28T00:00:00.000Z',
+        '2026-03-28T00:00:00.000Z',
+      );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(getPairedTaskById('paired-legacy-failover')).toMatchObject({
+      owner_service_id: CODEX_REVIEW_SERVICE_ID,
+      reviewer_service_id: CLAUDE_SERVICE_ID,
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+    });
+  });
+
+  it('preserves raw legacy paired task service ids during init when registered group metadata is present', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-paired-task-legacy-groups-');
     const dbPath = path.join(tempDir, 'messages.db');
     const legacyDb = new Database(dbPath);
 
@@ -931,18 +1019,20 @@ describe('paired task state', () => {
         group_folder TEXT NOT NULL,
         owner_service_id TEXT NOT NULL,
         reviewer_service_id TEXT NOT NULL,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
         title TEXT,
         source_ref TEXT,
         plan_notes TEXT,
         review_requested_at TEXT,
         round_trip_count INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'active',
+        status TEXT NOT NULL,
         arbiter_verdict TEXT,
         arbiter_requested_at TEXT,
         completion_reason TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        CHECK (status IN ('active', 'review_ready', 'in_review', 'merge_ready', 'completed', 'arbiter_requested', 'in_arbitration'))
+        updated_at TEXT NOT NULL
       );
     `);
 
@@ -961,17 +1051,17 @@ describe('paired task state', () => {
       ) VALUES (?, ?, ?, ?, ?, NULL, 1, 0, ?, NULL)`,
     );
     insertGroup.run(
-      'dc:legacy-failover',
-      'Legacy Failover Room',
-      'legacy-failover-room',
+      'dc:paired-failover-groups',
+      'Legacy Failover Groups',
+      'paired-failover-groups',
       '@Claude',
       '2024-01-01T00:00:00.000Z',
       'claude-code',
     );
     insertGroup.run(
-      'dc:legacy-failover',
-      'Legacy Failover Room',
-      'legacy-failover-room',
+      'dc:paired-failover-groups',
+      'Legacy Failover Groups',
+      'paired-failover-groups',
       '@Codex',
       '2024-01-01T00:00:00.000Z',
       'codex',
@@ -985,6 +1075,9 @@ describe('paired task state', () => {
           group_folder,
           owner_service_id,
           reviewer_service_id,
+          owner_agent_type,
+          reviewer_agent_type,
+          arbiter_agent_type,
           title,
           source_ref,
           plan_notes,
@@ -996,16 +1089,19 @@ describe('paired task state', () => {
           completion_reason,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
-        'paired-legacy-failover',
-        'dc:legacy-failover',
-        'legacy-failover-room',
+        'paired-legacy-groups',
+        'dc:paired-failover-groups',
+        'paired-failover-groups',
         CODEX_REVIEW_SERVICE_ID,
         CLAUDE_SERVICE_ID,
         null,
-        'HEAD',
+        null,
+        null,
+        'legacy failover with groups',
+        null,
         null,
         null,
         0,
@@ -1020,15 +1116,125 @@ describe('paired task state', () => {
 
     _initTestDatabaseFromFile(dbPath);
 
-    expect(getStoredRoomSettings('dc:legacy-failover')).toMatchObject({
-      ownerAgentType: 'codex',
-    });
-    expect(getPairedTaskById('paired-legacy-failover')).toMatchObject({
-      owner_service_id: CODEX_MAIN_SERVICE_ID,
+    expect(getPairedTaskById('paired-legacy-groups')).toMatchObject({
+      owner_service_id: CODEX_REVIEW_SERVICE_ID,
       reviewer_service_id: CLAUDE_SERVICE_ID,
       owner_agent_type: 'codex',
       reviewer_agent_type: 'claude-code',
-      arbiter_agent_type: ARBITER_AGENT_TYPE ?? null,
+    });
+  });
+
+  it('preserves raw legacy channel owner lease service ids during init', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-channel-owner-legacy-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE channel_owner (
+        chat_jid TEXT PRIMARY KEY,
+        owner_service_id TEXT NOT NULL,
+        reviewer_service_id TEXT,
+        arbiter_service_id TEXT,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
+        activated_at TEXT,
+        reason TEXT
+      );
+    `);
+
+    legacyDb
+      .prepare(
+        `INSERT INTO channel_owner (
+          chat_jid,
+          owner_service_id,
+          reviewer_service_id,
+          arbiter_service_id,
+          owner_agent_type,
+          reviewer_agent_type,
+          arbiter_agent_type,
+          activated_at,
+          reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'dc:legacy-channel-owner',
+        CODEX_REVIEW_SERVICE_ID,
+        CLAUDE_SERVICE_ID,
+        null,
+        null,
+        null,
+        null,
+        '2026-03-28T00:00:00.000Z',
+        'legacy-failover',
+      );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(getChannelOwnerLease('dc:legacy-channel-owner')).toMatchObject({
+      owner_service_id: CODEX_REVIEW_SERVICE_ID,
+      reviewer_service_id: CLAUDE_SERVICE_ID,
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+    });
+  });
+
+  it('preserves stored reviewer service ids during init even when reviewer agent metadata exists', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-channel-owner-stored-reviewer-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE channel_owner (
+        chat_jid TEXT PRIMARY KEY,
+        owner_service_id TEXT NOT NULL,
+        reviewer_service_id TEXT,
+        arbiter_service_id TEXT,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
+        activated_at TEXT,
+        reason TEXT
+      );
+    `);
+
+    legacyDb
+      .prepare(
+        `INSERT INTO channel_owner (
+          chat_jid,
+          owner_service_id,
+          reviewer_service_id,
+          arbiter_service_id,
+          owner_agent_type,
+          reviewer_agent_type,
+          arbiter_agent_type,
+          activated_at,
+          reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'dc:legacy-channel-owner-stored-reviewer',
+        CLAUDE_SERVICE_ID,
+        'stale-reviewer-shadow',
+        null,
+        'claude-code',
+        'codex',
+        null,
+        '2026-03-28T00:00:00.000Z',
+        'legacy-reviewer-stored-id',
+      );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(
+      getChannelOwnerLease('dc:legacy-channel-owner-stored-reviewer'),
+    ).toMatchObject({
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: 'stale-reviewer-shadow',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
     });
   });
 
@@ -1326,8 +1532,8 @@ describe('paired task state', () => {
       trigger: '@Custom',
     });
     expect(getPairedTaskById('paired-explicit-owner')).toMatchObject({
-      owner_service_id: CLAUDE_SERVICE_ID,
-      reviewer_service_id: CLAUDE_SERVICE_ID,
+      owner_service_id: CODEX_REVIEW_SERVICE_ID,
+      reviewer_service_id: CODEX_MAIN_SERVICE_ID,
       owner_agent_type: 'claude-code',
       reviewer_agent_type: 'claude-code',
       arbiter_agent_type: ARBITER_AGENT_TYPE ?? null,
@@ -1701,6 +1907,133 @@ describe('room assignment writes', () => {
     });
   });
 
+  it('materializes inferred room_settings from legacy registered_groups rows during init', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-legacy-room-settings-init-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE registered_groups (
+        jid TEXT NOT NULL,
+        name TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        trigger_pattern TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        agent_config TEXT,
+        requires_trigger INTEGER DEFAULT 1,
+        is_main INTEGER DEFAULT 0,
+        agent_type TEXT NOT NULL DEFAULT 'claude-code',
+        work_dir TEXT,
+        PRIMARY KEY (jid, agent_type),
+        UNIQUE (folder, agent_type)
+      );
+    `);
+
+    const insertGroup = legacyDb.prepare(
+      `INSERT INTO registered_groups (
+        jid,
+        name,
+        folder,
+        trigger_pattern,
+        added_at,
+        agent_config,
+        requires_trigger,
+        is_main,
+        agent_type,
+        work_dir
+      ) VALUES (?, ?, ?, ?, ?, NULL, 1, 0, ?, NULL)`,
+    );
+    insertGroup.run(
+      'dc:legacy-sql',
+      'Legacy SQL Room',
+      'legacy-sql-room',
+      '@Claude',
+      '2024-01-01T00:00:00.000Z',
+      'claude-code',
+    );
+    insertGroup.run(
+      'dc:legacy-sql',
+      'Legacy SQL Room',
+      'legacy-sql-room',
+      '@Codex',
+      '2024-01-01T00:00:00.000Z',
+      'codex',
+    );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(getStoredRoomSettings('dc:legacy-sql')).toMatchObject({
+      chatJid: 'dc:legacy-sql',
+      roomMode: 'tribunal',
+      modeSource: 'inferred',
+      name: 'Legacy SQL Room',
+      folder: 'legacy-sql-room',
+      ownerAgentType: 'codex',
+    });
+    expect(getEffectiveRoomMode('dc:legacy-sql')).toBe('tribunal');
+    expect(getEffectiveRuntimeRoomMode('dc:legacy-sql')).toBe('tribunal');
+  });
+
+  it('fails init when legacy registered_groups rows conflict on room-level metadata', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-legacy-room-conflict-init-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE registered_groups (
+        jid TEXT NOT NULL,
+        name TEXT NOT NULL,
+        folder TEXT NOT NULL,
+        trigger_pattern TEXT NOT NULL,
+        added_at TEXT NOT NULL,
+        agent_config TEXT,
+        requires_trigger INTEGER DEFAULT 1,
+        is_main INTEGER DEFAULT 0,
+        agent_type TEXT NOT NULL DEFAULT 'claude-code',
+        work_dir TEXT,
+        PRIMARY KEY (jid, agent_type),
+        UNIQUE (folder, agent_type)
+      );
+    `);
+
+    const insertGroup = legacyDb.prepare(
+      `INSERT INTO registered_groups (
+        jid,
+        name,
+        folder,
+        trigger_pattern,
+        added_at,
+        agent_config,
+        requires_trigger,
+        is_main,
+        agent_type,
+        work_dir
+      ) VALUES (?, ?, ?, ?, ?, NULL, 1, 0, ?, NULL)`,
+    );
+    insertGroup.run(
+      'dc:legacy-conflict',
+      'Legacy Conflict Room',
+      'legacy-conflict-a',
+      '@Claude',
+      '2024-01-01T00:00:00.000Z',
+      'claude-code',
+    );
+    insertGroup.run(
+      'dc:legacy-conflict',
+      'Legacy Conflict Room',
+      'legacy-conflict-b',
+      '@Codex',
+      '2024-01-01T00:00:00.000Z',
+      'codex',
+    );
+    legacyDb.close();
+
+    expect(() => _initTestDatabaseFromFile(dbPath)).toThrow(
+      /Conflicting room-level registered_groups metadata/,
+    );
+  });
+
   it('ignores stale registered_groups capability rows once room_settings exists', () => {
     const tempDir = fs.mkdtempSync('/tmp/ejclaw-room-ssot-');
     const dbPath = path.join(tempDir, 'messages.db');
@@ -2044,85 +2377,6 @@ describe('paired room registration', () => {
     expect(getEffectiveRuntimeRoomMode('dc:legacy-paired')).toBe('tribunal');
   });
 
-  it('backfills inferred room modes for legacy SQL rows missing room_settings', () => {
-    const tempDir = fs.mkdtempSync('/tmp/ejclaw-room-mode-');
-    const dbPath = path.join(tempDir, 'messages.db');
-    const legacyDb = new Database(dbPath);
-
-    legacyDb.exec(`
-      CREATE TABLE registered_groups (
-        jid TEXT NOT NULL,
-        name TEXT NOT NULL,
-        folder TEXT NOT NULL,
-        trigger_pattern TEXT NOT NULL,
-        added_at TEXT NOT NULL,
-        agent_config TEXT,
-        requires_trigger INTEGER DEFAULT 1,
-        is_main INTEGER DEFAULT 0,
-        agent_type TEXT NOT NULL DEFAULT 'claude-code',
-        work_dir TEXT,
-        PRIMARY KEY (jid, agent_type),
-        UNIQUE (folder, agent_type)
-      );
-      CREATE TABLE room_settings (
-        chat_jid TEXT PRIMARY KEY,
-        room_mode TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        CHECK (room_mode IN ('single', 'tribunal'))
-      );
-    `);
-
-    const insertGroup = legacyDb.prepare(
-      `INSERT INTO registered_groups (
-        jid,
-        name,
-        folder,
-        trigger_pattern,
-        added_at,
-        agent_config,
-        requires_trigger,
-        is_main,
-        agent_type,
-        work_dir
-      ) VALUES (?, ?, ?, ?, ?, NULL, 1, 0, ?, NULL)`,
-    );
-    insertGroup.run(
-      'dc:legacy-sql',
-      'Legacy SQL Room',
-      'legacy-sql-room',
-      '@Claude',
-      '2024-01-01T00:00:00.000Z',
-      'claude-code',
-    );
-    insertGroup.run(
-      'dc:legacy-sql',
-      'Legacy SQL Room',
-      'legacy-sql-room',
-      '@Codex',
-      '2024-01-01T00:00:00.000Z',
-      'codex',
-    );
-    legacyDb.close();
-
-    _initTestDatabaseFromFile(dbPath);
-
-    expect(getExplicitRoomMode('dc:legacy-sql')).toBeUndefined();
-    expect(getEffectiveRoomMode('dc:legacy-sql')).toBe('tribunal');
-    expect(getEffectiveRuntimeRoomMode('dc:legacy-sql')).toBe('tribunal');
-
-    expect(getStoredRoomSettings('dc:legacy-sql')).toMatchObject({
-      chatJid: 'dc:legacy-sql',
-      roomMode: 'tribunal',
-      modeSource: 'inferred',
-      name: 'Legacy SQL Room',
-      folder: 'legacy-sql-room',
-      trigger: '@Codex',
-      requiresTrigger: true,
-      isMain: false,
-      ownerAgentType: 'codex',
-    });
-  });
-
   it('keeps room-level metadata synced on setRegisteredGroup helper writes', () => {
     _setRegisteredGroupForTests('dc:room-settings', {
       name: 'Room Settings Test',
@@ -2172,71 +2426,6 @@ describe('paired room registration', () => {
       trigger: '@Codex',
       ownerAgentType: 'codex',
     });
-  });
-
-  it('fails room_settings backfill when room-level metadata conflicts across agent rows', () => {
-    const tempDir = fs.mkdtempSync('/tmp/ejclaw-room-settings-conflict-');
-    const dbPath = path.join(tempDir, 'messages.db');
-    const legacyDb = new Database(dbPath);
-
-    legacyDb.exec(`
-      CREATE TABLE registered_groups (
-        jid TEXT NOT NULL,
-        name TEXT NOT NULL,
-        folder TEXT NOT NULL,
-        trigger_pattern TEXT NOT NULL,
-        added_at TEXT NOT NULL,
-        agent_config TEXT,
-        requires_trigger INTEGER DEFAULT 1,
-        is_main INTEGER DEFAULT 0,
-        agent_type TEXT NOT NULL DEFAULT 'claude-code',
-        work_dir TEXT,
-        PRIMARY KEY (jid, agent_type),
-        UNIQUE (folder, agent_type)
-      );
-      CREATE TABLE room_settings (
-        chat_jid TEXT PRIMARY KEY,
-        room_mode TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        CHECK (room_mode IN ('single', 'tribunal'))
-      );
-    `);
-
-    const insertGroup = legacyDb.prepare(
-      `INSERT INTO registered_groups (
-        jid,
-        name,
-        folder,
-        trigger_pattern,
-        added_at,
-        agent_config,
-        requires_trigger,
-        is_main,
-        agent_type,
-        work_dir
-      ) VALUES (?, ?, ?, ?, ?, NULL, 1, 0, ?, NULL)`,
-    );
-    insertGroup.run(
-      'dc:conflict',
-      'Conflict Room',
-      'conflict-folder-1',
-      '@Claude',
-      '2024-01-01T00:00:00.000Z',
-      'claude-code',
-    );
-    insertGroup.run(
-      'dc:conflict',
-      'Conflict Room',
-      'conflict-folder-2',
-      '@Codex',
-      '2024-01-01T00:00:00.000Z',
-      'codex',
-    );
-    legacyDb.close();
-
-    expect(() => _initTestDatabaseFromFile(dbPath)).toThrow(
-      /Conflicting room-level registered_groups metadata/,
-    );
   });
 
   it('lets explicit single override dual registration for paired-room checks', () => {
@@ -2478,7 +2667,7 @@ describe('service handoff completion', () => {
     });
   });
 
-  it('stores owner handoff service ids as stable role-slot shadows', () => {
+  it('derives owner handoff service ids as stable role-slot shadows when raw ids are omitted', () => {
     assignRoom('dc:handoff-owner-shadow', {
       name: 'Owner Handoff Shadow',
       roomMode: 'tribunal',
@@ -2491,10 +2680,9 @@ describe('service handoff completion', () => {
     const handoff = createServiceHandoff({
       chat_jid: 'dc:handoff-owner-shadow',
       group_folder: 'owner-handoff-shadow',
-      source_service_id: CLAUDE_SERVICE_ID,
-      target_service_id: CODEX_REVIEW_SERVICE_ID,
       source_role: 'owner',
       target_role: 'owner',
+      source_agent_type: 'codex',
       target_agent_type: 'codex',
       prompt: 'owner fallback',
       reason: 'claude-usage-exhausted',
@@ -2514,7 +2702,7 @@ describe('service handoff completion', () => {
     ]);
   });
 
-  it('normalizes legacy owner handoff service ids to stable role-slot shadows during init', () => {
+  it('preserves stored owner handoff service ids during init when service id columns already exist', () => {
     const tempDir = fs.mkdtempSync('/tmp/ejclaw-handoff-shadow-');
     const dbPath = path.join(tempDir, 'messages.db');
     const legacyDb = new Database(dbPath);
@@ -2634,255 +2822,43 @@ describe('service handoff completion', () => {
 
     _initTestDatabaseFromFile(dbPath);
 
-    expect(getPendingServiceHandoffs(CODEX_MAIN_SERVICE_ID)).toEqual([
+    expect(getPendingServiceHandoffs(CODEX_REVIEW_SERVICE_ID)).toEqual([
       expect.objectContaining({
         chat_jid: 'dc:handoff-owner-shadow',
-        source_service_id: CODEX_MAIN_SERVICE_ID,
-        target_service_id: CODEX_MAIN_SERVICE_ID,
+        source_service_id: CLAUDE_SERVICE_ID,
+        target_service_id: CODEX_REVIEW_SERVICE_ID,
         source_role: 'owner',
         target_role: 'owner',
       }),
     ]);
   });
 
-  it('rebuilds legacy service-shadow tables into canonical schemas while preserving derived runtime shadows', () => {
-    const tempDir = fs.mkdtempSync('/tmp/ejclaw-canonical-schema-');
-    const dbPath = path.join(tempDir, 'messages.db');
-    const legacyDb = new Database(dbPath);
-
-    legacyDb.exec(`
-      CREATE TABLE work_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        group_folder TEXT NOT NULL,
-        chat_jid TEXT NOT NULL,
-        agent_type TEXT NOT NULL,
-        service_id TEXT NOT NULL DEFAULT '',
-        delivery_role TEXT,
-        status TEXT NOT NULL DEFAULT 'produced',
-        start_seq INTEGER,
-        end_seq INTEGER,
-        result_payload TEXT NOT NULL,
-        delivery_attempts INTEGER NOT NULL DEFAULT 0,
-        delivery_message_id TEXT,
-        last_error TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        delivered_at TEXT
-      );
-      CREATE TABLE channel_owner (
-        chat_jid TEXT PRIMARY KEY,
-        owner_service_id TEXT NOT NULL,
-        reviewer_service_id TEXT,
-        arbiter_service_id TEXT,
-        owner_agent_type TEXT,
-        reviewer_agent_type TEXT,
-        arbiter_agent_type TEXT,
-        activated_at TEXT,
-        reason TEXT
-      );
-      CREATE TABLE paired_tasks (
-        id TEXT PRIMARY KEY,
-        chat_jid TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        owner_service_id TEXT NOT NULL,
-        reviewer_service_id TEXT NOT NULL,
-        owner_agent_type TEXT,
-        reviewer_agent_type TEXT,
-        arbiter_agent_type TEXT,
-        title TEXT,
-        source_ref TEXT,
-        plan_notes TEXT,
-        review_requested_at TEXT,
-        round_trip_count INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'active',
-        arbiter_verdict TEXT,
-        arbiter_requested_at TEXT,
-        completion_reason TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE service_handoffs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_jid TEXT NOT NULL,
-        group_folder TEXT NOT NULL,
-        source_service_id TEXT NOT NULL,
-        target_service_id TEXT NOT NULL,
-        source_role TEXT,
-        target_role TEXT,
-        target_agent_type TEXT NOT NULL,
-        prompt TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        start_seq INTEGER,
-        end_seq INTEGER,
-        reason TEXT,
-        intended_role TEXT,
-        created_at TEXT NOT NULL,
-        claimed_at TEXT,
-        completed_at TEXT,
-        last_error TEXT
-      );
-    `);
-
-    legacyDb
-      .prepare(
-        `INSERT INTO work_items (
-          group_folder, chat_jid, agent_type, service_id, delivery_role, status,
-          start_seq, end_seq, result_payload, delivery_attempts, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        'canonical-schema',
-        'dc:canonical-schema',
-        'codex',
-        CODEX_REVIEW_SERVICE_ID,
-        'reviewer',
-        'produced',
-        1,
-        2,
-        'payload',
-        0,
-        '2026-04-03T00:00:00.000Z',
-        '2026-04-03T00:00:00.000Z',
-      );
-
-    legacyDb
-      .prepare(
-        `INSERT INTO channel_owner (
-          chat_jid, owner_service_id, reviewer_service_id, arbiter_service_id,
-          owner_agent_type, reviewer_agent_type, arbiter_agent_type, activated_at, reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        'dc:canonical-schema',
-        CODEX_MAIN_SERVICE_ID,
-        CLAUDE_SERVICE_ID,
-        null,
-        'codex',
-        'claude-code',
-        null,
-        '2026-04-03T00:00:00.000Z',
-        'explicit',
-      );
-
-    legacyDb
-      .prepare(
-        `INSERT INTO paired_tasks (
-          id, chat_jid, group_folder, owner_service_id, reviewer_service_id,
-          owner_agent_type, reviewer_agent_type, arbiter_agent_type, title,
-          source_ref, plan_notes, review_requested_at, round_trip_count,
-          status, arbiter_verdict, arbiter_requested_at, completion_reason,
-          created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        'task-canonical-schema',
-        'dc:canonical-schema',
-        'canonical-schema',
-        CODEX_MAIN_SERVICE_ID,
-        CLAUDE_SERVICE_ID,
-        'codex',
-        'claude-code',
-        null,
-        'canonical task',
-        null,
-        null,
-        null,
-        0,
-        'active',
-        null,
-        null,
-        null,
-        '2026-04-03T00:00:00.000Z',
-        '2026-04-03T00:00:00.000Z',
-      );
-
-    legacyDb
-      .prepare(
-        `INSERT INTO service_handoffs (
-          chat_jid, group_folder, source_service_id, target_service_id,
-          source_role, target_role, target_agent_type, prompt, status,
-          reason, intended_role, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        'dc:canonical-schema',
-        'canonical-schema',
-        CODEX_MAIN_SERVICE_ID,
-        CLAUDE_SERVICE_ID,
-        'owner',
-        'reviewer',
-        'claude-code',
-        'review please',
-        'pending',
-        'reviewer-codex-manual',
-        'reviewer',
-        '2026-04-03T00:00:00.000Z',
-      );
-    legacyDb.close();
-
-    _initTestDatabaseFromFile(dbPath);
-
-    expect(
-      getOpenWorkItem('dc:canonical-schema', 'codex', CODEX_REVIEW_SERVICE_ID),
-    ).toMatchObject({
-      delivery_role: 'reviewer',
-      service_id: CODEX_REVIEW_SERVICE_ID,
+  it('preserves an explicit reviewer target service id when creating a new handoff', () => {
+    const handoff = createServiceHandoff({
+      chat_jid: 'dc:handoff-stored-reviewer',
+      group_folder: 'handoff-stored-reviewer',
+      source_service_id: CLAUDE_SERVICE_ID,
+      target_service_id: 'stale-reviewer-shadow',
+      source_role: 'owner',
+      target_role: 'reviewer',
+      source_agent_type: 'claude-code',
+      target_agent_type: 'codex',
+      prompt: 'stored reviewer service id',
+      intended_role: 'reviewer',
     });
-    expect(getChannelOwnerLease('dc:canonical-schema')).toMatchObject({
-      owner_service_id: CODEX_MAIN_SERVICE_ID,
-      reviewer_service_id: CLAUDE_SERVICE_ID,
-    });
-    expect(getLatestPairedTaskForChat('dc:canonical-schema')).toMatchObject({
-      owner_service_id: CODEX_MAIN_SERVICE_ID,
-      reviewer_service_id: CLAUDE_SERVICE_ID,
-    });
-    expect(getPendingServiceHandoffs(CLAUDE_SERVICE_ID)).toEqual([
+
+    expect(handoff.target_service_id).toBe('stale-reviewer-shadow');
+    expect(getPendingServiceHandoffs('stale-reviewer-shadow')).toEqual([
       expect.objectContaining({
-        chat_jid: 'dc:canonical-schema',
-        source_service_id: CODEX_MAIN_SERVICE_ID,
-        target_service_id: CLAUDE_SERVICE_ID,
-        source_agent_type: 'codex',
+        id: handoff.id,
+        source_service_id: CLAUDE_SERVICE_ID,
+        target_service_id: 'stale-reviewer-shadow',
+        source_role: 'owner',
+        target_role: 'reviewer',
       }),
     ]);
-
-    const migratedDb = new Database(dbPath, { readonly: true });
-    expect(
-      (
-        migratedDb.prepare(`PRAGMA table_info(work_items)`).all() as Array<{
-          name: string;
-        }>
-      ).map((row) => row.name),
-    ).not.toContain('service_id');
-    expect(
-      (
-        migratedDb.prepare(`PRAGMA table_info(channel_owner)`).all() as Array<{
-          name: string;
-        }>
-      ).map((row) => row.name),
-    ).not.toContain('owner_service_id');
-    expect(
-      (
-        migratedDb.prepare(`PRAGMA table_info(paired_tasks)`).all() as Array<{
-          name: string;
-        }>
-      ).map((row) => row.name),
-    ).not.toContain('owner_service_id');
-    expect(
-      (
-        migratedDb
-          .prepare(`PRAGMA table_info(service_handoffs)`)
-          .all() as Array<{ name: string }>
-      ).map((row) => row.name),
-    ).not.toContain('source_service_id');
-    expect(
-      (
-        migratedDb
-          .prepare(`PRAGMA table_info(service_handoffs)`)
-          .all() as Array<{ name: string }>
-      ).map((row) => row.name),
-    ).toContain('source_agent_type');
-    migratedDb.close();
   });
+
 });
 
 describe('message seq cursors', () => {
@@ -2936,6 +2912,439 @@ describe('message seq cursors', () => {
     expect(
       getLatestMessageSeqAtOrBefore('2024-01-01T00:00:02.000Z', 'group@g.us'),
     ).toBe(2);
+  });
+
+  it('preserves legacy timestamp order when backfilling seq during init', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-message-seq-order-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE messages (
+        id TEXT PRIMARY KEY,
+        chat_jid TEXT NOT NULL,
+        sender TEXT NOT NULL,
+        sender_name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        is_from_me INTEGER NOT NULL DEFAULT 0,
+        is_bot_message INTEGER NOT NULL DEFAULT 0,
+        seq INTEGER
+      );
+    `);
+
+    legacyDb
+      .prepare(
+        `INSERT INTO messages (
+          id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, seq
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, NULL)`,
+      )
+      .run(
+        'legacy-late',
+        'dc:legacy-seq',
+        'user-1',
+        'User One',
+        'late insert',
+        '2024-01-01T00:00:02.000Z',
+      );
+    legacyDb
+      .prepare(
+        `INSERT INTO messages (
+          id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, seq
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, NULL)`,
+      )
+      .run(
+        'legacy-early',
+        'dc:legacy-seq',
+        'user-2',
+        'User Two',
+        'early insert',
+        '2024-01-01T00:00:01.000Z',
+      );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(
+      getMessagesSinceSeq('dc:legacy-seq', 0, 'Andy').map((message) => ({
+        id: message.id,
+        seq: message.seq,
+      })),
+    ).toEqual([
+      { id: 'legacy-early', seq: 1 },
+      { id: 'legacy-late', seq: 2 },
+    ]);
+  });
+
+  it('backfills missing legacy seq values after the existing maximum without duplicates', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-message-seq-partial-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE messages (
+        id TEXT PRIMARY KEY,
+        chat_jid TEXT NOT NULL,
+        sender TEXT NOT NULL,
+        sender_name TEXT NOT NULL,
+        content TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        is_from_me INTEGER NOT NULL DEFAULT 0,
+        is_bot_message INTEGER NOT NULL DEFAULT 0,
+        seq INTEGER
+      );
+    `);
+
+    legacyDb
+      .prepare(
+        `INSERT INTO messages (
+          id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, seq
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
+      )
+      .run(
+        'legacy-existing-seq',
+        'dc:legacy-partial-seq',
+        'user-1',
+        'User One',
+        'existing seq',
+        '2024-01-01T00:00:01.000Z',
+        1,
+      );
+    legacyDb
+      .prepare(
+        `INSERT INTO messages (
+          id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, seq
+        ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, NULL)`,
+      )
+      .run(
+        'legacy-missing-seq',
+        'dc:legacy-partial-seq',
+        'user-2',
+        'User Two',
+        'missing seq',
+        '2024-01-01T00:00:00.500Z',
+      );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(
+      getMessagesSinceSeq('dc:legacy-partial-seq', 0, 'Andy').map((message) => ({
+        id: message.id,
+        seq: message.seq,
+      })),
+    ).toEqual([
+      { id: 'legacy-existing-seq', seq: 1 },
+      { id: 'legacy-missing-seq', seq: 2 },
+    ]);
+  });
+
+  it('creates new service handoffs after init on a legacy handoff schema', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-legacy-handoff-write-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE service_handoffs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_jid TEXT NOT NULL,
+        group_folder TEXT NOT NULL,
+        source_service_id TEXT NOT NULL,
+        target_service_id TEXT NOT NULL,
+        source_role TEXT,
+        target_role TEXT,
+        target_agent_type TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        start_seq INTEGER,
+        end_seq INTEGER,
+        reason TEXT,
+        intended_role TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        claimed_at TEXT,
+        completed_at TEXT,
+        last_error TEXT
+      );
+    `);
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    const handoff = createServiceHandoff({
+      chat_jid: 'dc:legacy-write-handoff',
+      group_folder: 'legacy-write-handoff',
+      source_service_id: CLAUDE_SERVICE_ID,
+      target_service_id: CODEX_REVIEW_SERVICE_ID,
+      source_role: 'owner',
+      target_role: 'reviewer',
+      target_agent_type: 'codex',
+      prompt: 'legacy handoff write',
+      intended_role: 'reviewer',
+    });
+
+    expect(handoff.target_service_id).toBe(CODEX_REVIEW_SERVICE_ID);
+    expect(getPendingServiceHandoffs(CODEX_REVIEW_SERVICE_ID)).toEqual([
+      expect.objectContaining({
+        id: handoff.id,
+        target_service_id: CODEX_REVIEW_SERVICE_ID,
+      }),
+    ]);
+  });
+
+  it('creates new service handoffs after init on a canonical handoff schema without service id columns', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-canonical-handoff-write-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE service_handoffs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_jid TEXT NOT NULL,
+        group_folder TEXT NOT NULL,
+        source_role TEXT,
+        source_agent_type TEXT,
+        target_role TEXT,
+        target_agent_type TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        start_seq INTEGER,
+        end_seq INTEGER,
+        reason TEXT,
+        intended_role TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        claimed_at TEXT,
+        completed_at TEXT,
+        last_error TEXT
+      );
+    `);
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    const handoff = createServiceHandoff({
+      chat_jid: 'dc:canonical-write-handoff',
+      group_folder: 'canonical-write-handoff',
+      source_role: 'owner',
+      source_agent_type: 'claude-code',
+      target_role: 'reviewer',
+      target_agent_type: 'codex',
+      prompt: 'canonical handoff write',
+      intended_role: 'reviewer',
+    });
+
+    expect(handoff.source_service_id).toBe(CLAUDE_SERVICE_ID);
+    expect(handoff.target_service_id).toBe(CODEX_REVIEW_SERVICE_ID);
+    expect(getPendingServiceHandoffs(CODEX_REVIEW_SERVICE_ID)).toEqual([
+      expect.objectContaining({
+        id: handoff.id,
+        target_service_id: CODEX_REVIEW_SERVICE_ID,
+      }),
+    ]);
+  });
+});
+
+describe('legacy schema writes after init', () => {
+  it('creates paired tasks after init on a legacy paired_tasks schema', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-legacy-paired-task-write-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE paired_tasks (
+        id TEXT PRIMARY KEY,
+        chat_jid TEXT NOT NULL,
+        group_folder TEXT NOT NULL,
+        owner_service_id TEXT NOT NULL,
+        reviewer_service_id TEXT NOT NULL,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
+        title TEXT,
+        source_ref TEXT,
+        plan_notes TEXT,
+        review_requested_at TEXT,
+        round_trip_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        arbiter_verdict TEXT,
+        arbiter_requested_at TEXT,
+        completion_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    createPairedTask({
+      id: 'paired-legacy-write',
+      chat_jid: 'dc:legacy-write',
+      group_folder: 'legacy-write-room',
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: CODEX_REVIEW_SERVICE_ID,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      arbiter_agent_type: ARBITER_AGENT_TYPE ?? null,
+      title: 'legacy write task',
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    expect(getPairedTaskById('paired-legacy-write')).toMatchObject({
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: CODEX_REVIEW_SERVICE_ID,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+    });
+  });
+
+  it('creates paired tasks after init on a canonical paired_tasks schema without service id columns', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-canonical-paired-task-write-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE paired_tasks (
+        id TEXT PRIMARY KEY,
+        chat_jid TEXT NOT NULL,
+        group_folder TEXT NOT NULL,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
+        title TEXT,
+        source_ref TEXT,
+        plan_notes TEXT,
+        review_requested_at TEXT,
+        round_trip_count INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        arbiter_verdict TEXT,
+        arbiter_requested_at TEXT,
+        completion_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    createPairedTask({
+      id: 'paired-canonical-write',
+      chat_jid: 'dc:canonical-write',
+      group_folder: 'canonical-write-room',
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: CODEX_REVIEW_SERVICE_ID,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      arbiter_agent_type: ARBITER_AGENT_TYPE ?? null,
+      title: 'canonical write task',
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    expect(getPairedTaskById('paired-canonical-write')).toMatchObject({
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: CODEX_REVIEW_SERVICE_ID,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+    });
+  });
+
+  it('creates channel owner leases after init on a legacy channel_owner schema', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-legacy-channel-owner-write-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE channel_owner (
+        chat_jid TEXT PRIMARY KEY,
+        owner_service_id TEXT NOT NULL,
+        reviewer_service_id TEXT,
+        arbiter_service_id TEXT,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
+        activated_at TEXT,
+        reason TEXT
+      );
+    `);
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    setChannelOwnerLease({
+      chat_jid: 'dc:legacy-channel-owner-write',
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: CODEX_REVIEW_SERVICE_ID,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      activated_at: '2026-03-28T00:00:00.000Z',
+      reason: 'legacy-write',
+    });
+
+    expect(getChannelOwnerLease('dc:legacy-channel-owner-write')).toMatchObject(
+      {
+        owner_service_id: CLAUDE_SERVICE_ID,
+        reviewer_service_id: CODEX_REVIEW_SERVICE_ID,
+        owner_agent_type: 'claude-code',
+        reviewer_agent_type: 'codex',
+      },
+    );
+  });
+
+  it('creates channel owner leases after init on a canonical channel_owner schema without service id columns', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-canonical-channel-owner-write-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE channel_owner (
+        chat_jid TEXT PRIMARY KEY,
+        owner_agent_type TEXT,
+        reviewer_agent_type TEXT,
+        arbiter_agent_type TEXT,
+        activated_at TEXT,
+        reason TEXT
+      );
+    `);
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    setChannelOwnerLease({
+      chat_jid: 'dc:canonical-channel-owner-write',
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: CODEX_REVIEW_SERVICE_ID,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      activated_at: '2026-03-28T00:00:00.000Z',
+      reason: 'canonical-write',
+    });
+
+    expect(
+      getChannelOwnerLease('dc:canonical-channel-owner-write'),
+    ).toMatchObject({
+      owner_service_id: CLAUDE_SERVICE_ID,
+      reviewer_service_id: CODEX_REVIEW_SERVICE_ID,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+    });
   });
 });
 
@@ -3082,16 +3491,20 @@ describe('work items', () => {
     });
 
     expect(item.delivery_role).toBe('reviewer');
-    expect(getOpenWorkItem('dc:123', 'claude-code')?.id).toBe(item.id);
+    expect(getOpenWorkItem('dc:123', 'claude-code', item.service_id)?.id).toBe(
+      item.id,
+    );
 
     markWorkItemDeliveryRetry(item.id, 'send failed');
-    const retried = getOpenWorkItem('dc:123', 'claude-code');
+    const retried = getOpenWorkItem('dc:123', 'claude-code', item.service_id);
     expect(retried?.status).toBe('delivery_retry');
     expect(retried?.delivery_attempts).toBe(1);
     expect(retried?.last_error).toBe('send failed');
 
     markWorkItemDelivered(item.id, 'msg-1');
-    expect(getOpenWorkItem('dc:123', 'claude-code')).toBeUndefined();
+    expect(
+      getOpenWorkItem('dc:123', 'claude-code', item.service_id),
+    ).toBeUndefined();
   });
 
   it('finds pending delivery retries even when they were created by a fallback agent type', () => {
@@ -3099,6 +3512,7 @@ describe('work items', () => {
       group_folder: 'discord_test',
       chat_jid: 'dc:fallback',
       agent_type: 'codex',
+      service_id: SERVICE_SESSION_SCOPE,
       delivery_role: 'reviewer',
       start_seq: 20,
       end_seq: 22,
@@ -3112,7 +3526,7 @@ describe('work items', () => {
     expect(getOpenWorkItemForChat('dc:fallback')).toBeUndefined();
   });
 
-  it('stores service shadow as a derived compatibility field from role and agent type', () => {
+  it('stores service id from role and agent type when an explicit service id is omitted', () => {
     const reviewerItem = createProducedWorkItem({
       group_folder: 'discord_test',
       chat_jid: 'dc:shadow-reviewer',
@@ -3134,5 +3548,150 @@ describe('work items', () => {
 
     expect(reviewerItem.service_id).toBe(CODEX_REVIEW_SERVICE_ID);
     expect(ownerItem.service_id).toBe(CODEX_MAIN_SERVICE_ID);
+  });
+
+  it('routes open work items by stored service id before falling back to role shadow inference', () => {
+    const reviewerItem = createProducedWorkItem({
+      group_folder: 'discord_test',
+      chat_jid: 'dc:stored-service-reviewer',
+      agent_type: 'codex',
+      service_id: 'stale-reviewer-shadow',
+      delivery_role: 'reviewer',
+      start_seq: 1,
+      end_seq: 2,
+      result_payload: 'reviewer output',
+    });
+    createProducedWorkItem({
+      group_folder: 'discord_test',
+      chat_jid: 'dc:stored-service-reviewer',
+      agent_type: 'codex',
+      service_id: CODEX_MAIN_SERVICE_ID,
+      delivery_role: 'owner',
+      start_seq: 3,
+      end_seq: 4,
+      result_payload: 'owner output',
+    });
+
+    expect(
+      getOpenWorkItem(
+        'dc:stored-service-reviewer',
+        'codex',
+        'stale-reviewer-shadow',
+      )?.id,
+    ).toBe(reviewerItem.id);
+  });
+
+  it('returns undefined when no open work item matches the requested service id or fallback role', () => {
+    createProducedWorkItem({
+      group_folder: 'discord_test',
+      chat_jid: 'dc:stored-service-mismatch',
+      agent_type: 'codex',
+      service_id: 'stale-reviewer-shadow',
+      delivery_role: 'reviewer',
+      start_seq: 1,
+      end_seq: 2,
+      result_payload: 'reviewer output',
+    });
+
+    expect(
+      getOpenWorkItem('dc:stored-service-mismatch', 'codex', CODEX_MAIN_SERVICE_ID),
+    ).toBeUndefined();
+    expect(getOpenWorkItemForChat('dc:stored-service-mismatch')).toBeUndefined();
+  });
+
+  it('allows a current-service open work item even when a stale-service open row already exists', () => {
+    createProducedWorkItem({
+      group_folder: 'discord_test',
+      chat_jid: 'dc:repro',
+      agent_type: 'codex',
+      service_id: 'stale-reviewer-shadow',
+      delivery_role: 'reviewer',
+      start_seq: 1,
+      end_seq: 2,
+      result_payload: 'stale reviewer output',
+    });
+
+    expect(getOpenWorkItemForChat('dc:repro', CODEX_MAIN_SERVICE_ID)).toBeUndefined();
+
+    const currentItem = createProducedWorkItem({
+      group_folder: 'discord_test',
+      chat_jid: 'dc:repro',
+      agent_type: 'codex',
+      service_id: CODEX_MAIN_SERVICE_ID,
+      delivery_role: 'reviewer',
+      start_seq: 3,
+      end_seq: 4,
+      result_payload: 'current reviewer output',
+    });
+
+    expect(
+      getOpenWorkItemForChat('dc:repro', CODEX_MAIN_SERVICE_ID)?.id,
+    ).toBe(currentItem.id);
+  });
+
+  it('backfills work item service ids during init on a canonical work_items schema without service_id columns', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-work-items-canonical-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    legacyDb.exec(`
+      CREATE TABLE work_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_folder TEXT NOT NULL,
+        chat_jid TEXT NOT NULL,
+        agent_type TEXT NOT NULL,
+        delivery_role TEXT,
+        status TEXT NOT NULL DEFAULT 'produced',
+        start_seq INTEGER,
+        end_seq INTEGER,
+        result_payload TEXT NOT NULL,
+        delivery_attempts INTEGER NOT NULL DEFAULT 0,
+        delivery_message_id TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        delivered_at TEXT
+      );
+    `);
+    legacyDb
+      .prepare(
+        `INSERT INTO work_items (
+          group_folder,
+          chat_jid,
+          agent_type,
+          delivery_role,
+          status,
+          start_seq,
+          end_seq,
+          result_payload,
+          delivery_attempts,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        'discord_test',
+        'dc:legacy-work-item',
+        'codex',
+        'reviewer',
+        'produced',
+        1,
+        2,
+        'legacy reviewer output',
+        0,
+        '2026-03-28T00:00:00.000Z',
+        '2026-03-28T00:00:00.000Z',
+      );
+    legacyDb.close();
+
+    _initTestDatabaseFromFile(dbPath);
+
+    expect(
+      getOpenWorkItem('dc:legacy-work-item', 'codex', CODEX_REVIEW_SERVICE_ID),
+    ).toMatchObject({
+      delivery_role: 'reviewer',
+      service_id: CODEX_REVIEW_SERVICE_ID,
+      result_payload: 'legacy reviewer output',
+    });
   });
 });

@@ -144,15 +144,6 @@ import {
   setRouterStateInDatabase,
 } from './db/router-state.js';
 import {
-  backfillChannelOwnerRoleMetadata,
-  backfillPairedTaskRoleMetadata,
-  backfillServiceHandoffServiceShadows,
-  backfillStoredRoomSettings,
-  backfillWorkItemServiceShadows,
-  rebuildChannelOwnerCanonicalSchema,
-  rebuildPairedTasksCanonicalSchema,
-  rebuildServiceHandoffsCanonicalSchema,
-  rebuildWorkItemsCanonicalSchema,
   resolveStablePairedTaskOwnerAgentType,
   resolveStableRoomRoleAgentType,
 } from './db/legacy-rebuilds.js';
@@ -163,7 +154,7 @@ import {
   getSessionFromDatabase,
   setSessionInDatabase,
 } from './db/sessions.js';
-import { type SchemaMigrationHooks, tableHasColumn } from './db/schema.js';
+import { tableHasColumn } from './db/schema.js';
 import {
   type CreateScheduledTaskInput,
   type ScheduledTaskStatusTrackingUpdates,
@@ -233,62 +224,10 @@ export type { WorkItem } from './db/work-items.js';
 export type { ChannelOwnerLeaseRow } from './db/channel-owner-leases.js';
 export type { ServiceHandoff } from './db/service-handoffs.js';
 
-function backfillMessageSeq(database: Database): void {
-  const rows = database
-    .prepare(
-      `SELECT rowid, seq
-       FROM messages
-       ORDER BY CASE WHEN seq IS NULL THEN 1 ELSE 0 END, seq, timestamp, rowid`,
-    )
-    .all() as Array<{ rowid: number; seq: number | null }>;
-
-  if (rows.length === 0) {
-    return;
-  }
-
-  let nextSeq = 1;
-  const assignSeq = database.prepare(
-    'UPDATE messages SET seq = ? WHERE rowid = ? AND seq IS NULL',
-  );
-  const tx = database.transaction(() => {
-    for (const row of rows) {
-      if (row.seq === null) {
-        assignSeq.run(nextSeq, row.rowid);
-      }
-      nextSeq = Math.max(nextSeq, (row.seq ?? nextSeq) + 1);
-    }
-  });
-  tx();
-
-  const maxSeqRow = database
-    .prepare('SELECT MAX(seq) AS maxSeq FROM messages')
-    .get() as { maxSeq: number | null };
-  const maxSeq = maxSeqRow.maxSeq ?? 0;
-  if (maxSeq > 0) {
-    database
-      .prepare('INSERT OR IGNORE INTO message_sequence (id) VALUES (?)')
-      .run(maxSeq);
-  }
-}
-
-function getSchemaMigrationHooks(): SchemaMigrationHooks {
-  return {
-    backfillMessageSeq,
-    backfillStoredRoomSettings,
-    backfillChannelOwnerRoleMetadata,
-    backfillWorkItemServiceShadows,
-    backfillServiceHandoffServiceShadows,
-    backfillPairedTaskRoleMetadata,
-    rebuildWorkItemsCanonicalSchema,
-    rebuildChannelOwnerCanonicalSchema,
-    rebuildPairedTasksCanonicalSchema,
-    rebuildServiceHandoffsCanonicalSchema,
-  };
-}
-
 export function initDatabase(): void {
   db = openPersistentDatabase();
-  initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  initializeDatabaseSchema(db);
+  syncLegacyRegisteredGroupsIntoStoredRooms();
   clearPairedTaskExecutionLeasesForServiceInDatabase(
     db,
     normalizeServiceId(SERVICE_ID),
@@ -304,7 +243,8 @@ export function initDatabase(): void {
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = openInMemoryDatabase();
-  initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  initializeDatabaseSchema(db);
+  syncLegacyRegisteredGroupsIntoStoredRooms();
   clearPairedTaskExecutionLeasesForServiceInDatabase(
     db,
     normalizeServiceId(SERVICE_ID),
@@ -315,7 +255,8 @@ export function _initTestDatabase(): void {
 /** @internal - for tests only. Opens an existing database file and runs schema/migrations. */
 export function _initTestDatabaseFromFile(dbPath: string): void {
   db = openDatabaseFromFile(dbPath);
-  initializeDatabaseSchema(db, getSchemaMigrationHooks());
+  initializeDatabaseSchema(db);
+  syncLegacyRegisteredGroupsIntoStoredRooms();
   clearPairedTaskExecutionLeasesForServiceInDatabase(
     db,
     normalizeServiceId(SERVICE_ID),
@@ -540,8 +481,11 @@ export function getOpenWorkItem(
   return getOpenWorkItemFromDatabase(db, chatJid, agentType, serviceId);
 }
 
-export function getOpenWorkItemForChat(chatJid: string): WorkItem | undefined {
-  return getOpenWorkItemForChatFromDatabase(db, chatJid);
+export function getOpenWorkItemForChat(
+  chatJid: string,
+  serviceId: string = SERVICE_SESSION_SCOPE,
+): WorkItem | undefined {
+  return getOpenWorkItemForChatFromDatabase(db, chatJid, serviceId);
 }
 
 export function createProducedWorkItem(
@@ -1051,6 +995,25 @@ function syncStoredRoomRegistrationSnapshotForJid(chatJid: string): void {
   }
 
   updateStoredRoomMetadata(db, chatJid, snapshot);
+}
+
+function syncLegacyRegisteredGroupsIntoStoredRooms(): void {
+  const rows = db
+    .prepare(
+      `SELECT DISTINCT jid
+         FROM registered_groups
+        ORDER BY jid`,
+    )
+    .all() as Array<{ jid: string }>;
+  if (rows.length === 0) {
+    return;
+  }
+
+  db.transaction((registeredGroupRows: Array<{ jid: string }>) => {
+    for (const row of registeredGroupRows) {
+      syncStoredRoomRegistrationSnapshotForJid(row.jid);
+    }
+  })(rows);
 }
 
 function buildRoomRegistrationSnapshotFromStoredRoom(

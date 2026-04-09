@@ -27,6 +27,9 @@ export interface ChannelOwnerLeaseRow {
 
 interface StoredChannelOwnerLeaseRow {
   chat_jid: string;
+  owner_service_id?: string | null;
+  reviewer_service_id?: string | null;
+  arbiter_service_id?: string | null;
   owner_agent_type?: string | null;
   reviewer_agent_type?: string | null;
   arbiter_agent_type?: string | null;
@@ -49,32 +52,55 @@ export interface SetChannelOwnerLeaseInput {
 function hydrateChannelOwnerLeaseRow(
   row: StoredChannelOwnerLeaseRow,
 ): ChannelOwnerLeaseRow {
+  const persistedOwnerAgentType = normalizeStoredAgentType(
+    row.owner_agent_type,
+  );
+  const persistedReviewerAgentType = normalizeStoredAgentType(
+    row.reviewer_agent_type,
+  );
+  const persistedArbiterAgentType = normalizeStoredAgentType(
+    row.arbiter_agent_type,
+  );
   const ownerAgentType =
-    normalizeStoredAgentType(row.owner_agent_type) ?? OWNER_AGENT_TYPE;
+    persistedOwnerAgentType ??
+    (row.owner_service_id
+      ? inferAgentTypeFromServiceShadow(row.owner_service_id)
+      : undefined) ??
+    OWNER_AGENT_TYPE;
   const reviewerAgentType =
-    row.reviewer_agent_type == null
+    row.reviewer_agent_type == null && row.reviewer_service_id == null
       ? null
-      : (normalizeStoredAgentType(row.reviewer_agent_type) ??
+      : (persistedReviewerAgentType ??
+        (row.reviewer_service_id
+          ? inferAgentTypeFromServiceShadow(row.reviewer_service_id)
+          : null) ??
         resolveStableReviewerAgentType(ownerAgentType, null));
   const arbiterAgentType =
-    row.arbiter_agent_type == null
+    row.arbiter_agent_type == null && row.arbiter_service_id == null
       ? null
-      : (normalizeStoredAgentType(row.arbiter_agent_type) ??
+      : (persistedArbiterAgentType ??
+        (row.arbiter_service_id
+          ? inferAgentTypeFromServiceShadow(row.arbiter_service_id)
+          : undefined) ??
         ARBITER_AGENT_TYPE ??
         null);
 
   return {
     chat_jid: row.chat_jid,
     owner_service_id:
-      resolveRoleServiceShadow('owner', ownerAgentType) ?? CLAUDE_SERVICE_ID,
+      row.owner_service_id ??
+      resolveRoleServiceShadow('owner', ownerAgentType) ??
+      CLAUDE_SERVICE_ID,
     reviewer_service_id:
-      reviewerAgentType == null
+      row.reviewer_service_id ??
+      (reviewerAgentType == null
         ? null
-        : resolveRoleServiceShadow('reviewer', reviewerAgentType),
+        : resolveRoleServiceShadow('reviewer', reviewerAgentType)),
     arbiter_service_id:
-      arbiterAgentType == null
+      row.arbiter_service_id ??
+      (arbiterAgentType == null
         ? null
-        : resolveRoleServiceShadow('arbiter', arbiterAgentType),
+        : resolveRoleServiceShadow('arbiter', arbiterAgentType)),
     owner_agent_type: ownerAgentType,
     reviewer_agent_type: reviewerAgentType,
     arbiter_agent_type: arbiterAgentType,
@@ -88,17 +114,7 @@ export function getChannelOwnerLeaseFromDatabase(
   chatJid: string,
 ): ChannelOwnerLeaseRow | undefined {
   const row = database
-    .prepare(
-      `SELECT
-         chat_jid,
-         owner_agent_type,
-         reviewer_agent_type,
-         arbiter_agent_type,
-         activated_at,
-         reason
-       FROM channel_owner
-       WHERE chat_jid = ?`,
-    )
+    .prepare(`SELECT * FROM channel_owner WHERE chat_jid = ?`)
     .get(chatJid) as StoredChannelOwnerLeaseRow | undefined;
   return row ? hydrateChannelOwnerLeaseRow(row) : undefined;
 }
@@ -107,16 +123,7 @@ export function getAllChannelOwnerLeasesFromDatabase(
   database: Database,
 ): ChannelOwnerLeaseRow[] {
   const rows = database
-    .prepare(
-      `SELECT
-         chat_jid,
-         owner_agent_type,
-         reviewer_agent_type,
-         arbiter_agent_type,
-         activated_at,
-         reason
-       FROM channel_owner`,
-    )
+    .prepare(`SELECT * FROM channel_owner`)
     .all() as StoredChannelOwnerLeaseRow[];
   return rows.map(hydrateChannelOwnerLeaseRow);
 }
@@ -142,20 +149,44 @@ export function setChannelOwnerLeaseInDatabase(
         inferAgentTypeFromServiceShadow(input.arbiter_service_id ?? null) ??
         ARBITER_AGENT_TYPE ??
         null);
+  const ownerServiceId =
+    input.owner_service_id ??
+    resolveRoleServiceShadow('owner', ownerAgentType) ??
+    CLAUDE_SERVICE_ID;
+  const reviewerServiceId =
+    input.reviewer_service_id == null && reviewerAgentType == null
+      ? null
+      : (input.reviewer_service_id ??
+        (reviewerAgentType == null
+          ? null
+          : resolveRoleServiceShadow('reviewer', reviewerAgentType)));
+  const arbiterServiceId =
+    input.arbiter_service_id == null && arbiterAgentType == null
+      ? null
+      : (input.arbiter_service_id ??
+        (arbiterAgentType == null
+          ? null
+          : resolveRoleServiceShadow('arbiter', arbiterAgentType)));
 
   database
     .prepare(
       `INSERT OR REPLACE INTO channel_owner (
         chat_jid,
+        owner_service_id,
+        reviewer_service_id,
+        arbiter_service_id,
         owner_agent_type,
         reviewer_agent_type,
         arbiter_agent_type,
         activated_at,
         reason
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.chat_jid,
+      ownerServiceId,
+      reviewerServiceId,
+      arbiterServiceId,
       ownerAgentType ?? null,
       reviewerAgentType ?? null,
       arbiterAgentType ?? null,

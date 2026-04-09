@@ -4,6 +4,7 @@ import {
   _setRegisteredGroupForTests,
   _setStoredRoomOwnerAgentTypeForTests,
   _initTestDatabase,
+  setChannelOwnerLease,
   setExplicitRoomMode,
 } from './db.js';
 import {
@@ -246,7 +247,7 @@ describe('service-routing global failover', () => {
 });
 
 describe('resolveLeaseServiceId', () => {
-  it('prefers canonical reviewer shadow over a stale compatibility field', () => {
+  it('trusts the stored reviewer service id when a lease row already persisted it', () => {
     expect(
       resolveLeaseServiceId(
         {
@@ -260,7 +261,7 @@ describe('resolveLeaseServiceId', () => {
         },
         'reviewer',
       ),
-    ).toBe('codex-review');
+    ).toBe('stale-reviewer-shadow');
   });
 
   it('keeps the explicit owner failover service instead of recomputing the stable shadow', () => {
@@ -278,5 +279,32 @@ describe('resolveLeaseServiceId', () => {
         'owner',
       ),
     ).toBe('codex-review');
+  });
+});
+
+describe('stored lease ids as SSOT', () => {
+  it('preserves a stored reviewer service id instead of recomputing it from role metadata', () => {
+    setChannelOwnerLease({
+      chat_jid: 'dc:stored-reviewer-ssot',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'stale-reviewer-shadow',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      activated_at: '2026-04-09T00:00:00.000Z',
+      reason: 'ssot-test',
+    });
+    refreshChannelOwnerCache(true);
+
+    const lease = getEffectiveChannelLease('dc:stored-reviewer-ssot');
+    expect(lease).toMatchObject({
+      owner_service_id: 'claude',
+      reviewer_service_id: 'stale-reviewer-shadow',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      explicit: true,
+    });
+    expect(resolveLeaseServiceId(lease, 'reviewer')).toBe(
+      'stale-reviewer-shadow',
+    );
   });
 });

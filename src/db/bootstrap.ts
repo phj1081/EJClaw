@@ -7,7 +7,7 @@ import { logger } from '../logger.js';
 import type { RegisteredGroup } from '../types.js';
 import { readJsonFile } from '../utils.js';
 import { applyBaseSchema } from './base-schema.js';
-import { type SchemaMigrationHooks, applySchemaMigrations } from './schema.js';
+import { applySchemaMigrations } from './schema.js';
 
 export interface JsonStateMigrationHooks {
   setRouterState(key: string, value: string): void;
@@ -18,14 +18,10 @@ export interface JsonStateMigrationHooks {
   ): void;
 }
 
-export function initializeDatabaseSchema(
-  database: Database,
-  hooks: SchemaMigrationHooks,
-): void {
+export function initializeDatabaseSchema(database: Database): void {
   applyBaseSchema(database);
   applySchemaMigrations(database, {
     assistantName: ASSISTANT_NAME,
-    hooks,
   });
 }
 
