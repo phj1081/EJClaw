@@ -6,9 +6,14 @@ import {
   fillCanonicalChannelOwnerLeaseMetadata,
   fillCanonicalPairedTaskMetadata,
   fillCanonicalServiceHandoffMetadata,
+  inferExecutionLeaseServiceIdFromCanonicalMetadata,
 } from '../canonical-role-metadata.js';
 import { normalizeStoredAgentType } from '../room-registration.js';
-import { tableHasColumn, tryExecMigration } from './helpers.js';
+import {
+  getTableColumns,
+  tableHasColumn,
+  tryExecMigration,
+} from './helpers.js';
 import type { SchemaMigrationDefinition } from './types.js';
 
 interface StoredPairedTaskServiceRow {
@@ -50,6 +55,17 @@ interface StoredWorkItemServiceRow {
   agent_type?: string | null;
   service_id?: string | null;
   delivery_role?: string | null;
+}
+
+interface LegacyExecutionLeaseServiceRow {
+  rowid: number;
+  role: string;
+  owner_service_id?: string | null;
+  reviewer_service_id?: string | null;
+  arbiter_service_id?: string | null;
+  owner_agent_type?: string | null;
+  reviewer_agent_type?: string | null;
+  arbiter_agent_type?: string | null;
 }
 
 function normalizePairedRole(
@@ -354,10 +370,110 @@ function backfillCanonicalWorkItemServiceIds(database: Database): void {
   tx(rows);
 }
 
+function backfillLegacyExecutionLeaseServiceShadows(database: Database): void {
+  if (
+    !tableHasColumn(
+      database,
+      'paired_task_execution_leases',
+      'claimed_service_id',
+    )
+  ) {
+    return;
+  }
+
+  const pairedTasksTable = database
+    .prepare(
+      `
+        SELECT 1
+          FROM sqlite_master
+         WHERE type = 'table'
+           AND name = 'paired_tasks'
+      `,
+    )
+    .get();
+  if (!pairedTasksTable) {
+    return;
+  }
+
+  const pairedTaskColumns = getTableColumns(database, 'paired_tasks');
+  const selectPairedTaskColumn = (columnName: string): string =>
+    pairedTaskColumns.includes(columnName)
+      ? `paired_tasks.${columnName} AS ${columnName}`
+      : `NULL AS ${columnName}`;
+
+  const rows = database
+    .prepare(
+      `
+        SELECT
+          paired_task_execution_leases.rowid AS rowid,
+          paired_task_execution_leases.role AS role,
+          ${selectPairedTaskColumn('owner_service_id')},
+          ${selectPairedTaskColumn('reviewer_service_id')},
+          ${selectPairedTaskColumn('arbiter_service_id')},
+          ${selectPairedTaskColumn('owner_agent_type')},
+          ${selectPairedTaskColumn('reviewer_agent_type')},
+          ${selectPairedTaskColumn('arbiter_agent_type')}
+        FROM paired_task_execution_leases
+        LEFT JOIN paired_tasks
+          ON paired_tasks.id = paired_task_execution_leases.task_id
+       WHERE paired_task_execution_leases.claimed_service_id IS NULL
+      `,
+    )
+    .all() as LegacyExecutionLeaseServiceRow[];
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const update = database.prepare(
+    `
+      UPDATE paired_task_execution_leases
+         SET claimed_service_id = ?
+       WHERE rowid = ?
+         AND claimed_service_id IS NULL
+    `,
+  );
+  const tx = database.transaction(
+    (leaseRows: LegacyExecutionLeaseServiceRow[]) => {
+      for (const row of leaseRows) {
+        const claimedServiceId =
+          inferExecutionLeaseServiceIdFromCanonicalMetadata(row);
+        if (!claimedServiceId) {
+          continue;
+        }
+
+        update.run(claimedServiceId, row.rowid);
+      }
+    },
+  );
+
+  tx(rows);
+}
+
 export const RUNTIME_SERVICE_METADATA_MIGRATION = {
   version: 7,
   name: 'runtime_service_metadata',
   apply(database) {
+    for (const statement of [
+      `ALTER TABLE service_handoffs ADD COLUMN intended_role TEXT`,
+      `ALTER TABLE service_handoffs ADD COLUMN source_role TEXT`,
+      `ALTER TABLE service_handoffs ADD COLUMN target_role TEXT`,
+      `ALTER TABLE service_handoffs ADD COLUMN source_agent_type TEXT`,
+      `ALTER TABLE service_handoffs ADD COLUMN source_service_id TEXT`,
+      `ALTER TABLE service_handoffs ADD COLUMN target_service_id TEXT`,
+      `ALTER TABLE paired_tasks ADD COLUMN owner_service_id TEXT`,
+      `ALTER TABLE paired_tasks ADD COLUMN reviewer_service_id TEXT`,
+      `ALTER TABLE paired_tasks ADD COLUMN owner_agent_type TEXT`,
+      `ALTER TABLE paired_tasks ADD COLUMN reviewer_agent_type TEXT`,
+      `ALTER TABLE paired_tasks ADD COLUMN arbiter_agent_type TEXT`,
+      `ALTER TABLE paired_task_execution_leases ADD COLUMN expires_at TEXT`,
+      `ALTER TABLE paired_task_execution_leases ADD COLUMN claimed_service_id TEXT`,
+      `ALTER TABLE work_items ADD COLUMN delivery_role TEXT`,
+      `ALTER TABLE work_items ADD COLUMN service_id TEXT`,
+    ]) {
+      tryExecMigration(database, statement);
+    }
+
     for (const column of [
       'owner_service_id',
       'reviewer_service_id',
@@ -372,9 +488,22 @@ export const RUNTIME_SERVICE_METADATA_MIGRATION = {
       );
     }
 
+    database.exec(`
+      UPDATE paired_task_execution_leases
+         SET expires_at = COALESCE(
+           expires_at,
+           strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+10 minutes')
+         )
+    `);
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_paired_task_execution_leases_expires_at
+        ON paired_task_execution_leases(expires_at)
+    `);
+
     backfillCanonicalPairedTaskServiceIds(database);
     backfillCanonicalChannelOwnerServiceIds(database);
     backfillCanonicalServiceHandoffServiceIds(database);
     backfillCanonicalWorkItemServiceIds(database);
+    backfillLegacyExecutionLeaseServiceShadows(database);
   },
 } satisfies SchemaMigrationDefinition;

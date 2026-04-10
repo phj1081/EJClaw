@@ -1,12 +1,7 @@
 import { Database } from 'bun:sqlite';
 
-import { inferExecutionLeaseServiceIdFromCanonicalMetadata } from './canonical-role-metadata.js';
 import { buildPairedTurnAttemptId } from './paired-turn-attempts.js';
-import {
-  getTableColumns,
-  tableHasColumn,
-  tryExecMigration,
-} from './migrations/helpers.js';
+import { tableHasColumn, tryExecMigration } from './migrations/helpers.js';
 
 // Legacy monolithic migration bundle kept for compatibility with databases
 // that predate ordered schema migration tracking. New schema changes belong in
@@ -143,17 +138,6 @@ function tableHasForeignKey(
   }
 
   return false;
-}
-
-interface LegacyExecutionLeaseServiceRow {
-  rowid: number;
-  role: string;
-  owner_service_id?: string | null;
-  reviewer_service_id?: string | null;
-  arbiter_service_id?: string | null;
-  owner_agent_type?: string | null;
-  reviewer_agent_type?: string | null;
-  arbiter_agent_type?: string | null;
 }
 
 interface PairedTurnAttemptTimingRow {
@@ -2076,160 +2060,14 @@ export function applyPairedTurnAttemptProvenanceConstraints(
   }
 }
 
-function backfillLegacyExecutionLeaseServiceShadows(database: Database): void {
-  if (
-    !tableHasColumn(
-      database,
-      'paired_task_execution_leases',
-      'claimed_service_id',
-    )
-  ) {
-    return;
-  }
-
-  const pairedTasksTable = database
-    .prepare(
-      `
-        SELECT 1
-          FROM sqlite_master
-         WHERE type = 'table'
-           AND name = 'paired_tasks'
-      `,
-    )
-    .get();
-  if (!pairedTasksTable) {
-    return;
-  }
-
-  const pairedTaskColumns = getTableColumns(database, 'paired_tasks');
-  const selectPairedTaskColumn = (columnName: string): string =>
-    pairedTaskColumns.includes(columnName)
-      ? `paired_tasks.${columnName} AS ${columnName}`
-      : `NULL AS ${columnName}`;
-
-  const rows = database
-    .prepare(
-      `
-        SELECT
-          paired_task_execution_leases.rowid AS rowid,
-          paired_task_execution_leases.role AS role,
-          ${selectPairedTaskColumn('owner_service_id')},
-          ${selectPairedTaskColumn('reviewer_service_id')},
-          ${selectPairedTaskColumn('arbiter_service_id')},
-          ${selectPairedTaskColumn('owner_agent_type')},
-          ${selectPairedTaskColumn('reviewer_agent_type')},
-          ${selectPairedTaskColumn('arbiter_agent_type')}
-        FROM paired_task_execution_leases
-        LEFT JOIN paired_tasks
-          ON paired_tasks.id = paired_task_execution_leases.task_id
-       WHERE paired_task_execution_leases.claimed_service_id IS NULL
-      `,
-    )
-    .all() as LegacyExecutionLeaseServiceRow[];
-
-  if (rows.length === 0) {
-    return;
-  }
-
-  const update = database.prepare(
-    `
-      UPDATE paired_task_execution_leases
-         SET claimed_service_id = ?
-       WHERE rowid = ?
-         AND claimed_service_id IS NULL
-    `,
-  );
-  const tx = database.transaction(
-    (leaseRows: LegacyExecutionLeaseServiceRow[]) => {
-      for (const row of leaseRows) {
-        const claimedServiceId =
-          inferExecutionLeaseServiceIdFromCanonicalMetadata(row);
-        if (!claimedServiceId) {
-          continue;
-        }
-        update.run(claimedServiceId, row.rowid);
-      }
-    },
-  );
-
-  tx(rows);
-}
-
 export function applyLegacySchemaMigrations(
   database: Database,
   _args: {
     assistantName: string;
   },
 ): void {
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN intended_role TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN source_role TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN target_role TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN source_agent_type TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN source_service_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN target_service_id TEXT`,
-  );
-
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_tasks ADD COLUMN owner_agent_type TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_tasks ADD COLUMN reviewer_agent_type TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_tasks ADD COLUMN arbiter_agent_type TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_tasks ADD COLUMN owner_service_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_tasks ADD COLUMN reviewer_service_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_task_execution_leases ADD COLUMN expires_at TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_task_execution_leases ADD COLUMN claimed_service_id TEXT`,
-  );
-  database.exec(`
-    UPDATE paired_task_execution_leases
-       SET expires_at = COALESCE(
-         expires_at,
-         strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+10 minutes')
-       )
-  `);
-  // Legacy lease rows predate claimed_service_id. Infer the original service
-  // from paired-task role metadata when possible instead of blanket-marking
-  // everything as the current service, which would let startup cleanup delete
-  // leases that belong to another runtime.
-  backfillLegacyExecutionLeaseServiceShadows(database);
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_paired_task_execution_leases_expires_at
-      ON paired_task_execution_leases(expires_at)
-  `);
+  // Some legacy columns must exist before later numbered migrations can run.
+  // `work_items.service_id` / `delivery_role` are referenced by v4 indexes.
   tryExecMigration(
     database,
     `ALTER TABLE work_items ADD COLUMN delivery_role TEXT`,
