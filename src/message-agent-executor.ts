@@ -68,7 +68,8 @@ import type { AgentType, PairedRoomRole, RegisteredGroup } from './types.js';
 
 export interface MessageAgentExecutorDeps {
   assistantName: string;
-  queue: Pick<GroupQueue, 'registerProcess' | 'enqueueMessageCheck'>;
+  queue: Pick<GroupQueue, 'registerProcess' | 'enqueueMessageCheck'> &
+    Partial<Pick<GroupQueue, 'getDirectTerminalDeliveryForRun'>>;
   getRegisteredGroups: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   persistSession: (groupFolder: string, sessionId: string) => void;
@@ -402,9 +403,21 @@ export async function runAgentForGroup(
     chatJid,
     runId,
     enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
+    getDirectTerminalDeliveryText: () =>
+      deps.queue.getDirectTerminalDeliveryForRun?.(
+        chatJid,
+        runId,
+        runtimePairedTurnIdentity?.role ?? activeRole,
+      ) ?? null,
     onOutput,
     log,
   });
+  const hasDirectTerminalDelivery = (): boolean =>
+    !!deps.queue.getDirectTerminalDeliveryForRun?.(
+      chatJid,
+      runId,
+      runtimePairedTurnIdentity?.role ?? activeRole,
+    );
 
   const maybeHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -917,7 +930,11 @@ export async function runAgentForGroup(
       });
     }
 
-    if (!attempt.sawOutput && output.status !== 'error') {
+    if (
+      !attempt.sawOutput &&
+      !hasDirectTerminalDelivery() &&
+      output.status !== 'error'
+    ) {
       const claudeRetryResult = await retryClaudeAttemptIfNeeded(attempt);
       if (claudeRetryResult) {
         return claudeRetryResult;
@@ -973,7 +990,11 @@ export async function runAgentForGroup(
 
     // success-null-result with no visible output — agent returned nothing useful.
     // But if output was already delivered to Discord (sawOutput), treat as success.
-    if (attempt.sawSuccessNullResultWithoutOutput && !attempt.sawOutput) {
+    if (
+      attempt.sawSuccessNullResultWithoutOutput &&
+      !attempt.sawOutput &&
+      !hasDirectTerminalDelivery()
+    ) {
       log.error(
         'Agent returned success with null result and no visible output',
       );
@@ -981,7 +1002,9 @@ export async function runAgentForGroup(
     }
 
     pairedExecutionLifecycle.markStatus('succeeded');
-    pairedExecutionLifecycle.markSawOutput(attempt.sawOutput);
+    pairedExecutionLifecycle.markSawOutput(
+      attempt.sawOutput || hasDirectTerminalDelivery(),
+    );
     return 'success';
   };
 

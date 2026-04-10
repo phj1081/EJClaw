@@ -124,6 +124,49 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  it('stores direct terminal text for the active run and clears it when the run ends', async () => {
+    let releaseRun!: (value: boolean) => void;
+    let runId: string | undefined;
+    const blocker = new Promise<boolean>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    queue.setProcessMessagesFn(
+      async (_groupJid: string, context: GroupRunContext) => {
+        runId = context.runId;
+        return await blocker;
+      },
+    );
+
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runId).toEqual(expect.any(String));
+
+    queue.noteDirectTerminalDelivery(
+      'group1@g.us',
+      'reviewer',
+      'DONE_WITH_CONCERNS\n리뷰 완료',
+    );
+
+    expect(
+      queue.hasDirectTerminalDeliveryForRun('group1@g.us', runId!, 'reviewer'),
+    ).toBe(true);
+    expect(
+      queue.getDirectTerminalDeliveryForRun('group1@g.us', runId!, 'reviewer'),
+    ).toBe('DONE_WITH_CONCERNS\n리뷰 완료');
+
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(
+      queue.hasDirectTerminalDeliveryForRun('group1@g.us', runId!, 'reviewer'),
+    ).toBe(false);
+    expect(
+      queue.getDirectTerminalDeliveryForRun('group1@g.us', runId!, 'reviewer'),
+    ).toBeNull();
+  });
+
   it('force-terminates a lingering process after output was delivered', async () => {
     class StubbornProcess extends EventEmitter {
       exitCode: number | null = null;

@@ -472,7 +472,7 @@ async function main(): Promise<void> {
         (senderRole === 'reviewer' || senderRole === 'arbiter') &&
         isTerminalStatusMessage(text)
       ) {
-        queue.noteDirectTerminalDelivery(jid, senderRole);
+        queue.noteDirectTerminalDelivery(jid, senderRole, text);
       }
     },
     nudgeScheduler: nudgeSchedulerLoop,
