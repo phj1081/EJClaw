@@ -26,8 +26,13 @@ export function buildRoomRoleContext(
     arbiter: arbiterServiceId === normalizedServiceId,
   };
 
+  const canHonorPreferredRole =
+    preferredRole === 'owner' ||
+    (preferredRole === 'reviewer' && reviewerServiceId !== null) ||
+    (preferredRole === 'arbiter' && arbiterServiceId !== undefined);
+
   const role =
-    preferredRole && matches[preferredRole]
+    preferredRole && canHonorPreferredRole
       ? preferredRole
       : matches.arbiter
         ? 'arbiter'

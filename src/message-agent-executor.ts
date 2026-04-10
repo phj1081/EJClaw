@@ -397,7 +397,7 @@ export async function runAgentForGroup(
   const pairedExecutionLifecycle = createPairedExecutionLifecycle({
     pairedExecutionContext,
     pairedTurnIdentity: runtimePairedTurnIdentity,
-    completedRole: roomRoleContext?.role ?? 'owner',
+    completedRole: runtimePairedTurnIdentity?.role ?? activeRole,
     chatJid,
     runId,
     enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),

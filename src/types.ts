@@ -209,6 +209,12 @@ export interface ChannelMeta {
   categoryPosition: number;
 }
 
+export interface ChannelOutboundAuditMeta {
+  channelName: string;
+  botUserId: string | null;
+  botUsername: string | null;
+}
+
 export interface Channel {
   name: string;
   connect(): Promise<void>;
@@ -229,6 +235,8 @@ export interface Channel {
   getChannelMeta?(jids: string[]): Promise<Map<string, ChannelMeta>>;
   // Optional: delete all messages in a channel (used for dashboard cleanup).
   purgeChannel?(jid: string): Promise<number>;
+  // Optional: expose runtime sender identity for outbound audit logs.
+  getOutboundAuditMeta?(): ChannelOutboundAuditMeta;
 }
 
 // Callback type that channels use to deliver inbound messages
