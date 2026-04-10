@@ -5,6 +5,7 @@ import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import { formatElapsedKorean } from './utils.js';
+import { hasRecognizedPairedTerminalSummary } from './paired-execution-context-shared.js';
 import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import {
   normalizeAgentOutputPhase,
@@ -338,11 +339,30 @@ export class MessageTurnController {
       !this.hadError &&
       this.latestProgressTextForFinal
     ) {
-      this.log.info(
-        'Sending a separate final message from the last progress output after agent completion',
-      );
-      await this.finalizeProgressMessage();
-      await this.deliverFinalText(this.latestProgressTextForFinal);
+      const pairedRole = this.options.pairedTurnIdentity?.role ?? null;
+      const shouldPromoteToFinal =
+        !pairedRole ||
+        hasRecognizedPairedTerminalSummary(
+          pairedRole,
+          this.latestProgressTextForFinal,
+        );
+      if (shouldPromoteToFinal) {
+        this.log.info(
+          'Sending a separate final message from the last progress output after agent completion',
+        );
+        await this.finalizeProgressMessage();
+        await this.deliverFinalText(this.latestProgressTextForFinal);
+      } else {
+        this.log.info(
+          {
+            pairedRole,
+            turnId: this.options.pairedTurnIdentity?.turnId ?? null,
+          },
+          'Skipped separate final message promotion because paired progress did not contain an explicit terminal verdict',
+        );
+        await this.finalizeProgressMessage();
+        this.latestProgressTextForFinal = null;
+      }
     } else if (
       this.visiblePhase === 'progress' &&
       !this.terminalObserved() &&

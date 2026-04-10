@@ -46,6 +46,7 @@ import {
   preparePairedExecutionContext,
 } from './paired-execution-context.js';
 import * as pairedWorkspaceManager from './paired-workspace-manager.js';
+import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import type {
   PairedTask,
   PairedWorkspace,
@@ -333,6 +334,51 @@ describe('paired execution context', () => {
       EJCLAW_REVIEWER_RUNTIME: '1',
       EJCLAW_PAIRED_ROLE: 'reviewer',
     });
+  });
+
+  it('reuses the persisted reviewer turn revision when a claimed handoff re-enters an already in_review task', () => {
+    const pairedTurnIdentity: PairedTurnIdentity = {
+      turnId: 'task-1:2026-03-28T00:00:00.000Z:reviewer-turn',
+      taskId: 'task-1',
+      taskUpdatedAt: '2026-03-28T00:00:00.000Z',
+      intentKind: 'reviewer-turn',
+      role: 'reviewer',
+    };
+
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(
+      buildPairedTask({
+        status: 'in_review',
+        review_requested_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:05.000Z',
+      }),
+    );
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'in_review',
+        review_requested_at: '2026-03-28T00:00:00.000Z',
+        updated_at: '2026-03-28T00:00:05.000Z',
+      }),
+    );
+    vi.mocked(
+      pairedWorkspaceManager.prepareReviewerWorkspaceForExecution,
+    ).mockReturnValue({
+      workspace: buildWorkspace('reviewer', '/tmp/paired/task-1/reviewer'),
+      autoRefreshed: false,
+    });
+
+    const result = preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-reviewer-handoff-reentry',
+      roomRoleContext: reviewerContext,
+      pairedTurnIdentity,
+    });
+
+    expect(result?.claimedTaskUpdatedAt).toBe('2026-03-28T00:00:00.000Z');
+    expect(db.updatePairedTask).not.toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({ status: 'in_review' }),
+    );
   });
 
   it('does not change task state when the reviewer snapshot is not ready', () => {

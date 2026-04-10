@@ -194,6 +194,7 @@ export async function runAgentForGroup(
     runId,
     roomRoleContext,
     hasHumanMessage: args.hasHumanMessage,
+    pairedTurnIdentity: args.pairedTurnIdentity,
   });
   const preparedTurnTaskUpdatedAt = pairedExecutionContext
     ? (pairedExecutionContext.claimedTaskUpdatedAt ??

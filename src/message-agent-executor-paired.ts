@@ -14,6 +14,7 @@ import {
   completePairedExecutionContext,
   type PreparedPairedExecutionContext,
 } from './paired-execution-context.js';
+import { hasRecognizedPairedTerminalSummary } from './paired-execution-context-shared.js';
 import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
 import { enqueuePairedFollowUpAfterEvent } from './message-runtime-follow-up.js';
 import type { PairedTurnIdentity } from './paired-turn-identity.js';
@@ -60,7 +61,8 @@ export function createPairedExecutionLifecycle(args: {
 
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
-  let pairedFinalOutput: string | null = null;
+  let pairedTerminalSummary: string | null = null;
+  let pairedTerminalOutput: string | null = null;
   let pairedExecutionCompleted = false;
   let pairedExecutionDelegated = false;
   let pairedSawOutput = false;
@@ -131,12 +133,20 @@ export function createPairedExecutionLifecycle(args: {
     leaseHeartbeatTimer.unref?.();
   }
 
+  const rememberTerminalOutputIfRecognized = (outputText: string) => {
+    if (!hasRecognizedPairedTerminalSummary(completedRole, outputText)) {
+      return;
+    }
+    pairedTerminalSummary = outputText.slice(0, 500);
+    pairedTerminalOutput = outputText;
+  };
+
   const persistPairedTurnOutputIfNeeded = () => {
     if (
       !pairedExecutionContext ||
       pairedTurnOutputPersisted ||
-      !pairedFinalOutput ||
-      pairedFinalOutput.length === 0
+      !pairedTerminalOutput ||
+      pairedTerminalOutput.length === 0
     ) {
       return;
     }
@@ -146,7 +156,7 @@ export function createPairedExecutionLifecycle(args: {
       pairedExecutionContext.task.id,
       turnNumber,
       completedRole,
-      pairedFinalOutput,
+      pairedTerminalOutput,
     );
     pairedTurnOutputPersisted = true;
   };
@@ -156,8 +166,8 @@ export function createPairedExecutionLifecycle(args: {
       completedRole !== 'owner' ||
       !pairedExecutionContext ||
       pairedExecutionCompleted ||
-      !pairedFinalOutput ||
-      pairedFinalOutput.length === 0
+      !pairedTerminalOutput ||
+      pairedTerminalOutput.length === 0
     ) {
       return;
     }
@@ -171,7 +181,7 @@ export function createPairedExecutionLifecycle(args: {
       role: completedRole,
       status: 'succeeded',
       runId,
-      summary: pairedExecutionSummary,
+      summary: pairedTerminalSummary ?? pairedExecutionSummary,
     });
     pairedExecutionCompleted = true;
   };
@@ -180,6 +190,7 @@ export function createPairedExecutionLifecycle(args: {
     updateSummary({ outputText, errorText }) {
       if (outputText && outputText.length > 0) {
         pairedExecutionSummary = outputText.slice(0, 500);
+        rememberTerminalOutputIfRecognized(outputText);
         return;
       }
 
@@ -189,7 +200,7 @@ export function createPairedExecutionLifecycle(args: {
     },
 
     recordFinalOutputBeforeDelivery(outputText) {
-      pairedFinalOutput = outputText;
+      rememberTerminalOutputIfRecognized(outputText);
       completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded();
       persistPairedTurnOutputIfNeeded();
     },
@@ -254,12 +265,29 @@ export function createPairedExecutionLifecycle(args: {
         return;
       }
 
+      const missingReviewerOrArbiterVerdict =
+        (completedRole === 'reviewer' || completedRole === 'arbiter') &&
+        pairedExecutionStatus === 'succeeded' &&
+        !pairedTerminalSummary;
       const effectiveStatus =
         completedRole === 'owner' &&
         pairedExecutionStatus === 'succeeded' &&
         !pairedSawOutput
           ? 'failed'
-          : pairedExecutionStatus;
+          : missingReviewerOrArbiterVerdict
+            ? 'failed'
+            : pairedExecutionStatus;
+
+      if (missingReviewerOrArbiterVerdict) {
+        log.warn(
+          {
+            pairedTaskId: pairedExecutionContext?.task.id ?? null,
+            role: completedRole,
+            summary: pairedExecutionSummary,
+          },
+          'Downgraded paired reviewer/arbiter completion to failed because no explicit terminal verdict was emitted',
+        );
+      }
 
       if (pairedExecutionContext && !pairedExecutionCompleted) {
         if (effectiveStatus === 'succeeded') {
@@ -278,7 +306,10 @@ export function createPairedExecutionLifecycle(args: {
           role: completedRole,
           status: effectiveStatus,
           runId,
-          summary: pairedExecutionSummary,
+          summary:
+            effectiveStatus === 'succeeded'
+              ? (pairedTerminalSummary ?? pairedExecutionSummary)
+              : (pairedExecutionSummary ?? pairedTerminalSummary),
         });
         pairedExecutionCompleted = true;
       }

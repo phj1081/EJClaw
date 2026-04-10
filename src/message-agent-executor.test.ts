@@ -1236,6 +1236,99 @@ describe('runAgentForGroup room memory', () => {
     ]);
   });
 
+  it('fails a paired reviewer turn when the run ends after progress-only output without an explicit reviewer verdict', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      workDir: '/repo/canonical',
+    };
+
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-reviewer-progress-only',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: '2026-04-10T00:00:00.000Z',
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        updated_at: '2026-04-10T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result:
+            '요청 범위가 실제로 지워졌는지와 검증 근거가 맞는지 확인하겠습니다.',
+          output: {
+            visibility: 'public',
+            text: '요청 범위가 실제로 지워졌는지와 검증 근거가 맞는지 확인하겠습니다.',
+          },
+        } as AgentOutput);
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result:
+            '우선 변경 파일과 현재 계약 노출 지점을 직접 읽고, 필요하면 전용 검증도 다시 돌리겠습니다.',
+          output: {
+            visibility: 'public',
+            text: '우선 변경 파일과 현재 계약 노출 지점을 직접 읽고, 필요하면 전용 검증도 다시 돌리겠습니다.',
+          },
+        } as AgentOutput);
+        return {
+          status: 'success',
+          result: null,
+        } as AgentOutput;
+      },
+    );
+
+    await expect(
+      runAgentForGroup(makeDeps(), {
+        group,
+        prompt: 'review please',
+        chatJid: 'group@test',
+        runId: 'run-reviewer-progress-only',
+        forcedRole: 'reviewer',
+        forcedAgentType: 'codex',
+        pairedTurnIdentity: {
+          turnId:
+            'paired-task-reviewer-progress-only:2026-04-10T00:00:00.000Z:reviewer-turn',
+          taskId: 'paired-task-reviewer-progress-only',
+          taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+          intentKind: 'reviewer-turn',
+          role: 'reviewer',
+        },
+      }),
+    ).resolves.toBe('success');
+
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'paired-task-reviewer-progress-only',
+        role: 'reviewer',
+        status: 'failed',
+        summary: expect.stringContaining(
+          '우선 변경 파일과 현재 계약 노출 지점을',
+        ),
+      }),
+    );
+  });
+
   it('logs streamed activity with resolved execution attribution', async () => {
     const group = {
       ...makeGroup(),

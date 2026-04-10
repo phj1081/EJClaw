@@ -59,6 +59,28 @@ function makeTurnIdentity(): PairedTurnIdentity {
   };
 }
 
+function makeTurnIdentityWithRole(
+  role: PairedTurnIdentity['role'],
+): PairedTurnIdentity {
+  return {
+    ...makeTurnIdentity(),
+    role,
+    intentKind:
+      role === 'arbiter'
+        ? 'arbiter-turn'
+        : role === 'owner'
+          ? 'owner-turn'
+          : 'reviewer-turn',
+    turnId: `task-1:2026-04-10T14:22:00.000Z:${
+      role === 'arbiter'
+        ? 'arbiter-turn'
+        : role === 'owner'
+          ? 'owner-turn'
+          : 'reviewer-turn'
+    }`,
+  };
+}
+
 async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -220,5 +242,45 @@ describe('MessageTurnController outbound audit logging', () => {
         }),
       ]),
     );
+  });
+
+  it('does not promote paired reviewer progress-only output to a final message when no explicit verdict was emitted', async () => {
+    const channel = makeChannel();
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-reviewer-progress-only',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: false,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      deliveryRole: 'reviewer',
+      deliveryServiceId: 'codex-review',
+      pairedTurnIdentity: makeTurnIdentityWithRole('reviewer'),
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result:
+        '요청 범위가 실제로 지워졌는지와 검증 근거가 맞는지 확인하겠습니다.',
+    } as any);
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result:
+        '우선 변경 파일과 현재 계약 노출 지점을 직접 읽고, 필요하면 전용 검증도 다시 돌리겠습니다.',
+    } as any);
+    await flushAsync();
+    await controller.finish('success');
+
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(deliverFinalText).not.toHaveBeenCalled();
   });
 });

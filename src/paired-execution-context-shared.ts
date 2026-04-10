@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import { isArbiterEnabled } from './config.js';
 import { updatePairedTaskIfUnchanged } from './db.js';
 import { logger } from './logger.js';
-import type { PairedTaskStatus } from './types.js';
+import type { PairedRoomRole, PairedTaskStatus } from './types.js';
 
 export type VisibleVerdict =
   | 'done'
@@ -147,6 +147,25 @@ export function classifyArbiterVerdict(
     return verdictMatch[1].toLowerCase() as ArbiterVerdictResult;
   }
   return 'unknown';
+}
+
+export function hasRecognizedPairedTerminalSummary(
+  role: PairedRoomRole,
+  summary: string | null | undefined,
+): boolean {
+  if (!summary || summary.trim().length === 0) {
+    return false;
+  }
+
+  if (role === 'owner') {
+    return true;
+  }
+
+  if (role === 'reviewer') {
+    return parseVisibleVerdict(summary) !== 'continue';
+  }
+
+  return classifyArbiterVerdict(summary) !== 'unknown';
 }
 
 export function resolveCanonicalSourceRef(workDir: string): string {
