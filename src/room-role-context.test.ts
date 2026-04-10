@@ -137,6 +137,32 @@ describe('buildRoomRoleContext', () => {
     });
   });
 
+  it('keeps the preferred reviewer role when fallback execution shares the arbiter service shadow', () => {
+    expect(
+      buildRoomRoleContext(
+        {
+          chat_jid: 'group@test',
+          owner_service_id: 'codex-main',
+          reviewer_service_id: 'claude',
+          arbiter_service_id: 'codex-review',
+          owner_failover_active: false,
+          activated_at: null,
+          reason: null,
+          explicit: false,
+        },
+        'codex-review',
+        'reviewer',
+      ),
+    ).toEqual({
+      serviceId: 'codex-review',
+      role: 'reviewer',
+      ownerServiceId: 'codex-main',
+      reviewerServiceId: 'claude',
+      failoverOwner: false,
+      arbiterServiceId: 'codex-review',
+    });
+  });
+
   it('returns undefined for a non-paired room', () => {
     expect(
       buildRoomRoleContext(

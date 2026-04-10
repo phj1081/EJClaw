@@ -743,6 +743,68 @@ describe('runAgentForGroup room memory', () => {
     expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
   });
 
+  it('allows a claimed paired turn revision when preparation advances the task before execution', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-prep-advance',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: '2026-04-10T00:00:00.000Z',
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        updated_at: '2026-04-10T01:00:00.000Z',
+      },
+      claimedTaskUpdatedAt: '2026-04-10T00:00:00.000Z',
+      workspace: null,
+      envOverrides: {},
+    });
+
+    await expect(
+      runAgentForGroup(makeDeps(), {
+        group,
+        prompt: 'hello',
+        chatJid: 'group@test',
+        runId: 'run-claimed-paired-turn-revision',
+        forcedRole: 'reviewer',
+        pairedTurnIdentity: {
+          turnId:
+            'paired-task-prep-advance:2026-04-10T00:00:00.000Z:reviewer-turn',
+          taskId: 'paired-task-prep-advance',
+          taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+          intentKind: 'reviewer-turn',
+          role: 'reviewer',
+        },
+      }),
+    ).resolves.toBe('success');
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      group,
+      expect.any(Object),
+      expect.any(Function),
+      expect.any(Function),
+      expect.objectContaining({
+        EJCLAW_PAIRED_TURN_ID:
+          'paired-task-prep-advance:2026-04-10T00:00:00.000Z:reviewer-turn',
+        EJCLAW_PAIRED_TURN_ROLE: 'reviewer',
+        EJCLAW_PAIRED_TURN_INTENT: 'reviewer-turn',
+        EJCLAW_PAIRED_TASK_UPDATED_AT: '2026-04-10T00:00:00.000Z',
+      }),
+    );
+  });
+
   it('fails closed when a persisted paired turn revision mismatches the latest paired task fallback', async () => {
     const group = { ...makeGroup(), folder: 'test-group' };
 

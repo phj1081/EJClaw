@@ -5,11 +5,13 @@ import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import { formatElapsedKorean } from './utils.js';
+import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import {
   normalizeAgentOutputPhase,
   toVisiblePhase,
   type AgentOutputPhase,
   type Channel,
+  type PairedRoomRole,
   type RegisteredGroup,
   type VisiblePhase,
 } from './types.js';
@@ -32,6 +34,9 @@ interface MessageTurnControllerOptions {
   clearSession: () => void;
   requestClose: (reason: string) => void;
   deliverFinalText: (text: string) => Promise<boolean>;
+  deliveryRole?: PairedRoomRole | null;
+  deliveryServiceId?: string | null;
+  pairedTurnIdentity?: PairedTurnIdentity | null;
 }
 
 export class MessageTurnController {
@@ -64,6 +69,41 @@ export class MessageTurnController {
       groupFolder: options.group.folder,
       runId: options.runId,
     });
+  }
+
+  private buildOutboundAuditContext(
+    extra: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    const outboundMeta = this.options.channel.getOutboundAuditMeta?.();
+    return {
+      chatJid: this.options.chatJid,
+      runId: this.options.runId,
+      deliveryRole:
+        this.options.deliveryRole ??
+        this.options.pairedTurnIdentity?.role ??
+        null,
+      serviceId: this.options.deliveryServiceId ?? null,
+      turnId: this.options.pairedTurnIdentity?.turnId ?? null,
+      turnRole: this.options.pairedTurnIdentity?.role ?? null,
+      intentKind: this.options.pairedTurnIdentity?.intentKind ?? null,
+      channelName: outboundMeta?.channelName ?? this.options.channel.name,
+      botUserId: outboundMeta?.botUserId ?? null,
+      botUsername: outboundMeta?.botUsername ?? null,
+      ...extra,
+    };
+  }
+
+  private logOutboundAudit(
+    auditEvent: string,
+    extra: Record<string, unknown> = {},
+  ): void {
+    this.log.info(
+      this.buildOutboundAuditContext({
+        auditEvent,
+        ...extra,
+      }),
+      'Outbound message audit',
+    );
   }
 
   private async setTyping(
@@ -481,6 +521,11 @@ export class MessageTurnController {
       );
       this.latestProgressRendered = rendered;
       this.progressEditFailCount = 0;
+      this.logOutboundAudit('progress-edit', {
+        messageId: this.progressMessageId,
+        textLength: this.latestProgressText.length,
+        renderedLength: rendered.length,
+      });
     } catch (err) {
       this.progressEditFailCount++;
       this.log.warn(
@@ -529,7 +574,16 @@ export class MessageTurnController {
   private async deliverFinalText(text: string): Promise<void> {
     await this.activateTyping('turn:deliver-final');
     this.visiblePhase = toVisiblePhase('final');
+    this.logOutboundAudit('final-delivery-attempt', {
+      messageId: this.progressMessageId,
+      textLength: text.length,
+    });
     const delivered = await this.options.deliverFinalText(text);
+    this.logOutboundAudit('final-delivery-result', {
+      messageId: this.progressMessageId,
+      textLength: text.length,
+      delivered,
+    });
     if (!delivered) {
       this.producedDeliverySucceeded = false;
     }
@@ -581,6 +635,12 @@ export class MessageTurnController {
     if (!this.options.channel.sendAndTrack) {
       this.latestProgressRendered = rendered;
       await this.options.channel.sendMessage(this.options.chatJid, rendered);
+      this.logOutboundAudit('progress-fallback-send', {
+        messageId: null,
+        tracked: false,
+        textLength: text.length,
+        renderedLength: rendered.length,
+      });
       this.visiblePhase = toVisiblePhase('progress');
       return;
     }
@@ -594,6 +654,13 @@ export class MessageTurnController {
       this.log.warn({ err }, 'Failed to send tracked progress message');
       this.latestProgressRendered = rendered;
       await this.options.channel.sendMessage(this.options.chatJid, rendered);
+      this.logOutboundAudit('progress-fallback-send', {
+        messageId: null,
+        tracked: false,
+        fallbackReason: 'tracked-send-error',
+        textLength: text.length,
+        renderedLength: rendered.length,
+      });
       this.visiblePhase = toVisiblePhase('progress');
       return;
     }
@@ -607,6 +674,12 @@ export class MessageTurnController {
         'Created tracked progress message',
       );
       this.latestProgressRendered = rendered;
+      this.logOutboundAudit('progress-create', {
+        messageId: this.progressMessageId,
+        tracked: true,
+        textLength: text.length,
+        renderedLength: rendered.length,
+      });
       this.ensureProgressTicker();
       this.visiblePhase = toVisiblePhase('progress');
       return;
@@ -614,6 +687,13 @@ export class MessageTurnController {
 
     this.latestProgressRendered = rendered;
     await this.options.channel.sendMessage(this.options.chatJid, rendered);
+    this.logOutboundAudit('progress-fallback-send', {
+      messageId: null,
+      tracked: false,
+      fallbackReason: 'tracked-send-returned-null',
+      textLength: text.length,
+      renderedLength: rendered.length,
+    });
     this.visiblePhase = toVisiblePhase('progress');
   }
 

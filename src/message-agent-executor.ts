@@ -195,12 +195,17 @@ export async function runAgentForGroup(
     roomRoleContext,
     hasHumanMessage: args.hasHumanMessage,
   });
+  const preparedTurnTaskUpdatedAt = pairedExecutionContext
+    ? (pairedExecutionContext.claimedTaskUpdatedAt ??
+      pairedExecutionContext.task.updated_at)
+    : undefined;
   const runtimePairedTurnIdentity =
     args.pairedTurnIdentity ??
     (pairedExecutionContext
       ? resolveRuntimePairedTurnIdentity({
           taskId: pairedExecutionContext.task.id,
-          taskUpdatedAt: pairedExecutionContext.task.updated_at,
+          taskUpdatedAt:
+            preparedTurnTaskUpdatedAt ?? pairedExecutionContext.task.updated_at,
           role: activeRole,
           taskStatus: pairedExecutionContext.task.status,
           hasHumanMessage: args.hasHumanMessage,
@@ -230,8 +235,7 @@ export async function runAgentForGroup(
     }
     if (
       pairedExecutionContext &&
-      runtimePairedTurnIdentity.taskUpdatedAt !==
-        pairedExecutionContext.task.updated_at
+      runtimePairedTurnIdentity.taskUpdatedAt !== preparedTurnTaskUpdatedAt
     ) {
       throw new Error(
         `Paired turn ${runtimePairedTurnIdentity.turnId} task_updated_at does not match the prepared execution context`,
@@ -393,7 +397,7 @@ export async function runAgentForGroup(
   const pairedExecutionLifecycle = createPairedExecutionLifecycle({
     pairedExecutionContext,
     pairedTurnIdentity: runtimePairedTurnIdentity,
-    completedRole: roomRoleContext?.role ?? 'owner',
+    completedRole: runtimePairedTurnIdentity?.role ?? activeRole,
     chatJid,
     runId,
     enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),

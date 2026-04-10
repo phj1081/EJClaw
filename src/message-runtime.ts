@@ -268,6 +268,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     const pairedRoom = hasReviewerLease(chatJid);
     const resolvedDeliveryRole =
       args.deliveryRole ?? args.forcedRole ?? (pairedRoom ? 'owner' : null);
+    const resolvedDeliveryServiceId = resolveLeaseServiceId(
+      getEffectiveChannelLease(chatJid),
+      resolvedDeliveryRole ?? 'owner',
+    );
     const turnController = new MessageTurnController({
       chatJid,
       group,
@@ -279,13 +283,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       clearSession: () => deps.clearSession(group.folder),
       requestClose: (reason) =>
         deps.queue.closeStdin(chatJid, { runId, reason }),
+      deliveryRole: resolvedDeliveryRole,
+      deliveryServiceId: resolvedDeliveryServiceId,
+      pairedTurnIdentity: args.pairedTurnIdentity ?? null,
       deliverFinalText: async (text) => {
         try {
           const persistedDeliveryRole = resolvedDeliveryRole;
-          const persistedDeliveryServiceId = resolveLeaseServiceId(
-            getEffectiveChannelLease(chatJid),
-            persistedDeliveryRole ?? 'owner',
-          );
+          const persistedDeliveryServiceId = resolvedDeliveryServiceId;
           if (
             (persistedDeliveryRole === 'reviewer' ||
               persistedDeliveryRole === 'arbiter') &&

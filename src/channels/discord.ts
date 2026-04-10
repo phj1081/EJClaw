@@ -601,6 +601,8 @@ export class DiscordChannel implements Channel {
           attachmentCount: files.length,
           messageId: sentMessageIds[0] ?? null,
           messageIds: sentMessageIds,
+          botUserId: this.client.user?.id ?? null,
+          botUsername: this.client.user?.username ?? null,
         },
         'Discord message sent',
       );
@@ -689,11 +691,31 @@ export class DiscordChannel implements Channel {
       const channel = await this.client.channels.fetch(channelId);
       if (!channel || !('send' in channel)) return null;
       const msg = await (channel as TextChannel).send(text);
+      logger.info(
+        {
+          jid,
+          channelName: this.name,
+          deliveryMode: 'tracked-send',
+          messageId: msg.id,
+          botUserId: this.client.user?.id ?? null,
+          botUsername: this.client.user?.username ?? null,
+          length: text.length,
+        },
+        'Discord tracked message sent',
+      );
       return msg.id;
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send tracked Discord message');
       throw err;
     }
+  }
+
+  getOutboundAuditMeta() {
+    return {
+      channelName: this.name,
+      botUserId: this.client?.user?.id ?? null,
+      botUsername: this.client?.user?.username ?? null,
+    };
   }
 
   async getChannelMeta(jids: string[]): Promise<Map<string, ChannelMeta>> {
@@ -813,12 +835,21 @@ export class DiscordChannel implements Channel {
           deliveryMode: 'edit',
           messageId,
           length: text.length,
+          botUserId: this.client.user?.id ?? null,
+          botUsername: this.client.user?.username ?? null,
         },
         'Discord message edited',
       );
     } catch (err) {
       logger.debug(
-        { jid, channelName: this.name, messageId, err },
+        {
+          jid,
+          channelName: this.name,
+          messageId,
+          botUserId: this.client?.user?.id ?? null,
+          botUsername: this.client?.user?.username ?? null,
+          err,
+        },
         'Failed to edit Discord message',
       );
       throw err; // Re-throw so callers (e.g. dashboard) can reset message ID
