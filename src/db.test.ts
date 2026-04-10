@@ -1311,6 +1311,57 @@ describe('paired task state', () => {
     });
   });
 
+  it('fails fast when a paired task row loses canonical agent metadata after init', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-paired-task-strict-read-');
+    const dbPath = path.join(tempDir, 'messages.db');
+
+    try {
+      const fileDb = new Database(dbPath);
+      initializeDatabaseSchema(fileDb);
+      fileDb.close();
+
+      _initTestDatabaseFromFile(dbPath);
+      createPairedTask({
+        id: 'paired-task-strict-read',
+        chat_jid: 'dc:paired-task-strict-read',
+        group_folder: 'paired-task-strict-read',
+        owner_service_id: CODEX_MAIN_SERVICE_ID,
+        reviewer_service_id: CLAUDE_SERVICE_ID,
+        owner_agent_type: 'codex',
+        reviewer_agent_type: 'claude-code',
+        arbiter_agent_type: null,
+        title: 'strict read task',
+        source_ref: null,
+        plan_notes: null,
+        review_requested_at: null,
+        round_trip_count: 0,
+        status: 'active',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        updated_at: '2026-04-10T00:00:00.000Z',
+      });
+
+      const rawDb = new Database(dbPath);
+      rawDb
+        .prepare(
+          `UPDATE paired_tasks
+              SET reviewer_agent_type = NULL
+            WHERE id = ?`,
+        )
+        .run('paired-task-strict-read');
+      rawDb.close();
+
+      expect(() => getPairedTaskById('paired-task-strict-read')).toThrow(
+        /cannot read reviewer_agent_type from stored row metadata/,
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+    }
+  });
+
   it('preserves stored reviewer service ids during init even when reviewer agent metadata exists', () => {
     const tempDir = fs.mkdtempSync(
       '/tmp/ejclaw-channel-owner-stored-reviewer-',
@@ -1369,6 +1420,44 @@ describe('paired task state', () => {
       owner_agent_type: 'claude-code',
       reviewer_agent_type: 'codex',
     });
+  });
+
+  it('fails fast when a channel owner lease row loses canonical reviewer metadata after init', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-channel-owner-strict-read-');
+    const dbPath = path.join(tempDir, 'messages.db');
+
+    try {
+      const fileDb = new Database(dbPath);
+      initializeDatabaseSchema(fileDb);
+      fileDb.close();
+
+      _initTestDatabaseFromFile(dbPath);
+      setChannelOwnerLease({
+        chat_jid: 'dc:channel-owner-strict-read',
+        owner_service_id: CODEX_MAIN_SERVICE_ID,
+        reviewer_service_id: CLAUDE_SERVICE_ID,
+        owner_agent_type: 'codex',
+        reviewer_agent_type: 'claude-code',
+        reason: 'strict read setup',
+      });
+
+      const rawDb = new Database(dbPath);
+      rawDb
+        .prepare(
+          `UPDATE channel_owner
+              SET reviewer_agent_type = NULL
+            WHERE chat_jid = ?`,
+        )
+        .run('dc:channel-owner-strict-read');
+      rawDb.close();
+
+      expect(() =>
+        getChannelOwnerLease('dc:channel-owner-strict-read'),
+      ).toThrow(/cannot read reviewer_agent_type from stored row metadata/);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+    }
   });
 
   it('fails init when stored paired task metadata conflicts with stored service ids even if room settings differ', () => {
@@ -3379,6 +3468,48 @@ describe('service handoff completion', () => {
     expect(() => _initTestDatabaseFromFile(dbPath)).toThrow(
       /target_role conflicts with target_service_id/,
     );
+  });
+
+  it('fails fast when a service handoff row loses canonical target metadata after init', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-handoff-strict-read-');
+    const dbPath = path.join(tempDir, 'messages.db');
+
+    try {
+      const fileDb = new Database(dbPath);
+      initializeDatabaseSchema(fileDb);
+      fileDb.close();
+
+      _initTestDatabaseFromFile(dbPath);
+      const handoff = createServiceHandoff({
+        chat_jid: 'dc:handoff-strict-read',
+        group_folder: 'handoff-strict-read',
+        source_service_id: CLAUDE_SERVICE_ID,
+        target_service_id: CODEX_REVIEW_SERVICE_ID,
+        source_role: 'owner',
+        target_role: 'reviewer',
+        source_agent_type: 'claude-code',
+        target_agent_type: 'codex',
+        prompt: 'strict read handoff',
+        intended_role: 'reviewer',
+      });
+
+      const rawDb = new Database(dbPath);
+      rawDb
+        .prepare(
+          `UPDATE service_handoffs
+              SET target_agent_type = ''
+            WHERE id = ?`,
+        )
+        .run(handoff.id);
+      rawDb.close();
+
+      expect(() => getPendingServiceHandoffs(CODEX_REVIEW_SERVICE_ID)).toThrow(
+        /cannot read target_agent_type from stored row metadata/,
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+    }
   });
 
   it('preserves an explicit reviewer target service id when creating a new handoff', () => {
@@ -8684,6 +8815,49 @@ describe('work items', () => {
     expect(getOpenWorkItemForChat('dc:repro', CODEX_MAIN_SERVICE_ID)?.id).toBe(
       currentItem.id,
     );
+  });
+
+  it('fails fast when a work item row loses canonical agent metadata after init', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-work-item-strict-read-');
+    const dbPath = path.join(tempDir, 'messages.db');
+
+    try {
+      const fileDb = new Database(dbPath);
+      initializeDatabaseSchema(fileDb);
+      fileDb.close();
+
+      _initTestDatabaseFromFile(dbPath);
+      const item = createProducedWorkItem({
+        group_folder: 'discord_test',
+        chat_jid: 'dc:work-item-strict-read',
+        agent_type: 'codex',
+        service_id: CODEX_REVIEW_SERVICE_ID,
+        delivery_role: 'reviewer',
+        start_seq: 1,
+        end_seq: 2,
+        result_payload: 'strict read work item',
+      });
+
+      const rawDb = new Database(dbPath);
+      rawDb
+        .prepare(
+          `UPDATE work_items
+              SET agent_type = ''
+            WHERE id = ?`,
+        )
+        .run(item.id);
+      rawDb.close();
+
+      expect(() =>
+        getOpenWorkItemForChat(
+          'dc:work-item-strict-read',
+          CODEX_REVIEW_SERVICE_ID,
+        ),
+      ).toThrow(/cannot read agent_type from stored row metadata/);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+    }
   });
 
   it('backfills work item service ids during init on a canonical work_items schema without service_id columns', () => {

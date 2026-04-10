@@ -9,7 +9,10 @@ import {
   buildPairedTurnIdentity,
   resolvePairedTurnRole,
 } from '../paired-turn-identity.js';
-import { canonicalizePairedTaskMetadata } from './canonical-role-metadata.js';
+import {
+  fillCanonicalPairedTaskMetadata,
+  readCanonicalPairedTaskMetadata,
+} from './canonical-role-metadata.js';
 import {
   ensurePairedTurnQueuedInDatabase,
   markPairedTurnRunningInDatabase,
@@ -74,7 +77,7 @@ function hydratePairedTaskRow(
     arbiterAgentType,
     ownerServiceId,
     reviewerServiceId,
-  } = canonicalizePairedTaskMetadata({
+  } = readCanonicalPairedTaskMetadata({
     id: row.id,
     owner_service_id: row.owner_service_id,
     reviewer_service_id: row.reviewer_service_id,
@@ -142,7 +145,7 @@ export function createPairedTaskInDatabase(
     arbiterAgentType,
     ownerServiceId,
     reviewerServiceId,
-  } = canonicalizePairedTaskMetadata({
+  } = fillCanonicalPairedTaskMetadata({
     id: task.id,
     owner_service_id: task.owner_service_id,
     reviewer_service_id: task.reviewer_service_id,

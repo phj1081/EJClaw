@@ -53,7 +53,7 @@ function normalizeStoredAgentType(
   return undefined;
 }
 
-function resolveStoredWorkItemServiceId(args: {
+function fillCanonicalWorkItemServiceId(args: {
   agentType: AgentType;
   deliveryRole?: PairedRoomRole | null;
   serviceId?: string | null;
@@ -65,16 +65,37 @@ function resolveStoredWorkItemServiceId(args: {
   );
 }
 
+function readStoredWorkItemAgentType(
+  row: Pick<StoredWorkItemRow, 'id' | 'agent_type'>,
+): AgentType {
+  const agentType = normalizeStoredAgentType(row.agent_type);
+  if (agentType) {
+    return agentType;
+  }
+
+  throw new Error(
+    `work_items(${row.id}): cannot read agent_type from stored row metadata`,
+  );
+}
+
+function readStoredWorkItemServiceId(
+  row: Pick<StoredWorkItemRow, 'id' | 'service_id'>,
+): string {
+  if (row.service_id) {
+    return normalizeServiceId(row.service_id);
+  }
+
+  throw new Error(
+    `work_items(${row.id}): cannot read service_id from stored row metadata`,
+  );
+}
+
 function hydrateWorkItemRow(row: StoredWorkItemRow): WorkItem {
-  const agentType = normalizeStoredAgentType(row.agent_type) ?? 'claude-code';
+  const agentType = readStoredWorkItemAgentType(row);
   return {
     ...row,
     agent_type: agentType,
-    service_id: resolveStoredWorkItemServiceId({
-      agentType,
-      deliveryRole: row.delivery_role,
-      serviceId: row.service_id,
-    }),
+    service_id: readStoredWorkItemServiceId(row),
   };
 }
 
@@ -182,7 +203,7 @@ export function createProducedWorkItemInDatabase(
 ): WorkItem {
   const now = new Date().toISOString();
   const agentType = input.agent_type || 'claude-code';
-  const serviceId = resolveStoredWorkItemServiceId({
+  const serviceId = fillCanonicalWorkItemServiceId({
     agentType,
     deliveryRole: input.delivery_role,
     serviceId: input.service_id,

@@ -1,7 +1,10 @@
 import { Database } from 'bun:sqlite';
 
 import { AgentType } from '../types.js';
-import { canonicalizeChannelOwnerLeaseMetadata } from './canonical-role-metadata.js';
+import {
+  fillCanonicalChannelOwnerLeaseMetadata,
+  readCanonicalChannelOwnerLeaseMetadata,
+} from './canonical-role-metadata.js';
 
 export interface ChannelOwnerLeaseRow {
   chat_jid: string;
@@ -49,7 +52,7 @@ function hydrateChannelOwnerLeaseRow(
     ownerServiceId,
     reviewerServiceId,
     arbiterServiceId,
-  } = canonicalizeChannelOwnerLeaseMetadata({
+  } = readCanonicalChannelOwnerLeaseMetadata({
     chat_jid: row.chat_jid,
     owner_service_id: row.owner_service_id,
     reviewer_service_id: row.reviewer_service_id,
@@ -102,7 +105,7 @@ export function setChannelOwnerLeaseInDatabase(
     ownerServiceId,
     reviewerServiceId,
     arbiterServiceId,
-  } = canonicalizeChannelOwnerLeaseMetadata({
+  } = fillCanonicalChannelOwnerLeaseMetadata({
     chat_jid: input.chat_jid,
     owner_service_id: input.owner_service_id,
     reviewer_service_id: input.reviewer_service_id,

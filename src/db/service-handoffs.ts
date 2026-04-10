@@ -19,7 +19,10 @@ import {
   getLatestMessageSeqAtOrBeforeFromDatabase,
   normalizeSeqCursor,
 } from './messages.js';
-import { canonicalizeServiceHandoffMetadata } from './canonical-role-metadata.js';
+import {
+  fillCanonicalServiceHandoffMetadata,
+  readCanonicalServiceHandoffMetadata,
+} from './canonical-role-metadata.js';
 import {
   getRouterStateFromDatabase,
   setRouterStateInDatabase,
@@ -133,7 +136,7 @@ function hydrateServiceHandoffRow(
     targetAgentType,
     sourceServiceId,
     targetServiceId,
-  } = canonicalizeServiceHandoffMetadata({
+  } = readCanonicalServiceHandoffMetadata({
     id: row.id,
     chat_jid: row.chat_jid,
     source_service_id: row.source_service_id,
@@ -249,7 +252,7 @@ export function createServiceHandoffInDatabase(
     targetAgentType,
     sourceServiceId,
     targetServiceId,
-  } = canonicalizeServiceHandoffMetadata({
+  } = fillCanonicalServiceHandoffMetadata({
     id: 'new',
     chat_jid: input.chat_jid,
     source_service_id: input.source_service_id,

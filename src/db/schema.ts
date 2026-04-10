@@ -6,9 +6,9 @@ import {
   resolveRoleServiceShadow,
 } from '../role-service-shadow.js';
 import {
-  canonicalizeChannelOwnerLeaseMetadata,
-  canonicalizePairedTaskMetadata,
-  canonicalizeServiceHandoffMetadata,
+  fillCanonicalChannelOwnerLeaseMetadata,
+  fillCanonicalPairedTaskMetadata,
+  fillCanonicalServiceHandoffMetadata,
   inferExecutionLeaseServiceIdFromCanonicalMetadata,
 } from './canonical-role-metadata.js';
 import {
@@ -2320,7 +2320,7 @@ function backfillCanonicalPairedTaskServiceIds(database: Database): void {
         arbiterAgentType,
         ownerServiceId,
         reviewerServiceId,
-      } = canonicalizePairedTaskMetadata({
+      } = fillCanonicalPairedTaskMetadata({
         id: row.id,
         owner_service_id: row.owner_service_id,
         reviewer_service_id: row.reviewer_service_id,
@@ -2400,7 +2400,7 @@ function backfillCanonicalChannelOwnerServiceIds(database: Database): void {
           ownerServiceId,
           reviewerServiceId,
           arbiterServiceId,
-        } = canonicalizeChannelOwnerLeaseMetadata({
+        } = fillCanonicalChannelOwnerLeaseMetadata({
           chat_jid: row.chat_jid,
           owner_service_id: row.owner_service_id,
           reviewer_service_id: row.reviewer_service_id,
@@ -2486,7 +2486,7 @@ function backfillCanonicalServiceHandoffServiceIds(database: Database): void {
           targetAgentType,
           sourceServiceId,
           targetServiceId,
-        } = canonicalizeServiceHandoffMetadata({
+        } = fillCanonicalServiceHandoffMetadata({
           id: row.id,
           chat_jid: row.chat_jid,
           source_service_id: row.source_service_id,
