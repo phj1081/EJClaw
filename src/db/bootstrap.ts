@@ -4,7 +4,22 @@ import path from 'path';
 
 import { ASSISTANT_NAME, STORE_DIR } from '../config.js';
 import { applyBaseSchema } from './base-schema.js';
-import { applySchemaMigrations } from './schema.js';
+import { applyVersionedSchemaMigrations } from './migrations/index.js';
+
+function isFreshDatabase(database: Database): boolean {
+  const row = database
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+          FROM sqlite_master
+         WHERE type = 'table'
+           AND name NOT LIKE 'sqlite_%'
+           AND name != 'schema_migrations'
+      `,
+    )
+    .get() as { count: number };
+  return row.count === 0;
+}
 
 function setForeignKeys(database: Database, enabled: boolean): void {
   database.exec(`PRAGMA foreign_keys = ${enabled ? 'ON' : 'OFF'}`);
@@ -31,8 +46,10 @@ function assertNoForeignKeyViolations(database: Database): void {
 
 export function initializeDatabaseSchema(database: Database): void {
   setForeignKeys(database, false);
-  applyBaseSchema(database);
-  applySchemaMigrations(database, {
+  if (isFreshDatabase(database)) {
+    applyBaseSchema(database);
+  }
+  applyVersionedSchemaMigrations(database, {
     assistantName: ASSISTANT_NAME,
   });
   setForeignKeys(database, true);

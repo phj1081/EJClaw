@@ -22,6 +22,10 @@ import {
   migrateSessionsTableToCompositePk,
 } from './sessions.js';
 
+// Legacy monolithic migration bundle kept for compatibility with databases
+// that predate ordered schema migration tracking. New schema changes belong in
+// src/db/migrations/*.
+
 function getTableColumns(database: Database, tableName: string): string[] {
   return (
     database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
@@ -2568,7 +2572,7 @@ function backfillCanonicalWorkItemServiceIds(database: Database): void {
   tx(rows);
 }
 
-export function applySchemaMigrations(
+export function applyLegacySchemaMigrations(
   database: Database,
   args: {
     assistantName: string;
@@ -3154,3 +3158,6 @@ export function applySchemaMigrations(
     /* columns already exist */
   }
 }
+
+/** @deprecated New schema changes should be added under src/db/migrations/*. */
+export const applySchemaMigrations = applyLegacySchemaMigrations;
