@@ -1,6 +1,11 @@
 import type { Database } from 'bun:sqlite';
 
 import { LEGACY_SCHEMA_BUNDLE_MIGRATION } from './001_legacy-schema-bundle.js';
+import { SCHEDULED_TASK_COLUMNS_MIGRATION } from './002_scheduled-task-columns.js';
+import { ROOM_REGISTRATION_CANONICAL_COLUMNS_MIGRATION } from './003_room-registration-canonical-columns.js';
+import { MESSAGE_SEQ_AND_WORK_ITEM_INDEXES_MIGRATION } from './004_message-seq-and-work-item-indexes.js';
+import { SESSIONS_COMPOSITE_KEY_MIGRATION } from './005_sessions-composite-key.js';
+import { CHAT_CHANNEL_METADATA_MIGRATION } from './006_chat-channel-metadata.js';
 import type {
   SchemaMigrationArgs,
   SchemaMigrationDefinition,
@@ -10,6 +15,11 @@ const SCHEMA_MIGRATIONS_TABLE = 'schema_migrations';
 
 const ORDERED_SCHEMA_MIGRATIONS: readonly SchemaMigrationDefinition[] = [
   LEGACY_SCHEMA_BUNDLE_MIGRATION,
+  SCHEDULED_TASK_COLUMNS_MIGRATION,
+  ROOM_REGISTRATION_CANONICAL_COLUMNS_MIGRATION,
+  MESSAGE_SEQ_AND_WORK_ITEM_INDEXES_MIGRATION,
+  SESSIONS_COMPOSITE_KEY_MIGRATION,
+  CHAT_CHANNEL_METADATA_MIGRATION,
 ];
 
 function ensureSchemaMigrationsTable(database: Database): void {

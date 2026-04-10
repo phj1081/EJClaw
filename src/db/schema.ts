@@ -1,10 +1,7 @@
 import { Database } from 'bun:sqlite';
 
 import { SERVICE_SESSION_SCOPE, normalizeServiceId } from '../config.js';
-import {
-  inferAgentTypeFromServiceShadow,
-  resolveRoleServiceShadow,
-} from '../role-service-shadow.js';
+import { resolveRoleServiceShadow } from '../role-service-shadow.js';
 import {
   fillCanonicalChannelOwnerLeaseMetadata,
   fillCanonicalPairedTaskMetadata,
@@ -15,32 +12,16 @@ import {
   backfillPairedTurnAttemptsFromTurns,
   buildPairedTurnAttemptId,
 } from './paired-turn-attempts.js';
-import { normalizeStoredAgentType } from './room-registration.js';
 import {
-  backfillLegacyServiceSessions,
-  dropLegacyServiceSessionsTable,
-  migrateSessionsTableToCompositePk,
-} from './sessions.js';
+  getTableColumns,
+  tableHasColumn,
+  tryExecMigration,
+} from './migrations/helpers.js';
+import { normalizeStoredAgentType } from './room-registration.js';
 
 // Legacy monolithic migration bundle kept for compatibility with databases
 // that predate ordered schema migration tracking. New schema changes belong in
 // src/db/migrations/*.
-
-function getTableColumns(database: Database, tableName: string): string[] {
-  return (
-    database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
-      name: string;
-    }>
-  ).map((column) => column.name);
-}
-
-export function tableHasColumn(
-  database: Database,
-  tableName: string,
-  columnName: string,
-): boolean {
-  return getTableColumns(database, tableName).includes(columnName);
-}
 
 function getTableSql(database: Database, tableName: string): string | null {
   const row = database
@@ -54,14 +35,6 @@ function getTableSql(database: Database, tableName: string): string | null {
     )
     .get(tableName) as { sql?: string | null } | undefined;
   return row?.sql ?? null;
-}
-
-function tryExecMigration(database: Database, sql: string): void {
-  try {
-    database.exec(sql);
-  } catch {
-    /* column already exists */
-  }
 }
 
 function buildPairedTurnAttemptIdSql(
@@ -181,43 +154,6 @@ function tableHasForeignKey(
   }
 
   return false;
-}
-
-function backfillMessageSeq(database: Database): void {
-  const rows = database
-    .prepare(
-      `SELECT rowid, seq
-       FROM messages
-       ORDER BY CASE WHEN seq IS NULL THEN 1 ELSE 0 END, seq, timestamp, rowid`,
-    )
-    .all() as Array<{ rowid: number; seq: number | null }>;
-  if (rows.length === 0) {
-    return;
-  }
-
-  let nextSeq = 1;
-  const assignSeq = database.prepare(
-    'UPDATE messages SET seq = ? WHERE rowid = ? AND seq IS NULL',
-  );
-  const tx = database.transaction(() => {
-    for (const row of rows) {
-      if (row.seq === null) {
-        assignSeq.run(nextSeq, row.rowid);
-      }
-      nextSeq = Math.max(nextSeq, (row.seq ?? nextSeq) + 1);
-    }
-  });
-  tx();
-
-  const maxSeqRow = database
-    .prepare('SELECT MAX(seq) AS maxSeq FROM messages')
-    .get() as { maxSeq: number | null };
-  const maxSeq = maxSeqRow.maxSeq ?? 0;
-  if (maxSeq > 0) {
-    database
-      .prepare('INSERT OR IGNORE INTO message_sequence (id) VALUES (?)')
-      .run(maxSeq);
-  }
 }
 
 interface LegacyExecutionLeaseServiceRow {
@@ -2574,98 +2510,10 @@ function backfillCanonicalWorkItemServiceIds(database: Database): void {
 
 export function applyLegacySchemaMigrations(
   database: Database,
-  args: {
+  _args: {
     assistantName: string;
   },
 ): void {
-  const { assistantName } = args;
-
-  tryExecMigration(
-    database,
-    `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE scheduled_tasks ADD COLUMN agent_type TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE scheduled_tasks ADD COLUMN ci_provider TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE scheduled_tasks ADD COLUMN ci_metadata TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE scheduled_tasks ADD COLUMN max_duration_ms INTEGER`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE scheduled_tasks ADD COLUMN status_message_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE scheduled_tasks ADD COLUMN status_started_at TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE scheduled_tasks ADD COLUMN suspended_until TEXT`,
-  );
-
-  tryExecMigration(
-    database,
-    `ALTER TABLE room_settings ADD COLUMN mode_source TEXT NOT NULL DEFAULT 'explicit'`,
-  );
-  tryExecMigration(database, `ALTER TABLE room_settings ADD COLUMN name TEXT`);
-  tryExecMigration(
-    database,
-    `ALTER TABLE room_settings ADD COLUMN folder TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE room_settings ADD COLUMN trigger_pattern TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE room_settings ADD COLUMN requires_trigger INTEGER DEFAULT 1`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE room_settings ADD COLUMN is_main INTEGER DEFAULT 0`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE room_settings ADD COLUMN owner_agent_type TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE room_settings ADD COLUMN work_dir TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE room_settings ADD COLUMN created_at TEXT`,
-  );
-  if (tableHasColumn(database, 'room_settings', 'created_at')) {
-    database.exec(`
-      UPDATE room_settings
-         SET created_at = COALESCE(created_at, updated_at, CURRENT_TIMESTAMP)
-    `);
-  }
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS room_role_overrides (
-      chat_jid TEXT NOT NULL,
-      role TEXT NOT NULL,
-      agent_type TEXT NOT NULL,
-      agent_config_json TEXT,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (chat_jid, role),
-      CHECK (role IN ('owner', 'reviewer', 'arbiter')),
-      CHECK (agent_type IN ('claude-code', 'codex'))
-    )
-  `);
-
   tryExecMigration(
     database,
     `ALTER TABLE service_handoffs ADD COLUMN intended_role TEXT`,
@@ -2935,41 +2783,6 @@ export function applyLegacySchemaMigrations(
   backfillCanonicalServiceHandoffServiceIds(database);
   backfillCanonicalWorkItemServiceIds(database);
 
-  database.exec(
-    `UPDATE room_settings
-     SET mode_source = 'explicit'
-     WHERE COALESCE(mode_source, '') NOT IN ('explicit', 'inferred')`,
-  );
-
-  try {
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
-    );
-    database
-      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
-      .run(`${assistantName}:%`);
-  } catch {
-    /* column already exists */
-  }
-
-  tryExecMigration(database, `ALTER TABLE messages ADD COLUMN seq INTEGER`);
-
-  backfillMessageSeq(database);
-
-  database.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_seq ON messages(seq);
-    CREATE INDEX IF NOT EXISTS idx_messages_chat_jid_seq ON messages(chat_jid, seq);
-  `);
-  database.exec(`DROP INDEX IF EXISTS idx_work_items_group_agent;`);
-  database.exec(`DROP INDEX IF EXISTS idx_work_items_open;`);
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_work_items_group_agent
-      ON work_items(chat_jid, agent_type, service_id, delivery_role, status);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_open
-      ON work_items(chat_jid, agent_type, IFNULL(service_id, ''), IFNULL(delivery_role, ''))
-      WHERE status IN ('produced', 'delivery_retry');
-  `);
-
   const pairedTasksSqlRow = database
     .prepare(
       `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'paired_tasks'`,
@@ -3133,29 +2946,6 @@ export function applyLegacySchemaMigrations(
         updated_at TEXT NOT NULL
       );
     `);
-  }
-
-  migrateSessionsTableToCompositePk(database, 'claude-code');
-  backfillLegacyServiceSessions(database, inferAgentTypeFromServiceShadow);
-  dropLegacyServiceSessionsTable(database);
-
-  try {
-    database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
-    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`,
-    );
-  } catch {
-    /* columns already exist */
   }
 }
 

@@ -20,6 +20,20 @@ function getAppliedSchemaMigrations(
     .all() as Array<{ version: number; name: string }>;
 }
 
+function getExpectedSchemaMigrations(): Array<{
+  version: number;
+  name: string;
+}> {
+  return [
+    { version: 1, name: 'legacy_schema_bundle' },
+    { version: 2, name: 'scheduled_task_columns' },
+    { version: 3, name: 'room_registration_canonical_columns' },
+    { version: 4, name: 'message_seq_and_work_item_indexes' },
+    { version: 5, name: 'sessions_composite_key' },
+    { version: 6, name: 'chat_channel_metadata' },
+  ];
+}
+
 describe('initializeDatabaseSchema', () => {
   const tempDirs: string[] = [];
 
@@ -35,12 +49,9 @@ describe('initializeDatabaseSchema', () => {
     try {
       initializeDatabaseSchema(database);
 
-      expect(getAppliedSchemaMigrations(database)).toEqual([
-        {
-          version: 1,
-          name: 'legacy_schema_bundle',
-        },
-      ]);
+      expect(getAppliedSchemaMigrations(database)).toEqual(
+        getExpectedSchemaMigrations(),
+      );
     } finally {
       database.close();
     }
@@ -53,12 +64,9 @@ describe('initializeDatabaseSchema', () => {
       initializeDatabaseSchema(database);
       initializeDatabaseSchema(database);
 
-      expect(getAppliedSchemaMigrations(database)).toEqual([
-        {
-          version: 1,
-          name: 'legacy_schema_bundle',
-        },
-      ]);
+      expect(getAppliedSchemaMigrations(database)).toEqual(
+        getExpectedSchemaMigrations(),
+      );
     } finally {
       database.close();
     }
@@ -86,12 +94,9 @@ describe('initializeDatabaseSchema', () => {
     try {
       initializeDatabaseSchema(reopened);
 
-      expect(getAppliedSchemaMigrations(reopened)).toEqual([
-        {
-          version: 1,
-          name: 'legacy_schema_bundle',
-        },
-      ]);
+      expect(getAppliedSchemaMigrations(reopened)).toEqual(
+        getExpectedSchemaMigrations(),
+      );
     } finally {
       reopened.close();
     }
