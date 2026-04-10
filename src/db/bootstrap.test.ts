@@ -31,6 +31,9 @@ function getExpectedSchemaMigrations(): Array<{
     { version: 4, name: 'message_seq_and_work_item_indexes' },
     { version: 5, name: 'sessions_composite_key' },
     { version: 6, name: 'chat_channel_metadata' },
+    { version: 7, name: 'runtime_service_metadata' },
+    { version: 8, name: 'paired_task_schema_cleanup' },
+    { version: 9, name: 'paired_workspace_project_schema_cleanup' },
   ];
 }
 

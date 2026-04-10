@@ -6,6 +6,9 @@ import { ROOM_REGISTRATION_CANONICAL_COLUMNS_MIGRATION } from './003_room-regist
 import { MESSAGE_SEQ_AND_WORK_ITEM_INDEXES_MIGRATION } from './004_message-seq-and-work-item-indexes.js';
 import { SESSIONS_COMPOSITE_KEY_MIGRATION } from './005_sessions-composite-key.js';
 import { CHAT_CHANNEL_METADATA_MIGRATION } from './006_chat-channel-metadata.js';
+import { RUNTIME_SERVICE_METADATA_MIGRATION } from './007_runtime-service-metadata.js';
+import { PAIRED_TASK_SCHEMA_CLEANUP_MIGRATION } from './008_paired-task-schema-cleanup.js';
+import { PAIRED_WORKSPACE_PROJECT_SCHEMA_CLEANUP_MIGRATION } from './009_paired-workspace-project-schema-cleanup.js';
 import type {
   SchemaMigrationArgs,
   SchemaMigrationDefinition,
@@ -20,6 +23,9 @@ const ORDERED_SCHEMA_MIGRATIONS: readonly SchemaMigrationDefinition[] = [
   MESSAGE_SEQ_AND_WORK_ITEM_INDEXES_MIGRATION,
   SESSIONS_COMPOSITE_KEY_MIGRATION,
   CHAT_CHANNEL_METADATA_MIGRATION,
+  RUNTIME_SERVICE_METADATA_MIGRATION,
+  PAIRED_TASK_SCHEMA_CLEANUP_MIGRATION,
+  PAIRED_WORKSPACE_PROJECT_SCHEMA_CLEANUP_MIGRATION,
 ];
 
 function ensureSchemaMigrationsTable(database: Database): void {
@@ -68,6 +74,7 @@ export function applyVersionedSchemaMigrations(
       continue;
     }
 
+    // Fail fast: a partially-applied migration must not be recorded as complete.
     migration.apply(database, args);
     if (!alreadyApplied) {
       recordAppliedSchemaMigration(database, migration);
