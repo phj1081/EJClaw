@@ -2,9 +2,7 @@ import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-export const VERIFICATION_SNAPSHOT_EXCLUDE_NAMES = new Set([
-  'node_modules',
-]);
+export const VERIFICATION_SNAPSHOT_EXCLUDE_NAMES = new Set(['node_modules']);
 
 const VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_NAMES = new Set([
   '.git',
@@ -16,9 +14,7 @@ const VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_NAMES = new Set([
   '.ejclaw-reviewer-runtime',
 ]);
 
-const VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_PREFIXES = [
-  'store.local-backup-',
-];
+const VERIFICATION_SNAPSHOT_ROOT_EXCLUDE_PREFIXES = ['store.local-backup-'];
 
 export function isVerificationSnapshotExcludedName(name) {
   return VERIFICATION_SNAPSHOT_EXCLUDE_NAMES.has(name);

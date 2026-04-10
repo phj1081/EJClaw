@@ -17,8 +17,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "typecheck:all": "bun run install:runners && bunx tsc --noEmit -p tsconfig.check.json && bunx tsc --noEmit -p runners/shared/tsconfig.json && bunx tsc --noEmit -p runners/agent-runner/tsconfig.json && bunx tsc --noEmit -p runners/codex-runner/tsconfig.json",
-    "format:fix": "prettier --write \"{src,setup,test,scripts}/**/*.{ts,js}\" \"runners/**/*.{ts,js}\" \"vitest*.ts\"",
-    "format:check": "prettier --check \"{src,setup,test,scripts}/**/*.{ts,js}\" \"runners/**/*.{ts,js}\" \"vitest*.ts\"",
+    "format:fix": "prettier --write \"{src,setup,shared,test,scripts}/**/*.{ts,js}\" \"runners/**/*.{ts,js}\" \"vitest*.ts\"",
+    "format:check": "prettier --check \"{src,setup,shared,test,scripts}/**/*.{ts,js}\" \"runners/**/*.{ts,js}\" \"vitest*.ts\"",
     "check": "bun run format:check && bun run typecheck:all && bun run test && bun run build:all",
     "prepare": "husky",
     "setup": "bun setup/index.ts"
