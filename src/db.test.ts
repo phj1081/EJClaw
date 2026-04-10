@@ -746,7 +746,9 @@ describe('task CRUD', () => {
     const migratedDb = new Database(dbPath, { readonly: true });
     try {
       const remainingLogs = migratedDb
-        .prepare(`SELECT COUNT(*) AS count FROM task_run_logs WHERE task_id = ?`)
+        .prepare(
+          `SELECT COUNT(*) AS count FROM task_run_logs WHERE task_id = ?`,
+        )
         .get('task-legacy-orphan') as { count: number };
       const fkViolations = migratedDb.prepare('PRAGMA foreign_key_check').all();
 
