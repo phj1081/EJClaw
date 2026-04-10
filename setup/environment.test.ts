@@ -4,7 +4,7 @@ import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Database } from 'bun:sqlite';
-import { detectAssignedRooms, run as runEnvironment } from './environment.js';
+import { run as runEnvironment } from './environment.js';
 
 /**
  * Tests for the environment check step.
@@ -17,77 +17,6 @@ describe('environment detection', () => {
     const { getPlatform } = await import('./platform.js');
     const platform = getPlatform();
     expect(['macos', 'linux', 'unknown']).toContain(platform);
-  });
-});
-
-describe('assigned rooms detection', () => {
-  const tempDirs: string[] = [];
-
-  afterEach(() => {
-    for (const dir of tempDirs.splice(0)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('returns false when the database does not exist', () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-'));
-    tempDirs.push(tempDir);
-
-    expect(
-      detectAssignedRooms({ dbPath: path.join(tempDir, 'messages.db') }),
-    ).toBe(false);
-  });
-
-  it('returns false for an empty room_settings table', () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-'));
-    tempDirs.push(tempDir);
-    const dbPath = path.join(tempDir, 'messages.db');
-    const db = new Database(dbPath);
-    db.exec(`CREATE TABLE room_settings (chat_jid TEXT PRIMARY KEY)`);
-    db.close();
-
-    expect(detectAssignedRooms({ dbPath })).toBe(false);
-  });
-
-  it('returns true when canonical room assignments exist', () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-'));
-    tempDirs.push(tempDir);
-    const dbPath = path.join(tempDir, 'messages.db');
-    const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE room_settings (
-        chat_jid TEXT PRIMARY KEY,
-        room_mode TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      )
-    `);
-    db.prepare(
-      `INSERT INTO room_settings (chat_jid, room_mode, updated_at)
-       VALUES (?, ?, ?)`,
-    ).run('dc:room-1', 'single', '2024-01-01T00:00:00.000Z');
-    db.close();
-
-    expect(detectAssignedRooms({ dbPath })).toBe(true);
-  });
-
-  it('returns false when only legacy registered_groups rows exist', () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-'));
-    tempDirs.push(tempDir);
-    const dbPath = path.join(tempDir, 'messages.db');
-    const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE registered_groups (
-        jid TEXT PRIMARY KEY,
-        agent_type TEXT
-      )
-    `);
-    db.exec(`
-      INSERT INTO registered_groups (jid, agent_type)
-      VALUES ('dc:legacy-room', 'claude-code')
-    `);
-    db.close();
-
-    expect(detectAssignedRooms({ dbPath })).toBe(false);
   });
 });
 

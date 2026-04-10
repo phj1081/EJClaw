@@ -16,7 +16,7 @@ export interface AssignedRoomsSummary {
   unexpectedDataStateDetected: boolean;
 }
 
-export interface LegacyMigrationGuidance {
+export interface RoomRegistrationGateFailure {
   error: string;
   nextStep: string;
 }
@@ -25,13 +25,13 @@ function getDataDir(projectRoot: string): string {
   return process.env.EJCLAW_DATA_DIR || path.join(projectRoot, 'data');
 }
 
-export function getLegacyMigrationGuidance(
+export function getRoomRegistrationGateFailure(
   summary: Pick<
     AssignedRoomsSummary,
     'legacyRoomMigrationRequired' | 'unexpectedDataStateDetected'
   >,
   target: 'setup' | 'verification',
-): LegacyMigrationGuidance | undefined {
+): RoomRegistrationGateFailure | undefined {
   if (
     !summary.legacyRoomMigrationRequired &&
     !summary.unexpectedDataStateDetected

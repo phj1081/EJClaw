@@ -11,7 +11,7 @@ import path from 'path';
 
 import { logger } from '../src/logger.js';
 import { getServiceManager } from './platform.js';
-import { getLegacyMigrationGuidance } from './room-registration-state.js';
+import { getRoomRegistrationGateFailure } from './room-registration-state.js';
 import { getServiceDefs } from './service-defs.js';
 import { emitStatus } from './status.js';
 import {
@@ -66,7 +66,7 @@ export async function run(_args: string[]): Promise<void> {
       activeArbiterTasks,
     },
   );
-  const legacyMigrationGuidance = getLegacyMigrationGuidance(
+  const roomRegistrationGateFailure = getRoomRegistrationGateFailure(
     roomSummary,
     'verification',
   );
@@ -100,10 +100,10 @@ export async function run(_args: string[]): Promise<void> {
     UNEXPECTED_DATA_STATE_DETECTED: roomSummary.unexpectedDataStateDetected,
     REVIEWER_CHANNEL_CONFIGURED: reviewerChannelConfigured,
     ARBITER_CHANNEL_CONFIGURED: arbiterChannelConfigured,
-    ...(legacyMigrationGuidance
+    ...(roomRegistrationGateFailure
       ? {
-          ERROR: legacyMigrationGuidance.error,
-          NEXT_STEP: legacyMigrationGuidance.nextStep,
+          ERROR: roomRegistrationGateFailure.error,
+          NEXT_STEP: roomRegistrationGateFailure.nextStep,
         }
       : {}),
     STATUS: status,

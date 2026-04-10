@@ -151,7 +151,7 @@ export interface RegisteredGroup {
   trigger?: string;
   added_at: string;
   agentConfig?: AgentConfig;
-  requiresTrigger?: boolean; // Compatibility-only legacy field
+  requiresTrigger?: boolean; // Whether non-paired messages must match the room trigger
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
   agentType?: AgentType;
   workDir?: string; // Working directory for the agent (defaults to group folder)

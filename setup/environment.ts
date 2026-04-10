@@ -16,7 +16,7 @@ import {
 } from './platform.js';
 import {
   detectRoomRegistrationState,
-  getLegacyMigrationGuidance,
+  getRoomRegistrationGateFailure,
 } from './room-registration-state.js';
 import { emitStatus } from './status.js';
 
@@ -51,11 +51,11 @@ export async function run(_args: string[]): Promise<void> {
     projectRoot,
     dbPath: path.join(projectRoot, 'store', 'messages.db'),
   });
-  const legacyMigrationGuidance = getLegacyMigrationGuidance(
+  const roomRegistrationGateFailure = getRoomRegistrationGateFailure(
     roomState,
     'setup',
   );
-  const status = legacyMigrationGuidance ? 'failed' : 'success';
+  const status = roomRegistrationGateFailure ? 'failed' : 'success';
 
   logger.info(
     {
@@ -94,10 +94,10 @@ export async function run(_args: string[]): Promise<void> {
       apparmorRestrictUnprivilegedUserns ?? 'n/a',
     HAS_BWRAP_READONLY_SANDBOX_CAPABILITY:
       hasBubblewrapReadonlySandboxCapability,
-    ...(legacyMigrationGuidance
+    ...(roomRegistrationGateFailure
       ? {
-          ERROR: legacyMigrationGuidance.error,
-          NEXT_STEP: legacyMigrationGuidance.nextStep,
+          ERROR: roomRegistrationGateFailure.error,
+          NEXT_STEP: roomRegistrationGateFailure.nextStep,
         }
       : {}),
     STATUS: status,

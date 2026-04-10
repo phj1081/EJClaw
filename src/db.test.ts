@@ -2271,6 +2271,25 @@ describe('message query LIMIT', () => {
 // --- RegisteredGroup isMain round-trip ---
 
 describe('registered group isMain', () => {
+  it('projects trigger metadata from canonical room settings into registered groups', () => {
+    _setRegisteredGroupForTests('dc:triggered', {
+      name: 'Triggered Room',
+      folder: 'triggered-room',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      requiresTrigger: true,
+    });
+
+    expect(getRegisteredGroup('dc:triggered')).toMatchObject({
+      trigger: '@Andy',
+      requiresTrigger: true,
+    });
+    expect(getAllRoomBindings()['dc:triggered']).toMatchObject({
+      trigger: '@Andy',
+      requiresTrigger: true,
+    });
+  });
+
   it('persists isMain=true through set/get round-trip', () => {
     _setRegisteredGroupForTests('dc:main', {
       name: 'Main Chat',
