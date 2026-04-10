@@ -3,19 +3,19 @@ import path from 'path';
 
 import type { MoaConfig, MoaModelConfig } from '../moa.js';
 import type { AgentType } from '../types.js';
-import { getEnv } from '../env.js';
+import { getEnv, listConfiguredEnvKeys } from '../env.js';
 
 import type { AppConfig, RoleModelConfig } from './schema.js';
 
-const LEGACY_ENV_ALIAS_MAP = {
-  DISCORD_BOT_TOKEN: 'DISCORD_OWNER_BOT_TOKEN',
-  DISCORD_CLAUDE_BOT_TOKEN: 'DISCORD_OWNER_BOT_TOKEN',
-  DISCORD_CODEX_BOT_TOKEN: 'DISCORD_REVIEWER_BOT_TOKEN',
-  DISCORD_CODEX_MAIN_BOT_TOKEN: 'DISCORD_REVIEWER_BOT_TOKEN',
-  DISCORD_REVIEW_BOT_TOKEN: 'DISCORD_ARBITER_BOT_TOKEN',
-  DISCORD_CODEX_REVIEW_BOT_TOKEN: 'DISCORD_ARBITER_BOT_TOKEN',
-  SESSION_COMMAND_USER_IDS: 'SESSION_COMMAND_ALLOWED_SENDERS',
-} as const;
+const CANONICAL_DISCORD_CHANNEL_TOKEN_KEYS = new Set([
+  'DISCORD_OWNER_BOT_TOKEN',
+  'DISCORD_REVIEWER_BOT_TOKEN',
+  'DISCORD_ARBITER_BOT_TOKEN',
+]);
+
+const CANONICAL_SESSION_COMMAND_KEYS = new Set([
+  'SESSION_COMMAND_ALLOWED_SENDERS',
+]);
 
 function readText(key: string): string | undefined {
   return getEnv(key);
@@ -111,22 +111,22 @@ function normalizeServiceId(
 }
 
 function assertNoLegacyEnvAliasesConfigured(): void {
-  const configuredAliases = Object.entries(LEGACY_ENV_ALIAS_MAP).filter(
-    ([legacyKey]) => {
-      const value = getEnv(legacyKey);
-      return value != null && value !== '';
-    },
-  );
+  const configuredAliases = listConfiguredEnvKeys().filter((key) => {
+    if (key.startsWith('DISCORD_') && key.endsWith('_BOT_TOKEN')) {
+      return !CANONICAL_DISCORD_CHANNEL_TOKEN_KEYS.has(key);
+    }
+    if (key.startsWith('SESSION_COMMAND_')) {
+      return !CANONICAL_SESSION_COMMAND_KEYS.has(key);
+    }
+    return false;
+  });
 
   if (configuredAliases.length === 0) {
     return;
   }
 
-  const aliasList = configuredAliases
-    .map(([legacyKey, canonicalKey]) => `${legacyKey} -> ${canonicalKey}`)
-    .join(', ');
   throw new Error(
-    `Legacy env aliases are no longer supported; rename them to canonical keys (${aliasList})`,
+    `Legacy env aliases are no longer supported; remove or rename (${configuredAliases.join(', ')}) to the canonical keys DISCORD_OWNER_BOT_TOKEN, DISCORD_REVIEWER_BOT_TOKEN, DISCORD_ARBITER_BOT_TOKEN, SESSION_COMMAND_ALLOWED_SENDERS`,
   );
 }
 

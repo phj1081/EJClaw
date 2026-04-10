@@ -95,13 +95,9 @@ export async function run(_args: string[]): Promise<void> {
     ASSIGNED_ROOMS: roomSummary.assignedRooms,
     ROOMS_BY_OWNER_AGENT: JSON.stringify(roomSummary.roomsByOwnerAgent),
     LEGACY_REGISTERED_GROUP_ROWS: roomSummary.legacyRegisteredGroupRows,
-    HAS_LEGACY_REGISTERED_GROUPS_JSON:
-      roomSummary.hasLegacyRegisteredGroupsJson,
     LEGACY_ROOM_MIGRATION_REQUIRED: roomSummary.legacyRoomMigrationRequired,
-    PENDING_LEGACY_JSON_STATE_FILES:
-      roomSummary.pendingLegacyJsonStateFiles.join(','),
-    LEGACY_JSON_STATE_MIGRATION_REQUIRED:
-      roomSummary.legacyJsonStateMigrationRequired,
+    UNEXPECTED_DATA_STATE_FILES: roomSummary.unexpectedDataStateFiles.join(','),
+    UNEXPECTED_DATA_STATE_DETECTED: roomSummary.unexpectedDataStateDetected,
     REVIEWER_CHANNEL_CONFIGURED: reviewerChannelConfigured,
     ARBITER_CHANNEL_CONFIGURED: arbiterChannelConfigured,
     ...(legacyMigrationGuidance

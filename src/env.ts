@@ -74,3 +74,11 @@ export function readEnvFile(keys: string[]): Record<string, string> {
   }
   return result;
 }
+
+export function listConfiguredEnvKeys(): string[] {
+  if (!_cache) loadEnvFile();
+
+  return Array.from(
+    new Set([...Object.keys(_cache!), ...Object.keys(process.env)]),
+  ).sort();
+}

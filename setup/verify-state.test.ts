@@ -128,10 +128,9 @@ describe('verify state helpers', () => {
         codex: 2,
       },
       legacyRegisteredGroupRows: 0,
-      hasLegacyRegisteredGroupsJson: false,
       legacyRoomMigrationRequired: false,
-      pendingLegacyJsonStateFiles: [],
-      legacyJsonStateMigrationRequired: false,
+      unexpectedDataStateFiles: [],
+      unexpectedDataStateDetected: false,
     });
   });
 
@@ -157,10 +156,9 @@ describe('verify state helpers', () => {
         assignedRooms: 0,
         roomsByOwnerAgent: {},
         legacyRegisteredGroupRows: 1,
-        hasLegacyRegisteredGroupsJson: false,
         legacyRoomMigrationRequired: true,
-        pendingLegacyJsonStateFiles: [],
-        legacyJsonStateMigrationRequired: false,
+        unexpectedDataStateFiles: [],
+        unexpectedDataStateDetected: false,
       },
     );
   });
@@ -268,10 +266,9 @@ describe('verify state helpers', () => {
           codex: 1,
         },
         legacyRegisteredGroupRows: 1,
-        hasLegacyRegisteredGroupsJson: false,
         legacyRoomMigrationRequired: true,
-        pendingLegacyJsonStateFiles: [],
-        legacyJsonStateMigrationRequired: false,
+        unexpectedDataStateFiles: [],
+        unexpectedDataStateDetected: false,
       },
     );
   });
@@ -396,15 +393,14 @@ describe('verify state helpers', () => {
           codex: 1,
         },
         legacyRegisteredGroupRows: 0,
-        hasLegacyRegisteredGroupsJson: false,
         legacyRoomMigrationRequired: false,
-        pendingLegacyJsonStateFiles: [],
-        legacyJsonStateMigrationRequired: false,
+        unexpectedDataStateFiles: [],
+        unexpectedDataStateDetected: false,
       },
     );
   });
 
-  it('marks legacy registered_groups.json as migration-required', () => {
+  it('marks unexpected data-state files as setup blockers', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-verify-'));
     tempRoots.push(tempRoot);
     fs.mkdirSync(path.join(tempRoot, 'data'), { recursive: true });
@@ -417,14 +413,13 @@ describe('verify state helpers', () => {
       assignedRooms: 0,
       roomsByOwnerAgent: {},
       legacyRegisteredGroupRows: 0,
-      hasLegacyRegisteredGroupsJson: true,
-      legacyRoomMigrationRequired: true,
-      pendingLegacyJsonStateFiles: [],
-      legacyJsonStateMigrationRequired: false,
+      legacyRoomMigrationRequired: false,
+      unexpectedDataStateFiles: ['registered_groups.json'],
+      unexpectedDataStateDetected: true,
     });
   });
 
-  it('marks pending legacy json state files as migration-required', () => {
+  it('marks unexpected router/session json files as setup blockers', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-verify-'));
     tempRoots.push(tempRoot);
     fs.mkdirSync(path.join(tempRoot, 'data'), { recursive: true });
@@ -441,10 +436,9 @@ describe('verify state helpers', () => {
       assignedRooms: 0,
       roomsByOwnerAgent: {},
       legacyRegisteredGroupRows: 0,
-      hasLegacyRegisteredGroupsJson: false,
       legacyRoomMigrationRequired: false,
-      pendingLegacyJsonStateFiles: ['router_state.json', 'sessions.json'],
-      legacyJsonStateMigrationRequired: true,
+      unexpectedDataStateFiles: ['router_state.json', 'sessions.json'],
+      unexpectedDataStateDetected: true,
     });
   });
 
@@ -474,10 +468,9 @@ describe('verify state helpers', () => {
           assignedRooms: 2,
           roomsByOwnerAgent: { codex: 1 },
           legacyRegisteredGroupRows: 0,
-          hasLegacyRegisteredGroupsJson: false,
           legacyRoomMigrationRequired: false,
-          pendingLegacyJsonStateFiles: [],
-          legacyJsonStateMigrationRequired: false,
+          unexpectedDataStateFiles: [],
+          unexpectedDataStateDetected: false,
         },
       ),
     ).toMatchObject({
@@ -502,10 +495,9 @@ describe('verify state helpers', () => {
           assignedRooms: 0,
           roomsByOwnerAgent: {},
           legacyRegisteredGroupRows: 0,
-          hasLegacyRegisteredGroupsJson: false,
           legacyRoomMigrationRequired: false,
-          pendingLegacyJsonStateFiles: [],
-          legacyJsonStateMigrationRequired: false,
+          unexpectedDataStateFiles: [],
+          unexpectedDataStateDetected: false,
         },
       ),
     ).toMatchObject({
@@ -528,10 +520,9 @@ describe('verify state helpers', () => {
           assignedRooms: 1,
           roomsByOwnerAgent: {},
           legacyRegisteredGroupRows: 0,
-          hasLegacyRegisteredGroupsJson: false,
           legacyRoomMigrationRequired: false,
-          pendingLegacyJsonStateFiles: [],
-          legacyJsonStateMigrationRequired: false,
+          unexpectedDataStateFiles: [],
+          unexpectedDataStateDetected: false,
         },
       ),
     ).toMatchObject({
@@ -556,10 +547,9 @@ describe('verify state helpers', () => {
           assignedRooms: 1,
           roomsByOwnerAgent: {},
           legacyRegisteredGroupRows: 0,
-          hasLegacyRegisteredGroupsJson: false,
           legacyRoomMigrationRequired: false,
-          pendingLegacyJsonStateFiles: [],
-          legacyJsonStateMigrationRequired: false,
+          unexpectedDataStateFiles: [],
+          unexpectedDataStateDetected: false,
         },
         { tribunalRooms: 1 },
       ),
@@ -588,10 +578,9 @@ describe('verify state helpers', () => {
           assignedRooms: 1,
           roomsByOwnerAgent: {},
           legacyRegisteredGroupRows: 0,
-          hasLegacyRegisteredGroupsJson: false,
           legacyRoomMigrationRequired: false,
-          pendingLegacyJsonStateFiles: [],
-          legacyJsonStateMigrationRequired: false,
+          unexpectedDataStateFiles: [],
+          unexpectedDataStateDetected: false,
         },
         { tribunalRooms: 1, activeArbiterTasks: 1 },
       ),
@@ -617,10 +606,9 @@ describe('verify state helpers', () => {
           assignedRooms: 0,
           roomsByOwnerAgent: {},
           legacyRegisteredGroupRows: 2,
-          hasLegacyRegisteredGroupsJson: false,
           legacyRoomMigrationRequired: true,
-          pendingLegacyJsonStateFiles: [],
-          legacyJsonStateMigrationRequired: false,
+          unexpectedDataStateFiles: [],
+          unexpectedDataStateDetected: false,
         },
       ),
     ).toMatchObject({
@@ -630,7 +618,7 @@ describe('verify state helpers', () => {
     });
   });
 
-  it('fails verification when legacy json state migration is still required', () => {
+  it('fails verification when unexpected data state files are still present', () => {
     const services: ServiceCheck[] = [{ name: 'ejclaw', status: 'running' }];
 
     expect(
@@ -643,16 +631,15 @@ describe('verify state helpers', () => {
           assignedRooms: 1,
           roomsByOwnerAgent: { codex: 1 },
           legacyRegisteredGroupRows: 0,
-          hasLegacyRegisteredGroupsJson: false,
           legacyRoomMigrationRequired: false,
-          pendingLegacyJsonStateFiles: ['router_state.json'],
-          legacyJsonStateMigrationRequired: true,
+          unexpectedDataStateFiles: ['router_state.json'],
+          unexpectedDataStateDetected: true,
         },
       ),
     ).toMatchObject({
       status: 'failed',
-      legacyJsonStateMigrationRequired: true,
-      pendingLegacyJsonStateFiles: ['router_state.json'],
+      unexpectedDataStateDetected: true,
+      unexpectedDataStateFiles: ['router_state.json'],
     });
   });
 });

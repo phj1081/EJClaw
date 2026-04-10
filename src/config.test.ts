@@ -108,7 +108,7 @@ describe('config/env loading', () => {
     const { loadConfig } = await import('./config/load-config.js');
 
     expect(() => loadConfig()).toThrow(
-      /Legacy env aliases are no longer supported; rename them to canonical keys \(DISCORD_BOT_TOKEN -> DISCORD_OWNER_BOT_TOKEN\)/,
+      /Legacy env aliases are no longer supported; remove or rename \(DISCORD_BOT_TOKEN\) to the canonical keys/,
     );
   });
 
@@ -118,7 +118,7 @@ describe('config/env loading', () => {
     const { loadConfig } = await import('./config/load-config.js');
 
     expect(() => loadConfig()).toThrow(
-      /Legacy env aliases are no longer supported; rename them to canonical keys \(SESSION_COMMAND_USER_IDS -> SESSION_COMMAND_ALLOWED_SENDERS\)/,
+      /Legacy env aliases are no longer supported; remove or rename \(SESSION_COMMAND_USER_IDS\) to the canonical keys/,
     );
   });
 });

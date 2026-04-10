@@ -169,7 +169,7 @@ describe('environment step legacy-room handling', () => {
     exitSpy.mockRestore();
   });
 
-  it('exits with failure when legacy json state files need explicit migration', async () => {
+  it('exits with failure when unexpected data state files are present', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-run-'));
     tempDirs.push(tempDir);
     process.chdir(tempDir);

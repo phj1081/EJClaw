@@ -13,6 +13,7 @@ import {
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
 } from './config.js';
+import { listUnexpectedDataStateFiles } from './data-state-files.js';
 import {
   isValidGroupFolder,
   resolveTaskRuntimeIpcPath as resolveTaskRuntimeIpcPathFromGroup,
@@ -155,7 +156,7 @@ import {
 } from './db/service-handoffs.js';
 import {
   getLastRespondingAgentTypeFromDatabase,
-  getLegacyRouterStateKeysFromDatabase,
+  getUnsupportedRouterStateKeysFromDatabase,
   getRouterStateForServiceFromDatabase,
   getRouterStateFromDatabase,
   setRouterStateForServiceInDatabase,
@@ -242,8 +243,8 @@ export function initDatabase(): void {
   db = openPersistentDatabase();
   initializeDatabaseSchema(db);
   assertNoPendingLegacyRoomMigration();
-  assertNoPendingLegacyJsonStateMigration();
-  assertNoPendingLegacyRouterStateDbMigration();
+  assertNoUnexpectedDataStateFiles();
+  assertNoUnsupportedRouterStateDbKeys();
   clearPairedTaskExecutionLeasesForServiceInDatabase(
     db,
     normalizeServiceId(SERVICE_ID),
@@ -267,7 +268,7 @@ export function _initTestDatabaseFromFile(dbPath: string): void {
   db = openDatabaseFromFile(dbPath);
   initializeDatabaseSchema(db);
   assertNoPendingLegacyRoomMigration();
-  assertNoPendingLegacyRouterStateDbMigration();
+  assertNoUnsupportedRouterStateDbKeys();
   clearPairedTaskExecutionLeasesForServiceInDatabase(
     db,
     normalizeServiceId(SERVICE_ID),
@@ -1001,39 +1002,34 @@ function getStoredRoomModeRow(chatJid: string): StoredRoomModeRow | undefined {
 
 function assertNoPendingLegacyRoomMigration(): void {
   const pendingLegacyRows = countPendingLegacyRegisteredGroupRows(db);
-  const hasLegacyRegisteredGroupsJson = fs.existsSync(
-    path.join(DATA_DIR, 'registered_groups.json'),
-  );
-  if (pendingLegacyRows === 0 && !hasLegacyRegisteredGroupsJson) {
+  if (pendingLegacyRows === 0) {
     return;
   }
 
   throw new Error(
-    `Legacy room migration required before startup (pending_rows=${pendingLegacyRows}, legacy_json=${hasLegacyRegisteredGroupsJson})`,
+    `Legacy room migration required before startup (pending_rows=${pendingLegacyRows})`,
   );
 }
 
-function assertNoPendingLegacyJsonStateMigration(): void {
-  const pendingFiles = ['router_state.json', 'sessions.json'].filter(
-    (filename) => fs.existsSync(path.join(DATA_DIR, filename)),
-  );
+function assertNoUnexpectedDataStateFiles(): void {
+  const pendingFiles = listUnexpectedDataStateFiles(DATA_DIR);
   if (pendingFiles.length === 0) {
     return;
   }
 
   throw new Error(
-    `Legacy JSON state migration required before startup (files=${pendingFiles.join(',')})`,
+    `Unexpected data state files detected before startup (files=${pendingFiles.join(',')})`,
   );
 }
 
-function assertNoPendingLegacyRouterStateDbMigration(): void {
-  const legacyKeys = getLegacyRouterStateKeysFromDatabase(db);
+function assertNoUnsupportedRouterStateDbKeys(): void {
+  const legacyKeys = getUnsupportedRouterStateKeysFromDatabase(db);
   if (legacyKeys.length === 0) {
     return;
   }
 
   throw new Error(
-    `Legacy router_state DB migration required before startup (keys=${legacyKeys.join(',')})`,
+    `Unsupported router_state DB keys remain before startup (keys=${legacyKeys.join(',')})`,
   );
 }
 

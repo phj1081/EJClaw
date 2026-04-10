@@ -4,16 +4,16 @@ import path from 'path';
 import { Database } from 'bun:sqlite';
 
 import { STORE_DIR } from '../src/config.js';
+import { listUnexpectedDataStateFiles } from '../src/data-state-files.js';
 import { countPendingLegacyRegisteredGroupRows } from '../src/db/room-registration.js';
 
 export interface AssignedRoomsSummary {
   assignedRooms: number;
   roomsByOwnerAgent: Record<string, number>;
   legacyRegisteredGroupRows: number;
-  hasLegacyRegisteredGroupsJson: boolean;
   legacyRoomMigrationRequired: boolean;
-  pendingLegacyJsonStateFiles: string[];
-  legacyJsonStateMigrationRequired: boolean;
+  unexpectedDataStateFiles: string[];
+  unexpectedDataStateDetected: boolean;
 }
 
 export interface LegacyMigrationGuidance {
@@ -25,50 +25,36 @@ function getDataDir(projectRoot: string): string {
   return process.env.EJCLAW_DATA_DIR || path.join(projectRoot, 'data');
 }
 
-function getPendingLegacyJsonStateFiles(projectRoot: string): string[] {
-  const dataDir = getDataDir(projectRoot);
-  return ['router_state.json', 'sessions.json'].filter((filename) =>
-    fs.existsSync(path.join(dataDir, filename)),
-  );
-}
-
 export function getLegacyMigrationGuidance(
   summary: Pick<
     AssignedRoomsSummary,
-    'legacyRoomMigrationRequired' | 'legacyJsonStateMigrationRequired'
+    'legacyRoomMigrationRequired' | 'unexpectedDataStateDetected'
   >,
   target: 'setup' | 'verification',
 ): LegacyMigrationGuidance | undefined {
   if (
     !summary.legacyRoomMigrationRequired &&
-    !summary.legacyJsonStateMigrationRequired
+    !summary.unexpectedDataStateDetected
   ) {
     return undefined;
   }
 
-  const steps: string[] = [];
-  if (summary.legacyRoomMigrationRequired) {
-    steps.push('bun setup/index.ts --step migrate-room-registrations');
-  }
-  if (summary.legacyJsonStateMigrationRequired) {
-    steps.push('bun setup/index.ts --step migrate-json-state');
-  }
-
   const error =
-    summary.legacyRoomMigrationRequired &&
-    summary.legacyJsonStateMigrationRequired
-      ? 'legacy_migration_required'
+    summary.legacyRoomMigrationRequired && summary.unexpectedDataStateDetected
+      ? 'legacy_migration_and_unexpected_data_state_detected'
       : summary.legacyRoomMigrationRequired
         ? 'legacy_room_migration_required'
-        : 'legacy_json_state_migration_required';
-  const commandText =
-    steps.length === 1
-      ? `Run \`${steps[0]}\` before continuing with ${target}`
-      : `Run \`${steps[0]}\` and \`${steps[1]}\` before continuing with ${target}`;
+        : 'unexpected_data_state_files_detected';
+  const nextStep =
+    summary.legacyRoomMigrationRequired && summary.unexpectedDataStateDetected
+      ? `Run \`bun setup/index.ts --step migrate-room-registrations\` and remove or archive unexpected data state files before continuing with ${target}`
+      : summary.legacyRoomMigrationRequired
+        ? `Run \`bun setup/index.ts --step migrate-room-registrations\` before continuing with ${target}`
+        : `Remove or archive unexpected data state files before continuing with ${target}`;
 
   return {
     error,
-    nextStep: commandText,
+    nextStep,
   };
 }
 
@@ -127,23 +113,18 @@ export function detectRoomRegistrationState(
     }
   }
 
-  const hasLegacyRegisteredGroupsJson = fs.existsSync(
-    path.join(getDataDir(projectRoot), 'registered_groups.json'),
+  const unexpectedDataStateFiles = listUnexpectedDataStateFiles(
+    getDataDir(projectRoot),
   );
-  const pendingLegacyJsonStateFiles =
-    getPendingLegacyJsonStateFiles(projectRoot);
-  const legacyRoomMigrationRequired =
-    legacyRegisteredGroupRows > 0 || hasLegacyRegisteredGroupsJson;
-  const legacyJsonStateMigrationRequired =
-    pendingLegacyJsonStateFiles.length > 0;
+  const legacyRoomMigrationRequired = legacyRegisteredGroupRows > 0;
+  const unexpectedDataStateDetected = unexpectedDataStateFiles.length > 0;
 
   return {
     assignedRooms,
     roomsByOwnerAgent,
     legacyRegisteredGroupRows,
-    hasLegacyRegisteredGroupsJson,
     legacyRoomMigrationRequired,
-    pendingLegacyJsonStateFiles,
-    legacyJsonStateMigrationRequired,
+    unexpectedDataStateFiles,
+    unexpectedDataStateDetected,
   };
 }

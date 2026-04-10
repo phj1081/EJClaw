@@ -162,7 +162,7 @@ export function buildVerifySummary(
     arbiterRoutingSatisfied &&
     roomSummary.assignedRooms > 0 &&
     !roomSummary.legacyRoomMigrationRequired &&
-    !roomSummary.legacyJsonStateMigrationRequired
+    !roomSummary.unexpectedDataStateDetected
       ? 'success'
       : 'failed';
 

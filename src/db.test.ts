@@ -2482,7 +2482,7 @@ describe('room assignment writes', () => {
     );
   });
 
-  it('fails init when legacy router_state DB keys remain without canonical keys', () => {
+  it('fails init when unsupported router_state DB keys remain without canonical keys', () => {
     const tempDir = fs.mkdtempSync('/tmp/ejclaw-legacy-router-state-db-');
     const dbPath = path.join(tempDir, 'messages.db');
     const legacyDb = new Database(dbPath);
@@ -2497,7 +2497,7 @@ describe('room assignment writes', () => {
     legacyDb.close();
 
     expect(() => _initTestDatabaseFromFile(dbPath)).toThrow(
-      /Legacy router_state DB migration required before startup \(keys=last_agent_timestamp,last_timestamp\)/,
+      /Unsupported router_state DB keys remain before startup \(keys=last_agent_timestamp,last_timestamp\)/,
     );
 
     const rawDb = new Database(dbPath, { readonly: true });

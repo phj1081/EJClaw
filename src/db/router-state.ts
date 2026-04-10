@@ -65,16 +65,19 @@ export function setRouterStateForServiceInDatabase(
     .run(prefixedKey, value);
 }
 
-export function getLegacyRouterStateKeysFromDatabase(
+export function getUnsupportedRouterStateKeysFromDatabase(
   database: Database,
 ): string[] {
   const rows = database
     .prepare(
       `SELECT key
        FROM router_state
-       WHERE key IN ('last_timestamp', 'last_agent_timestamp')
-          OR key LIKE '%:last_timestamp'
-          OR key LIKE '%:last_agent_timestamp'
+       WHERE (
+         CASE
+           WHEN instr(key, ':') > 0 THEN substr(key, instr(key, ':') + 1)
+           ELSE key
+         END
+       ) NOT IN ('last_seq', 'last_agent_seq')
        ORDER BY key`,
     )
     .all() as Array<{ key: string }>;

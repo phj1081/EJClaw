@@ -65,11 +65,9 @@ export async function run(_args: string[]): Promise<void> {
       hasAuth,
       assignedRooms: roomState.assignedRooms,
       legacyRegisteredGroupRows: roomState.legacyRegisteredGroupRows,
-      hasLegacyRegisteredGroupsJson: roomState.hasLegacyRegisteredGroupsJson,
       legacyRoomMigrationRequired: roomState.legacyRoomMigrationRequired,
-      pendingLegacyJsonStateFiles: roomState.pendingLegacyJsonStateFiles,
-      legacyJsonStateMigrationRequired:
-        roomState.legacyJsonStateMigrationRequired,
+      unexpectedDataStateFiles: roomState.unexpectedDataStateFiles,
+      unexpectedDataStateDetected: roomState.unexpectedDataStateDetected,
       hasBubblewrap,
       hasSocat,
       apparmorRestrictUnprivilegedUserns,
@@ -87,12 +85,9 @@ export async function run(_args: string[]): Promise<void> {
     HAS_ASSIGNED_ROOMS: roomState.assignedRooms > 0,
     ASSIGNED_ROOMS: roomState.assignedRooms,
     LEGACY_REGISTERED_GROUP_ROWS: roomState.legacyRegisteredGroupRows,
-    HAS_LEGACY_REGISTERED_GROUPS_JSON: roomState.hasLegacyRegisteredGroupsJson,
     LEGACY_ROOM_MIGRATION_REQUIRED: roomState.legacyRoomMigrationRequired,
-    PENDING_LEGACY_JSON_STATE_FILES:
-      roomState.pendingLegacyJsonStateFiles.join(','),
-    LEGACY_JSON_STATE_MIGRATION_REQUIRED:
-      roomState.legacyJsonStateMigrationRequired,
+    UNEXPECTED_DATA_STATE_FILES: roomState.unexpectedDataStateFiles.join(','),
+    UNEXPECTED_DATA_STATE_DETECTED: roomState.unexpectedDataStateDetected,
     HAS_BWRAP: hasBubblewrap,
     HAS_SOCAT: hasSocat,
     APPARMOR_RESTRICT_UNPRIVILEGED_USERNS:
