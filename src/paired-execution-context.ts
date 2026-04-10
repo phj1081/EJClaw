@@ -2,7 +2,10 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-import { buildPairedReadonlyRuntimeEnvOverrides } from 'ejclaw-runners-shared';
+import {
+  buildPairedReadonlyRuntimeEnvOverrides,
+  isUnsafeHostPairedModeEnabled,
+} from 'ejclaw-runners-shared';
 
 import {
   ARBITER_DEADLOCK_THRESHOLD,
@@ -322,8 +325,7 @@ export function preparePairedExecutionContext(args: {
     EJCLAW_PAIRED_TASK_ID: task.id,
     EJCLAW_PAIRED_ROLE: roomRoleContext.role,
   };
-  const unsafeHostPairedMode =
-    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
+  const unsafeHostPairedMode = isUnsafeHostPairedModeEnabled();
 
   if (workspace?.workspace_dir) {
     envOverrides.EJCLAW_WORK_DIR = workspace.workspace_dir;

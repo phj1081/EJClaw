@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { isUnsafeHostPairedModeEnabled } from 'ejclaw-runners-shared';
+
 import { listAvailableGroups } from './available-groups.js';
 import {
   ARBITER_AGENT_TYPE,
@@ -115,8 +117,7 @@ export async function prepareMessageAgentExecutionTarget(
       ? { ...group, agentType: effectiveAgentType }
       : group;
   const isClaudeCodeAgent = effectiveAgentType === 'claude-code';
-  const unsafeHostPairedMode =
-    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
+  const unsafeHostPairedMode = isUnsafeHostPairedModeEnabled();
   const forceFreshClaudeReviewerSession =
     reviewerMode && isClaudeCodeAgent && unsafeHostPairedMode;
   const shouldPersistSession =

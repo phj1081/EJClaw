@@ -2,6 +2,8 @@ import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { isUnsafeHostPairedModeEnabled } from 'ejclaw-runners-shared';
+
 /**
  * Agent Process Runner for EJClaw
  * Spawns agent execution as direct host processes and handles IPC.
@@ -59,8 +61,7 @@ export async function runAgentProcess(
   onOutput?: (output: AgentOutput) => Promise<void>,
   envOverrides?: Record<string, string>,
 ): Promise<AgentOutput> {
-  const unsafeHostPairedMode =
-    envOverrides?.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1';
+  const unsafeHostPairedMode = isUnsafeHostPairedModeEnabled(envOverrides);
 
   // ── Host process mode (owner) ───────────────────────────────────
   const startTime = Date.now();
