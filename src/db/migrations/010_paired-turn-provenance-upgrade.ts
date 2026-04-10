@@ -10,7 +10,7 @@ import {
   dropPairedTurnAttemptProvenanceConstraints,
   rebuildPairedTurnAttemptForeignKeyTables,
   rebuildPairedTurnsWithoutLegacyScratchColumns,
-} from '../schema.js';
+} from '../paired-turn-provenance-schema.js';
 import { tryExecMigration } from './helpers.js';
 import type { SchemaMigrationDefinition } from './types.js';
 
