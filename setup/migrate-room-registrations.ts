@@ -9,11 +9,14 @@ import {
   openPersistentDatabase,
 } from '../src/db/bootstrap.js';
 import {
-  buildLegacyRoomMigrationPlan,
-  getPendingLegacyRegisteredGroupJids,
   insertStoredRoomSettingsFromMigration,
   upsertRoomRoleOverride,
 } from '../src/db/room-registration.js';
+import {
+  buildLegacyRoomMigrationPlan,
+  getPendingLegacyRegisteredGroupJids,
+  normalizeLegacyRegisteredGroupsTable,
+} from './legacy-room-registrations.js';
 import { emitStatus } from './status.js';
 
 interface MigrationReport {
@@ -42,21 +45,27 @@ function ensureLegacyBackupTable(database: Database): void {
   `);
 }
 
-function backupPendingLegacyRows(database: Database): number {
-  ensureLegacyBackupTable(database);
-  const pendingJids = new Set(getPendingLegacyRegisteredGroupJids(database));
-  if (pendingJids.size === 0) {
+function backupLegacyRows(database: Database): number {
+  const tableExists = database
+    .prepare(
+      `SELECT 1
+         FROM sqlite_master
+        WHERE type = 'table'
+          AND name = 'registered_groups'`,
+    )
+    .get();
+  if (!tableExists) {
     return 0;
   }
-  const rows = (
-    database
-      .prepare(
-        `SELECT jid, name, folder, trigger_pattern, added_at, agent_config,
-                requires_trigger, is_main, agent_type, work_dir
-           FROM registered_groups`,
-      )
-      .all() as Array<Record<string, unknown>>
-  ).filter((row) => pendingJids.has(String(row.jid)));
+
+  ensureLegacyBackupTable(database);
+  const rows = database
+    .prepare(
+      `SELECT jid, name, folder, trigger_pattern, added_at, agent_config,
+              requires_trigger, is_main, agent_type, work_dir
+         FROM registered_groups`,
+    )
+    .all() as Array<Record<string, unknown>>;
 
   const insert = database.prepare(
     `INSERT OR REPLACE INTO registered_groups_legacy_backup (
@@ -90,6 +99,10 @@ function backupPendingLegacyRows(database: Database): number {
   }
 
   return rows.length;
+}
+
+function dropLegacyRegisteredGroupsTable(database: Database): void {
+  database.exec(`DROP TABLE IF EXISTS registered_groups`);
 }
 
 function migrateLegacyRegisteredGroupsTable(
@@ -141,8 +154,10 @@ export async function run(_args: string[]): Promise<void> {
   };
 
   database.transaction(() => {
-    report.backedUpLegacyRows = backupPendingLegacyRows(database);
+    normalizeLegacyRegisteredGroupsTable(database);
+    report.backedUpLegacyRows = backupLegacyRows(database);
     migrateLegacyRegisteredGroupsTable(database, report);
+    dropLegacyRegisteredGroupsTable(database);
   })();
 
   database.close();

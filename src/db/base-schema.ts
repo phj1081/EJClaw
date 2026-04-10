@@ -97,20 +97,6 @@ export function applyBaseSchema(database: Database): void {
       session_id TEXT NOT NULL,
       PRIMARY KEY (group_folder, agent_type)
     );
-    CREATE TABLE IF NOT EXISTS registered_groups (
-      jid TEXT NOT NULL,
-      name TEXT NOT NULL,
-      folder TEXT NOT NULL,
-      trigger_pattern TEXT NOT NULL,
-      added_at TEXT NOT NULL,
-      agent_config TEXT,
-      requires_trigger INTEGER DEFAULT 1,
-      is_main INTEGER DEFAULT 0,
-      agent_type TEXT NOT NULL DEFAULT 'claude-code',
-      work_dir TEXT,
-      PRIMARY KEY (jid, agent_type),
-      UNIQUE (folder, agent_type)
-    );
     CREATE TABLE IF NOT EXISTS paired_projects (
       chat_jid TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,

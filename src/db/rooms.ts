@@ -7,20 +7,13 @@ import {
   type RoomModeSource,
   type RoomRegistrationSnapshot,
   type StoredRoomSettings,
-  buildLegacyRoomMigrationPlan,
   buildRegisteredGroupFromStoredSettings,
-  collectRegisteredAgentTypes,
-  countPendingLegacyRegisteredGroupRows,
-  deleteLegacyRegisteredGroupRowsForJid,
-  getPendingLegacyRegisteredGroupJids as getPendingLegacyRegisteredGroupJidsFromDatabase,
   getStoredRoomRowsFromDatabase,
   getStoredRoomSettingsRowFromDatabase,
   inferOwnerAgentTypeFromRegisteredAgentTypes,
   inferRoomModeFromRegisteredAgentTypes,
   inferStoredRoomCapabilityTypes,
   insertStoredRoomSettings,
-  insertStoredRoomSettingsFromMigration,
-  materializeRegisteredGroupsForRoom,
   normalizeStoredAgentType,
   resolveAssignedRoomFolder,
   resolveStoredRoomCapabilityTypes,
@@ -94,13 +87,12 @@ export function getRegisteredGroupFromDatabase(
   );
 }
 
-function writeLegacyRegisteredGroupAndSyncRoomSettingsInDatabase(
+function seedRoomBindingForTestsInDatabase(
   database: Database,
   jid: string,
   group: RegisteredGroup,
 ): void {
   const existingStored = getStoredRoomSettingsRowFromDatabase(database, jid);
-  const existingRoomMode = getStoredRoomModeRowFromDatabase(database, jid);
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
@@ -108,15 +100,17 @@ function writeLegacyRegisteredGroupAndSyncRoomSettingsInDatabase(
   database.transaction(() => {
     const seededAgentType = group.agentType || 'claude-code';
     const agentTypes = new Set<AgentType>(
-      collectRegisteredAgentTypes(database, jid),
+      existingStored
+        ? resolveStoredRoomCapabilityTypes(database, existingStored)
+        : [],
     );
     agentTypes.add(seededAgentType);
     const inferredRoomMode = inferRoomModeFromRegisteredAgentTypes([
       ...agentTypes,
     ]);
     const roomMode =
-      existingRoomMode?.source === 'explicit'
-        ? existingRoomMode.roomMode
+      existingStored?.modeSource === 'explicit'
+        ? existingStored.roomMode
         : inferredRoomMode;
     const ownerAgentType =
       existingStored?.modeSource === 'explicit' && existingStored.ownerAgentType
@@ -138,30 +132,28 @@ function writeLegacyRegisteredGroupAndSyncRoomSettingsInDatabase(
 
     if (existingStored) {
       updateStoredRoomMetadata(database, jid, snapshot);
-      if (!existingRoomMode || existingRoomMode.source === 'inferred') {
+      if (existingStored.modeSource === 'inferred') {
         upsertStoredRoomModeInDatabase(database, jid, roomMode, 'inferred');
       }
     } else {
       insertStoredRoomSettings(database, jid, roomMode, 'inferred', snapshot);
     }
 
-    materializeRegisteredGroupsForRoom(
-      database,
-      jid,
-      snapshot,
-      roomMode,
-      ownerAgentType,
-      seededAgentType === ownerAgentType ? group.agentConfig : undefined,
-      group.added_at,
-    );
-    syncRoomRoleOverridesForRoom(
-      database,
-      jid,
-      roomMode,
-      ownerAgentType,
-      seededAgentType === ownerAgentType ? group.agentConfig : undefined,
-      group.added_at,
-    );
+    syncRoomRoleOverridesForRoom(database, jid, roomMode, ownerAgentType, {
+      ownerAgentConfig:
+        seededAgentType === ownerAgentType ? group.agentConfig : undefined,
+      ownerCreatedAt:
+        seededAgentType === ownerAgentType ? group.added_at : undefined,
+      reviewerAgentConfig:
+        roomMode === 'tribunal' && seededAgentType !== ownerAgentType
+          ? group.agentConfig
+          : undefined,
+      reviewerCreatedAt:
+        roomMode === 'tribunal' && seededAgentType !== ownerAgentType
+          ? group.added_at
+          : undefined,
+      updatedAt: group.added_at,
+    });
   })();
 }
 
@@ -170,33 +162,7 @@ export function setRegisteredGroupForTestsInDatabase(
   jid: string,
   group: RegisteredGroup,
 ): void {
-  writeLegacyRegisteredGroupAndSyncRoomSettingsInDatabase(database, jid, group);
-}
-
-export function migrateLegacyRoomRegistrationsForTestsInDatabase(
-  database: Database,
-): {
-  migratedRooms: number;
-  migratedRoleOverrides: number;
-} {
-  const jids = getPendingLegacyRegisteredGroupJidsFromDatabase(database);
-  let migratedRooms = 0;
-  let migratedRoleOverrides = 0;
-
-  database.transaction(() => {
-    for (const jid of jids) {
-      const plan = buildLegacyRoomMigrationPlan(database, jid);
-      if (!plan) continue;
-      insertStoredRoomSettingsFromMigration(database, plan);
-      for (const override of plan.roleOverrides) {
-        upsertRoomRoleOverride(database, jid, override);
-        migratedRoleOverrides += 1;
-      }
-      migratedRooms += 1;
-    }
-  })();
-
-  return { migratedRooms, migratedRoleOverrides };
+  seedRoomBindingForTestsInDatabase(database, jid, group);
 }
 
 export function assignRoomInDatabase(
@@ -264,15 +230,11 @@ export function assignRoomInDatabase(
       );
     }
 
-    syncRoomRoleOverridesForRoom(
-      database,
-      chatJid,
-      roomMode,
-      ownerAgentType,
-      input.ownerAgentConfig,
-      input.addedAt ?? now,
-    );
-    deleteLegacyRegisteredGroupRowsForJid(database, chatJid);
+    syncRoomRoleOverridesForRoom(database, chatJid, roomMode, ownerAgentType, {
+      ownerAgentConfig: input.ownerAgentConfig,
+      ownerCreatedAt: input.addedAt ?? now,
+      updatedAt: input.addedAt ?? now,
+    });
   })();
 
   return getRegisteredGroupFromDatabase(database, chatJid);
@@ -283,25 +245,16 @@ export function updateRegisteredGroupNameInDatabase(
   jid: string,
   name: string,
 ): void {
-  const plan = buildRoomRegistrationPlanForJid(database, jid, { name });
-  if (!plan) {
+  const stored = getStoredRoomSettingsRowFromDatabase(database, jid);
+  if (!stored) {
     return;
   }
 
-  database.transaction(() => {
-    if (plan.hasStoredRoom) {
-      updateStoredRoomMetadata(database, jid, plan.snapshot);
-    } else {
-      insertStoredRoomSettings(
-        database,
-        jid,
-        plan.roomMode,
-        'inferred',
-        plan.snapshot,
-      );
-    }
-    deleteLegacyRegisteredGroupRowsForJid(database, jid);
-  })();
+  updateStoredRoomMetadata(
+    database,
+    jid,
+    buildRoomRegistrationSnapshotFromStoredRoom(database, stored, { name }),
+  );
 }
 
 export function getAllRoomBindingsFromDatabase(
@@ -383,33 +336,6 @@ function buildRoomRegistrationSnapshotFromStoredRoom(
   };
 }
 
-function buildRoomRegistrationPlanForJid(
-  database: Database,
-  chatJid: string,
-  overrides?: Partial<Pick<RoomRegistrationSnapshot, 'name'>>,
-):
-  | {
-      snapshot: RoomRegistrationSnapshot;
-      roomMode: RoomMode;
-      hasStoredRoom: boolean;
-    }
-  | undefined {
-  const stored = getStoredRoomSettingsRowFromDatabase(database, chatJid);
-  if (!stored) {
-    return undefined;
-  }
-
-  return {
-    snapshot: buildRoomRegistrationSnapshotFromStoredRoom(
-      database,
-      stored,
-      overrides,
-    ),
-    roomMode: stored.roomMode,
-    hasStoredRoom: true,
-  };
-}
-
 function upsertStoredRoomModeInDatabase(
   database: Database,
   chatJid: string,
@@ -446,7 +372,6 @@ export function setExplicitRoomModeInDatabase(
   roomMode: RoomMode,
 ): void {
   upsertStoredRoomModeInDatabase(database, chatJid, roomMode, 'explicit');
-  deleteLegacyRegisteredGroupRowsForJid(database, chatJid);
 }
 
 export function clearExplicitRoomModeInDatabase(
@@ -454,14 +379,18 @@ export function clearExplicitRoomModeInDatabase(
   chatJid: string,
 ): void {
   const stored = getStoredRoomSettingsRowFromDatabase(database, chatJid);
-  const agentTypes = stored
-    ? inferStoredRoomCapabilityTypes(database, stored)
-    : collectRegisteredAgentTypes(database, chatJid);
+  if (!stored) {
+    return;
+  }
+
+  const agentTypes = inferStoredRoomCapabilityTypes(database, stored);
   if (agentTypes.length === 0) {
     database
       .prepare('DELETE FROM room_settings WHERE chat_jid = ?')
       .run(chatJid);
-    deleteLegacyRegisteredGroupRowsForJid(database, chatJid);
+    database
+      .prepare('DELETE FROM room_role_overrides WHERE chat_jid = ?')
+      .run(chatJid);
     return;
   }
 
@@ -471,7 +400,6 @@ export function clearExplicitRoomModeInDatabase(
     inferRoomModeFromRegisteredAgentTypes(agentTypes),
     'inferred',
   );
-  deleteLegacyRegisteredGroupRowsForJid(database, chatJid);
 }
 
 export function getEffectiveRoomModeFromDatabase(
@@ -490,10 +418,4 @@ export function getEffectiveRuntimeRoomModeFromDatabase(
   return (
     getStoredRoomSettingsFromDatabase(database, chatJid)?.roomMode ?? 'single'
   );
-}
-
-export function countPendingLegacyRegisteredGroupRowsInDatabase(
-  database: Database,
-): number {
-  return countPendingLegacyRegisteredGroupRows(database);
 }

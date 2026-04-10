@@ -8,7 +8,6 @@ import {
   openPersistentDatabase,
   initializeDatabaseSchema,
 } from './bootstrap.js';
-import { countPendingLegacyRegisteredGroupRows } from './room-registration.js';
 import {
   clearExpiredPairedTaskExecutionLeasesInDatabase,
   clearPairedTaskExecutionLeasesForServiceInDatabase,
@@ -23,14 +22,47 @@ function finalizeDatabaseInitialization(database: Database): void {
   clearExpiredPairedTaskExecutionLeasesInDatabase(database);
 }
 
+function getUnexpectedLegacyRoomBindingTables(database: Database): string[] {
+  const tableRows = database
+    .prepare(
+      `SELECT name
+         FROM sqlite_master
+        WHERE type = 'table'
+          AND name NOT LIKE 'sqlite_%'
+        ORDER BY name`,
+    )
+    .all() as Array<{ name: string }>;
+  const matches: string[] = [];
+
+  for (const row of tableRows) {
+    const columns = database
+      .prepare(`PRAGMA table_info("${row.name.replaceAll('"', '""')}")`)
+      .all() as Array<{ name: string }>;
+    const columnNames = new Set(columns.map((column) => column.name));
+    const looksLikeLegacyRoomBindingTable =
+      columnNames.has('jid') &&
+      columnNames.has('name') &&
+      columnNames.has('folder') &&
+      columnNames.has('trigger_pattern') &&
+      columnNames.has('added_at');
+    const isBackupTable = columnNames.has('backup_at');
+
+    if (looksLikeLegacyRoomBindingTable && !isBackupTable) {
+      matches.push(row.name);
+    }
+  }
+
+  return matches;
+}
+
 function assertNoPendingLegacyRoomMigration(database: Database): void {
-  const pendingLegacyRows = countPendingLegacyRegisteredGroupRows(database);
-  if (pendingLegacyRows === 0) {
+  const pendingTables = getUnexpectedLegacyRoomBindingTables(database);
+  if (pendingTables.length === 0) {
     return;
   }
 
   throw new Error(
-    `Legacy room migration required before startup (pending_rows=${pendingLegacyRows})`,
+    `Legacy room migration required before startup (tables=${pendingTables.join(',')})`,
   );
 }
 

@@ -152,6 +152,16 @@ describe('migrate room registrations step', () => {
     expect(
       migratedDb
         .prepare(
+          `SELECT name
+             FROM sqlite_master
+            WHERE type = 'table'
+              AND name = 'registered_groups'`,
+        )
+        .get(),
+    ).toBeUndefined();
+    expect(
+      migratedDb
+        .prepare(
           `SELECT jid, agent_type
              FROM registered_groups_legacy_backup
             ORDER BY jid, agent_type`,

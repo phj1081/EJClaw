@@ -30,19 +30,6 @@ export interface RoomRegistrationSnapshot {
   workDir: string | null;
 }
 
-export interface RegisteredGroupDatabaseRow {
-  jid: string;
-  name: string;
-  folder: string;
-  trigger_pattern: string;
-  added_at: string;
-  agent_config: string | null;
-  requires_trigger: number | null;
-  is_main: number | null;
-  agent_type: string | null;
-  work_dir: string | null;
-}
-
 export interface RoomRoleOverrideSnapshot {
   role: 'owner' | 'reviewer' | 'arbiter';
   agentType: AgentType;
@@ -68,6 +55,14 @@ export interface LegacyRoomMigrationPlan {
   roleOverrides: RoomRoleOverrideSnapshot[];
 }
 
+export interface SyncRoomRoleOverridesOptions {
+  ownerAgentConfig?: RegisteredGroup['agentConfig'];
+  ownerCreatedAt?: string;
+  reviewerAgentConfig?: RegisteredGroup['agentConfig'];
+  reviewerCreatedAt?: string;
+  updatedAt?: string;
+}
+
 export function normalizeRoomModeSource(
   source: string | null | undefined,
 ): RoomModeSource | undefined {
@@ -80,46 +75,6 @@ export function normalizeStoredAgentType(
   return agentType === 'claude-code' || agentType === 'codex'
     ? agentType
     : undefined;
-}
-
-/**
- * Legacy capability-row helper for migration/write flows.
- * Runtime read paths must derive capability types from canonical room tables.
- */
-export function collectRegisteredAgentTypes(
-  database: Database,
-  jid: string,
-): AgentType[] {
-  const rows = database
-    .prepare('SELECT agent_type FROM registered_groups WHERE jid = ?')
-    .all(jid) as Array<{ agent_type: string | null }>;
-
-  const types = new Set<AgentType>();
-  for (const row of rows) {
-    const agentType = normalizeStoredAgentType(row.agent_type);
-    if (agentType) {
-      types.add(agentType);
-    }
-  }
-  return [...types];
-}
-
-export function collectRegisteredAgentTypesForFolder(
-  database: Database,
-  folder: string,
-): AgentType[] {
-  const rows = database
-    .prepare('SELECT agent_type FROM registered_groups WHERE folder = ?')
-    .all(folder) as Array<{ agent_type: string | null }>;
-
-  const types = new Set<AgentType>();
-  for (const row of rows) {
-    const agentType = normalizeStoredAgentType(row.agent_type);
-    if (agentType) {
-      types.add(agentType);
-    }
-  }
-  return [...types];
 }
 
 export function inferRoomModeFromRegisteredAgentTypes(
@@ -136,76 +91,6 @@ export function inferOwnerAgentTypeFromRegisteredAgentTypes(
   if (types.has(OWNER_AGENT_TYPE)) return OWNER_AGENT_TYPE;
   if (types.has('codex')) return 'codex';
   return 'claude-code';
-}
-
-export function parseRegisteredGroupRow(
-  row: RegisteredGroupDatabaseRow | undefined,
-): (RegisteredGroup & { jid: string }) | undefined {
-  if (!row) return undefined;
-  if (!isValidGroupFolder(row.folder)) {
-    logger.warn(
-      { jid: row.jid, folder: row.folder },
-      'Skipping registered group with invalid folder',
-    );
-    return undefined;
-  }
-
-  return {
-    jid: row.jid,
-    name: row.name,
-    folder: row.folder,
-    added_at: row.added_at,
-    agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
-    isMain: row.is_main === 1 ? true : undefined,
-    agentType: normalizeStoredAgentType(row.agent_type),
-    workDir: row.work_dir || undefined,
-  };
-}
-
-export function getPendingLegacyRegisteredGroupJids(
-  database: Database,
-): string[] {
-  const rows = database
-    .prepare(
-      `SELECT DISTINCT jid
-         FROM registered_groups
-        ORDER BY jid`,
-    )
-    .all() as Array<{ jid: string }>;
-
-  return rows
-    .map((row) => row.jid)
-    .filter((jid) => jidRequiresLegacyRoomMigration(database, jid));
-}
-
-export function countPendingLegacyRegisteredGroupRows(
-  database: Database,
-): number {
-  let count = 0;
-  const countRows = database.prepare(
-    `SELECT COUNT(*) AS count
-       FROM registered_groups
-      WHERE jid = ?`,
-  );
-
-  for (const jid of getPendingLegacyRegisteredGroupJids(database)) {
-    const row = countRows.get(jid) as { count: number };
-    count += row.count;
-  }
-
-  return count;
-}
-
-export function deleteLegacyRegisteredGroupRowsForJid(
-  database: Database,
-  jid: string,
-): void {
-  database
-    .prepare(
-      `DELETE FROM registered_groups
-       WHERE jid = ?`,
-    )
-    .run(jid);
 }
 
 function getStoredRoomRoleOverrideRows(
@@ -255,193 +140,6 @@ function getStoredRoomRoleOverrideRows(
     });
   }
   return result;
-}
-
-function normalizeAgentConfigValue(
-  agentConfig: RegisteredGroup['agentConfig'] | undefined,
-): string {
-  return JSON.stringify(agentConfig ?? null);
-}
-
-function roomRoleOverrideMatches(
-  actual: StoredRoomRoleOverrideRow | undefined,
-  expected: RoomRoleOverrideSnapshot,
-): boolean {
-  return (
-    actual?.agentType === expected.agentType &&
-    normalizeAgentConfigValue(actual.agentConfig) ===
-      normalizeAgentConfigValue(expected.agentConfig)
-  );
-}
-
-function storedRoomSettingsMatchesLegacySnapshot(
-  stored: StoredRoomSettings,
-  snapshot: RoomRegistrationSnapshot,
-): boolean {
-  return (
-    stored.name === snapshot.name &&
-    stored.folder === snapshot.folder &&
-    (stored.requiresTrigger ?? true) === snapshot.requiresTrigger &&
-    (stored.isMain ?? false) === snapshot.isMain &&
-    (stored.workDir ?? null) === (snapshot.workDir ?? null)
-  );
-}
-
-function getRegisteredGroupCapabilityMetadata(
-  database: Database,
-  jid: string,
-  preferredAgentType?: AgentType,
-): Pick<RegisteredGroup, 'added_at' | 'agentConfig'> | undefined {
-  const row = (
-    preferredAgentType
-      ? database
-          .prepare(
-            `SELECT added_at, agent_config
-             FROM registered_groups
-             WHERE jid = ? AND agent_type = ?
-             LIMIT 1`,
-          )
-          .get(jid, preferredAgentType)
-      : database
-          .prepare(
-            `SELECT added_at, agent_config
-             FROM registered_groups
-             WHERE jid = ?
-             ORDER BY CASE WHEN agent_type = ? THEN 0 ELSE 1 END, added_at
-             LIMIT 1`,
-          )
-          .get(jid, OWNER_AGENT_TYPE)
-  ) as { added_at: string; agent_config: string | null } | undefined;
-
-  if (!row) return undefined;
-  return {
-    added_at: row.added_at,
-    agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
-  };
-}
-
-function resolveReviewerAgentTypeFromRegisteredAgentTypes(
-  agentTypes: readonly AgentType[],
-  ownerAgentType: AgentType,
-): AgentType | undefined {
-  return agentTypes.find((agentType) => agentType !== ownerAgentType);
-}
-
-export function buildLegacyRoomMigrationPlan(
-  database: Database,
-  jid: string,
-): LegacyRoomMigrationPlan | undefined {
-  const existingStored = getStoredRoomSettingsRowFromDatabase(database, jid);
-  const snapshot = collectRoomRegistrationSnapshot(
-    database,
-    jid,
-    existingStored,
-  );
-  if (!snapshot) return undefined;
-
-  const rows = database
-    .prepare(
-      `SELECT added_at
-         FROM registered_groups
-        WHERE jid = ?
-        ORDER BY added_at, agent_type`,
-    )
-    .all(jid) as Array<{ added_at: string }>;
-  if (rows.length === 0) return undefined;
-
-  const agentTypes = collectRegisteredAgentTypes(database, jid);
-  const roomMode =
-    existingStored?.roomMode ??
-    inferRoomModeFromRegisteredAgentTypes(agentTypes);
-  const createdAt = rows[0].added_at;
-  const updatedAt = rows[rows.length - 1].added_at;
-  const roleOverrides: RoomRoleOverrideSnapshot[] = [];
-
-  const ownerMetadata = getRegisteredGroupCapabilityMetadata(
-    database,
-    jid,
-    snapshot.ownerAgentType,
-  );
-  roleOverrides.push({
-    role: 'owner',
-    agentType: snapshot.ownerAgentType,
-    agentConfig: ownerMetadata?.agentConfig,
-    createdAt: ownerMetadata?.added_at ?? createdAt,
-    updatedAt,
-  });
-
-  if (roomMode === 'tribunal') {
-    const reviewerAgentType = resolveReviewerAgentTypeFromRegisteredAgentTypes(
-      agentTypes,
-      snapshot.ownerAgentType,
-    );
-    if (!reviewerAgentType) {
-      throw new Error(
-        `Missing reviewer agent type for tribunal legacy room ${jid}`,
-      );
-    }
-    const reviewerMetadata = getRegisteredGroupCapabilityMetadata(
-      database,
-      jid,
-      reviewerAgentType,
-    );
-    roleOverrides.push({
-      role: 'reviewer',
-      agentType: reviewerAgentType,
-      agentConfig: reviewerMetadata?.agentConfig,
-      createdAt: reviewerMetadata?.added_at ?? createdAt,
-      updatedAt,
-    });
-  }
-
-  return {
-    chatJid: jid,
-    roomMode,
-    createdAt,
-    updatedAt,
-    snapshot,
-    roleOverrides,
-  };
-}
-
-function jidRequiresLegacyRoomMigration(
-  database: Database,
-  jid: string,
-): boolean {
-  let stored: StoredRoomSettings | undefined;
-  try {
-    stored = getStoredRoomSettingsRowFromDatabase(database, jid);
-  } catch {
-    return true;
-  }
-  if (!stored) {
-    return true;
-  }
-
-  let plan: LegacyRoomMigrationPlan | undefined;
-  try {
-    plan = buildLegacyRoomMigrationPlan(database, jid);
-  } catch {
-    return true;
-  }
-  if (!plan) {
-    return false;
-  }
-
-  if (!storedRoomSettingsMatchesLegacySnapshot(stored, plan.snapshot)) {
-    return true;
-  }
-
-  const existingOverrides = getStoredRoomRoleOverrideRows(database, jid);
-  for (const override of plan.roleOverrides) {
-    if (
-      !roomRoleOverrideMatches(existingOverrides.get(override.role), override)
-    ) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 export function getStoredRoomSettingsRowFromDatabase(
@@ -621,18 +319,9 @@ function collectReservedFolders(
       `SELECT folder
        FROM room_settings
        WHERE folder IS NOT NULL
-         AND (? IS NULL OR chat_jid != ?)
-       UNION
-       SELECT folder
-       FROM registered_groups
-       WHERE ? IS NULL OR jid != ?`,
+         AND (? IS NULL OR chat_jid != ?)`,
     )
-    .all(
-      exceptChatJid ?? null,
-      exceptChatJid ?? null,
-      exceptChatJid ?? null,
-      exceptChatJid ?? null,
-    ) as Array<{
+    .all(exceptChatJid ?? null, exceptChatJid ?? null) as Array<{
     folder: string | null;
   }>;
 
@@ -696,200 +385,6 @@ export function resolveAssignedRoomFolder(
   if (existingFolder) return existingFolder;
 
   return buildGeneratedRoomFolder(database, chatJid, name);
-}
-
-function getDesiredRegisteredAgentTypes(
-  roomMode: RoomMode,
-  ownerAgentType: AgentType,
-): AgentType[] {
-  const types = new Set<AgentType>([ownerAgentType]);
-  if (roomMode === 'tribunal') {
-    types.add(REVIEWER_AGENT_TYPE);
-  }
-  return [...types];
-}
-
-export function materializeRegisteredGroupsForRoom(
-  database: Database,
-  chatJid: string,
-  snapshot: RoomRegistrationSnapshot,
-  roomMode: RoomMode,
-  ownerAgentType: AgentType,
-  ownerAgentConfig?: RegisteredGroup['agentConfig'],
-  addedAt?: string,
-): void {
-  const now = new Date().toISOString();
-  const desiredTypes = getDesiredRegisteredAgentTypes(roomMode, ownerAgentType);
-  const existingRows = database
-    .prepare(
-      `SELECT agent_type, added_at, agent_config
-       FROM registered_groups
-       WHERE jid = ?`,
-    )
-    .all(chatJid) as Array<{
-    agent_type: string | null;
-    added_at: string;
-    agent_config: string | null;
-  }>;
-  const existingByType = new Map<
-    AgentType,
-    { added_at: string; agent_config: string | null }
-  >();
-  for (const row of existingRows) {
-    const agentType = normalizeStoredAgentType(row.agent_type);
-    if (agentType) {
-      existingByType.set(agentType, row);
-    }
-  }
-
-  for (const agentType of desiredTypes) {
-    const existing = existingByType.get(agentType);
-    const agentConfig =
-      agentType === ownerAgentType
-        ? (ownerAgentConfig ??
-          (existing?.agent_config
-            ? JSON.parse(existing.agent_config)
-            : undefined))
-        : existing?.agent_config
-          ? JSON.parse(existing.agent_config)
-          : undefined;
-    const rowAddedAt = existing?.added_at ?? addedAt ?? now;
-
-    database
-      .prepare(
-        `INSERT OR REPLACE INTO registered_groups (
-          jid,
-          name,
-          folder,
-          trigger_pattern,
-          added_at,
-          agent_config,
-          requires_trigger,
-          is_main,
-          agent_type,
-          work_dir
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        chatJid,
-        snapshot.name,
-        snapshot.folder,
-        snapshot.triggerPattern,
-        rowAddedAt,
-        agentConfig ? JSON.stringify(agentConfig) : null,
-        snapshot.requiresTrigger ? 1 : 0,
-        snapshot.isMain ? 1 : 0,
-        agentType,
-        snapshot.workDir,
-      );
-  }
-
-  const placeholders = desiredTypes.map(() => '?').join(',');
-  database
-    .prepare(
-      `DELETE FROM registered_groups
-       WHERE jid = ?
-         AND agent_type NOT IN (${placeholders})`,
-    )
-    .run(chatJid, ...desiredTypes);
-}
-
-/**
- * Legacy snapshot helper for migration/write flows.
- * Runtime read paths must not rebuild room metadata from registered_groups.
- */
-export function collectRoomRegistrationSnapshot(
-  database: Database,
-  jid: string,
-  existingStored?: Pick<
-    StoredRoomSettings,
-    'modeSource' | 'ownerAgentType' | 'trigger'
-  >,
-): RoomRegistrationSnapshot | undefined {
-  const rows = database
-    .prepare(
-      `SELECT name, folder, trigger_pattern, requires_trigger, is_main, agent_type, work_dir
-       FROM registered_groups
-       WHERE jid = ?
-       ORDER BY agent_type`,
-    )
-    .all(jid) as Array<{
-    name: string;
-    folder: string;
-    trigger_pattern: string;
-    requires_trigger: number | null;
-    is_main: number | null;
-    agent_type: string | null;
-    work_dir: string | null;
-  }>;
-
-  if (rows.length === 0) return undefined;
-
-  const first = rows[0];
-  const conflicts = new Set<string>();
-  for (const row of rows.slice(1)) {
-    if (row.name !== first.name) conflicts.add('name');
-    if (row.folder !== first.folder) conflicts.add('folder');
-    if ((row.requires_trigger ?? 1) !== (first.requires_trigger ?? 1)) {
-      conflicts.add('requires_trigger');
-    }
-    if ((row.is_main ?? 0) !== (first.is_main ?? 0)) {
-      conflicts.add('is_main');
-    }
-    if ((row.work_dir ?? null) !== (first.work_dir ?? null)) {
-      conflicts.add('work_dir');
-    }
-  }
-
-  if (conflicts.size > 0) {
-    throw new Error(
-      `Conflicting room-level registered_groups metadata for ${jid}: ${[
-        ...conflicts,
-      ].join(', ')}`,
-    );
-  }
-
-  const agentTypes = collectRegisteredAgentTypes(database, jid);
-  const inferredOwnerAgentType =
-    inferOwnerAgentTypeFromRegisteredAgentTypes(agentTypes);
-  const preferExplicitTrigger =
-    existingStored?.modeSource === 'explicit' && existingStored.trigger;
-  const preferExplicitOwner =
-    existingStored?.modeSource === 'explicit' && existingStored.ownerAgentType;
-  const preferredOwnerAgentType = preferExplicitOwner
-    ? existingStored.ownerAgentType
-    : undefined;
-  const preferredOwnerRow = preferredOwnerAgentType
-    ? rows.find(
-        (row) =>
-          normalizeStoredAgentType(row.agent_type) === preferredOwnerAgentType,
-      )
-    : undefined;
-  const inferredOwnerRow =
-    rows.find(
-      (row) =>
-        normalizeStoredAgentType(row.agent_type) === inferredOwnerAgentType,
-    ) ?? rows[0];
-  const ownerAgentType = preferredOwnerAgentType
-    ? preferredOwnerRow
-      ? preferredOwnerAgentType
-      : preferredOwnerAgentType
-    : inferredOwnerAgentType;
-  const ownerRow = preferredOwnerRow ?? inferredOwnerRow;
-
-  return {
-    name: first.name,
-    folder: first.folder,
-    triggerPattern: preferExplicitTrigger
-      ? existingStored.trigger!
-      : preferredOwnerRow != null
-        ? preferredOwnerRow.trigger_pattern
-        : ownerRow.trigger_pattern,
-    requiresTrigger: (first.requires_trigger ?? 1) === 1,
-    isMain: (first.is_main ?? 0) === 1,
-    ownerAgentType,
-    workDir: first.work_dir ?? null,
-  };
 }
 
 export function insertStoredRoomSettings(
@@ -1006,31 +501,24 @@ export function syncRoomRoleOverridesForRoom(
   chatJid: string,
   roomMode: RoomMode,
   ownerAgentType: AgentType,
-  ownerAgentConfig?: RegisteredGroup['agentConfig'],
-  addedAt?: string,
+  options: SyncRoomRoleOverridesOptions = {},
 ): void {
-  const now = addedAt ?? new Date().toISOString();
+  const now = options.updatedAt ?? new Date().toISOString();
   const existingOverrides = getStoredRoomRoleOverrideRows(database, chatJid);
   const existingOwnerOverride = existingOverrides.get('owner');
-  const ownerMetadata = getRegisteredGroupCapabilityMetadata(
-    database,
-    chatJid,
-    ownerAgentType,
-  );
   upsertRoomRoleOverride(database, chatJid, {
     role: 'owner',
     agentType: ownerAgentType,
     agentConfig:
-      ownerAgentConfig ??
+      options.ownerAgentConfig ??
       (existingOwnerOverride?.agentType === ownerAgentType
         ? existingOwnerOverride.agentConfig
-        : undefined) ??
-      ownerMetadata?.agentConfig,
+        : undefined),
     createdAt:
       (existingOwnerOverride?.agentType === ownerAgentType
         ? existingOwnerOverride.createdAt
         : undefined) ??
-      ownerMetadata?.added_at ??
+      options.ownerCreatedAt ??
       now,
     updatedAt: now,
   });
@@ -1040,24 +528,20 @@ export function syncRoomRoleOverridesForRoom(
       ownerAgentType === REVIEWER_AGENT_TYPE
         ? OWNER_AGENT_TYPE
         : REVIEWER_AGENT_TYPE;
-    const reviewerMetadata = getRegisteredGroupCapabilityMetadata(
-      database,
-      chatJid,
-      reviewerAgentType,
-    );
     const existingReviewerOverride = existingOverrides.get('reviewer');
     upsertRoomRoleOverride(database, chatJid, {
       role: 'reviewer',
       agentType: reviewerAgentType,
       agentConfig:
+        options.reviewerAgentConfig ??
         (existingReviewerOverride?.agentType === reviewerAgentType
           ? existingReviewerOverride.agentConfig
-          : undefined) ?? reviewerMetadata?.agentConfig,
+          : undefined),
       createdAt:
         (existingReviewerOverride?.agentType === reviewerAgentType
           ? existingReviewerOverride.createdAt
           : undefined) ??
-        reviewerMetadata?.added_at ??
+        options.reviewerCreatedAt ??
         now,
       updatedAt: now,
     });

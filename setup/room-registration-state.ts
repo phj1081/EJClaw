@@ -5,7 +5,7 @@ import { Database } from 'bun:sqlite';
 
 import { STORE_DIR } from '../src/config.js';
 import { listUnexpectedDataStateFiles } from '../src/data-state-files.js';
-import { countPendingLegacyRegisteredGroupRows } from '../src/db/room-registration.js';
+import { countPendingLegacyRegisteredGroupRows } from './legacy-room-registrations.js';
 
 export interface AssignedRoomsSummary {
   assignedRooms: number;

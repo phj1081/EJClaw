@@ -142,7 +142,6 @@ import {
   getRegisteredAgentTypesForJidFromDatabase,
   getRegisteredGroupFromDatabase,
   getStoredRoomSettingsFromDatabase,
-  migrateLegacyRoomRegistrationsForTestsInDatabase,
   setExplicitRoomModeInDatabase,
   setRegisteredGroupForTestsInDatabase,
   setStoredRoomOwnerAgentTypeForTestsInDatabase,
@@ -678,25 +677,12 @@ export function getRegisteredGroup(
   return getRegisteredGroupFromDatabase(db, jid, agentType);
 }
 
-/**
- * @internal Test/migration helper for seeding legacy capability rows.
- * Runtime code must use assignRoom() so room_settings remains the explicit SSOT.
- */
+/** @internal Test helper for seeding canonical room bindings. */
 export function _setRegisteredGroupForTests(
   jid: string,
   group: RegisteredGroup,
 ): void {
   setRegisteredGroupForTestsInDatabase(db, jid, group);
-}
-
-export function _migrateLegacyRoomRegistrationsForTests(): {
-  migratedRooms: number;
-  migratedRoleOverrides: number;
-} {
-  if (!db) {
-    throw new Error('Database not initialized');
-  }
-  return migrateLegacyRoomRegistrationsForTestsInDatabase(db);
 }
 
 export function assignRoom(
