@@ -34,6 +34,7 @@ function getExpectedSchemaMigrations(): Array<{
     { version: 7, name: 'runtime_service_metadata' },
     { version: 8, name: 'paired_task_schema_cleanup' },
     { version: 9, name: 'paired_workspace_project_schema_cleanup' },
+    { version: 10, name: 'paired_turn_provenance_upgrade' },
   ];
 }
 

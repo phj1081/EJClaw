@@ -1,10 +1,7 @@
 import { Database } from 'bun:sqlite';
 
 import { inferExecutionLeaseServiceIdFromCanonicalMetadata } from './canonical-role-metadata.js';
-import {
-  backfillPairedTurnAttemptsFromTurns,
-  buildPairedTurnAttemptId,
-} from './paired-turn-attempts.js';
+import { buildPairedTurnAttemptId } from './paired-turn-attempts.js';
 import {
   getTableColumns,
   tableHasColumn,
@@ -291,7 +288,7 @@ function resolveAttemptNoForBackfill(
   );
 }
 
-function backfillPairedTurnAttemptIds(database: Database): void {
+export function backfillPairedTurnAttemptIds(database: Database): void {
   if (!tableHasColumn(database, 'paired_turn_attempts', 'attempt_id')) {
     return;
   }
@@ -304,7 +301,7 @@ function backfillPairedTurnAttemptIds(database: Database): void {
   `);
 }
 
-function backfillPairedTurnAttemptParentIds(database: Database): void {
+export function backfillPairedTurnAttemptParentIds(database: Database): void {
   if (!tableHasColumn(database, 'paired_turn_attempts', 'parent_attempt_id')) {
     return;
   }
@@ -334,7 +331,9 @@ function backfillPairedTurnAttemptParentIds(database: Database): void {
   `);
 }
 
-function backfillPairedTurnAttemptActiveRunIds(database: Database): void {
+export function backfillPairedTurnAttemptActiveRunIds(
+  database: Database,
+): void {
   if (!tableHasColumn(database, 'paired_turn_attempts', 'active_run_id')) {
     return;
   }
@@ -418,7 +417,7 @@ function backfillPairedTurnAttemptActiveRunIds(database: Database): void {
   `);
 }
 
-function backfillPairedTurnAttemptEntityIds(database: Database): void {
+export function backfillPairedTurnAttemptEntityIds(database: Database): void {
   if (
     tableHasColumn(database, 'paired_turn_reservations', 'turn_attempt_id') &&
     tableHasColumn(database, 'paired_turn_reservations', 'turn_attempt_no')
@@ -475,7 +474,7 @@ function backfillPairedTurnAttemptEntityIds(database: Database): void {
   }
 }
 
-function backfillPairedTurnAttemptProvenance(database: Database): void {
+export function backfillPairedTurnAttemptProvenance(database: Database): void {
   const timingsByTurnId = getPairedTurnAttemptTimingsByTurnId(database);
 
   if (tableHasColumn(database, 'paired_turn_reservations', 'turn_attempt_no')) {
@@ -634,7 +633,9 @@ function backfillPairedTurnAttemptProvenance(database: Database): void {
   }
 }
 
-function assertPairedTurnAttemptProvenanceIntegrity(database: Database): void {
+export function assertPairedTurnAttemptProvenanceIntegrity(
+  database: Database,
+): void {
   if (tableHasColumn(database, 'paired_turn_attempts', 'attempt_id')) {
     const invalidAttemptIdRow = database
       .prepare(
@@ -1274,7 +1275,7 @@ function rebuildPairedTurnAttemptsWithForeignKeys(database: Database): void {
   })();
 }
 
-function rebuildPairedTurnsWithoutLegacyScratchColumns(
+export function rebuildPairedTurnsWithoutLegacyScratchColumns(
   database: Database,
 ): void {
   if (
@@ -1707,14 +1708,18 @@ function rebuildServiceHandoffsWithForeignKeys(database: Database): void {
   })();
 }
 
-function rebuildPairedTurnAttemptForeignKeyTables(database: Database): void {
+export function rebuildPairedTurnAttemptForeignKeyTables(
+  database: Database,
+): void {
   rebuildPairedTurnAttemptsWithForeignKeys(database);
   rebuildPairedTurnReservationsWithForeignKeys(database);
   rebuildPairedTaskExecutionLeasesWithForeignKeys(database);
   rebuildServiceHandoffsWithForeignKeys(database);
 }
 
-function dropPairedTurnAttemptProvenanceConstraints(database: Database): void {
+export function dropPairedTurnAttemptProvenanceConstraints(
+  database: Database,
+): void {
   database.exec(`
     DROP TRIGGER IF EXISTS paired_turn_attempts_validate_insert;
     DROP TRIGGER IF EXISTS paired_turn_attempts_validate_update;
@@ -1727,7 +1732,9 @@ function dropPairedTurnAttemptProvenanceConstraints(database: Database): void {
   `);
 }
 
-function applyPairedTurnAttemptProvenanceConstraints(database: Database): void {
+export function applyPairedTurnAttemptProvenanceConstraints(
+  database: Database,
+): void {
   database.exec(`
     CREATE TRIGGER IF NOT EXISTS paired_turn_attempts_validate_insert
     BEFORE INSERT ON paired_turn_attempts
@@ -2178,34 +2185,6 @@ export function applyLegacySchemaMigrations(
     database,
     `ALTER TABLE service_handoffs ADD COLUMN target_service_id TEXT`,
   );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN paired_task_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN paired_task_updated_at TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN turn_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN turn_attempt_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN turn_attempt_no INTEGER`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN turn_intent_kind TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE service_handoffs ADD COLUMN turn_role TEXT`,
-  );
 
   tryExecMigration(
     database,
@@ -2235,46 +2214,6 @@ export function applyLegacySchemaMigrations(
     database,
     `ALTER TABLE paired_task_execution_leases ADD COLUMN claimed_service_id TEXT`,
   );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_task_execution_leases ADD COLUMN turn_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_task_execution_leases ADD COLUMN turn_attempt_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_task_execution_leases ADD COLUMN turn_attempt_no INTEGER`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_attempts ADD COLUMN attempt_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_attempts ADD COLUMN parent_attempt_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_attempts ADD COLUMN parent_handoff_id INTEGER`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_attempts ADD COLUMN continuation_handoff_id INTEGER`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_attempts ADD COLUMN active_run_id TEXT`,
-  );
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_paired_turn_attempts_parent_handoff_id
-      ON paired_turn_attempts(parent_handoff_id)
-  `);
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS idx_paired_turn_attempts_continuation_handoff_id
-      ON paired_turn_attempts(continuation_handoff_id)
-  `);
   database.exec(`
     UPDATE paired_task_execution_leases
        SET expires_at = COALESCE(
@@ -2299,109 +2238,6 @@ export function applyLegacySchemaMigrations(
     database,
     `ALTER TABLE work_items ADD COLUMN service_id TEXT`,
   );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_reservations ADD COLUMN turn_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_reservations ADD COLUMN turn_attempt_id TEXT`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_reservations ADD COLUMN turn_attempt_no INTEGER`,
-  );
-  tryExecMigration(
-    database,
-    `ALTER TABLE paired_turn_reservations ADD COLUMN turn_role TEXT`,
-  );
-
-  database.exec(`
-    UPDATE paired_turn_reservations
-       SET turn_id = COALESCE(
-         turn_id,
-         task_id || ':' || task_updated_at || ':' || intent_kind
-       )
-  `);
-  database.exec(`
-    UPDATE paired_turn_reservations
-       SET turn_role = COALESCE(
-         turn_role,
-         CASE
-           WHEN intent_kind = 'reviewer-turn' THEN 'reviewer'
-           WHEN intent_kind = 'arbiter-turn' THEN 'arbiter'
-           ELSE 'owner'
-         END
-       )
-  `);
-  database.exec(`
-    UPDATE paired_task_execution_leases
-       SET turn_id = COALESCE(
-         turn_id,
-         task_id || ':' || task_updated_at || ':' || intent_kind
-       )
-  `);
-  database.exec(
-    `UPDATE service_handoffs
-     SET target_role = COALESCE(
-       target_role,
-       intended_role,
-       CASE
-         WHEN reason LIKE 'reviewer-%' THEN 'reviewer'
-         WHEN reason LIKE 'arbiter-%' THEN 'arbiter'
-         WHEN reason IS NOT NULL THEN 'owner'
-         ELSE NULL
-       END
-     )
-     WHERE target_role IS NULL`,
-  );
-
-  database.exec(
-    `UPDATE service_handoffs
-     SET source_role = COALESCE(source_role, target_role, intended_role)
-     WHERE source_role IS NULL`,
-  );
-  database.exec(
-    `UPDATE service_handoffs
-     SET turn_role = COALESCE(turn_role, target_role, intended_role)
-     WHERE turn_role IS NULL`,
-  );
-  database.exec(
-    `UPDATE service_handoffs
-     SET turn_intent_kind = COALESCE(
-       turn_intent_kind,
-       CASE
-         WHEN turn_role = 'reviewer' THEN 'reviewer-turn'
-         WHEN turn_role = 'arbiter' THEN 'arbiter-turn'
-         ELSE turn_intent_kind
-       END
-     )`,
-  );
-  database.exec(
-    `UPDATE service_handoffs
-     SET turn_id = COALESCE(
-       turn_id,
-       CASE
-         WHEN paired_task_id IS NOT NULL
-          AND paired_task_updated_at IS NOT NULL
-          AND turn_intent_kind IS NOT NULL
-         THEN paired_task_id || ':' || paired_task_updated_at || ':' || turn_intent_kind
-         ELSE turn_id
-       END
-     )`,
-  );
-
-  backfillPairedTurnAttemptsFromTurns(database);
-  backfillPairedTurnAttemptIds(database);
-  backfillPairedTurnAttemptParentIds(database);
-  backfillPairedTurnAttemptActiveRunIds(database);
-  backfillPairedTurnAttemptProvenance(database);
-  backfillPairedTurnAttemptEntityIds(database);
-  assertPairedTurnAttemptProvenanceIntegrity(database);
-  dropPairedTurnAttemptProvenanceConstraints(database);
-  rebuildPairedTurnsWithoutLegacyScratchColumns(database);
-  rebuildPairedTurnAttemptForeignKeyTables(database);
-  applyPairedTurnAttemptProvenanceConstraints(database);
 }
 
 /** @deprecated New schema changes should be added under src/db/migrations/*. */

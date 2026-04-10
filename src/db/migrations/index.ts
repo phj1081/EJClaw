@@ -9,6 +9,7 @@ import { CHAT_CHANNEL_METADATA_MIGRATION } from './006_chat-channel-metadata.js'
 import { RUNTIME_SERVICE_METADATA_MIGRATION } from './007_runtime-service-metadata.js';
 import { PAIRED_TASK_SCHEMA_CLEANUP_MIGRATION } from './008_paired-task-schema-cleanup.js';
 import { PAIRED_WORKSPACE_PROJECT_SCHEMA_CLEANUP_MIGRATION } from './009_paired-workspace-project-schema-cleanup.js';
+import { PAIRED_TURN_PROVENANCE_UPGRADE_MIGRATION } from './010_paired-turn-provenance-upgrade.js';
 import type {
   SchemaMigrationArgs,
   SchemaMigrationDefinition,
@@ -26,6 +27,7 @@ const ORDERED_SCHEMA_MIGRATIONS: readonly SchemaMigrationDefinition[] = [
   RUNTIME_SERVICE_METADATA_MIGRATION,
   PAIRED_TASK_SCHEMA_CLEANUP_MIGRATION,
   PAIRED_WORKSPACE_PROJECT_SCHEMA_CLEANUP_MIGRATION,
+  PAIRED_TURN_PROVENANCE_UPGRADE_MIGRATION,
 ];
 
 function ensureSchemaMigrationsTable(database: Database): void {
