@@ -990,6 +990,123 @@ describe('paired workspace manager', () => {
     ).toBe('keep me\n');
   });
 
+  it('auto-repairs a clean named owner workspace onto the expected new channel branch', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-named-branch-repair',
+      groupFolder: 'named-repair-room',
+    });
+
+    const workspaceDir = ownerWorkspacePath('named-repair-room');
+    fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
+    runGit(
+      [
+        'worktree',
+        'add',
+        '-b',
+        'codex/owner/named-repair-room-sync',
+        workspaceDir,
+        'HEAD',
+      ],
+      canonicalDir,
+    );
+
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-named-branch-repair',
+    );
+
+    expect(
+      runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
+    ).toBe(ownerBranchName('named-repair-room'));
+    expect(
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'README.md'),
+        'utf-8',
+      ),
+    ).toBe('original\n');
+  });
+
+  it('auto-repairs a clean named owner workspace onto an existing matching channel branch', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-named-existing-branch-repair',
+      groupFolder: 'named-existing-room',
+    });
+
+    runGit(
+      ['branch', ownerBranchName('named-existing-room'), 'HEAD'],
+      canonicalDir,
+    );
+    const workspaceDir = ownerWorkspacePath('named-existing-room');
+    fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
+    runGit(
+      [
+        'worktree',
+        'add',
+        '-b',
+        'codex/owner/named-existing-room-sync',
+        workspaceDir,
+        'HEAD',
+      ],
+      canonicalDir,
+    );
+
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-named-existing-branch-repair',
+    );
+
+    expect(
+      runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
+    ).toBe(ownerBranchName('named-existing-room'));
+  });
+
+  it('blocks provisioning when a named owner workspace branch mismatch has local changes', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-dirty-named-branch',
+      groupFolder: 'dirty-named-room',
+    });
+
+    const workspaceDir = ownerWorkspacePath('dirty-named-room');
+    fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
+    runGit(
+      [
+        'worktree',
+        'add',
+        '-b',
+        'codex/owner/dirty-named-room-sync',
+        workspaceDir,
+        'HEAD',
+      ],
+      canonicalDir,
+    );
+    fs.writeFileSync(
+      path.join(workspaceDir, 'README.md'),
+      'dirty named branch\n',
+    );
+
+    expect(() =>
+      manager.provisionOwnerWorkspaceForPairedTask(
+        'paired-task-dirty-named-branch',
+      ),
+    ).toThrow(/Owner workspace needs repair/);
+    expect(runGit(['branch', '--show-current'], workspaceDir)).toBe(
+      'codex/owner/dirty-named-room-sync',
+    );
+  });
+
   it('blocks provisioning when the channel branch is already checked out in another worktree', async () => {
     const { db, manager } = await loadModules();
     db._initTestDatabase();

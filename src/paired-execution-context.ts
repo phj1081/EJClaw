@@ -47,6 +47,7 @@ import {
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import {
+  isOwnerWorkspaceRepairNeededError,
   markPairedTaskReviewReady,
   prepareReviewerWorkspaceForExecution,
   provisionOwnerWorkspaceForPairedTask,
@@ -273,7 +274,15 @@ export function preparePairedExecutionContext(args: {
     }
     // Use a stable per-channel worktree (not per-task) so the Claude SDK
     // session persists across tasks. Different channels still get isolation.
-    workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
+    try {
+      workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
+    } catch (error) {
+      if (isOwnerWorkspaceRepairNeededError(error)) {
+        blockMessage = error.blockMessage || error.message;
+      } else {
+        throw error;
+      }
+    }
     // Update source_ref from workspace HEAD so change detection compares
     // against the correct repo. At task creation, source_ref is from the
     // canonical workDir which may differ from the workspace clone.

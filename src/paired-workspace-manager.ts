@@ -20,6 +20,7 @@ const REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE =
   'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.';
 const REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE =
   'Review snapshot is not ready yet. Wait for the owner to complete a turn so the reviewer snapshot can be prepared.';
+const OWNER_WORKSPACE_REPAIR_PREFIX = 'BLOCKED\nOwner workspace needs repair.';
 const REVIEWER_SNAPSHOT_DENY_SEGMENTS = new Set([
   '.git',
   '.claude',
@@ -108,6 +109,22 @@ function runGitWithInput(args: string[], cwd: string, input: string): string {
   }).trim();
 }
 
+export class OwnerWorkspaceRepairNeededError extends Error {
+  readonly blockMessage: string;
+
+  constructor(blockMessage: string) {
+    super(blockMessage);
+    this.name = 'OwnerWorkspaceRepairNeededError';
+    this.blockMessage = blockMessage;
+  }
+}
+
+export function isOwnerWorkspaceRepairNeededError(
+  error: unknown,
+): error is OwnerWorkspaceRepairNeededError {
+  return error instanceof OwnerWorkspaceRepairNeededError;
+}
+
 function ensureGitRepository(repoDir: string): void {
   const insideWorkTree = runGit(
     ['rev-parse', '--is-inside-work-tree'],
@@ -116,6 +133,82 @@ function ensureGitRepository(repoDir: string): void {
   if (insideWorkTree !== 'true') {
     throw new Error(`Not a git repository: ${repoDir}`);
   }
+}
+
+function isGitWorktreeClean(repoDir: string): boolean {
+  return runGit(['status', '--short'], repoDir).length === 0;
+}
+
+function buildOwnerWorkspaceRepairBlockMessage(args: {
+  workspaceDir: string;
+  currentBranch: string;
+  targetBranch: string;
+  reason: string;
+}): string {
+  return `${OWNER_WORKSPACE_REPAIR_PREFIX}
+Owner workspace branch mismatch: \`${args.currentBranch}\` -> expected \`${args.targetBranch}\`.
+${args.reason}
+Workspace: \`${args.workspaceDir}\`
+Repair the owner workspace branch, then retry the task.`;
+}
+
+function maybeRepairNamedOwnerWorkspaceBranch(args: {
+  canonicalWorkDir: string;
+  workspaceDir: string;
+  currentBranch: string;
+  targetBranch: string;
+  targetBranchCommit: string | null;
+}): boolean {
+  const {
+    canonicalWorkDir,
+    workspaceDir,
+    currentBranch,
+    targetBranch,
+    targetBranchCommit,
+  } = args;
+  const currentHeadCommit = resolveCommit(workspaceDir, 'HEAD');
+  if (!currentHeadCommit) {
+    throw new Error(
+      `Unable to resolve owner workspace HEAD for ${workspaceDir}.`,
+    );
+  }
+
+  if (!isGitWorktreeClean(workspaceDir)) {
+    throw new OwnerWorkspaceRepairNeededError(
+      buildOwnerWorkspaceRepairBlockMessage({
+        workspaceDir,
+        currentBranch,
+        targetBranch,
+        reason:
+          'Automatic repair was skipped because the workspace has local changes.',
+      }),
+    );
+  }
+
+  if (!targetBranchCommit) {
+    runGit(['switch', '-c', targetBranch], workspaceDir);
+    return true;
+  }
+
+  if (targetBranchCommit !== currentHeadCommit) {
+    throw new OwnerWorkspaceRepairNeededError(
+      buildOwnerWorkspaceRepairBlockMessage({
+        workspaceDir,
+        currentBranch,
+        targetBranch,
+        reason:
+          'Automatic repair was skipped because the expected branch points at a different commit.',
+      }),
+    );
+  }
+
+  ensureBranchNotCheckedOutElsewhere(
+    canonicalWorkDir,
+    workspaceDir,
+    targetBranch,
+  );
+  runGit(['switch', targetBranch], workspaceDir);
+  return true;
 }
 
 function ensureCleanDirectory(targetDir: string): void {
@@ -629,9 +722,25 @@ export function provisionOwnerWorkspaceForPairedTask(
     if (currentBranch === targetBranch) {
       // Stable owner workspace is already attached to the channel branch.
     } else if (currentBranch) {
-      throw new Error(
-        `Owner workspace ${workspaceDir} is on unexpected branch ${currentBranch}; expected ${targetBranch}.`,
-      );
+      const repaired = maybeRepairNamedOwnerWorkspaceBranch({
+        canonicalWorkDir,
+        workspaceDir,
+        currentBranch,
+        targetBranch,
+        targetBranchCommit,
+      });
+      if (repaired) {
+        logger.warn(
+          {
+            taskId,
+            workspaceDir,
+            previousBranch: currentBranch,
+            targetBranch,
+            targetBranchCommit,
+          },
+          'Auto-repaired owner workspace branch mismatch',
+        );
+      }
     } else {
       const currentHeadCommit = resolveCommit(workspaceDir, 'HEAD');
       if (!currentHeadCommit) {

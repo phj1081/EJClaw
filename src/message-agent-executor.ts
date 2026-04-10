@@ -194,7 +194,7 @@ export async function runAgentForGroup(
         roomRoleServiceId: roomRoleContext?.serviceId,
         roomRole: roomRoleContext?.role,
       },
-      'Blocked reviewer execution before review-ready snapshot was available',
+      'Blocked paired execution before runner start',
     );
     await onOutput?.({
       status: 'success',

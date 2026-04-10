@@ -29,6 +29,7 @@ vi.mock('./db.js', () => {
 });
 
 vi.mock('./paired-workspace-manager.js', () => ({
+  isOwnerWorkspaceRepairNeededError: vi.fn(() => false),
   markPairedTaskReviewReady: vi.fn(),
   prepareReviewerWorkspaceForExecution: vi.fn(),
   provisionOwnerWorkspaceForPairedTask: vi.fn(),
@@ -446,6 +447,34 @@ describe('paired execution context', () => {
       'task-1',
       expect.objectContaining({ status: 'in_review' }),
     );
+  });
+
+  it('blocks owner execution when the owner workspace needs branch repair', () => {
+    const repairError = new Error(
+      'BLOCKED\nOwner workspace needs repair.\nOwner workspace branch mismatch: `codex/owner/paired-room-sync` -> expected `codex/owner/paired-room`.',
+    );
+    vi.mocked(
+      pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
+    ).mockImplementation(() => {
+      throw repairError;
+    });
+    vi.mocked(
+      pairedWorkspaceManager.isOwnerWorkspaceRepairNeededError,
+    ).mockReturnValue(true);
+
+    const result = preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-owner-repair-needed',
+      roomRoleContext: ownerContext,
+      hasHumanMessage: true,
+    });
+
+    expect(result?.blockMessage).toContain('Owner workspace needs repair.');
+    expect(result?.blockMessage).toContain(
+      '`codex/owner/paired-room-sync` -> expected `codex/owner/paired-room`',
+    );
+    expect(result?.envOverrides.EJCLAW_WORK_DIR).toBeUndefined();
   });
 
   it('blocks reviewer execution when an in-review snapshot became stale', () => {
