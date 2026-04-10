@@ -67,6 +67,10 @@ export function createPairedExecutionLifecycle(args: {
   let pairedTurnOutputPersisted = false;
   let pairedTurnStateFinalized = false;
   let leaseHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  const requiresVisibleVerdict =
+    pairedExecutionContext?.requiresVisibleVerdict === true;
+  const missingVisibleVerdictSummary =
+    'Execution completed without a visible terminal verdict.';
 
   const finalizePairedTurnState = (
     status: 'succeeded' | 'failed',
@@ -254,12 +258,31 @@ export function createPairedExecutionLifecycle(args: {
         return;
       }
 
+      const missingVisibleVerdict =
+        requiresVisibleVerdict &&
+        (!pairedFinalOutput || pairedFinalOutput.length === 0);
+      if (missingVisibleVerdict) {
+        pairedExecutionSummary = missingVisibleVerdictSummary;
+        log.warn(
+          {
+            pairedTaskId: pairedExecutionContext?.task.id ?? null,
+            role: completedRole,
+            runId,
+          },
+          'Treating paired execution as failed because it ended without a visible terminal verdict',
+        );
+      }
       const effectiveStatus =
         completedRole === 'owner' &&
         pairedExecutionStatus === 'succeeded' &&
         !pairedSawOutput
           ? 'failed'
-          : pairedExecutionStatus;
+          : missingVisibleVerdict && pairedExecutionStatus === 'succeeded'
+            ? 'failed'
+            : pairedExecutionStatus;
+      const sawOutputForFollowUp = missingVisibleVerdict
+        ? false
+        : pairedSawOutput;
 
       if (pairedExecutionContext && !pairedExecutionCompleted) {
         if (effectiveStatus === 'succeeded') {
@@ -283,7 +306,10 @@ export function createPairedExecutionLifecycle(args: {
         pairedExecutionCompleted = true;
       }
 
-      finalizePairedTurnState(effectiveStatus);
+      finalizePairedTurnState(
+        effectiveStatus,
+        effectiveStatus === 'failed' ? pairedExecutionSummary : null,
+      );
 
       if (!pairedExecutionContext) {
         return;
@@ -314,7 +340,7 @@ export function createPairedExecutionLifecycle(args: {
       const queueAction = resolvePairedFollowUpQueueAction({
         completedRole,
         executionStatus: effectiveStatus,
-        sawOutput: pairedSawOutput,
+        sawOutput: sawOutputForFollowUp,
         taskStatus: finishedTask?.status ?? null,
       });
       if (queueAction !== 'pending' || !finishedTask) {
@@ -328,8 +354,8 @@ export function createPairedExecutionLifecycle(args: {
         source: 'executor-recovery',
         completedRole,
         executionStatus: effectiveStatus,
-        sawOutput: pairedSawOutput,
-        fallbackLastTurnOutputRole: pairedSawOutput ? completedRole : null,
+        sawOutput: sawOutputForFollowUp,
+        fallbackLastTurnOutputRole: sawOutputForFollowUp ? completedRole : null,
         enqueueMessageCheck,
       });
       if (followUpResult.kind !== 'paired-follow-up') {

@@ -18,7 +18,7 @@ function makeGroup(folder: string): RegisteredGroup {
 
 describe('getInterruptedRecoveryCandidates', () => {
   it('returns only registered interrupted groups and deduplicates by chatJid', () => {
-    const registeredGroups: Record<string, RegisteredGroup> = {
+    const roomBindings: Record<string, RegisteredGroup> = {
       'dc:1': makeGroup('group-one'),
       'dc:2': makeGroup('group-two'),
     };
@@ -64,7 +64,7 @@ describe('getInterruptedRecoveryCandidates', () => {
       ],
     };
 
-    expect(getInterruptedRecoveryCandidates(context, registeredGroups)).toEqual(
+    expect(getInterruptedRecoveryCandidates(context, roomBindings)).toEqual(
       [
         {
           chatJid: 'dc:1',

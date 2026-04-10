@@ -34,6 +34,7 @@ interface MessageTurnControllerOptions {
   clearSession: () => void;
   requestClose: (reason: string) => void;
   deliverFinalText: (text: string) => Promise<boolean>;
+  allowProgressReplayWithoutFinal?: boolean;
   deliveryRole?: PairedRoomRole | null;
   deliveryServiceId?: string | null;
   pairedTurnIdentity?: PairedTurnIdentity | null;
@@ -338,11 +339,18 @@ export class MessageTurnController {
       !this.hadError &&
       this.latestProgressTextForFinal
     ) {
-      this.log.info(
-        'Sending a separate final message from the last progress output after agent completion',
-      );
       await this.finalizeProgressMessage();
-      await this.deliverFinalText(this.latestProgressTextForFinal);
+      if (this.options.allowProgressReplayWithoutFinal !== false) {
+        this.log.info(
+          'Sending a separate final message from the last progress output after agent completion',
+        );
+        await this.deliverFinalText(this.latestProgressTextForFinal);
+      } else {
+        this.log.info(
+          'Skipped replaying the last progress output as a final message for this turn',
+        );
+        this.latestProgressTextForFinal = null;
+      }
     } else if (
       this.visiblePhase === 'progress' &&
       !this.terminalObserved() &&

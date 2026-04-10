@@ -148,10 +148,10 @@ export function toVisiblePhase(phase: AgentOutputPhase): VisiblePhase {
 export interface RegisteredGroup {
   name: string;
   folder: string;
-  trigger: string;
+  trigger?: string;
   added_at: string;
   agentConfig?: AgentConfig;
-  requiresTrigger?: boolean; // Default: true for groups, false for solo chats
+  requiresTrigger?: boolean; // Compatibility-only legacy field
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
   agentType?: AgentType;
   workDir?: string; // Working directory for the agent (defaults to group folder)

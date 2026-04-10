@@ -2989,7 +2989,7 @@ export function applySchemaMigrations(
       WHERE status IN ('produced', 'delivery_retry');
   `);
 
-  const registeredGroupsSql = (
+  const roomBindingsSql = (
     database
       .prepare(
         `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'registered_groups'`,
@@ -2997,8 +2997,8 @@ export function applySchemaMigrations(
       .get() as { sql?: string } | undefined
   )?.sql;
   if (
-    registeredGroupsSql &&
-    !registeredGroupsSql.includes('PRIMARY KEY (jid, agent_type)')
+    roomBindingsSql &&
+    !roomBindingsSql.includes('PRIMARY KEY (jid, agent_type)')
   ) {
     const registeredGroupCols = database
       .prepare('PRAGMA table_info(registered_groups)')

@@ -15,10 +15,8 @@ import { emitStatus } from './status.js';
 interface RegisterArgs {
   jid: string;
   name: string;
-  trigger: string;
   folder: string;
   channel: string;
-  requiresTrigger: boolean;
   isMain: boolean;
   assistantNameProvided: boolean;
 }
@@ -27,10 +25,8 @@ function parseArgs(args: string[]): RegisterArgs {
   const result: RegisterArgs = {
     jid: '',
     name: '',
-    trigger: '',
     folder: '',
     channel: 'discord',
-    requiresTrigger: true,
     isMain: false,
     assistantNameProvided: false,
   };
@@ -43,17 +39,11 @@ function parseArgs(args: string[]): RegisterArgs {
       case '--name':
         result.name = args[++i] || '';
         break;
-      case '--trigger':
-        result.trigger = args[++i] || '';
-        break;
       case '--folder':
         result.folder = args[++i] || '';
         break;
       case '--channel':
         result.channel = (args[++i] || '').toLowerCase();
-        break;
-      case '--no-trigger-required':
-        result.requiresTrigger = false;
         break;
       case '--is-main':
         result.isMain = true;
@@ -71,7 +61,7 @@ function parseArgs(args: string[]): RegisterArgs {
 export async function run(args: string[]): Promise<void> {
   const parsed = parseArgs(args);
 
-  if (!parsed.jid || !parsed.name || !parsed.trigger || !parsed.folder) {
+  if (!parsed.jid || !parsed.name || !parsed.folder) {
     emitStatus('REGISTER_CHANNEL', {
       STATUS: 'failed',
       ERROR: 'missing_required_args',
@@ -115,8 +105,6 @@ export async function run(args: string[]): Promise<void> {
   assignRoom(parsed.jid, {
     name: parsed.name,
     folder: parsed.folder,
-    trigger: parsed.trigger,
-    requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
   });
   logger.info('Assigned room through canonical room service');
@@ -131,8 +119,6 @@ export async function run(args: string[]): Promise<void> {
     NAME: parsed.name,
     FOLDER: parsed.folder,
     CHANNEL: parsed.channel,
-    TRIGGER: parsed.trigger,
-    REQUIRES_TRIGGER: parsed.requiresTrigger,
     STATUS: 'success',
     LOG: 'logs/setup.log',
   });

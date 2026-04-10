@@ -228,7 +228,7 @@ describe('task scheduler', () => {
     );
 
     startSchedulerLoop({
-      registeredGroups: () => ({}),
+      roomBindings: () => ({}),
       getSessions: () => ({}),
       queue: { enqueueTask } as any,
       onProcess: () => {},
@@ -274,7 +274,7 @@ describe('task scheduler', () => {
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -324,7 +324,7 @@ describe('task scheduler', () => {
 
     await runSchedulerTickOnce({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -372,7 +372,7 @@ describe('task scheduler', () => {
 
     await runSchedulerTickOnce({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -425,7 +425,7 @@ describe('task scheduler', () => {
 
     await runSchedulerTickOnce({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -496,7 +496,7 @@ describe('task scheduler', () => {
 
     await runSchedulerTickOnce({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'paired@g.us': {
           name: 'Paired',
           folder: 'paired-group',
@@ -568,7 +568,7 @@ describe('task scheduler', () => {
 
     await runSchedulerTickOnce({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'paired@g.us': {
           name: 'Paired',
           folder: 'paired-group',
@@ -608,7 +608,7 @@ describe('task scheduler', () => {
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -658,7 +658,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -751,7 +751,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'claude-code',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -850,7 +850,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'claude-code',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -928,7 +928,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'claude-code',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1021,7 +1021,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'claude-code',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1117,7 +1117,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1149,7 +1149,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1232,7 +1232,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1305,7 +1305,7 @@ Managed by host-driven watcher.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1381,7 +1381,7 @@ Managed by host-driven watcher.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1444,7 +1444,7 @@ Managed by host-driven watcher.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1513,7 +1513,7 @@ Managed by host-driven watcher.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1567,7 +1567,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1608,7 +1608,7 @@ Check the run.
 
     await runSchedulerTickOnce({
       serviceAgentType: 'codex',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',
@@ -1651,7 +1651,7 @@ Check the run.
 
     startSchedulerLoop({
       serviceAgentType: 'claude-code',
-      registeredGroups: () => ({
+      roomBindings: () => ({
         'shared@g.us': {
           name: 'Shared',
           folder: 'shared-group',

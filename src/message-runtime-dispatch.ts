@@ -8,7 +8,6 @@ import {
   advanceLastAgentCursor,
   filterLoopingPairedBotMessages,
   getProcessableMessages,
-  hasAllowedTrigger,
   resolveCursorKey,
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
@@ -293,18 +292,6 @@ export async function processLoopGroupMessages(args: {
       args.closeStdin('session-command-detected');
     }
     args.enqueueMessageCheck();
-    return;
-  }
-
-  if (
-    !hasAllowedTrigger({
-      chatJid,
-      messages: processableGroupMessages,
-      group,
-      triggerPattern: args.triggerPattern,
-      hasImplicitContinuationWindow: args.hasImplicitContinuationWindow,
-    })
-  ) {
     return;
   }
 

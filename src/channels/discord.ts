@@ -208,7 +208,7 @@ import {
 export interface DiscordChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
-  registeredGroups: () => Record<string, RegisteredGroup>;
+  roomBindings: () => Record<string, RegisteredGroup>;
 }
 
 export class DiscordChannel implements Channel {
@@ -277,29 +277,6 @@ export class DiscordChannel implements Channel {
         chatName = `${message.guild.name} #${textChannel.name}`;
       } else {
         chatName = senderName;
-      }
-
-      // Translate Discord @bot mentions into TRIGGER_PATTERN format.
-      // Discord mentions look like <@botUserId> — these won't match
-      // TRIGGER_PATTERN (e.g., ^@Andy\b), so we prepend the trigger
-      // when the bot is @mentioned.
-      if (this.client?.user) {
-        const botId = this.client.user.id;
-        const isBotMentioned =
-          message.mentions.users.has(botId) ||
-          content.includes(`<@${botId}>`) ||
-          content.includes(`<@!${botId}>`);
-
-        if (isBotMentioned) {
-          // Strip the <@botId> mention to avoid visual clutter
-          content = content
-            .replace(new RegExp(`<@!?${botId}>`, 'g'), '')
-            .trim();
-          // Prepend trigger if not already present
-          if (!TRIGGER_PATTERN.test(content)) {
-            content = `@${ASSISTANT_NAME} ${content}`;
-          }
-        }
       }
 
       // Handle attachments — transcribe voice messages, download files
@@ -403,7 +380,7 @@ export class DiscordChannel implements Channel {
 
       // Only deliver full message for registered groups. Secondary role bots
       // are configured as outbound-only, while the owner bot receives inbound.
-      const group = this.opts.registeredGroups()[chatJid];
+      const group = this.opts.roomBindings()[chatJid];
       if (!group) {
         logger.debug(
           { chatJid, chatName },
@@ -627,7 +604,7 @@ export class DiscordChannel implements Channel {
     if (!jid.startsWith('dc:')) return false;
     if (!this.ownsDiscordJids) return false;
     if (!this.agentTypeFilter) return true;
-    const group = this.opts.registeredGroups()[jid];
+    const group = this.opts.roomBindings()[jid];
     if (!group) return false;
     const groupType = group.agentType || 'claude-code';
     return groupType === this.agentTypeFilter;

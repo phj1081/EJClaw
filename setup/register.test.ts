@@ -63,8 +63,6 @@ describe('register step', () => {
       'dc:test-room',
       '--name',
       'Test Room',
-      '--trigger',
-      '@Andy',
       '--folder',
       'test-room',
     ]);
@@ -73,8 +71,6 @@ describe('register step', () => {
     expect(assignRoomMock).toHaveBeenCalledWith('dc:test-room', {
       name: 'Test Room',
       folder: 'test-room',
-      trigger: '@Andy',
-      requiresTrigger: true,
       isMain: false,
     });
     expect(mkdirSpy).toHaveBeenCalledWith('/tmp/ejclaw-groups/test-room/logs', {
@@ -87,8 +83,6 @@ describe('register step', () => {
       NAME: 'Test Room',
       FOLDER: 'test-room',
       CHANNEL: 'discord',
-      TRIGGER: '@Andy',
-      REQUIRES_TRIGGER: true,
       STATUS: 'success',
       LOG: 'logs/setup.log',
     });
@@ -107,8 +101,6 @@ describe('register step', () => {
         'dc:test-room',
         '--name',
         'Test Room',
-        '--trigger',
-        '@Andy',
         '--folder',
         'test-room',
         '--assistant-name',
@@ -141,19 +133,14 @@ describe('register step', () => {
       'dc:main-room',
       '--name',
       'Main Room',
-      '--trigger',
-      '@Andy',
       '--folder',
       'main-room',
       '--is-main',
-      '--no-trigger-required',
     ]);
 
     expect(assignRoomMock).toHaveBeenCalledWith('dc:main-room', {
       name: 'Main Room',
       folder: 'main-room',
-      trigger: '@Andy',
-      requiresTrigger: false,
       isMain: true,
     });
     expect(mkdirSpy).toHaveBeenCalledTimes(1);

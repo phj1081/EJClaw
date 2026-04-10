@@ -272,7 +272,7 @@ function makeDeps() {
       registerProcess: vi.fn(),
       enqueueMessageCheck: vi.fn(),
     },
-    getRegisteredGroups: () => ({}),
+    getRoomBindings: () => ({}),
     getSessions: () => ({}),
     persistSession: vi.fn(),
     clearSession: vi.fn(),
@@ -979,6 +979,108 @@ describe('runAgentForGroup room memory', () => {
         output: { visibility: 'silent' },
       }),
     ]);
+  });
+
+  it('fails paired reviewer turns that finish without a visible terminal verdict', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      workDir: '/repo',
+      agentType: 'codex' as const,
+    };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      arbiter_agent_type: null,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-review',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-review-no-verdict',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        review_requested_at: '2026-04-10T00:00:00.000Z',
+        plan_notes: null,
+        round_trip_count: 0,
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        updated_at: '2026-04-10T00:00:00.000Z',
+      },
+      claimedTaskUpdatedAt: '2026-04-10T00:00:00.000Z',
+      workspace: null,
+      envOverrides: {},
+      requiresVisibleVerdict: true,
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '검토 중입니다.',
+          output: { visibility: 'public', text: '검토 중입니다.' },
+        } as any);
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-review-no-verdict',
+      forcedRole: 'reviewer',
+      pairedTurnIdentity: {
+        turnId:
+          'paired-task-review-no-verdict:2026-04-10T00:00:00.000Z:reviewer-turn',
+        taskId: 'paired-task-review-no-verdict',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'reviewer-turn',
+        role: 'reviewer',
+      },
+    });
+
+    expect(result).toBe('error');
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'paired-task-review-no-verdict',
+        role: 'reviewer',
+        status: 'failed',
+        summary: 'Execution completed without a visible terminal verdict.',
+      }),
+    );
+    expect(db.failPairedTurn).toHaveBeenCalledWith({
+      turnIdentity: {
+        turnId:
+          'paired-task-review-no-verdict:2026-04-10T00:00:00.000Z:reviewer-turn',
+        taskId: 'paired-task-review-no-verdict',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'reviewer-turn',
+        role: 'reviewer',
+      },
+      error: 'Execution completed without a visible terminal verdict.',
+    });
+    expect(db.completePairedTurn).not.toHaveBeenCalled();
+    expect(db.insertPairedTurnOutput).not.toHaveBeenCalled();
   });
 
   it('passes paired workspace env overrides into the runner when execution metadata exists', async () => {

@@ -221,4 +221,56 @@ describe('MessageTurnController outbound audit logging', () => {
       ]),
     );
   });
+
+  it('does not replay the last progress message as a final delivery for paired reviewer turns', async () => {
+    const channel = makeChannel();
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-review-no-fake-final',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      allowProgressReplayWithoutFinal: false,
+      deliveryRole: 'reviewer',
+      deliveryServiceId: 'codex-review',
+      pairedTurnIdentity: makeTurnIdentity(),
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '확인하겠습니다.',
+    } as any);
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '근거를 다시 대조 중입니다.',
+    } as any);
+    await flushAsync();
+
+    const finishResult = await controller.finish('success');
+
+    expect(finishResult.visiblePhase).toBe('progress');
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(channel.editMessage).toHaveBeenCalledWith(
+      'dc:test-room',
+      'progress-1',
+      expect.stringContaining('확인하겠습니다.'),
+    );
+    expect(deliverFinalText).not.toHaveBeenCalled();
+    expect(getAuditEntries()).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          auditEvent: 'final-delivery-attempt',
+        }),
+      ]),
+    );
+  });
 });

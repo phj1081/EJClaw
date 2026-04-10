@@ -24,7 +24,7 @@ import { listAvailableGroups } from './available-groups.js';
 import {
   type AssignRoomInput,
   assignRoom,
-  getAllRegisteredGroups,
+  getAllRoomBindings,
   getAllSessions,
   getAllTasks,
   getLatestMessageSeqAtOrBefore,
@@ -139,7 +139,7 @@ export async function editFormattedTrackedChannelMessage(
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
-let registeredGroups: Record<string, RegisteredGroup> = {};
+let roomBindings: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 
 const channels: Channel[] = [];
@@ -152,7 +152,7 @@ const runtime = createMessageRuntime({
   triggerPattern: TRIGGER_PATTERN,
   channels,
   queue,
-  getRegisteredGroups: () => registeredGroups,
+  getRoomBindings: () => roomBindings,
   getSessions: () => sessions,
   getLastTimestamp: () => lastTimestamp,
   setLastTimestamp: (timestamp) => {
@@ -185,10 +185,10 @@ function loadState(): void {
     lastAgentTimestamp = {};
   }
   sessions = getAllSessions();
-  registeredGroups = getAllRegisteredGroups();
+  roomBindings = getAllRoomBindings();
   logger.info(
     {
-      groupCount: Object.keys(registeredGroups).length,
+      groupCount: Object.keys(roomBindings).length,
       agentType: 'unified',
     },
     'State loaded',
@@ -231,7 +231,7 @@ function assignRoomForIpc(jid: string, input: AssignRoomInput): void {
   }
 
   const { jid: _ignoredJid, ...storedGroup } = assignedGroup;
-  registeredGroups[jid] = storedGroup;
+  roomBindings[jid] = storedGroup;
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 }
 
@@ -240,14 +240,21 @@ function assignRoomForIpc(jid: string, input: AssignRoomInput): void {
  * Returns groups ordered by most recent activity.
  */
 export function getAvailableGroups(): import('./agent-runner.js').AvailableGroup[] {
-  return listAvailableGroups(registeredGroups);
+  return listAvailableGroups(roomBindings);
 }
 
 /** @internal - exported for testing */
 export function _setRegisteredGroups(
   groups: Record<string, RegisteredGroup>,
 ): void {
-  registeredGroups = groups;
+  roomBindings = groups;
+}
+
+/** @internal - exported for testing */
+export function _setRoomBindings(
+  groups: Record<string, RegisteredGroup>,
+): void {
+  roomBindings = groups;
 }
 
 async function announceRestartRecovery(
@@ -288,10 +295,7 @@ async function announceRestartRecovery(
     return explicitContext;
   }
 
-  const inferred = inferRecentRestartContext(
-    registeredGroups,
-    processStartedAtMs,
-  );
+  const inferred = inferRecentRestartContext(roomBindings, processStartedAtMs);
   if (!inferred) return null;
 
   if (hasRecentRestartAnnouncement(inferred.chatJid, dedupeSince)) {
@@ -334,7 +338,7 @@ async function main(): Promise<void> {
       leaseRecoveryTimer = null;
     }
     const interruptedGroups = queue
-      .getStatuses(Object.keys(registeredGroups))
+      .getStatuses(Object.keys(roomBindings))
       .filter(
         (
           status,
@@ -344,14 +348,14 @@ async function main(): Promise<void> {
       )
       .map((status) => ({
         chatJid: status.jid,
-        groupName: registeredGroups[status.jid]?.name || status.jid,
+        groupName: roomBindings[status.jid]?.name || status.jid,
         status: status.status,
         elapsedMs: status.elapsedMs,
         pendingMessages: status.pendingMessages,
         pendingTasks: status.pendingTasks,
       }));
     const writtenPaths = writeShutdownRestartContext(
-      registeredGroups,
+      roomBindings,
       interruptedGroups,
       signal,
     );
@@ -376,7 +380,7 @@ async function main(): Promise<void> {
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
+      if (!msg.is_from_me && !msg.is_bot_message && roomBindings[chatJid]) {
         const cfg = loadSenderAllowlist();
         if (
           shouldDropMessage(chatJid, cfg) &&
@@ -400,7 +404,7 @@ async function main(): Promise<void> {
       channel?: string,
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
-    registeredGroups: () => registeredGroups,
+    roomBindings: () => roomBindings,
   };
 
   // Create and connect all registered channels.
@@ -433,7 +437,7 @@ async function main(): Promise<void> {
   );
 
   startSchedulerLoop({
-    registeredGroups: () => registeredGroups,
+    roomBindings: () => roomBindings,
     getSessions: () => sessions,
     queue,
     onProcess: (groupJid, proc, processName, ipcDir) =>
@@ -476,7 +480,7 @@ async function main(): Promise<void> {
       }
     },
     nudgeScheduler: nudgeSchedulerLoop,
-    registeredGroups: () => registeredGroups,
+    roomBindings: () => roomBindings,
     assignRoom: assignRoomForIpc,
     syncGroups: async (force: boolean) => {
       await Promise.all(
@@ -494,7 +498,7 @@ async function main(): Promise<void> {
   const restartContext = await announceRestartRecovery(processStartedAtMs);
   for (const candidate of getInterruptedRecoveryCandidates(
     restartContext,
-    registeredGroups,
+    roomBindings,
   )) {
     queue.enqueueMessageCheck(
       candidate.chatJid,
@@ -520,9 +524,9 @@ async function main(): Promise<void> {
     usageUpdateInterval: USAGE_UPDATE_INTERVAL,
     channels,
     queue,
-    registeredGroups: () => registeredGroups,
+    roomBindings: () => roomBindings,
     onGroupNameSynced: (jid, name) => {
-      const group = registeredGroups[jid];
+      const group = roomBindings[jid];
       if (group) {
         group.name = name;
       }

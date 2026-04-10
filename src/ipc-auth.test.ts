@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-import { ASSISTANT_NAME } from './config.js';
 import {
   _setRegisteredGroupForTests,
   _initTestDatabase,
@@ -60,7 +59,7 @@ beforeEach(() => {
   deps = {
     sendMessage: async () => {},
     nudgeScheduler: vi.fn(),
-    registeredGroups: () => groups,
+    roomBindings: () => groups,
     assignRoom: (jid, room) => {
       const assigned = assignRoom(jid, room);
       if (!assigned) return;
@@ -440,14 +439,13 @@ describe('assign_room authorization', () => {
         jid: 'new@g.us',
         name: 'New Group',
         folder: 'new-group',
-        trigger: '@Andy',
       },
       'other-group',
       false,
       deps,
     );
 
-    // registeredGroups should not have changed
+    // roomBindings should not have changed
     expect(groups['new@g.us']).toBeUndefined();
   });
 
@@ -458,7 +456,6 @@ describe('assign_room authorization', () => {
         jid: 'new@g.us',
         name: 'New Group',
         folder: '../../outside',
-        trigger: '@Andy',
       },
       'whatsapp_main',
       true,
@@ -494,9 +491,9 @@ describe('IPC message authorization', () => {
     sourceGroup: string,
     isMain: boolean,
     targetChatJid: string,
-    registeredGroups: Record<string, RegisteredGroup>,
+    roomBindings: Record<string, RegisteredGroup>,
   ): boolean {
-    const targetGroup = registeredGroups[targetChatJid];
+    const targetGroup = roomBindings[targetChatJid];
     return isMain || (!!targetGroup && targetGroup.folder === sourceGroup);
   }
 
@@ -885,7 +882,6 @@ describe('assign_room success', () => {
         jid: 'new@g.us',
         name: 'New Group',
         folder: 'new-group',
-        trigger: '@Andy',
       },
       'whatsapp_main',
       true,
@@ -896,10 +892,9 @@ describe('assign_room success', () => {
     expect(group).toBeDefined();
     expect(group!.name).toBe('New Group');
     expect(group!.folder).toBe('new-group');
-    expect(group!.trigger).toBe('@Andy');
   });
 
-  it('assign_room auto-fills missing folder and trigger for single rooms', async () => {
+  it('assign_room auto-fills missing folder for single rooms without exposing trigger metadata', async () => {
     await processTaskIpc(
       {
         type: 'assign_room',
@@ -914,7 +909,6 @@ describe('assign_room success', () => {
     const group = getRegisteredGroup('partial@g.us');
     expect(group).toBeDefined();
     expect(group!.folder).toMatch(/^grp_whatsapp_/);
-    expect(group!.trigger).toBe(`@${ASSISTANT_NAME}`);
     expect(getStoredRoomSettings('partial@g.us')?.roomMode).toBe('single');
   });
 

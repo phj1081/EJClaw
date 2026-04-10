@@ -40,7 +40,7 @@ describe('host evidence IPC', () => {
 
     deps = {
       sendMessage: async () => {},
-      registeredGroups: () => ({ 'other@g.us': OTHER_GROUP }),
+      roomBindings: () => ({ 'other@g.us': OTHER_GROUP }),
       assignRoom: () => {},
       syncGroups: async () => {},
       getAvailableGroups: () => [],

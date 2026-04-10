@@ -71,7 +71,7 @@ export function resolveTaskExecutionContext(
   const groupDir = resolveGroupFolderPath(task.group_folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  const groups = deps.registeredGroups();
+  const groups = deps.roomBindings();
   const group = Object.values(groups).find(
     (registeredGroup) => registeredGroup.folder === task.group_folder,
   );

@@ -22,7 +22,7 @@ export async function startStatusDashboard(
     usageUpdateInterval: opts.usageUpdateInterval,
     channels: opts.channels,
     queue: opts.queue,
-    registeredGroups: opts.registeredGroups,
+    roomBindings: opts.roomBindings,
   });
 }
 

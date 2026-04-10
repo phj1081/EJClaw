@@ -69,7 +69,7 @@ import type { AgentType, PairedRoomRole, RegisteredGroup } from './types.js';
 export interface MessageAgentExecutorDeps {
   assistantName: string;
   queue: Pick<GroupQueue, 'registerProcess' | 'enqueueMessageCheck'>;
-  getRegisteredGroups: () => Record<string, RegisteredGroup>;
+  getRoomBindings: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   persistSession: (groupFolder: string, sessionId: string) => void;
   clearSession: (groupFolder: string) => void;
@@ -175,7 +175,7 @@ export async function runAgentForGroup(
   writeGroupsSnapshot(
     group.folder,
     isMain,
-    listAvailableGroups(deps.getRegisteredGroups()),
+    listAvailableGroups(deps.getRoomBindings()),
   );
 
   let resetSessionRequested = false;
@@ -194,6 +194,7 @@ export async function runAgentForGroup(
     runId,
     roomRoleContext,
     hasHumanMessage: args.hasHumanMessage,
+    pairedTurnIdentity: args.pairedTurnIdentity,
   });
   const preparedTurnTaskUpdatedAt = pairedExecutionContext
     ? (pairedExecutionContext.claimedTaskUpdatedAt ??

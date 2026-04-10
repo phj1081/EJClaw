@@ -1,10 +1,6 @@
 import { Database } from 'bun:sqlite';
 
-import {
-  ASSISTANT_NAME,
-  OWNER_AGENT_TYPE,
-  REVIEWER_AGENT_TYPE,
-} from '../config.js';
+import { OWNER_AGENT_TYPE, REVIEWER_AGENT_TYPE } from '../config.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
 import type { AgentType, RegisteredGroup, RoomMode } from '../types.js';
@@ -86,6 +82,10 @@ export function normalizeStoredAgentType(
     : undefined;
 }
 
+/**
+ * Legacy capability-row helper for migration/write flows.
+ * Runtime read paths must derive capability types from canonical room tables.
+ */
 export function collectRegisteredAgentTypes(
   database: Database,
   jid: string,
@@ -154,71 +154,12 @@ export function parseRegisteredGroupRow(
     jid: row.jid,
     name: row.name,
     folder: row.folder,
-    trigger: row.trigger_pattern,
     added_at: row.added_at,
     agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
-    requiresTrigger:
-      row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
     agentType: normalizeStoredAgentType(row.agent_type),
     workDir: row.work_dir || undefined,
   };
-}
-
-export function getLegacyRegisteredGroupRows(
-  database: Database,
-  agentTypeFilter?: string,
-): RegisteredGroupDatabaseRow[] {
-  return (
-    agentTypeFilter
-      ? database
-          .prepare(
-            `SELECT *
-             FROM registered_groups
-             WHERE agent_type = ?
-               AND NOT EXISTS (
-                 SELECT 1
-                 FROM room_settings
-                 WHERE chat_jid = registered_groups.jid
-               )`,
-          )
-          .all(agentTypeFilter)
-      : database
-          .prepare(
-            `SELECT *
-             FROM registered_groups
-             WHERE NOT EXISTS (
-               SELECT 1
-               FROM room_settings
-               WHERE chat_jid = registered_groups.jid
-             )`,
-          )
-          .all()
-  ) as RegisteredGroupDatabaseRow[];
-}
-
-export function getLegacyRegisteredGroup(
-  database: Database,
-  jid: string,
-  agentType?: string,
-): (RegisteredGroup & { jid: string }) | undefined {
-  if (getStoredRoomSettingsRowFromDatabase(database, jid)) {
-    return undefined;
-  }
-
-  const row = (
-    agentType
-      ? database
-          .prepare(
-            'SELECT * FROM registered_groups WHERE jid = ? AND agent_type = ?',
-          )
-          .get(jid, agentType)
-      : database
-          .prepare('SELECT * FROM registered_groups WHERE jid = ?')
-          .get(jid)
-  ) as RegisteredGroupDatabaseRow | undefined;
-
-  return parseRegisteredGroupRow(row);
 }
 
 export function getPendingLegacyRegisteredGroupJids(
@@ -605,10 +546,8 @@ export function buildRegisteredGroupFromStoredSettings(
     jid: stored.chatJid,
     name: stored.name || stored.chatJid,
     folder: stored.folder,
-    trigger: stored.trigger || `@${ASSISTANT_NAME}`,
     added_at: capabilityMetadata?.createdAt || new Date(0).toISOString(),
     agentConfig: capabilityMetadata?.agentConfig,
-    requiresTrigger: stored.requiresTrigger,
     isMain: stored.isMain ? true : undefined,
     agentType: resolvedAgentType,
     workDir: stored.workDir,
@@ -855,6 +794,10 @@ export function materializeRegisteredGroupsForRoom(
     .run(chatJid, ...desiredTypes);
 }
 
+/**
+ * Legacy snapshot helper for migration/write flows.
+ * Runtime read paths must not rebuild room metadata from registered_groups.
+ */
 export function collectRoomRegistrationSnapshot(
   database: Database,
   jid: string,

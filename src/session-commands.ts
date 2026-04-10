@@ -14,13 +14,13 @@ const SESSION_COMMAND_CONTROL_PATTERNS = [
 
 function normalizeSessionCommandText(
   content: string,
-  triggerPattern: RegExp,
+  _triggerPattern: RegExp,
 ): string {
-  return content.trim().replace(triggerPattern, '').trim();
+  return content.trim();
 }
 
 /**
- * Extract a session slash command from a message, stripping the trigger prefix if present.
+ * Extract a session slash command from a message.
  * Returns the slash command (e.g., '/compact') or null if not a session command.
  */
 export function extractSessionCommand(

@@ -35,7 +35,7 @@ export interface IpcDeps {
     senderRole?: string,
   ) => Promise<void>;
   nudgeScheduler?: () => void;
-  registeredGroups: () => Record<string, RegisteredGroup>;
+  roomBindings: () => Record<string, RegisteredGroup>;
   assignRoom: (jid: string, room: AssignRoomInput) => void;
   syncGroups: (force: boolean) => Promise<void>;
   getAvailableGroups: () => AvailableGroup[];
@@ -65,14 +65,14 @@ export async function forwardAuthorizedIpcMessage(
   msg: IpcMessagePayload,
   sourceGroup: string,
   isMain: boolean,
-  registeredGroups: Record<string, RegisteredGroup>,
+  roomBindings: Record<string, RegisteredGroup>,
   sendMessage: IpcDeps['sendMessage'],
 ): Promise<IpcMessageForwardResult> {
   if (!(msg.type === 'message' && msg.chatJid && msg.text)) {
     return { outcome: 'ignored', senderRole: msg.senderRole ?? null };
   }
 
-  const targetGroup = registeredGroups[msg.chatJid];
+  const targetGroup = roomBindings[msg.chatJid];
   const isMainOverride = isMain === true;
   if (
     !(isMainOverride || (targetGroup && targetGroup.folder === sourceGroup))
@@ -184,11 +184,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
       return;
     }
 
-    const registeredGroups = deps.registeredGroups();
+    const roomBindings = deps.roomBindings();
 
     // Build folder→isMain lookup from registered groups
     const folderIsMain = new Map<string, boolean>();
-    for (const group of Object.values(registeredGroups)) {
+    for (const group of Object.values(roomBindings)) {
       if (group.isMain) folderIsMain.set(group.folder, true);
     }
 
@@ -240,7 +240,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 msg,
                 sourceGroup,
                 isMain,
-                registeredGroups,
+                roomBindings,
                 deps.sendMessage,
               );
               if (forwardResult.outcome === 'sent') {
@@ -353,8 +353,6 @@ export async function processTaskIpc(
     jid?: string;
     name?: string;
     folder?: string;
-    trigger?: string;
-    requiresTrigger?: boolean;
     room_mode?: RoomMode;
     owner_agent_type?: AgentType;
     isMain?: boolean;
@@ -376,7 +374,7 @@ export async function processTaskIpc(
   isMain: boolean, // Verified from directory path
   deps: IpcDeps,
 ): Promise<void> {
-  const registeredGroups = deps.registeredGroups();
+  const roomBindings = deps.roomBindings();
 
   switch (data.type) {
     case 'schedule_task':
@@ -389,8 +387,8 @@ export async function processTaskIpc(
         // Resolve the target group from JID
         const targetJid = data.targetJid as string;
         const targetGroupEntry =
-          registeredGroups[targetJid] ||
-          Object.values(registeredGroups).find(
+          roomBindings[targetJid] ||
+          Object.values(roomBindings).find(
             (group) => group.folder === targetJid,
           );
 
@@ -404,9 +402,9 @@ export async function processTaskIpc(
 
         const targetFolder = targetGroupEntry.folder;
         const resolvedTargetJid =
-          registeredGroups[targetJid] !== undefined
+          roomBindings[targetJid] !== undefined
             ? targetJid
-            : Object.entries(registeredGroups).find(
+            : Object.entries(roomBindings).find(
                 ([, group]) => group.folder === targetFolder,
               )?.[0];
 
@@ -765,8 +763,6 @@ export async function processTaskIpc(
           roomMode: data.room_mode,
           ownerAgentType: data.owner_agent_type,
           folder: data.folder,
-          trigger: data.trigger,
-          requiresTrigger: data.requiresTrigger,
           isMain: data.isMain,
           workDir: data.workDir,
         });

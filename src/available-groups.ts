@@ -3,10 +3,10 @@ import { getAllChats } from './db.js';
 import type { RegisteredGroup } from './types.js';
 
 export function listAvailableGroups(
-  registeredGroups: Record<string, RegisteredGroup>,
+  roomBindings: Record<string, RegisteredGroup>,
 ): AvailableGroup[] {
   const chats = getAllChats();
-  const registeredJids = new Set(Object.keys(registeredGroups));
+  const registeredJids = new Set(Object.keys(roomBindings));
 
   return chats
     .filter((chat) => chat.jid !== '__group_sync__' && chat.is_group)

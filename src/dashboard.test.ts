@@ -22,7 +22,7 @@ function makeOptions(sessionId?: string): DashboardOptions {
         },
       ],
     } as unknown as DashboardOptions['queue'],
-    registeredGroups: () => ({
+    roomBindings: () => ({
       'dc:123': {
         name: 'clone-test',
         folder: 'group-folder',

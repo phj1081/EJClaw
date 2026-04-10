@@ -599,6 +599,17 @@ src/
 - `getAllRoomBindings()` 도입
 - startup sync 제거
 
+하위 컷 메모:
+
+- 하위 컷 1. `registered_groups` 기반 owner/room-mode/snapshot 추론 제거
+  - 대상: `src/service-routing.ts`, `src/db.ts`, `src/db/room-registration.ts`
+  - 범위: stored canonical 값이 없을 때 `registered_groups` legacy row로 owner service, room mode, snapshot 의미를 추론하는 read-path fallback 제거
+  - 동반 테스트: `src/service-routing.test.ts`, `src/db.test.ts`
+- 하위 컷 2. 남은 `registeredGroups` runtime consumer 제거
+  - 대상: `src/index.ts`, `src/message-runtime-loop.ts`, `src/ipc.ts`
+  - 범위: `getAllRegisteredGroups()` read-path 소비자 제거, `getAllRoomBindings()` 도입, startup sync 제거
+- 주의: 여기서 말하는 추론 제거는 PR 4 / Phase 4의 `paired-state.ts` hydrate fallback 제거와 별개다.
+
 ### PR 4. Paired task canonicalization
 
 - paired/channel owner/handoff/work item backfill

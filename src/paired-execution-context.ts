@@ -46,6 +46,7 @@ import {
   prepareReviewerWorkspaceForExecution,
   provisionOwnerWorkspaceForPairedTask,
 } from './paired-workspace-manager.js';
+import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import type {
   AgentType,
   PairedRoomRole,
@@ -193,6 +194,7 @@ export function preparePairedExecutionContext(args: {
   runId: string;
   roomRoleContext?: RoomRoleContext;
   hasHumanMessage?: boolean;
+  pairedTurnIdentity?: PairedTurnIdentity;
 }): PreparedPairedExecutionContext | undefined {
   const { group, chatJid, roomRoleContext } = args;
   if (!roomRoleContext || !group.workDir) {
@@ -210,7 +212,19 @@ export function preparePairedExecutionContext(args: {
   }
 
   const latestTask = getPairedTaskById(task.id) ?? task;
-  const claimedTaskUpdatedAt = latestTask.updated_at;
+  const continuationTurnIdentity = args.pairedTurnIdentity;
+  const claimedTaskUpdatedAt =
+    continuationTurnIdentity &&
+    continuationTurnIdentity.taskId === latestTask.id &&
+    continuationTurnIdentity.role === roomRoleContext.role &&
+    ((roomRoleContext.role === 'reviewer' &&
+      continuationTurnIdentity.intentKind === 'reviewer-turn' &&
+      latestTask.status === 'in_review') ||
+      (roomRoleContext.role === 'arbiter' &&
+        continuationTurnIdentity.intentKind === 'arbiter-turn' &&
+        latestTask.status === 'in_arbitration'))
+      ? continuationTurnIdentity.taskUpdatedAt
+      : latestTask.updated_at;
   let workspace: PairedWorkspace | null = null;
   let blockMessage: string | undefined;
   const now = new Date().toISOString();
@@ -354,6 +368,8 @@ export function preparePairedExecutionContext(args: {
     claimedTaskUpdatedAt,
     workspace,
     envOverrides,
+    requiresVisibleVerdict:
+      roomRoleContext.role === 'reviewer' || roomRoleContext.role === 'arbiter',
     blockMessage,
   };
 }

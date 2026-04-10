@@ -1,5 +1,4 @@
 import { logger } from './logger.js';
-import { hasAllowedTrigger } from './message-runtime-rules.js';
 import {
   handleSessionCommand,
   type SessionCommandDeps,
@@ -30,22 +29,6 @@ export async function handleQueuedRunGates(args: {
   });
   if (cmdResult.handled) {
     return cmdResult;
-  }
-
-  if (
-    !hasAllowedTrigger({
-      chatJid: args.chatJid,
-      messages: args.missedMessages,
-      group: args.group,
-      triggerPattern: args.triggerPattern,
-      hasImplicitContinuationWindow: args.hasImplicitContinuationWindow,
-    })
-  ) {
-    logger.info(
-      { chatJid: args.chatJid, group: args.group.name, runId: args.runId },
-      'Skipping queued run because no allowed trigger was found',
-    );
-    return { handled: true, success: true };
   }
 
   return { handled: false };

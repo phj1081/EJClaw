@@ -111,7 +111,7 @@ export interface MessageRuntimeDeps {
   triggerPattern: RegExp;
   channels: Channel[];
   queue: GroupQueue;
-  getRegisteredGroups: () => Record<string, RegisteredGroup>;
+  getRoomBindings: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   getLastTimestamp: () => string;
   setLastTimestamp: (timestamp: string) => void;
@@ -217,7 +217,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       {
         assistantName: deps.assistantName,
         queue: deps.queue,
-        getRegisteredGroups: deps.getRegisteredGroups,
+        getRoomBindings: deps.getRoomBindings,
         getSessions: deps.getSessions,
         persistSession: deps.persistSession,
         clearSession: deps.clearSession,
@@ -272,6 +272,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       getEffectiveChannelLease(chatJid),
       resolvedDeliveryRole ?? 'owner',
     );
+    const allowProgressReplayWithoutFinal =
+      args.pairedTurnIdentity?.role !== 'reviewer' &&
+      args.pairedTurnIdentity?.role !== 'arbiter';
     const turnController = new MessageTurnController({
       chatJid,
       group,
@@ -283,6 +286,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       clearSession: () => deps.clearSession(group.folder),
       requestClose: (reason) =>
         deps.queue.closeStdin(chatJid, { runId, reason }),
+      allowProgressReplayWithoutFinal,
       deliveryRole: resolvedDeliveryRole,
       deliveryServiceId: resolvedDeliveryServiceId,
       pairedTurnIdentity: args.pairedTurnIdentity ?? null,
@@ -426,7 +430,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       processClaimedHandoff: async (handoff) => {
         await processClaimedServiceHandoff({
           handoff,
-          getRegisteredGroups: deps.getRegisteredGroups,
+          getRoomBindings: deps.getRoomBindings,
           channels: deps.channels,
           executeTurn,
           lastAgentTimestamps: deps.getLastAgentTimestamps(),
@@ -444,7 +448,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     context: GroupRunContext,
   ): Promise<boolean> => {
     const { runId } = context;
-    const group = deps.getRegisteredGroups()[chatJid];
+    const group = deps.getRoomBindings()[chatJid];
     if (!group) return true;
     const log = createScopedLogger({
       chatJid,
@@ -651,18 +655,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           },
           formatMessages,
           isAdminSender: (msg) => isSessionCommandSenderAllowed(msg.sender),
-          canSenderInteract: (msg) => {
-            const hasTrigger = deps.triggerPattern.test(msg.content.trim());
-            const requiresTrigger =
-              !isMainGroup && group.requiresTrigger !== false;
-            return (
-              isMainGroup ||
-              !requiresTrigger ||
-              (hasTrigger &&
-                (msg.is_from_me ||
-                  isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
-            );
-          },
+          canSenderInteract: () => true,
           resetPairedTask: () => {
             if (hasReviewerLease(chatJid)) {
               const task = getLatestOpenPairedTaskForChat(chatJid);
@@ -717,7 +710,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     }
     messageLoopRunning = true;
 
-    logger.info(`EJClaw running (trigger: @${deps.assistantName})`);
+    logger.info('EJClaw running');
 
     while (true) {
       try {
@@ -727,7 +720,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           triggerPattern: deps.triggerPattern,
           timezone: deps.timezone,
           channels: deps.channels,
-          getRegisteredGroups: deps.getRegisteredGroups,
+          getRoomBindings: deps.getRoomBindings,
           getLastTimestamp: deps.getLastTimestamp,
           setLastTimestamp: deps.setLastTimestamp,
           lastAgentTimestamps: deps.getLastAgentTimestamps(),
@@ -755,7 +748,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     recoverRuntimePendingMessages({
       assistantName: deps.assistantName,
       channels: deps.channels,
-      getRegisteredGroups: deps.getRegisteredGroups,
+      getRoomBindings: deps.getRoomBindings,
       lastAgentTimestamps: deps.getLastAgentTimestamps(),
       saveState: deps.saveState,
       enqueueScopedGroupMessageCheck,

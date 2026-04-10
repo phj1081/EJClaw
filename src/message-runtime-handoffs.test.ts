@@ -124,7 +124,7 @@ describe('message-runtime-handoffs', () => {
         completed_at: null,
         last_error: null,
       },
-      getRegisteredGroups: () => ({
+      getRoomBindings: () => ({
         'group@test': makeGroup(),
       }),
       channels: [makeChannel('discord-main', true)],
@@ -174,7 +174,7 @@ describe('message-runtime-handoffs', () => {
         completed_at: null,
         last_error: null,
       },
-      getRegisteredGroups: () => ({
+      getRoomBindings: () => ({
         'group@test': makeGroup(),
       }),
       channels: [
@@ -249,7 +249,7 @@ describe('message-runtime-handoffs', () => {
         completed_at: null,
         last_error: null,
       },
-      getRegisteredGroups: () => ({
+      getRoomBindings: () => ({
         'group@test': makeGroup(),
       }),
       channels: [

@@ -334,6 +334,72 @@ describe('paired execution context', () => {
     });
   });
 
+  it('preserves the claimed reviewer turn revision for in-review continuations and requires a visible verdict', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-28T00:00:00.000Z',
+      status: 'in_review',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:05:00.000Z',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'task-1',
+      chat_jid: 'dc:test',
+      group_folder: group.folder,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-28T00:00:00.000Z',
+      status: 'in_review',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:05:00.000Z',
+    });
+    vi.mocked(
+      pairedWorkspaceManager.prepareReviewerWorkspaceForExecution,
+    ).mockReturnValue({
+      workspace: buildWorkspace('reviewer', '/tmp/paired/task-1/reviewer'),
+      autoRefreshed: false,
+    });
+
+    const result = preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-review-continuation',
+      roomRoleContext: reviewerContext,
+      pairedTurnIdentity: {
+        turnId: 'task-1:2026-03-28T00:00:00.000Z:reviewer-turn',
+        taskId: 'task-1',
+        taskUpdatedAt: '2026-03-28T00:00:00.000Z',
+        intentKind: 'reviewer-turn',
+        role: 'reviewer',
+      },
+    });
+
+    expect(result?.claimedTaskUpdatedAt).toBe('2026-03-28T00:00:00.000Z');
+    expect(result?.requiresVisibleVerdict).toBe(true);
+    expect(db.updatePairedTask).not.toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({ status: 'in_review' }),
+    );
+  });
+
   it('does not change task state when the reviewer snapshot is not ready', () => {
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
       id: 'task-1',

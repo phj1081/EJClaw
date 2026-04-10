@@ -27,7 +27,7 @@ export async function processMessageLoopTick(args: {
   triggerPattern: RegExp;
   timezone: string;
   channels: Channel[];
-  getRegisteredGroups: () => Record<string, RegisteredGroup>;
+  getRoomBindings: () => Record<string, RegisteredGroup>;
   getLastTimestamp: () => string;
   setLastTimestamp: (timestamp: string) => void;
   lastAgentTimestamps: Record<string, string>;
@@ -54,8 +54,8 @@ export async function processMessageLoopTick(args: {
   labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
 }): Promise<void> {
   args.enqueuePendingHandoffs();
-  const registeredGroups = args.getRegisteredGroups();
-  const jids = Object.keys(registeredGroups);
+  const roomBindings = args.getRoomBindings();
+  const jids = Object.keys(roomBindings);
   const { messages, newSeqCursor } = getNewMessagesBySeq(
     jids,
     args.getLastTimestamp(),
@@ -81,7 +81,7 @@ export async function processMessageLoopTick(args: {
   }
 
   for (const [chatJid, groupMessages] of messagesByGroup) {
-    const group = registeredGroups[chatJid];
+    const group = roomBindings[chatJid];
     if (!group) continue;
 
     const channel = findChannel(args.channels, chatJid);
@@ -125,7 +125,7 @@ export async function processMessageLoopTick(args: {
 export function recoverPendingMessages(args: {
   assistantName: string;
   channels: Channel[];
-  getRegisteredGroups: () => Record<string, RegisteredGroup>;
+  getRoomBindings: () => Record<string, RegisteredGroup>;
   lastAgentTimestamps: Record<string, string>;
   saveState: () => void;
   enqueueScopedGroupMessageCheck: (
@@ -133,8 +133,8 @@ export function recoverPendingMessages(args: {
     groupFolder: string,
   ) => void;
 }): void {
-  const registeredGroups = args.getRegisteredGroups();
-  for (const [chatJid, group] of Object.entries(registeredGroups)) {
+  const roomBindings = args.getRoomBindings();
+  for (const [chatJid, group] of Object.entries(roomBindings)) {
     const openWorkItem = getOpenWorkItemForChat(chatJid, SERVICE_SESSION_SCOPE);
     if (openWorkItem) {
       logger.info(

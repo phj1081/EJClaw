@@ -160,7 +160,7 @@ function failClaimedHandoff(args: {
 
 export async function processClaimedHandoff(args: {
   handoff: ServiceHandoff;
-  getRegisteredGroups: () => Record<string, RegisteredGroup>;
+  getRoomBindings: () => Record<string, RegisteredGroup>;
   channels: Channel[];
   executeTurn: ExecuteTurnFn;
   lastAgentTimestamps: Record<string, string>;
@@ -175,7 +175,7 @@ export async function processClaimedHandoff(args: {
   enqueueMessageCheck?: ((chatJid: string) => void) | undefined;
 }): Promise<void> {
   const { handoff } = args;
-  const group = args.getRegisteredGroups()[handoff.chat_jid];
+  const group = args.getRoomBindings()[handoff.chat_jid];
   if (!group) {
     failClaimedHandoff({
       handoff,

@@ -3,7 +3,6 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  ASSISTANT_NAME,
   ARBITER_AGENT_TYPE,
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
@@ -11,7 +10,6 @@ import {
   DATA_DIR,
   normalizeServiceId,
   OWNER_AGENT_TYPE,
-  REVIEWER_AGENT_TYPE,
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
 } from './config.js';
@@ -31,7 +29,6 @@ import {
   buildLegacyRoomMigrationPlan,
   collectRegisteredAgentTypes,
   collectRegisteredAgentTypesForFolder,
-  collectRoomRegistrationSnapshot,
   deleteLegacyRegisteredGroupRowsForJid,
   getPendingLegacyRegisteredGroupJids as getPendingLegacyRegisteredGroupJidsFromDatabase,
   getStoredRoomRowsFromDatabase,
@@ -223,8 +220,6 @@ export interface AssignRoomInput {
   roomMode?: RoomMode;
   ownerAgentType?: AgentType;
   folder?: string;
-  trigger?: string;
-  requiresTrigger?: boolean;
   isMain?: boolean;
   workDir?: string;
   addedAt?: string;
@@ -791,9 +786,9 @@ function writeLegacyRegisteredGroupAndSyncRoomSettings(
       triggerPattern:
         existingStored?.modeSource === 'explicit' && existingStored.trigger
           ? existingStored.trigger
-          : group.trigger,
+          : (group.trigger ?? ''),
       requiresTrigger:
-        group.requiresTrigger ?? existingStored?.requiresTrigger ?? true,
+        group.requiresTrigger ?? existingStored?.requiresTrigger ?? false,
       isMain: group.isMain ?? existingStored?.isMain ?? false,
       ownerAgentType,
       workDir: group.workDir ?? existingStored?.workDir ?? null,
@@ -885,8 +880,8 @@ export function assignRoom(
   const snapshot: RoomRegistrationSnapshot = {
     name: input.name,
     folder,
-    triggerPattern: input.trigger || existing?.trigger || `@${ASSISTANT_NAME}`,
-    requiresTrigger: input.requiresTrigger ?? existing?.requiresTrigger ?? true,
+    triggerPattern: existing?.trigger ?? '',
+    requiresTrigger: existing?.requiresTrigger ?? false,
     isMain: input.isMain ?? existing?.isMain ?? false,
     ownerAgentType,
     workDir: input.workDir ?? existing?.workDir ?? null,
@@ -959,7 +954,7 @@ export function updateRegisteredGroupName(jid: string, name: string): void {
   })();
 }
 
-export function getAllRegisteredGroups(
+export function getAllRoomBindings(
   agentTypeFilter?: string,
 ): Record<string, RegisteredGroup> {
   const result: Record<string, RegisteredGroup> = {};
@@ -984,21 +979,7 @@ export function getAllRegisteredGroups(
 export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
   if (!db) return [];
   const stored = getStoredRoomSettingsRowFromDatabase(db, jid);
-  if (stored) {
-    return resolveStoredRoomCapabilityTypes(db, stored);
-  }
-  return collectRegisteredAgentTypes(db, jid);
-}
-
-/**
- * Internal registration/backfill helper.
- * This infers the stored room mode from current registrations and must not be
- * treated as runtime source-of-truth by callers.
- */
-function inferStoredRoomModeForJid(jid: string): RoomMode {
-  return inferRoomModeFromRegisteredAgentTypes(
-    getRegisteredAgentTypesForJid(jid),
-  );
+  return stored ? resolveStoredRoomCapabilityTypes(db, stored) : [];
 }
 
 export function getStoredRoomSettings(
@@ -1016,31 +997,6 @@ function getStoredRoomModeRow(chatJid: string): StoredRoomModeRow | undefined {
         source: row.modeSource,
       }
     : undefined;
-}
-
-function syncStoredRoomRegistrationSnapshotForJid(chatJid: string): void {
-  const existingSettings = getStoredRoomSettingsRowFromDatabase(db, chatJid);
-  const snapshot = collectRoomRegistrationSnapshot(
-    db,
-    chatJid,
-    existingSettings,
-  );
-  if (!snapshot) return;
-
-  if (!existingSettings) {
-    insertStoredRoomSettings(
-      db,
-      chatJid,
-      inferRoomModeFromRegisteredAgentTypes(
-        getRegisteredAgentTypesForJid(chatJid),
-      ),
-      'inferred',
-      snapshot,
-    );
-    return;
-  }
-
-  updateStoredRoomMetadata(db, chatJid, snapshot);
 }
 
 function assertNoPendingLegacyRoomMigration(): void {
@@ -1096,8 +1052,8 @@ function buildRoomRegistrationSnapshotFromStoredRoom(
   return {
     name,
     folder: resolveAssignedRoomFolder(db, stored.chatJid, name, stored.folder),
-    triggerPattern: stored.trigger || `@${ASSISTANT_NAME}`,
-    requiresTrigger: stored.requiresTrigger ?? true,
+    triggerPattern: stored.trigger ?? '',
+    requiresTrigger: stored.requiresTrigger ?? false,
     isMain: stored.isMain ?? false,
     ownerAgentType,
     workDir: stored.workDir ?? null,
@@ -1123,19 +1079,7 @@ function buildRoomRegistrationPlanForJid(
     };
   }
 
-  const snapshot = collectRoomRegistrationSnapshot(db, chatJid);
-  if (!snapshot) return undefined;
-
-  return {
-    snapshot: {
-      ...snapshot,
-      name: overrides?.name ?? snapshot.name,
-    },
-    roomMode: inferRoomModeFromRegisteredAgentTypes(
-      collectRegisteredAgentTypes(db, chatJid),
-    ),
-    hasStoredRoom: false,
-  };
+  return undefined;
 }
 
 function upsertStoredRoomMode(
@@ -1155,10 +1099,6 @@ function upsertStoredRoomMode(
       mode_source = excluded.mode_source,
       updated_at = excluded.updated_at`,
   ).run(chatJid, roomMode, source, new Date().toISOString());
-}
-
-function syncInferredRoomModeForJid(chatJid: string): void {
-  upsertStoredRoomMode(chatJid, inferStoredRoomModeForJid(chatJid), 'inferred');
 }
 
 export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
@@ -1193,28 +1133,8 @@ export function getEffectiveRoomMode(chatJid: string): RoomMode {
   return getStoredRoomModeRow(chatJid)?.roomMode ?? 'single';
 }
 
-function canRunTribunalFromRegisteredAgentTypes(
-  agentTypes: readonly AgentType[],
-): boolean {
-  const types = new Set(agentTypes);
-  if (types.size === 0) return false;
-  return REVIEWER_AGENT_TYPE === 'claude-code'
-    ? types.has('claude-code')
-    : types.has('codex');
-}
-
 export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
-  const stored = getStoredRoomSettings(chatJid);
-  if (stored) {
-    return stored.roomMode;
-  }
-
-  return inferStoredRoomModeForJid(chatJid) === 'tribunal' &&
-    canRunTribunalFromRegisteredAgentTypes(
-      getRegisteredAgentTypesForJid(chatJid),
-    )
-    ? 'tribunal'
-    : 'single';
+  return getStoredRoomSettings(chatJid)?.roomMode ?? 'single';
 }
 
 // --- Paired task/project/workspace state ---

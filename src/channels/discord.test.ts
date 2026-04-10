@@ -133,7 +133,7 @@ function createTestOpts(
   return {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
-    registeredGroups: vi.fn(() => ({
+    roomBindings: vi.fn(() => ({
       'dc:1234567890123456': {
         name: 'Test Server #general',
         folder: 'test-server',
@@ -441,7 +441,7 @@ describe('DiscordChannel', () => {
 
     it('uses sender name for DM chats (no guild)', async () => {
       const opts = createTestOpts({
-        registeredGroups: vi.fn(() => ({
+        roomBindings: vi.fn(() => ({
           'dc:1234567890123456': {
             name: 'DM',
             folder: 'dm',
@@ -491,10 +491,10 @@ describe('DiscordChannel', () => {
     });
   });
 
-  // --- @mention translation ---
+  // --- bot mention handling ---
 
-  describe('@mention translation', () => {
-    it('translates <@botId> mention to trigger format', async () => {
+  describe('bot mention handling', () => {
+    it('passes through <@botId> mentions without rewriting them', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
@@ -509,12 +509,12 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '@Andy what time is it?',
+          content: '<@999888777> what time is it?',
         }),
       );
     });
 
-    it('does not translate if message already matches trigger', async () => {
+    it('leaves mixed text and mentions untouched', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
@@ -531,7 +531,7 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '@Andy hello',
+          content: '@Andy hello <@999888777>',
         }),
       );
     });
@@ -555,7 +555,7 @@ describe('DiscordChannel', () => {
       );
     });
 
-    it('handles <@!botId> (nickname mention format)', async () => {
+    it('passes through <@!botId> nickname mentions without rewriting them', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
       await channel.connect();
@@ -570,7 +570,7 @@ describe('DiscordChannel', () => {
       expect(opts.onMessage).toHaveBeenCalledWith(
         'dc:1234567890123456',
         expect.objectContaining({
-          content: '@Andy check this',
+          content: '<@!999888777> check this',
         }),
       );
     });

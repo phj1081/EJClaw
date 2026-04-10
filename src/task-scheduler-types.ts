@@ -5,7 +5,7 @@ import type { AgentType, RegisteredGroup } from './types.js';
 
 export interface SchedulerDependencies {
   serviceAgentType?: AgentType;
-  registeredGroups: () => Record<string, RegisteredGroup>;
+  roomBindings: () => Record<string, RegisteredGroup>;
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
   onProcess: (

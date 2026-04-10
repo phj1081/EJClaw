@@ -53,9 +53,9 @@ function formatKoreanTimestamp(timestamp: string | number | Date): string {
 }
 
 function getMainGroupJid(
-  registeredGroups: Record<string, RegisteredGroup>,
+  roomBindings: Record<string, RegisteredGroup>,
 ): string | null {
-  const mainEntry = Object.entries(registeredGroups).find(
+  const mainEntry = Object.entries(roomBindings).find(
     ([, group]) => group.isMain === true,
   );
   return mainEntry?.[0] ?? null;
@@ -140,7 +140,7 @@ export function writeRestartContext(
 }
 
 export function writeShutdownRestartContext(
-  registeredGroups: Record<string, RegisteredGroup>,
+  roomBindings: Record<string, RegisteredGroup>,
   interruptedGroups: RestartInterruptedGroup[],
   signal: string,
   serviceIds: string[] = [SERVICE_ID],
@@ -149,7 +149,7 @@ export function writeShutdownRestartContext(
 
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const mainChatJid =
-    getMainGroupJid(registeredGroups) ?? interruptedGroups[0].chatJid;
+    getMainGroupJid(roomBindings) ?? interruptedGroups[0].chatJid;
   const writtenPaths: string[] = [];
 
   for (const serviceId of serviceIds) {
@@ -233,7 +233,7 @@ export function buildRestartAnnouncement(context: RestartContext): string {
 
 export function getInterruptedRecoveryCandidates(
   context: RestartContext | null,
-  registeredGroups: Record<string, RegisteredGroup>,
+  roomBindings: Record<string, RegisteredGroup>,
 ): RestartRecoveryCandidate[] {
   if (!context?.interruptedGroups?.length) return [];
 
@@ -242,7 +242,7 @@ export function getInterruptedRecoveryCandidates(
 
   for (const interrupted of context.interruptedGroups) {
     if (seen.has(interrupted.chatJid)) continue;
-    const group = registeredGroups[interrupted.chatJid];
+    const group = roomBindings[interrupted.chatJid];
     if (!group) continue;
     seen.add(interrupted.chatJid);
     candidates.push({
@@ -258,10 +258,10 @@ export function getInterruptedRecoveryCandidates(
 }
 
 export function inferRecentRestartContext(
-  registeredGroups: Record<string, RegisteredGroup>,
+  roomBindings: Record<string, RegisteredGroup>,
   processStartedAtMs: number,
 ): InferredRestartContext | null {
-  const chatJid = getMainGroupJid(registeredGroups);
+  const chatJid = getMainGroupJid(roomBindings);
   if (!chatJid) return null;
 
   const latestBuildTime = getLatestDistBuildTime();

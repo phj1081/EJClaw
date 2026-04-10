@@ -66,7 +66,7 @@ export interface UnifiedDashboardOptions {
   usageUpdateInterval: number;
   channels: Channel[];
   queue: GroupQueue;
-  registeredGroups: () => Record<string, RegisteredGroup>;
+  roomBindings: () => Record<string, RegisteredGroup>;
   onGroupNameSynced?: (jid: string, name: string) => void;
   purgeOnStart?: boolean;
 }
@@ -175,7 +175,7 @@ async function refreshChannelMeta(
   );
   if (!channel?.getChannelMeta) return;
 
-  const localJids = Object.keys(opts.registeredGroups()).filter((jid) =>
+  const localJids = Object.keys(opts.roomBindings()).filter((jid) =>
     jid.startsWith('dc:'),
   );
   const snapshotJids = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS)
@@ -189,7 +189,7 @@ async function refreshChannelMeta(
 
     for (const [jid, meta] of channelMetaCache) {
       if (!meta.name) continue;
-      const group = opts.registeredGroups()[jid];
+      const group = opts.roomBindings()[jid];
       if (!group || group.name === meta.name) continue;
       logger.info(
         { jid, oldName: group.name, newName: meta.name },
@@ -230,7 +230,7 @@ function formatRoomName(
 }
 
 function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
-  const groups = opts.registeredGroups();
+  const groups = opts.roomBindings();
   const statuses = opts.queue.getStatuses(Object.keys(groups));
 
   writeStatusSnapshot({

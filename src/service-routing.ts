@@ -12,7 +12,6 @@ import {
   clearChannelOwnerLease,
   getAllChannelOwnerLeases,
   getEffectiveRuntimeRoomMode,
-  getRegisteredAgentTypesForJid,
   getStoredRoomSettings,
   type ChannelOwnerLeaseRow,
 } from './db.js';
@@ -103,32 +102,14 @@ function normalizeLeaseRow(
   };
 }
 
-function inferFallbackOwnerAgentType(
-  hasClaude: boolean,
-  hasCodex: boolean,
-): AgentType | undefined {
-  if (hasClaude && hasCodex) return OWNER_AGENT_TYPE;
-  if (hasCodex) return 'codex';
-  if (hasClaude) return 'claude-code';
-  return undefined;
-}
-
 function resolveDefaultOwnerAgentType(chatJid: string): AgentType | undefined {
-  const storedOwnerAgentType = getStoredRoomSettings(chatJid)?.ownerAgentType;
-  if (storedOwnerAgentType) {
-    return storedOwnerAgentType;
-  }
-
-  const types = getRegisteredAgentTypesForJid(chatJid);
-  const hasClaude = types.includes('claude-code');
-  const hasCodex = types.includes('codex');
-
-  return inferFallbackOwnerAgentType(hasClaude, hasCodex);
+  return getStoredRoomSettings(chatJid)?.ownerAgentType;
 }
 
 function getDefaultLease(chatJid: string): EffectiveChannelLease {
   const roomMode = getEffectiveRuntimeRoomMode(chatJid);
-  const ownerAgentType = resolveDefaultOwnerAgentType(chatJid) ?? 'claude-code';
+  const ownerAgentType =
+    resolveDefaultOwnerAgentType(chatJid) ?? OWNER_AGENT_TYPE;
   const rolePlan = resolveRoleAgentPlan({
     paired: roomMode === 'tribunal',
     groupAgentType: ownerAgentType,

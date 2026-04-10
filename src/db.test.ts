@@ -25,7 +25,7 @@ import {
   deleteTask,
   getAllChats,
   getChannelOwnerLease,
-  getAllRegisteredGroups,
+  getAllRoomBindings,
   getDueTasks,
   getEffectiveRoomMode,
   getEffectiveRuntimeRoomMode,
@@ -1870,7 +1870,7 @@ describe('registered group isMain', () => {
       isMain: true,
     });
 
-    const groups = getAllRegisteredGroups();
+    const groups = getAllRoomBindings();
     const group = groups['dc:main'];
     expect(group).toBeDefined();
     expect(group.isMain).toBe(true);
@@ -1885,7 +1885,7 @@ describe('registered group isMain', () => {
       added_at: '2024-01-01T00:00:00.000Z',
     });
 
-    const groups = getAllRegisteredGroups();
+    const groups = getAllRoomBindings();
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
@@ -1907,8 +1907,8 @@ describe('registered group isMain', () => {
       agentType: 'codex',
     });
 
-    const claudeGroups = getAllRegisteredGroups('claude-code');
-    const codexGroups = getAllRegisteredGroups('codex');
+    const claudeGroups = getAllRoomBindings('claude-code');
+    const codexGroups = getAllRoomBindings('codex');
 
     expect(claudeGroups['dc:shared']?.agentType).toBe('claude-code');
     expect(claudeGroups['dc:shared']?.name).toBe('Shared Room');
@@ -1946,9 +1946,9 @@ describe('room assignment writes', () => {
       folder: 'assigned-room',
     });
 
-    const allGroups = getAllRegisteredGroups();
-    const claudeGroups = getAllRegisteredGroups('claude-code');
-    const codexGroups = getAllRegisteredGroups('codex');
+    const allGroups = getAllRoomBindings();
+    const claudeGroups = getAllRoomBindings('claude-code');
+    const codexGroups = getAllRoomBindings('codex');
 
     expect(allGroups['dc:assigned-room']).toMatchObject({
       name: 'Assigned Room',
@@ -1984,19 +1984,17 @@ describe('room assignment writes', () => {
       ownerAgentType: 'codex',
     });
     expect(
-      getAllRegisteredGroups('claude-code')['dc:projection-room'],
+      getAllRoomBindings('claude-code')['dc:projection-room'],
     ).toMatchObject({
       name: 'Projection Room Renamed',
       folder: 'projection-room',
       agentType: 'claude-code',
     });
-    expect(getAllRegisteredGroups('codex')['dc:projection-room']).toMatchObject(
-      {
-        name: 'Projection Room Renamed',
-        folder: 'projection-room',
-        agentType: 'codex',
-      },
-    );
+    expect(getAllRoomBindings('codex')['dc:projection-room']).toMatchObject({
+      name: 'Projection Room Renamed',
+      folder: 'projection-room',
+      agentType: 'codex',
+    });
   });
 
   it('does not carry an owner override config onto a different owner agent type', () => {
@@ -2017,19 +2015,17 @@ describe('room assignment writes', () => {
       folder: 'owner-switch',
     });
 
-    expect(
-      getAllRegisteredGroups('claude-code')['dc:owner-switch'],
-    ).toMatchObject({
+    expect(getAllRoomBindings('claude-code')['dc:owner-switch']).toMatchObject({
       agentType: 'claude-code',
     });
     expect(
-      getAllRegisteredGroups('claude-code')['dc:owner-switch']?.agentConfig,
+      getAllRoomBindings('claude-code')['dc:owner-switch']?.agentConfig,
     ).toBeUndefined();
-    expect(getAllRegisteredGroups('codex')['dc:owner-switch']).toMatchObject({
+    expect(getAllRoomBindings('codex')['dc:owner-switch']).toMatchObject({
       agentType: 'codex',
     });
     expect(
-      getAllRegisteredGroups('codex')['dc:owner-switch']?.agentConfig,
+      getAllRoomBindings('codex')['dc:owner-switch']?.agentConfig,
     ).toBeUndefined();
   });
 
@@ -2057,14 +2053,14 @@ describe('room assignment writes', () => {
 
     expect(projectionRows).toEqual([]);
     expect(
-      getAllRegisteredGroups('claude-code')['dc:assign-no-projection'],
+      getAllRoomBindings('claude-code')['dc:assign-no-projection'],
     ).toMatchObject({
       name: 'Assign No Projection',
       folder: 'assign-no-projection',
       agentType: 'claude-code',
     });
     expect(
-      getAllRegisteredGroups('codex')['dc:assign-no-projection'],
+      getAllRoomBindings('codex')['dc:assign-no-projection'],
     ).toMatchObject({
       name: 'Assign No Projection',
       folder: 'assign-no-projection',
@@ -2072,7 +2068,7 @@ describe('room assignment writes', () => {
     });
   });
 
-  it('recreates inferred room_settings when renaming a legacy projection-only room', () => {
+  it('does not recreate inferred room_settings when renaming a legacy projection-only room', () => {
     _setRegisteredGroupForTests('dc:legacy-rename', {
       name: 'Legacy Rename',
       folder: 'legacy-rename',
@@ -2093,23 +2089,12 @@ describe('room assignment writes', () => {
 
     updateRegisteredGroupName('dc:legacy-rename', 'Legacy Rename Updated');
 
-    expect(getStoredRoomSettings('dc:legacy-rename')).toMatchObject({
-      chatJid: 'dc:legacy-rename',
-      roomMode: 'tribunal',
-      modeSource: 'inferred',
-      name: 'Legacy Rename Updated',
-      folder: 'legacy-rename',
-    });
+    expect(getStoredRoomSettings('dc:legacy-rename')).toBeUndefined();
+    expect(getRegisteredGroup('dc:legacy-rename')).toBeUndefined();
     expect(
-      getAllRegisteredGroups('claude-code')['dc:legacy-rename'],
-    ).toMatchObject({
-      name: 'Legacy Rename Updated',
-      agentType: 'claude-code',
-    });
-    expect(getAllRegisteredGroups('codex')['dc:legacy-rename']).toMatchObject({
-      name: 'Legacy Rename Updated',
-      agentType: 'codex',
-    });
+      getAllRoomBindings('claude-code')['dc:legacy-rename'],
+    ).toBeUndefined();
+    expect(getAllRoomBindings('codex')['dc:legacy-rename']).toBeUndefined();
   });
 
   it('requires explicit migration before init when only legacy registered_groups rows exist', () => {
@@ -2169,6 +2154,36 @@ describe('room assignment writes', () => {
     expect(() => _initTestDatabaseFromFile(dbPath)).toThrow(
       /Legacy room migration required before startup/,
     );
+    const rawDbBeforeMigration = new Database(dbPath, { readonly: true });
+    expect(
+      rawDbBeforeMigration
+        .prepare(
+          `SELECT COUNT(*) as count
+             FROM room_settings`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      rawDbBeforeMigration
+        .prepare(
+          `SELECT COUNT(*) as count
+             FROM room_role_overrides`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      rawDbBeforeMigration
+        .prepare(
+          `SELECT jid, agent_type
+             FROM registered_groups
+            ORDER BY jid, agent_type`,
+        )
+        .all(),
+    ).toEqual([
+      { jid: 'dc:legacy-sql', agent_type: 'claude-code' },
+      { jid: 'dc:legacy-sql', agent_type: 'codex' },
+    ]);
+    rawDbBeforeMigration.close();
     expect(migrateLegacyRoomRegistrationsInFile(dbPath)).toEqual({
       migratedRooms: 1,
       migratedRoleOverrides: 2,
@@ -2546,9 +2561,7 @@ describe('room assignment writes', () => {
       agentType: 'codex',
     });
     expect(getRegisteredGroup('dc:ssot-room', 'claude-code')).toBeUndefined();
-    expect(
-      getAllRegisteredGroups('claude-code')['dc:ssot-room'],
-    ).toBeUndefined();
+    expect(getAllRoomBindings('claude-code')['dc:ssot-room']).toBeUndefined();
     expect(getRegisteredAgentTypesForJid('dc:ssot-room')).toEqual(['codex']);
   });
 
@@ -2712,45 +2725,55 @@ describe('room assignment writes', () => {
 });
 
 describe('paired room registration', () => {
-  it('detects when both Claude and Codex are registered on the same jid', () => {
-    _setRegisteredGroupForTests('dc:123', {
+  it('detects paired capability types from canonical tribunal room settings', () => {
+    assignRoom('dc:123', {
       name: 'Paired Room',
+      roomMode: 'tribunal',
+      ownerAgentType: 'codex',
       folder: 'paired-room',
-      trigger: '@Andy',
-      added_at: '2024-01-01T00:00:00.000Z',
-      agentType: 'claude-code',
-    });
-    _setRegisteredGroupForTests('dc:123', {
-      name: 'Paired Room',
-      folder: 'paired-room',
-      trigger: '@Codex',
-      added_at: '2024-01-01T00:00:00.000Z',
-      agentType: 'codex',
     });
 
     expect(getRegisteredAgentTypesForJid('dc:123').sort()).toEqual([
       'claude-code',
       'codex',
     ]);
-    expect(getExplicitRoomMode('dc:123')).toBeUndefined();
+    expect(getExplicitRoomMode('dc:123')).toBe('tribunal');
     expect(getEffectiveRoomMode('dc:123')).toBe('tribunal');
     expect(getEffectiveRuntimeRoomMode('dc:123')).toBe('tribunal');
   });
 
-  it('does not mark solo rooms as paired', () => {
-    _setRegisteredGroupForTests('dc:solo', {
+  it('does not mark canonical single rooms as paired', () => {
+    assignRoom('dc:solo', {
       name: 'Solo Claude Room',
+      roomMode: 'single',
+      ownerAgentType: 'claude-code',
       folder: 'solo-claude',
-      trigger: '@Andy',
-      added_at: '2024-01-01T00:00:00.000Z',
-      agentType: 'claude-code',
     });
 
     expect(getRegisteredAgentTypesForJid('dc:solo')).toEqual(['claude-code']);
     expect(getEffectiveRuntimeRoomMode('dc:solo')).toBe('single');
   });
 
-  it('keeps inferred room mode available when no explicit override exists', () => {
+  it('keeps canonical inferred room mode available when no explicit override exists', () => {
+    assignRoom('dc:canonical-inferred-paired', {
+      name: 'Canonical Inferred Paired',
+      roomMode: 'tribunal',
+      ownerAgentType: 'codex',
+      folder: 'canonical-inferred-paired',
+    });
+
+    clearExplicitRoomMode('dc:canonical-inferred-paired');
+
+    expect(getExplicitRoomMode('dc:canonical-inferred-paired')).toBeUndefined();
+    expect(getEffectiveRoomMode('dc:canonical-inferred-paired')).toBe(
+      'tribunal',
+    );
+    expect(getEffectiveRuntimeRoomMode('dc:canonical-inferred-paired')).toBe(
+      'tribunal',
+    );
+  });
+
+  it('ignores legacy capability rows when canonical room settings are missing', () => {
     _setRegisteredGroupForTests('dc:legacy-paired', {
       name: 'Legacy Paired',
       folder: 'legacy-paired',
@@ -2765,10 +2788,12 @@ describe('paired room registration', () => {
       added_at: '2024-01-01T00:00:00.000Z',
       agentType: 'codex',
     });
+    _deleteStoredRoomSettingsForTests('dc:legacy-paired');
 
+    expect(getRegisteredAgentTypesForJid('dc:legacy-paired')).toEqual([]);
     expect(getExplicitRoomMode('dc:legacy-paired')).toBeUndefined();
-    expect(getEffectiveRoomMode('dc:legacy-paired')).toBe('tribunal');
-    expect(getEffectiveRuntimeRoomMode('dc:legacy-paired')).toBe('tribunal');
+    expect(getEffectiveRoomMode('dc:legacy-paired')).toBe('single');
+    expect(getEffectiveRuntimeRoomMode('dc:legacy-paired')).toBe('single');
   });
 
   it('keeps room-level metadata synced on setRegisteredGroup helper writes', () => {
@@ -2901,13 +2926,12 @@ describe('paired room registration', () => {
     expect(getEffectiveRuntimeRoomMode('dc:explicit-tribunal')).toBe('single');
   });
 
-  it('trusts stored tribunal mode even when legacy capability rows are incomplete', () => {
-    _setRegisteredGroupForTests('dc:explicit-tribunal-codex', {
+  it('trusts stored tribunal mode without projection rows', () => {
+    assignRoom('dc:explicit-tribunal-codex', {
       name: 'Explicit Tribunal Codex',
+      roomMode: 'single',
+      ownerAgentType: 'codex',
       folder: 'explicit-tribunal-codex',
-      trigger: '@Codex',
-      added_at: '2024-01-01T00:00:00.000Z',
-      agentType: 'codex',
     });
 
     setExplicitRoomMode('dc:explicit-tribunal-codex', 'tribunal');
@@ -3067,8 +3091,6 @@ describe('service handoff completion', () => {
       roomMode: 'tribunal',
       ownerAgentType: 'codex',
       folder: 'owner-handoff-shadow',
-      trigger: '@Owner',
-      requiresTrigger: true,
     });
 
     const handoff = createServiceHandoff({

@@ -15,8 +15,8 @@ describe('extractSessionCommand', () => {
     expect(extractSessionCommand('/compact', trigger)).toBe('/compact');
   });
 
-  it('detects /compact with trigger prefix', () => {
-    expect(extractSessionCommand('@Andy /compact', trigger)).toBe('/compact');
+  it('does not treat bot-name prefixes as commands anymore', () => {
+    expect(extractSessionCommand('@Andy /compact', trigger)).toBeNull();
   });
 
   it('detects bare /clear', () => {

@@ -8,7 +8,7 @@ import {
 export interface ChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
-  registeredGroups: () => Record<string, RegisteredGroup>;
+  roomBindings: () => Record<string, RegisteredGroup>;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

@@ -13,7 +13,7 @@ export interface DashboardOptions {
   channels: Channel[];
   getSessions: () => Record<string, string>;
   queue: GroupQueue;
-  registeredGroups: () => Record<string, RegisteredGroup>;
+  roomBindings: () => Record<string, RegisteredGroup>;
   statusChannelId: string;
   statusUpdateInterval: number;
   usageUpdateInterval: number;
@@ -30,7 +30,7 @@ export function buildStatusContent(opts: DashboardOptions): string {
   if (!STATUS_SHOW_ROOMS) return '';
 
   const sessions = opts.getSessions();
-  const groups = opts.registeredGroups();
+  const groups = opts.roomBindings();
   const statuses = opts.queue.getStatuses(Object.keys(groups));
 
   let totalActive = 0;

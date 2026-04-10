@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  _deleteStoredRoomSettingsForTests,
   _setRegisteredGroupForTests,
   _setStoredRoomOwnerAgentTypeForTests,
   _initTestDatabase,
@@ -235,10 +236,36 @@ describe('service-routing global failover', () => {
     });
   });
 
-  it('keeps the legacy claude fallback for chats without room settings', () => {
+  it('defaults to the configured owner service for chats without canonical room settings', () => {
     expect(getEffectiveChannelLease('dc:unregistered')).toMatchObject({
       chat_jid: 'dc:unregistered',
-      owner_service_id: 'claude',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: null,
+      owner_failover_active: false,
+      explicit: false,
+    });
+  });
+
+  it('ignores legacy capability rows when canonical room settings are missing', () => {
+    _setRegisteredGroupForTests('dc:legacy-only', {
+      name: 'Legacy Only',
+      folder: 'legacy-only',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'claude-code',
+    });
+    _setRegisteredGroupForTests('dc:legacy-only', {
+      name: 'Legacy Only',
+      folder: 'legacy-only',
+      trigger: '@Codex',
+      added_at: '2024-01-01T00:00:00.000Z',
+      agentType: 'codex',
+    });
+    _deleteStoredRoomSettingsForTests('dc:legacy-only');
+
+    expect(getEffectiveChannelLease('dc:legacy-only')).toMatchObject({
+      chat_jid: 'dc:legacy-only',
+      owner_service_id: 'codex-main',
       reviewer_service_id: null,
       owner_failover_active: false,
       explicit: false,
