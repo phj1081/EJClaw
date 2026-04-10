@@ -23,6 +23,7 @@ import {
   resolveLeaseServiceId,
   type EffectiveChannelLease,
 } from './service-routing.js';
+import { resolveRoleServiceShadow } from './role-service-shadow.js';
 
 const baseLease: EffectiveChannelLease = {
   chat_jid: 'chat-1',
@@ -354,7 +355,7 @@ describe('message-runtime-rules', () => {
     );
   });
 
-  it('applies forced agent type overrides without changing the configured role target', () => {
+  it('applies forced agent type overrides and switches to the forced role service shadow', () => {
     const resolution = resolveExecutionTarget({
       lease: baseLease,
       pairedTaskStatus: 'review_ready',
@@ -368,7 +369,9 @@ describe('message-runtime-rules', () => {
       configuredAgentType: 'claude-code',
       effectiveAgentType: 'codex',
     });
-    expect(resolution.effectiveServiceId).toBe(resolution.reviewerServiceId);
+    expect(resolution.effectiveServiceId).toBe(
+      resolveRoleServiceShadow('reviewer', 'codex'),
+    );
   });
 
   it('always gives arbiter a dedicated session folder', () => {

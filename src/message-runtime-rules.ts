@@ -9,6 +9,7 @@ import {
   resolveLeaseServiceId,
   type EffectiveChannelLease,
 } from './service-routing.js';
+import { resolveRoleServiceShadow } from './role-service-shadow.js';
 import {
   resolveAgentTypeForRole,
   resolveRoleAgentPlan,
@@ -307,13 +308,6 @@ export function resolveExecutionTarget(args: {
     (args.forcedRole === 'arbiter' && args.lease.arbiter_agent_type),
   );
   const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
-  const effectiveServiceId = resolveLeaseServiceId(args.lease, activeRole);
-  if (!effectiveServiceId) {
-    throw new Error(`Missing runtime service id for ${activeRole} lease`);
-  }
-
-  const reviewerServiceId = resolveLeaseServiceId(args.lease, 'reviewer');
-  const arbiterServiceId = resolveLeaseServiceId(args.lease, 'arbiter');
   const roleAgentPlan = resolveConfiguredRoleAgentPlan(
     args.lease.reviewer_agent_type != null,
     args.groupAgentType,
@@ -323,6 +317,16 @@ export function resolveExecutionTarget(args: {
     args.groupAgentType,
   );
   const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
+  const effectiveServiceId =
+    (args.forcedAgentType
+      ? resolveRoleServiceShadow(activeRole, effectiveAgentType)
+      : null) ?? resolveLeaseServiceId(args.lease, activeRole);
+  if (!effectiveServiceId) {
+    throw new Error(`Missing runtime service id for ${activeRole} lease`);
+  }
+
+  const reviewerServiceId = resolveLeaseServiceId(args.lease, 'reviewer');
+  const arbiterServiceId = resolveLeaseServiceId(args.lease, 'arbiter');
 
   return {
     inferredRole,

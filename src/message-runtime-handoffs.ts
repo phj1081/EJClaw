@@ -1,10 +1,9 @@
-import { SERVICE_SESSION_SCOPE } from './config.js';
 import { getErrorMessage } from './utils.js';
 import {
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
   failServiceHandoff,
-  getPendingServiceHandoffs,
+  getAllPendingServiceHandoffs,
   type ServiceHandoff,
 } from './db.js';
 import { findChannel, findChannelByName } from './router.js';
@@ -29,7 +28,7 @@ export function enqueuePendingHandoffs(args: {
   ) => void;
   processClaimedHandoff: (handoff: ServiceHandoff) => Promise<void>;
 }): void {
-  for (const handoff of getPendingServiceHandoffs(SERVICE_SESSION_SCOPE)) {
+  for (const handoff of getAllPendingServiceHandoffs()) {
     if (!claimServiceHandoff(handoff.id)) {
       continue;
     }

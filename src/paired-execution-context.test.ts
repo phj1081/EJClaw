@@ -327,6 +327,7 @@ describe('paired execution context', () => {
       'task-1',
       expect.objectContaining({ status: 'in_review' }),
     );
+    expect(result?.claimedTaskUpdatedAt).toBe('2026-03-28T00:00:00.000Z');
     expect(result?.envOverrides).toMatchObject({
       EJCLAW_WORK_DIR: '/tmp/paired/task-1/reviewer',
       EJCLAW_REVIEWER_RUNTIME: '1',

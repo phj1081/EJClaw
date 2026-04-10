@@ -1,16 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('./config.js', () => ({
-  SERVICE_SESSION_SCOPE: 'codex-main',
-}));
-
 vi.mock('./db.js', () => ({
   claimServiceHandoff: vi.fn(() => true),
   claimPairedTurnReservation: vi.fn(() => true),
   completeServiceHandoffAndAdvanceTargetCursor: vi.fn(() => null),
   failServiceHandoff: vi.fn(),
+  getAllPendingServiceHandoffs: vi.fn(() => []),
   getPairedTurnOutputs: vi.fn(() => []),
-  getPendingServiceHandoffs: vi.fn(() => []),
   reservePairedTurnReservation: vi.fn(() => true),
   _clearPairedTurnReservationsForTests: vi.fn(),
 }));
@@ -57,35 +53,30 @@ describe('message-runtime-handoffs', () => {
     vi.clearAllMocks();
   });
 
-  it('does not expose reviewer-targeted handoffs to the codex-main poller', () => {
-    vi.mocked(db.getPendingServiceHandoffs).mockImplementation(
-      (targetServiceId?: string) =>
-        targetServiceId === 'codex-main'
-          ? []
-          : ([
-              {
-                id: 1,
-                chat_jid: 'group@test',
-                group_folder: 'test-group',
-                source_service_id: 'claude',
-                target_service_id: 'codex-review',
-                source_role: 'reviewer',
-                source_agent_type: 'claude-code',
-                target_role: 'reviewer',
-                target_agent_type: 'codex',
-                prompt: 'review retry',
-                status: 'pending',
-                start_seq: 1,
-                end_seq: 2,
-                reason: 'reviewer-auth-failure',
-                intended_role: 'reviewer',
-                created_at: '2026-04-10T00:00:00.000Z',
-                claimed_at: null,
-                completed_at: null,
-                last_error: null,
-              },
-            ] as any),
-    );
+  it('exposes reviewer-targeted handoffs to the unified runtime poller', () => {
+    vi.mocked(db.getAllPendingServiceHandoffs).mockReturnValue([
+      {
+        id: 1,
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        source_service_id: 'claude',
+        target_service_id: 'codex-review',
+        source_role: 'reviewer',
+        source_agent_type: 'claude-code',
+        target_role: 'reviewer',
+        target_agent_type: 'codex',
+        prompt: 'review retry',
+        status: 'pending',
+        start_seq: 1,
+        end_seq: 2,
+        reason: 'reviewer-auth-failure',
+        intended_role: 'reviewer',
+        created_at: '2026-04-10T00:00:00.000Z',
+        claimed_at: null,
+        completed_at: null,
+        last_error: null,
+      },
+    ] as any);
 
     const enqueueTask = vi.fn();
 
@@ -94,9 +85,13 @@ describe('message-runtime-handoffs', () => {
       processClaimedHandoff: vi.fn(),
     });
 
-    expect(db.getPendingServiceHandoffs).toHaveBeenCalledWith('codex-main');
-    expect(db.claimServiceHandoff).not.toHaveBeenCalled();
-    expect(enqueueTask).not.toHaveBeenCalled();
+    expect(db.getAllPendingServiceHandoffs).toHaveBeenCalled();
+    expect(db.claimServiceHandoff).toHaveBeenCalledWith(1);
+    expect(enqueueTask).toHaveBeenCalledWith(
+      'group@test',
+      'handoff:1',
+      expect.any(Function),
+    );
   });
 
   it('fails a claimed handoff closed when its intended role cannot be resolved', async () => {

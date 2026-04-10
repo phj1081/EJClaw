@@ -698,6 +698,65 @@ describe('task CRUD', () => {
     expect(getTaskById('task-3')).toBeUndefined();
   });
 
+  it('prunes orphan task_run_logs rows during database initialization', () => {
+    const tempDir = fs.mkdtempSync('/tmp/ejclaw-task-log-fk-repair-');
+    const dbPath = path.join(tempDir, 'messages.db');
+    const legacyDb = new Database(dbPath);
+
+    try {
+      initializeDatabaseSchema(legacyDb);
+      legacyDb
+        .prepare(
+          `INSERT INTO scheduled_tasks (
+             id, group_folder, chat_jid, prompt, schedule_type, schedule_value, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'task-legacy-orphan',
+          'infra-auto',
+          'dc:legacy',
+          'legacy task',
+          'once',
+          '2026-03-20T19:00:00.000Z',
+          '2026-03-20T18:59:00.000Z',
+        );
+      legacyDb
+        .prepare(
+          `INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'task-legacy-orphan',
+          '2026-03-20T19:00:58.882Z',
+          0,
+          'error',
+          null,
+          'Group not found: infra-auto',
+        );
+      legacyDb.exec('PRAGMA foreign_keys = OFF');
+      legacyDb
+        .prepare('DELETE FROM scheduled_tasks WHERE id = ?')
+        .run('task-legacy-orphan');
+    } finally {
+      legacyDb.close();
+    }
+
+    expect(() => _initTestDatabaseFromFile(dbPath)).not.toThrow();
+
+    const migratedDb = new Database(dbPath, { readonly: true });
+    try {
+      const remainingLogs = migratedDb
+        .prepare(`SELECT COUNT(*) AS count FROM task_run_logs WHERE task_id = ?`)
+        .get('task-legacy-orphan') as { count: number };
+      const fkViolations = migratedDb.prepare('PRAGMA foreign_key_check').all();
+
+      expect(remainingLogs.count).toBe(0);
+      expect(fkViolations).toHaveLength(0);
+    } finally {
+      migratedDb.close();
+    }
+  });
+
   it('deletes task-scoped IPC and session directories when removing a task', () => {
     const taskId = 'task-cleanup';
     const groupFolder = 'cleanup-group';

@@ -171,6 +171,7 @@ function ensureActiveTask(
 
 export interface PreparedPairedExecutionContext {
   task: PairedTask;
+  claimedTaskUpdatedAt?: string;
   workspace: PairedWorkspace | null;
   envOverrides: Record<string, string>;
   gateTurnKind?: string | null;
@@ -209,6 +210,7 @@ export function preparePairedExecutionContext(args: {
   }
 
   const latestTask = getPairedTaskById(task.id) ?? task;
+  const claimedTaskUpdatedAt = latestTask.updated_at;
   let workspace: PairedWorkspace | null = null;
   let blockMessage: string | undefined;
   const now = new Date().toISOString();
@@ -349,6 +351,7 @@ export function preparePairedExecutionContext(args: {
 
   return {
     task: getPairedTaskById(task.id) ?? task,
+    claimedTaskUpdatedAt,
     workspace,
     envOverrides,
     blockMessage,
