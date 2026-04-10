@@ -51,7 +51,8 @@ Per-room routing uses an explicit assignment model:
   - `room_mode`: `single` or `tribunal`
   - `owner_agent_type`: `codex` or `claude-code`
 - Public room assignment uses `assign_room`
-- `registered_groups` remains as a materialized capability/read-model layer
+- `registered_groups` is a legacy projection being removed from setup/verify/runtime read paths
+- Refactor target and migration sequence live in `docs/legacy-compat-removal-spec.md`
 
 Operationally:
 
@@ -90,17 +91,17 @@ restricted environment variables and snapshot checks:
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/index.ts` | Orchestrator: state, message loop, agent invocation |
-| `src/agent-runner.ts` | Spawns agent processes, manages env/sessions/skills |
-| `src/verification.ts` | Fixed-profile verification execution with snapshot checks |
+| File                      | Purpose                                                    |
+| ------------------------- | ---------------------------------------------------------- |
+| `src/index.ts`            | Orchestrator: state, message loop, agent invocation        |
+| `src/agent-runner.ts`     | Spawns agent processes, manages env/sessions/skills        |
+| `src/verification.ts`     | Fixed-profile verification execution with snapshot checks  |
 | `src/channels/discord.ts` | Discord channel (8s typing refresh, Whisper transcription) |
-| `src/ipc.ts` | IPC watcher and task processing |
-| `src/router.ts` | Message formatting and outbound routing |
-| `src/config.ts` | Trigger pattern, paths, intervals |
-| `src/task-scheduler.ts` | Runs scheduled tasks |
-| `src/db.ts` | SQLite operations |
-| `runners/agent-runner/` | Claude Code runner (Agent SDK) |
-| `runners/codex-runner/` | Codex runner (SDK, `codex exec` wrapper) |
-| `groups/{name}/CLAUDE.md` | Per-group memory (isolated) |
+| `src/ipc.ts`              | IPC watcher and task processing                            |
+| `src/router.ts`           | Message formatting and outbound routing                    |
+| `src/config.ts`           | Trigger pattern, paths, intervals                          |
+| `src/task-scheduler.ts`   | Runs scheduled tasks                                       |
+| `src/db.ts`               | SQLite operations                                          |
+| `runners/agent-runner/`   | Claude Code runner (Agent SDK)                             |
+| `runners/codex-runner/`   | Codex runner (SDK, `codex exec` wrapper)                   |
+| `groups/{name}/CLAUDE.md` | Per-group memory (isolated)                                |

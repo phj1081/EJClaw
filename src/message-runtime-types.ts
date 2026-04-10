@@ -4,6 +4,7 @@ import type {
   PairedRoomRole,
   RegisteredGroup,
 } from './types.js';
+import type { PairedTurnIdentity } from './paired-turn-identity.js';
 
 export type ExecuteTurnFn = (args: {
   group: RegisteredGroup;
@@ -17,6 +18,7 @@ export type ExecuteTurnFn = (args: {
   hasHumanMessage?: boolean;
   forcedRole?: PairedRoomRole;
   forcedAgentType?: AgentType;
+  pairedTurnIdentity?: PairedTurnIdentity;
 }) => Promise<{
   outputStatus: 'success' | 'error';
   deliverySucceeded: boolean;

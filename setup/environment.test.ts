@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Database } from 'bun:sqlite';
+import { detectAssignedRooms, run as runEnvironment } from './environment.js';
 
 /**
  * Tests for the environment check step.
@@ -17,58 +20,174 @@ describe('environment detection', () => {
   });
 });
 
-describe('registered groups DB query', () => {
-  let db: Database;
+describe('assigned rooms detection', () => {
+  const tempDirs: string[] = [];
 
-  beforeEach(() => {
-    db = new Database(':memory:');
-    db.exec(`CREATE TABLE IF NOT EXISTS registered_groups (
-      jid TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      folder TEXT NOT NULL UNIQUE,
-      trigger_pattern TEXT NOT NULL,
-      added_at TEXT NOT NULL,
-      agent_config TEXT,
-      requires_trigger INTEGER DEFAULT 1
-    )`);
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it('returns 0 for empty table', () => {
-    const row = db
-      .prepare('SELECT COUNT(*) as count FROM registered_groups')
-      .get() as { count: number };
-    expect(row.count).toBe(0);
+  it('returns false when the database does not exist', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-'));
+    tempDirs.push(tempDir);
+
+    expect(
+      detectAssignedRooms({ dbPath: path.join(tempDir, 'messages.db') }),
+    ).toBe(false);
   });
 
-  it('returns correct count after inserts', () => {
+  it('returns false for an empty room_settings table', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-'));
+    tempDirs.push(tempDir);
+    const dbPath = path.join(tempDir, 'messages.db');
+    const db = new Database(dbPath);
+    db.exec(`CREATE TABLE room_settings (chat_jid TEXT PRIMARY KEY)`);
+    db.close();
+
+    expect(detectAssignedRooms({ dbPath })).toBe(false);
+  });
+
+  it('returns true when canonical room assignments exist', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-'));
+    tempDirs.push(tempDir);
+    const dbPath = path.join(tempDir, 'messages.db');
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE room_settings (
+        chat_jid TEXT PRIMARY KEY,
+        room_mode TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
     db.prepare(
-      `INSERT INTO registered_groups (jid, name, folder, trigger_pattern, added_at, requires_trigger)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(
-      '123@g.us',
-      'Group 1',
-      'group-1',
-      '@Andy',
-      '2024-01-01T00:00:00.000Z',
-      1,
+      `INSERT INTO room_settings (chat_jid, room_mode, updated_at)
+       VALUES (?, ?, ?)`,
+    ).run('dc:room-1', 'single', '2024-01-01T00:00:00.000Z');
+    db.close();
+
+    expect(detectAssignedRooms({ dbPath })).toBe(true);
+  });
+
+  it('returns false when only legacy registered_groups rows exist', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-'));
+    tempDirs.push(tempDir);
+    const dbPath = path.join(tempDir, 'messages.db');
+    const db = new Database(dbPath);
+    db.exec(`
+      CREATE TABLE registered_groups (
+        jid TEXT PRIMARY KEY,
+        agent_type TEXT
+      )
+    `);
+    db.exec(`
+      INSERT INTO registered_groups (jid, agent_type)
+      VALUES ('dc:legacy-room', 'claude-code')
+    `);
+    db.close();
+
+    expect(detectAssignedRooms({ dbPath })).toBe(false);
+  });
+});
+
+describe('environment step legacy-room handling', () => {
+  const originalCwd = process.cwd();
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('exits with failure when legacy-only room registrations need migration', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-run-'));
+    tempDirs.push(tempDir);
+    process.chdir(tempDir);
+
+    fs.mkdirSync(path.join(tempDir, 'store'), { recursive: true });
+    const db = new Database(path.join(tempDir, 'store', 'messages.db'));
+    db.exec(`
+      CREATE TABLE registered_groups (
+        jid TEXT PRIMARY KEY,
+        agent_type TEXT
+      )
+    `);
+    db.exec(`
+      INSERT INTO registered_groups (jid, agent_type)
+      VALUES ('dc:legacy-room', 'claude-code')
+    `);
+    db.close();
+
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((code?: string | number | null | undefined) => {
+        throw new Error(`process.exit:${code}`);
+      });
+
+    await expect(runEnvironment([])).rejects.toThrow('process.exit:1');
+    exitSpy.mockRestore();
+  });
+
+  it('exits with failure when canonical rooms exist but pending legacy registrations remain', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-run-'));
+    tempDirs.push(tempDir);
+    process.chdir(tempDir);
+
+    fs.mkdirSync(path.join(tempDir, 'store'), { recursive: true });
+    const db = new Database(path.join(tempDir, 'store', 'messages.db'));
+    db.exec(`
+      CREATE TABLE room_settings (
+        chat_jid TEXT PRIMARY KEY,
+        room_mode TEXT NOT NULL
+      );
+      CREATE TABLE registered_groups (
+        jid TEXT PRIMARY KEY,
+        agent_type TEXT
+      )
+    `);
+    db.exec(`
+      INSERT INTO room_settings (chat_jid, room_mode)
+      VALUES ('dc:canonical-room', 'single')
+    `);
+    db.exec(`
+      INSERT INTO registered_groups (jid, agent_type)
+      VALUES ('dc:legacy-room', 'claude-code')
+    `);
+    db.close();
+
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((code?: string | number | null | undefined) => {
+        throw new Error(`process.exit:${code}`);
+      });
+
+    await expect(runEnvironment([])).rejects.toThrow('process.exit:1');
+    exitSpy.mockRestore();
+  });
+
+  it('exits with failure when legacy json state files need explicit migration', async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-env-run-'));
+    tempDirs.push(tempDir);
+    process.chdir(tempDir);
+
+    fs.mkdirSync(path.join(tempDir, 'data'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempDir, 'data', 'router_state.json'),
+      JSON.stringify({ last_timestamp: '1234' }),
     );
 
-    db.prepare(
-      `INSERT INTO registered_groups (jid, name, folder, trigger_pattern, added_at, requires_trigger)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    ).run(
-      '456@g.us',
-      'Group 2',
-      'group-2',
-      '@Andy',
-      '2024-01-01T00:00:00.000Z',
-      1,
-    );
+    const exitSpy = vi
+      .spyOn(process, 'exit')
+      .mockImplementation((code?: string | number | null | undefined) => {
+        throw new Error(`process.exit:${code}`);
+      });
 
-    const row = db
-      .prepare('SELECT COUNT(*) as count FROM registered_groups')
-      .get() as { count: number };
-    expect(row.count).toBe(2);
+    await expect(runEnvironment([])).rejects.toThrow('process.exit:1');
+    exitSpy.mockRestore();
   });
 });
 

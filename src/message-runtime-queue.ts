@@ -9,6 +9,7 @@ import {
   executePendingPairedTurn,
   isBotOnlyPairedRoomTurn,
 } from './message-runtime-flow.js';
+import { buildPairedTurnIdentity } from './paired-turn-identity.js';
 import {
   advanceLastAgentCursor,
   resolveActiveRole,
@@ -202,8 +203,23 @@ export async function runQueuedGroupTurn(args: {
   const turnChannel =
     turnRole === 'owner' ? args.ownerChannel : roleToChannel[turnRole];
   const cursorKey = resolveCursorKeyForRole(chatJid, turnRole);
-  const forcedRole =
-    task && turnRole !== resolveActiveRole(taskStatus) ? turnRole : undefined;
+  const forcedRole = task ? turnRole : undefined;
+  const queuedIntentKind = task
+    ? resolveQueuedTurnReservationIntent({
+        task,
+        turnRole,
+        hasHumanMessage: hasHumanMsg,
+      })
+    : null;
+  const pairedTurnIdentity =
+    task && queuedIntentKind
+      ? buildPairedTurnIdentity({
+          taskId: task.id,
+          taskUpdatedAt: task.updated_at,
+          intentKind: queuedIntentKind,
+          role: turnRole,
+        })
+      : undefined;
 
   let prompt: string;
   if (turnRole === 'arbiter' && task) {
@@ -257,16 +273,11 @@ export async function runQueuedGroupTurn(args: {
   }
 
   if (task) {
-    const intentKind = resolveQueuedTurnReservationIntent({
-      task,
-      turnRole,
-      hasHumanMessage: hasHumanMsg,
-    });
     const claimed = claimPairedTurnExecution({
       chatJid,
       runId,
       task,
-      intentKind,
+      intentKind: queuedIntentKind!,
     });
     if (!claimed) {
       log.info(
@@ -274,7 +285,7 @@ export async function runQueuedGroupTurn(args: {
           taskId: task.id,
           taskStatus,
           taskUpdatedAt: task.updated_at,
-          intentKind,
+          intentKind: queuedIntentKind,
           turnRole,
         },
         'Skipped queued paired turn because the task revision was already claimed elsewhere',
@@ -304,6 +315,7 @@ export async function runQueuedGroupTurn(args: {
     endSeq,
     hasHumanMessage: hasHumanMsg,
     forcedRole,
+    pairedTurnIdentity,
   });
 
   if (!deliverySucceeded) {

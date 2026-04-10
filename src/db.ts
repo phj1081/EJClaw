@@ -1,5 +1,6 @@
 import { Database } from 'bun:sqlite';
 import fs from 'fs';
+import path from 'path';
 
 import {
   ASSISTANT_NAME,
@@ -7,6 +8,7 @@ import {
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
+  DATA_DIR,
   normalizeServiceId,
   OWNER_AGENT_TYPE,
   REVIEWER_AGENT_TYPE,
@@ -23,29 +25,33 @@ import { logger } from './logger.js';
 import {
   type RoomModeSource,
   type RoomRegistrationSnapshot,
+  countPendingLegacyRegisteredGroupRows,
   type StoredRoomSettings,
   buildRegisteredGroupFromStoredSettings,
+  buildLegacyRoomMigrationPlan,
   collectRegisteredAgentTypes,
   collectRegisteredAgentTypesForFolder,
   collectRoomRegistrationSnapshot,
-  getLegacyRegisteredGroup,
-  getLegacyRegisteredGroupRows,
+  deleteLegacyRegisteredGroupRowsForJid,
+  getPendingLegacyRegisteredGroupJids as getPendingLegacyRegisteredGroupJidsFromDatabase,
   getStoredRoomRowsFromDatabase,
   getStoredRoomSettingsRowFromDatabase,
+  inferStoredRoomCapabilityTypes,
   inferOwnerAgentTypeFromRegisteredAgentTypes,
   inferRoomModeFromRegisteredAgentTypes,
   insertStoredRoomSettings,
+  insertStoredRoomSettingsFromMigration,
   materializeRegisteredGroupsForRoom,
   normalizeRoomModeSource,
   normalizeStoredAgentType,
-  parseRegisteredGroupRow,
   resolveStoredRoomCapabilityTypes,
   resolveAssignedRoomFolder,
+  syncRoomRoleOverridesForRoom,
+  upsertRoomRoleOverride,
   updateStoredRoomMetadata,
 } from './db/room-registration.js';
 import {
   initializeDatabaseSchema,
-  migrateJsonStateFromFiles,
   openDatabaseFromFile,
   openInMemoryDatabase,
   openPersistentDatabase,
@@ -120,6 +126,20 @@ import {
   upsertPairedWorkspaceInDatabase,
 } from './db/paired-state.js';
 import {
+  clearPairedTurnAttemptsInDatabase,
+  getPairedTurnAttemptsForTurnFromDatabase,
+  type PairedTurnAttemptRecord,
+} from './db/paired-turn-attempts.js';
+import {
+  clearPairedTurnsInDatabase,
+  completePairedTurnInDatabase,
+  failPairedTurnInDatabase,
+  getPairedTurnByIdFromDatabase,
+  getPairedTurnsForTaskFromDatabase,
+  markPairedTurnRunningInDatabase,
+  type PairedTurnRecord,
+} from './db/paired-turns.js';
+import {
   getLatestTurnNumberFromDatabase,
   getPairedTurnOutputsFromDatabase,
   insertPairedTurnOutputInDatabase,
@@ -138,15 +158,12 @@ import {
 } from './db/service-handoffs.js';
 import {
   getLastRespondingAgentTypeFromDatabase,
+  getLegacyRouterStateKeysFromDatabase,
   getRouterStateForServiceFromDatabase,
   getRouterStateFromDatabase,
   setRouterStateForServiceInDatabase,
   setRouterStateInDatabase,
 } from './db/router-state.js';
-import {
-  resolveStablePairedTaskOwnerAgentType,
-  resolveStableRoomRoleAgentType,
-} from './db/legacy-rebuilds.js';
 import {
   deleteAllSessionsForGroupFromDatabase,
   deleteSessionFromDatabase,
@@ -219,6 +236,8 @@ export type {
   MemorySourceKind,
   RecallMemoryQuery,
 } from './db/memories.js';
+export type { PairedTurnAttemptRecord } from './db/paired-turn-attempts.js';
+export type { PairedTurnRecord } from './db/paired-turns.js';
 export type { ChatInfo } from './db/messages.js';
 export type { WorkItem } from './db/work-items.js';
 export type { ChannelOwnerLeaseRow } from './db/channel-owner-leases.js';
@@ -227,24 +246,20 @@ export type { ServiceHandoff } from './db/service-handoffs.js';
 export function initDatabase(): void {
   db = openPersistentDatabase();
   initializeDatabaseSchema(db);
-  syncLegacyRegisteredGroupsIntoStoredRooms();
+  assertNoPendingLegacyRoomMigration();
+  assertNoPendingLegacyJsonStateMigration();
+  assertNoPendingLegacyRouterStateDbMigration();
   clearPairedTaskExecutionLeasesForServiceInDatabase(
     db,
     normalizeServiceId(SERVICE_ID),
   );
   clearExpiredPairedTaskExecutionLeasesInDatabase(db);
-  migrateJsonStateFromFiles({
-    setRouterState,
-    setSession,
-    writeLegacyRegisteredGroupAndSyncRoomSettings,
-  });
 }
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = openInMemoryDatabase();
   initializeDatabaseSchema(db);
-  syncLegacyRegisteredGroupsIntoStoredRooms();
   clearPairedTaskExecutionLeasesForServiceInDatabase(
     db,
     normalizeServiceId(SERVICE_ID),
@@ -256,7 +271,8 @@ export function _initTestDatabase(): void {
 export function _initTestDatabaseFromFile(dbPath: string): void {
   db = openDatabaseFromFile(dbPath);
   initializeDatabaseSchema(db);
-  syncLegacyRegisteredGroupsIntoStoredRooms();
+  assertNoPendingLegacyRoomMigration();
+  assertNoPendingLegacyRouterStateDbMigration();
   clearPairedTaskExecutionLeasesForServiceInDatabase(
     db,
     normalizeServiceId(SERVICE_ID),
@@ -278,6 +294,15 @@ export function _setStoredRoomOwnerAgentTypeForTests(
          updated_at = ?
      WHERE chat_jid = ?`,
   ).run(ownerAgentType, new Date().toISOString(), chatJid);
+  if (ownerAgentType) {
+    const now = new Date().toISOString();
+    upsertRoomRoleOverride(db, chatJid, {
+      role: 'owner',
+      agentType: ownerAgentType,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
 }
 
 /** @internal - for tests only. */
@@ -733,7 +758,7 @@ export function getRegisteredGroup(
       requestedAgentType,
     );
   }
-  return getLegacyRegisteredGroup(db, jid, agentType);
+  return undefined;
 }
 
 function writeLegacyRegisteredGroupAndSyncRoomSettings(
@@ -792,6 +817,14 @@ function writeLegacyRegisteredGroupAndSyncRoomSettings(
       seededAgentType === ownerAgentType ? group.agentConfig : undefined,
       group.added_at,
     );
+    syncRoomRoleOverridesForRoom(
+      db,
+      jid,
+      roomMode,
+      ownerAgentType,
+      seededAgentType === ownerAgentType ? group.agentConfig : undefined,
+      group.added_at,
+    );
   });
   tx();
 }
@@ -805,6 +838,34 @@ export function _setRegisteredGroupForTests(
   group: RegisteredGroup,
 ): void {
   writeLegacyRegisteredGroupAndSyncRoomSettings(jid, group);
+}
+
+export function _migrateLegacyRoomRegistrationsForTests(): {
+  migratedRooms: number;
+  migratedRoleOverrides: number;
+} {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+
+  const jids = getPendingLegacyRegisteredGroupJidsFromDatabase(db);
+  let migratedRooms = 0;
+  let migratedRoleOverrides = 0;
+
+  db.transaction(() => {
+    for (const jid of jids) {
+      const plan = buildLegacyRoomMigrationPlan(db, jid);
+      if (!plan) continue;
+      insertStoredRoomSettingsFromMigration(db, plan);
+      for (const override of plan.roleOverrides) {
+        upsertRoomRoleOverride(db, jid, override);
+        migratedRoleOverrides += 1;
+      }
+      migratedRooms += 1;
+    }
+  })();
+
+  return { migratedRooms, migratedRoleOverrides };
 }
 
 export function assignRoom(
@@ -863,15 +924,15 @@ export function assignRoom(
       insertStoredRoomSettings(db, chatJid, roomMode, 'explicit', snapshot);
     }
 
-    materializeRegisteredGroupsForRoom(
+    syncRoomRoleOverridesForRoom(
       db,
       chatJid,
-      snapshot,
       roomMode,
       ownerAgentType,
       input.ownerAgentConfig,
       input.addedAt ?? now,
     );
+    deleteLegacyRegisteredGroupRowsForJid(db, chatJid);
   })();
 
   return getRegisteredGroup(chatJid);
@@ -894,13 +955,7 @@ export function updateRegisteredGroupName(jid: string, name: string): void {
         plan.snapshot,
       );
     }
-    materializeRegisteredGroupsForRoom(
-      db,
-      jid,
-      plan.snapshot,
-      plan.roomMode,
-      plan.snapshot.ownerAgentType,
-    );
+    deleteLegacyRegisteredGroupRowsForJid(db, jid);
   })();
 }
 
@@ -917,15 +972,6 @@ export function getAllRegisteredGroups(
       stored,
       requestedAgentType,
     );
-    if (group) {
-      const { jid, ...rest } = group;
-      result[jid] = rest;
-    }
-  }
-
-  for (const legacyRow of getLegacyRegisteredGroupRows(db, agentTypeFilter)) {
-    if (result[legacyRow.jid]) continue;
-    const group = parseRegisteredGroupRow(legacyRow);
     if (group) {
       const { jid, ...rest } = group;
       result[jid] = rest;
@@ -997,23 +1043,42 @@ function syncStoredRoomRegistrationSnapshotForJid(chatJid: string): void {
   updateStoredRoomMetadata(db, chatJid, snapshot);
 }
 
-function syncLegacyRegisteredGroupsIntoStoredRooms(): void {
-  const rows = db
-    .prepare(
-      `SELECT DISTINCT jid
-         FROM registered_groups
-        ORDER BY jid`,
-    )
-    .all() as Array<{ jid: string }>;
-  if (rows.length === 0) {
+function assertNoPendingLegacyRoomMigration(): void {
+  const pendingLegacyRows = countPendingLegacyRegisteredGroupRows(db);
+  const hasLegacyRegisteredGroupsJson = fs.existsSync(
+    path.join(DATA_DIR, 'registered_groups.json'),
+  );
+  if (pendingLegacyRows === 0 && !hasLegacyRegisteredGroupsJson) {
     return;
   }
 
-  db.transaction((registeredGroupRows: Array<{ jid: string }>) => {
-    for (const row of registeredGroupRows) {
-      syncStoredRoomRegistrationSnapshotForJid(row.jid);
-    }
-  })(rows);
+  throw new Error(
+    `Legacy room migration required before startup (pending_rows=${pendingLegacyRows}, legacy_json=${hasLegacyRegisteredGroupsJson})`,
+  );
+}
+
+function assertNoPendingLegacyJsonStateMigration(): void {
+  const pendingFiles = ['router_state.json', 'sessions.json'].filter(
+    (filename) => fs.existsSync(path.join(DATA_DIR, filename)),
+  );
+  if (pendingFiles.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Legacy JSON state migration required before startup (files=${pendingFiles.join(',')})`,
+  );
+}
+
+function assertNoPendingLegacyRouterStateDbMigration(): void {
+  const legacyKeys = getLegacyRouterStateKeysFromDatabase(db);
+  if (legacyKeys.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Legacy router_state DB migration required before startup (keys=${legacyKeys.join(',')})`,
+  );
 }
 
 function buildRoomRegistrationSnapshotFromStoredRoom(
@@ -1103,12 +1168,17 @@ export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
 
 export function setExplicitRoomMode(chatJid: string, roomMode: RoomMode): void {
   upsertStoredRoomMode(chatJid, roomMode, 'explicit');
+  deleteLegacyRegisteredGroupRowsForJid(db, chatJid);
 }
 
 export function clearExplicitRoomMode(chatJid: string): void {
-  const agentTypes = collectRegisteredAgentTypes(db, chatJid);
+  const stored = getStoredRoomSettingsRowFromDatabase(db, chatJid);
+  const agentTypes = stored
+    ? inferStoredRoomCapabilityTypes(db, stored)
+    : collectRegisteredAgentTypes(db, chatJid);
   if (agentTypes.length === 0) {
     db.prepare('DELETE FROM room_settings WHERE chat_jid = ?').run(chatJid);
+    deleteLegacyRegisteredGroupRowsForJid(db, chatJid);
     return;
   }
   upsertStoredRoomMode(
@@ -1116,6 +1186,7 @@ export function clearExplicitRoomMode(chatJid: string): void {
     inferRoomModeFromRegisteredAgentTypes(agentTypes),
     'inferred',
   );
+  deleteLegacyRegisteredGroupRowsForJid(db, chatJid);
 }
 
 export function getEffectiveRoomMode(chatJid: string): RoomMode {
@@ -1232,6 +1303,44 @@ export function refreshPairedTaskExecutionLease(args: {
   return refreshPairedTaskExecutionLeaseInDatabase(db, args);
 }
 
+export function markPairedTurnRunning(args: {
+  turnIdentity: import('./paired-turn-identity.js').PairedTurnIdentity;
+  executorServiceId?: string | null;
+  executorAgentType?: AgentType | null;
+  runId?: string | null;
+}): void {
+  markPairedTurnRunningInDatabase(db, args);
+}
+
+export function completePairedTurn(
+  turnIdentity: import('./paired-turn-identity.js').PairedTurnIdentity,
+): void {
+  completePairedTurnInDatabase(db, turnIdentity);
+}
+
+export function failPairedTurn(args: {
+  turnIdentity: import('./paired-turn-identity.js').PairedTurnIdentity;
+  error?: string | null;
+}): void {
+  failPairedTurnInDatabase(db, args);
+}
+
+export function getPairedTurnById(
+  turnId: string,
+): PairedTurnRecord | undefined {
+  return getPairedTurnByIdFromDatabase(db, turnId);
+}
+
+export function getPairedTurnsForTask(taskId: string): PairedTurnRecord[] {
+  return getPairedTurnsForTaskFromDatabase(db, taskId);
+}
+
+export function getPairedTurnAttempts(
+  turnId: string,
+): PairedTurnAttemptRecord[] {
+  return getPairedTurnAttemptsForTurnFromDatabase(db, turnId);
+}
+
 export function upsertPairedWorkspace(workspace: PairedWorkspace): void {
   upsertPairedWorkspaceInDatabase(db, workspace);
 }
@@ -1254,6 +1363,8 @@ export function _clearPairedTurnReservationsForTests(): void {
   }
   clearPairedTurnReservationsInDatabase(db);
   clearPairedTaskExecutionLeasesInDatabase(db);
+  clearPairedTurnAttemptsInDatabase(db);
+  clearPairedTurnsInDatabase(db);
 }
 
 /**

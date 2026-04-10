@@ -7,15 +7,18 @@
  *
  * Uses better-sqlite3 directly (no sqlite3 CLI), platform-aware service checks.
  */
+import path from 'path';
+
 import { logger } from '../src/logger.js';
 import { getServiceManager } from './platform.js';
+import { getLegacyMigrationGuidance } from './room-registration-state.js';
 import { getServiceDefs } from './service-defs.js';
 import { emitStatus } from './status.js';
 import {
   buildVerifySummary,
   detectChannelAuth,
   detectCredentials,
-  loadRegisteredGroupsSummary,
+  loadAssignedRoomsSummary,
   loadRoleRoutingRequirementsSummary,
 } from './verify-state.js';
 import { getServiceChecks } from './verify-services.js';
@@ -40,28 +43,32 @@ export async function run(_args: string[]): Promise<void> {
 
   const credentials = detectCredentials(projectRoot);
   const channelAuth = detectChannelAuth();
-  const { registeredGroups, groupsByAgent } = loadRegisteredGroupsSummary();
+  const dbPath = path.join(projectRoot, 'store', 'messages.db');
+  const roomSummary = loadAssignedRoomsSummary({ projectRoot, dbPath });
   const { tribunalRooms, activeArbiterTasks } =
-    loadRoleRoutingRequirementsSummary();
+    loadRoleRoutingRequirementsSummary({ dbPath });
   const {
     status: baseStatus,
     servicesSummary,
     configuredChannels,
     tribunalRooms: detectedTribunalRooms,
     activeArbiterTasks: detectedActiveArbiterTasks,
-    codexConfigured,
-    reviewConfigured,
+    reviewerChannelConfigured,
+    arbiterChannelConfigured,
   } = buildVerifySummary(
     services,
     serviceDefs,
     credentials,
     channelAuth,
-    registeredGroups,
-    groupsByAgent,
+    roomSummary,
     {
       tribunalRooms,
       activeArbiterTasks,
     },
+  );
+  const legacyMigrationGuidance = getLegacyMigrationGuidance(
+    roomSummary,
+    'verification',
   );
   const status = baseStatus;
 
@@ -85,10 +92,24 @@ export async function run(_args: string[]): Promise<void> {
     CHANNEL_AUTH: JSON.stringify(channelAuth),
     TRIBUNAL_ROOMS: detectedTribunalRooms,
     ACTIVE_ARBITER_TASKS: detectedActiveArbiterTasks,
-    REGISTERED_GROUPS: registeredGroups,
-    GROUPS_BY_AGENT: JSON.stringify(groupsByAgent),
-    CODEX_CONFIGURED: codexConfigured,
-    REVIEW_CONFIGURED: reviewConfigured,
+    ASSIGNED_ROOMS: roomSummary.assignedRooms,
+    ROOMS_BY_OWNER_AGENT: JSON.stringify(roomSummary.roomsByOwnerAgent),
+    LEGACY_REGISTERED_GROUP_ROWS: roomSummary.legacyRegisteredGroupRows,
+    HAS_LEGACY_REGISTERED_GROUPS_JSON:
+      roomSummary.hasLegacyRegisteredGroupsJson,
+    LEGACY_ROOM_MIGRATION_REQUIRED: roomSummary.legacyRoomMigrationRequired,
+    PENDING_LEGACY_JSON_STATE_FILES:
+      roomSummary.pendingLegacyJsonStateFiles.join(','),
+    LEGACY_JSON_STATE_MIGRATION_REQUIRED:
+      roomSummary.legacyJsonStateMigrationRequired,
+    REVIEWER_CHANNEL_CONFIGURED: reviewerChannelConfigured,
+    ARBITER_CHANNEL_CONFIGURED: arbiterChannelConfigured,
+    ...(legacyMigrationGuidance
+      ? {
+          ERROR: legacyMigrationGuidance.error,
+          NEXT_STEP: legacyMigrationGuidance.nextStep,
+        }
+      : {}),
     STATUS: status,
     LOG: 'logs/setup.log',
   });

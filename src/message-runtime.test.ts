@@ -79,7 +79,9 @@ vi.mock('./db.js', () => {
     claimServiceHandoff: vi.fn(() => true),
     completeServiceHandoff: vi.fn(),
     completeServiceHandoffAndAdvanceTargetCursor: vi.fn(),
+    completePairedTurn: vi.fn(),
     failServiceHandoff: vi.fn(),
+    failPairedTurn: vi.fn(),
     getAllChats: vi.fn(() => []),
     getAllTasks: vi.fn(() => []),
     getAllPendingServiceHandoffs: vi.fn(() => []),
@@ -135,6 +137,7 @@ vi.mock('./db.js', () => {
       getOpenWorkItem(chatJid),
     ),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
+    getPairedTaskById: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
     getRecentChatMessages: vi.fn(() => []),
     createProducedWorkItem: vi.fn((input) => ({
@@ -157,6 +160,7 @@ vi.mock('./db.js', () => {
     })),
     markWorkItemDelivered: vi.fn(),
     markWorkItemDeliveryRetry: vi.fn(),
+    markPairedTurnRunning: vi.fn(),
     getLastBotFinalMessage: vi.fn(() => []),
     reservePairedTurnReservation: vi.fn((args) => {
       const key = buildReservationKey(args);
@@ -193,8 +197,13 @@ vi.mock('./service-routing.js', () => ({
   hasReviewerLease: vi.fn(() => false),
   getEffectiveChannelLease: vi.fn((chatJid: string) => ({
     chat_jid: chatJid,
+    owner_agent_type: 'claude-code',
+    reviewer_agent_type: 'claude-code',
+    arbiter_agent_type: 'claude-code',
     owner_service_id: 'claude',
     reviewer_service_id: 'codex-main',
+    arbiter_service_id: 'claude-arbiter',
+    owner_failover_active: false,
     activated_at: null,
     reason: null,
     explicit: false,
@@ -202,9 +211,13 @@ vi.mock('./service-routing.js', () => ({
   resolveLeaseServiceId: vi.fn(
     (
       lease: {
+        owner_agent_type?: string;
+        reviewer_agent_type?: string | null;
+        arbiter_agent_type?: string | null;
         owner_service_id: string;
         reviewer_service_id: string | null;
         arbiter_service_id?: string | null;
+        owner_failover_active?: boolean;
       },
       role: 'owner' | 'reviewer' | 'arbiter',
     ) => {
@@ -2987,9 +3000,13 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: chatJid,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
       owner_service_id: 'claude',
       reviewer_service_id: 'claude',
       arbiter_service_id: null,
+      owner_failover_active: false,
       activated_at: null,
       reason: null,
       explicit: false,
@@ -3099,9 +3116,13 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
       chat_jid: chatJid,
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: 'claude-code',
       owner_service_id: 'claude',
       reviewer_service_id: 'claude',
-      arbiter_service_id: null,
+      arbiter_service_id: 'claude-arbiter',
+      owner_failover_active: false,
       activated_at: null,
       reason: null,
       explicit: false,

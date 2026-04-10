@@ -20,6 +20,8 @@ import {
   resolveCursorKey,
   resolveNextTurnAction,
 } from './message-runtime-rules.js';
+import type { ExecuteTurnFn } from './message-runtime-types.js';
+import { buildPairedTurnIdentity } from './paired-turn-identity.js';
 import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { hasReviewerLease } from './service-routing.js';
 import type {
@@ -35,9 +37,11 @@ export type PendingPairedTurn = {
   prompt: string;
   channel: Channel | null;
   cursor: string | number | null;
+  taskId: string;
+  taskUpdatedAt: string;
   intentKind: PairedTurnReservationIntentKind;
   cursorKey?: string;
-  role?: 'reviewer' | 'arbiter';
+  role: PairedRoomRole;
 } | null;
 
 export type BotOnlyPairedFollowUpAction =
@@ -127,6 +131,8 @@ export function buildPendingPairedTurn(args: {
       }),
       channel: resolveChannel(taskStatus),
       cursor,
+      taskId: task.id,
+      taskUpdatedAt: task.updated_at,
       intentKind: 'reviewer-turn',
       cursorKey: resolveCursorKey(chatJid, taskStatus),
       role: 'reviewer',
@@ -145,6 +151,8 @@ export function buildPendingPairedTurn(args: {
       }),
       channel: resolveChannel(taskStatus),
       cursor,
+      taskId: task.id,
+      taskUpdatedAt: task.updated_at,
       intentKind: 'arbiter-turn',
       cursorKey: resolveCursorKey(chatJid, taskStatus),
       role: 'arbiter',
@@ -156,7 +164,10 @@ export function buildPendingPairedTurn(args: {
       prompt: buildFinalizePendingPrompt({ turnOutputs }),
       channel: resolveChannel(taskStatus),
       cursor,
+      taskId: task.id,
+      taskUpdatedAt: task.updated_at,
       intentKind: 'finalize-owner-turn',
+      role: 'owner',
     };
   }
 
@@ -171,7 +182,10 @@ export function buildPendingPairedTurn(args: {
       }),
       channel: resolveChannel(taskStatus),
       cursor,
+      taskId: task.id,
+      taskUpdatedAt: task.updated_at,
       intentKind: 'owner-follow-up',
+      role: 'owner',
     };
   }
 
@@ -186,16 +200,7 @@ export async function executePendingPairedTurn(args: {
   log: typeof logger;
   saveState: () => void;
   lastAgentTimestamps: Record<string, string>;
-  executeTurn: (args: {
-    group: RegisteredGroup;
-    prompt: string;
-    chatJid: string;
-    runId: string;
-    channel: Channel;
-    startSeq: number | null;
-    endSeq: number | null;
-    deliveryRole?: PairedRoomRole;
-  }) => Promise<{ deliverySucceeded: boolean }>;
+  executeTurn: ExecuteTurnFn;
   getFixedRoleChannelName: (role: 'reviewer' | 'arbiter') => string;
 }): Promise<boolean> {
   const {
@@ -211,7 +216,17 @@ export async function executePendingPairedTurn(args: {
   } = args;
 
   if (!pendingTurn.channel) {
-    const missingRole = pendingTurn.role ?? 'reviewer';
+    if (pendingTurn.role === 'owner') {
+      log.error(
+        {
+          role: 'owner',
+        },
+        'Skipping paired turn because the owner channel is not available',
+      );
+      return false;
+    }
+
+    const missingRole = pendingTurn.role;
     log.error(
       {
         role: missingRole,
@@ -239,6 +254,13 @@ export async function executePendingPairedTurn(args: {
     runId,
     channel: pendingTurn.channel,
     deliveryRole: pendingTurn.role,
+    forcedRole: pendingTurn.role,
+    pairedTurnIdentity: buildPairedTurnIdentity({
+      taskId: pendingTurn.taskId,
+      taskUpdatedAt: pendingTurn.taskUpdatedAt,
+      intentKind: pendingTurn.intentKind,
+      role: pendingTurn.role,
+    }),
     startSeq: null,
     endSeq: null,
   });
@@ -321,6 +343,8 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
     chatJid: string;
     runId: string;
     channel: Channel;
+    forcedRole?: PairedRoomRole;
+    pairedTurnIdentity?: ReturnType<typeof buildPairedTurnIdentity>;
     startSeq: number | null;
     endSeq: number | null;
   }) => Promise<{ deliverySucceeded: boolean }>;
@@ -395,6 +419,13 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
       chatJid,
       runId,
       channel,
+      forcedRole: 'owner',
+      pairedTurnIdentity: buildPairedTurnIdentity({
+        taskId: action.task.id,
+        taskUpdatedAt: action.task.updated_at,
+        intentKind: 'finalize-owner-turn',
+        role: 'owner',
+      }),
       startSeq: null,
       endSeq: null,
     });

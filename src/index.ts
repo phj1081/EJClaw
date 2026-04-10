@@ -168,11 +168,8 @@ const runtime = createMessageRuntime({
 });
 
 function loadState(): void {
-  lastTimestamp = normalizeStoredSeqCursor(
-    getRouterState('last_seq') || getRouterState('last_timestamp'),
-  );
-  const agentTs =
-    getRouterState('last_agent_seq') || getRouterState('last_agent_timestamp');
+  lastTimestamp = normalizeStoredSeqCursor(getRouterState('last_seq'));
+  const agentTs = getRouterState('last_agent_seq');
   try {
     const parsed = agentTs
       ? (JSON.parse(agentTs) as Record<string, string>)
