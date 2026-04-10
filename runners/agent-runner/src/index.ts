@@ -16,7 +16,12 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query,
+  HookCallback,
+  PreCompactHookInput,
+  PreToolUseHookInput,
+} from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 import {
@@ -76,7 +81,14 @@ interface SessionsIndex {
 
 type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'; data: string } };
+  | {
+      type: 'image';
+      source: {
+        type: 'base64';
+        media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+        data: string;
+      };
+    };
 
 interface SDKUserMessage {
   type: 'user';
@@ -106,8 +118,11 @@ const HOST_TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
 /** SSOT: src/agent-protocol.ts — keep in sync */
 const IMAGE_TAG_RE = /\[Image:\s*(\/[^\]]+)\]/g;
 const MIME_TYPES: Record<string, string> = {
-  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-  '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
 };
 
 /**
@@ -138,11 +153,20 @@ function buildMultimodalContent(text: string): string | ContentBlock[] {
       }
       const data = fs.readFileSync(imgPath).toString('base64');
       const ext = path.extname(imgPath).toLowerCase();
-      const mediaType = (MIME_TYPES[ext] || 'image/png') as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
-      blocks.push({ type: 'image', source: { type: 'base64', media_type: mediaType, data } });
+      const mediaType = (MIME_TYPES[ext] || 'image/png') as
+        | 'image/jpeg'
+        | 'image/png'
+        | 'image/gif'
+        | 'image/webp';
+      blocks.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mediaType, data },
+      });
       log(`Added image block: ${imgPath} (${mediaType})`);
     } catch (err) {
-      log(`Failed to read image ${imgPath}: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `Failed to read image ${imgPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -180,7 +204,9 @@ class MessageStream {
         yield this.queue.shift()!;
       }
       if (this.done) return;
-      await new Promise<void>(r => { this.waiting = r; });
+      await new Promise<void>((r) => {
+        this.waiting = r;
+      });
       this.waiting = null;
     }
   }
@@ -190,7 +216,9 @@ async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
     process.stdin.setEncoding('utf8');
-    process.stdin.on('data', chunk => { data += chunk; });
+    process.stdin.on('data', (chunk) => {
+      data += chunk;
+    });
     process.stdin.on('end', () => resolve(data));
     process.stdin.on('error', reject);
   });
@@ -246,7 +274,10 @@ function extractAssistantText(message: unknown): string | null {
   return text || null;
 }
 
-function getSessionSummary(sessionId: string, transcriptPath: string): string | null {
+function getSessionSummary(
+  sessionId: string,
+  transcriptPath: string,
+): string | null {
   const projectDir = path.dirname(transcriptPath);
   const indexPath = path.join(projectDir, 'sessions-index.json');
 
@@ -256,13 +287,17 @@ function getSessionSummary(sessionId: string, transcriptPath: string): string | 
   }
 
   try {
-    const index: SessionsIndex = JSON.parse(fs.readFileSync(indexPath, 'utf-8'));
-    const entry = index.entries.find(e => e.sessionId === sessionId);
+    const index: SessionsIndex = JSON.parse(
+      fs.readFileSync(indexPath, 'utf-8'),
+    );
+    const entry = index.entries.find((e) => e.sessionId === sessionId);
     if (entry?.summary) {
       return entry.summary;
     }
   } catch (err) {
-    log(`Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`);
+    log(
+      `Failed to read sessions index: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   return null;
@@ -283,7 +318,10 @@ function writeHostTaskIpcFile(data: object): string {
   return filename;
 }
 
-async function persistCompactMemory(summary: string, sessionId: string): Promise<void> {
+async function persistCompactMemory(
+  summary: string,
+  sessionId: string,
+): Promise<void> {
   const normalized = summary.trim();
   if (!normalized || !GROUP_FOLDER) return;
 
@@ -359,7 +397,11 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       const filename = `${date}-${name}.md`;
       const filePath = path.join(conversationsDir, filename);
 
-      const markdown = formatTranscriptMarkdown(messages, summary, assistantName);
+      const markdown = formatTranscriptMarkdown(
+        messages,
+        summary,
+        assistantName,
+      );
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
@@ -368,7 +410,9 @@ function createPreCompactHook(assistantName?: string): HookCallback {
         await persistCompactMemory(summary, sessionId);
       }
     } catch (err) {
-      log(`Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`);
+      log(
+        `Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     return {};
@@ -444,9 +488,12 @@ function parseTranscript(content: string): ParsedMessage[] {
     try {
       const entry = JSON.parse(line);
       if (entry.type === 'user' && entry.message?.content) {
-        const text = typeof entry.message.content === 'string'
-          ? entry.message.content
-          : entry.message.content.map((c: { text?: string }) => c.text || '').join('');
+        const text =
+          typeof entry.message.content === 'string'
+            ? entry.message.content
+            : entry.message.content
+                .map((c: { text?: string }) => c.text || '')
+                .join('');
         if (text) messages.push({ role: 'user', content: text });
       } else if (entry.type === 'assistant' && entry.message?.content) {
         const textParts = entry.message.content
@@ -455,22 +502,26 @@ function parseTranscript(content: string): ParsedMessage[] {
         const text = textParts.join('');
         if (text) messages.push({ role: 'assistant', content: text });
       }
-    } catch {
-    }
+    } catch {}
   }
 
   return messages;
 }
 
-function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | null, assistantName?: string): string {
+function formatTranscriptMarkdown(
+  messages: ParsedMessage[],
+  title?: string | null,
+  assistantName?: string,
+): string {
   const now = new Date();
-  const formatDateTime = (d: Date) => d.toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true
-  });
+  const formatDateTime = (d: Date) =>
+    d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    });
 
   const lines: string[] = [];
   lines.push(`# ${title || 'Conversation'}`);
@@ -481,10 +532,11 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
   lines.push('');
 
   for (const msg of messages) {
-    const sender = msg.role === 'user' ? 'User' : (assistantName || 'Assistant');
-    const content = msg.content.length > 2000
-      ? msg.content.slice(0, 2000) + '...'
-      : msg.content;
+    const sender = msg.role === 'user' ? 'User' : assistantName || 'Assistant';
+    const content =
+      msg.content.length > 2000
+        ? msg.content.slice(0, 2000) + '...'
+        : msg.content;
     lines.push(`**${sender}**: ${content}`);
     lines.push('');
   }
@@ -497,7 +549,11 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
  */
 function shouldClose(): boolean {
   if (fs.existsSync(IPC_INPUT_CLOSE_SENTINEL)) {
-    try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
+    } catch {
+      /* ignore */
+    }
     return true;
   }
   return false;
@@ -510,8 +566,9 @@ function shouldClose(): boolean {
 function drainIpcInput(): string[] {
   try {
     fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
-    const files = fs.readdirSync(IPC_INPUT_DIR)
-      .filter(f => f.endsWith('.json'))
+    const files = fs
+      .readdirSync(IPC_INPUT_DIR)
+      .filter((f) => f.endsWith('.json'))
       .sort();
 
     const messages: string[] = [];
@@ -524,8 +581,14 @@ function drainIpcInput(): string[] {
           messages.push(data.text);
         }
       } catch (err) {
-        log(`Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`);
-        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+        log(
+          `Failed to process input file ${file}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          /* ignore */
+        }
       }
     }
     return messages;
@@ -568,7 +631,9 @@ async function runQuery(
       // Flush any buffered text before closing — the for-await loop may not
       // reach the post-loop flush code after stream.end().
       if (pendingProgressText && !terminalResultObserved) {
-        log(`Flushing pending text before close (${pendingProgressText.length} chars)`);
+        log(
+          `Flushing pending text before close (${pendingProgressText.length} chars)`,
+        );
         writeOutput({
           status: 'success',
           ...normalizeStructuredOutput(pendingProgressText),
@@ -605,7 +670,9 @@ async function runQuery(
   const effectiveCwd = WORK_DIR || GROUP_DIR;
   if (WORK_DIR && WORK_DIR !== GROUP_DIR) {
     extraDirs.push(GROUP_DIR);
-    log(`Work directory override: ${WORK_DIR} (group dir added to additionalDirectories)`);
+    log(
+      `Work directory override: ${WORK_DIR} (group dir added to additionalDirectories)`,
+    );
   }
   if (extraDirs.length > 0) {
     log(`Additional directories: ${extraDirs.join(', ')}`);
@@ -617,11 +684,17 @@ async function runQuery(
   const thinkingBudget = process.env.CLAUDE_THINKING_BUDGET
     ? parseInt(process.env.CLAUDE_THINKING_BUDGET, 10)
     : undefined;
-  const effort = (process.env.CLAUDE_EFFORT as 'low' | 'medium' | 'high' | 'max') || undefined;
-  const thinking = thinkingType === 'adaptive' ? { type: 'adaptive' as const }
-    : thinkingType === 'enabled' ? { type: 'enabled' as const, budgetTokens: thinkingBudget }
-    : thinkingType === 'disabled' ? { type: 'disabled' as const }
-    : undefined;
+  const effort =
+    (process.env.CLAUDE_EFFORT as 'low' | 'medium' | 'high' | 'max') ||
+    undefined;
+  const thinking =
+    thinkingType === 'adaptive'
+      ? { type: 'adaptive' as const }
+      : thinkingType === 'enabled'
+        ? { type: 'enabled' as const, budgetTokens: thinkingBudget }
+        : thinkingType === 'disabled'
+          ? { type: 'disabled' as const }
+          : undefined;
 
   if (model) log(`Using model: ${model}`);
   if (thinking) log(`Thinking config: ${JSON.stringify(thinking)}`);
@@ -643,22 +716,42 @@ async function runQuery(
   const allowedTools = readonlyReviewerRuntime
     ? [
         'Bash',
-        'Read', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
+        'Read',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+        'Task',
+        'TaskOutput',
+        'TaskStop',
+        'TeamCreate',
+        'TeamDelete',
+        'SendMessage',
+        'TodoWrite',
+        'ToolSearch',
+        'Skill',
         'mcp__ejclaw__*',
       ]
     : [
         'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
+        'Read',
+        'Write',
+        'Edit',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+        'Task',
+        'TaskOutput',
+        'TaskStop',
+        'TeamCreate',
+        'TeamDelete',
+        'SendMessage',
+        'TodoWrite',
+        'ToolSearch',
+        'Skill',
         'NotebookEdit',
-        'mcp__ejclaw__*'
+        'mcp__ejclaw__*',
       ];
 
   const readonlyProtectedPaths = [effectiveCwd, ...extraDirs].filter(
@@ -701,8 +794,7 @@ async function runQuery(
             EJCLAW_CHAT_JID: runnerInput.chatJid,
             EJCLAW_GROUP_FOLDER: runnerInput.groupFolder,
             EJCLAW_IS_MAIN: runnerInput.isMain ? '1' : '0',
-            EJCLAW_AGENT_TYPE:
-              process.env.EJCLAW_AGENT_TYPE || 'claude-code',
+            EJCLAW_AGENT_TYPE: process.env.EJCLAW_AGENT_TYPE || 'claude-code',
             EJCLAW_ROOM_ROLE: runnerInput.roomRoleContext?.role || '',
             ...(process.env.EJCLAW_IPC_DIR && {
               EJCLAW_IPC_DIR: process.env.EJCLAW_IPC_DIR,
@@ -714,7 +806,9 @@ async function runQuery(
         },
       },
       hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(runnerInput.assistantName)] }],
+        PreCompact: [
+          { hooks: [createPreCompactHook(runnerInput.assistantName)] },
+        ],
         PreToolUse: [
           {
             matcher: 'Bash',
@@ -725,10 +819,13 @@ async function runQuery(
         ],
       },
       agentProgressSummaries: true,
-    }
+    },
   })) {
     messageCount++;
-    const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
+    const msgType =
+      message.type === 'system'
+        ? `system/${(message as { subtype?: string }).subtype}`
+        : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
 
     // Flush pending intermediate text as a regular message on non-assistant events.
@@ -747,15 +844,37 @@ async function runQuery(
       log(`Session initialized: ${newSessionId}`);
     }
 
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
-      const meta = (message as { compact_metadata?: { trigger?: string; pre_tokens?: number } }).compact_metadata;
-      log(`Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`);
+    if (
+      message.type === 'system' &&
+      (message as { subtype?: string }).subtype === 'compact_boundary'
+    ) {
+      const meta = (
+        message as {
+          compact_metadata?: { trigger?: string; pre_tokens?: number };
+        }
+      ).compact_metadata;
+      log(
+        `Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`,
+      );
     }
 
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
-      const tn = message as { task_id: string; status: string; summary: string };
-      log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
-      if (tn.status === 'completed' || tn.status === 'error' || tn.status === 'cancelled') {
+    if (
+      message.type === 'system' &&
+      (message as { subtype?: string }).subtype === 'task_notification'
+    ) {
+      const tn = message as {
+        task_id: string;
+        status: string;
+        summary: string;
+      };
+      log(
+        `Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`,
+      );
+      if (
+        tn.status === 'completed' ||
+        tn.status === 'error' ||
+        tn.status === 'cancelled'
+      ) {
         writeOutput({
           status: 'success',
           phase: 'progress',
@@ -767,11 +886,15 @@ async function runQuery(
       }
     }
 
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_progress') {
+    if (
+      message.type === 'system' &&
+      (message as { subtype?: string }).subtype === 'task_progress'
+    ) {
       const tp = message as Record<string, unknown>;
       const taskId = typeof tp.task_id === 'string' ? tp.task_id : undefined;
       const summary = typeof tp.summary === 'string' ? tp.summary : '';
-      const description = typeof tp.description === 'string' ? tp.description : '';
+      const description =
+        typeof tp.description === 'string' ? tp.description : '';
       if (description && description.length <= 80) {
         // Short tool description → show as sub-line in progress
         const normalized = normalizeStructuredOutput(description);
@@ -784,11 +907,16 @@ async function runQuery(
         });
       } else if (description) {
         // Long AI summary → skip (too long for progress sub-line)
-        log(`Skipping long task_progress description (${description.length} chars)`);
+        log(
+          `Skipping long task_progress description (${description.length} chars)`,
+        );
       }
     }
 
-    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_started') {
+    if (
+      message.type === 'system' &&
+      (message as { subtype?: string }).subtype === 'task_started'
+    ) {
       const ts = message as { task_id: string; description?: string };
       const desc = ts.description || '';
       log(`Subagent started: task=${ts.task_id} desc=${desc.slice(0, 200)}`);
@@ -835,28 +963,44 @@ async function runQuery(
 
     if (message.type === 'result') {
       resultCount++;
-      let textResult = 'result' in message ? (message as { result?: string }).result : null;
+      let textResult =
+        'result' in message ? (message as { result?: string }).result : null;
       const isError = message.subtype?.startsWith('error');
       // Discard pending progress if it matches the final result (prevent duplicate)
-      if (pendingProgressText && textResult && pendingProgressText === textResult) {
+      if (
+        pendingProgressText &&
+        textResult &&
+        pendingProgressText === textResult
+      ) {
         log(`Discarding pending progress (matches result)`);
         pendingProgressText = null;
       } else if (pendingProgressText) {
         // If the result has no text, promote pending progress to the result
         // so it gets delivered as the final output instead of being lost.
         if (!textResult) {
-          log(`Promoting pending progress text to result (${pendingProgressText.length} chars)`);
+          log(
+            `Promoting pending progress text to result (${pendingProgressText.length} chars)`,
+          );
           textResult = pendingProgressText;
         } else {
-          writeOutput({ status: 'success', phase: 'intermediate', result: pendingProgressText, newSessionId });
+          writeOutput({
+            status: 'success',
+            phase: 'intermediate',
+            result: pendingProgressText,
+            newSessionId,
+          });
         }
         pendingProgressText = null;
       }
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      log(
+        `Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`,
+      );
       if (isError) {
         // Log full error details for debugging
         const msg = message as Record<string, unknown>;
-        const sdkErrors = Array.isArray(msg.errors) ? msg.errors as string[] : [];
+        const sdkErrors = Array.isArray(msg.errors)
+          ? (msg.errors as string[])
+          : [];
         const errorDetail = JSON.stringify({
           subtype: message.subtype,
           result: textResult?.slice(0, 500),
@@ -868,7 +1012,8 @@ async function runQuery(
         });
         log(`Error result detail: ${errorDetail}`);
         // Pass SDK errors through so host can detect session issues
-        const errorText = sdkErrors.length > 0 ? sdkErrors.join('; ') : undefined;
+        const errorText =
+          sdkErrors.length > 0 ? sdkErrors.join('; ') : undefined;
         writeOutput({
           status: 'error',
           result: textResult || null,
@@ -880,7 +1025,7 @@ async function runQuery(
         writeOutput({
           status: 'success',
           ...normalized,
-          newSessionId
+          newSessionId,
         });
       }
 
@@ -899,7 +1044,9 @@ async function runQuery(
       const textResult = extractAssistantText(message);
       // Only log when there's something interesting (text or terminal)
       if (textResult || stopReason === 'end_turn') {
-        log(`Assistant: stop=${stopReason} text=${textResult ? textResult.length + ' chars' : 'null'}`);
+        log(
+          `Assistant: stop=${stopReason} text=${textResult ? textResult.length + ' chars' : 'null'}`,
+        );
       }
       if (stopReason === 'end_turn' && textResult) {
         resultCount++;
@@ -932,7 +1079,9 @@ async function runQuery(
           });
         }
         pendingProgressText = textResult;
-        log(`Intermediate assistant text buffered (${textResult.length} chars, stop=${stopReason})`);
+        log(
+          `Intermediate assistant text buffered (${textResult.length} chars, stop=${stopReason})`,
+        );
       }
     }
   }
@@ -940,7 +1089,9 @@ async function runQuery(
   // Flush any remaining buffered text that was never followed by a result event.
   // This happens when the agent produces a short response without a formal end_turn.
   if (pendingProgressText && !terminalResultObserved) {
-    log(`Flushing remaining pending progress text as final output (${pendingProgressText.length} chars)`);
+    log(
+      `Flushing remaining pending progress text as final output (${pendingProgressText.length} chars)`,
+    );
     writeOutput({
       status: 'success',
       ...normalizeStructuredOutput(pendingProgressText),
@@ -964,13 +1115,17 @@ async function main(): Promise<void> {
     const stdinData = await readStdin();
     runnerInput = JSON.parse(stdinData);
     // Delete the temp file the entrypoint wrote — it contains secrets
-    try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
+    try {
+      fs.unlinkSync('/tmp/input.json');
+    } catch {
+      /* may not exist */
+    }
     log(`Received input for group: ${runnerInput.groupFolder}`);
   } catch (err) {
     writeOutput({
       status: 'error',
       result: null,
-      error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`
+      error: `Failed to parse input: ${err instanceof Error ? err.message : String(err)}`,
     });
     process.exit(1);
   }
@@ -984,8 +1139,9 @@ async function main(): Promise<void> {
   const reviewerRuntime =
     process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
     isReviewerRuntime(runnerInput.roomRoleContext);
-  const claudeReadonlyReviewerRuntime =
-    isClaudeReadonlyReviewerRuntime(runnerInput.roomRoleContext);
+  const claudeReadonlyReviewerRuntime = isClaudeReadonlyReviewerRuntime(
+    runnerInput.roomRoleContext,
+  );
   const claudeReadonlySandboxMode = claudeReadonlyReviewerRuntime
     ? getClaudeReadonlySandboxMode()
     : null;
@@ -1006,7 +1162,11 @@ async function main(): Promise<void> {
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
   // Clean up stale _close sentinel from previous runner sessions
-  try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  try {
+    fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL);
+  } catch {
+    /* ignore */
+  }
 
   // Effective working directory (WORK_DIR overrides GROUP_DIR)
   const mainEffectiveCwd = WORK_DIR || GROUP_DIR;
@@ -1024,7 +1184,9 @@ async function main(): Promise<void> {
   // --- Slash command handling ---
   // Check BEFORE prepending room role header so /compact isn't masked.
   const KNOWN_SESSION_COMMANDS = new Set(['/compact']);
-  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(runnerInput.prompt.trim());
+  const isSessionSlashCommand = KNOWN_SESSION_COMMANDS.has(
+    runnerInput.prompt.trim(),
+  );
 
   if (!isSessionSlashCommand) {
     prompt = prependRoomRoleHeader(prompt, runnerInput.roomRoleContext);
@@ -1052,13 +1214,16 @@ async function main(): Promise<void> {
           settingSources: ['project', 'user'] as const,
           abortController: agentAbortController,
           hooks: {
-            PreCompact: [{ hooks: [createPreCompactHook(runnerInput.assistantName)] }],
+            PreCompact: [
+              { hooks: [createPreCompactHook(runnerInput.assistantName)] },
+            ],
           },
         },
       })) {
-        const msgType = message.type === 'system'
-          ? `system/${(message as { subtype?: string }).subtype}`
-          : message.type;
+        const msgType =
+          message.type === 'system'
+            ? `system/${(message as { subtype?: string }).subtype}`
+            : message.type;
         log(`[slash-cmd] type=${msgType}`);
 
         if (message.type === 'system' && message.subtype === 'init') {
@@ -1067,15 +1232,27 @@ async function main(): Promise<void> {
         }
 
         // Observe compact_boundary to confirm compaction completed
-        if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+        if (
+          message.type === 'system' &&
+          (message as { subtype?: string }).subtype === 'compact_boundary'
+        ) {
           compactBoundarySeen = true;
-          const meta = (message as { compact_metadata?: { trigger?: string; pre_tokens?: number } }).compact_metadata;
-          log(`Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`);
+          const meta = (
+            message as {
+              compact_metadata?: { trigger?: string; pre_tokens?: number };
+            }
+          ).compact_metadata;
+          log(
+            `Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`,
+          );
         }
 
         if (message.type === 'result') {
           const resultSubtype = (message as { subtype?: string }).subtype;
-          const textResult = 'result' in message ? (message as { result?: string }).result : null;
+          const textResult =
+            'result' in message
+              ? (message as { result?: string }).result
+              : null;
 
           if (resultSubtype?.startsWith('error')) {
             hadError = true;
@@ -1102,11 +1279,15 @@ async function main(): Promise<void> {
       writeOutput({ status: 'error', result: null, error: errorMsg });
     }
 
-    log(`Slash command done. compactBoundarySeen=${compactBoundarySeen}, hadError=${hadError}`);
+    log(
+      `Slash command done. compactBoundarySeen=${compactBoundarySeen}, hadError=${hadError}`,
+    );
 
     // Warn if compact_boundary was never observed — compaction may not have occurred
     if (!hadError && !compactBoundarySeen) {
-      log('WARNING: compact_boundary was not observed. Compaction may not have completed.');
+      log(
+        'WARNING: compact_boundary was not observed. Compaction may not have completed.',
+      );
     }
 
     // Only emit final session marker if no result was emitted yet and no error occurred
@@ -1120,7 +1301,11 @@ async function main(): Promise<void> {
       });
     } else if (!hadError) {
       // Emit session-only marker so host updates session tracking
-      writeOutput({ status: 'success', result: null, newSessionId: slashSessionId });
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId: slashSessionId,
+      });
     }
     return;
   }
@@ -1153,7 +1338,8 @@ async function main(): Promise<void> {
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     const errorStack = err instanceof Error ? err.stack : undefined;
-    const errorCause = err instanceof Error && err.cause ? String(err.cause) : undefined;
+    const errorCause =
+      err instanceof Error && err.cause ? String(err.cause) : undefined;
     log(`Agent error: ${errorMessage}`);
     if (errorStack) log(`Stack: ${errorStack}`);
     if (errorCause) log(`Cause: ${errorCause}`);
@@ -1161,7 +1347,7 @@ async function main(): Promise<void> {
       status: 'error',
       result: null,
       newSessionId: sessionId,
-      error: errorMessage
+      error: errorMessage,
     });
     process.exit(1);
   }

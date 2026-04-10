@@ -8,6 +8,7 @@ export default defineConfig({
     },
   },
   test: {
+    setupFiles: ['test/vitest-env.ts'],
     include: [
       'src/**/*.test.ts',
       'setup/**/*.test.ts',

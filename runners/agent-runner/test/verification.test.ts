@@ -11,10 +11,15 @@ import {
 
 describe('runner verification helpers', () => {
   it('computes the same snapshot when excluded files change', () => {
-    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-runner-snapshot-'));
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-runner-snapshot-'),
+    );
     fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
     fs.mkdirSync(path.join(repoDir, 'node_modules'), { recursive: true });
-    fs.writeFileSync(path.join(repoDir, 'src', 'index.ts'), 'export const x = 1;\n');
+    fs.writeFileSync(
+      path.join(repoDir, 'src', 'index.ts'),
+      'export const x = 1;\n',
+    );
     fs.writeFileSync(path.join(repoDir, '.env'), 'SECRET=1\n');
 
     const first = computeVerificationSnapshotId(repoDir);

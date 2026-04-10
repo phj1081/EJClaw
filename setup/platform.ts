@@ -177,10 +177,7 @@ export function ensureLinuxReadonlySandboxAppArmorSupport(options?: {
   const sandboxCapable =
     options?.sandboxCapable ?? canUseLinuxBubblewrapReadonlySandbox(platform);
 
-  if (
-    apparmorRestrictUnprivilegedUserns !== '1' ||
-    sandboxCapable
-  ) {
+  if (apparmorRestrictUnprivilegedUserns !== '1' || sandboxCapable) {
     return 'not-needed';
   }
 
@@ -211,9 +208,8 @@ export function ensureLinuxReadonlySandboxAppArmorSupport(options?: {
       stdio: 'ignore',
     });
 
-    const appliedValue = getAppArmorRestrictUnprivilegedUsernsValue(
-      readFileSyncFn,
-    );
+    const appliedValue =
+      getAppArmorRestrictUnprivilegedUsernsValue(readFileSyncFn);
     if (appliedValue !== '0') {
       throw new Error(
         `kernel.apparmor_restrict_unprivileged_userns remained ${appliedValue ?? 'unavailable'} after sysctl apply`,

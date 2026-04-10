@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  isTaskScopedIpcDir,
-  resolveIpcDirectories,
-} from '../src/ipc-paths.js';
+import { isTaskScopedIpcDir, resolveIpcDirectories } from '../src/ipc-paths.js';
 
 describe('ipc path helpers', () => {
   it('detects task-scoped IPC directories', () => {

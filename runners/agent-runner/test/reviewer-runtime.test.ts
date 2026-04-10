@@ -110,11 +110,11 @@ describe('claude reviewer runtime guard', () => {
   });
 
   it('builds a read-only sandbox with normalized protected paths', () => {
-    const sandbox = buildClaudeReadonlySandboxSettings([
-      '/repo/work',
-      '/repo/work',
-      '/repo/owner/../owner',
-    ], 'linux', 'strict');
+    const sandbox = buildClaudeReadonlySandboxSettings(
+      ['/repo/work', '/repo/work', '/repo/owner/../owner'],
+      'linux',
+      'strict',
+    );
 
     expect(sandbox).toMatchObject({
       enabled: true,
@@ -157,12 +157,10 @@ describe('claude reviewer runtime guard', () => {
 
   it('flags mutating shell commands', () => {
     expect(isReviewerMutatingShellCommand('git commit -m "x"')).toBe(false);
-    expect(isReviewerMutatingShellCommand('git -c color.ui=false commit -m "x"')).toBe(
-      false,
-    );
-    expect(isReviewerMutatingShellCommand('sed -i s/a/b/ file.ts')).toBe(
-      true,
-    );
+    expect(
+      isReviewerMutatingShellCommand('git -c color.ui=false commit -m "x"'),
+    ).toBe(false);
+    expect(isReviewerMutatingShellCommand('sed -i s/a/b/ file.ts')).toBe(true);
     expect(isReviewerMutatingShellCommand('git status')).toBe(false);
     expect(isReviewerMutatingShellCommand('npm test')).toBe(false);
   });
@@ -263,7 +261,9 @@ describe('claude reviewer runtime guard', () => {
       true,
     );
 
-    expect(() => assertReadonlyWorkspaceRepoConnectivity(env, true)).not.toThrow();
+    expect(() =>
+      assertReadonlyWorkspaceRepoConnectivity(env, true),
+    ).not.toThrow();
   });
 
   it.each([
@@ -286,7 +286,9 @@ describe('claude reviewer runtime guard', () => {
         true,
       );
 
-      expect(() => assertReadonlyWorkspaceRepoConnectivity(env, true)).not.toThrow();
+      expect(() =>
+        assertReadonlyWorkspaceRepoConnectivity(env, true),
+      ).not.toThrow();
     },
   );
 

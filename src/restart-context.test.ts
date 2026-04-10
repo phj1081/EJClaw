@@ -64,24 +64,22 @@ describe('getInterruptedRecoveryCandidates', () => {
       ],
     };
 
-    expect(getInterruptedRecoveryCandidates(context, roomBindings)).toEqual(
-      [
-        {
-          chatJid: 'dc:1',
-          groupFolder: 'group-one',
-          status: 'processing',
-          pendingMessages: true,
-          pendingTasks: 0,
-        },
-        {
-          chatJid: 'dc:2',
-          groupFolder: 'group-two',
-          status: 'idle',
-          pendingMessages: false,
-          pendingTasks: 0,
-        },
-      ],
-    );
+    expect(getInterruptedRecoveryCandidates(context, roomBindings)).toEqual([
+      {
+        chatJid: 'dc:1',
+        groupFolder: 'group-one',
+        status: 'processing',
+        pendingMessages: true,
+        pendingTasks: 0,
+      },
+      {
+        chatJid: 'dc:2',
+        groupFolder: 'group-two',
+        status: 'idle',
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+    ]);
   });
 
   it('returns empty when there is no explicit restart context', () => {

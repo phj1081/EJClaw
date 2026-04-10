@@ -102,7 +102,11 @@ export class CodexAppServerClient {
     if (this.proc) return;
 
     const codexPackagePath = this.require.resolve('@openai/codex/package.json');
-    const codexBin = path.join(path.dirname(codexPackagePath), 'bin', 'codex.js');
+    const codexBin = path.join(
+      path.dirname(codexPackagePath),
+      'bin',
+      'codex.js',
+    );
 
     this.proc = spawn(process.execPath, [codexBin, 'app-server'], {
       cwd: this.cwd,
@@ -213,15 +217,17 @@ export class CodexAppServerClient {
       throw new Error('A Codex app-server turn is already active.');
     }
 
-    const turnPromise = new Promise<CodexAppServerTurnResult>((resolve, reject) => {
-      this.activeTurn = {
-        threadId,
-        state: createInitialAppServerTurnState(),
-        onProgress: options.onProgress,
-        resolve,
-        reject,
-      };
-    });
+    const turnPromise = new Promise<CodexAppServerTurnResult>(
+      (resolve, reject) => {
+        this.activeTurn = {
+          threadId,
+          state: createInitialAppServerTurnState(),
+          onProgress: options.onProgress,
+          resolve,
+          reject,
+        };
+      },
+    );
 
     let turnId = '';
     try {
@@ -285,14 +291,16 @@ export class CodexAppServerClient {
       throw new Error('A Codex app-server turn is already active.');
     }
 
-    const turnPromise = new Promise<CodexAppServerTurnResult>((resolve, reject) => {
-      this.activeTurn = {
-        threadId,
-        state: createInitialAppServerTurnState(),
-        resolve,
-        reject,
-      };
-    });
+    const turnPromise = new Promise<CodexAppServerTurnResult>(
+      (resolve, reject) => {
+        this.activeTurn = {
+          threadId,
+          state: createInitialAppServerTurnState(),
+          resolve,
+          reject,
+        };
+      },
+    );
 
     try {
       await this.request('thread/compact/start', { threadId });

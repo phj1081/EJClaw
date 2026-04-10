@@ -36,7 +36,7 @@ function restartStackServicesDirect(
   }
 
   const execImpl = deps.execFileSyncImpl ?? execFileSync;
-  const systemctlArgs = deps.runningAsRoot ?? isRoot() ? [] : ['--user'];
+  const systemctlArgs = (deps.runningAsRoot ?? isRoot()) ? [] : ['--user'];
 
   execImpl('systemctl', [...systemctlArgs, 'restart', ...services], {
     stdio: 'ignore',
@@ -64,7 +64,7 @@ export function restartStackServices(
 
   const services = getConfiguredServiceNames(projectRoot);
   const execImpl = deps.execFileSyncImpl ?? execFileSync;
-  const systemctlArgs = deps.runningAsRoot ?? isRoot() ? [] : ['--user'];
+  const systemctlArgs = (deps.runningAsRoot ?? isRoot()) ? [] : ['--user'];
 
   if (deps.direct) {
     return restartStackServicesDirect(projectRoot, deps);

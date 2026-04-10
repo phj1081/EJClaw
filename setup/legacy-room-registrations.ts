@@ -55,7 +55,9 @@ export function normalizeLegacyRegisteredGroupsTable(database: Database): void {
     const hasIsMain = legacyCols.some((col) => col.name === 'is_main');
     const hasAgentType = legacyCols.some((col) => col.name === 'agent_type');
     const hasWorkDir = legacyCols.some((col) => col.name === 'work_dir');
-    const hasAgentConfig = legacyCols.some((col) => col.name === 'agent_config');
+    const hasAgentConfig = legacyCols.some(
+      (col) => col.name === 'agent_config',
+    );
     const hasContainerConfig = legacyCols.some(
       (col) => col.name === 'container_config',
     );

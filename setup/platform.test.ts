@@ -105,43 +105,30 @@ describe('commandExists', () => {
 describe('canUseLinuxBubblewrapReadonlySandbox', () => {
   it('returns false outside linux', () => {
     expect(
-      canUseLinuxBubblewrapReadonlySandbox(
-        'macos',
-        () => {
-          throw new Error('should not probe commands on macOS');
-        },
-      ),
+      canUseLinuxBubblewrapReadonlySandbox('macos', () => {
+        throw new Error('should not probe commands on macOS');
+      }),
     ).toBe(false);
   });
 
   it('returns false when bwrap is not installed', () => {
-    expect(
-      canUseLinuxBubblewrapReadonlySandbox(
-        'linux',
-        () => false,
-      ),
-    ).toBe(false);
+    expect(canUseLinuxBubblewrapReadonlySandbox('linux', () => false)).toBe(
+      false,
+    );
   });
 
   it('returns true when linux bwrap readonly probe succeeds', () => {
     expect(
-      canUseLinuxBubblewrapReadonlySandbox(
-        'linux',
-        () => true,
-        (() => Buffer.from('')) as typeof import('child_process').execSync,
-      ),
+      canUseLinuxBubblewrapReadonlySandbox('linux', () => true, (() =>
+        Buffer.from('')) as unknown as typeof import('child_process').execSync),
     ).toBe(true);
   });
 
   it('returns false when linux bwrap readonly probe fails', () => {
     expect(
-      canUseLinuxBubblewrapReadonlySandbox(
-        'linux',
-        () => true,
-        (() => {
-          throw new Error('permission denied');
-        }) as typeof import('child_process').execSync,
-      ),
+      canUseLinuxBubblewrapReadonlySandbox('linux', () => true, (() => {
+        throw new Error('permission denied');
+      }) as typeof import('child_process').execSync),
     ).toBe(false);
   });
 });
@@ -157,8 +144,9 @@ describe('getAppArmorRestrictUnprivilegedUsernsValue', () => {
 
   it('returns the trimmed proc sysctl value', () => {
     expect(
-      getAppArmorRestrictUnprivilegedUsernsValue((() =>
-        '1\n') as typeof import('fs').readFileSync),
+      getAppArmorRestrictUnprivilegedUsernsValue(
+        (() => '1\n') as unknown as typeof import('fs').readFileSync,
+      ),
     ).toBe('1');
   });
 });
@@ -252,9 +240,11 @@ describe('ensureLinuxReadonlySandboxAppArmorSupport', () => {
     const writes: string[] = [];
     const commands: string[] = [];
     const fileContents = new Map<string, string>([
-      ['/etc/sysctl.d/90-ejclaw-sandbox.conf',
+      [
+        '/etc/sysctl.d/90-ejclaw-sandbox.conf',
         '# Managed by EJClaw setup to allow bubblewrap readonly sandboxing.\n' +
-          'kernel.apparmor_restrict_unprivileged_userns=0\n'],
+          'kernel.apparmor_restrict_unprivileged_userns=0\n',
+      ],
       ['/proc/sys/kernel/apparmor_restrict_unprivileged_userns', '1\n'],
     ]);
 
@@ -301,14 +291,17 @@ describe('ensureLinuxReadonlySandboxAppArmorSupport', () => {
         apparmorRestrictUnprivilegedUserns: '1',
         sandboxCapable: false,
         isRootUser: true,
-        readFileSyncFn: ((target) => {
+        readFileSyncFn: ((target: import('fs').PathOrFileDescriptor) => {
           const value = fileContents.get(String(target));
           if (value == null) throw new Error('missing');
           return value;
-        }) as typeof import('fs').readFileSync,
+        }) as unknown as typeof import('fs').readFileSync,
         mkdirSyncFn: (() => undefined) as typeof import('fs').mkdirSync,
         writeFileSyncFn: (() => undefined) as typeof import('fs').writeFileSync,
-        execFn: (() => Buffer.from('')) as typeof import('child_process').execSync,
+        execFn: (() =>
+          Buffer.from(
+            '',
+          )) as unknown as typeof import('child_process').execSync,
       }),
     ).toBe('failed');
   });

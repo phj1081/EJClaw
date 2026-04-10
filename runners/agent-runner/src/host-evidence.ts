@@ -58,9 +58,7 @@ export async function waitForHostEvidenceResponse(
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
 
-  throw new Error(
-    `Timed out waiting for host evidence response: ${requestId}`,
-  );
+  throw new Error(`Timed out waiting for host evidence response: ${requestId}`);
 }
 
 export function formatHostEvidenceResponse(

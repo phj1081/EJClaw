@@ -118,9 +118,7 @@ describe('systemd unit generation', () => {
       '/home/user',
       false,
     );
-    expect(unit).toContain(
-      'ExecStart=/usr/bin/bun /srv/ejclaw/dist/index.js',
-    );
+    expect(unit).toContain('ExecStart=/usr/bin/bun /srv/ejclaw/dist/index.js');
   });
 
   it('preserves EnvironmentFile and extraEnv in the actual builder', () => {

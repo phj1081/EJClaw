@@ -99,10 +99,7 @@ function normalizeStructuredOutput(result: string | null): {
     const envelope = parsed?.ejclaw;
     if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
       if (envelope.visibility === 'silent') {
-        if (
-          envelope.verdict !== undefined &&
-          envelope.verdict !== 'silent'
-        ) {
+        if (envelope.verdict !== undefined && envelope.verdict !== 'silent') {
           return {
             result,
             output: { visibility: 'public', text: result },
@@ -225,7 +222,10 @@ function drainIpcInput(): string[] {
   }
 }
 
-function extractImagePaths(text: string): { cleanText: string; imagePaths: string[] } {
+function extractImagePaths(text: string): {
+  cleanText: string;
+  imagePaths: string[];
+} {
   /** SSOT: src/agent-protocol.ts — keep in sync */
   const imagePattern = /\[Image:\s*(\/[^\]]+)\]/g;
   const imagePaths: string[] = [];
@@ -285,24 +285,28 @@ async function executeAppServerTurn(
   retryCount = 0,
 ): Promise<{ result: string | null; error?: string }> {
   let lastProgressMessage: string | null = null;
-  const activeTurn = await client.startTurn(threadId, parseAppServerInput(prompt), {
-    cwd: EFFECTIVE_CWD,
-    model: CODEX_MODEL || undefined,
-    effort: CODEX_EFFORT || undefined,
-    onProgress: (message) => {
-      const trimmed = message.trim();
-      if (!trimmed || trimmed === lastProgressMessage) {
-        return;
-      }
-      lastProgressMessage = trimmed;
-      writeOutput({
-        status: 'success',
-        phase: 'progress',
-        ...normalizeStructuredOutput(trimmed),
-        newSessionId: threadId,
-      });
+  const activeTurn = await client.startTurn(
+    threadId,
+    parseAppServerInput(prompt),
+    {
+      cwd: EFFECTIVE_CWD,
+      model: CODEX_MODEL || undefined,
+      effort: CODEX_EFFORT || undefined,
+      onProgress: (message) => {
+        const trimmed = message.trim();
+        if (!trimmed || trimmed === lastProgressMessage) {
+          return;
+        }
+        lastProgressMessage = trimmed;
+        writeOutput({
+          status: 'success',
+          phase: 'progress',
+          ...normalizeStructuredOutput(trimmed),
+          newSessionId: threadId,
+        });
+      },
     },
-  });
+  );
 
   let elapsedMs = 0;
   let polling = true;
@@ -360,7 +364,8 @@ async function executeAppServerTurn(
     }
     return {
       result,
-      error: state.errorMessage || `Codex turn finished with status ${state.status}`,
+      error:
+        state.errorMessage || `Codex turn finished with status ${state.status}`,
     };
   } finally {
     polling = false;
@@ -451,7 +456,11 @@ async function runAppServerSession(
     }
 
     log('Starting app-server turn...');
-    const { result, error } = await executeAppServerTurn(client, threadId, prompt);
+    const { result, error } = await executeAppServerTurn(
+      client,
+      threadId,
+      prompt,
+    );
 
     if (error) {
       const normalized = normalizeStructuredOutput(result || null);

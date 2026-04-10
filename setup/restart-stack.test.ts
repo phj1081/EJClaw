@@ -77,24 +77,24 @@ describe('restartStackServices', () => {
 
     expect(() =>
       restartStackServices(tempRoot, {
-        serviceManager: 'nohup',
+        serviceManager: 'none',
       }),
-    ).toThrow('restart:stack only supports Linux systemd services in this repo');
+    ).toThrow(
+      'restart:stack only supports Linux systemd services in this repo',
+    );
   });
 
   it('falls back to direct restart when the oneshot unit is not installed for an external caller', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-restart-'));
     tempRoots.push(tempRoot);
 
-    const execFileSyncImpl = vi
-      .fn()
-      .mockImplementationOnce(() => {
-        const error = new Error('unit missing');
-        Object.assign(error, {
-          stderr: 'Unit ejclaw-stack-restart.service not found.',
-        });
-        throw error;
+    const execFileSyncImpl = vi.fn().mockImplementationOnce(() => {
+      const error = new Error('unit missing');
+      Object.assign(error, {
+        stderr: 'Unit ejclaw-stack-restart.service not found.',
       });
+      throw error;
+    });
 
     const services = restartStackServices(tempRoot, {
       execFileSyncImpl,
@@ -147,7 +147,8 @@ describe('restartStackServices', () => {
     const execFileSyncImpl = vi.fn().mockImplementation(() => {
       const error = new Error('job failed');
       Object.assign(error, {
-        stderr: 'Job for ejclaw-stack-restart.service failed because the control process exited with error code.',
+        stderr:
+          'Job for ejclaw-stack-restart.service failed because the control process exited with error code.',
       });
       throw error;
     });

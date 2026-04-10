@@ -65,7 +65,18 @@ function backupLegacyRows(database: Database): number {
               requires_trigger, is_main, agent_type, work_dir
          FROM registered_groups`,
     )
-    .all() as Array<Record<string, unknown>>;
+    .all() as Array<{
+    jid: string;
+    name: string;
+    folder: string;
+    trigger_pattern: string;
+    added_at: string;
+    agent_config: string | null;
+    requires_trigger: number | null;
+    is_main: number | null;
+    agent_type: string | null;
+    work_dir: string | null;
+  }>;
 
   const insert = database.prepare(
     `INSERT OR REPLACE INTO registered_groups_legacy_backup (

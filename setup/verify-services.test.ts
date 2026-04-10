@@ -52,9 +52,12 @@ describe('verify service checks', () => {
     execSyncMock.mockReturnValue(undefined);
 
     expect(checkSystemdService('ejclaw')).toBe('running');
-    expect(execSyncMock).toHaveBeenCalledWith('systemctl --user is-active ejclaw', {
-      stdio: 'ignore',
-    });
+    expect(execSyncMock).toHaveBeenCalledWith(
+      'systemctl --user is-active ejclaw',
+      {
+        stdio: 'ignore',
+      },
+    );
   });
 
   it('checks systemd services in both explicit scopes', () => {
@@ -71,8 +74,12 @@ describe('verify service checks', () => {
       throw new Error(`unexpected command: ${cmd}`);
     });
 
-    expect(checkSystemdServiceInScope('ejclaw-codex', 'system')).toBe('running');
-    expect(checkSystemdServiceInScope('ejclaw-codex', 'user')).toBe('not_found');
+    expect(checkSystemdServiceInScope('ejclaw-codex', 'system')).toBe(
+      'running',
+    );
+    expect(checkSystemdServiceInScope('ejclaw-codex', 'user')).toBe(
+      'not_found',
+    );
   });
 
   it('treats an unloaded launchd plist as stopped when artifact detection is enabled', () => {
@@ -87,9 +94,9 @@ describe('verify service checks', () => {
     fs.writeFileSync(plistPath, '<plist />');
     execSyncMock.mockReturnValue('');
 
-    expect(
-      checkLaunchdServiceArtifact('com.ejclaw-codex', plistPath),
-    ).toBe('stopped');
+    expect(checkLaunchdServiceArtifact('com.ejclaw-codex', plistPath)).toBe(
+      'stopped',
+    );
 
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
@@ -111,7 +118,7 @@ describe('verify service checks', () => {
 
     const killSpy = vi
       .spyOn(process, 'kill')
-      .mockImplementation((_pid: number, _signal?: number | NodeJS.Signals) => true);
+      .mockImplementation((_pid: number, _signal?: string | number) => true);
 
     expect(checkNohupService(tempRoot, 'ejclaw')).toBe('running');
 
@@ -121,7 +128,10 @@ describe('verify service checks', () => {
 
   it('treats a legacy nohup wrapper without a live pid as stopped when artifact detection is enabled', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-verify-'));
-    fs.writeFileSync(path.join(tempRoot, 'start-ejclaw-codex.sh'), '#!/bin/bash\n');
+    fs.writeFileSync(
+      path.join(tempRoot, 'start-ejclaw-codex.sh'),
+      '#!/bin/bash\n',
+    );
 
     expect(checkNohupServiceArtifact(tempRoot, 'ejclaw-codex')).toBe('stopped');
 

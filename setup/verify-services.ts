@@ -27,7 +27,9 @@ export function checkLaunchdService(label: string): ServiceStatus {
   try {
     const output = execSync('launchctl list', { encoding: 'utf-8' });
     if (output.includes(label)) {
-      const line = output.split('\n').find((candidate) => candidate.includes(label));
+      const line = output
+        .split('\n')
+        .find((candidate) => candidate.includes(label));
       if (line) {
         const pidField = line.trim().split(/\s+/)[0];
         return pidField !== '-' && pidField ? 'running' : 'stopped';

@@ -34,10 +34,7 @@ export function normalizeWatchCiIntervalSeconds(
     throw new Error('poll_interval_seconds must be an integer.');
   }
 
-  if (
-    seconds < minSeconds ||
-    seconds > MAX_WATCH_CI_INTERVAL_SECONDS
-  ) {
+  if (seconds < minSeconds || seconds > MAX_WATCH_CI_INTERVAL_SECONDS) {
     throw new Error(
       `poll_interval_seconds must be between ${minSeconds} and ${MAX_WATCH_CI_INTERVAL_SECONDS}.`,
     );

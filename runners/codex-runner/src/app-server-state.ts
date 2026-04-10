@@ -37,10 +37,7 @@ export type AppServerTurnEvent =
         turn?: {
           id?: string | null;
           status?: string | null;
-          error?:
-            | { message?: string | null }
-            | string
-            | null;
+          error?: { message?: string | null } | string | null;
         };
       };
     }

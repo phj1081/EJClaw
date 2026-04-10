@@ -167,7 +167,9 @@ describe('codex reviewer runtime guard', () => {
       true,
     );
 
-    expect(() => assertReadonlyWorkspaceRepoConnectivity(env, true)).not.toThrow();
+    expect(() =>
+      assertReadonlyWorkspaceRepoConnectivity(env, true),
+    ).not.toThrow();
   });
 
   it.each([
@@ -190,7 +192,9 @@ describe('codex reviewer runtime guard', () => {
         true,
       );
 
-      expect(() => assertReadonlyWorkspaceRepoConnectivity(env, true)).not.toThrow();
+      expect(() =>
+        assertReadonlyWorkspaceRepoConnectivity(env, true),
+      ).not.toThrow();
     },
   );
 
