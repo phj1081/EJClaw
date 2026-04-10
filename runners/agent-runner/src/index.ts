@@ -22,6 +22,15 @@ import {
   PreCompactHookInput,
   PreToolUseHookInput,
 } from '@anthropic-ai/claude-agent-sdk';
+import {
+  extractImageTagPaths,
+  IPC_CLOSE_SENTINEL,
+  IPC_INPUT_SUBDIR,
+  IPC_POLL_MS,
+  normalizePublicTextOutput,
+  type RunnerStructuredOutput,
+  writeProtocolOutput,
+} from 'ejclaw-runners-shared';
 import { fileURLToPath } from 'url';
 
 import {
@@ -33,9 +42,11 @@ import {
   buildClaudeReadonlySandboxSettings,
   buildReviewerGitGuardEnv,
   getClaudeReadonlySandboxMode,
+  isArbiterRuntimeEnvEnabled,
   isClaudeReadonlyReviewerRuntime,
   isReviewerMutatingShellCommand,
   isReviewerRuntime,
+  isReviewerRuntimeEnvEnabled,
 } from './reviewer-runtime.js';
 import { selectCompactMemoriesFromSummary } from './memory-selection.js';
 
@@ -59,11 +70,7 @@ interface RunnerOutput {
   agentLabel?: string;
   agentDone?: boolean;
   result: string | null;
-  output?: {
-    visibility: 'public' | 'silent';
-    text?: string;
-    verdict?: 'done' | 'done_with_concerns' | 'blocked' | 'silent';
-  };
+  output?: RunnerStructuredOutput;
   newSessionId?: string;
   error?: string;
 }
@@ -110,13 +117,9 @@ const HOST_IPC_DIR = process.env.EJCLAW_HOST_IPC_DIR || IPC_DIR;
 const WORK_DIR = process.env.EJCLAW_WORK_DIR || '';
 const GROUP_FOLDER = process.env.EJCLAW_GROUP_FOLDER || '';
 
-const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
-const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
-const IPC_POLL_MS = 500;
+const IPC_INPUT_DIR = path.join(IPC_DIR, IPC_INPUT_SUBDIR);
+const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, IPC_CLOSE_SENTINEL);
 const HOST_TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
-
-/** SSOT: src/agent-protocol.ts — keep in sync */
-const IMAGE_TAG_RE = /\[Image:\s*(\/[^\]]+)\]/g;
 const MIME_TYPES: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -130,17 +133,10 @@ const MIME_TYPES: Record<string, string> = {
  * Returns a plain string if no images found, or ContentBlock[] with text + image blocks.
  */
 function buildMultimodalContent(text: string): string | ContentBlock[] {
-  const imagePaths: string[] = [];
-  let match;
-  while ((match = IMAGE_TAG_RE.exec(text)) !== null) {
-    imagePaths.push(match[1].trim());
-  }
-  IMAGE_TAG_RE.lastIndex = 0; // reset regex state
-
+  const { cleanText, imagePaths } = extractImageTagPaths(text);
   if (imagePaths.length === 0) return text;
 
   const blocks: ContentBlock[] = [];
-  const cleanText = text.replace(IMAGE_TAG_RE, '').trim();
   if (cleanText) {
     blocks.push({ type: 'text', text: cleanText });
   }
@@ -224,24 +220,15 @@ async function readStdin(): Promise<string> {
   });
 }
 
-const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
-
 function writeOutput(output: RunnerOutput): void {
-  console.log(OUTPUT_START_MARKER);
-  console.log(JSON.stringify(output));
-  console.log(OUTPUT_END_MARKER);
+  writeProtocolOutput(output);
 }
 
 function normalizeStructuredOutput(result: string | null): {
   result: string | null;
   output?: RunnerOutput['output'];
 } {
-  if (typeof result !== 'string' || result.length === 0) {
-    return { result };
-  }
-  // All output is public — silent suppression was removed.
-  return { result, output: { visibility: 'public', text: result } };
+  return normalizePublicTextOutput(result);
 }
 
 function log(message: string): void {
@@ -1137,7 +1124,7 @@ async function main(): Promise<void> {
     sdkEnv[key] = value;
   }
   const reviewerRuntime =
-    process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
+    isReviewerRuntimeEnvEnabled(process.env) ||
     isReviewerRuntime(runnerInput.roomRoleContext);
   const claudeReadonlyReviewerRuntime = isClaudeReadonlyReviewerRuntime(
     runnerInput.roomRoleContext,
@@ -1148,7 +1135,7 @@ async function main(): Promise<void> {
   const readonlyRuntime =
     reviewerRuntime ||
     claudeReadonlyReviewerRuntime ||
-    process.env.EJCLAW_ARBITER_RUNTIME === '1';
+    isArbiterRuntimeEnvEnabled(process.env);
   const guardedSdkEnv = buildReviewerGitGuardEnv(
     sdkEnv,
     reviewerRuntime || claudeReadonlyReviewerRuntime,

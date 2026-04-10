@@ -3,7 +3,43 @@ export {
   type RoomRoleContext,
 } from './room-role-context.js';
 export {
+  extractImageTagPaths,
+  IMAGE_TAG_RE,
+  IPC_CLOSE_SENTINEL,
+  IPC_INPUT_SUBDIR,
+  IPC_POLL_MS,
+  normalizeEjclawStructuredOutput,
+  normalizePublicTextOutput,
+  OUTPUT_END_MARKER,
+  OUTPUT_START_MARKER,
+  writeProtocolOutput,
+  type NormalizedRunnerOutput,
+  type RunnerOutputPhase,
+  type RunnerOutputVerdict,
+  type RunnerOutputVisibility,
+  type RunnerStructuredOutput,
+} from './agent-protocol.js';
+export {
   assertReadonlyWorkspaceRepoConnectivity,
   buildReviewerGitGuardEnv,
   isReviewerRuntime,
 } from './reviewer-git-guard.js';
+export {
+  ARBITER_RUNTIME_ENV,
+  CLAUDE_REVIEWER_READONLY_ENV,
+  REVIEWER_RUNTIME_ENV,
+  UNSAFE_HOST_PAIRED_MODE_ENV,
+  buildClaudeReadonlySandboxSettings,
+  buildPairedReadonlyRuntimeEnvOverrides,
+  canUseLinuxBubblewrapReadonlySandbox,
+  getClaudeReadonlySandboxMode,
+  getReviewerRuntimeCapabilities,
+  isArbiterRuntimeEnvEnabled,
+  isClaudeReadonlyReviewerRuntime,
+  isReviewerMutatingShellCommand,
+  isReviewerRuntimeEnvEnabled,
+  isUnsafeHostPairedModeEnabled,
+  type ClaudeReadonlySandboxMode,
+  type ReviewerRuntimeCapabilities,
+  type RunnerAgentType,
+} from './reviewer-runtime-policy.js';

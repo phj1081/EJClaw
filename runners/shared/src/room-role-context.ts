@@ -1,9 +1,15 @@
+import type { RunnerAgentType } from './reviewer-runtime-policy.js';
+
 export interface RoomRoleContext {
   serviceId: string;
-  role: 'owner' | 'reviewer';
+  role: 'owner' | 'reviewer' | 'arbiter';
   ownerServiceId: string;
   reviewerServiceId: string;
+  ownerAgentType?: RunnerAgentType;
+  reviewerAgentType?: RunnerAgentType | null;
   failoverOwner: boolean;
+  arbiterServiceId?: string;
+  arbiterAgentType?: RunnerAgentType | null;
 }
 
 export function prependRoomRoleHeader(

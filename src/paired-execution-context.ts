@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
+import { buildPairedReadonlyRuntimeEnvOverrides } from 'ejclaw-runners-shared';
+
 import {
   ARBITER_DEADLOCK_THRESHOLD,
   ARBITER_AGENT_TYPE,
@@ -337,14 +339,14 @@ export function preparePairedExecutionContext(args: {
     );
     fs.mkdirSync(reviewerSessionDir, { recursive: true });
     envOverrides.CLAUDE_CONFIG_DIR = reviewerSessionDir;
-    if (unsafeHostPairedMode) {
-      envOverrides.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
-      if (REVIEWER_AGENT_TYPE === 'claude-code') {
-        envOverrides.EJCLAW_CLAUDE_REVIEWER_READONLY = '1';
-      }
-    } else {
-      envOverrides.EJCLAW_REVIEWER_RUNTIME = '1';
-    }
+    Object.assign(
+      envOverrides,
+      buildPairedReadonlyRuntimeEnvOverrides({
+        role: 'reviewer',
+        agentType: REVIEWER_AGENT_TYPE,
+        unsafeHostPairedMode,
+      }),
+    );
   } else if (roomRoleContext.role === 'arbiter') {
     const arbiterSessionDir = path.join(
       DATA_DIR,
@@ -356,11 +358,14 @@ export function preparePairedExecutionContext(args: {
     fs.rmSync(arbiterSessionDir, { recursive: true, force: true });
     fs.mkdirSync(arbiterSessionDir, { recursive: true });
     envOverrides.CLAUDE_CONFIG_DIR = arbiterSessionDir;
-    if (unsafeHostPairedMode) {
-      envOverrides.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
-    } else {
-      envOverrides.EJCLAW_ARBITER_RUNTIME = '1';
-    }
+    Object.assign(
+      envOverrides,
+      buildPairedReadonlyRuntimeEnvOverrides({
+        role: 'arbiter',
+        agentType: ARBITER_AGENT_TYPE ?? REVIEWER_AGENT_TYPE,
+        unsafeHostPairedMode,
+      }),
+    );
   }
 
   return {

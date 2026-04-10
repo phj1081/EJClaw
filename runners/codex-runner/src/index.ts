@@ -16,6 +16,16 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  extractImageTagPaths,
+  IPC_CLOSE_SENTINEL,
+  IPC_INPUT_SUBDIR,
+  IPC_POLL_MS,
+  normalizeEjclawStructuredOutput,
+  writeProtocolOutput,
+  type RunnerStructuredOutput,
+} from 'ejclaw-runners-shared';
+
+import {
   CodexAppServerClient,
   type AppServerInputItem,
 } from './app-server-client.js';
@@ -26,7 +36,9 @@ import {
 import {
   assertReadonlyWorkspaceRepoConnectivity,
   buildReviewerGitGuardEnv,
+  isArbiterRuntimeEnvEnabled,
   isReviewerRuntime,
+  isReviewerRuntimeEnvEnabled,
 } from './reviewer-runtime.js';
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -46,11 +58,7 @@ interface RunnerInput {
 interface RunnerOutput {
   status: 'success' | 'error';
   result: string | null;
-  output?: {
-    visibility: 'public' | 'silent';
-    text?: string;
-    verdict?: 'done' | 'done_with_concerns' | 'blocked' | 'silent';
-  };
+  output?: RunnerStructuredOutput;
   phase?: 'progress' | 'final';
   newSessionId?: string;
   error?: string;
@@ -61,13 +69,8 @@ interface RunnerOutput {
 const GROUP_DIR = process.env.EJCLAW_GROUP_DIR || '/workspace/group';
 const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
 const WORK_DIR = process.env.EJCLAW_WORK_DIR || '';
-const IPC_INPUT_DIR = path.join(IPC_DIR, 'input');
-const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
-const IPC_POLL_MS = 500;
-
-/** SSOT: src/agent-protocol.ts — keep in sync */
-const OUTPUT_START_MARKER = '---EJCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
+const IPC_INPUT_DIR = path.join(IPC_DIR, IPC_INPUT_SUBDIR);
+const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, IPC_CLOSE_SENTINEL);
 
 const EFFECTIVE_CWD = WORK_DIR || GROUP_DIR;
 const CODEX_MODEL = process.env.CODEX_MODEL || '';
@@ -78,82 +81,14 @@ let closeRequested = false;
 // ── Helpers ────────────────────────────────────────────────────────
 
 function writeOutput(output: RunnerOutput): void {
-  console.log(OUTPUT_START_MARKER);
-  console.log(JSON.stringify(output));
-  console.log(OUTPUT_END_MARKER);
+  writeProtocolOutput(output);
 }
 
 function normalizeStructuredOutput(result: string | null): {
   result: string | null;
   output?: RunnerOutput['output'];
 } {
-  if (typeof result !== 'string' || result.length === 0) {
-    return { result };
-  }
-
-  const trimmed = result.trim();
-  try {
-    const parsed = JSON.parse(trimmed) as {
-      ejclaw?: { visibility?: unknown; text?: unknown; verdict?: unknown };
-    };
-    const envelope = parsed?.ejclaw;
-    if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
-      if (envelope.visibility === 'silent') {
-        if (envelope.verdict !== undefined && envelope.verdict !== 'silent') {
-          return {
-            result,
-            output: { visibility: 'public', text: result },
-          };
-        }
-        return {
-          result: null,
-          output: {
-            visibility: 'silent',
-            verdict:
-              envelope.verdict === 'silent' ? ('silent' as const) : undefined,
-          },
-        };
-      }
-      if (
-        envelope.visibility === 'public' &&
-        typeof envelope.text === 'string' &&
-        envelope.text.length > 0
-      ) {
-        if (
-          envelope.verdict !== undefined &&
-          envelope.verdict !== 'done' &&
-          envelope.verdict !== 'done_with_concerns' &&
-          envelope.verdict !== 'blocked'
-        ) {
-          return {
-            result,
-            output: { visibility: 'public', text: result },
-          };
-        }
-        return {
-          result: envelope.text,
-          output: {
-            visibility: 'public',
-            text: envelope.text,
-            verdict:
-              typeof envelope.verdict === 'string'
-                ? (envelope.verdict as
-                    | 'done'
-                    | 'done_with_concerns'
-                    | 'blocked')
-                : undefined,
-          },
-        };
-      }
-    }
-  } catch {
-    // fall through to legacy string output
-  }
-
-  return {
-    result,
-    output: { visibility: 'public', text: result },
-  };
+  return normalizeEjclawStructuredOutput(result);
 }
 
 function log(message: string): void {
@@ -226,18 +161,7 @@ function extractImagePaths(text: string): {
   cleanText: string;
   imagePaths: string[];
 } {
-  /** SSOT: src/agent-protocol.ts — keep in sync */
-  const imagePattern = /\[Image:\s*(\/[^\]]+)\]/g;
-  const imagePaths: string[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = imagePattern.exec(text)) !== null) {
-    imagePaths.push(match[1].trim());
-  }
-
-  return {
-    cleanText: text.replace(imagePattern, '').trim(),
-    imagePaths,
-  };
+  return extractImageTagPaths(text);
 }
 
 function parseAppServerInput(text: string): AppServerInputItem[] {
@@ -409,10 +333,10 @@ async function runAppServerSession(
   prompt: string,
 ): Promise<void> {
   const reviewerRuntime =
-    process.env.EJCLAW_REVIEWER_RUNTIME === '1' ||
+    isReviewerRuntimeEnvEnabled(process.env) ||
     isReviewerRuntime(runnerInput.roomRoleContext);
   const readonlyRuntime =
-    reviewerRuntime || process.env.EJCLAW_ARBITER_RUNTIME === '1';
+    reviewerRuntime || isArbiterRuntimeEnvEnabled(process.env);
   const clientEnv = buildReviewerGitGuardEnv(process.env, reviewerRuntime);
   assertReadonlyWorkspaceRepoConnectivity(clientEnv, readonlyRuntime);
   const client = new CodexAppServerClient({

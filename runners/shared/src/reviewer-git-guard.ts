@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 
 import type { RoomRoleContext } from './room-role-context.js';
+import { isUnsafeHostPairedModeEnabled } from './reviewer-runtime-policy.js';
 
 const BLOCKED_GIT_SUBCOMMANDS = new Set([
   'add',
@@ -26,7 +27,7 @@ const BLOCKED_GIT_SUBCOMMANDS = new Set([
 ]);
 
 export function isReviewerRuntime(roomRoleContext?: RoomRoleContext): boolean {
-  if (process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE === '1') {
+  if (isUnsafeHostPairedModeEnabled()) {
     return false;
   }
   return roomRoleContext?.role === 'reviewer';

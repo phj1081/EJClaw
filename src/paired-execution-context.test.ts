@@ -3,6 +3,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+import {
+  CLAUDE_REVIEWER_READONLY_ENV,
+  REVIEWER_RUNTIME_ENV,
+} from 'ejclaw-runners-shared';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./db.js', () => {
@@ -88,9 +92,9 @@ const failoverOwnerContext: RoomRoleContext = {
 
 const ORIGINAL_UNSAFE_HOST_PAIRED_MODE =
   process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
-const ORIGINAL_REVIEWER_RUNTIME = process.env.EJCLAW_REVIEWER_RUNTIME;
+const ORIGINAL_REVIEWER_RUNTIME = process.env[REVIEWER_RUNTIME_ENV];
 const ORIGINAL_CLAUDE_REVIEWER_READONLY =
-  process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
+  process.env[CLAUDE_REVIEWER_READONLY_ENV];
 
 function createCanonicalRepoWithCommit(commitMessage: string): string {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-finalize-'));
@@ -165,8 +169,8 @@ function buildWorkspace(
 describe('paired execution context', () => {
   beforeEach(() => {
     delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
-    delete process.env.EJCLAW_REVIEWER_RUNTIME;
-    delete process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
+    delete process.env[REVIEWER_RUNTIME_ENV];
+    delete process.env[CLAUDE_REVIEWER_READONLY_ENV];
     vi.resetAllMocks();
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
     vi.mocked(db.getPairedTaskById).mockReturnValue(undefined);
@@ -202,15 +206,15 @@ describe('paired execution context', () => {
     }
 
     if (ORIGINAL_REVIEWER_RUNTIME == null) {
-      delete process.env.EJCLAW_REVIEWER_RUNTIME;
+      delete process.env[REVIEWER_RUNTIME_ENV];
     } else {
-      process.env.EJCLAW_REVIEWER_RUNTIME = ORIGINAL_REVIEWER_RUNTIME;
+      process.env[REVIEWER_RUNTIME_ENV] = ORIGINAL_REVIEWER_RUNTIME;
     }
 
     if (ORIGINAL_CLAUDE_REVIEWER_READONLY == null) {
-      delete process.env.EJCLAW_CLAUDE_REVIEWER_READONLY;
+      delete process.env[CLAUDE_REVIEWER_READONLY_ENV];
     } else {
-      process.env.EJCLAW_CLAUDE_REVIEWER_READONLY =
+      process.env[CLAUDE_REVIEWER_READONLY_ENV] =
         ORIGINAL_CLAUDE_REVIEWER_READONLY;
     }
   });
