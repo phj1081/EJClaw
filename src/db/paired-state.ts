@@ -1,21 +1,15 @@
 import { Database } from 'bun:sqlite';
 
+import { SERVICE_ID, normalizeServiceId } from '../config.js';
 import {
-  ARBITER_AGENT_TYPE,
-  CODEX_MAIN_SERVICE_ID,
-  CODEX_REVIEW_SERVICE_ID,
-  SERVICE_ID,
-  normalizeServiceId,
-} from '../config.js';
+  buildPairedTurnIdentity,
+  resolvePairedTurnRole,
+} from '../paired-turn-identity.js';
+import { canonicalizePairedTaskMetadata } from './canonical-role-metadata.js';
 import {
-  resolveStablePairedTaskOwnerAgentType,
-  resolveStableReviewerAgentType,
-} from './legacy-rebuilds.js';
-import { normalizeStoredAgentType } from './room-registration.js';
-import {
-  inferAgentTypeFromServiceShadow,
-  resolveRoleServiceShadow,
-} from '../role-service-shadow.js';
+  ensurePairedTurnQueuedInDatabase,
+  markPairedTurnRunningInDatabase,
+} from './paired-turns.js';
 import {
   AgentType,
   PairedProject,
@@ -66,69 +60,31 @@ function computeExecutionLeaseExpiry(now: string): string {
   ).toISOString();
 }
 
-function resolveExecutionLeaseRole(
-  intentKind: PairedTurnReservationIntentKind,
-): PairedRoomRole {
-  switch (intentKind) {
-    case 'reviewer-turn':
-      return 'reviewer';
-    case 'arbiter-turn':
-      return 'arbiter';
-    case 'owner-turn':
-    case 'owner-follow-up':
-    case 'finalize-owner-turn':
-    default:
-      return 'owner';
-  }
-}
-
 function hydratePairedTaskRow(
   database: Database,
   row: StoredPairedTaskRow,
 ): PairedTask {
-  const persistedOwnerAgentType = normalizeStoredAgentType(
-    row.owner_agent_type ?? null,
-  );
-  const persistedReviewerAgentType = normalizeStoredAgentType(
-    row.reviewer_agent_type ?? null,
-  );
-  const stableOwnerAgentType = resolveStablePairedTaskOwnerAgentType(
-    database,
-    row,
-  );
-  const ownerAgentType =
-    stableOwnerAgentType ??
-    (row.owner_service_id
-      ? inferAgentTypeFromServiceShadow(row.owner_service_id)
-      : undefined);
-  const stableReviewerAgentType = resolveStableReviewerAgentType(
-    stableOwnerAgentType,
-    row.reviewer_agent_type ?? null,
-  );
-  const reviewerAgentType =
-    persistedReviewerAgentType ??
-    stableReviewerAgentType ??
-    (row.reviewer_service_id
-      ? inferAgentTypeFromServiceShadow(row.reviewer_service_id)
-      : null) ??
-    resolveStableReviewerAgentType(ownerAgentType, null);
-  const arbiterAgentType =
-    normalizeStoredAgentType(row.arbiter_agent_type) ??
-    ARBITER_AGENT_TYPE ??
-    null;
+  const {
+    ownerAgentType,
+    reviewerAgentType,
+    arbiterAgentType,
+    ownerServiceId,
+    reviewerServiceId,
+  } = canonicalizePairedTaskMetadata({
+    id: row.id,
+    owner_service_id: row.owner_service_id,
+    reviewer_service_id: row.reviewer_service_id,
+    owner_agent_type: row.owner_agent_type,
+    reviewer_agent_type: row.reviewer_agent_type,
+    arbiter_agent_type: row.arbiter_agent_type,
+  });
 
   return {
     ...row,
-    owner_service_id:
-      row.owner_service_id ??
-      resolveRoleServiceShadow('owner', ownerAgentType) ??
-      CODEX_MAIN_SERVICE_ID,
-    reviewer_service_id:
-      row.reviewer_service_id ??
-      resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
-      CODEX_REVIEW_SERVICE_ID,
-    owner_agent_type: ownerAgentType ?? null,
-    reviewer_agent_type: reviewerAgentType ?? null,
+    owner_service_id: ownerServiceId,
+    reviewer_service_id: reviewerServiceId,
+    owner_agent_type: ownerAgentType,
+    reviewer_agent_type: reviewerAgentType,
     arbiter_agent_type: arbiterAgentType,
   };
 }
@@ -176,26 +132,20 @@ export function createPairedTaskInDatabase(
   database: Database,
   task: PairedTask,
 ): void {
-  const ownerAgentType =
-    normalizeStoredAgentType(task.owner_agent_type) ??
-    inferAgentTypeFromServiceShadow(task.owner_service_id) ??
-    null;
-  const reviewerAgentType =
-    normalizeStoredAgentType(task.reviewer_agent_type) ??
-    inferAgentTypeFromServiceShadow(task.reviewer_service_id) ??
-    resolveStableReviewerAgentType(ownerAgentType ?? undefined, null);
-  const arbiterAgentType =
-    normalizeStoredAgentType(task.arbiter_agent_type) ??
-    ARBITER_AGENT_TYPE ??
-    null;
-  const ownerServiceId =
-    task.owner_service_id ??
-    resolveRoleServiceShadow('owner', ownerAgentType) ??
-    CODEX_MAIN_SERVICE_ID;
-  const reviewerServiceId =
-    task.reviewer_service_id ??
-    resolveRoleServiceShadow('reviewer', reviewerAgentType) ??
-    CODEX_REVIEW_SERVICE_ID;
+  const {
+    ownerAgentType,
+    reviewerAgentType,
+    arbiterAgentType,
+    ownerServiceId,
+    reviewerServiceId,
+  } = canonicalizePairedTaskMetadata({
+    id: task.id,
+    owner_service_id: task.owner_service_id,
+    reviewer_service_id: task.reviewer_service_id,
+    owner_agent_type: task.owner_agent_type,
+    reviewer_agent_type: task.reviewer_agent_type,
+    arbiter_agent_type: task.arbiter_agent_type,
+  });
 
   database
     .prepare(
@@ -426,6 +376,12 @@ export function reservePairedTurnReservationInDatabase(
   },
 ): boolean {
   const now = new Date().toISOString();
+  const turnIdentity = buildPairedTurnIdentity({
+    taskId: args.taskId,
+    taskUpdatedAt: args.taskUpdatedAt,
+    intentKind: args.intentKind,
+    role: resolvePairedTurnRole(args.intentKind),
+  });
   const result = database
     .prepare(
       `
@@ -435,6 +391,10 @@ export function reservePairedTurnReservationInDatabase(
           task_status,
           round_trip_count,
           task_updated_at,
+          turn_id,
+          turn_attempt_id,
+          turn_attempt_no,
+          turn_role,
           intent_kind,
           status,
           scheduled_run_id,
@@ -443,8 +403,32 @@ export function reservePairedTurnReservationInDatabase(
           updated_at,
           consumed_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL, ?, ?, NULL)
-        ON CONFLICT(chat_jid, task_id, task_updated_at, intent_kind) DO NOTHING
+        VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 'pending', ?, NULL, ?, ?, NULL)
+        ON CONFLICT(chat_jid, task_id, task_updated_at, intent_kind) DO UPDATE SET
+          task_status = excluded.task_status,
+          round_trip_count = excluded.round_trip_count,
+          turn_id = excluded.turn_id,
+          turn_attempt_id = NULL,
+          turn_attempt_no = NULL,
+          turn_role = excluded.turn_role,
+          status = 'pending',
+          scheduled_run_id = excluded.scheduled_run_id,
+          consumed_run_id = NULL,
+          updated_at = excluded.updated_at,
+          consumed_at = NULL
+        WHERE paired_turn_reservations.status = 'completed'
+          AND EXISTS (
+            SELECT 1
+              FROM paired_turn_attempts latest_attempt
+             WHERE latest_attempt.turn_id = paired_turn_reservations.turn_id
+               AND latest_attempt.state = 'failed'
+               AND NOT EXISTS (
+                 SELECT 1
+                   FROM paired_turn_attempts newer_attempt
+                  WHERE newer_attempt.turn_id = latest_attempt.turn_id
+                    AND newer_attempt.attempt_no > latest_attempt.attempt_no
+               )
+          )
       `,
     )
     .run(
@@ -453,13 +437,20 @@ export function reservePairedTurnReservationInDatabase(
       args.taskStatus,
       args.roundTripCount,
       args.taskUpdatedAt,
+      turnIdentity.turnId,
+      turnIdentity.role,
       args.intentKind,
       args.runId,
       now,
       now,
     );
 
-  return result.changes > 0;
+  if (result.changes > 0) {
+    ensurePairedTurnQueuedInDatabase(database, turnIdentity);
+    return true;
+  }
+
+  return false;
 }
 
 class PairedTurnReservationClaimError extends Error {}
@@ -479,7 +470,12 @@ export function claimPairedTurnReservationInDatabase(
   const tx = database.transaction(() => {
     const now = new Date().toISOString();
     const expiresAt = computeExecutionLeaseExpiry(now);
-    const leaseRole = resolveExecutionLeaseRole(args.intentKind);
+    const turnIdentity = buildPairedTurnIdentity({
+      taskId: args.taskId,
+      taskUpdatedAt: args.taskUpdatedAt,
+      intentKind: args.intentKind,
+      role: resolvePairedTurnRole(args.intentKind),
+    });
     const existingLease = database
       .prepare(
         `
@@ -501,26 +497,30 @@ export function claimPairedTurnReservationInDatabase(
       const insertedLease = database
         .prepare(
           `
-            INSERT INTO paired_task_execution_leases (
-              task_id,
-              chat_jid,
-              role,
-              intent_kind,
-              claimed_run_id,
-              claimed_service_id,
+        INSERT INTO paired_task_execution_leases (
+          task_id,
+          chat_jid,
+          role,
+          turn_id,
+          turn_attempt_id,
+          turn_attempt_no,
+          intent_kind,
+          claimed_run_id,
+          claimed_service_id,
               task_status,
               task_updated_at,
               claimed_at,
               updated_at,
               expires_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
           args.taskId,
           args.chatJid,
-          leaseRole,
+          turnIdentity.role,
+          turnIdentity.turnId,
           args.intentKind,
           args.runId,
           CURRENT_SERVICE_ID,
@@ -543,6 +543,9 @@ export function claimPairedTurnReservationInDatabase(
             UPDATE paired_task_execution_leases
                SET chat_jid = ?,
                    role = ?,
+                   turn_id = ?,
+                   turn_attempt_id = NULL,
+                   turn_attempt_no = NULL,
                    intent_kind = ?,
                    claimed_run_id = ?,
                    claimed_service_id = ?,
@@ -559,7 +562,8 @@ export function claimPairedTurnReservationInDatabase(
         )
         .run(
           args.chatJid,
-          leaseRole,
+          turnIdentity.role,
+          turnIdentity.turnId,
           args.intentKind,
           args.runId,
           CURRENT_SERVICE_ID,
@@ -579,31 +583,6 @@ export function claimPairedTurnReservationInDatabase(
       }
     }
 
-    database
-      .prepare(
-        `
-          UPDATE paired_turn_reservations
-             SET status = 'completed',
-                 consumed_run_id = ?,
-                 updated_at = ?,
-                 consumed_at = ?
-           WHERE chat_jid = ?
-             AND task_id = ?
-             AND task_updated_at = ?
-             AND intent_kind = ?
-             AND status = 'pending'
-        `,
-      )
-      .run(
-        args.runId,
-        now,
-        now,
-        args.chatJid,
-        args.taskId,
-        args.taskUpdatedAt,
-        args.intentKind,
-      );
-
     const claimedTask = database
       .prepare(
         `
@@ -619,6 +598,67 @@ export function claimPairedTurnReservationInDatabase(
     if (claimedTask.changes === 0) {
       throw new PairedTurnReservationClaimError();
     }
+
+    const currentAttempt = markPairedTurnRunningInDatabase(database, {
+      turnIdentity,
+      executorServiceId: CURRENT_SERVICE_ID,
+      runId: args.runId,
+    });
+    if (!currentAttempt) {
+      throw new Error(
+        `paired_turns(${turnIdentity.turnId}) did not materialize a running attempt row`,
+      );
+    }
+    const turnAttemptNo = currentAttempt.attempt_no;
+    const turnAttemptId = currentAttempt.attempt_id;
+
+    database
+      .prepare(
+        `
+          UPDATE paired_task_execution_leases
+             SET turn_attempt_id = ?,
+                 turn_attempt_no = ?
+           WHERE task_id = ?
+             AND claimed_service_id = ?
+             AND claimed_run_id = ?
+        `,
+      )
+      .run(
+        turnAttemptId,
+        turnAttemptNo,
+        args.taskId,
+        CURRENT_SERVICE_ID,
+        args.runId,
+      );
+
+    database
+      .prepare(
+        `
+          UPDATE paired_turn_reservations
+             SET status = 'completed',
+                 turn_attempt_id = ?,
+                 turn_attempt_no = ?,
+                 consumed_run_id = ?,
+                 updated_at = ?,
+                 consumed_at = ?
+           WHERE chat_jid = ?
+             AND task_id = ?
+             AND task_updated_at = ?
+             AND intent_kind = ?
+             AND status = 'pending'
+        `,
+      )
+      .run(
+        turnAttemptId,
+        turnAttemptNo,
+        args.runId,
+        now,
+        now,
+        args.chatJid,
+        args.taskId,
+        args.taskUpdatedAt,
+        args.intentKind,
+      );
   });
 
   try {

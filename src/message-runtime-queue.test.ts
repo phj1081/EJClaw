@@ -12,6 +12,7 @@ import {
   runPendingPairedTurnIfNeeded,
   runQueuedGroupTurn,
 } from './message-runtime-queue.js';
+import { resetPairedFollowUpScheduleState } from './paired-follow-up-scheduler.js';
 import type { Channel, PairedTask, RegisteredGroup } from './types.js';
 
 function makeGroup(): RegisteredGroup {
@@ -64,6 +65,7 @@ function makeChannel(): Channel {
 describe('message-runtime-queue', () => {
   beforeEach(() => {
     _initTestDatabase();
+    resetPairedFollowUpScheduleState();
   });
 
   it('skips a pending paired turn when another run already claimed the same task revision', async () => {
@@ -221,5 +223,124 @@ describe('message-runtime-queue', () => {
 
     expect(outcome).toBe(true);
     expect(executeTurn).not.toHaveBeenCalled();
+  });
+
+  it('always passes the explicit reviewer role for queued paired reviewer turns', async () => {
+    const task = makeTask();
+    createPairedTask(task);
+    const executeTurn = vi.fn(async () => ({
+      outputStatus: 'success' as const,
+      deliverySucceeded: true,
+      visiblePhase: 'final',
+    }));
+
+    const outcome = await runQueuedGroupTurn({
+      chatJid: task.chat_jid,
+      group: makeGroup(),
+      runId: 'run-reviewer-forced-role',
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
+      timezone: 'UTC',
+      missedMessages: [
+        {
+          id: 'bot-reviewer-1',
+          chat_jid: task.chat_jid,
+          sender: 'reviewer-bot@test',
+          sender_name: 'reviewer',
+          content: 'review pending',
+          timestamp: '2026-03-30T00:00:02.000Z',
+          seq: 45,
+          is_bot_message: true,
+        },
+      ],
+      task,
+      roleToChannel: {
+        owner: null,
+        reviewer: makeChannel(),
+        arbiter: null,
+      },
+      ownerChannel: makeChannel(),
+      lastAgentTimestamps: {},
+      saveState: vi.fn(),
+      executeTurn,
+      getFixedRoleChannelName: () => 'discord-review',
+      labelPairedSenders: (_chatJid, messages) => messages,
+      formatMessages: () => 'formatted prompt',
+    });
+
+    expect(outcome).toBe(true);
+    expect(executeTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryRole: 'reviewer',
+        forcedRole: 'reviewer',
+        pairedTurnIdentity: {
+          turnId: 'task-queue-claim:2026-03-30T00:00:00.000Z:reviewer-turn',
+          taskId: 'task-queue-claim',
+          taskUpdatedAt: '2026-03-30T00:00:00.000Z',
+          intentKind: 'reviewer-turn',
+          role: 'reviewer',
+        },
+      }),
+    );
+  });
+
+  it('always passes the explicit owner role for queued paired owner turns', async () => {
+    const task = makeTask({
+      status: 'active',
+      review_requested_at: null,
+    });
+    createPairedTask(task);
+    const executeTurn = vi.fn(async () => ({
+      outputStatus: 'success' as const,
+      deliverySucceeded: true,
+      visiblePhase: 'final',
+    }));
+
+    const outcome = await runQueuedGroupTurn({
+      chatJid: task.chat_jid,
+      group: makeGroup(),
+      runId: 'run-owner-forced-role',
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
+      timezone: 'UTC',
+      missedMessages: [
+        {
+          id: 'human-owner-1',
+          chat_jid: task.chat_jid,
+          sender: 'user@test',
+          sender_name: 'User',
+          content: '다시 고쳐줘',
+          timestamp: '2026-03-30T00:00:03.000Z',
+          seq: 46,
+          is_bot_message: false,
+        },
+      ],
+      task,
+      roleToChannel: {
+        owner: null,
+        reviewer: makeChannel(),
+        arbiter: null,
+      },
+      ownerChannel: makeChannel(),
+      lastAgentTimestamps: {},
+      saveState: vi.fn(),
+      executeTurn,
+      getFixedRoleChannelName: () => 'discord-review',
+      labelPairedSenders: (_chatJid, messages) => messages,
+      formatMessages: () => 'formatted prompt',
+    });
+
+    expect(outcome).toBe(true);
+    expect(executeTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryRole: 'owner',
+        forcedRole: 'owner',
+        pairedTurnIdentity: {
+          turnId: 'task-queue-claim:2026-03-30T00:00:00.000Z:owner-turn',
+          taskId: 'task-queue-claim',
+          taskUpdatedAt: '2026-03-30T00:00:00.000Z',
+          intentKind: 'owner-turn',
+          role: 'owner',
+        },
+      }),
+    );
   });
 });

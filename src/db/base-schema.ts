@@ -178,6 +178,10 @@ export function applyBaseSchema(database: Database): void {
       task_status TEXT NOT NULL,
       round_trip_count INTEGER NOT NULL DEFAULT 0,
       task_updated_at TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      turn_attempt_id TEXT,
+      turn_attempt_no INTEGER,
+      turn_role TEXT NOT NULL,
       intent_kind TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
       scheduled_run_id TEXT,
@@ -186,7 +190,11 @@ export function applyBaseSchema(database: Database): void {
       updated_at TEXT NOT NULL,
       consumed_at TEXT,
       PRIMARY KEY (chat_jid, task_id, task_updated_at, intent_kind),
+      FOREIGN KEY (turn_id, turn_attempt_no)
+        REFERENCES paired_turn_attempts(turn_id, attempt_no)
+        ON DELETE CASCADE,
       CHECK (status IN ('pending', 'completed')),
+      CHECK (turn_role IN ('owner', 'reviewer', 'arbiter')),
       CHECK (
         intent_kind IN (
           'owner-turn',
@@ -199,10 +207,89 @@ export function applyBaseSchema(database: Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_paired_turn_reservations_task
       ON paired_turn_reservations(task_id, task_updated_at, status);
+    CREATE TABLE IF NOT EXISTS paired_turns (
+      turn_id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      task_updated_at TEXT NOT NULL,
+      role TEXT NOT NULL,
+      intent_kind TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      CHECK (role IN ('owner', 'reviewer', 'arbiter')),
+      CHECK (
+        intent_kind IN (
+          'owner-turn',
+          'reviewer-turn',
+          'arbiter-turn',
+          'owner-follow-up',
+          'finalize-owner-turn'
+        )
+      )
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_turns_task
+      ON paired_turns(task_id, task_updated_at, updated_at);
+    CREATE TABLE IF NOT EXISTS paired_turn_attempts (
+      attempt_id TEXT NOT NULL PRIMARY KEY,
+      parent_attempt_id TEXT,
+      parent_handoff_id INTEGER,
+      continuation_handoff_id INTEGER,
+      turn_id TEXT NOT NULL,
+      attempt_no INTEGER NOT NULL,
+      task_id TEXT NOT NULL,
+      task_updated_at TEXT NOT NULL,
+      role TEXT NOT NULL,
+      intent_kind TEXT NOT NULL,
+      state TEXT NOT NULL,
+      executor_service_id TEXT,
+      executor_agent_type TEXT,
+      active_run_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      last_error TEXT,
+      UNIQUE (turn_id, attempt_no),
+      FOREIGN KEY (parent_attempt_id)
+        REFERENCES paired_turn_attempts(attempt_id)
+        ON DELETE CASCADE,
+      FOREIGN KEY (parent_handoff_id)
+        REFERENCES service_handoffs(id)
+        ON DELETE SET NULL,
+      FOREIGN KEY (continuation_handoff_id)
+        REFERENCES service_handoffs(id)
+        ON DELETE SET NULL,
+      FOREIGN KEY (turn_id) REFERENCES paired_turns(turn_id) ON DELETE CASCADE,
+      CHECK (role IN ('owner', 'reviewer', 'arbiter')),
+      CHECK (
+        intent_kind IN (
+          'owner-turn',
+          'reviewer-turn',
+          'arbiter-turn',
+          'owner-follow-up',
+          'finalize-owner-turn'
+        )
+      ),
+      CHECK (
+        state IN (
+          'running',
+          'delegated',
+          'completed',
+          'failed',
+          'cancelled'
+        )
+      ),
+      CHECK (executor_agent_type IN ('claude-code', 'codex') OR executor_agent_type IS NULL)
+    );
+    CREATE INDEX IF NOT EXISTS idx_paired_turn_attempts_turn
+      ON paired_turn_attempts(turn_id, attempt_no);
+    CREATE INDEX IF NOT EXISTS idx_paired_turn_attempts_task
+      ON paired_turn_attempts(task_id, task_updated_at, attempt_no);
     CREATE TABLE IF NOT EXISTS paired_task_execution_leases (
       task_id TEXT PRIMARY KEY,
       chat_jid TEXT NOT NULL,
       role TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      turn_attempt_id TEXT,
+      turn_attempt_no INTEGER,
       intent_kind TEXT NOT NULL,
       claimed_run_id TEXT NOT NULL,
       claimed_service_id TEXT NOT NULL,
@@ -211,6 +298,9 @@ export function applyBaseSchema(database: Database): void {
       claimed_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       expires_at TEXT NOT NULL,
+      FOREIGN KEY (turn_id, turn_attempt_no)
+        REFERENCES paired_turn_attempts(turn_id, attempt_no)
+        ON DELETE CASCADE,
       CHECK (role IN ('owner', 'reviewer', 'arbiter')),
       CHECK (
         intent_kind IN (
@@ -249,9 +339,21 @@ export function applyBaseSchema(database: Database): void {
       is_main INTEGER DEFAULT 0,
       owner_agent_type TEXT,
       work_dir TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL,
       CHECK (room_mode IN ('single', 'tribunal')),
       CHECK (owner_agent_type IN ('claude-code', 'codex') OR owner_agent_type IS NULL)
+    );
+    CREATE TABLE IF NOT EXISTS room_role_overrides (
+      chat_jid TEXT NOT NULL,
+      role TEXT NOT NULL,
+      agent_type TEXT NOT NULL,
+      agent_config_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (chat_jid, role),
+      CHECK (role IN ('owner', 'reviewer', 'arbiter')),
+      CHECK (agent_type IN ('claude-code', 'codex'))
     );
     CREATE TABLE IF NOT EXISTS service_handoffs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,6 +361,13 @@ export function applyBaseSchema(database: Database): void {
       group_folder TEXT NOT NULL,
       source_service_id TEXT NOT NULL,
       target_service_id TEXT NOT NULL,
+      paired_task_id TEXT,
+      paired_task_updated_at TEXT,
+      turn_id TEXT,
+      turn_attempt_id TEXT,
+      turn_attempt_no INTEGER,
+      turn_intent_kind TEXT,
+      turn_role TEXT,
       source_role TEXT,
       source_agent_type TEXT,
       target_role TEXT,
@@ -273,8 +382,21 @@ export function applyBaseSchema(database: Database): void {
       claimed_at TEXT,
       completed_at TEXT,
       last_error TEXT,
+      FOREIGN KEY (turn_id, turn_attempt_no)
+        REFERENCES paired_turn_attempts(turn_id, attempt_no)
+        ON DELETE CASCADE,
       CHECK (status IN ('pending', 'claimed', 'completed', 'failed')),
       CHECK (intended_role IN ('owner', 'reviewer', 'arbiter') OR intended_role IS NULL),
+      CHECK (
+        turn_intent_kind IN (
+          'owner-turn',
+          'reviewer-turn',
+          'arbiter-turn',
+          'owner-follow-up',
+          'finalize-owner-turn'
+        ) OR turn_intent_kind IS NULL
+      ),
+      CHECK (turn_role IN ('owner', 'reviewer', 'arbiter') OR turn_role IS NULL),
       CHECK (source_role IN ('owner', 'reviewer', 'arbiter') OR source_role IS NULL),
       CHECK (target_role IN ('owner', 'reviewer', 'arbiter') OR target_role IS NULL)
     );

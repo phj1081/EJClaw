@@ -3,34 +3,32 @@ import path from 'path';
 
 import { Database } from 'bun:sqlite';
 
-import { STORE_DIR } from '../src/config.js';
 import { readEnvFile } from '../src/env.js';
+import { STORE_DIR } from '../src/config.js';
+import {
+  type AssignedRoomsSummary,
+  detectRoomRegistrationState,
+} from './room-registration-state.js';
 import type { ServiceDef } from './service-defs.js';
 import type { ServiceCheck } from './verify-services.js';
 
 export type CredentialsStatus = 'configured' | 'missing';
 export type VerifyStatus = 'success' | 'failed';
 
-export interface RegisteredGroupsSummary {
-  registeredGroups: number;
-  groupsByAgent: Record<string, number>;
-}
-
 export interface RoleRoutingRequirementsSummary {
   tribunalRooms: number;
   activeArbiterTasks: number;
 }
 
-export interface VerifySummary extends RegisteredGroupsSummary {
+export interface VerifySummary extends AssignedRoomsSummary {
   status: VerifyStatus;
   servicesSummary: Record<string, string>;
   configuredChannels: string[];
   channelAuth: Record<string, string>;
   tribunalRooms: number;
   activeArbiterTasks: number;
-  // Legacy status fields kept for backward-compatible setup output.
-  codexConfigured: boolean;
-  reviewConfigured: boolean;
+  reviewerChannelConfigured: boolean;
+  arbiterChannelConfigured: boolean;
 }
 
 export function detectCredentials(projectRoot: string): CredentialsStatus {
@@ -70,47 +68,18 @@ export function detectChannelAuth(
   return channelAuth;
 }
 
-export function loadRegisteredGroupsSummary(
-  dbPath = path.join(STORE_DIR, 'messages.db'),
-): RegisteredGroupsSummary {
-  let registeredGroups = 0;
-  const groupsByAgent: Record<string, number> = {};
-
-  if (!fs.existsSync(dbPath)) {
-    return { registeredGroups, groupsByAgent };
-  }
-
-  try {
-    const db = new Database(dbPath, { readonly: true });
-    const row = db
-      .prepare('SELECT COUNT(*) as count FROM registered_groups')
-      .get() as { count: number };
-    registeredGroups = row.count;
-
-    try {
-      const rows = db
-        .prepare(
-          'SELECT agent_type, COUNT(*) as count FROM registered_groups GROUP BY agent_type',
-        )
-        .all() as { agent_type: string; count: number }[];
-      for (const current of rows) {
-        groupsByAgent[current.agent_type || 'unknown'] = current.count;
-      }
-    } catch {
-      // agent_type column might not exist in older schema
-    }
-
-    db.close();
-  } catch {
-    // Table might not exist
-  }
-
-  return { registeredGroups, groupsByAgent };
+export function loadAssignedRoomsSummary(
+  options?: Parameters<typeof detectRoomRegistrationState>[0],
+): AssignedRoomsSummary {
+  return detectRoomRegistrationState(options);
 }
 
 export function loadRoleRoutingRequirementsSummary(
-  dbPath = path.join(STORE_DIR, 'messages.db'),
+  options: {
+    dbPath?: string;
+  } = {},
 ): RoleRoutingRequirementsSummary {
+  const dbPath = options.dbPath ?? path.join(STORE_DIR, 'messages.db');
   let tribunalRooms = 0;
   let activeArbiterTasks = 0;
 
@@ -126,39 +95,14 @@ export function loadRoleRoutingRequirementsSummary(
         .prepare(
           `
             SELECT COUNT(*) as count
-              FROM (
-                SELECT chat_jid AS jid
-                  FROM room_settings
-                 WHERE room_mode = 'tribunal'
-                UNION
-                SELECT jid
-                  FROM registered_groups
-                 GROUP BY jid
-                HAVING COUNT(DISTINCT agent_type) > 1
-              )
+              FROM room_settings
+             WHERE room_mode = 'tribunal'
           `,
         )
         .get() as { count: number };
       tribunalRooms = roomModeRow.count;
     } catch {
-      try {
-        const fallbackRow = db
-          .prepare(
-            `
-              SELECT COUNT(*) as count
-                FROM (
-                  SELECT jid
-                    FROM registered_groups
-                   GROUP BY jid
-                  HAVING COUNT(DISTINCT agent_type) > 1
-                )
-            `,
-          )
-          .get() as { count: number };
-        tribunalRooms = fallbackRow.count;
-      } catch {
-        tribunalRooms = 0;
-      }
+      tribunalRooms = 0;
     }
 
     try {
@@ -189,8 +133,7 @@ export function buildVerifySummary(
   serviceDefs: ServiceDef[],
   credentials: CredentialsStatus,
   channelAuth: Record<string, string>,
-  registeredGroups: number,
-  groupsByAgent: Record<string, number>,
+  roomSummary: AssignedRoomsSummary,
   options: {
     tribunalRooms?: number;
     activeArbiterTasks?: number;
@@ -202,20 +145,24 @@ export function buildVerifySummary(
     (service) => service.status === 'running',
   );
   const hasOwnerCapableChannel = 'discord' in channelAuth;
-  const codexConfigured = 'discord-review' in channelAuth;
-  const reviewConfigured = 'discord-arbiter' in channelAuth;
+  const reviewerChannelConfigured = 'discord-review' in channelAuth;
+  const arbiterChannelConfigured = 'discord-arbiter' in channelAuth;
   const tribunalRooms = options.tribunalRooms ?? 0;
   const activeArbiterTasks = options.activeArbiterTasks ?? 0;
-  const reviewerConfigured = tribunalRooms === 0 || codexConfigured;
-  const arbiterConfigured = activeArbiterTasks === 0 || reviewConfigured;
+  const reviewerRoutingSatisfied =
+    tribunalRooms === 0 || reviewerChannelConfigured;
+  const arbiterRoutingSatisfied =
+    activeArbiterTasks === 0 || arbiterChannelConfigured;
 
   const status =
     allConfiguredServicesRunning &&
     credentials === 'configured' &&
     hasOwnerCapableChannel &&
-    reviewerConfigured &&
-    arbiterConfigured &&
-    registeredGroups > 0
+    reviewerRoutingSatisfied &&
+    arbiterRoutingSatisfied &&
+    roomSummary.assignedRooms > 0 &&
+    !roomSummary.legacyRoomMigrationRequired &&
+    !roomSummary.legacyJsonStateMigrationRequired
       ? 'success'
       : 'failed';
 
@@ -231,9 +178,8 @@ export function buildVerifySummary(
     channelAuth,
     tribunalRooms,
     activeArbiterTasks,
-    registeredGroups,
-    groupsByAgent,
-    codexConfigured,
-    reviewConfigured,
+    ...roomSummary,
+    reviewerChannelConfigured,
+    arbiterChannelConfigured,
   };
 }

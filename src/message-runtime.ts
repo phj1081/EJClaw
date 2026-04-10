@@ -6,6 +6,7 @@ import {
   getMessagesSinceSeq,
   getLastBotFinalMessage,
   getLatestOpenPairedTaskForChat,
+  getPairedTaskById,
 } from './db.js';
 import {
   isSessionCommandSenderAllowed,
@@ -51,6 +52,7 @@ import {
 } from './message-runtime-follow-up.js';
 import { runAgentForGroup } from './message-agent-executor.js';
 import { MessageTurnController } from './message-turn-controller.js';
+import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
 import {
@@ -208,6 +210,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       hasHumanMessage?: boolean;
       forcedRole?: PairedRoomRole;
       forcedAgentType?: AgentType;
+      pairedTurnIdentity?: PairedTurnIdentity;
     },
   ): Promise<'success' | 'error'> =>
     runAgentForGroup(
@@ -229,6 +232,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         hasHumanMessage: options?.hasHumanMessage,
         forcedRole: options?.forcedRole,
         forcedAgentType: options?.forcedAgentType,
+        pairedTurnIdentity: options?.pairedTurnIdentity,
         onOutput,
       },
     );
@@ -245,6 +249,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     hasHumanMessage?: boolean;
     forcedRole?: PairedRoomRole;
     forcedAgentType?: AgentType;
+    pairedTurnIdentity?: PairedTurnIdentity;
   }): Promise<{
     outputStatus: 'success' | 'error';
     deliverySucceeded: boolean;
@@ -346,6 +351,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           hasHumanMessage: args.hasHumanMessage,
           forcedRole: args.forcedRole,
           forcedAgentType: args.forcedAgentType,
+          pairedTurnIdentity: args.pairedTurnIdentity,
         },
       );
 
@@ -421,6 +427,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           executeTurn,
           lastAgentTimestamps: deps.getLastAgentTimestamps(),
           saveState: deps.saveState,
+          getPairedTaskById,
+          enqueueMessageCheck: (chatJid) =>
+            deps.queue.enqueueMessageCheck(chatJid),
         });
       },
     });

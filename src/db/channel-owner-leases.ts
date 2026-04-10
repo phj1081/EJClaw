@@ -1,17 +1,7 @@
 import { Database } from 'bun:sqlite';
 
-import {
-  ARBITER_AGENT_TYPE,
-  CLAUDE_SERVICE_ID,
-  OWNER_AGENT_TYPE,
-} from '../config.js';
-import {
-  inferAgentTypeFromServiceShadow,
-  resolveRoleServiceShadow,
-} from '../role-service-shadow.js';
 import { AgentType } from '../types.js';
-import { resolveStableReviewerAgentType } from './legacy-rebuilds.js';
-import { normalizeStoredAgentType } from './room-registration.js';
+import { canonicalizeChannelOwnerLeaseMetadata } from './canonical-role-metadata.js';
 
 export interface ChannelOwnerLeaseRow {
   chat_jid: string;
@@ -52,55 +42,28 @@ export interface SetChannelOwnerLeaseInput {
 function hydrateChannelOwnerLeaseRow(
   row: StoredChannelOwnerLeaseRow,
 ): ChannelOwnerLeaseRow {
-  const persistedOwnerAgentType = normalizeStoredAgentType(
-    row.owner_agent_type,
-  );
-  const persistedReviewerAgentType = normalizeStoredAgentType(
-    row.reviewer_agent_type,
-  );
-  const persistedArbiterAgentType = normalizeStoredAgentType(
-    row.arbiter_agent_type,
-  );
-  const ownerAgentType =
-    persistedOwnerAgentType ??
-    (row.owner_service_id
-      ? inferAgentTypeFromServiceShadow(row.owner_service_id)
-      : undefined) ??
-    OWNER_AGENT_TYPE;
-  const reviewerAgentType =
-    row.reviewer_agent_type == null && row.reviewer_service_id == null
-      ? null
-      : (persistedReviewerAgentType ??
-        (row.reviewer_service_id
-          ? inferAgentTypeFromServiceShadow(row.reviewer_service_id)
-          : null) ??
-        resolveStableReviewerAgentType(ownerAgentType, null));
-  const arbiterAgentType =
-    row.arbiter_agent_type == null && row.arbiter_service_id == null
-      ? null
-      : (persistedArbiterAgentType ??
-        (row.arbiter_service_id
-          ? inferAgentTypeFromServiceShadow(row.arbiter_service_id)
-          : undefined) ??
-        ARBITER_AGENT_TYPE ??
-        null);
+  const {
+    ownerAgentType,
+    reviewerAgentType,
+    arbiterAgentType,
+    ownerServiceId,
+    reviewerServiceId,
+    arbiterServiceId,
+  } = canonicalizeChannelOwnerLeaseMetadata({
+    chat_jid: row.chat_jid,
+    owner_service_id: row.owner_service_id,
+    reviewer_service_id: row.reviewer_service_id,
+    arbiter_service_id: row.arbiter_service_id,
+    owner_agent_type: row.owner_agent_type,
+    reviewer_agent_type: row.reviewer_agent_type,
+    arbiter_agent_type: row.arbiter_agent_type,
+  });
 
   return {
     chat_jid: row.chat_jid,
-    owner_service_id:
-      row.owner_service_id ??
-      resolveRoleServiceShadow('owner', ownerAgentType) ??
-      CLAUDE_SERVICE_ID,
-    reviewer_service_id:
-      row.reviewer_service_id ??
-      (reviewerAgentType == null
-        ? null
-        : resolveRoleServiceShadow('reviewer', reviewerAgentType)),
-    arbiter_service_id:
-      row.arbiter_service_id ??
-      (arbiterAgentType == null
-        ? null
-        : resolveRoleServiceShadow('arbiter', arbiterAgentType)),
+    owner_service_id: ownerServiceId,
+    reviewer_service_id: reviewerServiceId,
+    arbiter_service_id: arbiterServiceId,
     owner_agent_type: ownerAgentType,
     reviewer_agent_type: reviewerAgentType,
     arbiter_agent_type: arbiterAgentType,
@@ -132,41 +95,22 @@ export function setChannelOwnerLeaseInDatabase(
   database: Database,
   input: SetChannelOwnerLeaseInput,
 ): void {
-  const ownerAgentType =
-    normalizeStoredAgentType(input.owner_agent_type) ??
-    inferAgentTypeFromServiceShadow(input.owner_service_id) ??
-    OWNER_AGENT_TYPE;
-  const reviewerAgentType =
-    input.reviewer_service_id == null && input.reviewer_agent_type == null
-      ? null
-      : (normalizeStoredAgentType(input.reviewer_agent_type) ??
-        inferAgentTypeFromServiceShadow(input.reviewer_service_id ?? null) ??
-        resolveStableReviewerAgentType(ownerAgentType, null));
-  const arbiterAgentType =
-    input.arbiter_service_id == null && input.arbiter_agent_type == null
-      ? null
-      : (normalizeStoredAgentType(input.arbiter_agent_type) ??
-        inferAgentTypeFromServiceShadow(input.arbiter_service_id ?? null) ??
-        ARBITER_AGENT_TYPE ??
-        null);
-  const ownerServiceId =
-    input.owner_service_id ??
-    resolveRoleServiceShadow('owner', ownerAgentType) ??
-    CLAUDE_SERVICE_ID;
-  const reviewerServiceId =
-    input.reviewer_service_id == null && reviewerAgentType == null
-      ? null
-      : (input.reviewer_service_id ??
-        (reviewerAgentType == null
-          ? null
-          : resolveRoleServiceShadow('reviewer', reviewerAgentType)));
-  const arbiterServiceId =
-    input.arbiter_service_id == null && arbiterAgentType == null
-      ? null
-      : (input.arbiter_service_id ??
-        (arbiterAgentType == null
-          ? null
-          : resolveRoleServiceShadow('arbiter', arbiterAgentType)));
+  const {
+    ownerAgentType,
+    reviewerAgentType,
+    arbiterAgentType,
+    ownerServiceId,
+    reviewerServiceId,
+    arbiterServiceId,
+  } = canonicalizeChannelOwnerLeaseMetadata({
+    chat_jid: input.chat_jid,
+    owner_service_id: input.owner_service_id,
+    reviewer_service_id: input.reviewer_service_id,
+    arbiter_service_id: input.arbiter_service_id,
+    owner_agent_type: input.owner_agent_type,
+    reviewer_agent_type: input.reviewer_agent_type,
+    arbiter_agent_type: input.arbiter_agent_type,
+  });
 
   database
     .prepare(

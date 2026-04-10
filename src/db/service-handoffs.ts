@@ -5,14 +5,21 @@ import {
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
 } from '../config.js';
-import { resolveRoleServiceShadow } from '../role-service-shadow.js';
+import {
+  buildPairedTurnIdentity,
+  type PairedTurnIdentity,
+} from '../paired-turn-identity.js';
 import { AgentType, PairedRoomRole } from '../types.js';
+import { setPairedTurnAttemptContinuationHandoffIdInDatabase } from './paired-turn-attempts.js';
+import {
+  failPairedTurnInDatabase,
+  markPairedTurnDelegatedInDatabase,
+} from './paired-turns.js';
 import {
   getLatestMessageSeqAtOrBeforeFromDatabase,
   normalizeSeqCursor,
 } from './messages.js';
-import { resolveStableRoomRoleAgentType } from './legacy-rebuilds.js';
-import { normalizeStoredAgentType } from './room-registration.js';
+import { canonicalizeServiceHandoffMetadata } from './canonical-role-metadata.js';
 import {
   getRouterStateFromDatabase,
   setRouterStateInDatabase,
@@ -22,6 +29,13 @@ export interface ServiceHandoff {
   id: number;
   chat_jid: string;
   group_folder: string;
+  paired_task_id?: string | null;
+  paired_task_updated_at?: string | null;
+  turn_id?: string | null;
+  turn_attempt_id?: string | null;
+  turn_attempt_no?: number | null;
+  turn_intent_kind?: PairedTurnIdentity['intentKind'] | null;
+  turn_role?: PairedRoomRole | null;
   source_service_id: string;
   target_service_id: string;
   source_role: PairedRoomRole | null;
@@ -43,6 +57,12 @@ export interface ServiceHandoff {
 export interface CreateServiceHandoffInput {
   chat_jid: string;
   group_folder: string;
+  paired_task_id?: string | null;
+  paired_task_updated_at?: string | null;
+  turn_id?: string | null;
+  turn_attempt_id?: string | null;
+  turn_intent_kind?: PairedTurnIdentity['intentKind'] | null;
+  turn_role?: PairedRoomRole | null;
   source_service_id?: string;
   target_service_id?: string;
   source_role?: PairedRoomRole | null;
@@ -76,46 +96,72 @@ interface StoredServiceHandoffRow extends Omit<
   target_agent_type: string;
 }
 
+function hydrateStoredTurnIdentity(
+  row: Pick<
+    StoredServiceHandoffRow,
+    | 'paired_task_id'
+    | 'paired_task_updated_at'
+    | 'turn_id'
+    | 'turn_intent_kind'
+    | 'turn_role'
+  >,
+): PairedTurnIdentity | null {
+  if (
+    !row.paired_task_id ||
+    !row.paired_task_updated_at ||
+    !row.turn_intent_kind
+  ) {
+    return null;
+  }
+
+  return buildPairedTurnIdentity({
+    taskId: row.paired_task_id,
+    taskUpdatedAt: row.paired_task_updated_at,
+    intentKind: row.turn_intent_kind,
+    role: row.turn_role ?? undefined,
+    turnId: row.turn_id ?? undefined,
+  });
+}
+
 function hydrateServiceHandoffRow(
-  database: Database,
   row: StoredServiceHandoffRow,
 ): ServiceHandoff {
-  const sourceAgentType =
-    normalizeStoredAgentType(row.source_agent_type) ??
-    (row.source_role
-      ? resolveStableRoomRoleAgentType(database, {
-          chatJid: row.chat_jid,
-          groupFolder: row.group_folder,
-          role: row.source_role,
-        })
-      : null);
-  const targetAgentType =
-    normalizeStoredAgentType(row.target_agent_type) ??
-    (row.target_role
-      ? resolveStableRoomRoleAgentType(database, {
-          chatJid: row.chat_jid,
-          groupFolder: row.group_folder,
-          role: row.target_role,
-        })
-      : null) ??
-    'claude-code';
+  const {
+    sourceRole,
+    targetRole,
+    sourceAgentType,
+    targetAgentType,
+    sourceServiceId,
+    targetServiceId,
+  } = canonicalizeServiceHandoffMetadata({
+    id: row.id,
+    chat_jid: row.chat_jid,
+    source_service_id: row.source_service_id,
+    target_service_id: row.target_service_id,
+    source_role: row.source_role,
+    target_role: row.target_role,
+    intended_role: row.intended_role,
+    source_agent_type: row.source_agent_type,
+    target_agent_type: row.target_agent_type,
+  });
+  const turnIdentity = hydrateStoredTurnIdentity(row);
 
   return {
     ...row,
+    paired_task_id: turnIdentity?.taskId ?? row.paired_task_id ?? null,
+    paired_task_updated_at:
+      turnIdentity?.taskUpdatedAt ?? row.paired_task_updated_at ?? null,
+    turn_id: turnIdentity?.turnId ?? row.turn_id ?? null,
+    turn_attempt_id: row.turn_attempt_id ?? null,
+    turn_attempt_no: row.turn_attempt_no ?? null,
+    turn_intent_kind: turnIdentity?.intentKind ?? row.turn_intent_kind ?? null,
+    turn_role: turnIdentity?.role ?? row.turn_role ?? null,
+    source_role: sourceRole,
+    target_role: targetRole,
     source_agent_type: sourceAgentType ?? null,
     target_agent_type: targetAgentType,
-    source_service_id:
-      row.source_service_id ??
-      (row.source_role != null
-        ? (resolveRoleServiceShadow(row.source_role, sourceAgentType) ??
-          SERVICE_SESSION_SCOPE)
-        : SERVICE_SESSION_SCOPE),
-    target_service_id:
-      row.target_service_id ??
-      (row.target_role != null
-        ? (resolveRoleServiceShadow(row.target_role, targetAgentType) ??
-          SERVICE_SESSION_SCOPE)
-        : SERVICE_SESSION_SCOPE),
+    source_service_id: sourceServiceId,
+    target_service_id: targetServiceId,
   };
 }
 
@@ -184,35 +230,66 @@ export function createServiceHandoffInDatabase(
   database: Database,
   input: CreateServiceHandoffInput,
 ): ServiceHandoff {
-  const sourceRole = input.source_role ?? input.intended_role ?? null;
-  const targetRole = input.target_role ?? input.intended_role ?? null;
-  const sourceAgentType =
-    normalizeStoredAgentType(input.source_agent_type) ??
-    (sourceRole
-      ? resolveStableRoomRoleAgentType(database, {
-          chatJid: input.chat_jid,
-          groupFolder: input.group_folder,
-          role: sourceRole,
+  const turnIdentity =
+    input.paired_task_id &&
+    input.paired_task_updated_at &&
+    input.turn_intent_kind
+      ? buildPairedTurnIdentity({
+          taskId: input.paired_task_id,
+          taskUpdatedAt: input.paired_task_updated_at,
+          intentKind: input.turn_intent_kind,
+          role: input.turn_role ?? undefined,
+          turnId: input.turn_id ?? undefined,
         })
-      : null);
-  const sourceServiceId =
-    input.source_service_id ??
-    (sourceRole != null
-      ? (resolveRoleServiceShadow(sourceRole, sourceAgentType) ?? null)
-      : null) ??
-    SERVICE_SESSION_SCOPE;
-  const targetServiceId =
-    input.target_service_id ??
-    (targetRole != null
-      ? (resolveRoleServiceShadow(targetRole, input.target_agent_type) ?? null)
-      : null) ??
-    SERVICE_SESSION_SCOPE;
+      : null;
+  const {
+    sourceRole,
+    targetRole,
+    sourceAgentType,
+    targetAgentType,
+    sourceServiceId,
+    targetServiceId,
+  } = canonicalizeServiceHandoffMetadata({
+    id: 'new',
+    chat_jid: input.chat_jid,
+    source_service_id: input.source_service_id,
+    target_service_id: input.target_service_id,
+    source_role: input.source_role,
+    target_role: input.target_role,
+    intended_role: input.intended_role,
+    source_agent_type: input.source_agent_type,
+    target_agent_type: input.target_agent_type,
+  });
+
+  const currentAttempt = turnIdentity
+    ? markPairedTurnDelegatedInDatabase(database, {
+        turnIdentity,
+        executorServiceId: targetServiceId,
+        executorAgentType: targetAgentType,
+      })
+    : undefined;
+  if (turnIdentity) {
+    if (!currentAttempt) {
+      throw new Error(
+        `paired_turns(${turnIdentity.turnId}) did not materialize a delegated attempt row`,
+      );
+    }
+  }
+  const turnAttemptNo = currentAttempt?.attempt_no ?? null;
+  const turnAttemptId = currentAttempt?.attempt_id ?? null;
 
   database
     .prepare(
       `INSERT INTO service_handoffs (
           chat_jid,
           group_folder,
+          paired_task_id,
+          paired_task_updated_at,
+          turn_id,
+          turn_attempt_id,
+          turn_attempt_no,
+          turn_intent_kind,
+          turn_role,
           source_service_id,
           target_service_id,
           source_role,
@@ -224,17 +301,24 @@ export function createServiceHandoffInDatabase(
           end_seq,
           reason,
           intended_role
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.chat_jid,
       input.group_folder,
+      turnIdentity?.taskId ?? null,
+      turnIdentity?.taskUpdatedAt ?? null,
+      turnIdentity?.turnId ?? null,
+      turnAttemptId,
+      turnAttemptNo,
+      turnIdentity?.intentKind ?? null,
+      turnIdentity?.role ?? null,
       sourceServiceId,
       targetServiceId,
       sourceRole,
       sourceAgentType ?? null,
       targetRole,
-      input.target_agent_type,
+      targetAgentType,
       input.prompt,
       input.start_seq ?? null,
       input.end_seq ?? null,
@@ -245,8 +329,14 @@ export function createServiceHandoffInDatabase(
   const lastId = (
     database.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
   ).id;
+  if (turnIdentity && currentAttempt) {
+    setPairedTurnAttemptContinuationHandoffIdInDatabase(database, {
+      turnId: turnIdentity.turnId,
+      attemptNo: currentAttempt.attempt_no,
+      handoffId: lastId,
+    });
+  }
   return hydrateServiceHandoffRow(
-    database,
     database
       .prepare('SELECT * FROM service_handoffs WHERE id = ?')
       .get(lastId) as StoredServiceHandoffRow,
@@ -258,7 +348,7 @@ export function getPendingServiceHandoffsFromDatabase(
   targetServiceId: string = SERVICE_SESSION_SCOPE,
 ): ServiceHandoff[] {
   return getPendingServiceHandoffRows(database)
-    .map((row) => hydrateServiceHandoffRow(database, row))
+    .map((row) => hydrateServiceHandoffRow(row))
     .filter(
       (handoff) =>
         normalizeServiceId(handoff.target_service_id) ===
@@ -270,7 +360,7 @@ export function getAllPendingServiceHandoffsFromDatabase(
   database: Database,
 ): ServiceHandoff[] {
   return getPendingServiceHandoffRows(database).map((row) =>
-    hydrateServiceHandoffRow(database, row),
+    hydrateServiceHandoffRow(row),
   );
 }
 
@@ -312,15 +402,36 @@ export function failServiceHandoffInDatabase(
   id: number,
   error: string,
 ): void {
-  database
-    .prepare(
-      `UPDATE service_handoffs
-       SET status = 'failed',
-           completed_at = datetime('now'),
-           last_error = ?
-       WHERE id = ?`,
-    )
-    .run(error, id);
+  database.transaction(() => {
+    const row = database
+      .prepare('SELECT * FROM service_handoffs WHERE id = ?')
+      .get(id) as StoredServiceHandoffRow | undefined;
+    let turnIdentity: PairedTurnIdentity | null = null;
+    if (row) {
+      try {
+        turnIdentity = hydrateStoredTurnIdentity(row);
+      } catch {
+        turnIdentity = null;
+      }
+    }
+
+    database
+      .prepare(
+        `UPDATE service_handoffs
+         SET status = 'failed',
+             completed_at = datetime('now'),
+             last_error = ?
+         WHERE id = ?`,
+      )
+      .run(error, id);
+
+    if (turnIdentity) {
+      failPairedTurnInDatabase(database, {
+        turnIdentity,
+        error,
+      });
+    }
+  })();
 }
 
 export function completeServiceHandoffAndAdvanceTargetCursorInDatabase(

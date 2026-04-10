@@ -16,7 +16,12 @@ import {
   _initTestDatabase,
   _initTestDatabaseFromFile,
   createPairedTask,
+  createServiceHandoff,
+  failServiceHandoff,
   getPairedTaskById,
+  getPairedTurnAttempts,
+  getPairedTurnById,
+  releasePairedTaskExecutionLease,
 } from './db.js';
 import {
   buildPairedFollowUpKey,
@@ -242,6 +247,140 @@ describe('paired follow-up scheduler', () => {
     expect(second).toBe(false);
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
+
+  it('persists the same logical turn id across reservation and execution lease rows', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-paired-turn-id-'),
+    );
+    const dbPath = path.join(tempDir, 'paired-state.db');
+
+    try {
+      const emptyDb = new Database(dbPath);
+      emptyDb.close();
+      _initTestDatabaseFromFile(dbPath);
+      resetPairedFollowUpScheduleState();
+
+      const task = {
+        id: 'task-turn-id-persistence',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-main',
+        owner_agent_type: 'claude-code',
+        reviewer_agent_type: 'codex',
+        arbiter_agent_type: null,
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        review_requested_at: null,
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        status: 'review_ready',
+        round_trip_count: 1,
+        updated_at: '2026-04-10T00:00:00.000Z',
+      } as const;
+      createPairedTask(task as any);
+
+      expect(
+        schedulePairedFollowUpOnce({
+          chatJid: task.chat_jid,
+          runId: 'run-turn-id-reservation',
+          task,
+          intentKind: 'reviewer-turn',
+          enqueue: vi.fn(),
+        }),
+      ).toBe(true);
+      expect(
+        claimPairedTurnExecution({
+          chatJid: task.chat_jid,
+          runId: 'run-turn-id-claim',
+          task,
+          intentKind: 'reviewer-turn',
+        }),
+      ).toBe(true);
+
+      const rawDatabase = new Database(dbPath, { readonly: true });
+      const reservationRow = rawDatabase
+        .prepare(
+          `
+            SELECT turn_id, turn_attempt_no, turn_role
+              FROM paired_turn_reservations
+             WHERE task_id = ?
+               AND intent_kind = ?
+          `,
+        )
+        .get(task.id, 'reviewer-turn') as
+        | { turn_id: string; turn_attempt_no: number | null; turn_role: string }
+        | undefined;
+      const leaseRow = rawDatabase
+        .prepare(
+          `
+            SELECT turn_id, turn_attempt_no, role
+              FROM paired_task_execution_leases
+             WHERE task_id = ?
+          `,
+        )
+        .get(task.id) as
+        | { turn_id: string; turn_attempt_no: number | null; role: string }
+        | undefined;
+      const turnRow = rawDatabase
+        .prepare(
+          `
+            SELECT turn_id, task_id, task_updated_at, role, intent_kind
+              FROM paired_turns
+             WHERE task_id = ?
+          `,
+        )
+        .get(task.id) as
+        | {
+            turn_id: string;
+            task_id: string;
+            task_updated_at: string;
+            role: string;
+            intent_kind: string;
+          }
+        | undefined;
+      rawDatabase.close();
+
+      expect(reservationRow).toEqual({
+        turn_id:
+          'task-turn-id-persistence:2026-04-10T00:00:00.000Z:reviewer-turn',
+        turn_attempt_no: 1,
+        turn_role: 'reviewer',
+      });
+      expect(leaseRow).toEqual({
+        turn_id:
+          'task-turn-id-persistence:2026-04-10T00:00:00.000Z:reviewer-turn',
+        turn_attempt_no: 1,
+        role: 'reviewer',
+      });
+      expect(turnRow).toEqual({
+        turn_id:
+          'task-turn-id-persistence:2026-04-10T00:00:00.000Z:reviewer-turn',
+        task_id: task.id,
+        task_updated_at: task.updated_at,
+        role: 'reviewer',
+        intent_kind: 'reviewer-turn',
+      });
+      expect(
+        getPairedTurnById(
+          'task-turn-id-persistence:2026-04-10T00:00:00.000Z:reviewer-turn',
+        ),
+      ).toMatchObject({
+        turn_id:
+          'task-turn-id-persistence:2026-04-10T00:00:00.000Z:reviewer-turn',
+        state: 'running',
+        executor_service_id: CURRENT_SERVICE_ID,
+        attempt_no: 1,
+      });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+      resetPairedFollowUpScheduleState();
+    }
+  });
   it('keeps different round trips schedulable', () => {
     const enqueue = vi.fn();
 
@@ -372,6 +511,137 @@ describe('paired follow-up scheduler', () => {
       }),
     ).toBe(false);
     expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('requeues the same reviewer logical turn after a failed fallback handoff', () => {
+    const firstEnqueue = vi.fn();
+    const secondEnqueue = vi.fn();
+    const currentReviewerServiceId =
+      CURRENT_AGENT_TYPE === 'codex'
+        ? CODEX_REVIEW_SERVICE_ID
+        : CLAUDE_SERVICE_ID;
+    const otherReviewerServiceId =
+      OTHER_AGENT_TYPE === 'codex'
+        ? CODEX_REVIEW_SERVICE_ID
+        : CLAUDE_SERVICE_ID;
+    const task = {
+      id: 'task-reviewer-handoff-retry',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: CURRENT_SERVICE_ID,
+      reviewer_service_id: OTHER_SERVICE_ID,
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-10T00:00:00.000Z',
+      status: 'review_ready',
+      round_trip_count: 1,
+      updated_at: '2026-04-10T00:00:00.000Z',
+    } as const;
+    createPairedTask(task as any);
+
+    expect(
+      schedulePairedFollowUpOnce({
+        chatJid: task.chat_jid,
+        runId: 'run-reviewer-schedule-1',
+        task,
+        intentKind: 'reviewer-turn',
+        enqueue: firstEnqueue,
+      }),
+    ).toBe(true);
+    expect(
+      claimPairedTurnExecution({
+        chatJid: task.chat_jid,
+        runId: 'run-reviewer-claim-1',
+        task,
+        intentKind: 'reviewer-turn',
+      }),
+    ).toBe(true);
+
+    const handoff = createServiceHandoff({
+      chat_jid: task.chat_jid,
+      group_folder: task.group_folder,
+      paired_task_id: task.id,
+      paired_task_updated_at: task.updated_at,
+      turn_intent_kind: 'reviewer-turn',
+      turn_role: 'reviewer',
+      source_service_id: currentReviewerServiceId,
+      target_service_id: otherReviewerServiceId,
+      source_role: 'reviewer',
+      target_role: 'reviewer',
+      source_agent_type: CURRENT_AGENT_TYPE,
+      target_agent_type: OTHER_AGENT_TYPE,
+      prompt: 'review retry after fallback',
+      intended_role: 'reviewer',
+    });
+
+    failServiceHandoff(handoff.id, 'fallback handoff failed');
+    releasePairedTaskExecutionLease({
+      taskId: task.id,
+      runId: 'run-reviewer-claim-1',
+    });
+
+    expect(
+      getPairedTurnById(
+        'task-reviewer-handoff-retry:2026-04-10T00:00:00.000Z:reviewer-turn',
+      ),
+    ).toMatchObject({
+      state: 'failed',
+      attempt_no: 1,
+      last_error: 'fallback handoff failed',
+    });
+
+    expect(
+      schedulePairedFollowUpOnce({
+        chatJid: task.chat_jid,
+        runId: 'run-reviewer-schedule-2',
+        task,
+        intentKind: 'reviewer-turn',
+        enqueue: secondEnqueue,
+      }),
+    ).toBe(true);
+    expect(secondEnqueue).toHaveBeenCalledTimes(1);
+    expect(
+      getPairedTurnById(
+        'task-reviewer-handoff-retry:2026-04-10T00:00:00.000Z:reviewer-turn',
+      ),
+    ).toMatchObject({
+      state: 'failed',
+      attempt_no: 1,
+      last_error: 'fallback handoff failed',
+    });
+    expect(
+      getPairedTurnAttempts(
+        'task-reviewer-handoff-retry:2026-04-10T00:00:00.000Z:reviewer-turn',
+      ),
+    ).toMatchObject([
+      {
+        attempt_no: 1,
+        state: 'failed',
+        last_error: 'fallback handoff failed',
+      },
+    ]);
+
+    expect(
+      claimPairedTurnExecution({
+        chatJid: task.chat_jid,
+        runId: 'run-reviewer-claim-2',
+        task,
+        intentKind: 'reviewer-turn',
+      }),
+    ).toBe(true);
+    expect(
+      getPairedTurnById(
+        'task-reviewer-handoff-retry:2026-04-10T00:00:00.000Z:reviewer-turn',
+      ),
+    ).toMatchObject({
+      state: 'running',
+      attempt_no: 2,
+    });
   });
 
   it('blocks a fresh-refetched task revision from reclaiming the same turn while the execution lease is active', () => {
@@ -553,6 +823,91 @@ describe('paired follow-up scheduler', () => {
           intentKind: 'reviewer-turn',
         }),
       ).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      _initTestDatabase();
+      resetPairedFollowUpScheduleState();
+    }
+  });
+
+  it('creates attempt 2 after restart reclaim without overwriting attempt 1', () => {
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-paired-attempt-restart-'),
+    );
+    const dbPath = path.join(tempDir, 'paired-state.db');
+
+    try {
+      _initTestDatabaseFromFile(dbPath);
+      resetPairedFollowUpScheduleState();
+
+      const task = {
+        id: 'task-restart-attempt-history',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-main',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        review_requested_at: null,
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-30T00:00:00.000Z',
+        status: 'review_ready',
+        round_trip_count: 1,
+        updated_at: '2026-03-30T00:00:00.000Z',
+      } as const;
+      createPairedTask(task as any);
+
+      expect(
+        claimPairedTurnExecution({
+          chatJid: task.chat_jid,
+          runId: 'run-restart-attempt-1',
+          task,
+          intentKind: 'reviewer-turn',
+        }),
+      ).toBe(true);
+
+      _initTestDatabaseFromFile(dbPath);
+      const recoveredTask = getPairedTaskById(task.id);
+      expect(recoveredTask).toBeDefined();
+
+      expect(
+        claimPairedTurnExecution({
+          chatJid: task.chat_jid,
+          runId: 'run-restart-attempt-2',
+          task: recoveredTask ?? task,
+          intentKind: 'reviewer-turn',
+        }),
+      ).toBe(true);
+
+      expect(
+        getPairedTurnById(
+          'task-restart-attempt-history:2026-03-30T00:00:00.000Z:reviewer-turn',
+        ),
+      ).toMatchObject({
+        state: 'running',
+        attempt_no: 2,
+      });
+      expect(
+        getPairedTurnAttempts(
+          'task-restart-attempt-history:2026-03-30T00:00:00.000Z:reviewer-turn',
+        ),
+      ).toMatchObject([
+        {
+          attempt_no: 1,
+          state: 'cancelled',
+          executor_service_id: CURRENT_SERVICE_ID,
+          executor_agent_type: CURRENT_AGENT_TYPE,
+        },
+        {
+          attempt_no: 2,
+          state: 'running',
+          executor_service_id: CURRENT_SERVICE_ID,
+          executor_agent_type: CURRENT_AGENT_TYPE,
+        },
+      ]);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
       _initTestDatabase();

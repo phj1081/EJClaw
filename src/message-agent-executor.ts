@@ -22,6 +22,7 @@ import {
   createServiceHandoff,
   getAllTasks,
   getLatestOpenPairedTaskForChat,
+  markPairedTurnRunning,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { createScopedLogger } from './logger.js';
@@ -29,6 +30,10 @@ import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
 import { preparePairedExecutionContext } from './paired-execution-context.js';
 import { resolveCodexFallbackHandoff } from './paired-turn-fallback.js';
 import { createPairedExecutionLifecycle } from './message-agent-executor-paired.js';
+import {
+  resolveRuntimePairedTurnIdentity,
+  type PairedTurnIdentity,
+} from './paired-turn-identity.js';
 import { resolveExecutionTarget } from './message-runtime-rules.js';
 import { buildRoomRoleContext } from './room-role-context.js';
 import { type AgentTriggerReason } from './agent-error-detection.js';
@@ -82,6 +87,7 @@ export async function runAgentForGroup(
     hasHumanMessage?: boolean;
     forcedRole?: PairedRoomRole;
     forcedAgentType?: AgentType;
+    pairedTurnIdentity?: PairedTurnIdentity;
     onOutput?: (output: AgentOutput) => Promise<void>;
   },
 ): Promise<'success' | 'error'> {
@@ -189,6 +195,75 @@ export async function runAgentForGroup(
     roomRoleContext,
     hasHumanMessage: args.hasHumanMessage,
   });
+  const runtimePairedTurnIdentity =
+    args.pairedTurnIdentity ??
+    (pairedExecutionContext
+      ? resolveRuntimePairedTurnIdentity({
+          taskId: pairedExecutionContext.task.id,
+          taskUpdatedAt: pairedExecutionContext.task.updated_at,
+          role: activeRole,
+          taskStatus: pairedExecutionContext.task.status,
+          hasHumanMessage: args.hasHumanMessage,
+        })
+      : pairedTask
+        ? resolveRuntimePairedTurnIdentity({
+            taskId: pairedTask.id,
+            taskUpdatedAt: pairedTask.updated_at,
+            role: activeRole,
+            taskStatus: pairedTask.status,
+            hasHumanMessage: args.hasHumanMessage,
+          })
+        : undefined);
+  if (runtimePairedTurnIdentity) {
+    if (runtimePairedTurnIdentity.role !== activeRole) {
+      throw new Error(
+        `Paired turn ${runtimePairedTurnIdentity.turnId} cannot execute as ${activeRole}`,
+      );
+    }
+    if (
+      pairedExecutionContext &&
+      runtimePairedTurnIdentity.taskId !== pairedExecutionContext.task.id
+    ) {
+      throw new Error(
+        `Paired turn ${runtimePairedTurnIdentity.turnId} task_id does not match the prepared execution context`,
+      );
+    }
+    if (
+      pairedExecutionContext &&
+      runtimePairedTurnIdentity.taskUpdatedAt !==
+        pairedExecutionContext.task.updated_at
+    ) {
+      throw new Error(
+        `Paired turn ${runtimePairedTurnIdentity.turnId} task_updated_at does not match the prepared execution context`,
+      );
+    }
+    if (
+      !pairedExecutionContext &&
+      pairedTask &&
+      runtimePairedTurnIdentity.taskId !== pairedTask.id
+    ) {
+      throw new Error(
+        `Paired turn ${runtimePairedTurnIdentity.turnId} task_id does not match the latest paired task`,
+      );
+    }
+    if (
+      !pairedExecutionContext &&
+      pairedTask &&
+      runtimePairedTurnIdentity.taskUpdatedAt !== pairedTask.updated_at
+    ) {
+      throw new Error(
+        `Paired turn ${runtimePairedTurnIdentity.turnId} task_updated_at does not match the latest paired task`,
+      );
+    }
+  }
+  if (runtimePairedTurnIdentity) {
+    markPairedTurnRunning({
+      turnIdentity: runtimePairedTurnIdentity,
+      executorServiceId: effectiveServiceId,
+      executorAgentType: effectiveAgentType,
+      runId,
+    });
+  }
   // Forced fallbacks run under a different agent runtime, so keep the
   // fallback session on its default model/effort unless explicitly configured
   // for that runtime elsewhere.
@@ -203,6 +278,16 @@ export async function runAgentForGroup(
       pairedExecutionContext.envOverrides[effortKey] = roleConfig.effort;
     }
   }
+  if (pairedExecutionContext && runtimePairedTurnIdentity) {
+    pairedExecutionContext.envOverrides.EJCLAW_PAIRED_TURN_ID =
+      runtimePairedTurnIdentity.turnId;
+    pairedExecutionContext.envOverrides.EJCLAW_PAIRED_TURN_ROLE =
+      runtimePairedTurnIdentity.role;
+    pairedExecutionContext.envOverrides.EJCLAW_PAIRED_TURN_INTENT =
+      runtimePairedTurnIdentity.intentKind;
+    pairedExecutionContext.envOverrides.EJCLAW_PAIRED_TASK_UPDATED_AT =
+      runtimePairedTurnIdentity.taskUpdatedAt;
+  }
 
   const log = createScopedLogger({
     chatJid,
@@ -213,6 +298,7 @@ export async function runAgentForGroup(
     messageSeqEnd: endSeq ?? undefined,
     role: activeRole,
     serviceId: effectiveServiceId,
+    turnId: runtimePairedTurnIdentity?.turnId,
   });
   log.info(
     {
@@ -306,6 +392,7 @@ export async function runAgentForGroup(
   const effectivePrompt = moaEnrichedPrompt;
   const pairedExecutionLifecycle = createPairedExecutionLifecycle({
     pairedExecutionContext,
+    pairedTurnIdentity: runtimePairedTurnIdentity,
     completedRole: roomRoleContext?.role ?? 'owner',
     chatJid,
     runId,
@@ -349,8 +436,14 @@ export async function runAgentForGroup(
     createServiceHandoff({
       chat_jid: chatJid,
       group_folder: group.folder,
+      paired_task_id: runtimePairedTurnIdentity?.taskId,
+      paired_task_updated_at: runtimePairedTurnIdentity?.taskUpdatedAt,
+      turn_id: runtimePairedTurnIdentity?.turnId,
+      turn_intent_kind: runtimePairedTurnIdentity?.intentKind,
+      turn_role: runtimePairedTurnIdentity?.role,
       ...handoffResolution.plan.handoff,
     });
+    pairedExecutionLifecycle.markDelegated();
     log.warn({ reason }, handoffResolution.plan.logMessage);
     return true;
   };

@@ -60,7 +60,9 @@ vi.mock('./db.js', () => {
     [args.chatJid, args.taskId, args.taskUpdatedAt, args.intentKind].join(':');
 
   return {
+    completePairedTurn: vi.fn(),
     createServiceHandoff: vi.fn(),
+    failPairedTurn: vi.fn(),
     getAllTasks: vi.fn(() => []),
     getLastHumanMessageSender: vi.fn(() => null),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
@@ -68,7 +70,9 @@ vi.mock('./db.js', () => {
     getPairedTaskById: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
     insertPairedTurnOutput: vi.fn(),
+    markPairedTurnRunning: vi.fn(),
     refreshPairedTaskExecutionLease: vi.fn(() => true),
+    releasePairedTaskExecutionLease: vi.fn(),
     reservePairedTurnReservation: vi.fn((args) => {
       const key = buildReservationKey(args);
       if (pairedTurnReservations.has(key)) {
@@ -680,8 +684,167 @@ describe('runAgentForGroup room memory', () => {
       expect.any(Object),
       expect.any(Function),
       expect.any(Function),
-      {},
+      expect.objectContaining({
+        EJCLAW_PAIRED_TURN_ID:
+          'paired-task-reviewer-failover-model:2026-03-31T00:00:00.000Z:reviewer-turn',
+        EJCLAW_PAIRED_TURN_ROLE: 'reviewer',
+        EJCLAW_PAIRED_TURN_INTENT: 'reviewer-turn',
+      }),
     );
+  });
+
+  it('fails closed when a persisted paired turn revision mismatches the prepared execution context', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-stale-revision',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: null,
+        status: 'active',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        updated_at: '2026-04-10T01:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+
+    await expect(
+      runAgentForGroup(makeDeps(), {
+        group,
+        prompt: 'hello',
+        chatJid: 'group@test',
+        runId: 'run-stale-paired-turn-revision',
+        pairedTurnIdentity: {
+          turnId:
+            'paired-task-stale-revision:2026-04-10T00:00:00.000Z:owner-follow-up',
+          taskId: 'paired-task-stale-revision',
+          taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+          intentKind: 'owner-follow-up',
+          role: 'owner',
+        },
+      }),
+    ).rejects.toThrow(
+      /task_updated_at does not match the prepared execution context/,
+    );
+
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a persisted paired turn revision mismatches the latest paired task fallback', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue(undefined);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-stale-fallback',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: null,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-10T00:00:00.000Z',
+      updated_at: '2026-04-10T01:00:00.000Z',
+    });
+
+    await expect(
+      runAgentForGroup(makeDeps(), {
+        group,
+        prompt: 'hello',
+        chatJid: 'group@test',
+        runId: 'run-stale-paired-turn-fallback',
+        pairedTurnIdentity: {
+          turnId:
+            'paired-task-stale-fallback:2026-04-10T00:00:00.000Z:owner-follow-up',
+          taskId: 'paired-task-stale-fallback',
+          taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+          intentKind: 'owner-follow-up',
+          role: 'owner',
+        },
+      }),
+    ).rejects.toThrow(/task_updated_at does not match the latest paired task/);
+
+    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
+  });
+
+  it('persists logical turn state transitions while a paired turn runs successfully', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-stateful-owner',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: null,
+        status: 'active',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        updated_at: '2026-04-10T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-paired-turn-stateful-owner',
+    });
+
+    expect(result).toBe('success');
+    expect(db.markPairedTurnRunning).toHaveBeenCalledWith({
+      turnIdentity: {
+        turnId:
+          'paired-task-stateful-owner:2026-04-10T00:00:00.000Z:owner-follow-up',
+        taskId: 'paired-task-stateful-owner',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'owner-follow-up',
+        role: 'owner',
+      },
+      executorServiceId: 'claude',
+      executorAgentType: 'claude-code',
+      runId: 'run-paired-turn-stateful-owner',
+    });
+    expect(db.completePairedTurn).toHaveBeenCalledWith({
+      turnId:
+        'paired-task-stateful-owner:2026-04-10T00:00:00.000Z:owner-follow-up',
+      taskId: 'paired-task-stateful-owner',
+      taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+      intentKind: 'owner-follow-up',
+      role: 'owner',
+    });
   });
 
   it('allows silent reviewer outputs', async () => {
@@ -2613,6 +2776,109 @@ describe('runAgentForGroup Claude rotation', () => {
         intended_role: 'owner',
       }),
     );
+  });
+
+  it('does not enqueue generic paired reviewer recovery after delegating to a fallback handoff', async () => {
+    vi.mocked(
+      sessionRecovery.shouldRetryFreshSessionOnAgentFailure,
+    ).mockReturnValue(true);
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-reviewer-handoff-delegated',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 1,
+        review_requested_at: '2026-03-31T00:00:00.000Z',
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-reviewer-handoff-delegated',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 1,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: null,
+        });
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const deps = makeDeps();
+    const result = await runAgentForGroup(deps, {
+      group: makeGroup(),
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-reviewer-delegated-handoff',
+      forcedRole: 'reviewer',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(db.createServiceHandoff).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_jid: 'group@test',
+        paired_task_id: 'paired-task-reviewer-handoff-delegated',
+        paired_task_updated_at: '2026-03-31T00:00:00.000Z',
+        turn_id:
+          'paired-task-reviewer-handoff-delegated:2026-03-31T00:00:00.000Z:reviewer-turn',
+        turn_intent_kind: 'reviewer-turn',
+        turn_role: 'reviewer',
+        source_role: 'reviewer',
+        target_role: 'reviewer',
+        intended_role: 'reviewer',
+      }),
+    );
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).not.toHaveBeenCalled();
+    expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
   });
 
   it('drops a stale Claude session id before retrying a fresh session', async () => {

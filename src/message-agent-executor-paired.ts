@@ -1,10 +1,13 @@
 import type { AgentOutput } from './agent-runner.js';
 import {
+  completePairedTurn,
+  failPairedTurn,
   getLastHumanMessageSender,
   getLatestTurnNumber,
   getPairedTaskById,
   insertPairedTurnOutput,
   refreshPairedTaskExecutionLease,
+  releasePairedTaskExecutionLease,
 } from './db.js';
 import { logger } from './logger.js';
 import {
@@ -13,6 +16,7 @@ import {
 } from './paired-execution-context.js';
 import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
 import { enqueuePairedFollowUpAfterEvent } from './message-runtime-follow-up.js';
+import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import type { PairedRoomRole } from './types.js';
 
 type ExecutorLog = Pick<typeof logger, 'info' | 'warn'>;
@@ -26,6 +30,7 @@ export interface PairedExecutionLifecycle {
   }): void;
   recordFinalOutputBeforeDelivery(outputText: string): void;
   completeImmediately(args: { status: 'succeeded' | 'failed' }): void;
+  markDelegated(): void;
   markStatus(status: 'succeeded' | 'failed'): void;
   markSawOutput(sawOutput: boolean): void;
   getSummary(): string | null;
@@ -34,6 +39,7 @@ export interface PairedExecutionLifecycle {
 
 export function createPairedExecutionLifecycle(args: {
   pairedExecutionContext?: PreparedPairedExecutionContext;
+  pairedTurnIdentity?: PairedTurnIdentity;
   completedRole: PairedRoomRole;
   chatJid: string;
   runId: string;
@@ -43,6 +49,7 @@ export function createPairedExecutionLifecycle(args: {
 }): PairedExecutionLifecycle {
   const {
     pairedExecutionContext,
+    pairedTurnIdentity,
     completedRole,
     chatJid,
     runId,
@@ -55,9 +62,29 @@ export function createPairedExecutionLifecycle(args: {
   let pairedExecutionSummary: string | null = null;
   let pairedFinalOutput: string | null = null;
   let pairedExecutionCompleted = false;
+  let pairedExecutionDelegated = false;
   let pairedSawOutput = false;
   let pairedTurnOutputPersisted = false;
+  let pairedTurnStateFinalized = false;
   let leaseHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  const finalizePairedTurnState = (
+    status: 'succeeded' | 'failed',
+    errorText?: string | null,
+  ) => {
+    if (!pairedTurnIdentity || pairedTurnStateFinalized) {
+      return;
+    }
+    if (status === 'succeeded') {
+      completePairedTurn(pairedTurnIdentity);
+    } else {
+      failPairedTurn({
+        turnIdentity: pairedTurnIdentity,
+        error: errorText ?? pairedExecutionSummary,
+      });
+    }
+    pairedTurnStateFinalized = true;
+  };
 
   const clearLeaseHeartbeat = () => {
     if (!leaseHeartbeatTimer) {
@@ -188,6 +215,10 @@ export function createPairedExecutionLifecycle(args: {
       pairedExecutionCompleted = true;
     },
 
+    markDelegated() {
+      pairedExecutionDelegated = true;
+    },
+
     markStatus(status) {
       pairedExecutionStatus = status;
     },
@@ -203,14 +234,34 @@ export function createPairedExecutionLifecycle(args: {
     async asyncFinalize() {
       clearLeaseHeartbeat();
 
-      if (pairedExecutionContext && !pairedExecutionCompleted) {
-        const effectiveStatus =
-          completedRole === 'owner' &&
-          pairedExecutionStatus === 'succeeded' &&
-          !pairedSawOutput
-            ? 'failed'
-            : pairedExecutionStatus;
+      if (pairedExecutionContext && pairedExecutionDelegated) {
+        try {
+          releasePairedTaskExecutionLease({
+            taskId: pairedExecutionContext.task.id,
+            runId,
+          });
+        } catch (err) {
+          log.warn(
+            {
+              pairedTaskId: pairedExecutionContext.task.id,
+              runId,
+              err,
+            },
+            'Failed to release paired execution lease for delegated fallback handoff',
+          );
+        }
+        pairedExecutionCompleted = true;
+        return;
+      }
 
+      const effectiveStatus =
+        completedRole === 'owner' &&
+        pairedExecutionStatus === 'succeeded' &&
+        !pairedSawOutput
+          ? 'failed'
+          : pairedExecutionStatus;
+
+      if (pairedExecutionContext && !pairedExecutionCompleted) {
         if (effectiveStatus === 'succeeded') {
           try {
             persistPairedTurnOutputIfNeeded();
@@ -231,6 +282,8 @@ export function createPairedExecutionLifecycle(args: {
         });
         pairedExecutionCompleted = true;
       }
+
+      finalizePairedTurnState(effectiveStatus);
 
       if (!pairedExecutionContext) {
         return;
@@ -260,7 +313,7 @@ export function createPairedExecutionLifecycle(args: {
 
       const queueAction = resolvePairedFollowUpQueueAction({
         completedRole,
-        executionStatus: pairedExecutionStatus,
+        executionStatus: effectiveStatus,
         sawOutput: pairedSawOutput,
         taskStatus: finishedTask?.status ?? null,
       });
@@ -274,7 +327,7 @@ export function createPairedExecutionLifecycle(args: {
         task: finishedTask,
         source: 'executor-recovery',
         completedRole,
-        executionStatus: pairedExecutionStatus,
+        executionStatus: effectiveStatus,
         sawOutput: pairedSawOutput,
         fallbackLastTurnOutputRole: pairedSawOutput ? completedRole : null,
         enqueueMessageCheck,
@@ -286,7 +339,7 @@ export function createPairedExecutionLifecycle(args: {
         {
           taskId: pairedExecutionContext.task.id,
           role: completedRole,
-          pairedExecutionStatus,
+          pairedExecutionStatus: effectiveStatus,
           taskStatus: finishedTask.status,
           intentKind: followUpResult.intentKind,
           scheduled: followUpResult.scheduled,

@@ -65,6 +65,23 @@ export function setRouterStateForServiceInDatabase(
     .run(prefixedKey, value);
 }
 
+export function getLegacyRouterStateKeysFromDatabase(
+  database: Database,
+): string[] {
+  const rows = database
+    .prepare(
+      `SELECT key
+       FROM router_state
+       WHERE key IN ('last_timestamp', 'last_agent_timestamp')
+          OR key LIKE '%:last_timestamp'
+          OR key LIKE '%:last_agent_timestamp'
+       ORDER BY key`,
+    )
+    .all() as Array<{ key: string }>;
+
+  return rows.map((row) => row.key);
+}
+
 export function getLastRespondingAgentTypeFromDatabase(
   database: Database,
   chatJid: string,

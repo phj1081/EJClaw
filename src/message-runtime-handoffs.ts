@@ -1,21 +1,25 @@
+import { SERVICE_SESSION_SCOPE } from './config.js';
 import { getErrorMessage } from './utils.js';
 import {
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
   failServiceHandoff,
-  getAllPendingServiceHandoffs,
+  getPendingServiceHandoffs,
   type ServiceHandoff,
 } from './db.js';
 import { findChannel, findChannelByName } from './router.js';
 import { logger } from './logger.js';
+import { schedulePairedFollowUpWithMessageCheck } from './message-runtime-follow-up.js';
 import {
   getFixedRoleChannelName,
   getMissingRoleChannelMessage,
   resolveHandoffCursorKey,
   resolveHandoffRoleOverride,
 } from './message-runtime-shared.js';
+import { buildPairedTurnIdentity } from './paired-turn-identity.js';
+import type { ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
-import type { Channel, RegisteredGroup } from './types.js';
+import type { Channel, PairedTask, RegisteredGroup } from './types.js';
 
 export function enqueuePendingHandoffs(args: {
   enqueueTask: (
@@ -25,7 +29,7 @@ export function enqueuePendingHandoffs(args: {
   ) => void;
   processClaimedHandoff: (handoff: ServiceHandoff) => Promise<void>;
 }): void {
-  for (const handoff of getAllPendingServiceHandoffs()) {
+  for (const handoff of getPendingServiceHandoffs(SERVICE_SESSION_SCOPE)) {
     if (!claimServiceHandoff(handoff.id)) {
       continue;
     }
@@ -36,6 +40,124 @@ export function enqueuePendingHandoffs(args: {
   }
 }
 
+function requeueFailedClaimedPairedTurn(args: {
+  handoff: ServiceHandoff;
+  error: string;
+  getPairedTaskById?:
+    | ((
+        id: string,
+      ) =>
+        | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
+        | undefined)
+    | undefined;
+  enqueueMessageCheck?: ((chatJid: string) => void) | undefined;
+}): void {
+  const { handoff, error, getPairedTaskById, enqueueMessageCheck } = args;
+  if (
+    !handoff.paired_task_id ||
+    !handoff.paired_task_updated_at ||
+    !handoff.turn_intent_kind ||
+    !getPairedTaskById ||
+    !enqueueMessageCheck
+  ) {
+    return;
+  }
+
+  const task = getPairedTaskById(handoff.paired_task_id);
+  if (!task) {
+    logger.warn(
+      {
+        chatJid: handoff.chat_jid,
+        handoffId: handoff.id,
+        taskId: handoff.paired_task_id,
+        error,
+      },
+      'Skipped paired turn retry after claimed service handoff failure because the paired task no longer exists',
+    );
+    return;
+  }
+
+  if (!isScheduledPairedFollowUpIntentKind(handoff.turn_intent_kind)) {
+    logger.warn(
+      {
+        chatJid: handoff.chat_jid,
+        handoffId: handoff.id,
+        taskId: handoff.paired_task_id,
+        intentKind: handoff.turn_intent_kind,
+        error,
+      },
+      'Skipped paired turn retry after claimed service handoff failure because the persisted turn intent is not schedulable',
+    );
+    return;
+  }
+
+  if (task.updated_at !== handoff.paired_task_updated_at) {
+    logger.warn(
+      {
+        chatJid: handoff.chat_jid,
+        handoffId: handoff.id,
+        taskId: handoff.paired_task_id,
+        expectedTaskUpdatedAt: handoff.paired_task_updated_at,
+        actualTaskUpdatedAt: task.updated_at,
+        error,
+      },
+      'Skipped paired turn retry after claimed service handoff failure because the paired task revision changed',
+    );
+    return;
+  }
+
+  const scheduled = schedulePairedFollowUpWithMessageCheck({
+    chatJid: handoff.chat_jid,
+    runId: `handoff-${handoff.id}-retry`,
+    task,
+    intentKind: handoff.turn_intent_kind,
+    enqueueMessageCheck: () => enqueueMessageCheck(handoff.chat_jid),
+  });
+  logger.info(
+    {
+      chatJid: handoff.chat_jid,
+      handoffId: handoff.id,
+      taskId: task.id,
+      taskStatus: task.status,
+      taskUpdatedAt: task.updated_at,
+      intentKind: handoff.turn_intent_kind,
+      turnId: handoff.turn_id ?? null,
+      scheduled,
+      error,
+    },
+    scheduled
+      ? 'Queued paired turn retry after claimed service handoff failure'
+      : 'Skipped duplicate paired turn retry after claimed service handoff failure while task state was unchanged',
+  );
+}
+
+function isScheduledPairedFollowUpIntentKind(
+  intentKind: ServiceHandoff['turn_intent_kind'],
+): intentKind is ScheduledPairedFollowUpIntentKind {
+  return (
+    intentKind === 'reviewer-turn' ||
+    intentKind === 'arbiter-turn' ||
+    intentKind === 'owner-follow-up' ||
+    intentKind === 'finalize-owner-turn'
+  );
+}
+
+function failClaimedHandoff(args: {
+  handoff: ServiceHandoff;
+  error: string;
+  getPairedTaskById?:
+    | ((
+        id: string,
+      ) =>
+        | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
+        | undefined)
+    | undefined;
+  enqueueMessageCheck?: ((chatJid: string) => void) | undefined;
+}): void {
+  failServiceHandoff(args.handoff.id, args.error);
+  requeueFailedClaimedPairedTurn(args);
+}
+
 export async function processClaimedHandoff(args: {
   handoff: ServiceHandoff;
   getRegisteredGroups: () => Record<string, RegisteredGroup>;
@@ -43,21 +165,80 @@ export async function processClaimedHandoff(args: {
   executeTurn: ExecuteTurnFn;
   lastAgentTimestamps: Record<string, string>;
   saveState: () => void;
+  getPairedTaskById?:
+    | ((
+        id: string,
+      ) =>
+        | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
+        | undefined)
+    | undefined;
+  enqueueMessageCheck?: ((chatJid: string) => void) | undefined;
 }): Promise<void> {
   const { handoff } = args;
   const group = args.getRegisteredGroups()[handoff.chat_jid];
   if (!group) {
-    failServiceHandoff(handoff.id, 'Group not registered on target service');
+    failClaimedHandoff({
+      handoff,
+      error: 'Group not registered on target service',
+      getPairedTaskById: args.getPairedTaskById,
+      enqueueMessageCheck: args.enqueueMessageCheck,
+    });
     return;
   }
 
   const channel = findChannel(args.channels, handoff.chat_jid);
   if (!channel) {
-    failServiceHandoff(handoff.id, 'No channel owns handoff jid');
+    failClaimedHandoff({
+      handoff,
+      error: 'No channel owns handoff jid',
+      getPairedTaskById: args.getPairedTaskById,
+      enqueueMessageCheck: args.enqueueMessageCheck,
+    });
     return;
   }
 
   const handoffRole = resolveHandoffRoleOverride(handoff);
+  if (!handoffRole) {
+    failClaimedHandoff({
+      handoff,
+      error: 'Cannot resolve intended handoff role',
+      getPairedTaskById: args.getPairedTaskById,
+      enqueueMessageCheck: args.enqueueMessageCheck,
+    });
+    logger.error(
+      {
+        chatJid: handoff.chat_jid,
+        handoffId: handoff.id,
+        targetServiceId: handoff.target_service_id,
+        targetRole: handoff.target_role ?? null,
+        intendedRole: handoff.intended_role ?? null,
+        reason: handoff.reason ?? null,
+      },
+      'Failed claimed service handoff because its intended role could not be resolved',
+    );
+    return;
+  }
+  if (handoff.turn_role && handoff.turn_role !== handoffRole) {
+    failClaimedHandoff({
+      handoff,
+      error: `Stored handoff turn_role ${handoff.turn_role} conflicts with resolved role ${handoffRole}`,
+      getPairedTaskById: args.getPairedTaskById,
+      enqueueMessageCheck: args.enqueueMessageCheck,
+    });
+    logger.error(
+      {
+        chatJid: handoff.chat_jid,
+        handoffId: handoff.id,
+        turnId: handoff.turn_id ?? null,
+        turnRole: handoff.turn_role,
+        resolvedRole: handoffRole,
+        targetServiceId: handoff.target_service_id,
+      },
+      'Failed claimed service handoff because its persisted logical turn role conflicts with the resolved role',
+    );
+    return;
+  }
+
   let handoffChannel = channel;
   if (handoffRole === 'reviewer') {
     const reviewerChannel = findChannelByName(
@@ -65,7 +246,12 @@ export async function processClaimedHandoff(args: {
       getFixedRoleChannelName('reviewer'),
     );
     if (!reviewerChannel) {
-      failServiceHandoff(handoff.id, getMissingRoleChannelMessage('reviewer'));
+      failClaimedHandoff({
+        handoff,
+        error: getMissingRoleChannelMessage('reviewer'),
+        getPairedTaskById: args.getPairedTaskById,
+        enqueueMessageCheck: args.enqueueMessageCheck,
+      });
       return;
     }
     handoffChannel = reviewerChannel;
@@ -75,19 +261,37 @@ export async function processClaimedHandoff(args: {
       getFixedRoleChannelName('arbiter'),
     );
     if (!arbiterChannel) {
-      failServiceHandoff(handoff.id, getMissingRoleChannelMessage('arbiter'));
+      failClaimedHandoff({
+        handoff,
+        error: getMissingRoleChannelMessage('arbiter'),
+        getPairedTaskById: args.getPairedTaskById,
+        enqueueMessageCheck: args.enqueueMessageCheck,
+      });
       return;
     }
     handoffChannel = arbiterChannel;
   }
 
   const runId = `handoff-${handoff.id}`;
+  const pairedTurnIdentity =
+    handoff.paired_task_id &&
+    handoff.paired_task_updated_at &&
+    handoff.turn_intent_kind
+      ? buildPairedTurnIdentity({
+          taskId: handoff.paired_task_id,
+          taskUpdatedAt: handoff.paired_task_updated_at,
+          intentKind: handoff.turn_intent_kind,
+          role: handoff.turn_role ?? handoffRole,
+          turnId: handoff.turn_id,
+        })
+      : undefined;
   try {
     logger.info(
       {
         chatJid: handoff.chat_jid,
         handoffId: handoff.id,
         runId,
+        turnId: pairedTurnIdentity?.turnId ?? handoff.turn_id ?? null,
         handoffRole,
         targetRole: handoff.target_role ?? null,
         targetServiceId: handoff.target_service_id,
@@ -108,10 +312,16 @@ export async function processClaimedHandoff(args: {
       endSeq: handoff.end_seq,
       forcedRole: handoffRole,
       forcedAgentType: handoff.target_agent_type,
+      pairedTurnIdentity,
     });
 
     if (!result.deliverySucceeded) {
-      failServiceHandoff(handoff.id, 'Handoff delivery failed');
+      failClaimedHandoff({
+        handoff,
+        error: 'Handoff delivery failed',
+        getPairedTaskById: args.getPairedTaskById,
+        enqueueMessageCheck: args.enqueueMessageCheck,
+      });
       return;
     }
 
@@ -143,7 +353,12 @@ export async function processClaimedHandoff(args: {
     );
   } catch (err) {
     const errorMessage = getErrorMessage(err);
-    failServiceHandoff(handoff.id, errorMessage);
+    failClaimedHandoff({
+      handoff,
+      error: errorMessage,
+      getPairedTaskById: args.getPairedTaskById,
+      enqueueMessageCheck: args.enqueueMessageCheck,
+    });
     logger.error(
       { chatJid: handoff.chat_jid, handoffId: handoff.id, err },
       'Claimed service handoff failed',

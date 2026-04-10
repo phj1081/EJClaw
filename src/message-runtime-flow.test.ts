@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _initTestDatabase } from './db.js';
-import { executeBotOnlyPairedFollowUpAction } from './message-runtime-flow.js';
+import {
+  executeBotOnlyPairedFollowUpAction,
+  executePendingPairedTurn,
+} from './message-runtime-flow.js';
 import {
   resetPairedFollowUpScheduleState,
   schedulePairedFollowUpOnce,
@@ -118,6 +121,59 @@ describe('executeBotOnlyPairedFollowUpAction', () => {
         scheduled: false,
       }),
       'Skipped duplicate paired pending turn requeue while task state was unchanged',
+    );
+  });
+});
+
+describe('executePendingPairedTurn', () => {
+  it('passes the explicit pending role through as forcedRole', async () => {
+    const executeTurn = vi.fn(async () => ({
+      outputStatus: 'success' as const,
+      deliverySucceeded: true,
+      visiblePhase: 'final',
+    }));
+
+    const result = await executePendingPairedTurn({
+      pendingTurn: {
+        prompt: 'pending owner follow-up',
+        channel: {} as any,
+        cursor: null,
+        taskId: 'task-pending-owner-follow-up',
+        taskUpdatedAt: '2026-03-30T00:00:00.000Z',
+        intentKind: 'owner-follow-up',
+        role: 'owner',
+      },
+      chatJid: 'group@test',
+      group: {
+        name: 'Test Group',
+        folder: 'test-group',
+        trigger: '@Andy',
+        added_at: '2026-03-30T00:00:00.000Z',
+        requiresTrigger: false,
+        agentType: 'codex',
+      },
+      runId: 'run-pending-owner-forced-role',
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
+      saveState: vi.fn(),
+      lastAgentTimestamps: {},
+      executeTurn,
+      getFixedRoleChannelName: () => 'discord-review',
+    });
+
+    expect(result).toBe(true);
+    expect(executeTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryRole: 'owner',
+        forcedRole: 'owner',
+        pairedTurnIdentity: {
+          turnId:
+            'task-pending-owner-follow-up:2026-03-30T00:00:00.000Z:owner-follow-up',
+          taskId: 'task-pending-owner-follow-up',
+          taskUpdatedAt: '2026-03-30T00:00:00.000Z',
+          intentKind: 'owner-follow-up',
+          role: 'owner',
+        },
+      }),
     );
   });
 });

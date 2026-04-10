@@ -47,6 +47,31 @@ export interface RegisteredGroupDatabaseRow {
   work_dir: string | null;
 }
 
+export interface RoomRoleOverrideSnapshot {
+  role: 'owner' | 'reviewer' | 'arbiter';
+  agentType: AgentType;
+  agentConfig?: RegisteredGroup['agentConfig'];
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface StoredRoomRoleOverrideRow {
+  role: 'owner' | 'reviewer' | 'arbiter';
+  agentType: AgentType;
+  agentConfig?: RegisteredGroup['agentConfig'];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LegacyRoomMigrationPlan {
+  chatJid: string;
+  roomMode: RoomMode;
+  createdAt: string;
+  updatedAt: string;
+  snapshot: RoomRegistrationSnapshot;
+  roleOverrides: RoomRoleOverrideSnapshot[];
+}
+
 export function normalizeRoomModeSource(
   source: string | null | undefined,
 ): RoomModeSource | undefined {
@@ -196,7 +221,132 @@ export function getLegacyRegisteredGroup(
   return parseRegisteredGroupRow(row);
 }
 
-export function getRegisteredGroupCapabilityMetadata(
+export function getPendingLegacyRegisteredGroupJids(
+  database: Database,
+): string[] {
+  const rows = database
+    .prepare(
+      `SELECT DISTINCT jid
+         FROM registered_groups
+        ORDER BY jid`,
+    )
+    .all() as Array<{ jid: string }>;
+
+  return rows
+    .map((row) => row.jid)
+    .filter((jid) => jidRequiresLegacyRoomMigration(database, jid));
+}
+
+export function countPendingLegacyRegisteredGroupRows(
+  database: Database,
+): number {
+  let count = 0;
+  const countRows = database.prepare(
+    `SELECT COUNT(*) AS count
+       FROM registered_groups
+      WHERE jid = ?`,
+  );
+
+  for (const jid of getPendingLegacyRegisteredGroupJids(database)) {
+    const row = countRows.get(jid) as { count: number };
+    count += row.count;
+  }
+
+  return count;
+}
+
+export function deleteLegacyRegisteredGroupRowsForJid(
+  database: Database,
+  jid: string,
+): void {
+  database
+    .prepare(
+      `DELETE FROM registered_groups
+       WHERE jid = ?`,
+    )
+    .run(jid);
+}
+
+function getStoredRoomRoleOverrideRows(
+  database: Database,
+  jid: string,
+): Map<'owner' | 'reviewer' | 'arbiter', StoredRoomRoleOverrideRow> {
+  let rows: Array<{
+    role: 'owner' | 'reviewer' | 'arbiter';
+    agent_type: string | null;
+    agent_config_json: string | null;
+    created_at: string;
+    updated_at: string;
+  }> = [];
+  try {
+    rows = database
+      .prepare(
+        `SELECT role, agent_type, agent_config_json, created_at, updated_at
+           FROM room_role_overrides
+          WHERE chat_jid = ?`,
+      )
+      .all(jid) as Array<{
+      role: 'owner' | 'reviewer' | 'arbiter';
+      agent_type: string | null;
+      agent_config_json: string | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+  } catch {
+    return new Map();
+  }
+
+  const result = new Map<
+    'owner' | 'reviewer' | 'arbiter',
+    StoredRoomRoleOverrideRow
+  >();
+  for (const row of rows) {
+    const agentType = normalizeStoredAgentType(row.agent_type);
+    if (!agentType) continue;
+    result.set(row.role, {
+      role: row.role,
+      agentType,
+      agentConfig: row.agent_config_json
+        ? JSON.parse(row.agent_config_json)
+        : undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    });
+  }
+  return result;
+}
+
+function normalizeAgentConfigValue(
+  agentConfig: RegisteredGroup['agentConfig'] | undefined,
+): string {
+  return JSON.stringify(agentConfig ?? null);
+}
+
+function roomRoleOverrideMatches(
+  actual: StoredRoomRoleOverrideRow | undefined,
+  expected: RoomRoleOverrideSnapshot,
+): boolean {
+  return (
+    actual?.agentType === expected.agentType &&
+    normalizeAgentConfigValue(actual.agentConfig) ===
+      normalizeAgentConfigValue(expected.agentConfig)
+  );
+}
+
+function storedRoomSettingsMatchesLegacySnapshot(
+  stored: StoredRoomSettings,
+  snapshot: RoomRegistrationSnapshot,
+): boolean {
+  return (
+    stored.name === snapshot.name &&
+    stored.folder === snapshot.folder &&
+    (stored.requiresTrigger ?? true) === snapshot.requiresTrigger &&
+    (stored.isMain ?? false) === snapshot.isMain &&
+    (stored.workDir ?? null) === (snapshot.workDir ?? null)
+  );
+}
+
+function getRegisteredGroupCapabilityMetadata(
   database: Database,
   jid: string,
   preferredAgentType?: AgentType,
@@ -227,6 +377,130 @@ export function getRegisteredGroupCapabilityMetadata(
     added_at: row.added_at,
     agentConfig: row.agent_config ? JSON.parse(row.agent_config) : undefined,
   };
+}
+
+function resolveReviewerAgentTypeFromRegisteredAgentTypes(
+  agentTypes: readonly AgentType[],
+  ownerAgentType: AgentType,
+): AgentType | undefined {
+  return agentTypes.find((agentType) => agentType !== ownerAgentType);
+}
+
+export function buildLegacyRoomMigrationPlan(
+  database: Database,
+  jid: string,
+): LegacyRoomMigrationPlan | undefined {
+  const existingStored = getStoredRoomSettingsRowFromDatabase(database, jid);
+  const snapshot = collectRoomRegistrationSnapshot(
+    database,
+    jid,
+    existingStored,
+  );
+  if (!snapshot) return undefined;
+
+  const rows = database
+    .prepare(
+      `SELECT added_at
+         FROM registered_groups
+        WHERE jid = ?
+        ORDER BY added_at, agent_type`,
+    )
+    .all(jid) as Array<{ added_at: string }>;
+  if (rows.length === 0) return undefined;
+
+  const agentTypes = collectRegisteredAgentTypes(database, jid);
+  const roomMode =
+    existingStored?.roomMode ??
+    inferRoomModeFromRegisteredAgentTypes(agentTypes);
+  const createdAt = rows[0].added_at;
+  const updatedAt = rows[rows.length - 1].added_at;
+  const roleOverrides: RoomRoleOverrideSnapshot[] = [];
+
+  const ownerMetadata = getRegisteredGroupCapabilityMetadata(
+    database,
+    jid,
+    snapshot.ownerAgentType,
+  );
+  roleOverrides.push({
+    role: 'owner',
+    agentType: snapshot.ownerAgentType,
+    agentConfig: ownerMetadata?.agentConfig,
+    createdAt: ownerMetadata?.added_at ?? createdAt,
+    updatedAt,
+  });
+
+  if (roomMode === 'tribunal') {
+    const reviewerAgentType = resolveReviewerAgentTypeFromRegisteredAgentTypes(
+      agentTypes,
+      snapshot.ownerAgentType,
+    );
+    if (!reviewerAgentType) {
+      throw new Error(
+        `Missing reviewer agent type for tribunal legacy room ${jid}`,
+      );
+    }
+    const reviewerMetadata = getRegisteredGroupCapabilityMetadata(
+      database,
+      jid,
+      reviewerAgentType,
+    );
+    roleOverrides.push({
+      role: 'reviewer',
+      agentType: reviewerAgentType,
+      agentConfig: reviewerMetadata?.agentConfig,
+      createdAt: reviewerMetadata?.added_at ?? createdAt,
+      updatedAt,
+    });
+  }
+
+  return {
+    chatJid: jid,
+    roomMode,
+    createdAt,
+    updatedAt,
+    snapshot,
+    roleOverrides,
+  };
+}
+
+function jidRequiresLegacyRoomMigration(
+  database: Database,
+  jid: string,
+): boolean {
+  let stored: StoredRoomSettings | undefined;
+  try {
+    stored = getStoredRoomSettingsRowFromDatabase(database, jid);
+  } catch {
+    return true;
+  }
+  if (!stored) {
+    return true;
+  }
+
+  let plan: LegacyRoomMigrationPlan | undefined;
+  try {
+    plan = buildLegacyRoomMigrationPlan(database, jid);
+  } catch {
+    return true;
+  }
+  if (!plan) {
+    return false;
+  }
+
+  if (!storedRoomSettingsMatchesLegacySnapshot(stored, plan.snapshot)) {
+    return true;
+  }
+
+  const existingOverrides = getStoredRoomRoleOverrideRows(database, jid);
+  for (const override of plan.roleOverrides) {
+    if (
+      !roomRoleOverrideMatches(existingOverrides.get(override.role), override)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function getStoredRoomSettingsRowFromDatabase(
@@ -300,14 +574,16 @@ export function buildRegisteredGroupFromStoredSettings(
   requestedAgentType?: AgentType,
 ): (RegisteredGroup & { jid: string }) | undefined {
   const capabilityTypes = resolveStoredRoomCapabilityTypes(database, stored);
+  const ownerAgentType =
+    stored.ownerAgentType ||
+    (capabilityTypes.length > 0
+      ? inferOwnerAgentTypeFromRegisteredAgentTypes(capabilityTypes)
+      : undefined);
   const resolvedAgentType = requestedAgentType
     ? capabilityTypes.includes(requestedAgentType)
       ? requestedAgentType
       : undefined
-    : stored.ownerAgentType ||
-      (capabilityTypes.length > 0
-        ? inferOwnerAgentTypeFromRegisteredAgentTypes(capabilityTypes)
-        : undefined);
+    : ownerAgentType;
 
   if (!resolvedAgentType) return undefined;
   if (!stored.folder || !isValidGroupFolder(stored.folder)) {
@@ -318,18 +594,19 @@ export function buildRegisteredGroupFromStoredSettings(
     return undefined;
   }
 
-  const capabilityMetadata = getRegisteredGroupCapabilityMetadata(
+  const role: 'owner' | 'reviewer' =
+    ownerAgentType === resolvedAgentType ? 'owner' : 'reviewer';
+  const capabilityMetadata = getStoredRoomRoleOverrideRows(
     database,
     stored.chatJid,
-    resolvedAgentType,
-  );
+  ).get(role);
 
   return {
     jid: stored.chatJid,
     name: stored.name || stored.chatJid,
     folder: stored.folder,
     trigger: stored.trigger || `@${ASSISTANT_NAME}`,
-    added_at: capabilityMetadata?.added_at || new Date(0).toISOString(),
+    added_at: capabilityMetadata?.createdAt || new Date(0).toISOString(),
     agentConfig: capabilityMetadata?.agentConfig,
     requiresTrigger: stored.requiresTrigger,
     isMain: stored.isMain ? true : undefined,
@@ -338,23 +615,43 @@ export function buildRegisteredGroupFromStoredSettings(
   };
 }
 
+export function inferStoredRoomCapabilityTypes(
+  database: Database,
+  stored: StoredRoomSettings,
+): AgentType[] {
+  const overrides = getStoredRoomRoleOverrideRows(database, stored.chatJid);
+  const inferredTypes = new Set<AgentType>();
+  for (const override of overrides.values()) {
+    inferredTypes.add(override.agentType);
+  }
+  if (inferredTypes.size === 0 && stored.ownerAgentType) {
+    inferredTypes.add(stored.ownerAgentType);
+  }
+  return [...inferredTypes];
+}
+
 export function resolveStoredRoomCapabilityTypes(
   database: Database,
   stored: StoredRoomSettings,
 ): AgentType[] {
-  const projectedTypes = collectRegisteredAgentTypes(database, stored.chatJid);
+  const overrides = getStoredRoomRoleOverrideRows(database, stored.chatJid);
+  const ownerAgentType =
+    stored.ownerAgentType ??
+    overrides.get('owner')?.agentType ??
+    OWNER_AGENT_TYPE;
+
   if (stored.modeSource !== 'explicit') {
-    return projectedTypes;
+    return inferStoredRoomCapabilityTypes(database, stored);
   }
 
-  const ownerAgentType =
-    stored.ownerAgentType ||
-    (projectedTypes.length > 0
-      ? inferOwnerAgentTypeFromRegisteredAgentTypes(projectedTypes)
-      : OWNER_AGENT_TYPE);
   const types = new Set<AgentType>([ownerAgentType]);
   if (stored.roomMode === 'tribunal') {
-    types.add(REVIEWER_AGENT_TYPE);
+    const reviewerAgentType =
+      overrides.get('reviewer')?.agentType ??
+      (ownerAgentType === REVIEWER_AGENT_TYPE
+        ? OWNER_AGENT_TYPE
+        : REVIEWER_AGENT_TYPE);
+    types.add(reviewerAgentType);
   }
   return [...types];
 }
@@ -659,6 +956,7 @@ export function insertStoredRoomSettings(
   source: RoomModeSource,
   snapshot: RoomRegistrationSnapshot,
 ): void {
+  const now = new Date().toISOString();
   database
     .prepare(
       `INSERT INTO room_settings (
@@ -672,8 +970,9 @@ export function insertStoredRoomSettings(
         is_main,
         owner_agent_type,
         work_dir,
+        created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       chatJid,
@@ -686,8 +985,148 @@ export function insertStoredRoomSettings(
       snapshot.isMain ? 1 : 0,
       snapshot.ownerAgentType,
       snapshot.workDir,
-      new Date().toISOString(),
+      now,
+      now,
     );
+}
+
+export function insertStoredRoomSettingsFromMigration(
+  database: Database,
+  plan: LegacyRoomMigrationPlan,
+): void {
+  database
+    .prepare(
+      `INSERT INTO room_settings (
+        chat_jid,
+        room_mode,
+        mode_source,
+        name,
+        folder,
+        trigger_pattern,
+        requires_trigger,
+        is_main,
+        owner_agent_type,
+        work_dir,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(chat_jid) DO NOTHING`,
+    )
+    .run(
+      plan.chatJid,
+      plan.roomMode,
+      'inferred',
+      plan.snapshot.name,
+      plan.snapshot.folder,
+      plan.snapshot.triggerPattern,
+      plan.snapshot.requiresTrigger ? 1 : 0,
+      plan.snapshot.isMain ? 1 : 0,
+      plan.snapshot.ownerAgentType,
+      plan.snapshot.workDir,
+      plan.createdAt,
+      plan.updatedAt,
+    );
+}
+
+export function upsertRoomRoleOverride(
+  database: Database,
+  chatJid: string,
+  override: RoomRoleOverrideSnapshot,
+): void {
+  database
+    .prepare(
+      `INSERT INTO room_role_overrides (
+        chat_jid,
+        role,
+        agent_type,
+        agent_config_json,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(chat_jid, role) DO UPDATE SET
+        agent_type = excluded.agent_type,
+        agent_config_json = excluded.agent_config_json,
+        updated_at = excluded.updated_at`,
+    )
+    .run(
+      chatJid,
+      override.role,
+      override.agentType,
+      override.agentConfig ? JSON.stringify(override.agentConfig) : null,
+      override.createdAt,
+      override.updatedAt,
+    );
+}
+
+export function syncRoomRoleOverridesForRoom(
+  database: Database,
+  chatJid: string,
+  roomMode: RoomMode,
+  ownerAgentType: AgentType,
+  ownerAgentConfig?: RegisteredGroup['agentConfig'],
+  addedAt?: string,
+): void {
+  const now = addedAt ?? new Date().toISOString();
+  const existingOverrides = getStoredRoomRoleOverrideRows(database, chatJid);
+  const existingOwnerOverride = existingOverrides.get('owner');
+  const ownerMetadata = getRegisteredGroupCapabilityMetadata(
+    database,
+    chatJid,
+    ownerAgentType,
+  );
+  upsertRoomRoleOverride(database, chatJid, {
+    role: 'owner',
+    agentType: ownerAgentType,
+    agentConfig:
+      ownerAgentConfig ??
+      (existingOwnerOverride?.agentType === ownerAgentType
+        ? existingOwnerOverride.agentConfig
+        : undefined) ??
+      ownerMetadata?.agentConfig,
+    createdAt:
+      (existingOwnerOverride?.agentType === ownerAgentType
+        ? existingOwnerOverride.createdAt
+        : undefined) ??
+      ownerMetadata?.added_at ??
+      now,
+    updatedAt: now,
+  });
+
+  if (roomMode === 'tribunal') {
+    const reviewerAgentType =
+      ownerAgentType === REVIEWER_AGENT_TYPE
+        ? OWNER_AGENT_TYPE
+        : REVIEWER_AGENT_TYPE;
+    const reviewerMetadata = getRegisteredGroupCapabilityMetadata(
+      database,
+      chatJid,
+      reviewerAgentType,
+    );
+    const existingReviewerOverride = existingOverrides.get('reviewer');
+    upsertRoomRoleOverride(database, chatJid, {
+      role: 'reviewer',
+      agentType: reviewerAgentType,
+      agentConfig:
+        (existingReviewerOverride?.agentType === reviewerAgentType
+          ? existingReviewerOverride.agentConfig
+          : undefined) ?? reviewerMetadata?.agentConfig,
+      createdAt:
+        (existingReviewerOverride?.agentType === reviewerAgentType
+          ? existingReviewerOverride.createdAt
+          : undefined) ??
+        reviewerMetadata?.added_at ??
+        now,
+      updatedAt: now,
+    });
+  } else {
+    database
+      .prepare(
+        `DELETE FROM room_role_overrides
+         WHERE chat_jid = ?
+           AND role = 'reviewer'`,
+      )
+      .run(chatJid);
+  }
 }
 
 export function updateStoredRoomMetadata(
