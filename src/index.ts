@@ -1,6 +1,3 @@
-import fs from 'fs';
-import path from 'path';
-
 import {
   ASSISTANT_NAME,
   DATA_DIR,
@@ -20,27 +17,17 @@ import {
   getRegisteredChannelNames,
 } from './channels/registry.js';
 import { writeGroupsSnapshot } from './agent-runner.js';
-import { listAvailableGroups } from './available-groups.js';
 import {
   type AssignRoomInput,
-  assignRoom,
-  getAllRoomBindings,
-  getAllSessions,
   getAllTasks,
-  getLatestMessageSeqAtOrBefore,
   hasRecentRestartAnnouncement,
-  getRouterState,
   initDatabase,
-  setRouterState,
-  deleteAllSessionsForGroup,
-  deleteSession,
-  setSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
 import { composeDashboardContent } from './dashboard-render.js';
 import { GroupQueue } from './group-queue.js';
-import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
+import { resolveGroupIpcPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import {
   findChannel,
@@ -69,7 +56,6 @@ import { nudgeSchedulerLoop, startSchedulerLoop } from './task-scheduler.js';
 import { startUnifiedDashboard } from './unified-dashboard.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
-import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
 import {
   hasAvailableClaudeToken,
@@ -88,6 +74,7 @@ import {
   clearGlobalFailover,
   getGlobalFailoverInfo,
 } from './service-routing.js';
+import { createRuntimeState } from './runtime-state.js';
 import { FAILOVER_MIN_DURATION_MS } from './config.js';
 
 // Token rotation is initialized lazily on first use or at startup below
@@ -137,13 +124,9 @@ export async function editFormattedTrackedChannelMessage(
   await channel.editMessage(jid, messageId, text);
 }
 
-let lastTimestamp = '';
-let sessions: Record<string, string> = {};
-let roomBindings: Record<string, RegisteredGroup> = {};
-let lastAgentTimestamp: Record<string, string> = {};
-
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+const runtimeState = createRuntimeState();
 const runtime = createMessageRuntime({
   assistantName: ASSISTANT_NAME,
   idleTimeout: IDLE_TIMEOUT,
@@ -152,109 +135,36 @@ const runtime = createMessageRuntime({
   triggerPattern: TRIGGER_PATTERN,
   channels,
   queue,
-  getRoomBindings: () => roomBindings,
-  getSessions: () => sessions,
-  getLastTimestamp: () => lastTimestamp,
-  setLastTimestamp: (timestamp) => {
-    lastTimestamp = timestamp;
-  },
-  getLastAgentTimestamps: () => lastAgentTimestamp,
-  saveState,
-  persistSession: (groupFolder, sessionId) => {
-    sessions[groupFolder] = sessionId;
-    setSession(groupFolder, sessionId);
-  },
-  clearSession,
+  getRoomBindings: runtimeState.getRoomBindings,
+  getSessions: runtimeState.getSessions,
+  getLastTimestamp: runtimeState.getLastTimestamp,
+  setLastTimestamp: runtimeState.setLastTimestamp,
+  getLastAgentTimestamps: runtimeState.getLastAgentTimestamps,
+  saveState: runtimeState.saveState,
+  persistSession: runtimeState.persistSession,
+  clearSession: runtimeState.clearSession,
 });
-
-function loadState(): void {
-  lastTimestamp = normalizeStoredSeqCursor(getRouterState('last_seq'));
-  const agentTs = getRouterState('last_agent_seq');
-  try {
-    const parsed = agentTs
-      ? (JSON.parse(agentTs) as Record<string, string>)
-      : {};
-    lastAgentTimestamp = Object.fromEntries(
-      Object.entries(parsed).map(([chatJid, cursor]) => [
-        chatJid,
-        normalizeStoredSeqCursor(cursor, chatJid),
-      ]),
-    );
-  } catch {
-    logger.warn('Corrupted last_agent_seq in DB, resetting');
-    lastAgentTimestamp = {};
-  }
-  sessions = getAllSessions();
-  roomBindings = getAllRoomBindings();
-  logger.info(
-    {
-      groupCount: Object.keys(roomBindings).length,
-      agentType: 'unified',
-    },
-    'State loaded',
-  );
-}
-
-function saveState(): void {
-  setRouterState('last_seq', lastTimestamp);
-  setRouterState('last_agent_seq', JSON.stringify(lastAgentTimestamp));
-}
-
-function clearSession(
-  groupFolder: string,
-  opts?: { allRoles?: boolean },
-): void {
-  delete sessions[groupFolder];
-  if (opts?.allRoles) {
-    deleteAllSessionsForGroup(groupFolder);
-  } else {
-    deleteSession(groupFolder);
-  }
-}
-
-function assignRoomForIpc(jid: string, input: AssignRoomInput): void {
-  const assignedGroup = assignRoom(jid, input);
-  if (!assignedGroup) {
-    logger.warn({ jid }, 'Failed to assign room from IPC');
-    return;
-  }
-
-  let groupDir: string;
-  try {
-    groupDir = resolveGroupFolderPath(assignedGroup.folder);
-  } catch (err) {
-    logger.warn(
-      { jid, folder: assignedGroup.folder, err },
-      'Rejecting room assignment with invalid folder',
-    );
-    return;
-  }
-
-  const { jid: _ignoredJid, ...storedGroup } = assignedGroup;
-  roomBindings[jid] = storedGroup;
-  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
-}
 
 /**
  * Get available groups list for the agent.
  * Returns groups ordered by most recent activity.
  */
 export function getAvailableGroups(): import('./agent-runner.js').AvailableGroup[] {
-  return listAvailableGroups(roomBindings);
+  return runtimeState.getAvailableGroups();
 }
 
 /** @internal - exported for testing */
 export function _setRegisteredGroups(
   groups: Record<string, RegisteredGroup>,
 ): void {
-  roomBindings = groups;
+  runtimeState.setRoomBindings(groups);
 }
 
 /** @internal - exported for testing */
 export function _setRoomBindings(
   groups: Record<string, RegisteredGroup>,
 ): void {
-  roomBindings = groups;
+  runtimeState.setRoomBindings(groups);
 }
 
 async function announceRestartRecovery(
@@ -295,7 +205,10 @@ async function announceRestartRecovery(
     return explicitContext;
   }
 
-  const inferred = inferRecentRestartContext(roomBindings, processStartedAtMs);
+  const inferred = inferRecentRestartContext(
+    runtimeState.getRoomBindings(),
+    processStartedAtMs,
+  );
   if (!inferred) return null;
 
   if (hasRecentRestartAnnouncement(inferred.chatJid, dedupeSince)) {
@@ -326,7 +239,7 @@ async function main(): Promise<void> {
   initCodexTokenRotation();
   startTokenRefreshLoop();
 
-  loadState();
+  runtimeState.loadState();
 
   // Graceful shutdown handlers
   let leaseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
@@ -337,6 +250,7 @@ async function main(): Promise<void> {
       clearInterval(leaseRecoveryTimer);
       leaseRecoveryTimer = null;
     }
+    const roomBindings = runtimeState.getRoomBindings();
     const interruptedGroups = queue
       .getStatuses(Object.keys(roomBindings))
       .filter(
@@ -380,6 +294,7 @@ async function main(): Promise<void> {
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Sender allowlist drop mode: discard messages from denied senders before storing
+      const roomBindings = runtimeState.getRoomBindings();
       if (!msg.is_from_me && !msg.is_bot_message && roomBindings[chatJid]) {
         const cfg = loadSenderAllowlist();
         if (
@@ -404,7 +319,7 @@ async function main(): Promise<void> {
       channel?: string,
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
-    roomBindings: () => roomBindings,
+    roomBindings: runtimeState.getRoomBindings,
   };
 
   // Create and connect all registered channels.
@@ -437,8 +352,8 @@ async function main(): Promise<void> {
   );
 
   startSchedulerLoop({
-    roomBindings: () => roomBindings,
-    getSessions: () => sessions,
+    roomBindings: runtimeState.getRoomBindings,
+    getSessions: runtimeState.getSessions,
     queue,
     onProcess: (groupJid, proc, processName, ipcDir) =>
       queue.registerProcess(groupJid, proc, processName, ipcDir),
@@ -480,8 +395,8 @@ async function main(): Promise<void> {
       }
     },
     nudgeScheduler: nudgeSchedulerLoop,
-    roomBindings: () => roomBindings,
-    assignRoom: assignRoomForIpc,
+    roomBindings: runtimeState.getRoomBindings,
+    assignRoom: runtimeState.assignRoomForIpc,
     syncGroups: async (force: boolean) => {
       await Promise.all(
         channels
@@ -496,6 +411,7 @@ async function main(): Promise<void> {
   queue.enterRecoveryMode();
   runtime.recoverPendingMessages();
   const restartContext = await announceRestartRecovery(processStartedAtMs);
+  const roomBindings = runtimeState.getRoomBindings();
   for (const candidate of getInterruptedRecoveryCandidates(
     restartContext,
     roomBindings,
@@ -524,9 +440,9 @@ async function main(): Promise<void> {
     usageUpdateInterval: USAGE_UPDATE_INTERVAL,
     channels,
     queue,
-    roomBindings: () => roomBindings,
+    roomBindings: runtimeState.getRoomBindings,
     onGroupNameSynced: (jid, name) => {
-      const group = roomBindings[jid];
+      const group = runtimeState.getRoomBindings()[jid];
       if (group) {
         group.name = name;
       }

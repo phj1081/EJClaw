@@ -1,22 +1,16 @@
-/**
- * Agent Process Runner for EJClaw
- * Spawns agent execution as direct host processes and handles IPC
- */
 import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { getErrorMessage } from './utils.js';
-import {
-  AGENT_MAX_OUTPUT_SIZE,
-  AGENT_TIMEOUT,
-  IDLE_TIMEOUT,
-  LOG_LEVEL,
-} from './config.js';
+/**
+ * Agent Process Runner for EJClaw
+ * Spawns agent execution as direct host processes and handles IPC.
+ */
 import {
   prepareReadonlySessionEnvironment,
   prepareGroupEnvironment,
 } from './agent-runner-environment.js';
+import { runSpawnedAgentProcess } from './agent-runner-process.js';
 import { getEnv } from './env.js';
 export {
   type AvailableGroup,
@@ -24,14 +18,7 @@ export {
   writeTasksSnapshot,
 } from './agent-runner-snapshot.js';
 import { logger } from './logger.js';
-import { OUTPUT_END_MARKER, OUTPUT_START_MARKER } from './agent-protocol.js';
-import {
-  AgentOutputPhase,
-  AgentType,
-  RegisteredGroup,
-  RoomRoleContext,
-  StructuredAgentOutput,
-} from './types.js';
+import { AgentType, RegisteredGroup, RoomRoleContext } from './types.js';
 
 export interface AgentInput {
   prompt: string;
@@ -52,8 +39,8 @@ export interface AgentInput {
 export interface AgentOutput {
   status: 'success' | 'error';
   result: string | null;
-  output?: StructuredAgentOutput;
-  phase?: AgentOutputPhase;
+  output?: import('./types.js').StructuredAgentOutput;
+  phase?: import('./types.js').AgentOutputPhase;
   agentId?: string;
   agentLabel?: string;
   agentDone?: boolean;
@@ -163,395 +150,17 @@ export async function runAgentProcess(
 
     onProcess(proc, processName, env.EJCLAW_IPC_DIR);
 
-    let stdout = '';
-    let stderr = '';
-    let stdoutTruncated = false;
-    let stderrTruncated = false;
-
     proc.stdin.write(JSON.stringify(input));
     proc.stdin.end();
 
-    // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
-    let parseBuffer = '';
-    let newSessionId: string | undefined;
-    let outputChain = Promise.resolve();
-
-    proc.stdout.on('data', (data) => {
-      const chunk = data.toString();
-
-      if (!stdoutTruncated) {
-        const remaining = AGENT_MAX_OUTPUT_SIZE - stdout.length;
-        if (chunk.length > remaining) {
-          stdout += chunk.slice(0, remaining);
-          stdoutTruncated = true;
-          logger.warn(
-            {
-              group: group.name,
-              chatJid: input.chatJid,
-              runId: input.runId,
-              size: stdout.length,
-            },
-            'Agent stdout truncated due to size limit',
-          );
-        } else {
-          stdout += chunk;
-        }
-      }
-
-      if (onOutput) {
-        parseBuffer += chunk;
-        let startIdx: number;
-        while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
-          const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
-          if (endIdx === -1) break;
-
-          const jsonStr = parseBuffer
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
-          parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
-
-          try {
-            const parsed: AgentOutput = JSON.parse(jsonStr);
-            if (parsed.newSessionId) {
-              newSessionId = parsed.newSessionId;
-            }
-            hadStreamingOutput = true;
-            resetTimeout();
-            if (parsed.status === 'error') {
-              logger.warn(
-                {
-                  group: group.name,
-                  chatJid: input.chatJid,
-                  runId: input.runId,
-                  error: parsed.error,
-                  newSessionId: parsed.newSessionId,
-                },
-                'Streamed agent error output',
-              );
-            }
-            outputChain = outputChain.then(() => onOutput(parsed));
-          } catch (err) {
-            logger.warn(
-              {
-                group: group.name,
-                chatJid: input.chatJid,
-                runId: input.runId,
-                error: err,
-              },
-              'Failed to parse streamed output chunk',
-            );
-          }
-        }
-      }
-    });
-
-    let timedOut = false;
-    let hadStreamingOutput = false;
-    const configTimeout = group.agentConfig?.timeout || AGENT_TIMEOUT;
-    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
-
-    const killOnTimeout = () => {
-      timedOut = true;
-      logger.error(
-        {
-          group: group.name,
-          chatJid: input.chatJid,
-          runId: input.runId,
-          processName,
-        },
-        'Agent timeout, sending SIGTERM',
-      );
-      proc.kill('SIGTERM');
-      // Force kill after 15s if still alive
-      setTimeout(() => {
-        if (!proc.killed) proc.kill('SIGKILL');
-      }, 15000);
-    };
-
-    let timeout = setTimeout(killOnTimeout, timeoutMs);
-
-    const resetTimeout = () => {
-      clearTimeout(timeout);
-      timeout = setTimeout(killOnTimeout, timeoutMs);
-    };
-
-    proc.stderr.on('data', (data) => {
-      const chunk = data.toString();
-      const lines = chunk.trim().split('\n');
-      for (const line of lines) {
-        if (!line) continue;
-        if (
-          line.includes('Turn in progress') ||
-          line.includes('Subagent') ||
-          line.includes('Intermediate assistant') ||
-          line.includes('Promoting') ||
-          line.includes('Flushing') ||
-          line.includes('Result #') ||
-          line.includes('Query done') ||
-          line.includes('Terminal') ||
-          line.includes('Assistant: stop=') ||
-          line.includes('Close sentinel')
-        ) {
-          logger.info(
-            { group: group.name, chatJid: input.chatJid, runId: input.runId },
-            line.replace(/^\[.*?\]\s*/, ''),
-          );
-        } else {
-          logger.debug(
-            { agent: group.folder, chatJid: input.chatJid, runId: input.runId },
-            line,
-          );
-        }
-      }
-      // Stderr activity means agent is alive — reset timeout
-      resetTimeout();
-      if (stderrTruncated) return;
-      const remaining = AGENT_MAX_OUTPUT_SIZE - stderr.length;
-      if (chunk.length > remaining) {
-        stderr += chunk.slice(0, remaining);
-        stderrTruncated = true;
-      } else {
-        stderr += chunk;
-      }
-    });
-
-    proc.on('close', (code, signal) => {
-      clearTimeout(timeout);
-      const duration = Date.now() - startTime;
-
-      if (timedOut) {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        fs.writeFileSync(
-          path.join(logsDir, `agent-${input.runId || 'adhoc'}-${ts}.log`),
-          [
-            `=== Agent Run Log (TIMEOUT) ===`,
-            `Timestamp: ${new Date().toISOString()}`,
-            `Group: ${group.name}`,
-            `ChatJid: ${input.chatJid}`,
-            `RunId: ${input.runId || 'n/a'}`,
-            `Process: ${processName}`,
-            `Duration: ${duration}ms`,
-            `Exit Code: ${code}`,
-            `Signal: ${signal}`,
-            `Had Streaming Output: ${hadStreamingOutput}`,
-          ].join('\n'),
-        );
-
-        if (hadStreamingOutput) {
-          logger.info(
-            {
-              group: group.name,
-              chatJid: input.chatJid,
-              runId: input.runId,
-              processName,
-              duration,
-              code,
-              signal,
-            },
-            'Agent timed out after output (idle cleanup)',
-          );
-          outputChain.then(() => {
-            resolve({ status: 'success', result: null, newSessionId });
-          });
-          return;
-        }
-
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Agent timed out after ${configTimeout}ms`,
-        });
-        return;
-      }
-
-      // Signal kill (SIGTERM/SIGKILL) from post-close cleanup or service
-      // restart.  When the agent already delivered streaming output this is
-      // normal lifecycle — not an error.
-      if (code === null && signal) {
-        if (hadStreamingOutput) {
-          logger.info(
-            {
-              group: group.name,
-              chatJid: input.chatJid,
-              runId: input.runId,
-              processName,
-              duration,
-              signal,
-            },
-            'Agent terminated by signal after output delivery (normal cleanup)',
-          );
-          outputChain.then(() => {
-            resolve({ status: 'success', result: null, newSessionId });
-          });
-          return;
-        }
-        // No output delivered before signal kill — genuine error
-        logger.error(
-          {
-            group: group.name,
-            chatJid: input.chatJid,
-            runId: input.runId,
-            processName,
-            duration,
-            signal,
-          },
-          'Agent killed by signal before producing output',
-        );
-        outputChain.then(() => {
-          resolve({
-            status: 'error',
-            result: null,
-            error: `Agent killed by ${signal} before producing output`,
-          });
-        });
-        return;
-      }
-
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const logFile = path.join(
-        logsDir,
-        `agent-${input.runId || 'adhoc'}-${timestamp}.log`,
-      );
-      const isVerbose = LOG_LEVEL === 'debug' || LOG_LEVEL === 'trace';
-
-      const logLines = [
-        `=== Agent Run Log ===`,
-        `Timestamp: ${new Date().toISOString()}`,
-        `Group: ${group.name}`,
-        `ChatJid: ${input.chatJid}`,
-        `GroupFolder: ${input.groupFolder}`,
-        `RunId: ${input.runId || 'n/a'}`,
-        `IsMain: ${input.isMain}`,
-        `AgentType: ${group.agentType || 'claude-code'}`,
-        `Duration: ${duration}ms`,
-        `Exit Code: ${code}`,
-        `Signal: ${signal}`,
-        ``,
-      ];
-
-      const isError = code !== 0;
-      if (isVerbose || isError) {
-        logLines.push(
-          `=== Input ===`,
-          JSON.stringify(input, null, 2),
-          ``,
-          `=== Stderr ===`,
-          stderr,
-          ``,
-          `=== Stdout ===`,
-          stdout,
-        );
-      } else {
-        logLines.push(
-          `Prompt length: ${input.prompt.length} chars`,
-          `Session ID: ${input.sessionId || 'new'}`,
-        );
-      }
-
-      fs.writeFileSync(logFile, logLines.join('\n'));
-
-      if (code !== 0) {
-        logger.error(
-          {
-            group: group.name,
-            chatJid: input.chatJid,
-            runId: input.runId,
-            code,
-            duration,
-            logFile,
-          },
-          'Agent exited with error',
-        );
-        // Wait for any queued streamed-output handlers to finish so a late
-        // newSessionId cannot be persisted after the caller clears a poisoned
-        // session.
-        outputChain.then(() => {
-          resolve({
-            status: 'error',
-            result: null,
-            error: `Agent exited with code ${code}: ${stderr.slice(-200)}`,
-          });
-        });
-        return;
-      }
-
-      if (onOutput) {
-        outputChain.then(() => {
-          logger.info(
-            {
-              group: group.name,
-              chatJid: input.chatJid,
-              runId: input.runId,
-              duration,
-              newSessionId,
-            },
-            'Agent completed (streaming mode)',
-          );
-          resolve({ status: 'success', result: null, newSessionId });
-        });
-        return;
-      }
-
-      // Legacy mode: parse output from stdout
-      try {
-        const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
-        const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
-        let jsonLine: string;
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          jsonLine = stdout
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
-        } else {
-          const lines = stdout.trim().split('\n');
-          jsonLine = lines[lines.length - 1];
-        }
-        const output: AgentOutput = JSON.parse(jsonLine);
-        logger.info(
-          {
-            group: group.name,
-            chatJid: input.chatJid,
-            runId: input.runId,
-            duration,
-            status: output.status,
-          },
-          'Agent completed',
-        );
-        resolve(output);
-      } catch (err) {
-        logger.error(
-          {
-            group: group.name,
-            chatJid: input.chatJid,
-            runId: input.runId,
-            error: err,
-          },
-          'Failed to parse agent output',
-        );
-        resolve({
-          status: 'error',
-          result: null,
-          error: `Failed to parse agent output: ${getErrorMessage(err)}`,
-        });
-      }
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timeout);
-      logger.error(
-        {
-          group: group.name,
-          chatJid: input.chatJid,
-          runId: input.runId,
-          processName,
-          error: err,
-        },
-        'Agent spawn error',
-      );
-      resolve({
-        status: 'error',
-        result: null,
-        error: `Agent spawn error: ${err.message}`,
-      });
-    });
+    runSpawnedAgentProcess({
+      proc,
+      group,
+      input,
+      processName,
+      logsDir,
+      startTime,
+      onOutput,
+    }).then(resolve);
   });
 }

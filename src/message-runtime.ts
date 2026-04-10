@@ -1,10 +1,7 @@
-import { AgentOutput } from './agent-runner.js';
-import { getAgentOutputText } from './agent-output.js';
 import {
   createProducedWorkItem,
   getOpenWorkItemForChat,
   getMessagesSinceSeq,
-  getLastBotFinalMessage,
   getLatestOpenPairedTaskForChat,
   getPairedTaskById,
 } from './db.js';
@@ -13,12 +10,7 @@ import {
   SERVICE_SESSION_SCOPE,
 } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
-import {
-  findChannel,
-  findChannelByName,
-  formatMessages,
-  normalizeMessageForDedupe,
-} from './router.js';
+import { findChannel, findChannelByName, formatMessages } from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { enqueueGenericFollowUpAfterDeliveryRetry as enqueueDeliveryRetryFollowUp } from './message-runtime-dispatch.js';
 import {
@@ -50,25 +42,17 @@ import {
   enqueuePairedFollowUpAfterEvent,
   schedulePairedFollowUpWithMessageCheck,
 } from './message-runtime-follow-up.js';
-import { runAgentForGroup } from './message-agent-executor.js';
-import { MessageTurnController } from './message-turn-controller.js';
-import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
 import {
   Channel,
   NewMessage,
-  type AgentType,
   type PairedRoomRole,
   RegisteredGroup,
   type PairedTask,
 } from './types.js';
 import { createScopedLogger, logger } from './logger.js';
-import {
-  getEffectiveChannelLease,
-  hasReviewerLease,
-  resolveLeaseServiceId,
-} from './service-routing.js';
+import { hasReviewerLease } from './service-routing.js';
 export {
   resolveHandoffCursorKey,
   resolveHandoffRoleOverride,
@@ -77,31 +61,14 @@ import {
   getFixedRoleChannelName,
   getMissingRoleChannelMessage,
 } from './message-runtime-shared.js';
+import {
+  createRunAgent,
+  createExecuteTurn,
+  isDuplicateOfLastBotFinal,
+  labelPairedSenders,
+} from './message-runtime-turns.js';
 
-/**
- * Check if a message is a duplicate of the last bot final message in a paired room.
- * Exported for testing purposes.
- */
-export function isDuplicateOfLastBotFinal(
-  chatJid: string,
-  text: string,
-): boolean {
-  if (!hasReviewerLease(chatJid)) {
-    return false;
-  }
-
-  // Get the last bot final message from DB (any bot, not just this service)
-  const lastMessages = getLastBotFinalMessage(chatJid, 'claude-code', 1);
-  if (lastMessages.length === 0) {
-    return false;
-  }
-
-  const lastMessage = lastMessages[0];
-  const normalizedLast = normalizeMessageForDedupe(lastMessage.content);
-  const normalizedCurrent = normalizeMessageForDedupe(text);
-
-  return normalizedLast === normalizedCurrent && normalizedLast.length > 0;
-}
+export { isDuplicateOfLastBotFinal };
 
 export interface MessageRuntimeDeps {
   assistantName: string;
@@ -134,37 +101,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const continuationTracker = createImplicitContinuationTracker(
     deps.idleTimeout,
   );
-  // In paired rooms, replace bot sender_name with role label so agents
-  // know who is the owner and who is the reviewer regardless of bot nickname.
-  const labelPairedSenders = (
+  const labelPairedRuntimeSenders = (
     chatJid: string,
     messages: NewMessage[],
-  ): NewMessage[] => {
-    if (!hasReviewerLease(chatJid)) return messages;
-    // Build bot-user-id → channel-name mapping from connected channels
-    const botIdToChannelName = new Map<string, string>();
-    for (const ch of deps.channels) {
-      if (!ch.isConnected()) continue;
-      // Probe each bot message to find which channel owns it
-      for (const msg of messages) {
-        if (msg.is_bot_message && ch.isOwnMessage?.(msg)) {
-          botIdToChannelName.set(msg.sender, ch.name);
-        }
-      }
-    }
-    const channelToRole: Record<string, PairedRoomRole> = {
-      discord: 'owner',
-      'discord-review': 'reviewer',
-      'discord-arbiter': 'arbiter',
-    };
-    return messages.map((msg) => {
-      if (!msg.is_bot_message) return msg;
-      const channelName = botIdToChannelName.get(msg.sender);
-      if (!channelName) return msg;
-      const role = channelToRole[channelName];
-      return role ? { ...msg, sender_name: role } : msg;
-    });
-  };
+  ): NewMessage[] => labelPairedSenders(deps.channels, chatJid, messages);
 
   const enqueueScopedGroupMessageCheck = buildScopedMessageCheckEnqueuer(
     deps.queue,
@@ -197,230 +137,115 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   ): boolean => {
     return isDuplicateOfLastBotFinal(chatJid, text);
   };
-
-  const runAgent = async (
-    group: RegisteredGroup,
-    prompt: string,
-    chatJid: string,
-    runId: string,
-    onOutput?: (output: AgentOutput) => Promise<void>,
-    options?: {
-      startSeq?: number | null;
-      endSeq?: number | null;
-      hasHumanMessage?: boolean;
-      forcedRole?: PairedRoomRole;
-      forcedAgentType?: AgentType;
-      pairedTurnIdentity?: PairedTurnIdentity;
-    },
-  ): Promise<'success' | 'error'> =>
-    runAgentForGroup(
-      {
-        assistantName: deps.assistantName,
-        queue: deps.queue,
-        getRoomBindings: deps.getRoomBindings,
-        getSessions: deps.getSessions,
-        persistSession: deps.persistSession,
-        clearSession: deps.clearSession,
-      },
-      {
-        group,
-        prompt,
-        chatJid,
-        runId,
-        startSeq: options?.startSeq,
-        endSeq: options?.endSeq,
-        hasHumanMessage: options?.hasHumanMessage,
-        forcedRole: options?.forcedRole,
-        forcedAgentType: options?.forcedAgentType,
-        pairedTurnIdentity: options?.pairedTurnIdentity,
-        onOutput,
-      },
-    );
-
-  const executeTurn = async (args: {
-    group: RegisteredGroup;
-    prompt: string;
-    chatJid: string;
-    runId: string;
-    channel: Channel;
-    startSeq: number | null;
-    endSeq: number | null;
-    deliveryRole?: PairedRoomRole;
-    hasHumanMessage?: boolean;
-    forcedRole?: PairedRoomRole;
-    forcedAgentType?: AgentType;
-    pairedTurnIdentity?: PairedTurnIdentity;
-  }): Promise<{
-    outputStatus: 'success' | 'error';
-    deliverySucceeded: boolean;
-    visiblePhase: ReturnType<MessageTurnController['finish']> extends Promise<
-      infer T
-    >
-      ? T extends { visiblePhase: infer V }
-        ? V
-        : never
-      : never;
-  }> => {
-    const { group, prompt, chatJid, runId, channel, startSeq, endSeq } = args;
-    const isClaudeCodeAgent =
-      (args.forcedAgentType ?? group.agentType ?? 'claude-code') ===
-      'claude-code';
-    const pairedRoom = hasReviewerLease(chatJid);
-    const resolvedDeliveryRole =
-      args.deliveryRole ?? args.forcedRole ?? (pairedRoom ? 'owner' : null);
-    const resolvedDeliveryServiceId = resolveLeaseServiceId(
-      getEffectiveChannelLease(chatJid),
-      resolvedDeliveryRole ?? 'owner',
-    );
-    const allowProgressReplayWithoutFinal =
-      args.pairedTurnIdentity?.role !== 'reviewer' &&
-      args.pairedTurnIdentity?.role !== 'arbiter';
-    const turnController = new MessageTurnController({
+  const runAgent = createRunAgent({
+    assistantName: deps.assistantName,
+    queue: deps.queue,
+    getRoomBindings: deps.getRoomBindings,
+    getSessions: deps.getSessions,
+    persistSession: deps.persistSession,
+    clearSession: deps.clearSession,
+  });
+  const executeTurn = createExecuteTurn({
+    runAgent,
+    assistantName: deps.assistantName,
+    idleTimeout: deps.idleTimeout,
+    failureFinalText: FAILURE_FINAL_TEXT,
+    channels: deps.channels,
+    queue: deps.queue,
+    getRoomBindings: deps.getRoomBindings,
+    getSessions: deps.getSessions,
+    persistSession: deps.persistSession,
+    clearSession: deps.clearSession,
+    deliverFinalText: async ({
+      text,
       chatJid,
-      group,
       runId,
       channel,
-      idleTimeout: deps.idleTimeout,
-      failureFinalText: FAILURE_FINAL_TEXT,
-      isClaudeCodeAgent,
-      clearSession: () => deps.clearSession(group.folder),
-      requestClose: (reason) =>
-        deps.queue.closeStdin(chatJid, { runId, reason }),
-      allowProgressReplayWithoutFinal,
-      deliveryRole: resolvedDeliveryRole,
-      deliveryServiceId: resolvedDeliveryServiceId,
-      pairedTurnIdentity: args.pairedTurnIdentity ?? null,
-      deliverFinalText: async (text) => {
-        try {
-          const persistedDeliveryRole = resolvedDeliveryRole;
-          const persistedDeliveryServiceId = resolvedDeliveryServiceId;
-          if (
-            (persistedDeliveryRole === 'reviewer' ||
-              persistedDeliveryRole === 'arbiter') &&
-            deps.queue.hasDirectTerminalDeliveryForRun?.(
-              chatJid,
-              runId,
-              persistedDeliveryRole,
-            )
-          ) {
-            logger.info(
-              {
-                chatJid,
-                runId,
-                deliveryRole: persistedDeliveryRole,
-              },
-              'Skipping final work item delivery because this run already sent a direct terminal IPC message',
-            );
-            return true;
-          }
-          const workItem = createProducedWorkItem({
-            group_folder: group.folder,
-            chat_jid: chatJid,
-            agent_type:
-              args.forcedAgentType ?? group.agentType ?? 'claude-code',
-            service_id: persistedDeliveryServiceId ?? undefined,
-            delivery_role: persistedDeliveryRole,
-            start_seq: startSeq,
-            end_seq: endSeq,
-            result_payload: text,
-          });
-          return deliverOpenWorkItem({
-            channel,
-            item: workItem,
-            log: logger,
-            isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,
-            openContinuation: (targetChatJid) =>
-              continuationTracker.open(targetChatJid),
-          });
-        } catch (err) {
-          logger.warn(
-            { group: group.name, chatJid, runId, err },
-            'Failed to persist produced output for delivery',
-          );
-          return false;
-        }
-      },
-    });
-
-    await turnController.start();
-
-    try {
-      const outputStatus = await runAgent(
-        group,
-        prompt,
+      group,
+      startSeq,
+      endSeq,
+      forcedAgentType,
+      deliveryRole,
+      deliveryServiceId,
+    }) => {
+      if (
+        (deliveryRole === 'reviewer' || deliveryRole === 'arbiter') &&
+        deps.queue.hasDirectTerminalDeliveryForRun?.(
+          chatJid,
+          runId,
+          deliveryRole,
+        )
+      ) {
+        logger.info(
+          {
+            chatJid,
+            runId,
+            deliveryRole,
+          },
+          'Skipping final work item delivery because this run already sent a direct terminal IPC message',
+        );
+        return true;
+      }
+      const workItem = createProducedWorkItem({
+        group_folder: group.folder,
+        chat_jid: chatJid,
+        agent_type: forcedAgentType ?? group.agentType ?? 'claude-code',
+        service_id: deliveryServiceId ?? undefined,
+        delivery_role: deliveryRole,
+        start_seq: startSeq,
+        end_seq: endSeq,
+        result_payload: text,
+      });
+      return deliverOpenWorkItem({
+        channel,
+        item: workItem,
+        log: logger,
+        isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,
+        openContinuation: (targetChatJid) =>
+          continuationTracker.open(targetChatJid),
+      });
+    },
+    afterDeliverySuccess: async ({
+      chatJid,
+      runId,
+      deliveryRole,
+      pairedRoom,
+    }) => {
+      if (!deliveryRole || !pairedRoom) {
+        return;
+      }
+      const pendingTaskAfterDelivery = getLatestOpenPairedTaskForChat(chatJid);
+      const followUpResult = enqueuePairedFollowUpAfterEvent({
         chatJid,
         runId,
-        async (result) => {
-          await turnController.handleOutput(result);
-        },
-        {
-          startSeq,
-          endSeq,
-          hasHumanMessage: args.hasHumanMessage,
-          forcedRole: args.forcedRole,
-          forcedAgentType: args.forcedAgentType,
-          pairedTurnIdentity: args.pairedTurnIdentity,
-        },
-      );
-
-      const { deliverySucceeded, visiblePhase } =
-        await turnController.finish(outputStatus);
-
-      if (deliverySucceeded && pairedRoom && resolvedDeliveryRole) {
-        const pendingTaskAfterDelivery =
-          getLatestOpenPairedTaskForChat(chatJid);
-        const followUpResult = enqueuePairedFollowUpAfterEvent({
-          chatJid,
-          runId,
-          task: pendingTaskAfterDelivery,
-          source: 'delivery-success',
-          completedRole: resolvedDeliveryRole,
-          fallbackLastTurnOutputRole: resolvedDeliveryRole,
-          enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
-        });
-        if (followUpResult.kind === 'paired-follow-up') {
-          logger.info(
-            {
-              chatJid,
-              runId,
-              completedRole: resolvedDeliveryRole,
-              taskId: followUpResult.taskId,
-              taskStatus: followUpResult.taskStatus,
-              intentKind: followUpResult.intentKind,
-              scheduled: followUpResult.scheduled,
-            },
-            followUpResult.scheduled
-              ? resolvedDeliveryRole === 'owner'
-                ? 'Queued paired follow-up after successful owner delivery'
-                : 'Queued paired follow-up after successful reviewer/arbiter delivery'
-              : resolvedDeliveryRole === 'owner'
-                ? 'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged'
-                : 'Skipped duplicate paired follow-up after successful reviewer/arbiter delivery while task state was unchanged',
-          );
-        }
+        task: pendingTaskAfterDelivery,
+        source: 'delivery-success',
+        completedRole: deliveryRole,
+        fallbackLastTurnOutputRole: deliveryRole,
+        enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
+      });
+      if (followUpResult.kind === 'paired-follow-up') {
+        logger.info(
+          {
+            chatJid,
+            runId,
+            completedRole: deliveryRole,
+            taskId: followUpResult.taskId,
+            taskStatus: followUpResult.taskStatus,
+            intentKind: followUpResult.intentKind,
+            scheduled: followUpResult.scheduled,
+          },
+          followUpResult.scheduled
+            ? deliveryRole === 'owner'
+              ? 'Queued paired follow-up after successful owner delivery'
+              : 'Queued paired follow-up after successful reviewer/arbiter delivery'
+            : deliveryRole === 'owner'
+              ? 'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged'
+              : 'Skipped duplicate paired follow-up after successful reviewer/arbiter delivery while task state was unchanged',
+        );
       }
-
-      return {
-        outputStatus,
-        deliverySucceeded,
-        visiblePhase,
-      };
-    } finally {
-      turnController.cancelPendingTypingDelay();
-      logger.debug(
-        {
-          transition: 'typing:off',
-          source: 'message-runtime:safety-net',
-          chatJid,
-          group: group.name,
-          groupFolder: group.folder,
-          runId,
-        },
-        'Typing indicator transition',
-      );
-      await channel.setTyping?.(chatJid, false);
-    }
-  };
+    },
+  });
 
   const enqueuePendingHandoffs = (): void => {
     enqueueClaimedServiceHandoffs({
@@ -568,7 +393,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           executeTurn,
           getFixedRoleChannelName,
           roleToChannel,
-          labelPairedSenders,
+          labelPairedSenders: labelPairedRuntimeSenders,
           mode: 'idle',
         });
         if (pendingTurnOutcome !== null) {
@@ -602,7 +427,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         executeTurn,
         getFixedRoleChannelName,
         roleToChannel,
-        labelPairedSenders,
+        labelPairedSenders: labelPairedRuntimeSenders,
         mode: 'bot-only',
         missedMessages,
       });
@@ -697,7 +522,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         saveState: deps.saveState,
         executeTurn,
         getFixedRoleChannelName,
-        labelPairedSenders,
+        labelPairedSenders: labelPairedRuntimeSenders,
         formatMessages,
       });
     }
@@ -735,7 +560,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             deps.queue.closeStdin(chatJid, {
               reason,
             }),
-          labelPairedSenders,
+          labelPairedSenders: labelPairedRuntimeSenders,
         });
       } catch (err) {
         logger.error({ err }, 'Error in message loop');

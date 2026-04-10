@@ -7,53 +7,24 @@ import {
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
-  DATA_DIR,
-  normalizeServiceId,
-  OWNER_AGENT_TYPE,
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
 } from './config.js';
-import { listUnexpectedDataStateFiles } from './data-state-files.js';
 import {
-  isValidGroupFolder,
   resolveTaskRuntimeIpcPath as resolveTaskRuntimeIpcPathFromGroup,
   resolveServiceTaskSessionsPath as resolveServiceTaskSessionsPathFromGroup,
   resolveTaskSessionsPath as resolveTaskSessionsPathFromGroup,
 } from './group-folder.js';
 import { logger } from './logger.js';
 import {
-  type RoomModeSource,
-  type RoomRegistrationSnapshot,
-  countPendingLegacyRegisteredGroupRows,
   type StoredRoomSettings,
-  buildRegisteredGroupFromStoredSettings,
-  buildLegacyRoomMigrationPlan,
-  collectRegisteredAgentTypes,
-  collectRegisteredAgentTypesForFolder,
-  deleteLegacyRegisteredGroupRowsForJid,
-  getPendingLegacyRegisteredGroupJids as getPendingLegacyRegisteredGroupJidsFromDatabase,
-  getStoredRoomRowsFromDatabase,
-  getStoredRoomSettingsRowFromDatabase,
-  inferStoredRoomCapabilityTypes,
-  inferOwnerAgentTypeFromRegisteredAgentTypes,
   inferRoomModeFromRegisteredAgentTypes,
-  insertStoredRoomSettings,
-  insertStoredRoomSettingsFromMigration,
-  materializeRegisteredGroupsForRoom,
-  normalizeRoomModeSource,
-  normalizeStoredAgentType,
-  resolveStoredRoomCapabilityTypes,
-  resolveAssignedRoomFolder,
-  syncRoomRoleOverridesForRoom,
-  upsertRoomRoleOverride,
-  updateStoredRoomMetadata,
 } from './db/room-registration.js';
 import {
-  initializeDatabaseSchema,
-  openDatabaseFromFile,
-  openInMemoryDatabase,
-  openPersistentDatabase,
-} from './db/bootstrap.js';
+  openInitializedDatabaseFromFile,
+  openInitializedInMemoryDatabase,
+  openInitializedPersistentDatabase,
+} from './db/database-lifecycle.js';
 import {
   clearChannelOwnerLeaseInDatabase,
   getAllChannelOwnerLeasesFromDatabase,
@@ -102,8 +73,6 @@ import {
 } from './db/work-items.js';
 import {
   claimPairedTurnReservationInDatabase,
-  clearPairedTaskExecutionLeasesForServiceInDatabase,
-  clearExpiredPairedTaskExecutionLeasesInDatabase,
   clearPairedTaskExecutionLeasesInDatabase,
   clearPairedTurnReservationsInDatabase,
   type PairedTaskUpdates,
@@ -156,12 +125,29 @@ import {
 } from './db/service-handoffs.js';
 import {
   getLastRespondingAgentTypeFromDatabase,
-  getUnsupportedRouterStateKeysFromDatabase,
   getRouterStateForServiceFromDatabase,
   getRouterStateFromDatabase,
   setRouterStateForServiceInDatabase,
   setRouterStateInDatabase,
 } from './db/router-state.js';
+import {
+  type AssignRoomInput,
+  assignRoomInDatabase,
+  clearExplicitRoomModeInDatabase,
+  deleteStoredRoomSettingsForTestsInDatabase,
+  getAllRoomBindingsFromDatabase,
+  getEffectiveRoomModeFromDatabase,
+  getEffectiveRuntimeRoomModeFromDatabase,
+  getExplicitRoomModeFromDatabase,
+  getRegisteredAgentTypesForJidFromDatabase,
+  getRegisteredGroupFromDatabase,
+  getStoredRoomSettingsFromDatabase,
+  migrateLegacyRoomRegistrationsForTestsInDatabase,
+  setExplicitRoomModeInDatabase,
+  setRegisteredGroupForTestsInDatabase,
+  setStoredRoomOwnerAgentTypeForTestsInDatabase,
+  updateRegisteredGroupNameInDatabase,
+} from './db/rooms.js';
 import {
   deleteAllSessionsForGroupFromDatabase,
   deleteSessionFromDatabase,
@@ -169,7 +155,6 @@ import {
   getSessionFromDatabase,
   setSessionInDatabase,
 } from './db/sessions.js';
-import { tableHasColumn } from './db/schema.js';
 import {
   type CreateScheduledTaskInput,
   type ScheduledTaskStatusTrackingUpdates,
@@ -187,10 +172,7 @@ import {
   updateTaskInDatabase,
   updateTaskStatusTrackingInDatabase,
 } from './db/tasks.js';
-import {
-  inferAgentTypeFromServiceShadow,
-  resolveRoleServiceShadow,
-} from './role-service-shadow.js';
+import { inferAgentTypeFromServiceShadow } from './role-service-shadow.js';
 import { getTaskRuntimeTaskId } from './task-watch-status.js';
 import {
   NewMessage,
@@ -210,22 +192,7 @@ import {
 export { inferRoomModeFromRegisteredAgentTypes };
 
 let db: Database;
-
-interface StoredRoomModeRow {
-  roomMode: RoomMode;
-  source: RoomModeSource;
-}
-
-export interface AssignRoomInput {
-  name: string;
-  roomMode?: RoomMode;
-  ownerAgentType?: AgentType;
-  folder?: string;
-  isMain?: boolean;
-  workDir?: string;
-  addedAt?: string;
-  ownerAgentConfig?: RegisteredGroup['agentConfig'];
-}
+export type { AssignRoomInput } from './db/rooms.js';
 export type {
   MemoryRecord,
   MemoryScopeKind,
@@ -240,40 +207,17 @@ export type { ChannelOwnerLeaseRow } from './db/channel-owner-leases.js';
 export type { ServiceHandoff } from './db/service-handoffs.js';
 
 export function initDatabase(): void {
-  db = openPersistentDatabase();
-  initializeDatabaseSchema(db);
-  assertNoPendingLegacyRoomMigration();
-  assertNoUnexpectedDataStateFiles();
-  assertNoUnsupportedRouterStateDbKeys();
-  clearPairedTaskExecutionLeasesForServiceInDatabase(
-    db,
-    normalizeServiceId(SERVICE_ID),
-  );
-  clearExpiredPairedTaskExecutionLeasesInDatabase(db);
+  db = openInitializedPersistentDatabase();
 }
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
-  db = openInMemoryDatabase();
-  initializeDatabaseSchema(db);
-  clearPairedTaskExecutionLeasesForServiceInDatabase(
-    db,
-    normalizeServiceId(SERVICE_ID),
-  );
-  clearExpiredPairedTaskExecutionLeasesInDatabase(db);
+  db = openInitializedInMemoryDatabase();
 }
 
 /** @internal - for tests only. Opens an existing database file and runs schema/migrations. */
 export function _initTestDatabaseFromFile(dbPath: string): void {
-  db = openDatabaseFromFile(dbPath);
-  initializeDatabaseSchema(db);
-  assertNoPendingLegacyRoomMigration();
-  assertNoUnsupportedRouterStateDbKeys();
-  clearPairedTaskExecutionLeasesForServiceInDatabase(
-    db,
-    normalizeServiceId(SERVICE_ID),
-  );
-  clearExpiredPairedTaskExecutionLeasesInDatabase(db);
+  db = openInitializedDatabaseFromFile(dbPath);
 }
 
 /** @internal - for tests only. */
@@ -284,21 +228,7 @@ export function _setStoredRoomOwnerAgentTypeForTests(
   if (!db) {
     throw new Error('Database not initialized');
   }
-  db.prepare(
-    `UPDATE room_settings
-     SET owner_agent_type = ?,
-         updated_at = ?
-     WHERE chat_jid = ?`,
-  ).run(ownerAgentType, new Date().toISOString(), chatJid);
-  if (ownerAgentType) {
-    const now = new Date().toISOString();
-    upsertRoomRoleOverride(db, chatJid, {
-      role: 'owner',
-      agentType: ownerAgentType,
-      createdAt: now,
-      updatedAt: now,
-    });
-  }
+  setStoredRoomOwnerAgentTypeForTestsInDatabase(db, chatJid, ownerAgentType);
 }
 
 /** @internal - for tests only. */
@@ -306,7 +236,7 @@ export function _deleteStoredRoomSettingsForTests(chatJid: string): void {
   if (!db) {
     throw new Error('Database not initialized');
   }
-  db.prepare('DELETE FROM room_settings WHERE chat_jid = ?').run(chatJid);
+  deleteStoredRoomSettingsForTestsInDatabase(db, chatJid);
 }
 
 /** @internal - for tests only. */
@@ -745,84 +675,7 @@ export function getRegisteredGroup(
   jid: string,
   agentType?: string,
 ): (RegisteredGroup & { jid: string }) | undefined {
-  const requestedAgentType = normalizeStoredAgentType(agentType);
-  const stored = getStoredRoomSettingsRowFromDatabase(db, jid);
-  if (stored) {
-    return buildRegisteredGroupFromStoredSettings(
-      db,
-      stored,
-      requestedAgentType,
-    );
-  }
-  return undefined;
-}
-
-function writeLegacyRegisteredGroupAndSyncRoomSettings(
-  jid: string,
-  group: RegisteredGroup,
-): void {
-  const existingStored = getStoredRoomSettingsRowFromDatabase(db, jid);
-  const existingRoomMode = getStoredRoomModeRow(jid);
-  if (!isValidGroupFolder(group.folder)) {
-    throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
-  }
-  const tx = db.transaction(() => {
-    const seededAgentType = group.agentType || 'claude-code';
-    const agentTypes = new Set<AgentType>(collectRegisteredAgentTypes(db, jid));
-    agentTypes.add(seededAgentType);
-    const inferredRoomMode = inferRoomModeFromRegisteredAgentTypes([
-      ...agentTypes,
-    ]);
-    const roomMode =
-      existingRoomMode?.source === 'explicit'
-        ? existingRoomMode.roomMode
-        : inferredRoomMode;
-    const ownerAgentType =
-      existingStored?.modeSource === 'explicit' && existingStored.ownerAgentType
-        ? existingStored.ownerAgentType
-        : inferOwnerAgentTypeFromRegisteredAgentTypes([...agentTypes]);
-    const snapshot: RoomRegistrationSnapshot = {
-      name: group.name,
-      folder: group.folder,
-      triggerPattern:
-        existingStored?.modeSource === 'explicit' && existingStored.trigger
-          ? existingStored.trigger
-          : (group.trigger ?? ''),
-      requiresTrigger:
-        group.requiresTrigger ?? existingStored?.requiresTrigger ?? false,
-      isMain: group.isMain ?? existingStored?.isMain ?? false,
-      ownerAgentType,
-      workDir: group.workDir ?? existingStored?.workDir ?? null,
-    };
-
-    if (existingStored) {
-      updateStoredRoomMetadata(db, jid, snapshot);
-      if (!existingRoomMode || existingRoomMode.source === 'inferred') {
-        upsertStoredRoomMode(jid, roomMode, 'inferred');
-      }
-    } else {
-      insertStoredRoomSettings(db, jid, roomMode, 'inferred', snapshot);
-    }
-
-    materializeRegisteredGroupsForRoom(
-      db,
-      jid,
-      snapshot,
-      roomMode,
-      ownerAgentType,
-      seededAgentType === ownerAgentType ? group.agentConfig : undefined,
-      group.added_at,
-    );
-    syncRoomRoleOverridesForRoom(
-      db,
-      jid,
-      roomMode,
-      ownerAgentType,
-      seededAgentType === ownerAgentType ? group.agentConfig : undefined,
-      group.added_at,
-    );
-  });
-  tx();
+  return getRegisteredGroupFromDatabase(db, jid, agentType);
 }
 
 /**
@@ -833,7 +686,7 @@ export function _setRegisteredGroupForTests(
   jid: string,
   group: RegisteredGroup,
 ): void {
-  writeLegacyRegisteredGroupAndSyncRoomSettings(jid, group);
+  setRegisteredGroupForTestsInDatabase(db, jid, group);
 }
 
 export function _migrateLegacyRoomRegistrationsForTests(): {
@@ -843,294 +696,56 @@ export function _migrateLegacyRoomRegistrationsForTests(): {
   if (!db) {
     throw new Error('Database not initialized');
   }
-
-  const jids = getPendingLegacyRegisteredGroupJidsFromDatabase(db);
-  let migratedRooms = 0;
-  let migratedRoleOverrides = 0;
-
-  db.transaction(() => {
-    for (const jid of jids) {
-      const plan = buildLegacyRoomMigrationPlan(db, jid);
-      if (!plan) continue;
-      insertStoredRoomSettingsFromMigration(db, plan);
-      for (const override of plan.roleOverrides) {
-        upsertRoomRoleOverride(db, jid, override);
-        migratedRoleOverrides += 1;
-      }
-      migratedRooms += 1;
-    }
-  })();
-
-  return { migratedRooms, migratedRoleOverrides };
+  return migrateLegacyRoomRegistrationsForTestsInDatabase(db);
 }
 
 export function assignRoom(
   chatJid: string,
   input: AssignRoomInput,
 ): (RegisteredGroup & { jid: string }) | undefined {
-  const existing = getStoredRoomSettingsRowFromDatabase(db, chatJid);
-  const roomMode = input.roomMode || existing?.roomMode || 'single';
-  const ownerAgentType =
-    input.ownerAgentType || existing?.ownerAgentType || OWNER_AGENT_TYPE;
-  const folder = resolveAssignedRoomFolder(
-    db,
-    chatJid,
-    input.name,
-    input.folder,
-  );
-  const snapshot: RoomRegistrationSnapshot = {
-    name: input.name,
-    folder,
-    triggerPattern: existing?.trigger ?? '',
-    requiresTrigger: existing?.requiresTrigger ?? false,
-    isMain: input.isMain ?? existing?.isMain ?? false,
-    ownerAgentType,
-    workDir: input.workDir ?? existing?.workDir ?? null,
-  };
-  const now = new Date().toISOString();
-
-  db.transaction(() => {
-    if (existing) {
-      db.prepare(
-        `UPDATE room_settings
-         SET room_mode = ?,
-             mode_source = 'explicit',
-             name = ?,
-             folder = ?,
-             trigger_pattern = ?,
-             requires_trigger = ?,
-             is_main = ?,
-             owner_agent_type = ?,
-             work_dir = ?,
-             updated_at = ?
-         WHERE chat_jid = ?`,
-      ).run(
-        roomMode,
-        snapshot.name,
-        snapshot.folder,
-        snapshot.triggerPattern,
-        snapshot.requiresTrigger ? 1 : 0,
-        snapshot.isMain ? 1 : 0,
-        snapshot.ownerAgentType,
-        snapshot.workDir,
-        now,
-        chatJid,
-      );
-    } else {
-      insertStoredRoomSettings(db, chatJid, roomMode, 'explicit', snapshot);
-    }
-
-    syncRoomRoleOverridesForRoom(
-      db,
-      chatJid,
-      roomMode,
-      ownerAgentType,
-      input.ownerAgentConfig,
-      input.addedAt ?? now,
-    );
-    deleteLegacyRegisteredGroupRowsForJid(db, chatJid);
-  })();
-
-  return getRegisteredGroup(chatJid);
+  return assignRoomInDatabase(db, chatJid, input);
 }
 
 export function updateRegisteredGroupName(jid: string, name: string): void {
-  const plan = buildRoomRegistrationPlanForJid(jid, { name });
-  if (!plan) {
-    return;
-  }
-  db.transaction(() => {
-    if (plan.hasStoredRoom) {
-      updateStoredRoomMetadata(db, jid, plan.snapshot);
-    } else {
-      insertStoredRoomSettings(
-        db,
-        jid,
-        plan.roomMode,
-        'inferred',
-        plan.snapshot,
-      );
-    }
-    deleteLegacyRegisteredGroupRowsForJid(db, jid);
-  })();
+  updateRegisteredGroupNameInDatabase(db, jid, name);
 }
 
 export function getAllRoomBindings(
   agentTypeFilter?: string,
 ): Record<string, RegisteredGroup> {
-  const result: Record<string, RegisteredGroup> = {};
-  const requestedAgentType = normalizeStoredAgentType(agentTypeFilter);
-  const storedRows = getStoredRoomRowsFromDatabase(db);
-
-  for (const stored of storedRows) {
-    const group = buildRegisteredGroupFromStoredSettings(
-      db,
-      stored,
-      requestedAgentType,
-    );
-    if (group) {
-      const { jid, ...rest } = group;
-      result[jid] = rest;
-    }
-  }
-
-  return result;
+  return getAllRoomBindingsFromDatabase(db, agentTypeFilter);
 }
 
 export function getRegisteredAgentTypesForJid(jid: string): AgentType[] {
   if (!db) return [];
-  const stored = getStoredRoomSettingsRowFromDatabase(db, jid);
-  return stored ? resolveStoredRoomCapabilityTypes(db, stored) : [];
+  return getRegisteredAgentTypesForJidFromDatabase(db, jid);
 }
 
 export function getStoredRoomSettings(
   chatJid: string,
 ): StoredRoomSettings | undefined {
   if (!db) return undefined;
-  return getStoredRoomSettingsRowFromDatabase(db, chatJid);
-}
-
-function getStoredRoomModeRow(chatJid: string): StoredRoomModeRow | undefined {
-  const row = getStoredRoomSettings(chatJid);
-  return row
-    ? {
-        roomMode: row.roomMode,
-        source: row.modeSource,
-      }
-    : undefined;
-}
-
-function assertNoPendingLegacyRoomMigration(): void {
-  const pendingLegacyRows = countPendingLegacyRegisteredGroupRows(db);
-  if (pendingLegacyRows === 0) {
-    return;
-  }
-
-  throw new Error(
-    `Legacy room migration required before startup (pending_rows=${pendingLegacyRows})`,
-  );
-}
-
-function assertNoUnexpectedDataStateFiles(): void {
-  const pendingFiles = listUnexpectedDataStateFiles(DATA_DIR);
-  if (pendingFiles.length === 0) {
-    return;
-  }
-
-  throw new Error(
-    `Unexpected data state files detected before startup (files=${pendingFiles.join(',')})`,
-  );
-}
-
-function assertNoUnsupportedRouterStateDbKeys(): void {
-  const legacyKeys = getUnsupportedRouterStateKeysFromDatabase(db);
-  if (legacyKeys.length === 0) {
-    return;
-  }
-
-  throw new Error(
-    `Unsupported router_state DB keys remain before startup (keys=${legacyKeys.join(',')})`,
-  );
-}
-
-function buildRoomRegistrationSnapshotFromStoredRoom(
-  stored: StoredRoomSettings,
-  overrides?: Partial<Pick<RoomRegistrationSnapshot, 'name'>>,
-): RoomRegistrationSnapshot {
-  const capabilityTypes = resolveStoredRoomCapabilityTypes(db, stored);
-  const ownerAgentType =
-    stored.ownerAgentType ||
-    (capabilityTypes.length > 0
-      ? inferOwnerAgentTypeFromRegisteredAgentTypes(capabilityTypes)
-      : OWNER_AGENT_TYPE);
-  const name = overrides?.name ?? stored.name ?? stored.chatJid;
-
-  return {
-    name,
-    folder: resolveAssignedRoomFolder(db, stored.chatJid, name, stored.folder),
-    triggerPattern: stored.trigger ?? '',
-    requiresTrigger: stored.requiresTrigger ?? false,
-    isMain: stored.isMain ?? false,
-    ownerAgentType,
-    workDir: stored.workDir ?? null,
-  };
-}
-
-function buildRoomRegistrationPlanForJid(
-  chatJid: string,
-  overrides?: Partial<Pick<RoomRegistrationSnapshot, 'name'>>,
-):
-  | {
-      snapshot: RoomRegistrationSnapshot;
-      roomMode: RoomMode;
-      hasStoredRoom: boolean;
-    }
-  | undefined {
-  const stored = getStoredRoomSettingsRowFromDatabase(db, chatJid);
-  if (stored) {
-    return {
-      snapshot: buildRoomRegistrationSnapshotFromStoredRoom(stored, overrides),
-      roomMode: stored.roomMode,
-      hasStoredRoom: true,
-    };
-  }
-
-  return undefined;
-}
-
-function upsertStoredRoomMode(
-  chatJid: string,
-  roomMode: RoomMode,
-  source: RoomModeSource,
-): void {
-  db.prepare(
-    `INSERT INTO room_settings (
-      chat_jid,
-      room_mode,
-      mode_source,
-      updated_at
-    ) VALUES (?, ?, ?, ?)
-    ON CONFLICT(chat_jid) DO UPDATE SET
-      room_mode = excluded.room_mode,
-      mode_source = excluded.mode_source,
-      updated_at = excluded.updated_at`,
-  ).run(chatJid, roomMode, source, new Date().toISOString());
+  return getStoredRoomSettingsFromDatabase(db, chatJid);
 }
 
 export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
-  const row = getStoredRoomModeRow(chatJid);
-  return row?.source === 'explicit' ? row.roomMode : undefined;
+  return getExplicitRoomModeFromDatabase(db, chatJid);
 }
 
 export function setExplicitRoomMode(chatJid: string, roomMode: RoomMode): void {
-  upsertStoredRoomMode(chatJid, roomMode, 'explicit');
-  deleteLegacyRegisteredGroupRowsForJid(db, chatJid);
+  setExplicitRoomModeInDatabase(db, chatJid, roomMode);
 }
 
 export function clearExplicitRoomMode(chatJid: string): void {
-  const stored = getStoredRoomSettingsRowFromDatabase(db, chatJid);
-  const agentTypes = stored
-    ? inferStoredRoomCapabilityTypes(db, stored)
-    : collectRegisteredAgentTypes(db, chatJid);
-  if (agentTypes.length === 0) {
-    db.prepare('DELETE FROM room_settings WHERE chat_jid = ?').run(chatJid);
-    deleteLegacyRegisteredGroupRowsForJid(db, chatJid);
-    return;
-  }
-  upsertStoredRoomMode(
-    chatJid,
-    inferRoomModeFromRegisteredAgentTypes(agentTypes),
-    'inferred',
-  );
-  deleteLegacyRegisteredGroupRowsForJid(db, chatJid);
+  clearExplicitRoomModeInDatabase(db, chatJid);
 }
 
 export function getEffectiveRoomMode(chatJid: string): RoomMode {
-  return getStoredRoomModeRow(chatJid)?.roomMode ?? 'single';
+  return getEffectiveRoomModeFromDatabase(db, chatJid);
 }
 
 export function getEffectiveRuntimeRoomMode(chatJid: string): RoomMode {
-  return getStoredRoomSettings(chatJid)?.roomMode ?? 'single';
+  return getEffectiveRuntimeRoomModeFromDatabase(db, chatJid);
 }
 
 // --- Paired task/project/workspace state ---
