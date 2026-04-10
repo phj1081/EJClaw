@@ -225,24 +225,11 @@ describe('DiscordChannel', () => {
   });
 
   describe('channel registration', () => {
-    it('warns when only legacy owner token names are configured', () => {
+    it('warns when the canonical owner token is not configured', () => {
       const ownerFactory = registeredChannelFactories.get('discord');
-
-      vi.mocked(getEnv).mockImplementation((key: string) => {
-        if (key === 'DISCORD_BOT_TOKEN') return 'legacy-owner-token';
-        return undefined;
-      });
 
       expect(ownerFactory).toBeTypeOf('function');
       expect(ownerFactory?.(createTestOpts() as any)).toBeNull();
-      expect(logger.warn).toHaveBeenCalledWith(
-        {
-          role: 'owner',
-          canonicalKey: 'DISCORD_OWNER_BOT_TOKEN',
-          legacyKeys: ['DISCORD_BOT_TOKEN'],
-        },
-        'Discord: legacy bot token names detected; rename them to canonical role-based names',
-      );
       expect(logger.warn).toHaveBeenCalledWith(
         'Discord: DISCORD_OWNER_BOT_TOKEN not set',
       );

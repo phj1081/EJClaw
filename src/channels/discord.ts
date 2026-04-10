@@ -30,38 +30,6 @@ const DISCORD_ARBITER_CHANNEL = 'discord-arbiter';
 const DISCORD_OWNER_TOKEN_KEY = 'DISCORD_OWNER_BOT_TOKEN';
 const DISCORD_REVIEWER_TOKEN_KEY = 'DISCORD_REVIEWER_BOT_TOKEN';
 const DISCORD_ARBITER_TOKEN_KEY = 'DISCORD_ARBITER_BOT_TOKEN';
-const DISCORD_OWNER_LEGACY_TOKEN_KEYS = [
-  'DISCORD_BOT_TOKEN',
-  'DISCORD_CLAUDE_BOT_TOKEN',
-];
-const DISCORD_REVIEWER_LEGACY_TOKEN_KEYS = [
-  'DISCORD_CODEX_BOT_TOKEN',
-  'DISCORD_CODEX_MAIN_BOT_TOKEN',
-];
-const DISCORD_ARBITER_LEGACY_TOKEN_KEYS = [
-  'DISCORD_REVIEW_BOT_TOKEN',
-  'DISCORD_CODEX_REVIEW_BOT_TOKEN',
-];
-
-function warnIfLegacyDiscordTokenConfigured(
-  canonicalKey: string,
-  legacyKeys: string[],
-  role: 'owner' | 'reviewer' | 'arbiter',
-): void {
-  if (getEnv(canonicalKey)) return;
-
-  const configuredLegacyKeys = legacyKeys.filter((key) => !!getEnv(key));
-  if (configuredLegacyKeys.length === 0) return;
-
-  logger.warn(
-    {
-      role,
-      canonicalKey,
-      legacyKeys: configuredLegacyKeys,
-    },
-    'Discord: legacy bot token names detected; rename them to canonical role-based names',
-  );
-}
 
 /**
  * Download a Discord attachment to local disk.
@@ -835,11 +803,6 @@ export class DiscordChannel implements Channel {
 }
 
 registerChannel(DISCORD_OWNER_CHANNEL, (opts: ChannelOpts) => {
-  warnIfLegacyDiscordTokenConfigured(
-    DISCORD_OWNER_TOKEN_KEY,
-    DISCORD_OWNER_LEGACY_TOKEN_KEYS,
-    'owner',
-  );
   const token = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
   if (!token) {
     logger.warn('Discord: DISCORD_OWNER_BOT_TOKEN not set');
@@ -849,11 +812,6 @@ registerChannel(DISCORD_OWNER_CHANNEL, (opts: ChannelOpts) => {
 });
 
 registerChannel(DISCORD_REVIEWER_CHANNEL, (opts: ChannelOpts) => {
-  warnIfLegacyDiscordTokenConfigured(
-    DISCORD_REVIEWER_TOKEN_KEY,
-    DISCORD_REVIEWER_LEGACY_TOKEN_KEYS,
-    'reviewer',
-  );
   const ownerToken = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
   const token = getEnv(DISCORD_REVIEWER_TOKEN_KEY) || '';
   if (!token) return null;
@@ -874,11 +832,6 @@ registerChannel(DISCORD_REVIEWER_CHANNEL, (opts: ChannelOpts) => {
 });
 
 registerChannel(DISCORD_ARBITER_CHANNEL, (opts: ChannelOpts) => {
-  warnIfLegacyDiscordTokenConfigured(
-    DISCORD_ARBITER_TOKEN_KEY,
-    DISCORD_ARBITER_LEGACY_TOKEN_KEYS,
-    'arbiter',
-  );
   const ownerToken = getEnv(DISCORD_OWNER_TOKEN_KEY) || '';
   const reviewerToken = getEnv(DISCORD_REVIEWER_TOKEN_KEY) || '';
   const token = getEnv(DISCORD_ARBITER_TOKEN_KEY) || '';

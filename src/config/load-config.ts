@@ -7,6 +7,16 @@ import { getEnv } from '../env.js';
 
 import type { AppConfig, RoleModelConfig } from './schema.js';
 
+const LEGACY_ENV_ALIAS_MAP = {
+  DISCORD_BOT_TOKEN: 'DISCORD_OWNER_BOT_TOKEN',
+  DISCORD_CLAUDE_BOT_TOKEN: 'DISCORD_OWNER_BOT_TOKEN',
+  DISCORD_CODEX_BOT_TOKEN: 'DISCORD_REVIEWER_BOT_TOKEN',
+  DISCORD_CODEX_MAIN_BOT_TOKEN: 'DISCORD_REVIEWER_BOT_TOKEN',
+  DISCORD_REVIEW_BOT_TOKEN: 'DISCORD_ARBITER_BOT_TOKEN',
+  DISCORD_CODEX_REVIEW_BOT_TOKEN: 'DISCORD_ARBITER_BOT_TOKEN',
+  SESSION_COMMAND_USER_IDS: 'SESSION_COMMAND_ALLOWED_SENDERS',
+} as const;
+
 function readText(key: string): string | undefined {
   return getEnv(key);
 }
@@ -100,7 +110,29 @@ function normalizeServiceId(
   return serviceId === 'codex' ? codexMainServiceId : serviceId;
 }
 
+function assertNoLegacyEnvAliasesConfigured(): void {
+  const configuredAliases = Object.entries(LEGACY_ENV_ALIAS_MAP).filter(
+    ([legacyKey]) => {
+      const value = getEnv(legacyKey);
+      return value != null && value !== '';
+    },
+  );
+
+  if (configuredAliases.length === 0) {
+    return;
+  }
+
+  const aliasList = configuredAliases
+    .map(([legacyKey, canonicalKey]) => `${legacyKey} -> ${canonicalKey}`)
+    .join(', ');
+  throw new Error(
+    `Legacy env aliases are no longer supported; rename them to canonical keys (${aliasList})`,
+  );
+}
+
 export function loadConfig(): AppConfig {
+  assertNoLegacyEnvAliasesConfigured();
+
   const assistantName = readText('ASSISTANT_NAME') ?? 'Andy';
   const assistantSlug = assistantName.trim().toLowerCase();
 
@@ -217,11 +249,7 @@ export function loadConfig(): AppConfig {
     },
     sessionCommands: {
       allowedSenders: new Set(
-        (
-          readText('SESSION_COMMAND_ALLOWED_SENDERS') ??
-          readText('SESSION_COMMAND_USER_IDS') ??
-          ''
-        )
+        (readText('SESSION_COMMAND_ALLOWED_SENDERS') ?? '')
           .split(',')
           .map((value) => value.trim())
           .filter(Boolean),

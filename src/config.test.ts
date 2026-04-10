@@ -23,6 +23,13 @@ describe('config/env loading', () => {
     delete process.env.CODEX_MODEL;
     delete process.env.STATUS_CHANNEL_ID;
     delete process.env.TZ;
+    delete process.env.DISCORD_BOT_TOKEN;
+    delete process.env.DISCORD_CLAUDE_BOT_TOKEN;
+    delete process.env.DISCORD_CODEX_BOT_TOKEN;
+    delete process.env.DISCORD_CODEX_MAIN_BOT_TOKEN;
+    delete process.env.DISCORD_REVIEW_BOT_TOKEN;
+    delete process.env.DISCORD_CODEX_REVIEW_BOT_TOKEN;
+    delete process.env.SESSION_COMMAND_USER_IDS;
     vi.resetModules();
   });
 
@@ -93,5 +100,25 @@ describe('config/env loading', () => {
     expect(config.DEFAULT_CODEX_MODEL).toBe('gpt-5.4-test');
     expect(config.STATUS_CHANNEL_ID).toBe('status-room');
     expect(config.TIMEZONE).toBe('UTC');
+  });
+
+  it('fails fast when a legacy Discord token alias is configured', async () => {
+    process.env.DISCORD_BOT_TOKEN = 'legacy-owner-token';
+
+    const { loadConfig } = await import('./config/load-config.js');
+
+    expect(() => loadConfig()).toThrow(
+      /Legacy env aliases are no longer supported; rename them to canonical keys \(DISCORD_BOT_TOKEN -> DISCORD_OWNER_BOT_TOKEN\)/,
+    );
+  });
+
+  it('fails fast when SESSION_COMMAND_USER_IDS is configured', async () => {
+    process.env.SESSION_COMMAND_USER_IDS = 'alice,bob';
+
+    const { loadConfig } = await import('./config/load-config.js');
+
+    expect(() => loadConfig()).toThrow(
+      /Legacy env aliases are no longer supported; rename them to canonical keys \(SESSION_COMMAND_USER_IDS -> SESSION_COMMAND_ALLOWED_SENDERS\)/,
+    );
   });
 });
