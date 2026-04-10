@@ -1,4 +1,9 @@
-import { ARBITER_AGENT_TYPE, SERVICE_SESSION_SCOPE } from '../config.js';
+import {
+  ARBITER_AGENT_TYPE,
+  OWNER_AGENT_TYPE,
+  REVIEWER_AGENT_TYPE,
+  SERVICE_SESSION_SCOPE,
+} from '../config.js';
 import {
   inferAgentTypeFromServiceShadow,
   inferRoleFromServiceShadow,
@@ -12,6 +17,7 @@ interface RequiredRoleMetadataInput {
   role: PairedRoomRole;
   storedAgentType?: string | null;
   storedServiceId?: string | null;
+  fallbackAgentType?: AgentType | null;
 }
 
 interface OptionalRoleMetadataInput extends RequiredRoleMetadataInput {}
@@ -31,7 +37,8 @@ function resolveRequiredAgentType(input: RequiredRoleMetadataInput): AgentType {
     );
   }
 
-  const agentType = persistedAgentType ?? inferredAgentType;
+  const agentType =
+    persistedAgentType ?? inferredAgentType ?? input.fallbackAgentType ?? null;
   if (agentType) {
     return agentType;
   }
@@ -100,12 +107,14 @@ export function canonicalizePairedTaskMetadata(input: {
     role: 'owner',
     storedAgentType: input.owner_agent_type,
     storedServiceId: input.owner_service_id,
+    fallbackAgentType: OWNER_AGENT_TYPE,
   });
   const reviewerAgentType = resolveRequiredAgentType({
     context,
     role: 'reviewer',
     storedAgentType: input.reviewer_agent_type,
     storedServiceId: input.reviewer_service_id,
+    fallbackAgentType: REVIEWER_AGENT_TYPE,
   });
 
   return {

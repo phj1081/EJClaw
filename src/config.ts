@@ -22,6 +22,8 @@ export function normalizeServiceId(serviceId: string): string {
 }
 
 export const SERVICE_SESSION_SCOPE = normalizeServiceId(SERVICE_ID);
+export const CURRENT_RUNTIME_AGENT_TYPE =
+  SERVICE_SESSION_SCOPE === CLAUDE_SERVICE_ID ? 'claude-code' : 'codex';
 
 export function isClaudeService(serviceId: string = SERVICE_ID): boolean {
   return normalizeServiceId(serviceId) === CLAUDE_SERVICE_ID;
