@@ -1083,6 +1083,149 @@ describe('runAgentForGroup room memory', () => {
     expect(db.insertPairedTurnOutput).not.toHaveBeenCalled();
   });
 
+  it('adopts a direct terminal reviewer delivery as the paired final output and avoids requeue', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      workDir: '/repo',
+      agentType: 'codex' as const,
+    };
+    const deps = {
+      ...makeDeps(),
+      queue: {
+        registerProcess: vi.fn(),
+        enqueueMessageCheck: vi.fn(),
+        getDirectTerminalDeliveryForRun: vi.fn(
+          (groupJid: string, runId: string, senderRole?: string | null) =>
+            groupJid === 'group@test' &&
+            runId === 'run-review-direct-terminal' &&
+            senderRole === 'reviewer'
+              ? 'DONE_WITH_CONCERNS\n핵심 concern이 있습니다.'
+              : null,
+        ),
+      },
+    };
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      arbiter_agent_type: null,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-review',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-review-direct-terminal',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        review_requested_at: '2026-04-10T00:00:00.000Z',
+        plan_notes: null,
+        round_trip_count: 1,
+        status: 'in_review',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        updated_at: '2026-04-10T00:00:00.000Z',
+      },
+      claimedTaskUpdatedAt: '2026-04-10T00:00:00.000Z',
+      workspace: null,
+      envOverrides: {},
+      requiresVisibleVerdict: true,
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue({
+      id: 'paired-task-review-direct-terminal',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 1,
+      review_requested_at: '2026-04-10T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-10T00:00:00.000Z',
+      updated_at: '2026-04-10T00:00:00.000Z',
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          phase: 'progress',
+          result: '리뷰 완료했습니다. 핵심 concern을 정리 중입니다.',
+          output: {
+            visibility: 'public',
+            text: '리뷰 완료했습니다. 핵심 concern을 정리 중입니다.',
+          },
+        } as any);
+        return {
+          status: 'success',
+          result: null,
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-review-direct-terminal',
+      forcedRole: 'reviewer',
+      pairedTurnIdentity: {
+        turnId:
+          'paired-task-review-direct-terminal:2026-04-10T00:00:00.000Z:reviewer-turn',
+        taskId: 'paired-task-review-direct-terminal',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'reviewer-turn',
+        role: 'reviewer',
+      },
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'paired-task-review-direct-terminal',
+        role: 'reviewer',
+        status: 'succeeded',
+        summary: 'DONE_WITH_CONCERNS\n핵심 concern이 있습니다.',
+      }),
+    );
+    expect(db.insertPairedTurnOutput).toHaveBeenCalledWith(
+      'paired-task-review-direct-terminal',
+      1,
+      'reviewer',
+      'DONE_WITH_CONCERNS\n핵심 concern이 있습니다.',
+    );
+    expect(db.completePairedTurn).toHaveBeenCalledWith({
+      turnId:
+        'paired-task-review-direct-terminal:2026-04-10T00:00:00.000Z:reviewer-turn',
+      taskId: 'paired-task-review-direct-terminal',
+      taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+      intentKind: 'reviewer-turn',
+      role: 'reviewer',
+    });
+    expect(db.failPairedTurn).not.toHaveBeenCalled();
+    expect(deps.queue.enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+
   it('passes paired workspace env overrides into the runner when execution metadata exists', async () => {
     const group = {
       ...makeGroup(),

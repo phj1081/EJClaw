@@ -44,6 +44,7 @@ export function createPairedExecutionLifecycle(args: {
   chatJid: string;
   runId: string;
   enqueueMessageCheck: () => void;
+  getDirectTerminalDeliveryText?: () => string | null;
   onOutput?: (output: AgentOutput) => Promise<void>;
   log: ExecutorLog;
 }): PairedExecutionLifecycle {
@@ -54,6 +55,7 @@ export function createPairedExecutionLifecycle(args: {
     chatJid,
     runId,
     enqueueMessageCheck,
+    getDirectTerminalDeliveryText,
     onOutput,
     log,
   } = args;
@@ -61,6 +63,7 @@ export function createPairedExecutionLifecycle(args: {
   let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
   let pairedExecutionSummary: string | null = null;
   let pairedFinalOutput: string | null = null;
+  let pairedSummaryLocked = false;
   let pairedExecutionCompleted = false;
   let pairedExecutionDelegated = false;
   let pairedSawOutput = false;
@@ -180,8 +183,48 @@ export function createPairedExecutionLifecycle(args: {
     pairedExecutionCompleted = true;
   };
 
+  const lockVisibleVerdict = (outputText: string) => {
+    if (outputText.length === 0) {
+      return;
+    }
+    if (!pairedFinalOutput || pairedFinalOutput.length === 0) {
+      pairedFinalOutput = outputText;
+    }
+    if (!pairedSummaryLocked) {
+      pairedExecutionSummary = outputText.slice(0, 500);
+      pairedSummaryLocked = true;
+    }
+    pairedSawOutput = true;
+  };
+
+  const adoptDirectTerminalDeliveryIfNeeded = () => {
+    const outputText = getDirectTerminalDeliveryText?.();
+    if (!outputText || outputText.length === 0) {
+      return null;
+    }
+    if (!pairedFinalOutput || pairedFinalOutput.length === 0) {
+      lockVisibleVerdict(outputText);
+      log.info(
+        {
+          pairedTaskId: pairedExecutionContext?.task.id ?? null,
+          role: completedRole,
+          runId,
+        },
+        'Adopted direct terminal delivery as paired final output',
+      );
+    } else if (!pairedSummaryLocked) {
+      pairedExecutionSummary = pairedFinalOutput.slice(0, 500);
+      pairedSummaryLocked = true;
+    }
+    return outputText;
+  };
+
   return {
     updateSummary({ outputText, errorText }) {
+      if (pairedSummaryLocked) {
+        return;
+      }
+
       if (outputText && outputText.length > 0) {
         pairedExecutionSummary = outputText.slice(0, 500);
         return;
@@ -193,7 +236,7 @@ export function createPairedExecutionLifecycle(args: {
     },
 
     recordFinalOutputBeforeDelivery(outputText) {
-      pairedFinalOutput = outputText;
+      lockVisibleVerdict(outputText);
       completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded();
       persistPairedTurnOutputIfNeeded();
     },
@@ -257,6 +300,8 @@ export function createPairedExecutionLifecycle(args: {
         pairedExecutionCompleted = true;
         return;
       }
+
+      const directTerminalOutput = adoptDirectTerminalDeliveryIfNeeded();
 
       const missingVisibleVerdict =
         requiresVisibleVerdict &&
@@ -337,12 +382,16 @@ export function createPairedExecutionLifecycle(args: {
         }
       }
 
-      const queueAction = resolvePairedFollowUpQueueAction({
-        completedRole,
-        executionStatus: effectiveStatus,
-        sawOutput: sawOutputForFollowUp,
-        taskStatus: finishedTask?.status ?? null,
-      });
+      const queueAction =
+        directTerminalOutput &&
+        (completedRole === 'reviewer' || completedRole === 'arbiter')
+          ? 'none'
+          : resolvePairedFollowUpQueueAction({
+              completedRole,
+              executionStatus: effectiveStatus,
+              sawOutput: sawOutputForFollowUp,
+              taskStatus: finishedTask?.status ?? null,
+            });
       if (queueAction !== 'pending' || !finishedTask) {
         return;
       }
