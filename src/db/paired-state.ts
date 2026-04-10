@@ -1,6 +1,10 @@
 import { Database } from 'bun:sqlite';
 
-import { SERVICE_ID, normalizeServiceId } from '../config.js';
+import {
+  CURRENT_RUNTIME_AGENT_TYPE,
+  SERVICE_ID,
+  normalizeServiceId,
+} from '../config.js';
 import {
   buildPairedTurnIdentity,
   resolvePairedTurnRole,
@@ -602,6 +606,7 @@ export function claimPairedTurnReservationInDatabase(
     const currentAttempt = markPairedTurnRunningInDatabase(database, {
       turnIdentity,
       executorServiceId: CURRENT_SERVICE_ID,
+      executorAgentType: CURRENT_RUNTIME_AGENT_TYPE,
       runId: args.runId,
     });
     if (!currentAttempt) {

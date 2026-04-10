@@ -92,6 +92,7 @@ import {
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
+  OWNER_AGENT_TYPE,
   SERVICE_ID,
   SERVICE_SESSION_SCOPE,
   normalizeServiceId,
@@ -1148,6 +1149,34 @@ describe('paired task state', () => {
       owner_service_id: CODEX_REVIEW_SERVICE_ID,
       reviewer_service_id: CLAUDE_SERVICE_ID,
       owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+    });
+  });
+
+  it('backfills configured owner agent type when creating a paired task with a raw non-shadow owner service id', () => {
+    createPairedTask({
+      id: 'paired-task-raw-owner-service',
+      chat_jid: 'dc:paired-raw-owner-service',
+      group_folder: 'paired-raw-owner-service',
+      owner_service_id: 'andy',
+      reviewer_service_id: CLAUDE_SERVICE_ID,
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    expect(getPairedTaskById('paired-task-raw-owner-service')).toMatchObject({
+      owner_service_id: 'andy',
+      reviewer_service_id: CLAUDE_SERVICE_ID,
+      owner_agent_type: OWNER_AGENT_TYPE,
       reviewer_agent_type: 'claude-code',
     });
   });
