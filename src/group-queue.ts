@@ -49,6 +49,7 @@ interface GroupState {
   runningTaskId: string | null;
   currentRunId: string | null;
   directTerminalDeliveries: Map<string, string>;
+  recentDirectTerminalDeliveries: Map<string, Map<string, string>>;
   pendingMessages: boolean;
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
@@ -60,6 +61,32 @@ interface GroupState {
   postCloseTermTimer: ReturnType<typeof setTimeout> | null;
   postCloseKillTimer: ReturnType<typeof setTimeout> | null;
   startedAt: number | null;
+}
+
+const MAX_RECORDED_DIRECT_TERMINAL_RUNS = 16;
+
+function recordRecentDirectTerminalDelivery(
+  state: GroupState,
+  runId: string,
+  senderRole: string,
+  text: string,
+): void {
+  const existing = state.recentDirectTerminalDeliveries.get(runId) ?? new Map();
+  existing.set(senderRole, text);
+  state.recentDirectTerminalDeliveries.delete(runId);
+  state.recentDirectTerminalDeliveries.set(runId, existing);
+
+  while (
+    state.recentDirectTerminalDeliveries.size >
+    MAX_RECORDED_DIRECT_TERMINAL_RUNS
+  ) {
+    const oldestRunId =
+      state.recentDirectTerminalDeliveries.keys().next().value ?? null;
+    if (!oldestRunId) {
+      break;
+    }
+    state.recentDirectTerminalDeliveries.delete(oldestRunId);
+  }
 }
 
 function transitionRunPhase(
@@ -200,6 +227,7 @@ export class GroupQueue {
         runningTaskId: null,
         currentRunId: null,
         directTerminalDeliveries: new Map(),
+        recentDirectTerminalDeliveries: new Map(),
         pendingMessages: false,
         pendingTasks: [],
         process: null,
@@ -440,6 +468,12 @@ export class GroupQueue {
       return;
     }
     state.directTerminalDeliveries.set(senderRole, text);
+    recordRecentDirectTerminalDelivery(
+      state,
+      state.currentRunId,
+      senderRole,
+      text,
+    );
     logger.info(
       {
         groupJid,
@@ -473,6 +507,26 @@ export class GroupQueue {
       return null;
     }
     return state.directTerminalDeliveries.get(senderRole) ?? null;
+  }
+
+  hasRecordedDirectTerminalDeliveryForRun(
+    groupJid: string,
+    runId: string,
+    senderRole?: string | null,
+  ): boolean {
+    const state = this.getGroup(groupJid);
+    if (!senderRole) {
+      return false;
+    }
+    if (
+      state.currentRunId === runId &&
+      state.directTerminalDeliveries.has(senderRole)
+    ) {
+      return true;
+    }
+    return (
+      state.recentDirectTerminalDeliveries.get(runId)?.has(senderRole) ?? false
+    );
   }
 
   private clearPostCloseTimers(state: GroupState): void {

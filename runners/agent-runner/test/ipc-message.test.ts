@@ -10,6 +10,7 @@ describe('agent runner IPC message payload', () => {
         text: 'hello',
         sender: 'Reviewer',
         senderRole: 'reviewer',
+        runId: 'run-reviewer-1',
         groupFolder: 'discord-review',
         timestamp: '2026-04-04T13:45:00.000Z',
       }),
@@ -19,6 +20,7 @@ describe('agent runner IPC message payload', () => {
       text: 'hello',
       sender: 'Reviewer',
       senderRole: 'reviewer',
+      runId: 'run-reviewer-1',
       groupFolder: 'discord-review',
       timestamp: '2026-04-04T13:45:00.000Z',
     });

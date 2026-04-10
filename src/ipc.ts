@@ -33,6 +33,7 @@ export interface IpcDeps {
     jid: string,
     text: string,
     senderRole?: string,
+    runId?: string,
   ) => Promise<void>;
   nudgeScheduler?: () => void;
   roomBindings: () => Record<string, RegisteredGroup>;
@@ -51,6 +52,7 @@ export interface IpcMessagePayload {
   chatJid?: string;
   text?: string;
   senderRole?: string;
+  runId?: string;
 }
 
 export interface IpcMessageForwardResult {
@@ -86,7 +88,7 @@ export async function forwardAuthorizedIpcMessage(
     };
   }
 
-  await sendMessage(msg.chatJid, msg.text, msg.senderRole);
+  await sendMessage(msg.chatJid, msg.text, msg.senderRole, msg.runId);
   return {
     outcome: 'sent',
     chatJid: msg.chatJid,

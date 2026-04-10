@@ -22,7 +22,10 @@ import {
 } from './message-runtime-rules.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
 import { buildPairedTurnIdentity } from './paired-turn-identity.js';
-import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
+import {
+  claimPairedTurnExecution,
+  type ScheduledPairedFollowUpIntentKind,
+} from './paired-follow-up-scheduler.js';
 import { hasReviewerLease } from './service-routing.js';
 import type {
   Channel,
@@ -398,6 +401,29 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
   }
 
   if (action.kind === 'inline-finalize') {
+    const claimed = claimPairedTurnExecution({
+      chatJid,
+      runId,
+      task: action.task,
+      intentKind: 'finalize-owner-turn',
+    });
+    if (!claimed) {
+      log.info(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          taskId: action.task.id,
+          taskStatus: action.task.status,
+          handoffMode: 'inline-finalize',
+          nextRole: 'owner',
+          cursor: action.cursor,
+        },
+        'Skipped inline merge_ready finalize because the task revision was already claimed elsewhere',
+      );
+      return true;
+    }
+
     log.info(
       {
         chatJid,

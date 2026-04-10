@@ -371,13 +371,30 @@ async function main(): Promise<void> {
       editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
   });
   startIpcWatcher({
-    sendMessage: async (jid, text, senderRole) => {
+    sendMessage: async (jid, text, senderRole, runId) => {
+      if (
+        runId &&
+        (senderRole === 'reviewer' || senderRole === 'arbiter') &&
+        queue.hasRecordedDirectTerminalDeliveryForRun(jid, runId, senderRole)
+      ) {
+        logger.info(
+          {
+            transition: 'ipc:skip-post-terminal',
+            chatJid: jid,
+            senderRole,
+            runId,
+          },
+          'Skipped IPC relay message because the run already emitted a direct terminal verdict',
+        );
+        return;
+      }
       const route = resolveChannelForDeliveryRole(channels, jid, senderRole);
       if (!route.channel) throw new Error(`No channel for JID: ${jid}`);
       logger.info(
         {
           transition: 'ipc:route',
           chatJid: jid,
+          runId: runId ?? null,
           senderRole: senderRole ?? null,
           requestedRoleChannel: route.requestedRoleChannelName,
           selectedChannel: route.selectedChannelName,

@@ -543,6 +543,7 @@ describe('IPC message authorization', () => {
         chatJid: 'other@g.us',
         text: 'review text',
         senderRole: 'reviewer',
+        runId: 'run-reviewer-ipc',
       },
       'other-group',
       false,
@@ -554,6 +555,7 @@ describe('IPC message authorization', () => {
       'other@g.us',
       'review text',
       'reviewer',
+      'run-reviewer-ipc',
     );
     expect(result).toEqual(
       expect.objectContaining({
@@ -572,6 +574,7 @@ describe('IPC message authorization', () => {
         chatJid: 'third@g.us',
         text: 'review text',
         senderRole: 'reviewer',
+        runId: 'run-reviewer-ipc',
       },
       'other-group',
       false,

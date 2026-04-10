@@ -31,8 +31,9 @@ import {
 import { resolveIpcDirectories } from './ipc-paths.js';
 import { buildSendMessageIpcPayload } from './ipc-message.js';
 
-const { ipcDir: IPC_DIR, hostIpcDir: HOST_IPC_DIR } =
-  resolveIpcDirectories(process.env);
+const { ipcDir: IPC_DIR, hostIpcDir: HOST_IPC_DIR } = resolveIpcDirectories(
+  process.env,
+);
 const MESSAGES_DIR = path.join(HOST_IPC_DIR, 'messages');
 const TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
 const HOST_EVIDENCE_RESPONSES_DIR =
@@ -71,7 +72,12 @@ server.tool(
   "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
   {
     text: z.string().describe('The message text to send'),
-    sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+    sender: z
+      .string()
+      .optional()
+      .describe(
+        'Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.',
+      ),
   },
   async (args) => {
     const data = buildSendMessageIpcPayload({
@@ -79,6 +85,7 @@ server.tool(
       text: args.text,
       sender: args.sender || undefined,
       senderRole: process.env.EJCLAW_ROOM_ROLE || undefined,
+      runId: process.env.EJCLAW_RUN_ID || undefined,
       groupFolder,
     });
 
@@ -113,11 +120,33 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
 \u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
     {
-      prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
-      schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
-      schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
-      context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-      target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+      prompt: z
+        .string()
+        .describe(
+          'What the agent should do when the task runs. For isolated mode, include all necessary context here.',
+        ),
+      schedule_type: z
+        .enum(['cron', 'interval', 'once'])
+        .describe(
+          'cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time',
+        ),
+      schedule_value: z
+        .string()
+        .describe(
+          'cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)',
+        ),
+      context_mode: z
+        .enum(['group', 'isolated'])
+        .default('group')
+        .describe(
+          'group=runs with chat history and memory, isolated=fresh session (include context in prompt)',
+        ),
+      target_group_jid: z
+        .string()
+        .optional()
+        .describe(
+          '(Main group only) JID of the group to schedule the task for. Defaults to the current group.',
+        ),
     },
     async (args) => {
       // Validate schedule_value before writing IPC
@@ -126,7 +155,12 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
           CronExpressionParser.parse(args.schedule_value);
         } catch {
           return {
-            content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid cron: "${args.schedule_value}". Use format like "0 9 * * *" (daily 9am) or "*/5 * * * *" (every 5 min).`,
+              },
+            ],
             isError: true,
           };
         }
@@ -134,28 +168,47 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         const ms = parseInt(args.schedule_value, 10);
         if (isNaN(ms) || ms <= 0) {
           return {
-            content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid interval: "${args.schedule_value}". Must be positive milliseconds (e.g., "300000" for 5 min).`,
+              },
+            ],
             isError: true,
           };
         }
       } else if (args.schedule_type === 'once') {
-        if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
+        if (
+          /[Zz]$/.test(args.schedule_value) ||
+          /[+-]\d{2}:\d{2}$/.test(args.schedule_value)
+        ) {
           return {
-            content: [{ type: 'text' as const, text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".`,
+              },
+            ],
             isError: true,
           };
         }
         const date = new Date(args.schedule_value);
         if (isNaN(date.getTime())) {
           return {
-            content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".`,
+              },
+            ],
             isError: true,
           };
         }
       }
 
       // Non-main groups can only schedule for themselves
-      const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+      const targetJid =
+        isMain && args.target_group_jid ? args.target_group_jid : chatJid;
 
       const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -174,7 +227,12 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       writeIpcFile(TASKS_DIR, data);
 
       return {
-        content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}`,
+          },
+        ],
       };
     },
   );
@@ -297,9 +355,12 @@ server.tool(
 
     let pollSeconds: number;
     try {
-      pollSeconds = normalizeWatchCiIntervalSeconds(args.poll_interval_seconds, {
-        ciProvider: args.ci_provider,
-      });
+      pollSeconds = normalizeWatchCiIntervalSeconds(
+        args.poll_interval_seconds,
+        {
+          ciProvider: args.ci_provider,
+        },
+      );
     } catch (error) {
       return {
         content: [
@@ -407,8 +468,7 @@ server.tool(
         content: [
           {
             type: 'text' as const,
-            text:
-              error instanceof Error ? error.message : String(error),
+            text: error instanceof Error ? error.message : String(error),
           },
         ],
         isError: true,
@@ -436,10 +496,7 @@ server.tool(
         content: [
           {
             type: 'text' as const,
-            text:
-              error instanceof Error
-                ? error.message
-                : String(error),
+            text: error instanceof Error ? error.message : String(error),
           },
         ],
         isError: true,
@@ -470,8 +527,7 @@ server.tool(
         content: [
           {
             type: 'text' as const,
-            text:
-              error instanceof Error ? error.message : String(error),
+            text: error instanceof Error ? error.message : String(error),
           },
         ],
         isError: true,
@@ -489,30 +545,56 @@ server.tool(
 
     try {
       if (!fs.existsSync(tasksFile)) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+        return {
+          content: [
+            { type: 'text' as const, text: 'No scheduled tasks found.' },
+          ],
+        };
       }
 
       const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
 
       const tasks = isMain
         ? allTasks
-        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+        : allTasks.filter(
+            (t: { groupFolder: string }) => t.groupFolder === groupFolder,
+          );
 
       if (tasks.length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+        return {
+          content: [
+            { type: 'text' as const, text: 'No scheduled tasks found.' },
+          ],
+        };
       }
 
       const formatted = tasks
         .map(
-          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
+          (t: {
+            id: string;
+            prompt: string;
+            schedule_type: string;
+            schedule_value: string;
+            status: string;
+            next_run: string;
+          }) =>
             `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
         )
         .join('\n');
 
-      return { content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }] };
+      return {
+        content: [
+          { type: 'text' as const, text: `Scheduled tasks:\n${formatted}` },
+        ],
+      };
     } catch (err) {
       return {
-        content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
       };
     }
   },
@@ -533,7 +615,14 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} pause requested.` }] };
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Task ${args.task_id} pause requested.`,
+        },
+      ],
+    };
   },
 );
 
@@ -552,19 +641,36 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} resume requested.` }] };
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Task ${args.task_id} resume requested.`,
+        },
+      ],
+    };
   },
 );
 
 server.tool(
   'cancel_task',
   'Cancel and delete a scheduled task. If no task_id is provided, cancels the current task (for background watchers).',
-  { task_id: z.string().optional().describe('The task ID to cancel. Omit to cancel the current task.') },
+  {
+    task_id: z
+      .string()
+      .optional()
+      .describe('The task ID to cancel. Omit to cancel the current task.'),
+  },
   async (args: { task_id?: string }) => {
     const resolvedId = args.task_id || runtimeTaskId;
     if (!resolvedId) {
       return {
-        content: [{ type: 'text' as const, text: 'No task_id provided and no current task context available.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'No task_id provided and no current task context available.',
+          },
+        ],
         isError: true,
       };
     }
@@ -579,7 +685,11 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task cancellation requested.` }] };
+    return {
+      content: [
+        { type: 'text' as const, text: `Task cancellation requested.` },
+      ],
+    };
   },
 );
 
@@ -590,18 +700,37 @@ if (allowGenericScheduling) {
     {
       task_id: z.string().describe('The task ID to update'),
       prompt: z.string().optional().describe('New prompt for the task'),
-      schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
-      schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+      schedule_type: z
+        .enum(['cron', 'interval', 'once'])
+        .optional()
+        .describe('New schedule type'),
+      schedule_value: z
+        .string()
+        .optional()
+        .describe('New schedule value (see schedule_task for format)'),
     },
-    async (args: { task_id: string; prompt?: string; schedule_type?: 'cron' | 'interval' | 'once'; schedule_value?: string }) => {
+    async (args: {
+      task_id: string;
+      prompt?: string;
+      schedule_type?: 'cron' | 'interval' | 'once';
+      schedule_value?: string;
+    }) => {
       // Validate schedule_value if provided
-      if (args.schedule_type === 'cron' || (!args.schedule_type && args.schedule_value)) {
+      if (
+        args.schedule_type === 'cron' ||
+        (!args.schedule_type && args.schedule_value)
+      ) {
         if (args.schedule_value) {
           try {
             CronExpressionParser.parse(args.schedule_value);
           } catch {
             return {
-              content: [{ type: 'text' as const, text: `Invalid cron: "${args.schedule_value}".` }],
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Invalid cron: "${args.schedule_value}".`,
+                },
+              ],
               isError: true,
             };
           }
@@ -611,7 +740,12 @@ if (allowGenericScheduling) {
         const ms = parseInt(args.schedule_value, 10);
         if (isNaN(ms) || ms <= 0) {
           return {
-            content: [{ type: 'text' as const, text: `Invalid interval: "${args.schedule_value}".` }],
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid interval: "${args.schedule_value}".`,
+              },
+            ],
             isError: true,
           };
         }
@@ -625,12 +759,21 @@ if (allowGenericScheduling) {
         timestamp: new Date().toISOString(),
       };
       if (args.prompt !== undefined) data.prompt = args.prompt;
-      if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
-      if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
+      if (args.schedule_type !== undefined)
+        data.schedule_type = args.schedule_type;
+      if (args.schedule_value !== undefined)
+        data.schedule_value = args.schedule_value;
 
       writeIpcFile(TASKS_DIR, data);
 
-      return { content: [{ type: 'text' as const, text: `Task ${args.task_id} update requested.` }] };
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Task ${args.task_id} update requested.`,
+          },
+        ],
+      };
     },
   );
 }
@@ -641,15 +784,42 @@ server.tool(
 
 If folder is omitted, the host generates one automatically.`,
   {
-    jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
+    jid: z
+      .string()
+      .describe(
+        'The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")',
+      ),
     name: z.string().describe('Display name for the room'),
-    room_mode: z.enum(['single', 'tribunal']).default('single').describe('single=owner only, tribunal=owner/reviewer roles enabled'),
-    owner_agent_type: z.enum(['claude-code', 'codex']).optional().describe('Preferred owner agent type for the room'),
-    folder: z.string().optional().describe('Optional folder override. If omitted, the host generates one automatically.'),
-    trigger: z.string().optional().describe('Optional canonical trigger label to store for the room'),
-    requires_trigger: z.boolean().optional().describe('Whether direct trigger mention is required'),
-    is_main: z.boolean().optional().describe('Whether this room is the privileged main control room'),
-    work_dir: z.string().optional().describe('Optional working directory override'),
+    room_mode: z
+      .enum(['single', 'tribunal'])
+      .default('single')
+      .describe('single=owner only, tribunal=owner/reviewer roles enabled'),
+    owner_agent_type: z
+      .enum(['claude-code', 'codex'])
+      .optional()
+      .describe('Preferred owner agent type for the room'),
+    folder: z
+      .string()
+      .optional()
+      .describe(
+        'Optional folder override. If omitted, the host generates one automatically.',
+      ),
+    trigger: z
+      .string()
+      .optional()
+      .describe('Optional canonical trigger label to store for the room'),
+    requires_trigger: z
+      .boolean()
+      .optional()
+      .describe('Whether direct trigger mention is required'),
+    is_main: z
+      .boolean()
+      .optional()
+      .describe('Whether this room is the privileged main control room'),
+    work_dir: z
+      .string()
+      .optional()
+      .describe('Optional working directory override'),
   },
   async (args: {
     jid: string;
@@ -664,7 +834,12 @@ If folder is omitted, the host generates one automatically.`,
   }) => {
     if (!isMain) {
       return {
-        content: [{ type: 'text' as const, text: 'Only the main group can assign rooms.' }],
+        content: [
+          {
+            type: 'text' as const,
+            text: 'Only the main group can assign rooms.',
+          },
+        ],
         isError: true,
       };
     }
@@ -686,7 +861,12 @@ If folder is omitted, the host generates one automatically.`,
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Room "${args.name}" assignment requested.` }],
+      content: [
+        {
+          type: 'text' as const,
+          text: `Room "${args.name}" assignment requested.`,
+        },
+      ],
     };
   },
 );

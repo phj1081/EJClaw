@@ -124,7 +124,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
-  it('stores direct terminal text for the active run and clears it when the run ends', async () => {
+  it('stores direct terminal text for the active run, keeps a recent run record, and clears the active slot when the run ends', async () => {
     let releaseRun!: (value: boolean) => void;
     let runId: string | undefined;
     const blocker = new Promise<boolean>((resolve) => {
@@ -155,6 +155,13 @@ describe('GroupQueue', () => {
     expect(
       queue.getDirectTerminalDeliveryForRun('group1@g.us', runId!, 'reviewer'),
     ).toBe('DONE_WITH_CONCERNS\n리뷰 완료');
+    expect(
+      queue.hasRecordedDirectTerminalDeliveryForRun(
+        'group1@g.us',
+        runId!,
+        'reviewer',
+      ),
+    ).toBe(true);
 
     releaseRun(true);
     await vi.advanceTimersByTimeAsync(10);
@@ -165,6 +172,13 @@ describe('GroupQueue', () => {
     expect(
       queue.getDirectTerminalDeliveryForRun('group1@g.us', runId!, 'reviewer'),
     ).toBeNull();
+    expect(
+      queue.hasRecordedDirectTerminalDeliveryForRun(
+        'group1@g.us',
+        runId!,
+        'reviewer',
+      ),
+    ).toBe(true);
   });
 
   it('force-terminates a lingering process after output was delivered', async () => {
