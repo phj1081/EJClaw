@@ -73,6 +73,10 @@ describe('platform-prompts', () => {
 
     const codexPairedPrompt = readPairedRoomPrompt('codex', repoRoot);
     expect(codexPairedPrompt).toContain('reviewer');
+    expect(codexPairedPrompt).toContain('EJCLAW_WORK_DIR');
+    expect(codexPairedPrompt).toContain(
+      'canonical verification root for this turn',
+    );
     expect(codexPairedPrompt).not.toContain('owner-side paired agent');
 
     const failoverPlatformPrompt = fs.readFileSync(
