@@ -34,6 +34,17 @@ describe('verify state helpers', () => {
     expect(detectCredentials(tempRoot)).toBe('configured');
   });
 
+  it('detects configured multi-account credentials from .env', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-verify-'));
+    tempRoots.push(tempRoot);
+    fs.writeFileSync(
+      path.join(tempRoot, '.env'),
+      'CLAUDE_CODE_OAUTH_TOKENS=test-token-1,test-token-2\n',
+    );
+
+    expect(detectCredentials(tempRoot)).toBe('configured');
+  });
+
   it('detects canonical role-based channel auth names from process env', () => {
     expect(
       detectChannelAuth(

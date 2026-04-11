@@ -1,10 +1,10 @@
 /**
  * OAuth Token Rotation
  *
- * Rotates between multiple CLAUDE_CODE_OAUTH_TOKEN values when
- * rate-limited. Tokens are stored as comma-separated values in
- * CLAUDE_CODE_OAUTH_TOKENS env var. Falls through to the single
- * CLAUDE_CODE_OAUTH_TOKEN if multi-token is not configured.
+ * Rotates between multiple Claude Code OAuth tokens when
+ * rate-limited. Tokens are stored as comma-separated values in the
+ * canonical CLAUDE_CODE_OAUTH_TOKENS env var and fall through to the
+ * legacy single-token CLAUDE_CODE_OAUTH_TOKEN when needed.
  *
  * On rate-limit:  rotate to next token
  * All exhausted:  surface error to caller
@@ -33,21 +33,28 @@ const tokens: TokenState[] = [];
 let currentIndex = 0;
 let initialized = false;
 
+export function getConfiguredClaudeTokens(options?: {
+  multi?: string | undefined;
+  single?: string | undefined;
+}): string[] {
+  const multi = options?.multi ?? getEnv('CLAUDE_CODE_OAUTH_TOKENS');
+  const single = options?.single ?? getEnv('CLAUDE_CODE_OAUTH_TOKEN');
+
+  if (multi) {
+    return multi
+      .split(',')
+      .map((token) => token.trim())
+      .filter(Boolean);
+  }
+
+  return single ? [single] : [];
+}
+
 export function initTokenRotation(): void {
   if (initialized) return;
   initialized = true;
 
-  const multi = getEnv('CLAUDE_CODE_OAUTH_TOKENS');
-  const single = getEnv('CLAUDE_CODE_OAUTH_TOKEN');
-
-  const raw = multi
-    ? multi
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean)
-    : single
-      ? [single]
-      : [];
+  const raw = getConfiguredClaudeTokens();
 
   for (const token of raw) {
     tokens.push({ token, rateLimitedUntil: null });
@@ -155,7 +162,7 @@ function refreshRuntimeTokenSelection(): void {
 
 /** Get the current active token. */
 export function getCurrentToken(): string | undefined {
-  if (tokens.length === 0) return process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  if (tokens.length === 0) return getConfiguredClaudeTokens()[0];
   refreshRuntimeTokenSelection();
   return tokens[currentIndex % tokens.length]?.token;
 }
@@ -301,7 +308,7 @@ export function getTokenRotationInfo(): {
 
 export function hasAvailableClaudeToken(): boolean {
   if (tokens.length === 0) {
-    return Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
+    return getConfiguredClaudeTokens().length > 0;
   }
   refreshRuntimeTokenSelection();
   const now = Date.now();

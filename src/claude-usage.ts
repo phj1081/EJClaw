@@ -11,7 +11,11 @@ import path from 'path';
 
 import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
-import { getCurrentToken, getAllTokens } from './token-rotation.js';
+import {
+  getAllTokens,
+  getConfiguredClaudeTokens,
+  getCurrentToken,
+} from './token-rotation.js';
 import { readJsonFile, writeJsonFile } from './utils.js';
 
 const USAGE_CACHE_FILE = path.join(DATA_DIR, 'claude-usage-cache.json');
@@ -274,7 +278,7 @@ async function fetchUsageForToken(
  * Uses the current active token from rotation.
  */
 export async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
-  const token = getCurrentToken() || process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  const token = getCurrentToken() || getConfiguredClaudeTokens()[0];
   if (!token) {
     logger.debug('No Claude OAuth token available for usage check');
     return null;
@@ -431,8 +435,7 @@ export async function fetchAllClaudeUsage(): Promise<ClaudeAccountUsage[]> {
   const allTokens = getAllTokens();
   logger.debug({ tokenCount: allTokens.length }, 'fetchAllClaudeUsage called');
   if (allTokens.length === 0) {
-    // Single token fallback
-    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    const token = getConfiguredClaudeTokens()[0];
     if (!token) return [];
     const usage = await fetchUsageForToken(token, 0);
     return [

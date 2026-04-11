@@ -31,6 +31,17 @@ vi.mock('./codex-token-rotation.js', () => ({
 
 vi.mock('./token-rotation.js', () => ({
   getCurrentToken: vi.fn(() => undefined),
+  getConfiguredClaudeTokens: vi.fn(
+    (options?: { multi?: string | undefined; single?: string | undefined }) => {
+      if (options?.multi) {
+        return options.multi
+          .split(',')
+          .map((token) => token.trim())
+          .filter(Boolean);
+      }
+      return options?.single ? [options.single] : [];
+    },
+  ),
 }));
 
 vi.mock('./platform-prompts.js', () => ({
@@ -307,6 +318,21 @@ describe('prepareGroupEnvironment codex auth handling', () => {
       'owner common paired prompt',
       'memory briefing',
     ]);
+  });
+
+  it('maps the canonical multi-token env to a single runner OAuth token', () => {
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    mockReadEnvFile.mockReturnValue({
+      CLAUDE_CODE_OAUTH_TOKENS: 'token-a, token-b',
+    });
+
+    const prepared = prepareGroupEnvironment(
+      { ...group, agentType: 'claude-code' },
+      false,
+      'dc:test',
+    );
+
+    expect(prepared.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('token-a');
   });
 
   it('returns to the normal owner prompt stack after failover is cleared', () => {

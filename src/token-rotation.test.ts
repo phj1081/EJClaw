@@ -105,4 +105,12 @@ describe('token-rotation runtime reselection', () => {
       'Failed to persist Claude token rotation state',
     );
   });
+
+  it('treats CLAUDE_CODE_OAUTH_TOKENS as the canonical fallback even before init', async () => {
+    const mod = await import('./token-rotation.js');
+
+    expect(mod.getConfiguredClaudeTokens()).toEqual(['token-1', 'token-2']);
+    expect(mod.getCurrentToken()).toBe('token-1');
+    expect(mod.hasAvailableClaudeToken()).toBe(true);
+  });
 });

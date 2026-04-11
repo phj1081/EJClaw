@@ -12,7 +12,10 @@ import {
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 import { getActiveCodexAuthPath } from './codex-token-rotation.js';
-import { getCurrentToken } from './token-rotation.js';
+import {
+  getConfiguredClaudeTokens,
+  getCurrentToken,
+} from './token-rotation.js';
 import {
   resolveGroupFolderPath,
   resolveGroupIpcPath,
@@ -248,8 +251,14 @@ function prepareClaudeEnvironment(args: {
     // Token rotation takes priority over static .env value
     const oauthToken =
       getCurrentToken() ||
-      args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
-      process.env.CLAUDE_CODE_OAUTH_TOKEN;
+      getConfiguredClaudeTokens({
+        multi:
+          args.envVars.CLAUDE_CODE_OAUTH_TOKENS ||
+          process.env.CLAUDE_CODE_OAUTH_TOKENS,
+        single:
+          args.envVars.CLAUDE_CODE_OAUTH_TOKEN ||
+          process.env.CLAUDE_CODE_OAUTH_TOKEN,
+      })[0];
     if (oauthToken) {
       args.env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
     }
@@ -513,6 +522,7 @@ export function prepareGroupEnvironment(
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
+    'CLAUDE_CODE_OAUTH_TOKENS',
     'CLAUDE_CODE_OAUTH_TOKEN',
     'CLAUDE_MODEL',
     'CLAUDE_THINKING',

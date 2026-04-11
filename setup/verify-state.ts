@@ -38,7 +38,7 @@ export function detectCredentials(projectRoot: string): CredentialsStatus {
   }
 
   const envContent = fs.readFileSync(envFile, 'utf-8');
-  return /^(CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY)=/m.test(envContent)
+  return /^(CLAUDE_CODE_OAUTH_TOKENS?|ANTHROPIC_API_KEY)=/m.test(envContent)
     ? 'configured'
     : 'missing';
 }
