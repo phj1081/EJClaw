@@ -109,6 +109,7 @@ interface CreateExecuteTurnDeps {
     forcedAgentType?: AgentType;
     deliveryRole: PairedRoomRole | null;
     deliveryServiceId: string | null;
+    replaceMessageId?: string | null;
   }) => Promise<boolean>;
   afterDeliverySuccess?: (args: {
     chatJid: string;
@@ -197,7 +198,7 @@ export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
         });
         return ownership.state !== 'inactive';
       },
-      deliverFinalText: async (text) => {
+      deliverFinalText: async (text, options) => {
         try {
           return await deps.deliverFinalText({
             text,
@@ -210,6 +211,7 @@ export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
             forcedAgentType: args.forcedAgentType,
             deliveryRole: resolvedDeliveryRole,
             deliveryServiceId: resolvedDeliveryServiceId,
+            replaceMessageId: options?.replaceMessageId ?? null,
           });
         } catch (err) {
           logger.warn(

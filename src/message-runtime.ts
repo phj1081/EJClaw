@@ -167,6 +167,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       forcedAgentType,
       deliveryRole,
       deliveryServiceId,
+      replaceMessageId,
     }) => {
       if (
         (deliveryRole === 'reviewer' || deliveryRole === 'arbiter') &&
@@ -200,6 +201,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         channel,
         item: workItem,
         log: logger,
+        replaceMessageId,
         isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,
         openContinuation: (targetChatJid) =>
           continuationTracker.open(targetChatJid),

@@ -3556,10 +3556,11 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         'progress-1',
         P('CI 상태 확인 중입니다.\n\n10초'),
       );
-      // finish() promotes the last flushed progress text to a final message
-      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(
+      // finish() replaces the tracked progress message with the final text
+      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
+        'progress-1',
         'CI 상태 확인 중입니다.',
       );
       expect(notifyIdle).not.toHaveBeenCalled();
@@ -3850,9 +3851,10 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         'progress-1',
         expect.stringContaining('늦게 도착한 진행상황입니다.'),
       );
-      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(
+      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
+        'progress-1',
         '최종 답변입니다.',
       );
     } finally {
@@ -3955,9 +3957,11 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         'progress-1',
         P('오래 걸리는 작업입니다.\n\n1시간 10초'),
       );
-      // finish() promotes the last flushed progress text to a final message
-      expect(channel.sendMessage).toHaveBeenCalledWith(
+      // finish() replaces the tracked progress message with the final text
+      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
+        'progress-1',
         '오래 걸리는 작업입니다.',
       );
     } finally {
@@ -3965,7 +3969,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     }
   });
 
-  it('keeps progress separate from the final Codex answer', async () => {
+  it('promotes the tracked progress message into the final Codex answer', async () => {
     vi.useFakeTimers();
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -4054,10 +4058,11 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         'progress-1',
         P('테스트를 돌리는 중입니다.\n\n10초'),
       );
-      // Final delivered as separate message
-      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(
+      // Final replaces the tracked progress message instead of creating a new one
+      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
+        'progress-1',
         '테스트가 끝났습니다.',
       );
       expect(notifyIdle).not.toHaveBeenCalled();
@@ -4270,9 +4275,10 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
 
       expect(result).toBe(true);
       expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(
+      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
+        'progress-1',
         '첫 번째 진행상황입니다.',
       );
     } finally {
@@ -4473,10 +4479,11 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         'progress-2',
         P('두 번째 진행상황입니다.\n\n10초'),
       );
-      // finish() promotes the last flushed progress text to a final message
-      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(
+      // finish() replaces the latest tracked progress message with the final text
+      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
+        'progress-2',
         '두 번째 진행상황입니다.',
       );
     } finally {
@@ -4581,10 +4588,11 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         'progress-1',
         P('테스트도 통과했습니다.\n\n5초'),
       );
-      // finish() promotes the last flushed progress text to a final message
-      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(
+      // finish() replaces the tracked progress message with the replayed final text
+      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
+        'progress-1',
         '검증 중입니다.',
       );
     } finally {
@@ -4692,10 +4700,11 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         'progress-1',
         expect.any(String),
       );
-      // finish() promotes the last flushed progress text to a final message
-      expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-      expect(channel.sendMessage).toHaveBeenCalledWith(
+      // finish() replaces the tracked progress message with the replayed final text
+      expect(channel.sendMessage).not.toHaveBeenCalled();
+      expect(channel.editMessage).toHaveBeenCalledWith(
         chatJid,
+        'progress-1',
         '진행 중입니다.',
       );
     } finally {
@@ -4924,10 +4933,11 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
       chatJid,
       P('중간 진행상황입니다.\n\n0초'),
     );
-    // Error causes failure final to be published
-    expect(channel.sendMessage).toHaveBeenCalledTimes(1);
-    expect(channel.sendMessage).toHaveBeenCalledWith(
+    // Error replaces the tracked progress message with the failure final
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(channel.editMessage).toHaveBeenCalledWith(
       chatJid,
+      'progress-1',
       '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
     );
     expect(lastAgentTimestamps[chatJid]).toBe('1');

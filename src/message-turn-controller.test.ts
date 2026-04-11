@@ -121,12 +121,10 @@ describe('MessageTurnController outbound audit logging', () => {
       'dc:test-room',
       expect.stringContaining('첫 진행 상황'),
     );
-    expect(channel.editMessage).toHaveBeenCalledWith(
-      'dc:test-room',
-      'progress-1',
-      expect.stringContaining('첫 진행 상황'),
-    );
-    expect(deliverFinalText).toHaveBeenCalledWith('최종 답변');
+    expect(channel.editMessage).not.toHaveBeenCalled();
+    expect(deliverFinalText).toHaveBeenCalledWith('최종 답변', {
+      replaceMessageId: 'progress-1',
+    });
 
     expect(getAuditEntries()).toEqual(
       expect.arrayContaining([
@@ -144,23 +142,20 @@ describe('MessageTurnController outbound audit logging', () => {
           messageId: 'progress-1',
         }),
         expect.objectContaining({
-          auditEvent: 'progress-edit',
-          deliveryRole: 'reviewer',
-          serviceId: 'codex-review',
-          turnId: 'task-1:2026-04-10T14:22:00.000Z:reviewer-turn',
-          messageId: 'progress-1',
-        }),
-        expect.objectContaining({
           auditEvent: 'final-delivery-attempt',
           deliveryRole: 'reviewer',
           serviceId: 'codex-review',
           turnId: 'task-1:2026-04-10T14:22:00.000Z:reviewer-turn',
+          messageId: 'progress-1',
+          deliveryMode: 'edit',
         }),
         expect.objectContaining({
           auditEvent: 'final-delivery-result',
           deliveryRole: 'reviewer',
           serviceId: 'codex-review',
           turnId: 'task-1:2026-04-10T14:22:00.000Z:reviewer-turn',
+          messageId: 'progress-1',
+          deliveryMode: 'edit',
           delivered: true,
         }),
       ]),
@@ -316,7 +311,110 @@ describe('MessageTurnController outbound audit logging', () => {
     expect(deliverFinalText).toHaveBeenCalledTimes(1);
     expect(deliverFinalText).toHaveBeenCalledWith(
       'PROCEED 근거를 확인했습니다.',
+      {
+        replaceMessageId: null,
+      },
     );
+  });
+
+  it('replaces the tracked progress message when an owner final arrives', async () => {
+    const channel = {
+      ...makeChannel(),
+      name: 'discord',
+    } satisfies Channel;
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-owner-final-replace',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      deliveryRole: 'owner',
+      pairedTurnIdentity: {
+        turnId: 'task-1:2026-04-10T14:22:00.000Z:owner-turn',
+        taskId: 'task-1',
+        taskUpdatedAt: '2026-04-10T14:22:00.000Z',
+        intentKind: 'finalize-owner-turn',
+        role: 'owner',
+      },
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '첫 진행 상황',
+    } as any);
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '둘째 진행 상황',
+    } as any);
+    await flushAsync();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'final',
+      result: 'DONE 최종 답변',
+    } as any);
+    await controller.finish('success');
+
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(deliverFinalText).toHaveBeenCalledWith('DONE 최종 답변', {
+      replaceMessageId: 'progress-1',
+    });
+  });
+
+  it('replaces the tracked progress message when finish() replays the last owner progress as final', async () => {
+    const channel = {
+      ...makeChannel(),
+      name: 'discord',
+    } satisfies Channel;
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-owner-progress-replay',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      deliveryRole: 'owner',
+      pairedTurnIdentity: {
+        turnId: 'task-1:2026-04-10T14:22:00.000Z:owner-turn',
+        taskId: 'task-1',
+        taskUpdatedAt: '2026-04-10T14:22:00.000Z',
+        intentKind: 'finalize-owner-turn',
+        role: 'owner',
+      },
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '첫 진행 상황',
+    } as any);
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '둘째 진행 상황',
+    } as any);
+    await flushAsync();
+
+    await controller.finish('success');
+
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(deliverFinalText).toHaveBeenCalledWith('첫 진행 상황', {
+      replaceMessageId: 'progress-1',
+    });
   });
 
   it('suppresses replaying the last progress update as final when final delivery is disallowed', async () => {

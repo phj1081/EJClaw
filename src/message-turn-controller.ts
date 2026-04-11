@@ -33,7 +33,10 @@ interface MessageTurnControllerOptions {
   isClaudeCodeAgent: boolean;
   clearSession: () => void;
   requestClose: (reason: string) => void;
-  deliverFinalText: (text: string) => Promise<boolean>;
+  deliverFinalText: (
+    text: string,
+    options?: { replaceMessageId?: string | null },
+  ) => Promise<boolean>;
   canDeliverFinalText?: () => boolean;
   allowProgressReplayWithoutFinal?: boolean;
   deliveryRole?: PairedRoomRole | null;
@@ -294,8 +297,8 @@ export class MessageTurnController {
     // then discard the pending buffer so it never shows up.
     if (text) {
       await this.flushPendingProgress(text);
-      await this.finalizeProgressMessage();
-      await this.deliverFinalText(text);
+      const replaceMessageId = this.consumeProgressForFinalDelivery();
+      await this.deliverFinalText(text, { replaceMessageId });
     } else if (raw) {
       this.log.info(
         {
@@ -308,7 +311,15 @@ export class MessageTurnController {
       await this.finalizeProgressMessage();
       this.latestProgressTextForFinal = null;
     } else {
-      await this.finalizeProgressMessage();
+      this.log.info(
+        {
+          resultStatus: result.status,
+          resultPhase: result.phase,
+          progressMessageId: this.progressMessageId,
+          latestProgressTextForFinal: this.latestProgressTextForFinal,
+        },
+        'Received a final output with no visible text; deferring any progress replay to finish()',
+      );
     }
 
     await this.deactivateTyping('turn:handle-output', {
@@ -340,13 +351,16 @@ export class MessageTurnController {
       !this.hadError &&
       this.latestProgressTextForFinal
     ) {
-      await this.finalizeProgressMessage();
       if (this.options.allowProgressReplayWithoutFinal !== false) {
+        const replaceMessageId = this.consumeProgressForFinalDelivery();
         this.log.info(
           'Sending a separate final message from the last progress output after agent completion',
         );
-        await this.deliverFinalText(this.latestProgressTextForFinal);
+        await this.deliverFinalText(this.latestProgressTextForFinal, {
+          replaceMessageId,
+        });
       } else {
+        await this.finalizeProgressMessage();
         this.log.info(
           'Skipped replaying the last progress output as a final message for this turn',
         );
@@ -599,9 +613,28 @@ export class MessageTurnController {
     this.resetProgressState();
   }
 
-  private async deliverFinalText(text: string): Promise<void> {
+  private consumeProgressForFinalDelivery(): string | null {
+    const replaceMessageId = this.progressMessageId;
+    this.log.info(
+      {
+        progressMessageId: replaceMessageId,
+        latestProgressText: this.latestProgressText,
+      },
+      replaceMessageId
+        ? 'Promoting tracked progress message to final delivery'
+        : 'Delivering final output without a tracked progress message to replace',
+    );
+    this.resetProgressState();
+    return replaceMessageId;
+  }
+
+  private async deliverFinalText(
+    text: string,
+    options?: { replaceMessageId?: string | null },
+  ): Promise<void> {
     await this.activateTyping('turn:deliver-final');
     this.visiblePhase = toVisiblePhase('final');
+    const replaceMessageId = options?.replaceMessageId ?? null;
     if (
       this.options.canDeliverFinalText &&
       !this.options.canDeliverFinalText()
@@ -619,13 +652,17 @@ export class MessageTurnController {
       return;
     }
     this.logOutboundAudit('final-delivery-attempt', {
-      messageId: this.progressMessageId,
+      messageId: replaceMessageId,
       textLength: text.length,
+      deliveryMode: replaceMessageId ? 'edit' : 'send',
     });
-    const delivered = await this.options.deliverFinalText(text);
+    const delivered = await this.options.deliverFinalText(text, {
+      replaceMessageId,
+    });
     this.logOutboundAudit('final-delivery-result', {
-      messageId: this.progressMessageId,
+      messageId: replaceMessageId,
       textLength: text.length,
+      deliveryMode: replaceMessageId ? 'edit' : 'send',
       delivered,
     });
     if (!delivered) {
@@ -638,8 +675,10 @@ export class MessageTurnController {
     if (this.terminalObserved()) {
       return;
     }
-    await this.finalizeProgressMessage();
-    await this.deliverFinalText(this.options.failureFinalText);
+    const replaceMessageId = this.consumeProgressForFinalDelivery();
+    await this.deliverFinalText(this.options.failureFinalText, {
+      replaceMessageId,
+    });
   }
 
   private requestAgentClose(reason: string): void {
