@@ -296,9 +296,9 @@ export class MessageTurnController {
     // Final arrived — flush any buffered progress that isn't the same text,
     // then discard the pending buffer so it never shows up.
     if (text) {
-      await this.flushPendingProgress(text);
-      const replaceMessageId = this.consumeProgressForFinalDelivery();
-      await this.deliverFinalText(text, { replaceMessageId });
+      await this.publishTerminalText(text, {
+        flushPendingText: text,
+      });
     } else if (raw) {
       this.log.info(
         {
@@ -351,14 +351,12 @@ export class MessageTurnController {
       !this.hadError &&
       this.latestProgressTextForFinal
     ) {
+      const replayText = this.latestProgressTextForFinal;
       if (this.options.allowProgressReplayWithoutFinal !== false) {
-        const replaceMessageId = this.consumeProgressForFinalDelivery();
         this.log.info(
           'Sending a separate final message from the last progress output after agent completion',
         );
-        await this.deliverFinalText(this.latestProgressTextForFinal, {
-          replaceMessageId,
-        });
+        await this.publishTerminalText(replayText);
       } else {
         await this.finalizeProgressMessage();
         this.log.info(
@@ -613,6 +611,18 @@ export class MessageTurnController {
     this.resetProgressState();
   }
 
+  private async publishTerminalText(
+    text: string,
+    options?: { flushPendingText?: string | null },
+  ): Promise<void> {
+    if (options?.flushPendingText) {
+      await this.flushPendingProgress(options.flushPendingText);
+    }
+
+    const replaceMessageId = this.consumeProgressForFinalDelivery();
+    await this.deliverFinalText(text, { replaceMessageId });
+  }
+
   private consumeProgressForFinalDelivery(): string | null {
     const replaceMessageId = this.progressMessageId;
     this.log.info(
@@ -675,10 +685,7 @@ export class MessageTurnController {
     if (this.terminalObserved()) {
       return;
     }
-    const replaceMessageId = this.consumeProgressForFinalDelivery();
-    await this.deliverFinalText(this.options.failureFinalText, {
-      replaceMessageId,
-    });
+    await this.publishTerminalText(this.options.failureFinalText);
   }
 
   private requestAgentClose(reason: string): void {

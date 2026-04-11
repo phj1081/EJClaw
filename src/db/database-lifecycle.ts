@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 
 import { DATA_DIR, normalizeServiceId, SERVICE_ID } from '../config.js';
 import { listUnexpectedDataStateFiles } from '../data-state-files.js';
+import { StartupPreconditionError } from '../startup-preconditions.js';
 import {
   openDatabaseFromFile,
   openInMemoryDatabase,
@@ -61,7 +62,7 @@ function assertNoPendingLegacyRoomMigration(database: Database): void {
     return;
   }
 
-  throw new Error(
+  throw new StartupPreconditionError(
     `Legacy room migration required before startup (tables=${pendingTables.join(',')})`,
   );
 }
@@ -72,7 +73,7 @@ function assertNoUnexpectedDataStateFiles(): void {
     return;
   }
 
-  throw new Error(
+  throw new StartupPreconditionError(
     `Unexpected data state files detected before startup (files=${pendingFiles.join(',')})`,
   );
 }
@@ -83,7 +84,7 @@ function assertNoUnsupportedRouterStateDbKeys(database: Database): void {
     return;
   }
 
-  throw new Error(
+  throw new StartupPreconditionError(
     `Unsupported router_state DB keys remain before startup (keys=${unsupportedKeys.join(',')})`,
   );
 }

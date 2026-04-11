@@ -1,5 +1,6 @@
 import path from 'path';
 
+import { STARTUP_PRECONDITION_EXIT_CODE } from '../src/startup-preconditions.js';
 import type { ServiceDef } from './service-defs.js';
 
 export function buildRuntimePathEnv(nodePath: string, homeDir: string): string {
@@ -111,6 +112,7 @@ ExecStart=${nodePath} ${projectRoot}/dist/index.js
 WorkingDirectory=${projectRoot}
 Restart=always
 RestartSec=5
+RestartPreventExitStatus=${STARTUP_PRECONDITION_EXIT_CODE}
 ${envLines.join('\n')}
 StandardOutput=append:${projectRoot}/logs/${def.logName}.log
 StandardError=append:${projectRoot}/logs/${def.logName}.error.log

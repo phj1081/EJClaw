@@ -471,4 +471,52 @@ describe('MessageTurnController outbound audit logging', () => {
       ]),
     );
   });
+
+  it('replaces the tracked progress message when finish() publishes a failure final', async () => {
+    const channel = {
+      ...makeChannel(),
+      name: 'discord',
+    } satisfies Channel;
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-owner-failure-final',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      deliveryRole: 'owner',
+      pairedTurnIdentity: {
+        turnId: 'task-1:2026-04-10T14:22:00.000Z:owner-turn',
+        taskId: 'task-1',
+        taskUpdatedAt: '2026-04-10T14:22:00.000Z',
+        intentKind: 'finalize-owner-turn',
+        role: 'owner',
+      },
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '첫 진행 상황',
+    } as any);
+    await controller.handleOutput({
+      status: 'error',
+      phase: 'progress',
+      result: '오류 직전 진행 상황',
+    } as any);
+    await flushAsync();
+
+    await controller.finish('error');
+
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(deliverFinalText).toHaveBeenCalledWith('실패', {
+      replaceMessageId: 'progress-1',
+    });
+  });
 });

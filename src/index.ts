@@ -74,6 +74,7 @@ import {
   clearGlobalFailover,
   getGlobalFailoverInfo,
 } from './service-routing.js';
+import { resolveStartupFailureExitCode } from './startup-preconditions.js';
 import { createRuntimeState } from './runtime-state.js';
 import { FAILOVER_MIN_DURATION_MS } from './config.js';
 
@@ -497,7 +498,8 @@ const isDirectRun =
 
 if (isDirectRun) {
   main().catch((err) => {
-    logger.error({ err }, 'Failed to start EJClaw');
-    process.exit(1);
+    const exitCode = resolveStartupFailureExitCode(err);
+    logger.error({ err, exitCode }, 'Failed to start EJClaw');
+    process.exit(exitCode);
   });
 }

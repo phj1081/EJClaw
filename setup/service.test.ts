@@ -108,6 +108,7 @@ describe('systemd unit generation', () => {
     );
     expect(unit).toContain('Restart=always');
     expect(unit).toContain('RestartSec=5');
+    expect(unit).toContain('RestartPreventExitStatus=78');
   });
 
   it('sets correct ExecStart', () => {
