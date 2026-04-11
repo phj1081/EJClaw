@@ -11,7 +11,7 @@
     "build:runners": "bun run install:runners && bun run --cwd runners/shared build && bun run --cwd runners/agent-runner build && bun run --cwd runners/codex-runner build",
     "build:all": "bun run build && bun run build:runners",
     "build:runtime": "bun run build:all",
-    "deploy": "git pull --ff-only && bun run build:all && systemctl --user restart ejclaw",
+    "deploy": "git pull --ff-only && bun run build:all && bun setup/index.ts --step migrate-room-registrations && systemctl --user restart ejclaw",
     "start": "bun dist/index.js",
     "dev": "bun --watch src/index.ts",
     "test": "vitest run",
