@@ -1,83 +1,145 @@
-# Configuration
+# 설정
 
-All configuration in a single `.env` file.
+EJClaw의 설정 기준은 `.env` 하나입니다.
+프로젝트 루트의 [`../.env.example`](../.env.example)를 기본 예시로 보고, 이 문서는 현재 런타임에서 의미가 있는 키만 추려 설명합니다.
 
-## Discord Bots
+## 기본 원칙
+
+- Discord 토큰은 role-fixed canonical 키만 사용합니다
+- reviewer 기본 provider는 `claude-code`
+- owner 기본 provider는 `codex`
+- room-level override는 provider 단위(`claudeModel`, `codexModel`)만 지원합니다
+- `CLAUDE_CODE_OAUTH_TOKENS`가 canonical이고, `CLAUDE_CODE_OAUTH_TOKEN`은 legacy fallback입니다
+
+## Discord 봇
 
 ```bash
-DISCORD_OWNER_BOT_TOKEN=         # Owner bot
-DISCORD_REVIEWER_BOT_TOKEN=      # Reviewer bot
-DISCORD_ARBITER_BOT_TOKEN=       # Arbiter bot
+DISCORD_OWNER_BOT_TOKEN=
+DISCORD_REVIEWER_BOT_TOKEN=
+DISCORD_ARBITER_BOT_TOKEN=
 ```
 
-## Agent Types & Models
+예전 service-based alias는 더 이상 허용되지 않습니다.
+
+## 역할 / 모델 설정
 
 ```bash
-# Agent types per role
-OWNER_AGENT_TYPE=codex            # codex | claude-code
-REVIEWER_AGENT_TYPE=claude-code   # claude-code | codex
-ARBITER_AGENT_TYPE=codex          # codex | claude-code (optional, enables 3rd agent)
+# 역할별 provider
+OWNER_AGENT_TYPE=codex
+REVIEWER_AGENT_TYPE=claude-code
+# ARBITER_AGENT_TYPE=claude-code
 
-# Per-role model overrides
+# provider 기본 모델
+CLAUDE_MODEL=claude-opus-4-6
+CLAUDE_EFFORT=high
+CLAUDE_THINKING=adaptive
+CODEX_MODEL=gpt-5.4
+CODEX_EFFORT=xhigh
+
+# 역할별 override
 OWNER_MODEL=gpt-5.4
-REVIEWER_MODEL=claude-opus-4-6
-ARBITER_MODEL=gpt-5.4
-
-# Per-role effort level
 OWNER_EFFORT=xhigh
+OWNER_FALLBACK_ENABLED=true
+
+REVIEWER_MODEL=claude-opus-4-6
 REVIEWER_EFFORT=high
-ARBITER_EFFORT=xhigh
+REVIEWER_FALLBACK_ENABLED=true
 
-# Per-role fallback toggle
-REVIEWER_FALLBACK_ENABLED=true    # Auto-handoff to codex when Claude exhausted
-ARBITER_FALLBACK_ENABLED=false
-
-# Response language
-AGENT_LANGUAGE=Korean             # Injected into all agent prompts
+ARBITER_MODEL=claude-sonnet-4-6
+ARBITER_EFFORT=high
+ARBITER_FALLBACK_ENABLED=true
 ```
 
-## Authentication
+설명:
+
+- reviewer / arbiter provider 선택은 **전역 설정**
+- 특정 방에서만 reviewer를 Codex로 고르는 기능은 없음
+- room-level `agentConfig`의 `claudeModel`, `codexModel`은 역할별이 아니라 provider별 override
+- `ARBITER_AGENT_TYPE`은 옵션이며, 설정하지 않으면 arbiter는 비활성 상태입니다
+
+## 인증
 
 ```bash
-CLAUDE_CODE_OAUTH_TOKEN=          # Claude Code OAuth token
-CLAUDE_CODE_OAUTH_TOKENS=         # Comma-separated for multi-account rotation
-OPENAI_API_KEY=                   # Codex API key (if not using OAuth)
+# Claude Code OAuth
+CLAUDE_CODE_OAUTH_TOKENS=
+CLAUDE_CODE_OAUTH_TOKEN=
+
+# Claude host env (선택)
+ANTHROPIC_API_KEY=
+ANTHROPIC_AUTH_TOKEN=
+ANTHROPIC_BASE_URL=
 ```
 
-## Voice Transcription
+설명:
+
+- `CLAUDE_CODE_OAUTH_TOKENS`: canonical, 쉼표 구분
+- `CLAUDE_CODE_OAUTH_TOKEN`: 단일 토큰 legacy fallback
+- 실제 runner에는 현재 선택된 Claude 토큰 하나만 주입됩니다
+
+Codex 쪽은 현재 **OAuth 세션 파일** 기준으로 동작합니다. `OPENAI_API_KEY`를 Codex child process에 넘겨서 빌링하는 구조는 사용하지 않습니다.
+
+## 음성 전사
 
 ```bash
-GROQ_API_KEY=                     # Groq whisper-large-v3-turbo (primary)
-OPENAI_API_KEY=                   # OpenAI whisper-1 (fallback)
+GROQ_API_KEY=
 ```
 
-## Mixture of Agents (MoA)
+- 기본은 Groq Whisper
+- 필요 시 OpenAI Whisper fallback을 별도 확장할 수 있지만, 현재 README / 문서 기준 최소 키는 `GROQ_API_KEY`입니다
+
+## MoA
 
 ```bash
 MOA_ENABLED=true
-MOA_REF_MODELS=kimi,glm           # Configurable reference model list
+MOA_REF_MODELS=kimi,glm
 
-# Per-model config (pattern: MOA_{NAME}_{SETTING})
 MOA_KIMI_MODEL=kimi-k2.5
 MOA_KIMI_BASE_URL=https://api.kimi.com/coding
 MOA_KIMI_API_KEY=sk-kimi-xxx
 MOA_KIMI_API_FORMAT=anthropic
 
-MOA_GLM_MODEL=glm-5.1
-MOA_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
+MOA_GLM_MODEL=glm-4-plus
+MOA_GLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 MOA_GLM_API_KEY=xxx
 MOA_GLM_API_FORMAT=anthropic
 ```
 
-## Debugging Paths
+MoA는 arbiter 판정 전에 외부 모델 의견을 수집해 prompt에 주입합니다.
+`API_FORMAT` 같은 항목은 `.env.example`의 최소 예시에 없는 운영 확장 키입니다.
 
-| Item | Path |
-|------|------|
-| **DB** | `store/messages.db` (shared, WAL mode) |
-| Service log | `journalctl --user -u ejclaw -f` or `logs/ejclaw.log` |
-| Per-group logs | `groups/{name}/logs/` |
-| Claude sessions | `data/sessions/{name}/.claude/` |
-| Codex sessions | `data/sessions/{name}/.codex/` |
-| Claude platform rules | `prompts/claude-platform.md` |
-| Codex platform rules | `prompts/codex-platform.md` |
-| Global memory | `groups/global/CLAUDE.md` |
+## 운영 / 배포 관련 설정
+
+```bash
+ASSISTANT_NAME=claude
+STATUS_CHANNEL_ID=
+SESSION_COMMAND_ALLOWED_SENDERS=
+MAX_CONCURRENT_AGENTS=5
+```
+
+- `ASSISTANT_NAME`은 owner trigger 기본 이름을 만듭니다
+- paired room에서도 사용자 진입점은 owner가 기준입니다
+- status dashboard와 session command는 선택 설정입니다
+
+## 디버깅 경로
+
+| 항목 | 경로 / 명령 |
+| --- | --- |
+| DB | `store/messages.db` |
+| 서비스 로그 | `journalctl --user -u ejclaw -f` |
+| room 로그 | `groups/{folder}/logs/` |
+| owner/reviewer 세션 | `data/sessions/{folder}*` |
+| owner worktree | `data/workspaces/{folder}/owner` |
+| Claude 플랫폼 프롬프트 | `prompts/claude-platform.md` |
+| reviewer 프롬프트 | `prompts/claude-paired-room.md` |
+| arbiter 프롬프트 | `prompts/arbiter-paired-room.md` |
+| Codex 플랫폼 프롬프트 | `prompts/codex-platform.md` |
+| 글로벌 메모리 | `groups/global/CLAUDE.md` |
+
+## 문서와 실제 코드의 우선순위
+
+문서보다 실제 동작이 우선입니다. 동작 기준을 확인할 때는 아래를 먼저 봅니다.
+
+1. `.env.example`
+2. `src/config/load-config.ts`
+3. `src/agent-runner-environment.ts`
+4. `src/paired-execution-context.ts`
