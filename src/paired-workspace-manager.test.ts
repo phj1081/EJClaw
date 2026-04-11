@@ -799,6 +799,83 @@ describe('paired workspace manager', () => {
     ).toBe('owner changed again\n');
   });
 
+  it('resyncs a stale reviewer workspace record to the current owner workspace', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    fs.mkdirSync(canonicalDir, { recursive: true });
+    runGit(['init'], canonicalDir);
+    runGit(['config', 'user.email', 'test@example.com'], canonicalDir);
+    runGit(['config', 'user.name', 'EJClaw Test'], canonicalDir);
+    fs.writeFileSync(path.join(canonicalDir, 'README.md'), 'base\n');
+    runGit(['add', 'README.md'], canonicalDir);
+    runGit(['commit', '-m', 'initial'], canonicalDir);
+
+    const now = '2026-03-28T00:00:00.000Z';
+    db.upsertPairedProject({
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      canonical_work_dir: canonicalDir,
+      created_at: now,
+      updated_at: now,
+    });
+    db.createPairedTask({
+      id: 'paired-task-6b',
+      chat_jid: 'dc:test',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-28T00:01:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: now,
+      updated_at: '2026-03-28T00:01:00.000Z',
+    });
+
+    const ownerWorkspace =
+      manager.provisionOwnerWorkspaceForPairedTask('paired-task-6b');
+    db.upsertPairedWorkspace({
+      id: 'paired-task-6b:reviewer',
+      task_id: 'paired-task-6b',
+      role: 'reviewer',
+      workspace_dir: canonicalDir,
+      snapshot_source_dir: canonicalDir,
+      snapshot_ref: 'stale-fingerprint',
+      status: 'ready',
+      snapshot_refreshed_at: '2026-03-28T00:01:00.000Z',
+      created_at: '2026-03-28T00:01:00.000Z',
+      updated_at: '2026-03-28T00:01:00.000Z',
+    });
+
+    const result = manager.prepareReviewerWorkspaceForExecution(
+      db.getPairedTaskById('paired-task-6b')!,
+    );
+
+    expect(result.autoRefreshed).toBe(false);
+    expect(result.blockMessage).toBeUndefined();
+    expect(result.workspace?.workspace_dir).toBe(ownerWorkspace.workspace_dir);
+    expect(result.workspace?.snapshot_source_dir).toBe(
+      ownerWorkspace.workspace_dir,
+    );
+    expect(
+      db.getPairedWorkspace('paired-task-6b', 'reviewer')?.workspace_dir,
+    ).toBe(ownerWorkspace.workspace_dir);
+    expect(
+      db.getPairedWorkspace('paired-task-6b', 'reviewer')?.snapshot_source_dir,
+    ).toBe(ownerWorkspace.workspace_dir);
+    expect(
+      db.getPairedWorkspace('paired-task-6b', 'reviewer')
+        ?.snapshot_refreshed_at,
+    ).not.toBe('2026-03-28T00:01:00.000Z');
+  });
+
   it('bases a new owner branch on the canonical repo HEAD without requiring a remote', async () => {
     const { db, manager } = await loadModules();
     db._initTestDatabase();

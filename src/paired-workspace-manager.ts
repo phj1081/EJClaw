@@ -17,9 +17,9 @@ import type { PairedTask, PairedWorkspace } from './types.js';
 import { ensureWorkspaceDependenciesInstalled } from './workspace-package-manager.js';
 
 const REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE =
-  'Review snapshot is stale after owner changes. Retry the review once to refresh against the latest owner workspace.';
+  'Review workspace is out of date after owner changes. Retry the review once to resync against the latest owner workspace.';
 const REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE =
-  'Review snapshot is not ready yet. Wait for the owner to complete a turn so the reviewer snapshot can be prepared.';
+  'Review workspace is not ready yet. Wait for the owner to complete a turn so the reviewer workspace can be prepared.';
 const OWNER_WORKSPACE_REPAIR_PREFIX = 'BLOCKED\nOwner workspace needs repair.';
 const REVIEWER_SNAPSHOT_DENY_SEGMENTS = new Set([
   '.git',
@@ -887,16 +887,11 @@ export function markPairedTaskReviewReady(taskId: string): {
     );
   }
 
-  // Reviewer uses the owner workspace directly in read-only mode.
-  // No file-level snapshot copy needed — just register the path.
-  const reviewerWorkspace = makeWorkspaceRecord({
+  const reviewerWorkspace = syncReviewerWorkspaceToOwnerWorkspace({
     taskId,
-    role: 'reviewer',
-    workspaceDir: ownerWorkspace.workspace_dir,
-    snapshotSourceDir: ownerWorkspace.workspace_dir,
-    snapshotRefreshedAt: requestedAt,
+    ownerWorkspace,
+    syncedAt: requestedAt,
   });
-  upsertPairedWorkspace(reviewerWorkspace);
   logger.info(
     { taskId, ownerDir: ownerWorkspace.workspace_dir },
     'Reviewer will mount owner workspace directly',
@@ -926,6 +921,43 @@ export interface PreparedReviewerWorkspace {
   autoRefreshed: boolean;
 }
 
+function syncReviewerWorkspaceToOwnerWorkspace(args: {
+  taskId: string;
+  ownerWorkspace: PairedWorkspace;
+  syncedAt?: string;
+}): PairedWorkspace {
+  const existingReviewerWorkspace = getPairedWorkspace(args.taskId, 'reviewer');
+  if (
+    existingReviewerWorkspace &&
+    existingReviewerWorkspace.workspace_dir ===
+      args.ownerWorkspace.workspace_dir &&
+    existingReviewerWorkspace.snapshot_source_dir ===
+      args.ownerWorkspace.workspace_dir
+  ) {
+    return existingReviewerWorkspace;
+  }
+
+  const reviewerWorkspace = makeWorkspaceRecord({
+    taskId: args.taskId,
+    role: 'reviewer',
+    workspaceDir: args.ownerWorkspace.workspace_dir,
+    snapshotSourceDir: args.ownerWorkspace.workspace_dir,
+    snapshotRefreshedAt: args.syncedAt ?? new Date().toISOString(),
+  });
+  upsertPairedWorkspace(reviewerWorkspace);
+  if (existingReviewerWorkspace) {
+    logger.info(
+      {
+        taskId: args.taskId,
+        previousReviewerDir: existingReviewerWorkspace.workspace_dir,
+        ownerDir: args.ownerWorkspace.workspace_dir,
+      },
+      'Resynced reviewer workspace to the current owner workspace',
+    );
+  }
+  return reviewerWorkspace;
+}
+
 export function prepareReviewerWorkspaceForExecution(
   task: PairedTask,
 ): PreparedReviewerWorkspace {
@@ -939,21 +971,10 @@ export function prepareReviewerWorkspaceForExecution(
   }
 
   // Reviewer uses the owner workspace directly in read-only mode.
-  // No snapshot copy needed — just return the owner workspace as reviewer workspace.
-  const reviewerWorkspace = getPairedWorkspace(task.id, 'reviewer') ?? null;
-  if (reviewerWorkspace) {
-    return { workspace: reviewerWorkspace, autoRefreshed: false };
-  }
-
-  // No reviewer workspace registered yet — register owner dir
-  const now = new Date().toISOString();
-  const newReviewerWorkspace = makeWorkspaceRecord({
+  // If an old reviewer record still points elsewhere, resync it first.
+  const reviewerWorkspace = syncReviewerWorkspaceToOwnerWorkspace({
     taskId: task.id,
-    role: 'reviewer',
-    workspaceDir: ownerWorkspace.workspace_dir,
-    snapshotSourceDir: ownerWorkspace.workspace_dir,
-    snapshotRefreshedAt: now,
+    ownerWorkspace,
   });
-  upsertPairedWorkspace(newReviewerWorkspace);
-  return { workspace: newReviewerWorkspace, autoRefreshed: false };
+  return { workspace: reviewerWorkspace, autoRefreshed: false };
 }
