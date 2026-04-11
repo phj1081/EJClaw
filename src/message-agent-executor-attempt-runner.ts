@@ -64,7 +64,7 @@ export async function runMessageAgentAttempt(args: {
       outputText?: string | null;
       errorText?: string | null;
     }): void;
-    recordFinalOutputBeforeDelivery(outputText: string): void;
+    recordFinalOutputBeforeDelivery(outputText: string): boolean;
   };
   log: Logger;
 }): Promise<MessageAgentAttempt> {
@@ -214,13 +214,20 @@ export async function runMessageAgentAttempt(args: {
         outputText &&
         outputText.length > 0
       ) {
+        let finalOutputAccepted = true;
         try {
-          pairedExecutionLifecycle.recordFinalOutputBeforeDelivery(outputText);
+          finalOutputAccepted =
+            pairedExecutionLifecycle.recordFinalOutputBeforeDelivery(
+              outputText,
+            );
         } catch (err) {
           log.warn(
             { pairedTaskId: pairedExecutionContext?.task.id ?? null, err },
             'Failed to persist paired turn output and status before delivery',
           );
+        }
+        if (!finalOutputAccepted) {
+          return;
         }
       }
       if (onOutput) {

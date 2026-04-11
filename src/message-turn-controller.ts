@@ -34,6 +34,7 @@ interface MessageTurnControllerOptions {
   clearSession: () => void;
   requestClose: (reason: string) => void;
   deliverFinalText: (text: string) => Promise<boolean>;
+  canDeliverFinalText?: () => boolean;
   allowProgressReplayWithoutFinal?: boolean;
   deliveryRole?: PairedRoomRole | null;
   deliveryServiceId?: string | null;
@@ -582,6 +583,22 @@ export class MessageTurnController {
   private async deliverFinalText(text: string): Promise<void> {
     await this.activateTyping('turn:deliver-final');
     this.visiblePhase = toVisiblePhase('final');
+    if (
+      this.options.canDeliverFinalText &&
+      !this.options.canDeliverFinalText()
+    ) {
+      this.log.info(
+        {
+          runId: this.options.runId,
+          deliveryRole: this.options.deliveryRole ?? null,
+          turnId: this.options.pairedTurnIdentity?.turnId ?? null,
+          textLength: text.length,
+        },
+        'Suppressed final delivery because this run no longer owns the active paired turn attempt',
+      );
+      this.latestProgressTextForFinal = null;
+      return;
+    }
     this.logOutboundAudit('final-delivery-attempt', {
       messageId: this.progressMessageId,
       textLength: text.length,

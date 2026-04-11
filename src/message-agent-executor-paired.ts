@@ -17,6 +17,7 @@ import {
 import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
 import { enqueuePairedFollowUpAfterEvent } from './message-runtime-follow-up.js';
 import type { PairedTurnIdentity } from './paired-turn-identity.js';
+import { resolvePairedTurnRunOwnership } from './paired-turn-run-ownership.js';
 import type { PairedRoomRole } from './types.js';
 
 type ExecutorLog = Pick<typeof logger, 'info' | 'warn'>;
@@ -28,7 +29,7 @@ export interface PairedExecutionLifecycle {
     outputText?: string | null;
     errorText?: string | null;
   }): void;
-  recordFinalOutputBeforeDelivery(outputText: string): void;
+  recordFinalOutputBeforeDelivery(outputText: string): boolean;
   completeImmediately(args: { status: 'succeeded' | 'failed' }): void;
   markDelegated(): void;
   markStatus(status: 'succeeded' | 'failed'): void;
@@ -74,6 +75,44 @@ export function createPairedExecutionLifecycle(args: {
     pairedExecutionContext?.requiresVisibleVerdict === true;
   const missingVisibleVerdictSummary =
     'Execution completed without a visible terminal verdict.';
+
+  const currentRunOwnsActiveAttempt = (reason: string): boolean => {
+    if (!pairedTurnIdentity) {
+      return true;
+    }
+    const ownership = resolvePairedTurnRunOwnership({
+      turnId: pairedTurnIdentity.turnId,
+      runId,
+    });
+    if (ownership.state === 'active') {
+      return true;
+    }
+    if (ownership.state === 'missing') {
+      log.warn(
+        {
+          pairedTaskId: pairedExecutionContext?.task.id ?? null,
+          turnId: pairedTurnIdentity.turnId,
+          runId,
+          reason,
+        },
+        'Could not verify paired turn attempt ownership before final side effects; keeping legacy behavior',
+      );
+      return true;
+    }
+    log.warn(
+      {
+        pairedTaskId: pairedExecutionContext?.task.id ?? null,
+        turnId: pairedTurnIdentity.turnId,
+        runId,
+        reason,
+        currentAttemptNo: ownership.currentAttemptNo,
+        currentAttemptState: ownership.currentAttemptState,
+        currentAttemptRunId: ownership.currentAttemptRunId,
+      },
+      'Skipping paired final side effects because this run no longer owns the active attempt',
+    );
+    return false;
+  };
 
   const finalizePairedTurnState = (
     status: 'succeeded' | 'failed',
@@ -236,9 +275,13 @@ export function createPairedExecutionLifecycle(args: {
     },
 
     recordFinalOutputBeforeDelivery(outputText) {
+      if (!currentRunOwnsActiveAttempt('streamed-final-output')) {
+        return false;
+      }
       lockVisibleVerdict(outputText);
       completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded();
       persistPairedTurnOutputIfNeeded();
+      return true;
     },
 
     completeImmediately({ status }) {
@@ -280,6 +323,10 @@ export function createPairedExecutionLifecycle(args: {
 
     async asyncFinalize() {
       clearLeaseHeartbeat();
+
+      if (!currentRunOwnsActiveAttempt('async-finalize')) {
+        return;
+      }
 
       if (pairedExecutionContext && pairedExecutionDelegated) {
         try {

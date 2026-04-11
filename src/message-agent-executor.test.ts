@@ -68,6 +68,7 @@ vi.mock('./db.js', () => {
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
     getLatestTurnNumber: vi.fn(() => 0),
     getPairedTaskById: vi.fn(() => undefined),
+    getPairedTurnAttempts: vi.fn(() => []),
     getPairedTurnOutputs: vi.fn(() => []),
     insertPairedTurnOutput: vi.fn(),
     markPairedTurnRunning: vi.fn(),
@@ -907,6 +908,103 @@ describe('runAgentForGroup room memory', () => {
       intentKind: 'owner-follow-up',
       role: 'owner',
     });
+  });
+
+  it('suppresses stale owner finalize output when another run already owns the active paired attempt', async () => {
+    const group = { ...makeGroup(), folder: 'test-group' };
+    const onOutput = vi.fn(async () => {});
+
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-stale-owner-final',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'claude',
+        reviewer_service_id: 'codex-review',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: null,
+        status: 'merge_ready',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-04-10T00:00:00.000Z',
+        updated_at: '2026-04-10T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {},
+    });
+    vi.mocked(db.getPairedTurnAttempts).mockReturnValue([
+      {
+        attempt_id:
+          'paired-task-stale-owner-final:2026-04-10T00:00:00.000Z:finalize-owner-turn:attempt:2',
+        parent_attempt_id:
+          'paired-task-stale-owner-final:2026-04-10T00:00:00.000Z:finalize-owner-turn:attempt:1',
+        parent_handoff_id: null,
+        continuation_handoff_id: null,
+        turn_id:
+          'paired-task-stale-owner-final:2026-04-10T00:00:00.000Z:finalize-owner-turn',
+        attempt_no: 2,
+        task_id: 'paired-task-stale-owner-final',
+        task_updated_at: '2026-04-10T00:00:00.000Z',
+        role: 'owner',
+        intent_kind: 'finalize-owner-turn',
+        state: 'running',
+        executor_service_id: 'claude',
+        executor_agent_type: 'claude-code',
+        active_run_id: 'run-new-owner-attempt',
+        created_at: '2026-04-10T00:00:01.000Z',
+        updated_at: '2026-04-10T00:00:01.000Z',
+        completed_at: null,
+        last_error: null,
+      },
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, emitOutput) => {
+        await emitOutput?.({
+          status: 'success',
+          result: 'DONE\nowner final from stale attempt',
+          output: {
+            visibility: 'public',
+            text: 'DONE\nowner final from stale attempt',
+          },
+          phase: 'final',
+        } as any);
+        return {
+          status: 'success',
+          result: 'DONE\nowner final from stale attempt',
+        };
+      },
+    );
+
+    const result = await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'finalize please',
+      chatJid: 'group@test',
+      runId: 'run-stale-owner-attempt',
+      pairedTurnIdentity: {
+        turnId:
+          'paired-task-stale-owner-final:2026-04-10T00:00:00.000Z:finalize-owner-turn',
+        taskId: 'paired-task-stale-owner-final',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'finalize-owner-turn',
+        role: 'owner',
+      },
+      onOutput,
+    });
+
+    expect(result).toBe('success');
+    expect(onOutput).not.toHaveBeenCalled();
+    expect(db.insertPairedTurnOutput).not.toHaveBeenCalled();
+    expect(
+      pairedExecutionContext.completePairedExecutionContext,
+    ).not.toHaveBeenCalled();
+    expect(db.completePairedTurn).not.toHaveBeenCalled();
+    expect(db.failPairedTurn).not.toHaveBeenCalled();
   });
 
   it('allows silent reviewer outputs', async () => {

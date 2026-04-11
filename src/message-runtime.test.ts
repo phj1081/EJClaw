@@ -132,6 +132,7 @@ vi.mock('./db.js', () => {
         };
       },
     ),
+    getPairedTurnAttempts: vi.fn(() => []),
     getOpenWorkItem,
     getOpenWorkItemForChat: vi.fn((chatJid: string) =>
       getOpenWorkItem(chatJid),

@@ -7,6 +7,7 @@ import {
   hasReviewerLease,
   resolveLeaseServiceId,
 } from './service-routing.js';
+import { resolvePairedTurnRunOwnership } from './paired-turn-run-ownership.js';
 import { normalizeMessageForDedupe } from './router.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
 import type {
@@ -186,6 +187,16 @@ export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
       deliveryRole: resolvedDeliveryRole,
       deliveryServiceId: resolvedDeliveryServiceId,
       pairedTurnIdentity: args.pairedTurnIdentity ?? null,
+      canDeliverFinalText: () => {
+        if (!args.pairedTurnIdentity) {
+          return true;
+        }
+        const ownership = resolvePairedTurnRunOwnership({
+          turnId: args.pairedTurnIdentity.turnId,
+          runId,
+        });
+        return ownership.state !== 'inactive';
+      },
       deliverFinalText: async (text) => {
         try {
           return await deps.deliverFinalText({

@@ -273,4 +273,59 @@ describe('MessageTurnController outbound audit logging', () => {
       ]),
     );
   });
+
+  it('suppresses replaying the last progress update as final when final delivery is disallowed', async () => {
+    const channel = makeChannel();
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-stale-owner-attempt',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      canDeliverFinalText: () => false,
+      allowProgressReplayWithoutFinal: true,
+      deliveryRole: 'owner',
+      pairedTurnIdentity: {
+        turnId: 'paired-task:2026-04-10T00:00:00.000Z:finalize-owner-turn',
+        taskId: 'paired-task',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'finalize-owner-turn',
+        role: 'owner',
+      },
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '작업 중 1',
+      output: { visibility: 'public', text: '작업 중 1' },
+    } as any);
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '작업 중 2',
+      output: { visibility: 'public', text: '작업 중 2' },
+    } as any);
+    await flushAsync();
+
+    const finishResult = await controller.finish('success');
+
+    expect(finishResult.deliverySucceeded).toBe(true);
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(deliverFinalText).not.toHaveBeenCalled();
+    expect(getAuditEntries()).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          auditEvent: 'final-delivery-attempt',
+        }),
+      ]),
+    );
+  });
 });
