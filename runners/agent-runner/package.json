@@ -10,7 +10,7 @@
     "start": "bun dist/index.js"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.87",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.101",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "cron-parser": "^5.0.0",
     "ejclaw-runners-shared": "file:../shared",
