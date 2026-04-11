@@ -117,10 +117,14 @@ describe('MessageTurnController outbound audit logging', () => {
     await controller.finish('success');
 
     expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(channel.sendAndTrack).toHaveBeenCalledWith(
+      'dc:test-room',
+      expect.stringContaining('첫 진행 상황'),
+    );
     expect(channel.editMessage).toHaveBeenCalledWith(
       'dc:test-room',
       'progress-1',
-      expect.stringContaining('둘째 진행 상황'),
+      expect.stringContaining('첫 진행 상황'),
     );
     expect(deliverFinalText).toHaveBeenCalledWith('최종 답변');
 
@@ -271,6 +275,47 @@ describe('MessageTurnController outbound audit logging', () => {
           auditEvent: 'final-delivery-attempt',
         }),
       ]),
+    );
+  });
+
+  it('does not flush pending progress before final delivery for paired reviewer turns', async () => {
+    const channel = makeChannel();
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-review-no-pending-flush',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      deliveryRole: 'reviewer',
+      deliveryServiceId: 'codex-review',
+      pairedTurnIdentity: makeTurnIdentity(),
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '오너가 대화와 관련 코드 근거를 대조해서 판정을 내리겠습니다.',
+    } as any);
+
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'final',
+      result: 'PROCEED 근거를 확인했습니다.',
+    } as any);
+    await controller.finish('success');
+
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(deliverFinalText).toHaveBeenCalledTimes(1);
+    expect(deliverFinalText).toHaveBeenCalledWith(
+      'PROCEED 근거를 확인했습니다.',
     );
   });
 

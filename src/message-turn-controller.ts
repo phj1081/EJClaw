@@ -505,6 +505,25 @@ export class MessageTurnController {
    * pending text differs from the final text.
    */
   private async flushPendingProgress(finalText: string): Promise<void> {
+    if (
+      this.pendingProgressText &&
+      (this.options.pairedTurnIdentity?.role === 'reviewer' ||
+        this.options.pairedTurnIdentity?.role === 'arbiter')
+    ) {
+      this.log.info(
+        {
+          runId: this.options.runId,
+          deliveryRole: this.options.deliveryRole ?? null,
+          turnId: this.options.pairedTurnIdentity?.turnId ?? null,
+          pendingLength: this.pendingProgressText.length,
+          finalLength: finalText.length,
+        },
+        'Skipped flushing pending progress before final delivery for reviewer/arbiter turn',
+      );
+      this.pendingProgressText = null;
+      return;
+    }
+
     if (this.pendingProgressText && this.pendingProgressText !== finalText) {
       await this.sendProgressMessage(this.pendingProgressText);
     }
