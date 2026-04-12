@@ -49,6 +49,12 @@ import {
   writeOutput,
 } from './output-protocol.js';
 import {
+  TopLevelAgentTaskTracker,
+  buildTaskNotificationOutput,
+  buildTaskProgressOutput,
+  buildTaskStartedOutput,
+} from './task-progress-mapping.js';
+import {
   createPreCompactHook,
   createReviewerBashGuardHook,
   createSanitizeBashHook,
@@ -153,6 +159,7 @@ async function runQuery(
   let resultCount = 0;
   let terminalResultObserved = false;
   let pendingProgressText: string | null = null;
+  const trackedAgentTasks = new TopLevelAgentTaskTracker();
 
   // Discover additional directories
   const extraDirs: string[] = [];
@@ -366,25 +373,20 @@ async function runQuery(
     ) {
       const tn = message as {
         task_id: string;
+        tool_use_id?: string;
         status: string;
         summary: string;
       };
       log(
         `Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`,
       );
-      if (
-        tn.status === 'completed' ||
-        tn.status === 'error' ||
-        tn.status === 'cancelled'
-      ) {
-        writeOutput({
-          status: 'success',
-          phase: 'progress',
-          agentId: tn.task_id,
-          agentDone: true,
-          result: tn.summary || null,
-          newSessionId,
-        });
+      const mapped = buildTaskNotificationOutput(
+        trackedAgentTasks,
+        tn,
+        newSessionId,
+      );
+      if (mapped) {
+        writeOutput(mapped);
       }
     }
 
@@ -393,20 +395,16 @@ async function runQuery(
       (message as { subtype?: string }).subtype === 'task_progress'
     ) {
       const tp = message as Record<string, unknown>;
-      const taskId = typeof tp.task_id === 'string' ? tp.task_id : undefined;
       const summary = typeof tp.summary === 'string' ? tp.summary : '';
       const description =
         typeof tp.description === 'string' ? tp.description : '';
-      if (description && description.length <= 80) {
-        // Short tool description → show as sub-line in progress
-        const normalized = normalizeStructuredOutput(description);
-        writeOutput({
-          status: 'success',
-          phase: 'tool-activity',
-          ...normalized,
-          agentId: taskId,
-          newSessionId,
-        });
+      const mapped = buildTaskProgressOutput(
+        trackedAgentTasks,
+        tp,
+        newSessionId,
+      );
+      if (mapped) {
+        writeOutput(mapped);
       } else if (description) {
         // Long AI summary → skip (too long for progress sub-line)
         log(
@@ -422,16 +420,13 @@ async function runQuery(
       const ts = message as { task_id: string; description?: string };
       const desc = ts.description || '';
       log(`Subagent started: task=${ts.task_id} desc=${desc.slice(0, 200)}`);
-      if (desc) {
-        const normalized = normalizeStructuredOutput(`🔄 ${desc}`);
-        writeOutput({
-          status: 'success',
-          phase: 'progress',
-          ...normalized,
-          agentId: ts.task_id,
-          agentLabel: desc,
-          newSessionId,
-        });
+      const mapped = buildTaskStartedOutput(
+        trackedAgentTasks,
+        ts,
+        newSessionId,
+      );
+      if (mapped) {
+        writeOutput(mapped);
       }
     }
 
@@ -542,6 +537,7 @@ async function runQuery(
     }
 
     if (message.type === 'assistant') {
+      trackedAgentTasks.rememberAssistantMessage(message);
       const stopReason = (message as { stop_reason?: string }).stop_reason;
       const textResult = extractAssistantText(message);
       // Only log when there's something interesting (text or terminal)
