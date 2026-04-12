@@ -518,6 +518,24 @@ export class MessageTurnController {
    */
   private async flushPendingProgress(finalText: string): Promise<void> {
     if (
+      this.options.canDeliverFinalText &&
+      !this.options.canDeliverFinalText()
+    ) {
+      this.log.info(
+        {
+          runId: this.options.runId,
+          deliveryRole: this.options.deliveryRole ?? null,
+          turnId: this.options.pairedTurnIdentity?.turnId ?? null,
+          pendingLength: this.pendingProgressText?.length ?? 0,
+          finalLength: finalText.length,
+        },
+        'Skipped flushing pending progress because this run no longer owns the active paired turn attempt',
+      );
+      this.pendingProgressText = null;
+      return;
+    }
+
+    if (
       this.pendingProgressText &&
       (this.options.pairedTurnIdentity?.role === 'reviewer' ||
         this.options.pairedTurnIdentity?.role === 'arbiter')

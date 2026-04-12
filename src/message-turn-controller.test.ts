@@ -472,6 +472,54 @@ describe('MessageTurnController outbound audit logging', () => {
     );
   });
 
+  it('does not flush buffered progress when final delivery is disallowed for a stale owner turn', async () => {
+    const channel = makeChannel();
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-stale-owner-final-with-buffered-progress',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      canDeliverFinalText: () => false,
+      deliveryRole: 'owner',
+      pairedTurnIdentity: {
+        turnId: 'paired-task:2026-04-10T00:00:00.000Z:finalize-owner-turn',
+        taskId: 'paired-task',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'finalize-owner-turn',
+        role: 'owner',
+      },
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '버퍼된 진행 상황',
+      output: { visibility: 'public', text: '버퍼된 진행 상황' },
+    } as any);
+
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'final',
+      result: 'DONE 최종 답변',
+      output: { visibility: 'public', text: 'DONE 최종 답변' },
+    } as any);
+
+    const finishResult = await controller.finish('success');
+
+    expect(finishResult.deliverySucceeded).toBe(true);
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(deliverFinalText).not.toHaveBeenCalled();
+  });
+
   it('replaces the tracked progress message when finish() publishes a failure final', async () => {
     const channel = {
       ...makeChannel(),
