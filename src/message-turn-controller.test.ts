@@ -461,7 +461,8 @@ describe('MessageTurnController outbound audit logging', () => {
     const finishResult = await controller.finish('success');
 
     expect(finishResult.deliverySucceeded).toBe(true);
-    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+    expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(deliverFinalText).not.toHaveBeenCalled();
     expect(getAuditEntries()).not.toEqual(
       expect.arrayContaining([
@@ -516,6 +517,122 @@ describe('MessageTurnController outbound audit logging', () => {
 
     expect(finishResult.deliverySucceeded).toBe(true);
     expect(channel.sendAndTrack).not.toHaveBeenCalled();
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(deliverFinalText).not.toHaveBeenCalled();
+  });
+
+  it('does not emit a tracked progress message when a stale owner turn buffers multiple progress updates', async () => {
+    const channel = makeChannel();
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-stale-owner-progress-buffer',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      canDeliverFinalText: () => false,
+      deliveryRole: 'owner',
+      pairedTurnIdentity: {
+        turnId: 'paired-task:2026-04-10T00:00:00.000Z:owner-turn',
+        taskId: 'paired-task',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'owner-turn',
+        role: 'owner',
+      },
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '첫 진행 상황',
+      output: { visibility: 'public', text: '첫 진행 상황' },
+    } as any);
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '둘째 진행 상황',
+      output: { visibility: 'public', text: '둘째 진행 상황' },
+    } as any);
+
+    const finishResult = await controller.finish('success');
+
+    expect(finishResult.deliverySucceeded).toBe(true);
+    expect(channel.sendAndTrack).not.toHaveBeenCalled();
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+    expect(deliverFinalText).not.toHaveBeenCalled();
+  });
+
+  it('does not edit an existing tracked progress message after a stale owner turn loses delivery ownership', async () => {
+    const channel = makeChannel();
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    let canDeliver = true;
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-stale-owner-progress-edit',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      canDeliverFinalText: () => canDeliver,
+      deliveryRole: 'owner',
+      pairedTurnIdentity: {
+        turnId: 'paired-task:2026-04-10T00:00:00.000Z:owner-turn',
+        taskId: 'paired-task',
+        taskUpdatedAt: '2026-04-10T00:00:00.000Z',
+        intentKind: 'owner-turn',
+        role: 'owner',
+      },
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '첫 진행 상황',
+      output: { visibility: 'public', text: '첫 진행 상황' },
+    } as any);
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '둘째 진행 상황',
+      output: { visibility: 'public', text: '둘째 진행 상황' },
+    } as any);
+    await flushAsync();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '셋째 진행 상황',
+      output: { visibility: 'public', text: '셋째 진행 상황' },
+    } as any);
+    await flushAsync();
+
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(channel.editMessage).toHaveBeenCalledTimes(1);
+
+    canDeliver = false;
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '넷째 진행 상황',
+      output: { visibility: 'public', text: '넷째 진행 상황' },
+    } as any);
+    await flushAsync();
+
+    const finishResult = await controller.finish('success');
+
+    expect(finishResult.deliverySucceeded).toBe(true);
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(channel.editMessage).toHaveBeenCalledTimes(1);
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(deliverFinalText).not.toHaveBeenCalled();
   });

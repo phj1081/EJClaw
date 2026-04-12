@@ -562,6 +562,23 @@ export class MessageTurnController {
 
   private async syncTrackedProgressMessage(): Promise<void> {
     if (
+      this.options.canDeliverFinalText &&
+      !this.options.canDeliverFinalText()
+    ) {
+      this.log.info(
+        {
+          runId: this.options.runId,
+          deliveryRole: this.options.deliveryRole ?? null,
+          turnId: this.options.pairedTurnIdentity?.turnId ?? null,
+          progressMessageId: this.progressMessageId,
+          latestProgressLength: this.latestProgressText?.length ?? 0,
+        },
+        'Skipped editing tracked progress because this run no longer owns the active paired turn attempt',
+      );
+      return;
+    }
+
+    if (
       !this.progressMessageId ||
       !this.options.channel.editMessage ||
       !this.latestProgressText
@@ -713,6 +730,24 @@ export class MessageTurnController {
   }
 
   private async sendProgressMessage(text: string): Promise<void> {
+    if (
+      this.options.canDeliverFinalText &&
+      !this.options.canDeliverFinalText()
+    ) {
+      this.log.info(
+        {
+          runId: this.options.runId,
+          deliveryRole: this.options.deliveryRole ?? null,
+          turnId: this.options.pairedTurnIdentity?.turnId ?? null,
+          progressMessageId: this.progressMessageId,
+          textLength: text.length,
+        },
+        'Skipped progress delivery because this run no longer owns the active paired turn attempt',
+      );
+      this.pendingProgressText = null;
+      return;
+    }
+
     if (!text || (text === this.latestProgressText && this.progressMessageId)) {
       return;
     }
