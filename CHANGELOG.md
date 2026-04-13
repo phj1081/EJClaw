@@ -2,6 +2,20 @@
 
 이 문서는 EJClaw의 주요 변경 사항을 기록합니다.
 
+## [0.2.1] - 2026-04-13
+
+### Changed
+
+- Claude / Codex SDK를 최신 patch/minor 수준으로 갱신하고 runner 의존성을 정리
+- reviewer 검증 기준과 continuation/checklist mode 계획 문서를 현재 구조에 맞게 정리
+
+### Fixed
+
+- stale reviewer workspace 레코드가 남아 있을 때 reviewer가 현재 owner worktree 대신 옛 경로를 보는 문제 수정
+- reviewer 프롬프트를 `EJCLAW_WORK_DIR` 기준 검증으로 고정해 canonical clone을 단독 근거로 오판하는 문제 완화
+- stale owner run이 buffered progress flush, tracked progress send/edit를 외부로 새는 문제 수정
+- Claude SDK `task_*` 이벤트가 nested/internal task까지 별도 subagent처럼 표시되던 progress 렌더링 문제 수정
+
 ## [0.2.0] - 2026-04-11
 
 ### Added
