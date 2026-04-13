@@ -1,5 +1,6 @@
 import {
   createProducedWorkItem,
+  hasActiveCiWatcherForChat,
   getOpenWorkItemForChat,
   getMessagesSinceSeq,
   getLatestOpenPairedTaskForChat,
@@ -217,6 +218,23 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         return;
       }
       const pendingTaskAfterDelivery = getLatestOpenPairedTaskForChat(chatJid);
+      if (
+        deliveryRole === 'owner' &&
+        pendingTaskAfterDelivery?.status === 'review_ready' &&
+        hasActiveCiWatcherForChat(chatJid)
+      ) {
+        logger.info(
+          {
+            chatJid,
+            runId,
+            completedRole: deliveryRole,
+            taskId: pendingTaskAfterDelivery.id,
+            taskStatus: pendingTaskAfterDelivery.status,
+          },
+          'Deferred paired follow-up after successful owner delivery because CI watcher is still active',
+        );
+        return;
+      }
       const followUpResult = enqueuePairedFollowUpAfterEvent({
         chatJid,
         runId,

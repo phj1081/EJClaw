@@ -137,6 +137,7 @@ vi.mock('./db.js', () => {
     getOpenWorkItemForChat: vi.fn((chatJid: string) =>
       getOpenWorkItem(chatJid),
     ),
+    hasActiveCiWatcherForChat: vi.fn(() => false),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
     getPairedTaskById: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
@@ -1875,6 +1876,112 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         taskStatus: 'review_ready',
       }),
       'Queued paired follow-up after successful owner delivery',
+    );
+  });
+
+  it('defers reviewer enqueue after owner delivery when a CI watcher is still active', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'owner-bot@test'),
+    };
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const enqueueMessageCheck = vi.fn();
+    const pairedTask = {
+      id: 'task-owner-delivery-watcher-deferred',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.hasActiveCiWatcherForChat).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
+      () => pairedTask,
+    );
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '이 구현 진행해줘',
+        timestamp: '2026-03-30T00:00:00.000Z',
+        seq: 1,
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        pairedTask.status = 'review_ready';
+        pairedTask.review_requested_at = '2026-03-30T00:00:01.000Z';
+        pairedTask.round_trip_count = 1;
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE\nowner complete',
+          newSessionId: 'session-owner-delivery-watcher-deferred',
+        });
+        return {
+          status: 'success',
+          result: 'DONE\nowner complete',
+          newSessionId: 'session-owner-delivery-watcher-deferred',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRoomBindings: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-delivery-watcher-deferred',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        runId: 'run-owner-delivery-watcher-deferred',
+        completedRole: 'owner',
+        taskId: 'task-owner-delivery-watcher-deferred',
+        taskStatus: 'review_ready',
+      }),
+      'Deferred paired follow-up after successful owner delivery because CI watcher is still active',
     );
   });
 

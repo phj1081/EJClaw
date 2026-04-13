@@ -142,15 +142,6 @@ function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
   logMessage: string;
 }): void {
   const { task, taskId, now, logMessage } = args;
-
-  if (hasActiveCiWatcherForChat(task.chat_jid)) {
-    logger.info(
-      { taskId, chatJid: task.chat_jid },
-      'Active CI watcher found, deferring auto-review until watcher completes',
-    );
-    return;
-  }
-
   if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
     logger.info(
       {
@@ -177,6 +168,17 @@ function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
         round_trip_count: task.round_trip_count + 1,
       },
     });
+    if (hasActiveCiWatcherForChat(task.chat_jid)) {
+      logger.info(
+        {
+          taskId,
+          chatJid: task.chat_jid,
+          roundTrip: task.round_trip_count + 1,
+        },
+        'Active CI watcher found, marked task review_ready and deferred reviewer enqueue until watcher completes',
+      );
+      return;
+    }
     logger.info({ taskId, roundTrip: task.round_trip_count + 1 }, logMessage);
   }
 }

@@ -757,6 +757,42 @@ describe('paired execution context', () => {
     );
   });
 
+  it('marks review_ready but defers reviewer enqueue when an active CI watcher exists', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        round_trip_count: 0,
+      }),
+    );
+    vi.mocked(db.hasActiveCiWatcherForChat).mockReturnValue(true);
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', '/tmp/paired/task-1/owner'),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'DONE',
+    });
+
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        round_trip_count: 1,
+      }),
+    );
+  });
+
   it('requests arbiter instead of re-reviewing when repeated DONE finalize loops exceed the threshold', () => {
     vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
 
