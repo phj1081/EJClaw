@@ -173,7 +173,8 @@ function cancelOutstandingFinalizeOwnerTurn(task: PairedTask): void {
   }
   cancelPairedTurn({
     turnIdentity,
-    error: 'Superseded by a newer human message before owner finalize delivery.',
+    error:
+      'Superseded by a newer human message before owner finalize delivery.',
   });
   logger.info(
     {
@@ -358,8 +359,7 @@ export function preparePairedExecutionContext(args: {
     // bot-only ping-pong must accumulate the counter for loop detection.
     const hasHuman = args.hasHumanMessage === true;
     const needsStatusReset =
-      latestTask.status === 'review_ready' ||
-      latestTask.status === 'in_review';
+      latestTask.status === 'review_ready' || latestTask.status === 'in_review';
     if (hasHuman || needsStatusReset) {
       if (needsStatusReset) {
         transitionPairedTaskStatus({

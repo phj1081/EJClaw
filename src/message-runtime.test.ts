@@ -35,10 +35,12 @@ vi.mock('./config.js', () => ({
 vi.mock('./paired-execution-context.js', () => ({
   preparePairedExecutionContext: vi.fn(() => undefined),
   completePairedExecutionContext: vi.fn(),
-  resolveOwnerTaskForHumanMessage: vi.fn((args?: { existingTask?: unknown }) => ({
-    task: args?.existingTask ?? null,
-    supersededTask: null,
-  })),
+  resolveOwnerTaskForHumanMessage: vi.fn(
+    (args?: { existingTask?: unknown }) => ({
+      task: args?.existingTask ?? null,
+      supersededTask: null,
+    }),
+  ),
 }));
 
 vi.mock('./db.js', () => {
