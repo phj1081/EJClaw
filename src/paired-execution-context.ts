@@ -370,7 +370,9 @@ export function preparePairedExecutionContext(args: {
           expectedUpdatedAt: latestTask.updated_at,
           updatedAt: now,
           patch: {
-            ...(hasHuman ? { round_trip_count: 0, owner_failure_count: 0 } : {}),
+            ...(hasHuman
+              ? { round_trip_count: 0, owner_failure_count: 0 }
+              : {}),
           },
         });
       } else {
@@ -379,7 +381,9 @@ export function preparePairedExecutionContext(args: {
           expectedUpdatedAt: latestTask.updated_at,
           updatedAt: now,
           patch: {
-            ...(hasHuman ? { round_trip_count: 0, owner_failure_count: 0 } : {}),
+            ...(hasHuman
+              ? { round_trip_count: 0, owner_failure_count: 0 }
+              : {}),
           },
         });
       }

@@ -1018,7 +1018,8 @@ describe('paired execution context', () => {
       taskId: 'task-1',
       role: 'owner',
       status: 'failed',
-      summary: "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
+      summary:
+        "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
     });
 
     expect(db.updatePairedTask).toHaveBeenCalledWith(
