@@ -74,6 +74,7 @@ export {
 } from './db/runtime-tasks-rooms.js';
 export {
   _clearPairedTurnReservationsForTests,
+  cancelPairedTurn,
   claimPairedTurnReservation,
   claimServiceHandoff,
   clearChannelOwnerLease,

@@ -12,10 +12,12 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./db.js', () => {
   const updatePairedTask = vi.fn();
   return {
+    cancelPairedTurn: vi.fn(),
     createPairedTask: vi.fn(),
     getLatestPairedTaskForChat: vi.fn(),
     getLatestOpenPairedTaskForChat: vi.fn(),
     getPairedTaskById: vi.fn(),
+    getPairedTurnById: vi.fn(),
     getPairedWorkspace: vi.fn(),
     updatePairedTask,
     updatePairedTaskIfUnchanged: vi.fn((id, _expectedUpdatedAt, updates) => {

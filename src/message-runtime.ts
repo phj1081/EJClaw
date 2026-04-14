@@ -4,6 +4,7 @@ import {
   getOpenWorkItemForChat,
   getMessagesSinceSeq,
   getLatestOpenPairedTaskForChat,
+  markWorkItemDelivered,
   getPairedTaskById,
 } from './db.js';
 import {
@@ -39,6 +40,7 @@ import {
   getProcessableMessages,
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
+import { resolveOwnerTaskForHumanMessage } from './paired-execution-context.js';
 import {
   enqueuePairedFollowUpAfterEvent,
   schedulePairedFollowUpWithMessageCheck,
@@ -345,14 +347,55 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
 
     // Delivery retries can come from forced fallback runs whose agent_type
     // differs from the room owner's registered agent type.
-    const openWorkItem = getOpenWorkItemForChat(chatJid, SERVICE_SESSION_SCOPE);
+    let pendingTask = hasReviewerLease(chatJid)
+      ? getLatestOpenPairedTaskForChat(chatJid)
+      : null;
+    let openWorkItem = getOpenWorkItemForChat(chatJid, SERVICE_SESSION_SCOPE);
+    if (
+      pendingTask?.status === 'merge_ready' &&
+      openWorkItem?.delivery_role === 'owner'
+    ) {
+      const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
+      const preflightRawMessages = getMessagesSinceSeq(
+        chatJid,
+        sinceSeqCursor,
+        deps.assistantName,
+      );
+      const preflightMessages = filterLoopingPairedBotMessages(
+        chatJid,
+        getProcessableMessages(chatJid, preflightRawMessages, channel),
+        FAILURE_FINAL_TEXT,
+      );
+      const hasFreshHumanMessage = preflightMessages.some(
+        (message) => message.is_from_me !== true && !message.is_bot_message,
+      );
+      if (hasFreshHumanMessage) {
+        const resolvedTask = resolveOwnerTaskForHumanMessage({
+          group,
+          chatJid,
+          existingTask: pendingTask,
+        });
+        pendingTask = resolvedTask.task;
+        if (resolvedTask.supersededTask) {
+          markWorkItemDelivered(openWorkItem.id);
+          log.info(
+            {
+              chatJid,
+              workItemId: openWorkItem.id,
+              supersededTaskId: resolvedTask.supersededTask.id,
+              replacementTaskId: resolvedTask.task?.id ?? null,
+            },
+            'Suppressed stale owner delivery retry because a new human message superseded the merge_ready task',
+          );
+          openWorkItem = undefined;
+        }
+      }
+    }
     const openWorkItemOutcome = await processOpenWorkItemDelivery({
       chatJid,
       runId,
       openWorkItem,
-      pendingTask: hasReviewerLease(chatJid)
-        ? getLatestOpenPairedTaskForChat(chatJid)
-        : null,
+      pendingTask,
       channel,
       roleToChannel,
       log,

@@ -18,10 +18,12 @@ import {
   REVIEWER_AGENT_TYPE,
 } from './config.js';
 import {
+  cancelPairedTurn,
   createPairedTask,
   getLatestPairedTaskForChat,
   getLatestOpenPairedTaskForChat,
   getPairedTaskById,
+  getPairedTurnById,
   getPairedWorkspace,
   hasActiveCiWatcherForChat,
   releasePairedTaskExecutionLease,
@@ -52,7 +54,10 @@ import {
   prepareReviewerWorkspaceForExecution,
   provisionOwnerWorkspaceForPairedTask,
 } from './paired-workspace-manager.js';
-import type { PairedTurnIdentity } from './paired-turn-identity.js';
+import {
+  buildPairedTurnIdentity,
+  type PairedTurnIdentity,
+} from './paired-turn-identity.js';
 import type {
   AgentType,
   PairedRoomRole,
@@ -97,32 +102,12 @@ function resolvePairedTaskServiceShadow(
   return role === 'owner' ? CODEX_MAIN_SERVICE_ID : CODEX_REVIEW_SERVICE_ID;
 }
 
-// ---------------------------------------------------------------------------
-// ensureActiveTask
-// ---------------------------------------------------------------------------
-
-function ensureActiveTask(
-  group: RegisteredGroup,
-  chatJid: string,
-  roomRoleContext: RoomRoleContext,
-  hasHumanMessage?: boolean,
-): PairedTask | null {
-  const canonicalWorkDir = ensurePairedProject(group, chatJid);
-  if (!canonicalWorkDir) {
-    return null;
-  }
-
-  const existing = getLatestOpenPairedTaskForChat(chatJid);
-  if (existing) {
-    return existing;
-  }
-
-  // Don't create a new task for bot-only messages — prevents
-  // ESCALATE → completed → bot message triggers new task → loop.
-  if (!hasHumanMessage) {
-    return null;
-  }
-
+function createActiveTaskForRoom(args: {
+  group: RegisteredGroup;
+  chatJid: string;
+  canonicalWorkDir: string;
+}): PairedTask {
+  const { group, chatJid, canonicalWorkDir } = args;
   const now = new Date().toISOString();
   const rolePlan = resolveRoleAgentPlan({
     paired: true,
@@ -170,6 +155,137 @@ function ensureActiveTask(
     'Created active paired task for room',
   );
   return task;
+}
+
+function cancelOutstandingFinalizeOwnerTurn(task: PairedTask): void {
+  const turnIdentity = buildPairedTurnIdentity({
+    taskId: task.id,
+    taskUpdatedAt: task.updated_at,
+    intentKind: 'finalize-owner-turn',
+    role: 'owner',
+  });
+  const existingTurn = getPairedTurnById(turnIdentity.turnId);
+  if (
+    !existingTurn ||
+    (existingTurn.state !== 'running' && existingTurn.state !== 'delegated')
+  ) {
+    return;
+  }
+  cancelPairedTurn({
+    turnIdentity,
+    error: 'Superseded by a newer human message before owner finalize delivery.',
+  });
+  logger.info(
+    {
+      taskId: task.id,
+      turnId: turnIdentity.turnId,
+      turnState: existingTurn.state,
+    },
+    'Cancelled stale finalize-owner turn after a new human message superseded the merge_ready task',
+  );
+}
+
+export interface ResolvedOwnerHumanTask {
+  task: PairedTask | null;
+  supersededTask: PairedTask | null;
+}
+
+export function resolveOwnerTaskForHumanMessage(args: {
+  group: RegisteredGroup;
+  chatJid: string;
+  existingTask?: PairedTask | null;
+}): ResolvedOwnerHumanTask {
+  const canonicalWorkDir = ensurePairedProject(args.group, args.chatJid);
+  const existing =
+    args.existingTask ?? getLatestOpenPairedTaskForChat(args.chatJid) ?? null;
+
+  if (!existing) {
+    return {
+      task: canonicalWorkDir
+        ? createActiveTaskForRoom({
+            group: args.group,
+            chatJid: args.chatJid,
+            canonicalWorkDir,
+          })
+        : null,
+      supersededTask: null,
+    };
+  }
+
+  if (existing.status !== 'merge_ready' || !canonicalWorkDir) {
+    return {
+      task: existing,
+      supersededTask: null,
+    };
+  }
+
+  const now = new Date().toISOString();
+  const superseded = transitionPairedTaskStatus({
+    taskId: existing.id,
+    currentStatus: existing.status,
+    nextStatus: 'completed',
+    expectedUpdatedAt: existing.updated_at,
+    updatedAt: now,
+    patch: {
+      completion_reason: 'superseded',
+    },
+  });
+
+  if (!superseded) {
+    return {
+      task: getLatestOpenPairedTaskForChat(args.chatJid) ?? existing,
+      supersededTask: null,
+    };
+  }
+
+  cancelOutstandingFinalizeOwnerTurn(existing);
+
+  return {
+    task: createActiveTaskForRoom({
+      group: args.group,
+      chatJid: args.chatJid,
+      canonicalWorkDir,
+    }),
+    supersededTask: existing,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ensureActiveTask
+// ---------------------------------------------------------------------------
+
+function ensureActiveTask(
+  group: RegisteredGroup,
+  chatJid: string,
+  roomRoleContext: RoomRoleContext,
+  hasHumanMessage?: boolean,
+): PairedTask | null {
+  const existing = getLatestOpenPairedTaskForChat(chatJid);
+  if (roomRoleContext.role === 'owner' && hasHumanMessage) {
+    return resolveOwnerTaskForHumanMessage({
+      group,
+      chatJid,
+      existingTask: existing ?? null,
+    }).task;
+  }
+  if (existing) {
+    return existing;
+  }
+
+  // Don't create a new task for bot-only messages — prevents
+  // ESCALATE → completed → bot message triggers new task → loop.
+  if (!hasHumanMessage) {
+    return null;
+  }
+  const canonicalWorkDir = ensurePairedProject(group, chatJid);
+  if (!canonicalWorkDir) {
+    return null;
+  }
+  return createActiveTaskForRoom({
+    group,
+    chatJid,
+    canonicalWorkDir,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -236,17 +352,12 @@ export function preparePairedExecutionContext(args: {
   const now = new Date().toISOString();
 
   if (roomRoleContext.role === 'owner') {
-    // New human message → new ping-pong cycle. Reset round trip counter
-    // AND status so the owner turn is not treated as a finalize turn.
-    // Reset status on new human message so the owner gets a fresh working
-    // turn. merge_ready is only reset when a human message is present —
-    // without it, this is a finalize turn after reviewer approval and
-    // resetting would prevent task completion.
+    // New human message keeps the same task only for active review loops.
+    // merge_ready is split into a fresh task before this function runs.
     // Only reset round_trip_count when a human message is present —
     // bot-only ping-pong must accumulate the counter for loop detection.
     const hasHuman = args.hasHumanMessage === true;
     const needsStatusReset =
-      (latestTask.status === 'merge_ready' && hasHuman) ||
       latestTask.status === 'review_ready' ||
       latestTask.status === 'in_review';
     if (hasHuman || needsStatusReset) {

@@ -3,8 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   _initTestDatabase,
   createPairedTask,
+  getLatestOpenPairedTaskForChat,
   getPairedTaskById,
+  getPairedTurnById,
   insertPairedTurnOutput,
+  markPairedTurnRunning,
   updatePairedTaskIfUnchanged,
 } from './db.js';
 import { claimPairedTurnExecution } from './paired-follow-up-scheduler.js';
@@ -13,6 +16,7 @@ import {
   runQueuedGroupTurn,
 } from './message-runtime-queue.js';
 import { resetPairedFollowUpScheduleState } from './paired-follow-up-scheduler.js';
+import { buildPairedTurnIdentity } from './paired-turn-identity.js';
 import type { Channel, PairedTask, RegisteredGroup } from './types.js';
 
 function makeGroup(): RegisteredGroup {
@@ -23,6 +27,7 @@ function makeGroup(): RegisteredGroup {
     added_at: '2026-03-30T00:00:00.000Z',
     requiresTrigger: false,
     agentType: 'codex',
+    workDir: '/repo',
   };
 }
 
@@ -340,6 +345,90 @@ describe('message-runtime-queue', () => {
           intentKind: 'owner-turn',
           role: 'owner',
         },
+      }),
+    );
+  });
+
+  it('splits merge_ready owner turns into a fresh task and cancels the stale finalize turn', async () => {
+    const task = makeTask({
+      id: 'task-merge-ready-owner',
+      status: 'merge_ready',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    });
+    createPairedTask(task);
+    insertPairedTurnOutput(task.id, 1, 'reviewer', 'DONE\nreview finished');
+    const staleFinalizeTurn = buildPairedTurnIdentity({
+      taskId: task.id,
+      taskUpdatedAt: task.updated_at,
+      intentKind: 'finalize-owner-turn',
+      role: 'owner',
+    });
+    markPairedTurnRunning({
+      turnIdentity: staleFinalizeTurn,
+      executorServiceId: 'claude',
+      executorAgentType: 'claude-code',
+      runId: 'run-stale-finalize',
+    });
+    const executeTurn = vi.fn(async () => ({
+      outputStatus: 'success' as const,
+      deliverySucceeded: true,
+      visiblePhase: 'final',
+    }));
+
+    const outcome = await runQueuedGroupTurn({
+      chatJid: task.chat_jid,
+      group: makeGroup(),
+      runId: 'run-owner-after-merge-ready',
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
+      timezone: 'UTC',
+      missedMessages: [
+        {
+          id: 'human-merge-ready-1',
+          chat_jid: task.chat_jid,
+          sender: 'user@test',
+          sender_name: 'User',
+          content: '새 질문입니다',
+          timestamp: '2026-03-30T00:00:02.000Z',
+          seq: 47,
+          is_bot_message: false,
+        },
+      ],
+      task,
+      roleToChannel: {
+        owner: null,
+        reviewer: makeChannel(),
+        arbiter: null,
+      },
+      ownerChannel: makeChannel(),
+      lastAgentTimestamps: {},
+      saveState: vi.fn(),
+      executeTurn,
+      getFixedRoleChannelName: () => 'discord-review',
+      labelPairedSenders: (_chatJid, messages) => messages,
+      formatMessages: () => 'formatted prompt',
+    });
+
+    expect(outcome).toBe(true);
+    const freshTask = getLatestOpenPairedTaskForChat(task.chat_jid);
+    expect(freshTask).toBeDefined();
+    expect(freshTask?.id).not.toBe(task.id);
+    expect(getPairedTaskById(task.id)).toMatchObject({
+      status: 'completed',
+      completion_reason: 'superseded',
+    });
+    expect(getPairedTurnById(staleFinalizeTurn.turnId)).toMatchObject({
+      state: 'cancelled',
+    });
+    expect(executeTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: expect.not.stringContaining('DONE\nreview finished'),
+        deliveryRole: 'owner',
+        forcedRole: 'owner',
+        pairedTurnIdentity: expect.objectContaining({
+          taskId: freshTask?.id,
+          intentKind: 'owner-turn',
+          role: 'owner',
+        }),
       }),
     );
   });

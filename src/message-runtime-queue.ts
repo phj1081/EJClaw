@@ -4,6 +4,7 @@ import {
   buildArbiterPromptForTask,
   buildPairedTurnPrompt,
 } from './message-runtime-prompts.js';
+import { resolveOwnerTaskForHumanMessage } from './paired-execution-context.js';
 import {
   buildPendingPairedTurn,
   executePendingPairedTurn,
@@ -157,16 +158,32 @@ export async function runQueuedGroupTurn(args: {
 }): Promise<boolean> {
   const { chatJid, group, runId, log, missedMessages, task, roleToChannel } =
     args;
-  const taskStatus = task?.status;
+  let currentTask = task;
   const hasHumanMsg = task
     ? !missedMessages.every(
         (message) => message.is_from_me === true || !!message.is_bot_message,
       )
     : !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
-  const lastTurnOutputRole = task
-    ? (getPairedTurnOutputs(task.id).at(-1)?.role ?? null)
+  let fallbackMessages = missedMessages;
+  if (currentTask && hasHumanMsg) {
+    const resolvedTask = resolveOwnerTaskForHumanMessage({
+      group,
+      chatJid,
+      existingTask: currentTask,
+    });
+    currentTask = resolvedTask.task;
+    if (resolvedTask.supersededTask) {
+      fallbackMessages = getRecentChatMessages(chatJid, 20).filter(
+        (message) => !message.is_bot_message,
+      );
+    }
+  }
+  const taskStatus = currentTask?.status;
+  const turnOutputs = currentTask ? getPairedTurnOutputs(currentTask.id) : [];
+  const lastTurnOutputRole = currentTask
+    ? (turnOutputs.at(-1)?.role ?? null)
     : null;
-  const turnRole = task
+  const turnRole = currentTask
     ? hasHumanMsg
       ? resolveQueuedTurnRole({
           taskStatus,
@@ -203,43 +220,46 @@ export async function runQueuedGroupTurn(args: {
   const turnChannel =
     turnRole === 'owner' ? args.ownerChannel : roleToChannel[turnRole];
   const cursorKey = resolveCursorKeyForRole(chatJid, turnRole);
-  const forcedRole = task ? turnRole : undefined;
-  const queuedIntentKind = task
+  const forcedRole = currentTask ? turnRole : undefined;
+  const queuedIntentKind = currentTask
     ? resolveQueuedTurnReservationIntent({
-        task,
+        task: currentTask,
         turnRole,
         hasHumanMessage: hasHumanMsg,
       })
     : null;
   const pairedTurnIdentity =
-    task && queuedIntentKind
+    currentTask && queuedIntentKind
       ? buildPairedTurnIdentity({
-          taskId: task.id,
-          taskUpdatedAt: task.updated_at,
+          taskId: currentTask.id,
+          taskUpdatedAt: currentTask.updated_at,
           intentKind: queuedIntentKind,
           role: turnRole,
         })
       : undefined;
 
   let prompt: string;
-  if (turnRole === 'arbiter' && task) {
+  if (turnRole === 'arbiter' && currentTask) {
     const recentMessages = getRecentChatMessages(chatJid, 20);
     prompt = buildArbiterPromptForTask({
-      task,
+      task: currentTask,
       chatJid,
       timezone: args.timezone,
-      turnOutputs: getPairedTurnOutputs(task.id),
+      turnOutputs,
       recentMessages,
       labeledRecentMessages: args.labelPairedSenders(chatJid, recentMessages),
     });
-  } else if (task) {
+  } else if (currentTask) {
     prompt = buildPairedTurnPrompt({
-      taskId: task.id,
+      taskId: currentTask.id,
       chatJid,
       timezone: args.timezone,
       missedMessages,
-      labeledFallbackMessages: args.labelPairedSenders(chatJid, missedMessages),
-      turnOutputs: getPairedTurnOutputs(task.id),
+      labeledFallbackMessages: args.labelPairedSenders(
+        chatJid,
+        fallbackMessages,
+      ),
+      turnOutputs,
     });
   } else {
     prompt = args.formatMessages(
@@ -272,19 +292,19 @@ export async function runQueuedGroupTurn(args: {
     return false;
   }
 
-  if (task) {
+  if (currentTask) {
     const claimed = claimPairedTurnExecution({
       chatJid,
       runId,
-      task,
+      task: currentTask,
       intentKind: queuedIntentKind!,
     });
     if (!claimed) {
       log.info(
         {
-          taskId: task.id,
+          taskId: currentTask.id,
           taskStatus,
-          taskUpdatedAt: task.updated_at,
+          taskUpdatedAt: currentTask.updated_at,
           intentKind: queuedIntentKind,
           turnRole,
         },
@@ -310,7 +330,7 @@ export async function runQueuedGroupTurn(args: {
     chatJid,
     runId,
     channel: turnChannel,
-    deliveryRole: task ? turnRole : undefined,
+    deliveryRole: currentTask ? turnRole : undefined,
     startSeq,
     endSeq,
     hasHumanMessage: hasHumanMsg,

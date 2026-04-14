@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
+import * as pairedExecutionContext from './paired-execution-context.js';
 
 /** Prefix helper for progress message assertions */
 const P = (text: string) => `${TASK_STATUS_MESSAGE_PREFIX}${text}`;
@@ -34,6 +35,10 @@ vi.mock('./config.js', () => ({
 vi.mock('./paired-execution-context.js', () => ({
   preparePairedExecutionContext: vi.fn(() => undefined),
   completePairedExecutionContext: vi.fn(),
+  resolveOwnerTaskForHumanMessage: vi.fn((args?: { existingTask?: unknown }) => ({
+    task: args?.existingTask ?? null,
+    supersededTask: null,
+  })),
 }));
 
 vi.mock('./db.js', () => {
@@ -691,6 +696,131 @@ describe('createMessageRuntime', () => {
     );
     expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
     expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+  });
+
+  it('suppresses a stale owner work item when a new human message supersedes a merge_ready task', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const enqueueMessageCheck = vi.fn();
+    const oldTask = {
+      id: 'task-merge-ready-old',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:00.000Z',
+      round_trip_count: 1,
+      status: 'merge_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+    const newTask = {
+      ...oldTask,
+      id: 'task-fresh-owner-turn',
+      status: 'active',
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:05.000Z',
+      updated_at: '2026-03-30T00:00:05.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getOpenWorkItem).mockReturnValue({
+      id: 99,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'claude',
+      delivery_role: 'owner',
+      status: 'delivery_retry',
+      start_seq: 1,
+      end_seq: 1,
+      result_payload: '이전 final입니다.',
+      delivery_attempts: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'discord send failed',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '새 작업입니다.',
+        timestamp: '2026-03-30T00:00:10.000Z',
+        seq: 10,
+      },
+    ]);
+    vi.mocked(db.getLatestOpenPairedTaskForChat)
+      .mockReturnValueOnce(oldTask)
+      .mockReturnValue(newTask);
+    vi.mocked(
+      pairedExecutionContext.resolveOwnerTaskForHumanMessage,
+    ).mockReturnValue({
+      task: newTask,
+      supersededTask: oldTask,
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('새 작업입니다.');
+        expect(input.prompt).not.toContain('이전 final입니다.');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'DONE\n새 작업 처리',
+          output: { visibility: 'public', text: 'DONE\n새 작업 처리' },
+        } as any);
+        return {
+          status: 'success',
+          result: 'DONE\n새 작업 처리',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRoomBindings: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-supersede-owner-work-item',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(db.markWorkItemDelivered).toHaveBeenCalledWith(99);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(channel.sendMessage).not.toHaveBeenCalledWith(
+      chatJid,
+      '이전 final입니다.',
+    );
   });
 
   it('suppresses duplicate stale work item delivery and logs the suppression reason', async () => {

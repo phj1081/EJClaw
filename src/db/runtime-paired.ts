@@ -50,6 +50,7 @@ import {
   insertPairedTurnOutputInDatabase,
 } from './paired-turn-outputs.js';
 import {
+  cancelPairedTurnInDatabase,
   clearPairedTurnsInDatabase,
   completePairedTurnInDatabase,
   failPairedTurnInDatabase,
@@ -174,6 +175,13 @@ export function failPairedTurn(args: {
   error?: string | null;
 }): void {
   failPairedTurnInDatabase(requireDatabase(), args);
+}
+
+export function cancelPairedTurn(args: {
+  turnIdentity: PairedTurnIdentity;
+  error?: string | null;
+}): void {
+  cancelPairedTurnInDatabase(requireDatabase(), args);
 }
 
 export function getPairedTurnById(
