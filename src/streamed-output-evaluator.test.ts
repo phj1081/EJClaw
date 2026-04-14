@@ -21,6 +21,7 @@ vi.mock('./codex-token-rotation.js', () => ({
 }));
 
 vi.mock('./session-recovery.js', () => ({
+  shouldRetryFreshCodexSessionOnAgentFailure: vi.fn(() => false),
   shouldRetryFreshSessionOnAgentFailure: vi.fn(() => false),
 }));
 
@@ -34,7 +35,10 @@ import {
   isClaudeAuthError,
 } from './agent-error-detection.js';
 import { detectCodexRotationTrigger } from './codex-token-rotation.js';
-import { shouldRetryFreshSessionOnAgentFailure } from './session-recovery.js';
+import {
+  shouldRetryFreshCodexSessionOnAgentFailure,
+  shouldRetryFreshSessionOnAgentFailure,
+} from './session-recovery.js';
 
 import {
   evaluateStreamedOutput,
@@ -91,6 +95,7 @@ beforeEach(() => {
     shouldRotate: false,
     reason: '',
   });
+  vi.mocked(shouldRetryFreshCodexSessionOnAgentFailure).mockReturnValue(false);
   vi.mocked(shouldRetryFreshSessionOnAgentFailure).mockReturnValue(false);
 });
 
@@ -249,6 +254,28 @@ describe('evaluateStreamedOutput', () => {
 
       expect(result.shouldForwardOutput).toBe(true);
       expect(result.suppressedRetryableSessionFailure).toBeUndefined();
+    });
+  });
+
+  describe('Codex retryable session failure suppression', () => {
+    it('suppresses remote compact failures before any visible output', () => {
+      vi.mocked(shouldRetryFreshCodexSessionOnAgentFailure).mockReturnValue(
+        true,
+      );
+
+      const result = evaluateStreamedOutput(
+        successOutput(
+          "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
+          'intermediate',
+        ),
+        freshState(),
+        codexOpts,
+      );
+
+      expect(result.shouldForwardOutput).toBe(false);
+      expect(result.suppressedRetryableSessionFailure).toBe(true);
+      expect(result.state.retryableSessionFailureDetected).toBe(true);
+      expect(result.state.sawOutput).toBe(false);
     });
   });
 

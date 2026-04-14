@@ -137,6 +137,7 @@ function createActiveTaskForRoom(args: {
     plan_notes: null,
     review_requested_at: null,
     round_trip_count: 0,
+    owner_failure_count: 0,
     status: 'active',
     arbiter_verdict: null,
     arbiter_requested_at: null,
@@ -369,7 +370,7 @@ export function preparePairedExecutionContext(args: {
           expectedUpdatedAt: latestTask.updated_at,
           updatedAt: now,
           patch: {
-            ...(hasHuman ? { round_trip_count: 0 } : {}),
+            ...(hasHuman ? { round_trip_count: 0, owner_failure_count: 0 } : {}),
           },
         });
       } else {
@@ -378,7 +379,7 @@ export function preparePairedExecutionContext(args: {
           expectedUpdatedAt: latestTask.updated_at,
           updatedAt: now,
           patch: {
-            ...(hasHuman ? { round_trip_count: 0 } : {}),
+            ...(hasHuman ? { round_trip_count: 0, owner_failure_count: 0 } : {}),
           },
         });
       }
@@ -551,7 +552,7 @@ export function completePairedExecutionContext(args: {
         handleFailedArbiterExecution({ task, taskId });
         return;
       }
-      handleFailedOwnerExecution({ task, taskId });
+      handleFailedOwnerExecution({ task, taskId, summary: args.summary });
       return;
     }
 

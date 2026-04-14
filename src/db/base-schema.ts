@@ -118,6 +118,7 @@ export function applyBaseSchema(database: Database): void {
       plan_notes TEXT,
       review_requested_at TEXT,
       round_trip_count INTEGER NOT NULL DEFAULT 0,
+      owner_failure_count INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       arbiter_verdict TEXT,
       arbiter_requested_at TEXT,

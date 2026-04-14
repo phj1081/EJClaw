@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  shouldResetCodexSessionOnAgentFailure,
   shouldResetSessionOnAgentFailure,
+  shouldRetryFreshCodexSessionOnAgentFailure,
   shouldRetryFreshSessionOnAgentFailure,
 } from './session-recovery.js';
 
@@ -97,5 +99,38 @@ describe('shouldRetryFreshSessionOnAgentFailure', () => {
         error: undefined,
       }),
     ).toBe(false);
+  });
+});
+
+describe('shouldResetCodexSessionOnAgentFailure', () => {
+  it('matches remote compact task failures that mention prompt_cache_retention', () => {
+    expect(
+      shouldResetCodexSessionOnAgentFailure({
+        result: null,
+        error:
+          "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
+      }),
+    ).toBe(true);
+  });
+
+  it('does not match unrelated Codex failures', () => {
+    expect(
+      shouldResetCodexSessionOnAgentFailure({
+        result: null,
+        error: 'Codex process exited with code 1',
+      }),
+    ).toBe(false);
+  });
+});
+
+describe('shouldRetryFreshCodexSessionOnAgentFailure', () => {
+  it('retries the same remote compact task failure with a fresh session', () => {
+    expect(
+      shouldRetryFreshCodexSessionOnAgentFailure({
+        result: null,
+        error:
+          "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
+      }),
+    ).toBe(true);
   });
 });

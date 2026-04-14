@@ -139,6 +139,7 @@ function buildPairedTask(overrides: Partial<PairedTask> = {}): PairedTask {
     plan_notes: null,
     review_requested_at: null,
     round_trip_count: 0,
+    owner_failure_count: 0,
     status: 'active',
     arbiter_verdict: null,
     arbiter_requested_at: null,
@@ -980,7 +981,7 @@ describe('paired execution context', () => {
     );
   });
 
-  it('still resets owner tasks to active after failed execution', () => {
+  it('increments owner failure count and resets owner tasks to active after failed execution', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({
         status: 'merge_ready',
@@ -998,7 +999,34 @@ describe('paired execution context', () => {
       'task-1',
       expect.objectContaining({
         status: 'active',
+        owner_failure_count: 1,
         updated_at: expect.any(String),
+      }),
+    );
+  });
+
+  it('requests arbiter after repeated owner execution failures without a visible verdict', () => {
+    vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        owner_failure_count: 1,
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'failed',
+      summary: "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'arbiter_requested',
+        owner_failure_count: 2,
+        arbiter_requested_at: expect.any(String),
       }),
     );
   });

@@ -82,6 +82,7 @@ export interface PairedTask {
   plan_notes: string | null;
   review_requested_at: string | null;
   round_trip_count: number;
+  owner_failure_count?: number | null;
   status: PairedTaskStatus;
   arbiter_verdict: string | null;
   arbiter_requested_at: string | null;

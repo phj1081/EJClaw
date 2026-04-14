@@ -183,7 +183,8 @@ export function resolveFollowUpDispatch(args: {
         args.source === 'owner-delivery-success' ||
         args.completedRole === 'owner'
       ) {
-        return args.nextTurnAction.kind === 'reviewer-turn'
+        return args.nextTurnAction.kind === 'reviewer-turn' ||
+          args.nextTurnAction.kind === 'arbiter-turn'
           ? { kind: 'enqueue', queueKind: 'paired-follow-up' }
           : { kind: 'none' };
       }
@@ -211,6 +212,7 @@ export function resolveFollowUpDispatch(args: {
         return { kind: 'none' };
       }
       if (
+        args.completedRole !== 'owner' &&
         args.completedRole !== 'reviewer' &&
         args.completedRole !== 'arbiter'
       ) {

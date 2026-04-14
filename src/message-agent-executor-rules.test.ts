@@ -172,6 +172,17 @@ describe('message-agent-executor-rules', () => {
     ).toBe('pending');
   });
 
+  it('resolves pending arbiter follow-up requeue after repeated owner execution failures', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'owner',
+        executionStatus: 'failed',
+        sawOutput: false,
+        taskStatus: 'arbiter_requested',
+      }),
+    ).toBe('pending');
+  });
+
   it('does not request an executor-side follow-up after successful owner output moved the task to review_ready', () => {
     expect(
       resolvePairedFollowUpQueueAction({

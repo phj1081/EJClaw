@@ -12,7 +12,11 @@ import type {
 } from './agent-error-detection.js';
 import type { PairedExecutionLifecycle } from './message-agent-executor-paired.js';
 import type { MessageAgentAttempt } from './message-agent-executor-attempt-runner.js';
-import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import {
+  shouldResetCodexSessionOnAgentFailure,
+  shouldResetSessionOnAgentFailure,
+  shouldRetryFreshCodexSessionOnAgentFailure,
+} from './session-recovery.js';
 import { getErrorMessage } from './utils.js';
 
 type AttemptResult = 'success' | 'error';
@@ -208,6 +212,57 @@ export async function executeMessageAgentAttemptLifecycle(args: {
     };
   };
 
+  const isRetryableCodexSessionFailure = (
+    attempt: MessageAgentAttempt,
+  ): boolean => {
+    if (provider !== 'codex' || attempt.sawOutput) {
+      return false;
+    }
+
+    if (attempt.retryableSessionFailureDetected === true) {
+      return true;
+    }
+
+    if (attempt.error == null) {
+      return false;
+    }
+
+    return shouldRetryFreshCodexSessionOnAgentFailure({
+      result: null,
+      error: getErrorMessage(attempt.error),
+    });
+  };
+
+  const recoverRetryableCodexSessionFailure = async (
+    attempt: MessageAgentAttempt,
+  ): Promise<{
+    attempt: MessageAgentAttempt;
+    resolved: AttemptResult | null;
+  }> => {
+    if (!isRetryableCodexSessionFailure(attempt)) {
+      return { attempt, resolved: null };
+    }
+
+    clearStoredSession();
+    clearRoleSdkSessions();
+    log.warn(
+      'Cleared poisoned Codex session before visible output, retrying fresh session',
+    );
+
+    const freshAttempt = await runTrackedAttempt('codex');
+    if (!isRetryableCodexSessionFailure(freshAttempt)) {
+      return { attempt: freshAttempt, resolved: null };
+    }
+
+    clearStoredSession();
+    log.warn('Fresh Codex retry also hit a retryable session failure');
+    log.error('Retryable Codex session failure persisted after fresh retry');
+    return {
+      attempt: freshAttempt,
+      resolved: 'error',
+    };
+  };
+
   const handlePrimaryAttemptFailure = async (
     attempt: MessageAgentAttempt,
     rotationMessage: string,
@@ -294,6 +349,19 @@ export async function executeMessageAgentAttemptLifecycle(args: {
       );
     }
 
+    if (
+      !isClaudeCodeAgent &&
+      provider === 'codex' &&
+      (resetSessionRequested || shouldResetCodexSessionOnAgentFailure(output))
+    ) {
+      clearStoredSession();
+      clearRoleSdkSessions();
+      log.warn(
+        { sessionFolder },
+        'Cleared poisoned Codex session after unrecoverable error',
+      );
+    }
+
     if (output.status === 'error') {
       return handlePrimaryAttemptFailure(
         attempt,
@@ -353,6 +421,13 @@ export async function executeMessageAgentAttemptLifecycle(args: {
     return recoveredSessionAttempt.resolved;
   }
   primaryAttempt = recoveredSessionAttempt.attempt;
+
+  const recoveredCodexSessionAttempt =
+    await recoverRetryableCodexSessionFailure(primaryAttempt);
+  if (recoveredCodexSessionAttempt.resolved) {
+    return recoveredCodexSessionAttempt.resolved;
+  }
+  primaryAttempt = recoveredCodexSessionAttempt.attempt;
 
   if (primaryAttempt.error) {
     return handlePrimaryAttemptFailure(

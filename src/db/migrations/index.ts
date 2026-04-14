@@ -10,6 +10,7 @@ import { RUNTIME_SERVICE_METADATA_MIGRATION } from './007_runtime-service-metada
 import { PAIRED_TASK_SCHEMA_CLEANUP_MIGRATION } from './008_paired-task-schema-cleanup.js';
 import { PAIRED_WORKSPACE_PROJECT_SCHEMA_CLEANUP_MIGRATION } from './009_paired-workspace-project-schema-cleanup.js';
 import { PAIRED_TURN_PROVENANCE_UPGRADE_MIGRATION } from './010_paired-turn-provenance-upgrade.js';
+import { OWNER_FAILURE_COUNT_MIGRATION } from './011_owner-failure-count.js';
 import type {
   SchemaMigrationArgs,
   SchemaMigrationDefinition,
@@ -28,6 +29,7 @@ const ORDERED_SCHEMA_MIGRATIONS: readonly SchemaMigrationDefinition[] = [
   PAIRED_TASK_SCHEMA_CLEANUP_MIGRATION,
   PAIRED_WORKSPACE_PROJECT_SCHEMA_CLEANUP_MIGRATION,
   PAIRED_TURN_PROVENANCE_UPGRADE_MIGRATION,
+  OWNER_FAILURE_COUNT_MIGRATION,
 ];
 
 function ensureSchemaMigrationsTable(database: Database): void {

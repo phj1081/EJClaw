@@ -5,7 +5,10 @@ import type { AttemptStreamedTrigger } from './agent-attempt-retry.js';
 import { runAgentProcess, type AgentOutput } from './agent-runner.js';
 import { getCodexAccountCount } from './codex-token-rotation.js';
 import type { PreparedPairedExecutionContext } from './paired-execution-context.js';
-import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
+import {
+  shouldResetCodexSessionOnAgentFailure,
+  shouldResetSessionOnAgentFailure,
+} from './session-recovery.js';
 import type { AgentType, RegisteredGroup, RoomRoleContext } from './types.js';
 
 export interface MessageAgentAttempt {
@@ -149,6 +152,13 @@ export async function runMessageAgentAttempt(args: {
         resetSessionRequested = true;
       }
       if (
+        !isClaudeCodeAgent &&
+        provider === 'codex' &&
+        shouldResetCodexSessionOnAgentFailure(output)
+      ) {
+        resetSessionRequested = true;
+      }
+      if (
         output.newSessionId &&
         !resetSessionRequested &&
         shouldPersistSession
@@ -197,7 +207,9 @@ export async function runMessageAgentAttempt(args: {
               ? outputText.slice(0, 160)
               : output.error?.slice(0, 160),
           },
-          'Suppressed retryable Claude session failure from chat output',
+          provider === 'claude'
+            ? 'Suppressed retryable Claude session failure from chat output'
+            : 'Suppressed retryable Codex session failure from chat output',
         );
         return;
       }

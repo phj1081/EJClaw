@@ -133,7 +133,7 @@ describe('message-runtime-rules', () => {
     ).toEqual({ kind: 'none' });
   });
 
-  it('dispatches owner delivery success through a paired follow-up enqueue only for reviewer turns', () => {
+  it('dispatches owner delivery success through a paired follow-up enqueue for reviewer or arbiter turns', () => {
     expect(
       resolveFollowUpDispatch({
         source: 'owner-delivery-success',
@@ -146,9 +146,33 @@ describe('message-runtime-rules', () => {
     expect(
       resolveFollowUpDispatch({
         source: 'owner-delivery-success',
+        nextTurnAction: { kind: 'arbiter-turn' },
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'owner-delivery-success',
         nextTurnAction: { kind: 'none' },
       }),
     ).toEqual({ kind: 'none' });
+  });
+
+  it('dispatches failed owner recovery through a paired follow-up when execution escalated to arbiter', () => {
+    expect(
+      resolveFollowUpDispatch({
+        source: 'executor-recovery',
+        nextTurnAction: { kind: 'arbiter-turn' },
+        completedRole: 'owner',
+        executionStatus: 'failed',
+        sawOutput: false,
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
   });
 
   it('dispatches reviewer and arbiter delivery success through paired follow-up enqueue when a handoff is pending', () => {
