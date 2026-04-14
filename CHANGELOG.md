@@ -2,6 +2,13 @@
 
 이 문서는 EJClaw의 주요 변경 사항을 기록합니다.
 
+## [0.2.2] - 2026-04-15
+
+### Fixed
+
+- CI watcher 완료 뒤 reviewer가 끝난 상태에서 owner 후속 흐름이 이어지지 않던 문제 수정
+- `merge_ready` 상태에서 새 human message가 오면 이전 task를 supersede 처리해, 직전 owner final이나 turn output이 다음 질문으로 누출되며 한 턴 늦게 보이던 문제 수정
+
 ## [0.2.1] - 2026-04-13
 
 ### Changed
