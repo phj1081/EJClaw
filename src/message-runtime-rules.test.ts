@@ -315,6 +315,28 @@ describe('message-runtime-rules', () => {
     expect(resolution.effectiveServiceId).toBe(resolution.reviewerServiceId);
   });
 
+  it('uses lease reviewer metadata when the room reviewer differs from the owner agent type', () => {
+    const resolution = resolveExecutionTarget({
+      lease: {
+        ...baseLease,
+        owner_agent_type: 'claude-code',
+        reviewer_agent_type: 'codex',
+        reviewer_service_id: 'codex-review',
+      },
+      pairedTaskStatus: 'review_ready',
+      groupFolder: 'group-1',
+      groupAgentType: 'claude-code',
+    });
+
+    expect(resolution).toMatchObject({
+      activeRole: 'reviewer',
+      configuredAgentType: 'codex',
+      effectiveAgentType: 'codex',
+      sessionFolder: 'group-1:reviewer',
+    });
+    expect(resolution.effectiveServiceId).toBe('codex-review');
+  });
+
   it('resolves merge_ready execution target back to the owner/finalize path', () => {
     const resolution = resolveExecutionTarget({
       lease: baseLease,
@@ -346,13 +368,37 @@ describe('message-runtime-rules', () => {
     expect(resolution).toMatchObject({
       inferredRole: 'arbiter',
       activeRole: 'arbiter',
-      configuredAgentType: 'claude-code',
-      effectiveAgentType: 'claude-code',
+      configuredAgentType: 'codex',
+      effectiveAgentType: 'codex',
       sessionFolder: 'group-1:arbiter',
     });
     expect(resolution.effectiveServiceId).toBe(
       resolveLeaseServiceId(baseLease, 'arbiter'),
     );
+  });
+
+  it('uses lease arbiter metadata when the room arbiter differs from the owner agent type', () => {
+    const resolution = resolveExecutionTarget({
+      lease: {
+        ...baseLease,
+        owner_agent_type: 'codex',
+        reviewer_agent_type: 'claude-code',
+        reviewer_service_id: 'claude',
+        arbiter_agent_type: 'claude-code',
+        arbiter_service_id: 'claude',
+      },
+      pairedTaskStatus: 'arbiter_requested',
+      groupFolder: 'group-1',
+      groupAgentType: 'codex',
+    });
+
+    expect(resolution).toMatchObject({
+      activeRole: 'arbiter',
+      configuredAgentType: 'claude-code',
+      effectiveAgentType: 'claude-code',
+      sessionFolder: 'group-1:arbiter',
+    });
+    expect(resolution.effectiveServiceId).toBe('claude');
   });
 
   it('honors an arbiter forced role only when arbiter is configured', () => {

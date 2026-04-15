@@ -57,6 +57,7 @@ export {
   getRouterStateForService,
   getSession,
   getSessionForAgentType,
+  getStoredRoomRoleAgentPlan,
   getStoredRoomSettings,
   getTaskById,
   getTasksForGroup,

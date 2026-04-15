@@ -12,6 +12,7 @@ import {
   clearChannelOwnerLease,
   getAllChannelOwnerLeases,
   getEffectiveRuntimeRoomMode,
+  getStoredRoomRoleAgentPlan,
   getStoredRoomSettings,
   type ChannelOwnerLeaseRow,
 } from './db.js';
@@ -46,8 +47,10 @@ function normalizeLeaseRow(
   row: ChannelOwnerLeaseRow,
   explicit: boolean,
 ): EffectiveChannelLease {
+  const storedRolePlan = getStoredRoomRoleAgentPlan(row.chat_jid);
   const ownerAgentType =
     row.owner_agent_type ??
+    storedRolePlan?.ownerAgentType ??
     getStoredRoomSettings(row.chat_jid)?.ownerAgentType ??
     inferAgentTypeFromServiceShadow(row.owner_service_id) ??
     'claude-code';
@@ -56,6 +59,7 @@ function normalizeLeaseRow(
       ? null
       : (row.reviewer_agent_type ??
         inferAgentTypeFromServiceShadow(row.reviewer_service_id) ??
+        storedRolePlan?.reviewerAgentType ??
         resolveRoleAgentPlan({
           paired: true,
           groupAgentType: ownerAgentType,
@@ -67,6 +71,7 @@ function normalizeLeaseRow(
     (row.arbiter_service_id
       ? inferAgentTypeFromServiceShadow(row.arbiter_service_id)
       : undefined) ??
+    storedRolePlan?.arbiterAgentType ??
     null;
 
   return {
@@ -102,20 +107,21 @@ function normalizeLeaseRow(
   };
 }
 
-function resolveDefaultOwnerAgentType(chatJid: string): AgentType | undefined {
-  return getStoredRoomSettings(chatJid)?.ownerAgentType;
-}
-
 function getDefaultLease(chatJid: string): EffectiveChannelLease {
   const roomMode = getEffectiveRuntimeRoomMode(chatJid);
+  const storedRolePlan = getStoredRoomRoleAgentPlan(chatJid);
   const ownerAgentType =
-    resolveDefaultOwnerAgentType(chatJid) ?? OWNER_AGENT_TYPE;
-  const rolePlan = resolveRoleAgentPlan({
-    paired: roomMode === 'tribunal',
-    groupAgentType: ownerAgentType,
-    configuredReviewer: REVIEWER_AGENT_TYPE,
-    configuredArbiter: ARBITER_AGENT_TYPE,
-  });
+    storedRolePlan?.ownerAgentType ??
+    getStoredRoomSettings(chatJid)?.ownerAgentType ??
+    OWNER_AGENT_TYPE;
+  const rolePlan =
+    storedRolePlan ??
+    resolveRoleAgentPlan({
+      paired: roomMode === 'tribunal',
+      groupAgentType: ownerAgentType,
+      configuredReviewer: REVIEWER_AGENT_TYPE,
+      configuredArbiter: ARBITER_AGENT_TYPE,
+    });
 
   return {
     chat_jid: chatJid,

@@ -248,12 +248,14 @@ export function resolveCursorKeyForRole(
 export function resolveConfiguredRoleAgentPlan(
   paired: boolean,
   groupAgentType: AgentType | undefined,
+  configuredReviewer: AgentType = REVIEWER_AGENT_TYPE,
+  configuredArbiter: AgentType | null | undefined = ARBITER_AGENT_TYPE,
 ): RoleAgentPlan {
   return resolveRoleAgentPlan({
     paired,
     groupAgentType,
-    configuredReviewer: REVIEWER_AGENT_TYPE,
-    configuredArbiter: ARBITER_AGENT_TYPE,
+    configuredReviewer,
+    configuredArbiter,
   });
 }
 
@@ -261,8 +263,15 @@ export function resolveConfiguredRoleAgentPlan(
 export function resolveEffectiveAgentType(
   role: 'owner' | 'reviewer' | 'arbiter',
   groupAgentType: AgentType | undefined,
+  reviewerAgentType: AgentType = REVIEWER_AGENT_TYPE,
+  arbiterAgentType: AgentType | null | undefined = ARBITER_AGENT_TYPE,
 ): AgentType {
-  const plan = resolveConfiguredRoleAgentPlan(role !== 'owner', groupAgentType);
+  const plan = resolveConfiguredRoleAgentPlan(
+    role !== 'owner',
+    groupAgentType,
+    reviewerAgentType,
+    arbiterAgentType,
+  );
   return resolveAgentTypeForRole(plan, role);
 }
 
@@ -271,10 +280,17 @@ export function resolveSessionFolder(
   groupFolder: string,
   role: 'owner' | 'reviewer' | 'arbiter',
   groupAgentType: AgentType | undefined,
+  reviewerAgentType: AgentType = REVIEWER_AGENT_TYPE,
+  arbiterAgentType: AgentType | null | undefined = ARBITER_AGENT_TYPE,
 ): string {
   // Arbiter always gets a separate session — must never share with owner/reviewer
   if (role === 'arbiter') return `${groupFolder}:arbiter`;
-  const plan = resolveConfiguredRoleAgentPlan(role !== 'owner', groupAgentType);
+  const plan = resolveConfiguredRoleAgentPlan(
+    role !== 'owner',
+    groupAgentType,
+    reviewerAgentType,
+    arbiterAgentType,
+  );
   const effectiveType = resolveAgentTypeForRole(plan, role);
   const groupDefault = plan.ownerAgentType;
   if (effectiveType === groupDefault) return groupFolder;
@@ -316,14 +332,14 @@ export function resolveExecutionTarget(args: {
 
   const reviewerServiceId = resolveLeaseServiceId(args.lease, 'reviewer');
   const arbiterServiceId = resolveLeaseServiceId(args.lease, 'arbiter');
+  const ownerAgentType = args.lease.owner_agent_type ?? args.groupAgentType;
   const roleAgentPlan = resolveConfiguredRoleAgentPlan(
-    args.lease.reviewer_agent_type != null,
-    args.groupAgentType,
+    reviewerServiceId != null,
+    ownerAgentType,
+    args.lease.reviewer_agent_type ?? REVIEWER_AGENT_TYPE,
+    args.lease.arbiter_agent_type ?? ARBITER_AGENT_TYPE,
   );
-  const configuredAgentType = resolveEffectiveAgentType(
-    activeRole,
-    args.groupAgentType,
-  );
+  const configuredAgentType = resolveAgentTypeForRole(roleAgentPlan, activeRole);
   const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
 
   return {
@@ -339,7 +355,9 @@ export function resolveExecutionTarget(args: {
     sessionFolder: resolveSessionFolder(
       args.groupFolder,
       activeRole,
-      args.groupAgentType,
+      roleAgentPlan.ownerAgentType,
+      roleAgentPlan.reviewerAgentType ?? REVIEWER_AGENT_TYPE,
+      roleAgentPlan.arbiterAgentType ?? ARBITER_AGENT_TYPE,
     ),
   };
 }

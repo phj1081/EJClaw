@@ -250,6 +250,32 @@ describe('paired execution context', () => {
     });
   });
 
+  it('uses room role context agent overrides when creating a paired task', () => {
+    preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-room-overrides',
+      roomRoleContext: {
+        ...ownerContext,
+        ownerAgentType: 'codex',
+        reviewerAgentType: 'codex',
+        reviewerServiceId: config.CODEX_REVIEW_SERVICE_ID,
+        arbiterAgentType: 'claude-code',
+      },
+      hasHumanMessage: true,
+    });
+
+    expect(db.createPairedTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_service_id: config.CODEX_MAIN_SERVICE_ID,
+        reviewer_service_id: config.CODEX_REVIEW_SERVICE_ID,
+        owner_agent_type: 'codex',
+        reviewer_agent_type: 'codex',
+        arbiter_agent_type: 'claude-code',
+      }),
+    );
+  });
+
   it('persists stable role-slot service shadow instead of the transient failover owner lease', () => {
     preparePairedExecutionContext({
       group,
@@ -559,6 +585,49 @@ describe('paired execution context', () => {
     expect(result?.envOverrides.CLAUDE_CONFIG_DIR).toContain(
       '/data/sessions/paired-room-reviewer',
     );
+    delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+  });
+
+  it('honors room-level reviewer agent overrides for unsafe host reviewer runtime env', () => {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(
+      buildPairedTask({
+        status: 'review_ready',
+        review_requested_at: '2026-03-28T00:00:00.000Z',
+        reviewer_agent_type: 'codex',
+      }),
+    );
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'review_ready',
+        review_requested_at: '2026-03-28T00:00:00.000Z',
+        reviewer_agent_type: 'codex',
+      }),
+    );
+    vi.mocked(
+      pairedWorkspaceManager.prepareReviewerWorkspaceForExecution,
+    ).mockReturnValue({
+      workspace: buildWorkspace('reviewer', '/tmp/paired/task-1/reviewer'),
+      autoRefreshed: false,
+    });
+
+    const result = preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-host-reviewer-room-override',
+      roomRoleContext: {
+        ...reviewerContext,
+        reviewerAgentType: 'codex',
+      },
+    });
+
+    expect(result?.envOverrides).toMatchObject({
+      EJCLAW_WORK_DIR: '/tmp/paired/task-1/reviewer',
+      EJCLAW_PAIRED_ROLE: 'reviewer',
+      EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+    });
+    expect(result?.envOverrides.EJCLAW_CLAUDE_REVIEWER_READONLY).toBeUndefined();
+    expect(result?.envOverrides.EJCLAW_REVIEWER_RUNTIME).toBeUndefined();
     delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
   });
 

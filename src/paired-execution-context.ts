@@ -106,14 +106,17 @@ function createActiveTaskForRoom(args: {
   group: RegisteredGroup;
   chatJid: string;
   canonicalWorkDir: string;
+  roomRoleContext?: RoomRoleContext;
 }): PairedTask {
-  const { group, chatJid, canonicalWorkDir } = args;
+  const { group, chatJid, canonicalWorkDir, roomRoleContext } = args;
   const now = new Date().toISOString();
   const rolePlan = resolveRoleAgentPlan({
     paired: true,
-    groupAgentType: group.agentType,
-    configuredReviewer: REVIEWER_AGENT_TYPE,
-    configuredArbiter: ARBITER_AGENT_TYPE,
+    groupAgentType: roomRoleContext?.ownerAgentType ?? group.agentType,
+    configuredReviewer:
+      roomRoleContext?.reviewerAgentType ?? REVIEWER_AGENT_TYPE,
+    configuredArbiter:
+      roomRoleContext?.arbiterAgentType ?? ARBITER_AGENT_TYPE,
   });
   const ownerServiceShadow = resolvePairedTaskServiceShadow(
     'owner',
@@ -195,6 +198,7 @@ export interface ResolvedOwnerHumanTask {
 export function resolveOwnerTaskForHumanMessage(args: {
   group: RegisteredGroup;
   chatJid: string;
+  roomRoleContext?: RoomRoleContext;
   existingTask?: PairedTask | null;
 }): ResolvedOwnerHumanTask {
   const canonicalWorkDir = ensurePairedProject(args.group, args.chatJid);
@@ -208,6 +212,7 @@ export function resolveOwnerTaskForHumanMessage(args: {
             group: args.group,
             chatJid: args.chatJid,
             canonicalWorkDir,
+            roomRoleContext: args.roomRoleContext,
           })
         : null,
       supersededTask: null,
@@ -247,6 +252,7 @@ export function resolveOwnerTaskForHumanMessage(args: {
       group: args.group,
       chatJid: args.chatJid,
       canonicalWorkDir,
+      roomRoleContext: args.roomRoleContext,
     }),
     supersededTask: existing,
   };
@@ -267,6 +273,7 @@ function ensureActiveTask(
     return resolveOwnerTaskForHumanMessage({
       group,
       chatJid,
+      roomRoleContext,
       existingTask: existing ?? null,
     }).task;
   }
@@ -287,6 +294,7 @@ function ensureActiveTask(
     group,
     chatJid,
     canonicalWorkDir,
+    roomRoleContext,
   });
 }
 
@@ -470,7 +478,7 @@ export function preparePairedExecutionContext(args: {
       envOverrides,
       buildPairedReadonlyRuntimeEnvOverrides({
         role: 'reviewer',
-        agentType: REVIEWER_AGENT_TYPE,
+        agentType: roomRoleContext.reviewerAgentType ?? REVIEWER_AGENT_TYPE,
         unsafeHostPairedMode,
       }),
     );
@@ -489,7 +497,10 @@ export function preparePairedExecutionContext(args: {
       envOverrides,
       buildPairedReadonlyRuntimeEnvOverrides({
         role: 'arbiter',
-        agentType: ARBITER_AGENT_TYPE ?? REVIEWER_AGENT_TYPE,
+        agentType:
+          roomRoleContext.arbiterAgentType ??
+          ARBITER_AGENT_TYPE ??
+          REVIEWER_AGENT_TYPE,
         unsafeHostPairedMode,
       }),
     );

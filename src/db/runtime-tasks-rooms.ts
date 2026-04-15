@@ -34,6 +34,7 @@ import {
   getExplicitRoomModeFromDatabase,
   getRegisteredAgentTypesForJidFromDatabase,
   getRegisteredGroupFromDatabase,
+  getStoredRoomRoleAgentPlanFromDatabase,
   getStoredRoomSettingsFromDatabase,
   setExplicitRoomModeInDatabase,
   setRegisteredGroupForTestsInDatabase,
@@ -352,6 +353,14 @@ export function getStoredRoomSettings(
   const db = getDatabaseIfInitialized();
   if (!db) return undefined;
   return getStoredRoomSettingsFromDatabase(db, chatJid);
+}
+
+export function getStoredRoomRoleAgentPlan(
+  chatJid: string,
+): ReturnType<typeof getStoredRoomRoleAgentPlanFromDatabase> {
+  const db = getDatabaseIfInitialized();
+  if (!db) return undefined;
+  return getStoredRoomRoleAgentPlanFromDatabase(db, chatJid);
 }
 
 export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {

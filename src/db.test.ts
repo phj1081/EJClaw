@@ -2396,6 +2396,29 @@ describe('room assignment writes', () => {
     });
   });
 
+  it('includes arbiter-only room agent overrides in capability views', () => {
+    assignRoom('dc:arbiter-only-capability', {
+      name: 'Arbiter Only Capability',
+      roomMode: 'tribunal',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'claude-code',
+      arbiterAgentType: 'codex',
+      folder: 'arbiter-only-capability',
+    });
+
+    expect(getRegisteredAgentTypesForJid('dc:arbiter-only-capability').sort()).toEqual([
+      'claude-code',
+      'codex',
+    ]);
+    expect(
+      getAllRoomBindings('codex')['dc:arbiter-only-capability'],
+    ).toMatchObject({
+      name: 'Arbiter Only Capability',
+      folder: 'arbiter-only-capability',
+      agentType: 'codex',
+    });
+  });
+
   it('updates room_settings-backed metadata across tribunal capability views', () => {
     assignRoom('dc:projection-room', {
       name: 'Projection Room',
