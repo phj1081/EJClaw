@@ -207,7 +207,10 @@ function carryForwardLatestOwnerFinal(args: {
   sourceTask: PairedTask;
   targetTask: PairedTask;
 }): void {
-  const latestOwnerFinal = getLatestTurnOutputByRole(args.sourceTask.id, 'owner');
+  const latestOwnerFinal = getLatestTurnOutputByRole(
+    args.sourceTask.id,
+    'owner',
+  );
   if (!latestOwnerFinal) {
     return;
   }

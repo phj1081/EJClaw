@@ -259,7 +259,9 @@ describe('paired execution context', () => {
       status: 'merge_ready',
       updated_at: '2026-03-28T00:05:00.000Z',
     });
-    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(supersededTask);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(
+      supersededTask,
+    );
     vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
       {
         id: 1,
