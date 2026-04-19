@@ -300,6 +300,7 @@ export function insertPairedTurnOutput(
   turnNumber: number,
   role: PairedRoomRole,
   outputText: string,
+  createdAt?: string,
 ): void {
   insertPairedTurnOutputInDatabase(
     requireDatabase(),
@@ -307,6 +308,7 @@ export function insertPairedTurnOutput(
     turnNumber,
     role,
     outputText,
+    createdAt,
   );
 }
 

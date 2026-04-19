@@ -1246,6 +1246,40 @@ describe('paired task state', () => {
     expect(getLatestTurnNumber('paired-task-turn-output')).toBe(2);
   });
 
+  it('preserves explicit created_at when inserting a paired turn output', () => {
+    createPairedTask({
+      id: 'paired-task-turn-output-created-at',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: null,
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: null,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    insertPairedTurnOutput(
+      'paired-task-turn-output-created-at',
+      0,
+      'owner',
+      'carried forward owner final',
+      '2026-03-28T00:01:23.000Z',
+    );
+
+    const outputs = getPairedTurnOutputs('paired-task-turn-output-created-at');
+
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0].created_at).toBe('2026-03-28T00:01:23.000Z');
+  });
+
   it('fails init when paired task agent and service metadata conflict', () => {
     const tempDir = fs.mkdtempSync('/tmp/ejclaw-paired-task-shadow-');
     const dbPath = path.join(tempDir, 'messages.db');
@@ -2406,10 +2440,9 @@ describe('room assignment writes', () => {
       folder: 'arbiter-only-capability',
     });
 
-    expect(getRegisteredAgentTypesForJid('dc:arbiter-only-capability').sort()).toEqual([
-      'claude-code',
-      'codex',
-    ]);
+    expect(
+      getRegisteredAgentTypesForJid('dc:arbiter-only-capability').sort(),
+    ).toEqual(['claude-code', 'codex']);
     expect(
       getAllRoomBindings('codex')['dc:arbiter-only-capability'],
     ).toMatchObject({

@@ -77,6 +77,12 @@ describe('platform-prompts', () => {
     expect(codexPairedPrompt).toContain(
       'canonical verification root for this turn',
     );
+    expect(codexPairedPrompt).toContain(
+      'suggest 1-2 better alternatives with the reason and tradeoff for each',
+    );
+    expect(codexPairedPrompt).toContain(
+      'Separate correctness issues from improvement ideas',
+    );
     expect(codexPairedPrompt).not.toContain('owner-side paired agent');
 
     const failoverPlatformPrompt = fs.readFileSync(

@@ -24,8 +24,10 @@ import {
   getLatestOpenPairedTaskForChat,
   getPairedTaskById,
   getPairedTurnById,
+  getPairedTurnOutputs,
   getPairedWorkspace,
   hasActiveCiWatcherForChat,
+  insertPairedTurnOutput,
   releasePairedTaskExecutionLease,
   upsertPairedProject,
 } from './db.js';
@@ -62,6 +64,7 @@ import type {
   AgentType,
   PairedRoomRole,
   PairedTask,
+  PairedTurnOutput,
   PairedWorkspace,
   RegisteredGroup,
   RoomRoleContext,
@@ -115,8 +118,7 @@ function createActiveTaskForRoom(args: {
     groupAgentType: roomRoleContext?.ownerAgentType ?? group.agentType,
     configuredReviewer:
       roomRoleContext?.reviewerAgentType ?? REVIEWER_AGENT_TYPE,
-    configuredArbiter:
-      roomRoleContext?.arbiterAgentType ?? ARBITER_AGENT_TYPE,
+    configuredArbiter: roomRoleContext?.arbiterAgentType ?? ARBITER_AGENT_TYPE,
   });
   const ownerServiceShadow = resolvePairedTaskServiceShadow(
     'owner',
@@ -190,6 +192,43 @@ function cancelOutstandingFinalizeOwnerTurn(task: PairedTask): void {
   );
 }
 
+function getLatestTurnOutputByRole(
+  taskId: string,
+  role: PairedRoomRole,
+): PairedTurnOutput | null {
+  return (
+    [...getPairedTurnOutputs(taskId)]
+      .reverse()
+      .find((output) => output.role === role) ?? null
+  );
+}
+
+function carryForwardLatestOwnerFinal(args: {
+  sourceTask: PairedTask;
+  targetTask: PairedTask;
+}): void {
+  const latestOwnerFinal = getLatestTurnOutputByRole(args.sourceTask.id, 'owner');
+  if (!latestOwnerFinal) {
+    return;
+  }
+
+  insertPairedTurnOutput(
+    args.targetTask.id,
+    0,
+    'owner',
+    `[Carried forward context from the previous task: latest owner final]\n${latestOwnerFinal.output_text}`,
+    latestOwnerFinal.created_at,
+  );
+  logger.info(
+    {
+      sourceTaskId: args.sourceTask.id,
+      targetTaskId: args.targetTask.id,
+      carriedChars: latestOwnerFinal.output_text.length,
+    },
+    'Carried forward latest owner final into superseding paired task',
+  );
+}
+
 export interface ResolvedOwnerHumanTask {
   task: PairedTask | null;
   supersededTask: PairedTask | null;
@@ -247,13 +286,19 @@ export function resolveOwnerTaskForHumanMessage(args: {
 
   cancelOutstandingFinalizeOwnerTurn(existing);
 
+  const newTask = createActiveTaskForRoom({
+    group: args.group,
+    chatJid: args.chatJid,
+    canonicalWorkDir,
+    roomRoleContext: args.roomRoleContext,
+  });
+  carryForwardLatestOwnerFinal({
+    sourceTask: existing,
+    targetTask: newTask,
+  });
+
   return {
-    task: createActiveTaskForRoom({
-      group: args.group,
-      chatJid: args.chatJid,
-      canonicalWorkDir,
-      roomRoleContext: args.roomRoleContext,
-    }),
+    task: newTask,
     supersededTask: existing,
   };
 }
