@@ -15,8 +15,24 @@ export async function forwardAuthorizedIpcMessage(
     senderRole?: string,
     runId?: string,
   ) => Promise<void>,
+  injectInboundMessage?: (payload: {
+    chatJid: string;
+    text: string;
+    sender?: string;
+    senderName?: string;
+    messageId?: string;
+    timestamp?: string;
+    treatAsHuman: boolean;
+    sourceKind?: import('./types.js').MessageSourceKind;
+  }) => Promise<void>,
 ): Promise<IpcMessageForwardResult> {
-  if (!(msg.type === 'message' && msg.chatJid && msg.text)) {
+  if (
+    !(
+      (msg.type === 'message' || msg.type === 'inject_inbound_message') &&
+      msg.chatJid &&
+      msg.text
+    )
+  ) {
     return { outcome: 'ignored', senderRole: msg.senderRole ?? null };
   }
 
@@ -27,6 +43,35 @@ export async function forwardAuthorizedIpcMessage(
   ) {
     return {
       outcome: 'blocked',
+      chatJid: msg.chatJid,
+      targetGroup: targetGroup?.folder ?? null,
+      isMainOverride,
+      senderRole: msg.senderRole ?? null,
+    };
+  }
+
+  if (msg.type === 'inject_inbound_message') {
+    if (!injectInboundMessage) {
+      return {
+        outcome: 'ignored',
+        chatJid: msg.chatJid,
+        targetGroup: targetGroup?.folder ?? null,
+        isMainOverride,
+        senderRole: msg.senderRole ?? null,
+      };
+    }
+    await injectInboundMessage({
+      chatJid: msg.chatJid,
+      text: msg.text,
+      sender: msg.sender,
+      senderName: msg.senderName,
+      messageId: msg.messageId,
+      timestamp: msg.timestamp,
+      treatAsHuman: msg.treatAsHuman === true,
+      sourceKind: msg.sourceKind,
+    });
+    return {
+      outcome: 'sent',
       chatJid: msg.chatJid,
       targetGroup: targetGroup?.folder ?? null,
       isMainOverride,

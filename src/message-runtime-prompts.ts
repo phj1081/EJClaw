@@ -2,6 +2,12 @@ import { buildArbiterContextPrompt } from './arbiter-context.js';
 import { formatMessages } from './router.js';
 import type { NewMessage, PairedTask, PairedTurnOutput } from './types.js';
 
+const CARRIED_FORWARD_OWNER_FINAL_MARKER =
+  '[Carried forward context from the previous task: latest owner final]';
+
+const CARRIED_FORWARD_OWNER_FINAL_GUIDANCE = `System note:
+If you see a message beginning with "${CARRIED_FORWARD_OWNER_FINAL_MARKER}", treat it as background only. Do not repeat, continue, or answer that carried-forward final directly. Respond only to the latest human request and the current task.`;
+
 function turnOutputsToMessages(
   outputs: PairedTurnOutput[],
   chatJid: string,
@@ -29,6 +35,22 @@ function mergeHumanAndTurnOutputMessages(
   ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
+function hasCarriedForwardOwnerFinal(outputs: PairedTurnOutput[]): boolean {
+  return outputs.some((output) =>
+    output.output_text.startsWith(CARRIED_FORWARD_OWNER_FINAL_MARKER),
+  );
+}
+
+function prependCarriedForwardGuidance(
+  prompt: string,
+  turnOutputs: PairedTurnOutput[],
+): string {
+  if (!hasCarriedForwardOwnerFinal(turnOutputs)) {
+    return prompt;
+  }
+  return `${CARRIED_FORWARD_OWNER_FINAL_GUIDANCE}\n\n${prompt}`;
+}
+
 export function buildPairedTurnPrompt(args: {
   taskId: string;
   chatJid: string;
@@ -44,13 +66,16 @@ export function buildPairedTurnPrompt(args: {
   const humanMessages = args.missedMessages.filter(
     (message) => !message.is_bot_message,
   );
-  return formatMessages(
-    mergeHumanAndTurnOutputMessages(
-      args.chatJid,
-      humanMessages,
-      args.turnOutputs,
+  return prependCarriedForwardGuidance(
+    formatMessages(
+      mergeHumanAndTurnOutputMessages(
+        args.chatJid,
+        humanMessages,
+        args.turnOutputs,
+      ),
+      args.timezone,
     ),
-    args.timezone,
+    args.turnOutputs,
   );
 }
 
@@ -62,13 +87,16 @@ export function buildReviewerPendingPrompt(args: {
   lastHumanMessage: string | null | undefined;
 }): string {
   if (args.turnOutputs.length > 0) {
-    return formatMessages(
-      mergeHumanAndTurnOutputMessages(
-        args.chatJid,
-        args.recentHumanMessages,
-        args.turnOutputs,
+    return prependCarriedForwardGuidance(
+      formatMessages(
+        mergeHumanAndTurnOutputMessages(
+          args.chatJid,
+          args.recentHumanMessages,
+          args.turnOutputs,
+        ),
+        args.timezone,
       ),
-      args.timezone,
+      args.turnOutputs,
     );
   }
 
@@ -87,13 +115,16 @@ export function buildOwnerPendingPrompt(args: {
   lastHumanMessage: string | null | undefined;
 }): string {
   if (args.turnOutputs.length > 0) {
-    return formatMessages(
-      mergeHumanAndTurnOutputMessages(
-        args.chatJid,
-        args.recentHumanMessages,
-        args.turnOutputs,
+    return prependCarriedForwardGuidance(
+      formatMessages(
+        mergeHumanAndTurnOutputMessages(
+          args.chatJid,
+          args.recentHumanMessages,
+          args.turnOutputs,
+        ),
+        args.timezone,
       ),
-      args.timezone,
+      args.turnOutputs,
     );
   }
 
