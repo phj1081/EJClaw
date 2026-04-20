@@ -565,6 +565,73 @@ describe('IPC message authorization', () => {
     );
   });
 
+  it('injects authorized inbound messages for the source group without routing them as outbound sends', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const injectInboundMessage = vi.fn(async () => {});
+
+    const result = await (forwardAuthorizedIpcMessage as any)(
+      {
+        type: 'inject_inbound_message',
+        chatJid: 'other@g.us',
+        text: 'act like a human input',
+        senderRole: 'owner',
+        sender: '1480575043007418420',
+        senderName: 'algo',
+        treatAsHuman: true,
+        sourceKind: 'trusted_external_bot',
+      },
+      'other-group',
+      false,
+      groups,
+      sendMessage,
+      injectInboundMessage,
+    );
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(injectInboundMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid: 'other@g.us',
+        text: 'act like a human input',
+        sender: '1480575043007418420',
+        senderName: 'algo',
+        treatAsHuman: true,
+        sourceKind: 'trusted_external_bot',
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        outcome: 'sent',
+        chatJid: 'other@g.us',
+      }),
+    );
+  });
+
+  it('does not inject unauthorized inbound messages for another group', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const injectInboundMessage = vi.fn(async () => {});
+
+    const result = await (forwardAuthorizedIpcMessage as any)(
+      {
+        type: 'inject_inbound_message',
+        chatJid: 'third@g.us',
+        text: 'should be blocked',
+        sender: '1480575043007418420',
+        senderName: 'algo',
+        treatAsHuman: true,
+        sourceKind: 'trusted_external_bot',
+      },
+      'other-group',
+      false,
+      groups,
+      sendMessage,
+      injectInboundMessage,
+    );
+
+    expect(result.outcome).toBe('blocked');
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(injectInboundMessage).not.toHaveBeenCalled();
+  });
+
   it('does not forward unauthorized IPC messages even when senderRole exists', async () => {
     const sendMessage = vi.fn(async () => {});
 
@@ -973,6 +1040,41 @@ describe('assign_room success', () => {
       'claude-code',
       'codex',
     ]);
+  });
+
+  it('main group can assign per-room reviewer and arbiter agent types', async () => {
+    await processTaskIpc(
+      {
+        type: 'assign_room',
+        jid: 'tribunal-role-overrides@g.us',
+        name: 'Tribunal Role Overrides',
+        room_mode: 'tribunal',
+        owner_agent_type: 'claude-code',
+        reviewer_agent_type: 'codex',
+        arbiter_agent_type: 'claude-code',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getStoredRoomSettings('tribunal-role-overrides@g.us')).toMatchObject(
+      {
+        chatJid: 'tribunal-role-overrides@g.us',
+        roomMode: 'tribunal',
+        modeSource: 'explicit',
+        name: 'Tribunal Role Overrides',
+        ownerAgentType: 'claude-code',
+      },
+    );
+    expect(
+      getRegisteredAgentTypesForJid('tribunal-role-overrides@g.us').sort(),
+    ).toEqual(['claude-code', 'codex']);
+    expect(
+      getRegisteredGroup('tribunal-role-overrides@g.us', 'codex'),
+    ).toMatchObject({
+      agentType: 'codex',
+    });
   });
 
   it('assign_room rejects request with missing fields', async () => {

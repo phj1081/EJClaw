@@ -247,6 +247,7 @@ export function transitionPairedTaskStatus(args: {
     plan_notes?: string | null;
     review_requested_at?: string | null;
     round_trip_count?: number;
+    owner_failure_count?: number;
     arbiter_verdict?: string | null;
     arbiter_requested_at?: string | null;
     completion_reason?: string | null;
@@ -290,6 +291,7 @@ export function applyPairedTaskPatch(args: {
     plan_notes?: string | null;
     review_requested_at?: string | null;
     round_trip_count?: number;
+    owner_failure_count?: number;
     status?: PairedTaskStatus;
     arbiter_verdict?: string | null;
     arbiter_requested_at?: string | null;
@@ -324,6 +326,17 @@ export function requestArbiterOrEscalate(args: {
   arbiterLogMessage: string;
   escalateLogMessage: string;
   logContext?: Record<string, unknown>;
+  patch?: {
+    title?: string | null;
+    source_ref?: string | null;
+    plan_notes?: string | null;
+    review_requested_at?: string | null;
+    round_trip_count?: number;
+    owner_failure_count?: number;
+    arbiter_verdict?: string | null;
+    arbiter_requested_at?: string | null;
+    completion_reason?: string | null;
+  };
 }): boolean {
   const {
     taskId,
@@ -342,6 +355,7 @@ export function requestArbiterOrEscalate(args: {
       expectedUpdatedAt,
       updatedAt: now,
       patch: {
+        ...args.patch,
         arbiter_requested_at: now,
       },
     });
@@ -358,6 +372,7 @@ export function requestArbiterOrEscalate(args: {
     expectedUpdatedAt,
     updatedAt: now,
     patch: {
+      ...args.patch,
       completion_reason: 'escalated',
     },
   });

@@ -114,6 +114,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 isMain,
                 roomBindings,
                 deps.sendMessage,
+                deps.injectInboundMessage,
               );
               if (forwardResult.outcome === 'sent') {
                 logger.info(

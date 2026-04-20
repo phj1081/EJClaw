@@ -1,8 +1,16 @@
 import { Database } from 'bun:sqlite';
 
-import { OWNER_AGENT_TYPE, REVIEWER_AGENT_TYPE } from '../config.js';
+import {
+  ARBITER_AGENT_TYPE,
+  OWNER_AGENT_TYPE,
+  REVIEWER_AGENT_TYPE,
+} from '../config.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
+import {
+  type RoleAgentPlan,
+  resolveRoleAgentPlan,
+} from '../role-agent-plan.js';
 import type { AgentType, RegisteredGroup, RoomMode } from '../types.js';
 
 export type RoomModeSource = 'explicit' | 'inferred';
@@ -58,8 +66,12 @@ export interface LegacyRoomMigrationPlan {
 export interface SyncRoomRoleOverridesOptions {
   ownerAgentConfig?: RegisteredGroup['agentConfig'];
   ownerCreatedAt?: string;
+  reviewerAgentType?: AgentType;
   reviewerAgentConfig?: RegisteredGroup['agentConfig'];
   reviewerCreatedAt?: string;
+  arbiterAgentType?: AgentType | null;
+  arbiterAgentConfig?: RegisteredGroup['agentConfig'];
+  arbiterCreatedAt?: string;
   updatedAt?: string;
 }
 
@@ -207,14 +219,35 @@ export function getStoredRoomRowsFromDatabase(
     .filter((row): row is StoredRoomSettings => Boolean(row));
 }
 
+export function resolveStoredRoomRoleAgentPlan(
+  database: Database,
+  stored: StoredRoomSettings,
+): RoleAgentPlan {
+  const overrides = getStoredRoomRoleOverrideRows(database, stored.chatJid);
+  const ownerAgentType =
+    stored.ownerAgentType ??
+    overrides.get('owner')?.agentType ??
+    OWNER_AGENT_TYPE;
+
+  return resolveRoleAgentPlan({
+    paired: stored.roomMode === 'tribunal',
+    groupAgentType: ownerAgentType,
+    configuredReviewer:
+      overrides.get('reviewer')?.agentType ?? REVIEWER_AGENT_TYPE,
+    configuredArbiter:
+      overrides.get('arbiter')?.agentType ?? ARBITER_AGENT_TYPE,
+  });
+}
+
 export function buildRegisteredGroupFromStoredSettings(
   database: Database,
   stored: StoredRoomSettings,
   requestedAgentType?: AgentType,
 ): (RegisteredGroup & { jid: string }) | undefined {
   const capabilityTypes = resolveStoredRoomCapabilityTypes(database, stored);
+  const rolePlan = resolveStoredRoomRoleAgentPlan(database, stored);
   const ownerAgentType =
-    stored.ownerAgentType ||
+    rolePlan.ownerAgentType ||
     (capabilityTypes.length > 0
       ? inferOwnerAgentTypeFromRegisteredAgentTypes(capabilityTypes)
       : undefined);
@@ -233,8 +266,12 @@ export function buildRegisteredGroupFromStoredSettings(
     return undefined;
   }
 
-  const role: 'owner' | 'reviewer' =
-    ownerAgentType === resolvedAgentType ? 'owner' : 'reviewer';
+  const role: 'owner' | 'reviewer' | 'arbiter' =
+    ownerAgentType === resolvedAgentType
+      ? 'owner'
+      : rolePlan.reviewerAgentType === resolvedAgentType
+        ? 'reviewer'
+        : 'arbiter';
   const capabilityMetadata = getStoredRoomRoleOverrideRows(
     database,
     stored.chatJid,
@@ -273,24 +310,17 @@ export function resolveStoredRoomCapabilityTypes(
   database: Database,
   stored: StoredRoomSettings,
 ): AgentType[] {
-  const overrides = getStoredRoomRoleOverrideRows(database, stored.chatJid);
-  const ownerAgentType =
-    stored.ownerAgentType ??
-    overrides.get('owner')?.agentType ??
-    OWNER_AGENT_TYPE;
-
   if (stored.modeSource !== 'explicit') {
     return inferStoredRoomCapabilityTypes(database, stored);
   }
 
-  const types = new Set<AgentType>([ownerAgentType]);
-  if (stored.roomMode === 'tribunal') {
-    const reviewerAgentType =
-      overrides.get('reviewer')?.agentType ??
-      (ownerAgentType === REVIEWER_AGENT_TYPE
-        ? OWNER_AGENT_TYPE
-        : REVIEWER_AGENT_TYPE);
-    types.add(reviewerAgentType);
+  const rolePlan = resolveStoredRoomRoleAgentPlan(database, stored);
+  const types = new Set<AgentType>([rolePlan.ownerAgentType]);
+  if (stored.roomMode === 'tribunal' && rolePlan.reviewerAgentType) {
+    types.add(rolePlan.reviewerAgentType);
+  }
+  if (stored.roomMode === 'tribunal' && rolePlan.arbiterAgentType) {
+    types.add(rolePlan.arbiterAgentType);
   }
   return [...types];
 }
@@ -526,11 +556,21 @@ export function syncRoomRoleOverridesForRoom(
   });
 
   if (roomMode === 'tribunal') {
-    const reviewerAgentType =
+    const existingReviewerOverride = existingOverrides.get('reviewer');
+    const previousDefaultReviewerAgentType =
+      existingOwnerOverride?.agentType === REVIEWER_AGENT_TYPE
+        ? OWNER_AGENT_TYPE
+        : REVIEWER_AGENT_TYPE;
+    const computedReviewerAgentType =
       ownerAgentType === REVIEWER_AGENT_TYPE
         ? OWNER_AGENT_TYPE
         : REVIEWER_AGENT_TYPE;
-    const existingReviewerOverride = existingOverrides.get('reviewer');
+    const reviewerAgentType =
+      options.reviewerAgentType ??
+      (existingReviewerOverride &&
+      existingReviewerOverride.agentType !== previousDefaultReviewerAgentType
+        ? existingReviewerOverride.agentType
+        : computedReviewerAgentType);
     upsertRoomRoleOverride(database, chatJid, {
       role: 'reviewer',
       agentType: reviewerAgentType,
@@ -547,12 +587,53 @@ export function syncRoomRoleOverridesForRoom(
         now,
       updatedAt: now,
     });
+
+    const existingArbiterOverride = existingOverrides.get('arbiter');
+    const arbiterAgentType =
+      options.arbiterAgentType ??
+      existingArbiterOverride?.agentType ??
+      ARBITER_AGENT_TYPE ??
+      null;
+
+    if (arbiterAgentType) {
+      upsertRoomRoleOverride(database, chatJid, {
+        role: 'arbiter',
+        agentType: arbiterAgentType,
+        agentConfig:
+          options.arbiterAgentConfig ??
+          (existingArbiterOverride?.agentType === arbiterAgentType
+            ? existingArbiterOverride.agentConfig
+            : undefined),
+        createdAt:
+          (existingArbiterOverride?.agentType === arbiterAgentType
+            ? existingArbiterOverride.createdAt
+            : undefined) ??
+          options.arbiterCreatedAt ??
+          now,
+        updatedAt: now,
+      });
+    } else {
+      database
+        .prepare(
+          `DELETE FROM room_role_overrides
+           WHERE chat_jid = ?
+             AND role = 'arbiter'`,
+        )
+        .run(chatJid);
+    }
   } else {
     database
       .prepare(
         `DELETE FROM room_role_overrides
          WHERE chat_jid = ?
            AND role = 'reviewer'`,
+      )
+      .run(chatJid);
+    database
+      .prepare(
+        `DELETE FROM room_role_overrides
+         WHERE chat_jid = ?
+           AND role = 'arbiter'`,
       )
       .run(chatJid);
   }

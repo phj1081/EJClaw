@@ -5,6 +5,7 @@ import {
   _setRegisteredGroupForTests,
   _setStoredRoomOwnerAgentTypeForTests,
   _initTestDatabase,
+  assignRoom,
   setChannelOwnerLease,
   setExplicitRoomMode,
 } from './db.js';
@@ -231,6 +232,29 @@ describe('service-routing global failover', () => {
       chat_jid: 'dc:explicit-tribunal-codex',
       owner_service_id: 'codex-main',
       reviewer_service_id: 'claude',
+      owner_failover_active: false,
+      explicit: false,
+    });
+  });
+
+  it('uses room-level reviewer and arbiter agent overrides from assign_room', () => {
+    assignRoom('dc:room-role-overrides', {
+      name: 'Room Role Overrides',
+      roomMode: 'tribunal',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'codex',
+      arbiterAgentType: 'claude-code',
+      folder: 'room-role-overrides',
+    });
+
+    expect(getEffectiveChannelLease('dc:room-role-overrides')).toMatchObject({
+      chat_jid: 'dc:room-role-overrides',
+      owner_agent_type: 'claude-code',
+      reviewer_agent_type: 'codex',
+      arbiter_agent_type: 'claude-code',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-review',
+      arbiter_service_id: 'claude',
       owner_failover_active: false,
       explicit: false,
     });

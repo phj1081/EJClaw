@@ -1,6 +1,65 @@
 import type { AvailableGroup } from './agent-runner.js';
 import type { AssignRoomInput } from './db.js';
-import type { AgentType, RegisteredGroup, RoomMode } from './types.js';
+import type {
+  AgentType,
+  MessageSourceKind,
+  PairedTask,
+  RegisteredGroup,
+  RoomMode,
+} from './types.js';
+
+export interface InjectInboundMessagePayload {
+  chatJid: string;
+  text: string;
+  sender?: string;
+  senderName?: string;
+  messageId?: string;
+  timestamp?: string;
+  treatAsHuman: boolean;
+  sourceKind?: MessageSourceKind;
+}
+
+export interface RoomRuntimeReport {
+  chatJid: string;
+  groupFolder: string;
+  room: RegisteredGroup | null;
+  queue: {
+    status: 'processing' | 'waiting' | 'inactive';
+    runPhase: string;
+    elapsedMs: number | null;
+    pendingMessages: boolean;
+    pendingTasks: number;
+    currentRunId: string | null;
+    runningTaskId: string | null;
+    processName: string | null;
+    ipcDir: string | null;
+    retryCount: number;
+    retryScheduledAt: number | null;
+    waiting: boolean;
+  };
+  latestOpenTask: Pick<
+    PairedTask,
+    | 'id'
+    | 'status'
+    | 'title'
+    | 'round_trip_count'
+    | 'updated_at'
+    | 'owner_agent_type'
+    | 'reviewer_agent_type'
+    | 'arbiter_agent_type'
+  > | null;
+  recentMessages: Array<{
+    id: string;
+    seq?: number;
+    timestamp: string;
+    sender: string;
+    senderName: string;
+    isFromMe: boolean;
+    isBotMessage: boolean;
+    sourceKind: MessageSourceKind;
+    contentPreview: string;
+  }>;
+}
 
 export interface IpcDeps {
   sendMessage: (
@@ -19,6 +78,14 @@ export interface IpcDeps {
     isMain: boolean,
     availableGroups: AvailableGroup[],
   ) => void;
+  injectInboundMessage?: (
+    payload: InjectInboundMessagePayload,
+  ) => Promise<void>;
+  getRoomRuntimeReport?: (args: {
+    chatJid: string;
+    sourceGroup: string;
+    isMain: boolean;
+  }) => RoomRuntimeReport;
 }
 
 export interface IpcMessagePayload {
@@ -27,6 +94,12 @@ export interface IpcMessagePayload {
   text?: string;
   senderRole?: string;
   runId?: string;
+  sender?: string;
+  senderName?: string;
+  messageId?: string;
+  timestamp?: string;
+  treatAsHuman?: boolean;
+  sourceKind?: MessageSourceKind;
 }
 
 export interface IpcMessageForwardResult {
@@ -54,6 +127,8 @@ export interface TaskIpcPayload {
   folder?: string;
   room_mode?: RoomMode;
   owner_agent_type?: AgentType;
+  reviewer_agent_type?: AgentType;
+  arbiter_agent_type?: AgentType | null;
   isMain?: boolean;
   workDir?: string;
   scopeKind?: string;

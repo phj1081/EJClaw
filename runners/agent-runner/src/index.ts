@@ -24,6 +24,7 @@ import {
 } from 'ejclaw-runners-shared';
 import { fileURLToPath } from 'url';
 
+import { resolveBundledClaudeCodeExecutable } from './bundled-cli-path.js';
 import {
   prependRoomRoleHeader,
   type RoomRoleContext,
@@ -86,6 +87,17 @@ const HOST_TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
 
 function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
+}
+
+// 번들 CLI binary를 명시해야 SDK가 musl/glibc 잘못 탐색하는 걸 우회함.
+// (SDK 0.2.114의 W7() 헬퍼는 linux-x64-musl를 linux-x64보다 먼저 시도하므로
+// glibc 호스트에서 musl 패키지가 빈 껍데기로 설치돼 있으면 실패한다.)
+let cachedClaudeCliPath: string | null = null;
+function getClaudeCliPath(): string {
+  if (cachedClaudeCliPath) return cachedClaudeCliPath;
+  cachedClaudeCliPath = resolveBundledClaudeCodeExecutable();
+  log(`Resolved bundled Claude Code CLI: ${cachedClaudeCliPath}`);
+  return cachedClaudeCliPath;
 }
 
 // Graceful shutdown: SIGTERM → abort SDK query, allowing cleanup
@@ -267,6 +279,8 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
+      // 번들 CLI binary를 명시해야 SDK가 musl/glibc 잘못 탐색하는 걸 우회함.
+      pathToClaudeCodeExecutable: getClaudeCliPath(),
       cwd: effectiveCwd,
       model,
       thinking,
@@ -702,6 +716,8 @@ async function main(): Promise<void> {
       for await (const message of query({
         prompt: trimmedPrompt,
         options: {
+          // 번들 CLI binary를 명시해야 SDK가 musl/glibc 잘못 탐색하는 걸 우회함.
+          pathToClaudeCodeExecutable: getClaudeCliPath(),
           cwd: mainEffectiveCwd,
           resume: sessionId,
           systemPrompt: undefined,

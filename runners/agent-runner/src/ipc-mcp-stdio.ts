@@ -798,6 +798,14 @@ If folder is omitted, the host generates one automatically.`,
       .enum(['claude-code', 'codex'])
       .optional()
       .describe('Preferred owner agent type for the room'),
+    reviewer_agent_type: z
+      .enum(['claude-code', 'codex'])
+      .optional()
+      .describe('Optional reviewer agent type override for tribunal rooms'),
+    arbiter_agent_type: z
+      .enum(['claude-code', 'codex'])
+      .optional()
+      .describe('Optional arbiter agent type override for tribunal rooms'),
     folder: z
       .string()
       .optional()
@@ -826,6 +834,8 @@ If folder is omitted, the host generates one automatically.`,
     name: string;
     room_mode?: 'single' | 'tribunal';
     owner_agent_type?: 'claude-code' | 'codex';
+    reviewer_agent_type?: 'claude-code' | 'codex';
+    arbiter_agent_type?: 'claude-code' | 'codex';
     folder?: string;
     trigger?: string;
     requires_trigger?: boolean;
@@ -850,6 +860,8 @@ If folder is omitted, the host generates one automatically.`,
       name: args.name,
       room_mode: args.room_mode || 'single',
       owner_agent_type: args.owner_agent_type,
+      reviewer_agent_type: args.reviewer_agent_type,
+      arbiter_agent_type: args.arbiter_agent_type,
       folder: args.folder,
       trigger: args.trigger,
       requiresTrigger: args.requires_trigger,

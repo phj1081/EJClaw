@@ -19,7 +19,7 @@ export interface HostEvidenceRequest {
 
 export interface HostEvidenceResult {
   ok: boolean;
-  action: HostEvidenceAction;
+  action: HostEvidenceAction | 'ejclaw_room_runtime';
   command: string;
   stdout: string;
   stderr: string;

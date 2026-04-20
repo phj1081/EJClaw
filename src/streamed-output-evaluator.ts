@@ -15,7 +15,10 @@ import {
 } from './agent-error-detection.js';
 import type { AgentOutput } from './agent-runner.js';
 import { detectCodexRotationTrigger } from './codex-token-rotation.js';
-import { shouldRetryFreshSessionOnAgentFailure } from './session-recovery.js';
+import {
+  shouldRetryFreshCodexSessionOnAgentFailure,
+  shouldRetryFreshSessionOnAgentFailure,
+} from './session-recovery.js';
 
 export interface StreamedTriggerReason {
   reason: AgentTriggerReason;
@@ -65,6 +68,19 @@ export function evaluateStreamedOutput(
     isPrimaryClaude &&
     !state.sawOutput &&
     shouldRetryFreshSessionOnAgentFailure(output)
+  ) {
+    nextState.retryableSessionFailureDetected = true;
+    return {
+      state: nextState,
+      shouldForwardOutput: false,
+      suppressedRetryableSessionFailure: true,
+    };
+  }
+
+  if (
+    isPrimaryCodex &&
+    !state.sawOutput &&
+    shouldRetryFreshCodexSessionOnAgentFailure(output)
   ) {
     nextState.retryableSessionFailureDetected = true;
     return {

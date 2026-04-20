@@ -21,26 +21,72 @@ import {
 import type { PairedTask } from './types.js';
 
 type OwnerFinalizeOutcome = 'stop' | 're_review';
+const OWNER_FAILURE_ESCALATION_THRESHOLD = 2;
 
 export function handleFailedOwnerExecution(args: {
   task: PairedTask;
   taskId: string;
+  summary?: string | null;
 }): void {
-  const { task, taskId } = args;
+  const { task, taskId, summary } = args;
+  const now = new Date().toISOString();
+  const nextFailureCount = (task.owner_failure_count ?? 0) + 1;
+
+  if (nextFailureCount >= OWNER_FAILURE_ESCALATION_THRESHOLD) {
+    requestArbiterOrEscalate({
+      taskId,
+      currentStatus: task.status,
+      expectedUpdatedAt: task.updated_at,
+      now,
+      arbiterLogMessage:
+        'Owner failed repeatedly without a visible verdict — requesting arbiter',
+      escalateLogMessage:
+        'Owner failed repeatedly without a visible verdict — escalating to user',
+      logContext: {
+        taskId,
+        role: 'owner',
+        previousStatus: task.status,
+        ownerFailureCount: nextFailureCount,
+        summary: summary?.slice(0, 160),
+      },
+      patch: {
+        owner_failure_count: nextFailureCount,
+      },
+    });
+    return;
+  }
+
   if (task.status !== 'active') {
-    const now = new Date().toISOString();
     transitionPairedTaskStatus({
       taskId,
       currentStatus: task.status,
       nextStatus: 'active',
       expectedUpdatedAt: task.updated_at,
       updatedAt: now,
+      patch: {
+        owner_failure_count: nextFailureCount,
+      },
     });
-    logger.info(
-      { taskId, role: 'owner', previousStatus: task.status },
-      'Reset task to active after failed execution',
-    );
+  } else {
+    applyPairedTaskPatch({
+      taskId,
+      expectedUpdatedAt: task.updated_at,
+      updatedAt: now,
+      patch: {
+        owner_failure_count: nextFailureCount,
+      },
+    });
   }
+  logger.info(
+    {
+      taskId,
+      role: 'owner',
+      previousStatus: task.status,
+      ownerFailureCount: nextFailureCount,
+      summary: summary?.slice(0, 160),
+    },
+    'Reset task to active after failed owner execution',
+  );
 }
 
 function handleOwnerFinalizeCompletion(args: {
@@ -90,6 +136,9 @@ function handleOwnerFinalizeCompletion(args: {
         hasNewChanges,
         summary: summary?.slice(0, 100),
       },
+      patch: {
+        owner_failure_count: 0,
+      },
     });
     return 'stop';
   }
@@ -102,6 +151,9 @@ function handleOwnerFinalizeCompletion(args: {
         nextStatus: 'active',
         expectedUpdatedAt: task.updated_at,
         updatedAt: now,
+        patch: {
+          owner_failure_count: 0,
+        },
       });
     }
     logger.info(
@@ -126,6 +178,7 @@ function handleOwnerFinalizeCompletion(args: {
     updatedAt: now,
     patch: {
       completion_reason: 'done',
+      owner_failure_count: 0,
     },
   });
   logger.info(
@@ -166,6 +219,7 @@ function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
       updatedAt: now,
       patch: {
         round_trip_count: task.round_trip_count + 1,
+        owner_failure_count: 0,
       },
     });
     if (hasActiveCiWatcherForChat(task.chat_jid)) {
@@ -228,6 +282,9 @@ export function handleOwnerCompletion(args: {
         taskId,
         ownerVerdict,
         summary: summary?.slice(0, 100),
+      },
+      patch: {
+        owner_failure_count: 0,
       },
     });
     return;

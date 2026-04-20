@@ -50,6 +50,7 @@ export type PairedTaskUpdates = Partial<
     | 'plan_notes'
     | 'review_requested_at'
     | 'round_trip_count'
+    | 'owner_failure_count'
     | 'status'
     | 'arbiter_verdict'
     | 'arbiter_requested_at'
@@ -171,6 +172,7 @@ export function createPairedTaskInDatabase(
           plan_notes,
           review_requested_at,
           round_trip_count,
+          owner_failure_count,
           status,
           arbiter_verdict,
           arbiter_requested_at,
@@ -178,7 +180,7 @@ export function createPairedTaskInDatabase(
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .run(
@@ -195,6 +197,7 @@ export function createPairedTaskInDatabase(
       task.plan_notes,
       task.review_requested_at,
       task.round_trip_count,
+      task.owner_failure_count ?? 0,
       task.status,
       task.arbiter_verdict,
       task.arbiter_requested_at,
@@ -279,6 +282,10 @@ export function updatePairedTaskInDatabase(
     fields.push('round_trip_count = ?');
     values.push(updates.round_trip_count);
   }
+  if (updates.owner_failure_count !== undefined) {
+    fields.push('owner_failure_count = ?');
+    values.push(updates.owner_failure_count);
+  }
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
@@ -337,6 +344,10 @@ export function updatePairedTaskIfUnchangedInDatabase(
   if (updates.round_trip_count !== undefined) {
     fields.push('round_trip_count = ?');
     values.push(updates.round_trip_count);
+  }
+  if (updates.owner_failure_count !== undefined) {
+    fields.push('owner_failure_count = ?');
+    values.push(updates.owner_failure_count);
   }
   if (updates.status !== undefined) {
     fields.push('status = ?');

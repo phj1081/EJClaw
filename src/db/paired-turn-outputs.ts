@@ -11,6 +11,7 @@ export function insertPairedTurnOutputInDatabase(
   turnNumber: number,
   role: PairedRoomRole,
   outputText: string,
+  createdAt?: string,
 ): void {
   if (outputText.length > MAX_TURN_OUTPUT_CHARS) {
     logger.warn(
@@ -36,7 +37,7 @@ export function insertPairedTurnOutputInDatabase(
       turnNumber,
       role,
       outputText.slice(0, MAX_TURN_OUTPUT_CHARS),
-      new Date().toISOString(),
+      createdAt ?? new Date().toISOString(),
     );
 }
 

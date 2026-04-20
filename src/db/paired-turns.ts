@@ -463,6 +463,20 @@ export function failPairedTurnInDatabase(
   });
 }
 
+export function cancelPairedTurnInDatabase(
+  database: Database,
+  args: {
+    turnIdentity: PairedTurnIdentity;
+    error?: string | null;
+  },
+): void {
+  markPairedTurnTerminalStateInDatabase(database, {
+    turnIdentity: args.turnIdentity,
+    state: 'cancelled',
+    error: args.error,
+  });
+}
+
 export function getPairedTurnByIdFromDatabase(
   database: Database,
   turnId: string,

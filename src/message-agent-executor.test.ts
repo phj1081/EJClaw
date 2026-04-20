@@ -196,7 +196,9 @@ vi.mock('./agent-error-detection.js', async (importOriginal) => {
 });
 
 vi.mock('./session-recovery.js', () => ({
+  shouldResetCodexSessionOnAgentFailure: vi.fn(() => false),
   shouldResetSessionOnAgentFailure: vi.fn(() => false),
+  shouldRetryFreshCodexSessionOnAgentFailure: vi.fn(() => false),
   shouldRetryFreshSessionOnAgentFailure: vi.fn(() => false),
 }));
 
@@ -791,11 +793,30 @@ describe('runAgentForGroup room memory', () => {
       }),
     ).resolves.toBe('success');
 
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
-      group,
-      expect.any(Object),
-      expect.any(Function),
-      expect.any(Function),
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    const [
+      effectiveGroup,
+      agentInput,
+      _registerProcess,
+      _onOutput,
+      envOverrides,
+    ] = vi.mocked(agentRunner.runAgentProcess).mock.calls[0]!;
+    expect(effectiveGroup).toEqual(
+      expect.objectContaining({
+        folder: 'test-group',
+        agentType: 'codex',
+      }),
+    );
+    expect(agentInput).toEqual(
+      expect.objectContaining({
+        roomRoleContext: expect.objectContaining({
+          role: 'reviewer',
+          reviewerAgentType: 'codex',
+          serviceId: 'codex-review',
+        }),
+      }),
+    );
+    expect(envOverrides).toEqual(
       expect.objectContaining({
         EJCLAW_PAIRED_TURN_ID:
           'paired-task-prep-advance:2026-04-10T00:00:00.000Z:reviewer-turn',
@@ -1155,7 +1176,7 @@ describe('runAgentForGroup room memory', () => {
       },
     });
 
-    expect(result).toBe('error');
+    expect(result).toBe('success');
     expect(
       pairedExecutionContext.completePairedExecutionContext,
     ).toHaveBeenCalledWith(
@@ -3330,6 +3351,70 @@ describe('runAgentForGroup Claude rotation', () => {
     expect(deps.clearSession).toHaveBeenCalledWith('test-claude');
   });
 
+  it('drops a poisoned Codex session id before retrying a fresh session after remote compaction failure', async () => {
+    const group = {
+      ...makeGroup(),
+      folder: 'test-codex',
+      agentType: 'codex' as const,
+    };
+    const deps = {
+      ...makeDeps(),
+      getSessions: () => ({ 'test-codex': 'stale-codex-session-id' }),
+    };
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: null,
+      arbiter_agent_type: null,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: null,
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(sessionRecovery.shouldRetryFreshCodexSessionOnAgentFailure)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+    vi.mocked(sessionRecovery.shouldResetCodexSessionOnAgentFailure)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    vi.mocked(agentRunner.runAgentProcess)
+      .mockImplementationOnce(async (_group, input) => {
+        expect(input.sessionId).toBe('stale-codex-session-id');
+        throw new Error(
+          "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
+        );
+      })
+      .mockImplementationOnce(async (_group, input, _onProcess, onOutput) => {
+        expect(input.sessionId).toBeUndefined();
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'fresh Codex retry success',
+        });
+        return {
+          status: 'success',
+          result: 'fresh Codex retry success',
+          newSessionId: 'fresh-codex-session-id',
+        };
+      });
+
+    const result = await runAgentForGroup(deps, {
+      group,
+      prompt: 'hello',
+      chatJid: 'group@test',
+      runId: 'run-stale-codex-session-id-retry',
+      onOutput: async () => {},
+    });
+
+    expect(result).toBe('success');
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(deps.clearSession).toHaveBeenCalledWith('test-codex');
+  });
+
   it('suppresses a usage-exhausted banner even when Claude already emitted progress text', async () => {
     const outputs: string[] = [];
 
@@ -3589,6 +3674,19 @@ describe('runAgentForGroup Codex rotation', () => {
       agentType: 'codex',
     };
     const outputs: string[] = [];
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'codex',
+      arbiter_agent_type: null,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
 
     vi.mocked(agentRunner.runAgentProcess)
       .mockImplementationOnce(async (_group, _input, _onProcess, onOutput) => {

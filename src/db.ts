@@ -57,6 +57,7 @@ export {
   getRouterStateForService,
   getSession,
   getSessionForAgentType,
+  getStoredRoomRoleAgentPlan,
   getStoredRoomSettings,
   getTaskById,
   getTasksForGroup,
@@ -74,6 +75,7 @@ export {
 } from './db/runtime-tasks-rooms.js';
 export {
   _clearPairedTurnReservationsForTests,
+  cancelPairedTurn,
   claimPairedTurnReservation,
   claimServiceHandoff,
   clearChannelOwnerLease,

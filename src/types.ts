@@ -82,6 +82,7 @@ export interface PairedTask {
   plan_notes: string | null;
   review_requested_at: string | null;
   round_trip_count: number;
+  owner_failure_count?: number | null;
   status: PairedTaskStatus;
   arbiter_verdict: string | null;
   arbiter_requested_at: string | null;
@@ -157,6 +158,13 @@ export interface RegisteredGroup {
   workDir?: string; // Working directory for the agent (defaults to group folder)
 }
 
+export type MessageSourceKind =
+  | 'human'
+  | 'bot'
+  | 'trusted_external_bot'
+  | 'ipc_injected_human'
+  | 'ipc_injected_bot';
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -167,6 +175,7 @@ export interface NewMessage {
   seq?: number;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  message_source_kind?: MessageSourceKind;
 }
 
 export interface ScheduledTask {
@@ -226,8 +235,9 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
-  // Optional: edit/delete messages (used by status dashboard).
+  // Optional: edit/delete messages (used by status dashboard and tracked progress cleanup).
   editMessage?(jid: string, messageId: string, text: string): Promise<void>;
+  deleteMessage?(jid: string, messageId: string): Promise<void>;
   sendAndTrack?(jid: string, text: string): Promise<string | null>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;

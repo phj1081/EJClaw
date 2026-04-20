@@ -17,6 +17,7 @@ import {
   normalizeStoredAgentType,
   resolveAssignedRoomFolder,
   resolveStoredRoomCapabilityTypes,
+  resolveStoredRoomRoleAgentPlan,
   syncRoomRoleOverridesForRoom,
   updateStoredRoomMetadata,
   upsertRoomRoleOverride,
@@ -31,6 +32,8 @@ export interface AssignRoomInput {
   name: string;
   roomMode?: RoomMode;
   ownerAgentType?: AgentType;
+  reviewerAgentType?: AgentType;
+  arbiterAgentType?: AgentType | null;
   folder?: string;
   isMain?: boolean;
   workDir?: string;
@@ -233,6 +236,8 @@ export function assignRoomInDatabase(
     syncRoomRoleOverridesForRoom(database, chatJid, roomMode, ownerAgentType, {
       ownerAgentConfig: input.ownerAgentConfig,
       ownerCreatedAt: input.addedAt ?? now,
+      reviewerAgentType: input.reviewerAgentType,
+      arbiterAgentType: input.arbiterAgentType,
       updatedAt: input.addedAt ?? now,
     });
   })();
@@ -292,6 +297,14 @@ export function getStoredRoomSettingsFromDatabase(
   chatJid: string,
 ): StoredRoomSettings | undefined {
   return getStoredRoomSettingsRowFromDatabase(database, chatJid);
+}
+
+export function getStoredRoomRoleAgentPlanFromDatabase(
+  database: Database,
+  chatJid: string,
+): ReturnType<typeof resolveStoredRoomRoleAgentPlan> | undefined {
+  const stored = getStoredRoomSettingsRowFromDatabase(database, chatJid);
+  return stored ? resolveStoredRoomRoleAgentPlan(database, stored) : undefined;
 }
 
 function getStoredRoomModeRowFromDatabase(

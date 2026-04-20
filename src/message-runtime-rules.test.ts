@@ -133,7 +133,7 @@ describe('message-runtime-rules', () => {
     ).toEqual({ kind: 'none' });
   });
 
-  it('dispatches owner delivery success through a paired follow-up enqueue only for reviewer turns', () => {
+  it('dispatches owner delivery success through a paired follow-up enqueue for reviewer or arbiter turns', () => {
     expect(
       resolveFollowUpDispatch({
         source: 'owner-delivery-success',
@@ -146,9 +146,33 @@ describe('message-runtime-rules', () => {
     expect(
       resolveFollowUpDispatch({
         source: 'owner-delivery-success',
+        nextTurnAction: { kind: 'arbiter-turn' },
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'owner-delivery-success',
         nextTurnAction: { kind: 'none' },
       }),
     ).toEqual({ kind: 'none' });
+  });
+
+  it('dispatches failed owner recovery through a paired follow-up when execution escalated to arbiter', () => {
+    expect(
+      resolveFollowUpDispatch({
+        source: 'executor-recovery',
+        nextTurnAction: { kind: 'arbiter-turn' },
+        completedRole: 'owner',
+        executionStatus: 'failed',
+        sawOutput: false,
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
   });
 
   it('dispatches reviewer and arbiter delivery success through paired follow-up enqueue when a handoff is pending', () => {
@@ -291,6 +315,28 @@ describe('message-runtime-rules', () => {
     expect(resolution.effectiveServiceId).toBe(resolution.reviewerServiceId);
   });
 
+  it('uses lease reviewer metadata when the room reviewer differs from the owner agent type', () => {
+    const resolution = resolveExecutionTarget({
+      lease: {
+        ...baseLease,
+        owner_agent_type: 'claude-code',
+        reviewer_agent_type: 'codex',
+        reviewer_service_id: 'codex-review',
+      },
+      pairedTaskStatus: 'review_ready',
+      groupFolder: 'group-1',
+      groupAgentType: 'claude-code',
+    });
+
+    expect(resolution).toMatchObject({
+      activeRole: 'reviewer',
+      configuredAgentType: 'codex',
+      effectiveAgentType: 'codex',
+      sessionFolder: 'group-1:reviewer',
+    });
+    expect(resolution.effectiveServiceId).toBe('codex-review');
+  });
+
   it('resolves merge_ready execution target back to the owner/finalize path', () => {
     const resolution = resolveExecutionTarget({
       lease: baseLease,
@@ -322,13 +368,37 @@ describe('message-runtime-rules', () => {
     expect(resolution).toMatchObject({
       inferredRole: 'arbiter',
       activeRole: 'arbiter',
-      configuredAgentType: 'claude-code',
-      effectiveAgentType: 'claude-code',
+      configuredAgentType: 'codex',
+      effectiveAgentType: 'codex',
       sessionFolder: 'group-1:arbiter',
     });
     expect(resolution.effectiveServiceId).toBe(
       resolveLeaseServiceId(baseLease, 'arbiter'),
     );
+  });
+
+  it('uses lease arbiter metadata when the room arbiter differs from the owner agent type', () => {
+    const resolution = resolveExecutionTarget({
+      lease: {
+        ...baseLease,
+        owner_agent_type: 'codex',
+        reviewer_agent_type: 'claude-code',
+        reviewer_service_id: 'claude',
+        arbiter_agent_type: 'claude-code',
+        arbiter_service_id: 'claude',
+      },
+      pairedTaskStatus: 'arbiter_requested',
+      groupFolder: 'group-1',
+      groupAgentType: 'codex',
+    });
+
+    expect(resolution).toMatchObject({
+      activeRole: 'arbiter',
+      configuredAgentType: 'claude-code',
+      effectiveAgentType: 'claude-code',
+      sessionFolder: 'group-1:arbiter',
+    });
+    expect(resolution.effectiveServiceId).toBe('claude');
   });
 
   it('honors an arbiter forced role only when arbiter is configured', () => {

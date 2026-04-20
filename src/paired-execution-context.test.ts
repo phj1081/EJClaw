@@ -12,11 +12,15 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./db.js', () => {
   const updatePairedTask = vi.fn();
   return {
+    cancelPairedTurn: vi.fn(),
     createPairedTask: vi.fn(),
     getLatestPairedTaskForChat: vi.fn(),
     getLatestOpenPairedTaskForChat: vi.fn(),
     getPairedTaskById: vi.fn(),
+    getPairedTurnById: vi.fn(),
+    getPairedTurnOutputs: vi.fn(() => []),
     getPairedWorkspace: vi.fn(),
+    insertPairedTurnOutput: vi.fn(),
     updatePairedTask,
     updatePairedTaskIfUnchanged: vi.fn((id, _expectedUpdatedAt, updates) => {
       updatePairedTask(id, updates);
@@ -49,6 +53,7 @@ import * as config from './config.js';
 import {
   completePairedExecutionContext,
   preparePairedExecutionContext,
+  resolveOwnerTaskForHumanMessage,
 } from './paired-execution-context.js';
 import * as pairedWorkspaceManager from './paired-workspace-manager.js';
 import type {
@@ -137,6 +142,7 @@ function buildPairedTask(overrides: Partial<PairedTask> = {}): PairedTask {
     plan_notes: null,
     review_requested_at: null,
     round_trip_count: 0,
+    owner_failure_count: 0,
     status: 'active',
     arbiter_verdict: null,
     arbiter_requested_at: null,
@@ -245,6 +251,78 @@ describe('paired execution context', () => {
       EJCLAW_WORK_DIR: '/tmp/paired/task-1/owner',
       EJCLAW_PAIRED_ROLE: 'owner',
     });
+  });
+
+  it('carries forward the latest owner final when a merge_ready task is superseded by new human input', () => {
+    const supersededTask = buildPairedTask({
+      id: 'task-superseded',
+      status: 'merge_ready',
+      updated_at: '2026-03-28T00:05:00.000Z',
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(
+      supersededTask,
+    );
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: 'task-superseded',
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'DONE_WITH_CONCERNS\n이전 task owner final',
+        created_at: '2026-03-28T00:01:00.000Z',
+      },
+      {
+        id: 2,
+        task_id: 'task-superseded',
+        turn_number: 2,
+        role: 'reviewer',
+        output_text: 'DONE\nreview approved',
+        created_at: '2026-03-28T00:02:00.000Z',
+      },
+    ]);
+
+    const result = resolveOwnerTaskForHumanMessage({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+      existingTask: supersededTask,
+    });
+
+    expect(db.createPairedTask).toHaveBeenCalledTimes(1);
+    expect(result.supersededTask).toEqual(supersededTask);
+    expect(db.insertPairedTurnOutput).toHaveBeenCalledWith(
+      expect.any(String),
+      0,
+      'owner',
+      '[Carried forward context from the previous task: latest owner final]\nDONE_WITH_CONCERNS\n이전 task owner final',
+      '2026-03-28T00:01:00.000Z',
+    );
+  });
+
+  it('uses room role context agent overrides when creating a paired task', () => {
+    preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-room-overrides',
+      roomRoleContext: {
+        ...ownerContext,
+        ownerAgentType: 'codex',
+        reviewerAgentType: 'codex',
+        reviewerServiceId: config.CODEX_REVIEW_SERVICE_ID,
+        arbiterAgentType: 'claude-code',
+      },
+      hasHumanMessage: true,
+    });
+
+    expect(db.createPairedTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner_service_id: config.CODEX_MAIN_SERVICE_ID,
+        reviewer_service_id: config.CODEX_REVIEW_SERVICE_ID,
+        owner_agent_type: 'codex',
+        reviewer_agent_type: 'codex',
+        arbiter_agent_type: 'claude-code',
+      }),
+    );
   });
 
   it('persists stable role-slot service shadow instead of the transient failover owner lease', () => {
@@ -556,6 +634,51 @@ describe('paired execution context', () => {
     expect(result?.envOverrides.CLAUDE_CONFIG_DIR).toContain(
       '/data/sessions/paired-room-reviewer',
     );
+    delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+  });
+
+  it('honors room-level reviewer agent overrides for unsafe host reviewer runtime env', () => {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(
+      buildPairedTask({
+        status: 'review_ready',
+        review_requested_at: '2026-03-28T00:00:00.000Z',
+        reviewer_agent_type: 'codex',
+      }),
+    );
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'review_ready',
+        review_requested_at: '2026-03-28T00:00:00.000Z',
+        reviewer_agent_type: 'codex',
+      }),
+    );
+    vi.mocked(
+      pairedWorkspaceManager.prepareReviewerWorkspaceForExecution,
+    ).mockReturnValue({
+      workspace: buildWorkspace('reviewer', '/tmp/paired/task-1/reviewer'),
+      autoRefreshed: false,
+    });
+
+    const result = preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-host-reviewer-room-override',
+      roomRoleContext: {
+        ...reviewerContext,
+        reviewerAgentType: 'codex',
+      },
+    });
+
+    expect(result?.envOverrides).toMatchObject({
+      EJCLAW_WORK_DIR: '/tmp/paired/task-1/reviewer',
+      EJCLAW_PAIRED_ROLE: 'reviewer',
+      EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+    });
+    expect(
+      result?.envOverrides.EJCLAW_CLAUDE_REVIEWER_READONLY,
+    ).toBeUndefined();
+    expect(result?.envOverrides.EJCLAW_REVIEWER_RUNTIME).toBeUndefined();
     delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
   });
 
@@ -978,7 +1101,7 @@ describe('paired execution context', () => {
     );
   });
 
-  it('still resets owner tasks to active after failed execution', () => {
+  it('increments owner failure count and resets owner tasks to active after failed execution', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({
         status: 'merge_ready',
@@ -996,7 +1119,35 @@ describe('paired execution context', () => {
       'task-1',
       expect.objectContaining({
         status: 'active',
+        owner_failure_count: 1,
         updated_at: expect.any(String),
+      }),
+    );
+  });
+
+  it('requests arbiter after repeated owner execution failures without a visible verdict', () => {
+    vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        owner_failure_count: 1,
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'failed',
+      summary:
+        "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'arbiter_requested',
+        owner_failure_count: 2,
+        arbiter_requested_at: expect.any(String),
       }),
     );
   });

@@ -50,6 +50,7 @@ import {
   insertPairedTurnOutputInDatabase,
 } from './paired-turn-outputs.js';
 import {
+  cancelPairedTurnInDatabase,
   clearPairedTurnsInDatabase,
   completePairedTurnInDatabase,
   failPairedTurnInDatabase,
@@ -176,6 +177,13 @@ export function failPairedTurn(args: {
   failPairedTurnInDatabase(requireDatabase(), args);
 }
 
+export function cancelPairedTurn(args: {
+  turnIdentity: PairedTurnIdentity;
+  error?: string | null;
+}): void {
+  cancelPairedTurnInDatabase(requireDatabase(), args);
+}
+
 export function getPairedTurnById(
   turnId: string,
 ): PairedTurnRecord | undefined {
@@ -292,6 +300,7 @@ export function insertPairedTurnOutput(
   turnNumber: number,
   role: PairedRoomRole,
   outputText: string,
+  createdAt?: string,
 ): void {
   insertPairedTurnOutputInDatabase(
     requireDatabase(),
@@ -299,6 +308,7 @@ export function insertPairedTurnOutput(
     turnNumber,
     role,
     outputText,
+    createdAt,
   );
 }
 

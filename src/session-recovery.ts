@@ -17,6 +17,11 @@ const SESSION_RETRY_PATTERNS = [
   /invalid[^\n]*signature[^\n]*thinking/i,
 ];
 
+const CODEX_SESSION_RESET_PATTERNS = [
+  /Error running remote compact task/i,
+  /prompt_cache_retention/i,
+];
+
 function toText(value: string | object | null | undefined): string[] {
   if (!value) return [];
   if (typeof value === 'string') return [value];
@@ -50,4 +55,22 @@ export function shouldRetryFreshSessionOnAgentFailure(
   return texts.some((text) =>
     SESSION_RETRY_PATTERNS.some((pattern) => pattern.test(text)),
   );
+}
+
+export function shouldResetCodexSessionOnAgentFailure(
+  output: Pick<AgentOutput, 'result' | 'output' | 'error'>,
+): boolean {
+  const texts = [
+    ...toText(getAgentOutputText(output)),
+    ...toText(output.error),
+  ];
+  return texts.some((text) =>
+    CODEX_SESSION_RESET_PATTERNS.some((pattern) => pattern.test(text)),
+  );
+}
+
+export function shouldRetryFreshCodexSessionOnAgentFailure(
+  output: Pick<AgentOutput, 'result' | 'output' | 'error'>,
+): boolean {
+  return shouldResetCodexSessionOnAgentFailure(output);
 }

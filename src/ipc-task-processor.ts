@@ -241,6 +241,69 @@ export async function processTaskIpc(
         break;
       }
 
+      if (data.action === 'ejclaw_room_runtime') {
+        if (!data.chatJid) {
+          writeHostEvidenceResponse(sourceGroup, {
+            requestId: data.requestId,
+            ok: false,
+            action: 'ejclaw_room_runtime',
+            command: 'internal:ejclaw_room_runtime',
+            stdout: '',
+            stderr: '',
+            exitCode: 1,
+            error: 'Missing chatJid for ejclaw_room_runtime request',
+          });
+          logger.warn(
+            { sourceGroup, requestId: data.requestId },
+            'Rejected ejclaw_room_runtime request without chatJid',
+          );
+          break;
+        }
+
+        if (!deps.getRoomRuntimeReport) {
+          writeHostEvidenceResponse(sourceGroup, {
+            requestId: data.requestId,
+            ok: false,
+            action: 'ejclaw_room_runtime',
+            command: 'internal:ejclaw_room_runtime',
+            stdout: '',
+            stderr: '',
+            exitCode: 1,
+            error: 'Room runtime reporting is not configured',
+          });
+          logger.warn(
+            { sourceGroup, requestId: data.requestId, chatJid: data.chatJid },
+            'Rejected ejclaw_room_runtime request because runtime reporter is unavailable',
+          );
+          break;
+        }
+
+        const report = deps.getRoomRuntimeReport({
+          chatJid: data.chatJid,
+          sourceGroup,
+          isMain,
+        });
+        writeHostEvidenceResponse(sourceGroup, {
+          requestId: data.requestId,
+          ok: true,
+          action: 'ejclaw_room_runtime',
+          command: 'internal:ejclaw_room_runtime',
+          stdout: JSON.stringify(report, null, 2),
+          stderr: '',
+          exitCode: 0,
+        });
+        logger.info(
+          {
+            sourceGroup,
+            requestId: data.requestId,
+            action: data.action,
+            chatJid: data.chatJid,
+          },
+          'Processed room runtime report request via IPC',
+        );
+        break;
+      }
+
       if (!isHostEvidenceAction(data.action)) {
         writeHostEvidenceResponse(sourceGroup, {
           requestId: data.requestId,
@@ -405,11 +468,36 @@ export async function processTaskIpc(
           );
           break;
         }
+        if (
+          data.reviewer_agent_type !== undefined &&
+          data.reviewer_agent_type !== 'claude-code' &&
+          data.reviewer_agent_type !== 'codex'
+        ) {
+          logger.warn(
+            { sourceGroup, reviewerAgentType: data.reviewer_agent_type },
+            'Invalid assign_room request - unknown reviewer_agent_type',
+          );
+          break;
+        }
+        if (
+          data.arbiter_agent_type !== undefined &&
+          data.arbiter_agent_type !== null &&
+          data.arbiter_agent_type !== 'claude-code' &&
+          data.arbiter_agent_type !== 'codex'
+        ) {
+          logger.warn(
+            { sourceGroup, arbiterAgentType: data.arbiter_agent_type },
+            'Invalid assign_room request - unknown arbiter_agent_type',
+          );
+          break;
+        }
 
         deps.assignRoom(data.jid, {
           name: data.name,
           roomMode: data.room_mode,
           ownerAgentType: data.owner_agent_type,
+          reviewerAgentType: data.reviewer_agent_type,
+          arbiterAgentType: data.arbiter_agent_type,
           folder: data.folder,
           isMain: data.isMain,
           workDir: data.workDir,
