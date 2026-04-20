@@ -7,7 +7,10 @@ import {
 } from '../config.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
-import { type RoleAgentPlan, resolveRoleAgentPlan } from '../role-agent-plan.js';
+import {
+  type RoleAgentPlan,
+  resolveRoleAgentPlan,
+} from '../role-agent-plan.js';
 import type { AgentType, RegisteredGroup, RoomMode } from '../types.js';
 
 export type RoomModeSource = 'explicit' | 'inferred';
@@ -222,14 +225,17 @@ export function resolveStoredRoomRoleAgentPlan(
 ): RoleAgentPlan {
   const overrides = getStoredRoomRoleOverrideRows(database, stored.chatJid);
   const ownerAgentType =
-    stored.ownerAgentType ?? overrides.get('owner')?.agentType ?? OWNER_AGENT_TYPE;
+    stored.ownerAgentType ??
+    overrides.get('owner')?.agentType ??
+    OWNER_AGENT_TYPE;
 
   return resolveRoleAgentPlan({
     paired: stored.roomMode === 'tribunal',
     groupAgentType: ownerAgentType,
     configuredReviewer:
       overrides.get('reviewer')?.agentType ?? REVIEWER_AGENT_TYPE,
-    configuredArbiter: overrides.get('arbiter')?.agentType ?? ARBITER_AGENT_TYPE,
+    configuredArbiter:
+      overrides.get('arbiter')?.agentType ?? ARBITER_AGENT_TYPE,
   });
 }
 
@@ -556,7 +562,9 @@ export function syncRoomRoleOverridesForRoom(
         ? OWNER_AGENT_TYPE
         : REVIEWER_AGENT_TYPE;
     const computedReviewerAgentType =
-      ownerAgentType === REVIEWER_AGENT_TYPE ? OWNER_AGENT_TYPE : REVIEWER_AGENT_TYPE;
+      ownerAgentType === REVIEWER_AGENT_TYPE
+        ? OWNER_AGENT_TYPE
+        : REVIEWER_AGENT_TYPE;
     const reviewerAgentType =
       options.reviewerAgentType ??
       (existingReviewerOverride &&

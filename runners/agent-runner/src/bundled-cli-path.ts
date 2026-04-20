@@ -130,11 +130,11 @@ export function resolveBundledClaudeCodeExecutable(options?: {
  */
 function defaultResolvePackageDir(pkg: string): string | null {
   try {
-    // `require.resolve('<pkg>/package.json')` returns the absolute path to the
-    // package's package.json — its dirname is the package root.
+    // Resolve the package entrypoint instead of package.json because the SDK's
+    // exports map does not expose `./package.json`.
     const req = createRequire(import.meta.url);
-    const pkgJson = req.resolve(`${pkg}/package.json`);
-    return path.dirname(pkgJson);
+    const entrypoint = req.resolve(pkg);
+    return path.dirname(entrypoint);
   } catch {
     return null;
   }

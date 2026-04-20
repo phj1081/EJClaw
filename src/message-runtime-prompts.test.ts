@@ -47,9 +47,13 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       ],
     });
 
-    expect(prompt.startsWith('System note:\nIf you see a message beginning with')).toBe(true);
+    expect(
+      prompt.startsWith('System note:\nIf you see a message beginning with'),
+    ).toBe(true);
     expect(prompt).toContain(CARRY_FORWARD_MARKER);
-    expect(prompt).toContain('Respond only to the latest human request and the current task.');
+    expect(prompt).toContain(
+      'Respond only to the latest human request and the current task.',
+    );
   });
 
   it('prepends a carry-forward warning to reviewer pending prompts', () => {
@@ -63,8 +67,12 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       lastHumanMessage: '이제 새 질문',
     });
 
-    expect(prompt.startsWith('System note:\nIf you see a message beginning with')).toBe(true);
-    expect(prompt).toContain('Do not repeat, continue, or answer that carried-forward final directly.');
+    expect(
+      prompt.startsWith('System note:\nIf you see a message beginning with'),
+    ).toBe(true);
+    expect(prompt).toContain(
+      'Do not repeat, continue, or answer that carried-forward final directly.',
+    );
   });
 
   it('prepends a carry-forward warning to owner pending prompts', () => {
@@ -78,8 +86,12 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       lastHumanMessage: '새 owner 질문',
     });
 
-    expect(prompt.startsWith('System note:\nIf you see a message beginning with')).toBe(true);
-    expect(prompt).toContain('Respond only to the latest human request and the current task.');
+    expect(
+      prompt.startsWith('System note:\nIf you see a message beginning with'),
+    ).toBe(true);
+    expect(prompt).toContain(
+      'Respond only to the latest human request and the current task.',
+    );
   });
 
   it('does not prepend the warning when there is no carried-forward turn output', () => {
@@ -92,6 +104,8 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       turnOutputs: [makeTurnOutput('DONE\n일반 owner final')],
     });
 
-    expect(prompt.startsWith('System note:\nIf you see a message beginning with')).toBe(false);
+    expect(
+      prompt.startsWith('System note:\nIf you see a message beginning with'),
+    ).toBe(false);
   });
 });

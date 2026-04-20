@@ -78,7 +78,9 @@ export interface IpcDeps {
     isMain: boolean,
     availableGroups: AvailableGroup[],
   ) => void;
-  injectInboundMessage?: (payload: InjectInboundMessagePayload) => Promise<void>;
+  injectInboundMessage?: (
+    payload: InjectInboundMessagePayload,
+  ) => Promise<void>;
   getRoomRuntimeReport?: (args: {
     chatJid: string;
     sourceGroup: string;

@@ -339,7 +339,10 @@ export function resolveExecutionTarget(args: {
     args.lease.reviewer_agent_type ?? REVIEWER_AGENT_TYPE,
     args.lease.arbiter_agent_type ?? ARBITER_AGENT_TYPE,
   );
-  const configuredAgentType = resolveAgentTypeForRole(roleAgentPlan, activeRole);
+  const configuredAgentType = resolveAgentTypeForRole(
+    roleAgentPlan,
+    activeRole,
+  );
   const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
 
   return {

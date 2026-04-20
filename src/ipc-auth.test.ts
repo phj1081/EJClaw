@@ -1058,13 +1058,15 @@ describe('assign_room success', () => {
       deps,
     );
 
-    expect(getStoredRoomSettings('tribunal-role-overrides@g.us')).toMatchObject({
-      chatJid: 'tribunal-role-overrides@g.us',
-      roomMode: 'tribunal',
-      modeSource: 'explicit',
-      name: 'Tribunal Role Overrides',
-      ownerAgentType: 'claude-code',
-    });
+    expect(getStoredRoomSettings('tribunal-role-overrides@g.us')).toMatchObject(
+      {
+        chatJid: 'tribunal-role-overrides@g.us',
+        roomMode: 'tribunal',
+        modeSource: 'explicit',
+        name: 'Tribunal Role Overrides',
+        ownerAgentType: 'claude-code',
+      },
+    );
     expect(
       getRegisteredAgentTypesForJid('tribunal-role-overrides@g.us').sort(),
     ).toEqual(['claude-code', 'codex']);

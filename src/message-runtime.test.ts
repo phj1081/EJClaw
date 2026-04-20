@@ -1,10 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { EffectiveChannelLease } from './service-routing.js';
 import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
 import * as pairedExecutionContext from './paired-execution-context.js';
 
 /** Prefix helper for progress message assertions */
 const P = (text: string) => `${TASK_STATUS_MESSAGE_PREFIX}${text}`;
+
+const makeCodexLease = (chatJid: string): EffectiveChannelLease => ({
+  chat_jid: chatJid,
+  owner_agent_type: 'codex',
+  reviewer_agent_type: null,
+  arbiter_agent_type: null,
+  owner_service_id: 'codex',
+  reviewer_service_id: null,
+  arbiter_service_id: null,
+  owner_failover_active: false,
+  activated_at: null,
+  reason: null,
+  explicit: false,
+});
 
 vi.mock('./agent-runner.js', () => ({
   runAgentProcess: vi.fn(),
@@ -3641,6 +3656,20 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     const notifyIdle = vi.fn();
     const clearSession = vi.fn();
 
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: chatJid,
+      owner_agent_type: 'codex',
+      reviewer_agent_type: null,
+      arbiter_agent_type: null,
+      owner_service_id: 'codex',
+      reviewer_service_id: null,
+      arbiter_service_id: null,
+      owner_failover_active: false,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
         id: 'msg-1',
@@ -3711,6 +3740,10 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     const channel = makeChannel(chatJid);
     const notifyIdle = vi.fn();
     const persistSession = vi.fn();
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue(
+      makeCodexLease(chatJid),
+    );
 
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
@@ -4107,6 +4140,10 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
 
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue(
+      makeCodexLease(chatJid),
+    );
+
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
         id: 'msg-1',
@@ -4134,6 +4171,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
           result: '아직 진행 중입니다.',
           newSessionId: 'session-long-progress',
         });
+        await vi.advanceTimersByTimeAsync(0);
         await vi.advanceTimersByTimeAsync(70_000);
         await vi.advanceTimersByTimeAsync(50_000);
         await vi.advanceTimersByTimeAsync(3_480_000);
@@ -4736,6 +4774,10 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
 
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue(
+      makeCodexLease(chatJid),
+    );
+
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
         id: 'msg-1',
@@ -4844,6 +4886,10 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue(
+      makeCodexLease(chatJid),
+    );
 
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
