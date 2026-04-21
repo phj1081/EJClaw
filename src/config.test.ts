@@ -30,6 +30,7 @@ describe('config/env loading', () => {
     delete process.env.DISCORD_REVIEW_BOT_TOKEN;
     delete process.env.DISCORD_CODEX_REVIEW_BOT_TOKEN;
     delete process.env.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL;
+    delete process.env.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION;
     delete process.env.SESSION_COMMAND_USER_IDS;
     vi.resetModules();
   });
@@ -111,6 +112,16 @@ describe('config/env loading', () => {
     process.env.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL = 'true';
     config = await import('./config.js');
     expect(config.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL).toBe(true);
+  });
+
+  it('defaults unsafe-host Claude reviewer fresh-session forcing to disabled and honors explicit opt-in', async () => {
+    let config = await import('./config.js');
+    expect(config.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION).toBe(false);
+
+    vi.resetModules();
+    process.env.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION = 'true';
+    config = await import('./config.js');
+    expect(config.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION).toBe(true);
   });
 
   it('fails fast when a legacy Discord token alias is configured', async () => {

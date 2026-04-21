@@ -54,6 +54,7 @@ export interface AppConfig {
     arbiterAgentType?: AgentType;
     arbiterServiceId: string | null;
     carryForwardLatestOwnerFinal: boolean;
+    forceFreshClaudeReviewerSessionInUnsafeHostMode: boolean;
     agentLanguage: string;
     arbiterDeadlockThreshold: number;
     maxRoundTrips: number;
