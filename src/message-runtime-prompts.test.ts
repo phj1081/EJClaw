@@ -124,7 +124,9 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       },
     });
 
-    expect(prompt).toContain('Background from the previous completed paired task:');
+    expect(prompt).toContain(
+      'Background from the previous completed paired task:',
+    );
     expect(prompt).toContain('Previous task owner final:');
     expect(prompt).toContain('이전 owner 결론');
     expect(prompt).toContain('Previous task reviewer final:');
@@ -144,7 +146,9 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       },
     });
 
-    expect(prompt).toContain('Background from the previous completed paired task:');
+    expect(prompt).toContain(
+      'Background from the previous completed paired task:',
+    );
     expect(prompt).toContain('Previous task owner final:');
     expect(prompt).toContain('Previous task reviewer final:');
     expect(prompt).toContain('추가 owner 질문');

@@ -35,6 +35,7 @@ vi.mock('./config.js', () => ({
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   REVIEWER_AGENT_TYPE: 'claude-code',
   ARBITER_AGENT_TYPE: undefined,
+  shouldForceFreshClaudeReviewerSessionInUnsafeHostMode: vi.fn(() => false),
   normalizeServiceId: vi.fn((serviceId: string) => serviceId),
   isClaudeService: vi.fn(() => true),
   isReviewService: vi.fn(() => false),
@@ -1952,7 +1953,9 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
       updated_at: '2026-03-30T00:00:09.000Z',
     } as any;
 
-    vi.mocked(db.getLatestPreviousPairedTaskForChat).mockReturnValue(previousTask);
+    vi.mocked(db.getLatestPreviousPairedTaskForChat).mockReturnValue(
+      previousTask,
+    );
     vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) => {
       if (taskId === currentTask.id) {
         return [];
@@ -1992,7 +1995,9 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     });
 
     expect(pending).not.toBeNull();
-    expect(pending?.prompt).toContain('Background from the previous completed paired task:');
+    expect(pending?.prompt).toContain(
+      'Background from the previous completed paired task:',
+    );
     expect(pending?.prompt).toContain('Previous task owner final:');
     expect(pending?.prompt).toContain('이전 owner 답변');
     expect(pending?.prompt).toContain('Previous task reviewer final:');

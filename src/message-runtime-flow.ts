@@ -118,7 +118,11 @@ export function buildPendingPairedTurn(args: {
   const cursor = lastRaw?.seq ?? lastRaw?.timestamp ?? null;
   const taskStatus = task.status;
   const turnOutputs = getPairedTurnOutputs(task.id);
-  const priorTaskContext = resolvePriorTaskPromptContext(chatJid, task, turnOutputs);
+  const priorTaskContext = resolvePriorTaskPromptContext(
+    chatJid,
+    task,
+    turnOutputs,
+  );
   const lastTurnOutput = turnOutputs[turnOutputs.length - 1];
   const nextTurnAction = resolveNextTurnAction({
     taskStatus,
