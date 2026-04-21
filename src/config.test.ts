@@ -29,6 +29,7 @@ describe('config/env loading', () => {
     delete process.env.DISCORD_CODEX_MAIN_BOT_TOKEN;
     delete process.env.DISCORD_REVIEW_BOT_TOKEN;
     delete process.env.DISCORD_CODEX_REVIEW_BOT_TOKEN;
+    delete process.env.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL;
     delete process.env.SESSION_COMMAND_USER_IDS;
     vi.resetModules();
   });
@@ -100,6 +101,16 @@ describe('config/env loading', () => {
     expect(config.DEFAULT_CODEX_MODEL).toBe('gpt-5.4-test');
     expect(config.STATUS_CHANNEL_ID).toBe('status-room');
     expect(config.TIMEZONE).toBe('UTC');
+  });
+
+  it('defaults latest-owner-final carry-forward to disabled and honors explicit opt-in', async () => {
+    let config = await import('./config.js');
+    expect(config.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL).toBe(false);
+
+    vi.resetModules();
+    process.env.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL = 'true';
+    config = await import('./config.js');
+    expect(config.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL).toBe(true);
   });
 
   it('fails fast when a legacy Discord token alias is configured', async () => {

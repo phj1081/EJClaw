@@ -14,6 +14,7 @@ import {
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
   DATA_DIR,
+  PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL,
   PAIRED_MAX_ROUND_TRIPS,
   REVIEWER_AGENT_TYPE,
 } from './config.js';
@@ -207,6 +208,10 @@ function carryForwardLatestOwnerFinal(args: {
   sourceTask: PairedTask;
   targetTask: PairedTask;
 }): void {
+  if (!PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL) {
+    return;
+  }
+
   const latestOwnerFinal = getLatestTurnOutputByRole(
     args.sourceTask.id,
     'owner',

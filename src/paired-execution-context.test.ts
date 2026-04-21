@@ -253,7 +253,7 @@ describe('paired execution context', () => {
     });
   });
 
-  it('carries forward the latest owner final when a merge_ready task is superseded by new human input', () => {
+  it('does not carry forward the latest owner final by default when a merge_ready task is superseded by new human input', () => {
     const supersededTask = buildPairedTask({
       id: 'task-superseded',
       status: 'merge_ready',
@@ -290,13 +290,7 @@ describe('paired execution context', () => {
 
     expect(db.createPairedTask).toHaveBeenCalledTimes(1);
     expect(result.supersededTask).toEqual(supersededTask);
-    expect(db.insertPairedTurnOutput).toHaveBeenCalledWith(
-      expect.any(String),
-      0,
-      'owner',
-      '[Carried forward context from the previous task: latest owner final]\nDONE_WITH_CONCERNS\n이전 task owner final',
-      '2026-03-28T00:01:00.000Z',
-    );
+    expect(db.insertPairedTurnOutput).not.toHaveBeenCalled();
   });
 
   it('uses room role context agent overrides when creating a paired task', () => {

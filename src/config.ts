@@ -76,6 +76,10 @@ export const ARBITER_AGENT_TYPE = CONFIG.paired.arbiterAgentType;
 /** Service ID for the arbiter. Defaults to codex-review for internal routing when arbiter is enabled. */
 export const ARBITER_SERVICE_ID = CONFIG.paired.arbiterServiceId;
 
+/** Whether to re-inject the previous task's latest owner final into a superseding task. Default: false. */
+export const PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL =
+  CONFIG.paired.carryForwardLatestOwnerFinal;
+
 /** Language for agent responses. When set, a language instruction is appended to all paired room prompts. */
 export const AGENT_LANGUAGE = CONFIG.paired.agentLanguage;
 

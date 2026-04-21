@@ -53,6 +53,7 @@ export interface AppConfig {
     reviewerServiceIdForType: string;
     arbiterAgentType?: AgentType;
     arbiterServiceId: string | null;
+    carryForwardLatestOwnerFinal: boolean;
     agentLanguage: string;
     arbiterDeadlockThreshold: number;
     maxRoundTrips: number;

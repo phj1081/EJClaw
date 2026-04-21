@@ -223,6 +223,10 @@ export function loadConfig(): AppConfig {
       arbiterServiceId: arbiterAgentType
         ? (readText('ARBITER_SERVICE_ID') ?? codexReviewServiceId)
         : null,
+      carryForwardLatestOwnerFinal: readBoolean(
+        'PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL',
+        false,
+      ),
       agentLanguage: readText('AGENT_LANGUAGE') ?? '',
       arbiterDeadlockThreshold: readInteger('ARBITER_DEADLOCK_THRESHOLD', 2),
       maxRoundTrips,
