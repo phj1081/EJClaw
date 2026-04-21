@@ -26,6 +26,7 @@ import {
   createPairedTaskInDatabase,
   getLastBotFinalMessageFromDatabase,
   getLatestOpenPairedTaskForChatFromDatabase,
+  getLatestPreviousPairedTaskForChatFromDatabase,
   getLatestPairedTaskForChatFromDatabase,
   getPairedProjectFromDatabase,
   getPairedTaskByIdFromDatabase,
@@ -99,6 +100,17 @@ export function getLatestOpenPairedTaskForChat(
   chatJid: string,
 ): PairedTask | undefined {
   return getLatestOpenPairedTaskForChatFromDatabase(requireDatabase(), chatJid);
+}
+
+export function getLatestPreviousPairedTaskForChat(
+  chatJid: string,
+  currentTaskId: string,
+): PairedTask | undefined {
+  return getLatestPreviousPairedTaskForChatFromDatabase(
+    requireDatabase(),
+    chatJid,
+    currentTaskId,
+  );
 }
 
 export function updatePairedTask(id: string, updates: PairedTaskUpdates): void {
