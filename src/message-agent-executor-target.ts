@@ -8,6 +8,7 @@ import {
   ARBITER_AGENT_TYPE,
   REVIEWER_AGENT_TYPE,
   getRoleModelConfig,
+  shouldForceFreshClaudeReviewerSessionInUnsafeHostMode,
 } from './config.js';
 import {
   getAllTasks,
@@ -119,7 +120,10 @@ export async function prepareMessageAgentExecutionTarget(
   const isClaudeCodeAgent = effectiveAgentType === 'claude-code';
   const unsafeHostPairedMode = isUnsafeHostPairedModeEnabled();
   const forceFreshClaudeReviewerSession =
-    reviewerMode && isClaudeCodeAgent && unsafeHostPairedMode;
+    reviewerMode &&
+    isClaudeCodeAgent &&
+    unsafeHostPairedMode &&
+    shouldForceFreshClaudeReviewerSessionInUnsafeHostMode();
   const shouldPersistSession =
     activeRole !== 'arbiter' &&
     !args.forcedAgentType &&

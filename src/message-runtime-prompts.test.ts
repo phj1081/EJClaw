@@ -65,6 +65,7 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       ],
       recentHumanMessages: [makeHumanMessage('이제 새 질문')],
       lastHumanMessage: '이제 새 질문',
+      priorTaskContext: null,
     });
 
     expect(
@@ -84,6 +85,7 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       ],
       recentHumanMessages: [makeHumanMessage('새 owner 질문')],
       lastHumanMessage: '새 owner 질문',
+      priorTaskContext: null,
     });
 
     expect(
@@ -107,5 +109,48 @@ describe('message-runtime-prompts carry-forward guidance', () => {
     expect(
       prompt.startsWith('System note:\nIf you see a message beginning with'),
     ).toBe(false);
+  });
+
+  it('includes previous owner and reviewer finals in reviewer pending prompts when the current task has no outputs', () => {
+    const prompt = buildReviewerPendingPrompt({
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: [],
+      recentHumanMessages: [makeHumanMessage('추가 질문')],
+      lastHumanMessage: '추가 질문',
+      priorTaskContext: {
+        ownerFinal: 'DONE\n이전 owner 결론',
+        reviewerFinal: 'DONE_WITH_CONCERNS\n이전 reviewer 결론',
+      },
+    });
+
+    expect(prompt).toContain(
+      'Background from the previous completed paired task:',
+    );
+    expect(prompt).toContain('Previous task owner final:');
+    expect(prompt).toContain('이전 owner 결론');
+    expect(prompt).toContain('Previous task reviewer final:');
+    expect(prompt).toContain('이전 reviewer 결론');
+  });
+
+  it('includes previous owner and reviewer finals in owner pending prompts when the current task has no outputs', () => {
+    const prompt = buildOwnerPendingPrompt({
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: [],
+      recentHumanMessages: [makeHumanMessage('추가 owner 질문')],
+      lastHumanMessage: '추가 owner 질문',
+      priorTaskContext: {
+        ownerFinal: 'DONE\n이전 owner 결론',
+        reviewerFinal: 'DONE_WITH_CONCERNS\n이전 reviewer 결론',
+      },
+    });
+
+    expect(prompt).toContain(
+      'Background from the previous completed paired task:',
+    );
+    expect(prompt).toContain('Previous task owner final:');
+    expect(prompt).toContain('Previous task reviewer final:');
+    expect(prompt).toContain('추가 owner 질문');
   });
 });

@@ -254,6 +254,26 @@ export function getLatestOpenPairedTaskForChatFromDatabase(
   return row ? hydratePairedTaskRow(database, row) : undefined;
 }
 
+export function getLatestPreviousPairedTaskForChatFromDatabase(
+  database: Database,
+  chatJid: string,
+  currentTaskId: string,
+): PairedTask | undefined {
+  const row = database
+    .prepare(
+      `
+        SELECT *
+          FROM paired_tasks
+         WHERE chat_jid = ?
+           AND id != ?
+         ORDER BY updated_at DESC, created_at DESC
+         LIMIT 1
+      `,
+    )
+    .get(chatJid, currentTaskId) as StoredPairedTaskRow | undefined;
+  return row ? hydratePairedTaskRow(database, row) : undefined;
+}
+
 export function updatePairedTaskInDatabase(
   database: Database,
   id: string,

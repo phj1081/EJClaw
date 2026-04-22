@@ -1,4 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as config from './config.js';
 
 vi.mock('./agent-runner.js', () => ({
   runAgentProcess: vi.fn(),
@@ -16,9 +17,11 @@ vi.mock('./config.js', () => ({
   CODEX_MAIN_SERVICE_ID: 'codex-main',
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   DATA_DIR: '/tmp/ejclaw-test-data',
+  PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION: false,
   REVIEWER_AGENT_TYPE: 'claude-code',
   ARBITER_AGENT_TYPE: undefined,
   SERVICE_SESSION_SCOPE: 'claude',
+  shouldForceFreshClaudeReviewerSessionInUnsafeHostMode: vi.fn(() => false),
   isClaudeService: vi.fn(() => true),
   normalizeServiceId: vi.fn((serviceId: string) =>
     serviceId === 'codex' ? 'codex-main' : serviceId,
@@ -290,6 +293,9 @@ describe('runAgentForGroup room memory', () => {
     vi.resetAllMocks();
     resetPairedFollowUpScheduleState();
     delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+    vi.mocked(
+      config.shouldForceFreshClaudeReviewerSessionInUnsafeHostMode,
+    ).mockReturnValue(false);
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
         await onOutput?.({
@@ -1862,7 +1868,7 @@ describe('runAgentForGroup room memory', () => {
     );
   });
 
-  it('starts reviewer Claude fresh in unsafe host mode instead of resuming a stored session', async () => {
+  it('keeps reviewer Claude session in unsafe host mode by default', async () => {
     process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
     const group = {
       ...makeGroup(),
@@ -1944,6 +1950,110 @@ describe('runAgentForGroup room memory', () => {
       prompt: 'please review',
       chatJid: 'group@test',
       runId: 'run-review-plan-unsafe-host',
+    });
+
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        folder: 'test-group',
+        agentType: 'claude-code',
+      }),
+      expect.objectContaining({
+        sessionId: 'reviewer-session',
+      }),
+      expect.any(Function),
+      expect.any(Function),
+      expect.objectContaining({
+        EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+      }),
+    );
+    expect(deps.clearSession).not.toHaveBeenCalled();
+  });
+
+  it('starts reviewer Claude fresh in unsafe host mode when explicitly forced', async () => {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
+    vi.mocked(
+      config.shouldForceFreshClaudeReviewerSessionInUnsafeHostMode,
+    ).mockReturnValue(true);
+    const group = {
+      ...makeGroup(),
+      folder: 'test-group',
+      agentType: 'codex' as const,
+    };
+    const deps = {
+      ...makeDeps(),
+      getSessions: () => ({ 'test-group:reviewer': 'reviewer-session' }),
+    };
+
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-review',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockReturnValue({
+      task: {
+        id: 'paired-task-review',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: 'codex-main',
+        reviewer_service_id: 'claude',
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        round_trip_count: 0,
+        review_requested_at: '2026-03-31T00:00:00.000Z',
+        status: 'review_ready',
+        arbiter_verdict: null,
+        arbiter_requested_at: null,
+        completion_reason: null,
+        created_at: '2026-03-31T00:00:00.000Z',
+        updated_at: '2026-03-31T00:00:00.000Z',
+      },
+      workspace: null,
+      envOverrides: {
+        EJCLAW_PAIRED_TASK_ID: 'paired-task-review',
+        EJCLAW_PAIRED_ROLE: 'reviewer',
+        EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+        CLAUDE_CONFIG_DIR: '/tmp/test-group-reviewer',
+      },
+    });
+    vi.mocked(agentRunner.runAgentProcess).mockResolvedValue({
+      status: 'success',
+      result: 'review ok',
+      newSessionId: 'review-session-new',
+    });
+
+    await runAgentForGroup(deps, {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-review-plan-unsafe-host-fresh',
     });
 
     expect(deps.clearSession).toHaveBeenCalledWith('test-group:reviewer');

@@ -1,6 +1,6 @@
 {
   "name": "ejclaw",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Discord tribunal multi-agent assistant with owner, reviewer, and arbiter roles.",
   "packageManager": "bun@1.3.11",
   "type": "module",

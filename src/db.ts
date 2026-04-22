@@ -92,6 +92,7 @@ export {
   getLastBotFinalMessage,
   getLatestOpenPairedTaskForChat,
   getLatestPairedTaskForChat,
+  getLatestPreviousPairedTaskForChat,
   getLatestTurnNumber,
   getPairedProject,
   getPairedTaskById,

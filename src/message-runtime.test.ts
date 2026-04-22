@@ -35,6 +35,7 @@ vi.mock('./config.js', () => ({
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   REVIEWER_AGENT_TYPE: 'claude-code',
   ARBITER_AGENT_TYPE: undefined,
+  shouldForceFreshClaudeReviewerSessionInUnsafeHostMode: vi.fn(() => false),
   normalizeServiceId: vi.fn((serviceId: string) => serviceId),
   isClaudeService: vi.fn(() => true),
   isReviewService: vi.fn(() => false),
@@ -161,6 +162,7 @@ vi.mock('./db.js', () => {
     ),
     hasActiveCiWatcherForChat: vi.fn(() => false),
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
+    getLatestPreviousPairedTaskForChat: vi.fn(() => undefined),
     getPairedTaskById: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
     getRecentChatMessages: vi.fn(() => []),
@@ -1919,6 +1921,87 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
       intentKind: 'reviewer-turn',
       nextRole: 'reviewer',
     });
+  });
+
+  it('includes previous task owner and reviewer finals in a new reviewer prompt when the current task has no outputs', () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const currentTask = {
+      id: 'task-current-reviewer',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:10.000Z',
+      round_trip_count: 1,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:10.000Z',
+      updated_at: '2026-03-30T00:00:10.000Z',
+    } as any;
+    const previousTask = {
+      ...currentTask,
+      id: 'task-previous-reviewer',
+      status: 'completed',
+      completion_reason: 'superseded',
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:09.000Z',
+    } as any;
+
+    vi.mocked(db.getLatestPreviousPairedTaskForChat).mockReturnValue(
+      previousTask,
+    );
+    vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) => {
+      if (taskId === currentTask.id) {
+        return [];
+      }
+      if (taskId === previousTask.id) {
+        return [
+          {
+            id: 1,
+            task_id: previousTask.id,
+            turn_number: 1,
+            role: 'owner',
+            output_text: 'DONE\n이전 owner 답변',
+            created_at: '2026-03-30T00:00:05.000Z',
+          },
+          {
+            id: 2,
+            task_id: previousTask.id,
+            turn_number: 2,
+            role: 'reviewer',
+            output_text: 'DONE_WITH_CONCERNS\n이전 reviewer 피드백',
+            created_at: '2026-03-30T00:00:06.000Z',
+          },
+        ] as any;
+      }
+      return [];
+    });
+    vi.mocked(db.getLastHumanMessageContent).mockReturnValue('추가 질문');
+
+    const pending = buildPendingPairedTurn({
+      chatJid,
+      timezone: 'UTC',
+      task: currentTask,
+      rawMissedMessages: [{ seq: 42, timestamp: '2026-03-30T00:00:11.000Z' }],
+      recentHumanMessages: [],
+      labeledRecentMessages: [],
+      resolveChannel: () => makeChannel(chatJid, 'discord-review', false),
+    });
+
+    expect(pending).not.toBeNull();
+    expect(pending?.prompt).toContain(
+      'Background from the previous completed paired task:',
+    );
+    expect(pending?.prompt).toContain('Previous task owner final:');
+    expect(pending?.prompt).toContain('이전 owner 답변');
+    expect(pending?.prompt).toContain('Previous task reviewer final:');
+    expect(pending?.prompt).toContain('이전 reviewer 피드백');
   });
 
   it('re-enqueues reviewer after a successful owner delivery moves the task to review_ready', async () => {

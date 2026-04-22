@@ -8,6 +8,11 @@ const CARRIED_FORWARD_OWNER_FINAL_MARKER =
 const CARRIED_FORWARD_OWNER_FINAL_GUIDANCE = `System note:
 If you see a message beginning with "${CARRIED_FORWARD_OWNER_FINAL_MARKER}", treat it as background only. Do not repeat, continue, or answer that carried-forward final directly. Respond only to the latest human request and the current task.`;
 
+export interface PriorTaskPromptContext {
+  ownerFinal?: string | null;
+  reviewerFinal?: string | null;
+}
+
 function turnOutputsToMessages(
   outputs: PairedTurnOutput[],
   chatJid: string,
@@ -51,6 +56,40 @@ function prependCarriedForwardGuidance(
   return `${CARRIED_FORWARD_OWNER_FINAL_GUIDANCE}\n\n${prompt}`;
 }
 
+function truncatePriorTaskFinal(text: string, maxChars = 1200): string {
+  const normalized = text.trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxChars)}...`;
+}
+
+function formatPriorTaskPromptContext(
+  priorTaskContext?: PriorTaskPromptContext | null,
+): string {
+  if (!priorTaskContext) {
+    return '';
+  }
+
+  const sections: string[] = [];
+  if (priorTaskContext.ownerFinal?.trim()) {
+    sections.push(
+      `Previous task owner final:\n---\n${truncatePriorTaskFinal(priorTaskContext.ownerFinal)}\n---`,
+    );
+  }
+  if (priorTaskContext.reviewerFinal?.trim()) {
+    sections.push(
+      `Previous task reviewer final:\n---\n${truncatePriorTaskFinal(priorTaskContext.reviewerFinal)}\n---`,
+    );
+  }
+
+  if (sections.length === 0) {
+    return '';
+  }
+
+  return `Background from the previous completed paired task:\n${sections.join('\n\n')}\n\n`;
+}
+
 export function buildPairedTurnPrompt(args: {
   taskId: string;
   chatJid: string;
@@ -85,6 +124,7 @@ export function buildReviewerPendingPrompt(args: {
   turnOutputs: PairedTurnOutput[];
   recentHumanMessages: NewMessage[];
   lastHumanMessage: string | null | undefined;
+  priorTaskContext?: PriorTaskPromptContext | null;
 }): string {
   if (args.turnOutputs.length > 0) {
     return prependCarriedForwardGuidance(
@@ -101,10 +141,10 @@ export function buildReviewerPendingPrompt(args: {
   }
 
   if (!args.lastHumanMessage) {
-    return 'Review the latest owner changes in the workspace.';
+    return `${formatPriorTaskPromptContext(args.priorTaskContext)}Review the latest owner changes in the workspace.`;
   }
 
-  return `User request:\n---\n${args.lastHumanMessage}\n---\n\nReview the latest owner changes in the workspace.`;
+  return `${formatPriorTaskPromptContext(args.priorTaskContext)}User request:\n---\n${args.lastHumanMessage}\n---\n\nReview the latest owner changes in the workspace.`;
 }
 
 export function buildOwnerPendingPrompt(args: {
@@ -113,6 +153,7 @@ export function buildOwnerPendingPrompt(args: {
   turnOutputs: PairedTurnOutput[];
   recentHumanMessages: NewMessage[];
   lastHumanMessage: string | null | undefined;
+  priorTaskContext?: PriorTaskPromptContext | null;
 }): string {
   if (args.turnOutputs.length > 0) {
     return prependCarriedForwardGuidance(
@@ -129,10 +170,10 @@ export function buildOwnerPendingPrompt(args: {
   }
 
   if (!args.lastHumanMessage) {
-    return 'Continue the owner turn using the latest reviewer or arbiter feedback.';
+    return `${formatPriorTaskPromptContext(args.priorTaskContext)}Continue the owner turn using the latest reviewer or arbiter feedback.`;
   }
 
-  return `User request:\n---\n${args.lastHumanMessage}\n---\n\nContinue the owner turn using the latest reviewer or arbiter feedback.`;
+  return `${formatPriorTaskPromptContext(args.priorTaskContext)}User request:\n---\n${args.lastHumanMessage}\n---\n\nContinue the owner turn using the latest reviewer or arbiter feedback.`;
 }
 
 export function buildArbiterPromptForTask(args: {
