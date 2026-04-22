@@ -138,7 +138,8 @@ describe('claude reviewer runtime guard', () => {
       'best-effort',
     );
 
-    expect(sandbox.failIfUnavailable).toBe(false);
+    expect(sandbox).toBeDefined();
+    expect(sandbox?.failIfUnavailable).toBe(false);
   });
 
   it('keeps non-linux reviewers in best-effort sandbox mode', () => {
@@ -152,7 +153,8 @@ describe('claude reviewer runtime guard', () => {
       'best-effort',
     );
 
-    expect(sandbox.failIfUnavailable).toBe(false);
+    expect(sandbox).toBeDefined();
+    expect(sandbox?.failIfUnavailable).toBe(false);
   });
 
   it('flags mutating shell commands', () => {
