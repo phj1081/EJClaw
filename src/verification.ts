@@ -11,7 +11,12 @@ import {
 } from './workspace-package-manager.js';
 import { computeVerificationSnapshotId } from '../shared/verification-snapshot.js';
 
-export const VERIFICATION_PROFILES = ['test', 'typecheck', 'build'] as const;
+export const VERIFICATION_PROFILES = [
+  'test',
+  'typecheck',
+  'build',
+  'lint',
+] as const;
 
 export type VerificationProfile = (typeof VERIFICATION_PROFILES)[number];
 
@@ -91,12 +96,19 @@ export function buildVerificationCommand(
   profile: VerificationProfile,
   repoDir: string = process.cwd(),
 ): VerificationCommandSpec {
+  const scripts = readPackageScripts(repoDir);
   const scriptName =
     profile === 'test'
       ? 'test'
       : profile === 'typecheck'
         ? 'typecheck'
-        : 'build';
+        : profile === 'build'
+          ? 'build'
+          : scripts['lint:ci']
+            ? 'lint:ci'
+            : scripts['lint:check']
+              ? 'lint:check'
+              : 'lint';
   const command = buildWorkspaceScriptCommand(repoDir, scriptName);
   return {
     file: command.file,

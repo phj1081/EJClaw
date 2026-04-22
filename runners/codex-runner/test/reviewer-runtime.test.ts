@@ -75,6 +75,9 @@ describe('codex reviewer runtime guard', () => {
     const env = buildReviewerGitGuardEnv({ PATH: process.env.PATH }, true);
     expect(env.PATH).toContain('ejclaw-reviewer-git-');
     expect(env.EJCLAW_REAL_GIT).toBeTruthy();
+    expect(env.GIT_CONFIG_GLOBAL).toContain('global.gitconfig');
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe('1');
+    expect(fs.existsSync(env.GIT_CONFIG_GLOBAL!)).toBe(true);
   });
 
   it('prefers an executable HOME-scoped wrapper dir before tmp', () => {
@@ -149,6 +152,30 @@ describe('codex reviewer runtime guard', () => {
         'EJClaw reviewer runtime blocks mutating git subcommands: commit',
       );
     }
+  });
+
+  it('overrides problematic git config paths so read-only git queries still work', () => {
+    const cwd = createTempRepo('ejclaw-reviewer-readonly-git-');
+    const env = buildReviewerGitGuardEnv(
+      {
+        PATH: process.env.PATH,
+        HOME: cwd,
+        EJCLAW_WORK_DIR: cwd,
+        GIT_CONFIG_GLOBAL: path.join(cwd, '.gitconfig'),
+      },
+      true,
+    );
+
+    expect(env.GIT_CONFIG_GLOBAL).not.toBe(path.join(cwd, '.gitconfig'));
+    expect(() =>
+      execFileSync('git', ['log', '--oneline', '-1'], {
+        cwd,
+        env,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }),
+    ).not.toThrow();
+    expect(fs.existsSync(path.join(cwd, '.gitconfig'))).toBe(false);
   });
 
   it('accepts a mounted local origin path that resolves as a git repo', () => {

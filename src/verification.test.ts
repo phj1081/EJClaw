@@ -20,7 +20,7 @@ describe('verification helpers', () => {
     expect(isVerificationProfile('test')).toBe(true);
     expect(isVerificationProfile('typecheck')).toBe(true);
     expect(isVerificationProfile('build')).toBe(true);
-    expect(isVerificationProfile('lint')).toBe(false);
+    expect(isVerificationProfile('lint')).toBe(true);
   });
 
   it('builds deterministic commands for each profile', () => {
@@ -43,6 +43,49 @@ describe('verification helpers', () => {
       file: 'npm',
       args: ['run', 'build'],
       requiredScript: 'build',
+    });
+    expect(buildVerificationCommand('lint', repoDir)).toMatchObject({
+      file: 'npm',
+      args: ['run', 'lint'],
+      requiredScript: 'lint',
+    });
+  });
+
+  it('prefers lint:ci and lint:check before plain lint', () => {
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-lint-'),
+    );
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        scripts: {
+          lint: 'eslint .',
+          'lint:check': 'eslint --max-warnings 0 .',
+          'lint:ci': 'eslint --format compact .',
+        },
+      }),
+    );
+
+    expect(buildVerificationCommand('lint', repoDir)).toMatchObject({
+      file: 'npm',
+      args: ['run', 'lint:ci'],
+      requiredScript: 'lint:ci',
+    });
+
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        scripts: {
+          lint: 'eslint .',
+          'lint:check': 'eslint --max-warnings 0 .',
+        },
+      }),
+    );
+
+    expect(buildVerificationCommand('lint', repoDir)).toMatchObject({
+      file: 'npm',
+      args: ['run', 'lint:check'],
+      requiredScript: 'lint:check',
     });
   });
 
@@ -247,6 +290,53 @@ describe('verification helpers', () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('typecheck:1');
     expect(result.runtimeVersion).toMatch(/^host:bun@/);
+    expect(result.snapshotId).toBe(expectedSnapshotId);
+  });
+
+  it('runs lint verification using the preferred lint script', async () => {
+    const repoDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-direct-lint-'),
+    );
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
+      recursive: true,
+    });
+    fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        name: 'verification-direct-lint',
+        packageManager: 'bun@1.3.11',
+        scripts: {
+          'lint:check':
+            "node -e \"process.stdout.write('lint-check:' + (process.env.CI || 'missing'))\"",
+        },
+      }),
+    );
+    fs.writeFileSync(path.join(repoDir, 'bun.lock'), '');
+    fs.writeFileSync(
+      path.join(repoDir, 'node_modules', '.bin', 'placeholder'),
+      '',
+    );
+    fs.writeFileSync(
+      path.join(repoDir, 'src', 'index.ts'),
+      'export const value = 1;\n',
+    );
+    ensureWorkspaceDependenciesInstalled(repoDir);
+
+    const expectedSnapshotId = computeVerificationSnapshot(repoDir).snapshotId;
+    const result = await runVerificationRequest(
+      {
+        requestId: 'req-direct-lint',
+        profile: 'lint',
+        expectedSnapshotId,
+      },
+      { repoDir },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.command).toContain('lint:check');
+    expect(result.stdout).toContain('lint-check:1');
     expect(result.snapshotId).toBe(expectedSnapshotId);
   });
 
