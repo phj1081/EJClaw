@@ -136,7 +136,7 @@ describe('claude reviewer runtime guard', () => {
       ['/repo/work'],
       'linux',
       'best-effort',
-    ) as { failIfUnavailable?: boolean };
+    ) as unknown as { failIfUnavailable?: boolean };
 
     expect(sandbox.failIfUnavailable).toBe(false);
   });
@@ -150,7 +150,7 @@ describe('claude reviewer runtime guard', () => {
       ['/repo/work'],
       'darwin',
       'best-effort',
-    ) as { failIfUnavailable?: boolean };
+    ) as unknown as { failIfUnavailable?: boolean };
 
     expect(sandbox.failIfUnavailable).toBe(false);
   });
