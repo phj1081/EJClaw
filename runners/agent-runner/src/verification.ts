@@ -3,7 +3,12 @@ import path from 'path';
 import { pathToFileURL } from 'url';
 export { computeVerificationSnapshotId } from '../../../shared/verification-snapshot.js';
 
-export const VERIFICATION_PROFILES = ['test', 'typecheck', 'build'] as const;
+export const VERIFICATION_PROFILES = [
+  'test',
+  'typecheck',
+  'build',
+  'lint',
+] as const;
 
 export type VerificationProfile = (typeof VERIFICATION_PROFILES)[number];
 

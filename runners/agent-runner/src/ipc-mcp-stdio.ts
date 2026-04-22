@@ -479,12 +479,12 @@ server.tool(
 
 server.tool(
   'run_verification',
-  'Run a fixed verification profile directly on the host against the current repo snapshot using a restricted environment and snapshot checks. Use this instead of broad shell write access for test/typecheck/build verification.',
+  'Run a fixed verification profile directly on the host against the current repo snapshot using a restricted environment and snapshot checks. Use this instead of broad shell write access for test/typecheck/build/lint verification.',
   {
     profile: z
       .enum(VERIFICATION_PROFILES)
       .describe(
-        'Fixed verification profile. Runs the workspace test/typecheck/build scripts with the repo-configured package manager.',
+        'Fixed verification profile. Runs the workspace test/typecheck/build/lint scripts with the repo-configured package manager.',
       ),
   },
   async (args) => {
