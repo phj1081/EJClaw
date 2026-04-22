@@ -2,6 +2,23 @@
 
 이 문서는 EJClaw의 주요 변경 사항을 기록합니다.
 
+## [0.2.3] - 2026-04-22
+
+### Added
+
+- room-level reviewer / arbiter agent 선택 지원
+
+### Changed
+
+- 최신 owner final carry-forward를 기본적으로 비활성화
+- superseded task에서 직전 owner / reviewer final을 얇은 breadcrumb로 이어줘 reviewer가 task 경계 맥락을 덜 놓치도록 조정
+- `unsafe host mode`와 Claude reviewer fresh-session 강제를 분리해, reviewer가 기본적으로 세션을 이어가도록 변경
+
+### Fixed
+
+- Claude Code bundled binary 경로 문제를 수정해 runner 실행 안정성 개선
+- paired owner compaction / failure recovery 흐름 보강
+
 ## [0.2.2] - 2026-04-15
 
 ### Fixed
