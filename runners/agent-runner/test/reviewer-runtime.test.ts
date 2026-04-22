@@ -138,9 +138,6 @@ describe('claude reviewer runtime guard', () => {
       'best-effort',
     );
 
-    if (!sandbox) {
-      throw new Error('expected sandbox settings');
-    }
     expect(sandbox.failIfUnavailable).toBe(false);
   });
 
@@ -155,9 +152,6 @@ describe('claude reviewer runtime guard', () => {
       'best-effort',
     );
 
-    if (!sandbox) {
-      throw new Error('expected sandbox settings');
-    }
     expect(sandbox.failIfUnavailable).toBe(false);
   });
 
