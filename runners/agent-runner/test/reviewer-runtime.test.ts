@@ -136,9 +136,9 @@ describe('claude reviewer runtime guard', () => {
       ['/repo/work'],
       'linux',
       'best-effort',
-    );
+    ) as { failIfUnavailable?: boolean };
 
-    expect(sandbox?.failIfUnavailable).toBe(false);
+    expect(sandbox.failIfUnavailable).toBe(false);
   });
 
   it('keeps non-linux reviewers in best-effort sandbox mode', () => {
@@ -150,9 +150,9 @@ describe('claude reviewer runtime guard', () => {
       ['/repo/work'],
       'darwin',
       'best-effort',
-    );
+    ) as { failIfUnavailable?: boolean };
 
-    expect(sandbox?.failIfUnavailable).toBe(false);
+    expect(sandbox.failIfUnavailable).toBe(false);
   });
 
   it('flags mutating shell commands', () => {
