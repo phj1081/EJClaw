@@ -4,6 +4,7 @@ import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isTaskStatusControlMessage } from './task-watch-status.js';
 import { ARBITER_AGENT_TYPE, REVIEWER_AGENT_TYPE } from './config.js';
+import type { VisibleVerdict } from './paired-execution-context-shared.js';
 import {
   hasReviewerLease,
   resolveLeaseServiceId,
@@ -79,6 +80,7 @@ export function resolveQueuedPairedTurnRole(args: {
   taskStatus?: PairedTaskStatus | null;
   hasHumanMessage: boolean;
   lastTurnOutputRole?: PairedRoomRole | null;
+  lastTurnOutputVerdict?: VisibleVerdict | null;
 }): 'owner' | 'reviewer' | 'arbiter' | null {
   if (args.hasHumanMessage) {
     return resolveQueuedTurnRole({
@@ -90,6 +92,7 @@ export function resolveQueuedPairedTurnRole(args: {
   const nextTurnAction = resolveNextTurnAction({
     taskStatus: args.taskStatus,
     lastTurnOutputRole: args.lastTurnOutputRole,
+    lastTurnOutputVerdict: args.lastTurnOutputVerdict,
   });
 
   switch (nextTurnAction.kind) {
@@ -125,6 +128,7 @@ export type FollowUpDispatch =
 export function resolveNextTurnAction(args: {
   taskStatus?: PairedTaskStatus | null;
   lastTurnOutputRole?: PairedRoomRole | null;
+  lastTurnOutputVerdict?: VisibleVerdict | null;
 }): NextTurnAction {
   switch (args.taskStatus) {
     case 'review_ready':
@@ -142,7 +146,8 @@ export function resolveNextTurnAction(args: {
         ? { kind: 'none' }
         : { kind: 'finalize-owner-turn' };
     case 'active':
-      return args.lastTurnOutputRole === 'reviewer' ||
+      return args.lastTurnOutputVerdict === 'step_done' ||
+        args.lastTurnOutputRole === 'reviewer' ||
         args.lastTurnOutputRole === 'arbiter'
         ? { kind: 'owner-follow-up' }
         : { kind: 'none' };
@@ -154,12 +159,14 @@ export function resolveNextTurnAction(args: {
 export function matchesExpectedPairedFollowUpIntent(args: {
   taskStatus?: PairedTaskStatus | null;
   lastTurnOutputRole?: PairedRoomRole | null;
+  lastTurnOutputVerdict?: VisibleVerdict | null;
   intentKind: ScheduledNextTurnActionKind;
 }): boolean {
   return (
     resolveNextTurnAction({
       taskStatus: args.taskStatus,
       lastTurnOutputRole: args.lastTurnOutputRole,
+      lastTurnOutputVerdict: args.lastTurnOutputVerdict,
     }).kind === args.intentKind
   );
 }
@@ -184,7 +191,8 @@ export function resolveFollowUpDispatch(args: {
         args.completedRole === 'owner'
       ) {
         return args.nextTurnAction.kind === 'reviewer-turn' ||
-          args.nextTurnAction.kind === 'arbiter-turn'
+          args.nextTurnAction.kind === 'arbiter-turn' ||
+          args.nextTurnAction.kind === 'owner-follow-up'
           ? { kind: 'enqueue', queueKind: 'paired-follow-up' }
           : { kind: 'none' };
       }
@@ -219,6 +227,7 @@ export function resolveFollowUpDispatch(args: {
         return { kind: 'none' };
       }
       return args.nextTurnAction.kind === 'reviewer-turn' ||
+        args.nextTurnAction.kind === 'owner-follow-up' ||
         args.nextTurnAction.kind === 'arbiter-turn' ||
         args.nextTurnAction.kind === 'finalize-owner-turn'
         ? { kind: 'enqueue', queueKind: 'paired-follow-up' }

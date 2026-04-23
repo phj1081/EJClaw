@@ -212,7 +212,8 @@ export function buildFinalizePendingPrompt(args: {
     ? `\n\nReviewer's final assessment:\n${lastReviewerOutput.output_text.slice(0, 2000)}`
     : '';
 
-  return `The reviewer approved your work (DONE). Finalize and report the result.
-If you intend to close this paired turn now, your first line must be DONE.
+  return `The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.
+If you intend to close this paired turn now, your first line must be TASK_DONE.
+If the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.
 If your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.${reviewerSummary}`;
 }

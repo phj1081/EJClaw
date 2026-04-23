@@ -1,5 +1,9 @@
 import { getPairedTurnOutputs } from './db.js';
 import {
+  parseVisibleVerdict,
+  type VisibleVerdict,
+} from './paired-execution-context-shared.js';
+import {
   matchesExpectedPairedFollowUpIntent,
   resolveFollowUpDispatch,
   resolveNextTurnAction,
@@ -20,6 +24,7 @@ export interface PairedFollowUpDecision {
   taskId: string | null;
   taskStatus: PairedTaskStatus | null;
   lastTurnOutputRole: PairedRoomRole | null;
+  lastTurnOutputVerdict: VisibleVerdict | null;
   nextTurnAction: NextTurnAction;
   dispatch: FollowUpDispatch;
 }
@@ -37,15 +42,23 @@ export type PairedFollowUpDispatchResult =
       scheduled: boolean;
     });
 
-export function resolveLatestPairedTurnOutputRole(args: {
+export function resolveLatestPairedTurnOutputContext(args: {
   task: Pick<PairedTask, 'id'> | null | undefined;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
-}): PairedRoomRole | null {
-  return (
-    (args.task ? getPairedTurnOutputs(args.task.id).at(-1)?.role : null) ??
-    args.fallbackLastTurnOutputRole ??
-    null
-  );
+  fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
+}): {
+  role: PairedRoomRole | null;
+  verdict: VisibleVerdict | null;
+} {
+  const latestOutput = args.task
+    ? getPairedTurnOutputs(args.task.id).at(-1)
+    : null;
+  return {
+    role: latestOutput?.role ?? args.fallbackLastTurnOutputRole ?? null,
+    verdict: latestOutput?.output_text
+      ? parseVisibleVerdict(latestOutput.output_text)
+      : (args.fallbackLastTurnOutputVerdict ?? null),
+  };
 }
 
 export function resolvePairedFollowUpDecision(args: {
@@ -55,14 +68,18 @@ export function resolvePairedFollowUpDecision(args: {
   executionStatus?: 'succeeded' | 'failed';
   sawOutput?: boolean;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
+  fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
 }): PairedFollowUpDecision {
-  const lastTurnOutputRole = resolveLatestPairedTurnOutputRole({
-    task: args.task,
-    fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
-  });
+  const { role: lastTurnOutputRole, verdict: lastTurnOutputVerdict } =
+    resolveLatestPairedTurnOutputContext({
+      task: args.task,
+      fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
+      fallbackLastTurnOutputVerdict: args.fallbackLastTurnOutputVerdict,
+    });
   const nextTurnAction = resolveNextTurnAction({
     taskStatus: args.task?.status ?? null,
     lastTurnOutputRole,
+    lastTurnOutputVerdict,
   });
   const dispatch = resolveFollowUpDispatch({
     source: args.source,
@@ -76,6 +93,7 @@ export function resolvePairedFollowUpDecision(args: {
     taskId: args.task?.id ?? null,
     taskStatus: args.task?.status ?? null,
     lastTurnOutputRole,
+    lastTurnOutputVerdict,
     nextTurnAction,
     dispatch,
   };
@@ -91,23 +109,31 @@ export function schedulePairedFollowUpIntent(args: {
   intentKind: ScheduledPairedFollowUpIntentKind;
   enqueue: () => void;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
+  fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
   lastTurnOutputRole?: PairedRoomRole | null;
+  lastTurnOutputVerdict?: VisibleVerdict | null;
 }): boolean {
   if (!args.task) {
     return false;
   }
 
-  const lastTurnOutputRole =
-    args.lastTurnOutputRole ??
-    resolveLatestPairedTurnOutputRole({
-      task: args.task,
-      fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
-    });
+  const latestOutputContext =
+    args.lastTurnOutputRole != null || args.lastTurnOutputVerdict != null
+      ? {
+          role: args.lastTurnOutputRole ?? null,
+          verdict: args.lastTurnOutputVerdict ?? null,
+        }
+      : resolveLatestPairedTurnOutputContext({
+          task: args.task,
+          fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
+          fallbackLastTurnOutputVerdict: args.fallbackLastTurnOutputVerdict,
+        });
 
   if (
     !matchesExpectedPairedFollowUpIntent({
       taskStatus: args.task.status,
-      lastTurnOutputRole,
+      lastTurnOutputRole: latestOutputContext.role,
+      lastTurnOutputVerdict: latestOutputContext.verdict,
       intentKind: args.intentKind,
     })
   ) {
@@ -133,7 +159,9 @@ export function schedulePairedFollowUpWithMessageCheck(args: {
   intentKind: ScheduledPairedFollowUpIntentKind;
   enqueueMessageCheck: () => void;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
+  fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
   lastTurnOutputRole?: PairedRoomRole | null;
+  lastTurnOutputVerdict?: VisibleVerdict | null;
 }): boolean {
   return schedulePairedFollowUpIntent({
     chatJid: args.chatJid,
@@ -142,7 +170,9 @@ export function schedulePairedFollowUpWithMessageCheck(args: {
     intentKind: args.intentKind,
     enqueue: args.enqueueMessageCheck,
     fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
+    fallbackLastTurnOutputVerdict: args.fallbackLastTurnOutputVerdict,
     lastTurnOutputRole: args.lastTurnOutputRole,
+    lastTurnOutputVerdict: args.lastTurnOutputVerdict,
   });
 }
 
@@ -158,6 +188,7 @@ export function dispatchPairedFollowUpForEvent(args: {
   executionStatus?: 'succeeded' | 'failed';
   sawOutput?: boolean;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
+  fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
   enqueue: () => void;
   enqueueMessageCheck?: () => void;
 }): PairedFollowUpDispatchResult {
@@ -168,6 +199,7 @@ export function dispatchPairedFollowUpForEvent(args: {
     executionStatus: args.executionStatus,
     sawOutput: args.sawOutput,
     fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
+    fallbackLastTurnOutputVerdict: args.fallbackLastTurnOutputVerdict,
   });
 
   if (
@@ -193,6 +225,7 @@ export function dispatchPairedFollowUpForEvent(args: {
       intentKind: decision.nextTurnAction.kind,
       enqueue: args.enqueue,
       lastTurnOutputRole: decision.lastTurnOutputRole,
+      lastTurnOutputVerdict: decision.lastTurnOutputVerdict,
     });
 
     return {
@@ -221,6 +254,7 @@ export function enqueuePairedFollowUpAfterEvent(args: {
   executionStatus?: 'succeeded' | 'failed';
   sawOutput?: boolean;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
+  fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
   enqueueMessageCheck: () => void;
 }): PairedFollowUpDispatchResult {
   return dispatchPairedFollowUpForEvent({
@@ -232,6 +266,7 @@ export function enqueuePairedFollowUpAfterEvent(args: {
     executionStatus: args.executionStatus,
     sawOutput: args.sawOutput,
     fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
+    fallbackLastTurnOutputVerdict: args.fallbackLastTurnOutputVerdict,
     enqueue: args.enqueueMessageCheck,
     enqueueMessageCheck: args.enqueueMessageCheck,
   });

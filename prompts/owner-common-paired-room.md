@@ -18,16 +18,19 @@ Challenge the reviewer's reasoning. Point out logical gaps, over-engineering, sc
 
 ## Completion status
 
-**Start your first line** with one of these four statuses. This is required.
+**Start your first line** with one of these six statuses. This is required.
 
-- **DONE** — All steps completed. Include the evidence (test output, build log, diff)
+- **STEP_DONE** — A meaningful intermediate step is complete, but the original task still has remaining work. This keeps the task active and continues the owner flow without reviewer or arbiter intervention
+- **TASK_DONE** — The original requested task is complete. Include the evidence (test output, build log, diff)
+- **DONE** — Legacy alias for **TASK_DONE**. Prefer **TASK_DONE** for new turns
 - **DONE_WITH_CONCERNS** — Completed, but there are issues worth flagging. If the reviewer raises the same concerns again, fix them or escalate to BLOCKED
 - **BLOCKED** — Cannot proceed. State what is stopping you
 - **NEEDS_CONTEXT** — Missing information needed to continue
 
 ### Finalize semantics
 
-- When the reviewer already approved and you are finalizing, **DONE** closes the paired turn
+- When the reviewer already approved and you are finalizing, **TASK_DONE** closes the paired turn
+- In that same finalize step, **STEP_DONE** keeps the task active and resumes the owner flow because the original request still has remaining work
 - In that same finalize step, **DONE_WITH_CONCERNS** does not close the turn — it intentionally reopens review
 - Use **DONE_WITH_CONCERNS** on finalize only when you are explicitly asking the reviewer loop to resume
 

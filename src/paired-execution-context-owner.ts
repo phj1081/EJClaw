@@ -20,7 +20,7 @@ import {
 } from './paired-execution-context-shared.js';
 import type { PairedTask } from './types.js';
 
-type OwnerFinalizeOutcome = 'stop' | 're_review';
+type OwnerFinalizeOutcome = 'stop' | 're_review' | 'continue_owner';
 const OWNER_FAILURE_ESCALATION_THRESHOLD = 2;
 
 export function handleFailedOwnerExecution(args: {
@@ -170,6 +170,28 @@ function handleOwnerFinalizeCompletion(args: {
     return 're_review';
   }
 
+  if (signal.kind === 'request_owner_continue') {
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus: task.status,
+      nextStatus: 'active',
+      expectedUpdatedAt: task.updated_at,
+      updatedAt: now,
+      patch: {
+        owner_failure_count: 0,
+      },
+    });
+    logger.info(
+      {
+        taskId,
+        ownerVerdict,
+        summary: summary?.slice(0, 100),
+      },
+      'Owner marked finalize output as an intermediate step — task returned to active without re-review',
+    );
+    return 'continue_owner';
+  }
+
   transitionPairedTaskStatus({
     taskId,
     currentStatus: task.status,
@@ -287,6 +309,22 @@ export function handleOwnerCompletion(args: {
         owner_failure_count: 0,
       },
     });
+    return;
+  }
+
+  if (signal.kind === 'request_owner_continue') {
+    applyPairedTaskPatch({
+      taskId,
+      expectedUpdatedAt: task.updated_at,
+      updatedAt: now,
+      patch: {
+        owner_failure_count: 0,
+      },
+    });
+    logger.info(
+      { taskId, ownerVerdict, summary: summary?.slice(0, 100) },
+      'Owner marked the current output as an intermediate completed step — keeping task active for follow-up',
+    );
     return;
   }
 

@@ -22,9 +22,11 @@ If you see a materially better design, debugging path, or scoping choice, propos
 
 ## Completion status
 
-**Start your first line** with one of these four statuses. This is required.
+**Start your first line** with one of these six statuses. This is required.
 
-- **DONE** — Approved. The owner's response is correct and complete. Include the evidence
+- **STEP_DONE** — The current step is acceptable, but the original requested task still has remaining work. Send the task back to the owner without escalating to the arbiter
+- **TASK_DONE** — Approved. The owner's work satisfies the full requested task. Include the evidence
+- **DONE** — Legacy alias for **TASK_DONE**. Prefer **TASK_DONE** for new turns
 - **DONE_WITH_CONCERNS** — Approved with concerns. List specific actions the owner must take. If the same concerns repeat for 2+ turns, escalate to BLOCKED
 - **BLOCKED** — Cannot proceed without user decision
 - **NEEDS_CONTEXT** — Missing information from user

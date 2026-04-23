@@ -6,6 +6,8 @@ import { logger } from './logger.js';
 import type { PairedTaskStatus } from './types.js';
 
 export type VisibleVerdict =
+  | 'step_done'
+  | 'task_done'
   | 'done'
   | 'done_with_concerns'
   | 'blocked'
@@ -15,6 +17,7 @@ export type VisibleVerdict =
 export type CompletionSignal =
   | { kind: 'request_reviewer'; resetStatusToActive: boolean }
   | { kind: 'request_owner_finalize' }
+  | { kind: 'request_owner_continue'; resetStatusToActive: boolean }
   | { kind: 'request_owner_changes' }
   | { kind: 'request_arbiter' }
   | { kind: 'complete'; completionReason: 'done' | 'escalated' }
@@ -29,6 +32,8 @@ export function parseVisibleVerdict(
   const firstLine = cleaned.split('\n')[0].trim();
   if (/^\*{0,2}BLOCKED\*{0,2}\b/i.test(firstLine)) return 'blocked';
   if (/^\*{0,2}NEEDS_CONTEXT\*{0,2}\b/i.test(firstLine)) return 'needs_context';
+  if (/^\*{0,2}STEP_DONE\*{0,2}\b/i.test(firstLine)) return 'step_done';
+  if (/^\*{0,2}TASK_DONE\*{0,2}\b/i.test(firstLine)) return 'task_done';
   if (/^\*{0,2}DONE_WITH_CONCERNS\*{0,2}\b/i.test(firstLine))
     return 'done_with_concerns';
   if (/^\*{0,2}DONE\*{0,2}\b/i.test(firstLine)) return 'done';
@@ -57,9 +62,22 @@ export function resolveOwnerCompletionSignal(args: {
   }
 
   if (phase === 'normal') {
+    if (visibleVerdict === 'step_done') {
+      return {
+        kind: 'request_owner_continue',
+        resetStatusToActive: false,
+      };
+    }
     return {
       kind: 'request_reviewer',
       resetStatusToActive: false,
+    };
+  }
+
+  if (visibleVerdict === 'step_done') {
+    return {
+      kind: 'request_owner_continue',
+      resetStatusToActive: true,
     };
   }
 
@@ -90,8 +108,11 @@ export function resolveReviewerCompletionSignal(args: {
   const { visibleVerdict, roundTripCount, deadlockThreshold } = args;
 
   switch (visibleVerdict) {
+    case 'task_done':
     case 'done':
       return { kind: 'request_owner_finalize' };
+    case 'step_done':
+      return { kind: 'request_owner_changes' };
     case 'blocked':
     case 'needs_context':
       return { kind: 'request_arbiter' };
@@ -111,6 +132,7 @@ export function resolveReviewerFailureSignal(args: {
   const { visibleVerdict } = args;
 
   switch (visibleVerdict) {
+    case 'task_done':
     case 'done':
       return { kind: 'request_owner_finalize' };
     case 'blocked':
