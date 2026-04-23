@@ -106,7 +106,7 @@ function handleOwnerFinalizeCompletion(args: {
   const nextFinalizeStepDoneCount =
     ownerVerdict === 'step_done'
       ? (task.finalize_step_done_count ?? 0) + 1
-      : task.finalize_step_done_count ?? 0;
+      : (task.finalize_step_done_count ?? 0);
   const nextEmptyStepDoneStreak =
     ownerVerdict === 'step_done' && hasNewChanges === false
       ? (task.empty_step_done_streak ?? 0) + 1
