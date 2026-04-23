@@ -119,6 +119,10 @@ export function applyBaseSchema(database: Database): void {
       review_requested_at TEXT,
       round_trip_count INTEGER NOT NULL DEFAULT 0,
       owner_failure_count INTEGER NOT NULL DEFAULT 0,
+      owner_step_done_streak INTEGER NOT NULL DEFAULT 0,
+      finalize_step_done_count INTEGER NOT NULL DEFAULT 0,
+      task_done_then_user_reopen_count INTEGER NOT NULL DEFAULT 0,
+      empty_step_done_streak INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'active',
       arbiter_verdict TEXT,
       arbiter_requested_at TEXT,
@@ -154,6 +158,7 @@ export function applyBaseSchema(database: Database): void {
       turn_number INTEGER NOT NULL,
       role TEXT NOT NULL,
       output_text TEXT NOT NULL,
+      verdict TEXT,
       created_at TEXT NOT NULL,
       UNIQUE(task_id, turn_number, role)
     );

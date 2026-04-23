@@ -36,6 +36,7 @@ function getExpectedSchemaMigrations(): Array<{
     { version: 9, name: 'paired_workspace_project_schema_cleanup' },
     { version: 10, name: 'paired_turn_provenance_upgrade' },
     { version: 11, name: 'owner_failure_count' },
+    { version: 12, name: 'paired_verdict_and_step_telemetry' },
   ];
 }
 

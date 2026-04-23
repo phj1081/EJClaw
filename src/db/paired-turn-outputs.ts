@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 
 import { logger } from '../logger.js';
+import { parseVisibleVerdict } from '../paired-verdict.js';
 import { PairedRoomRole, PairedTurnOutput } from '../types.js';
 
 const MAX_TURN_OUTPUT_CHARS = 50_000;
@@ -29,14 +30,15 @@ export function insertPairedTurnOutputInDatabase(
   database
     .prepare(
       `INSERT OR REPLACE INTO paired_turn_outputs
-         (task_id, turn_number, role, output_text, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+         (task_id, turn_number, role, output_text, verdict, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .run(
       taskId,
       turnNumber,
       role,
       outputText.slice(0, MAX_TURN_OUTPUT_CHARS),
+      parseVisibleVerdict(outputText),
       createdAt ?? new Date().toISOString(),
     );
 }

@@ -842,6 +842,127 @@ describe('createMessageRuntime', () => {
     );
   });
 
+  it('suppresses a stale owner work item when a new human message arrives while the paired task is still active', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const enqueueMessageCheck = vi.fn();
+    const activeTask = {
+      id: 'task-active-owner-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:05.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getOpenWorkItem).mockReturnValue({
+      id: 109,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'claude',
+      delivery_role: 'owner',
+      status: 'delivery_retry',
+      start_seq: 1,
+      end_seq: 1,
+      result_payload: '이전 step 결과입니다.',
+      delivery_attempts: 1,
+      created_at: '2026-03-30T00:00:05.000Z',
+      updated_at: '2026-03-30T00:00:05.000Z',
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'discord send failed',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-2',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '이전 답 말고 이 방향으로 진행해줘',
+        timestamp: '2026-03-30T00:00:10.000Z',
+        seq: 2,
+      },
+    ]);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(activeTask);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('이 방향으로 진행해줘');
+        expect(input.prompt).not.toContain('이전 step 결과입니다.');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'STEP_DONE\n새 입력 기준으로 계속 진행',
+          output: {
+            visibility: 'public',
+            text: 'STEP_DONE\n새 입력 기준으로 계속 진행',
+          },
+        } as any);
+        return {
+          status: 'success',
+          result: 'STEP_DONE\n새 입력 기준으로 계속 진행',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRoomBindings: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-suppress-stale-active-owner-work-item',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(db.markWorkItemDelivered).toHaveBeenCalledWith(109);
+    expect(channel.sendMessage).not.toHaveBeenCalledWith(
+      chatJid,
+      '이전 step 결과입니다.',
+    );
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        workItemId: 109,
+        taskId: 'task-active-owner-follow-up',
+        taskStatus: 'active',
+      }),
+      'Suppressed stale owner delivery retry because a new human message arrived while the paired task was still active',
+    );
+  });
+
   it('suppresses duplicate stale work item delivery and logs the suppression reason', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
