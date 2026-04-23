@@ -1,3 +1,5 @@
+import type { VisibleVerdict } from './paired-verdict.js';
+
 export interface AgentConfig {
   timeout?: number; // Default: 300000 (5 minutes)
   // Per-group model/effort overrides (take precedence over global env vars)
@@ -83,6 +85,10 @@ export interface PairedTask {
   review_requested_at: string | null;
   round_trip_count: number;
   owner_failure_count?: number | null;
+  owner_step_done_streak?: number | null;
+  finalize_step_done_count?: number | null;
+  task_done_then_user_reopen_count?: number | null;
+  empty_step_done_streak?: number | null;
   status: PairedTaskStatus;
   arbiter_verdict: string | null;
   arbiter_requested_at: string | null;
@@ -97,6 +103,7 @@ export interface PairedTurnOutput {
   turn_number: number;
   role: PairedRoomRole;
   output_text: string;
+  verdict?: VisibleVerdict | null;
   created_at: string;
 }
 

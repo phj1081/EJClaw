@@ -11,6 +11,7 @@ import { PAIRED_TASK_SCHEMA_CLEANUP_MIGRATION } from './008_paired-task-schema-c
 import { PAIRED_WORKSPACE_PROJECT_SCHEMA_CLEANUP_MIGRATION } from './009_paired-workspace-project-schema-cleanup.js';
 import { PAIRED_TURN_PROVENANCE_UPGRADE_MIGRATION } from './010_paired-turn-provenance-upgrade.js';
 import { OWNER_FAILURE_COUNT_MIGRATION } from './011_owner-failure-count.js';
+import { PAIRED_VERDICT_AND_STEP_TELEMETRY_MIGRATION } from './012_paired-verdict-and-step-telemetry.js';
 import type {
   SchemaMigrationArgs,
   SchemaMigrationDefinition,
@@ -30,6 +31,7 @@ const ORDERED_SCHEMA_MIGRATIONS: readonly SchemaMigrationDefinition[] = [
   PAIRED_WORKSPACE_PROJECT_SCHEMA_CLEANUP_MIGRATION,
   PAIRED_TURN_PROVENANCE_UPGRADE_MIGRATION,
   OWNER_FAILURE_COUNT_MIGRATION,
+  PAIRED_VERDICT_AND_STEP_TELEMETRY_MIGRATION,
 ];
 
 function ensureSchemaMigrationsTable(database: Database): void {
