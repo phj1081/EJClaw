@@ -113,6 +113,14 @@ describe('message-runtime-rules', () => {
         intentKind: 'owner-follow-up',
       }),
     ).toBe(true);
+    expect(
+      matchesExpectedPairedFollowUpIntent({
+        taskStatus: 'active',
+        lastTurnOutputRole: 'owner',
+        lastTurnOutputVerdict: 'step_done',
+        intentKind: 'owner-follow-up',
+      }),
+    ).toBe(true);
   });
 
   it('maps active tasks with reviewer output to an owner follow-up', () => {
@@ -120,6 +128,16 @@ describe('message-runtime-rules', () => {
       resolveNextTurnAction({
         taskStatus: 'active',
         lastTurnOutputRole: 'reviewer',
+      }),
+    ).toEqual({ kind: 'owner-follow-up' });
+  });
+
+  it('maps active tasks with owner STEP_DONE output to an owner follow-up', () => {
+    expect(
+      resolveNextTurnAction({
+        taskStatus: 'active',
+        lastTurnOutputRole: 'owner',
+        lastTurnOutputVerdict: 'step_done',
       }),
     ).toEqual({ kind: 'owner-follow-up' });
   });
@@ -147,6 +165,15 @@ describe('message-runtime-rules', () => {
       resolveFollowUpDispatch({
         source: 'owner-delivery-success',
         nextTurnAction: { kind: 'arbiter-turn' },
+      }),
+    ).toEqual({
+      kind: 'enqueue',
+      queueKind: 'paired-follow-up',
+    });
+    expect(
+      resolveFollowUpDispatch({
+        source: 'owner-delivery-success',
+        nextTurnAction: { kind: 'owner-follow-up' },
       }),
     ).toEqual({
       kind: 'enqueue',
@@ -295,6 +322,14 @@ describe('message-runtime-rules', () => {
         lastTurnOutputRole: 'owner',
       }),
     ).toBe('reviewer');
+    expect(
+      resolveQueuedPairedTurnRole({
+        taskStatus: 'active',
+        hasHumanMessage: false,
+        lastTurnOutputRole: 'owner',
+        lastTurnOutputVerdict: 'step_done',
+      }),
+    ).toBe('owner');
   });
 
   it('resolves reviewer execution target from review_ready task status', () => {

@@ -11,6 +11,7 @@ import {
   isBotOnlyPairedRoomTurn,
 } from './message-runtime-flow.js';
 import { buildPairedTurnIdentity } from './paired-turn-identity.js';
+import { parseVisibleVerdict } from './paired-execution-context-shared.js';
 import {
   advanceLastAgentCursor,
   resolveActiveRole,
@@ -183,6 +184,11 @@ export async function runQueuedGroupTurn(args: {
   const lastTurnOutputRole = currentTask
     ? (turnOutputs.at(-1)?.role ?? null)
     : null;
+  const lastTurnOutputVerdict = currentTask
+    ? turnOutputs.at(-1)?.output_text
+      ? parseVisibleVerdict(turnOutputs.at(-1)?.output_text)
+      : null
+    : null;
   const turnRole = currentTask
     ? hasHumanMsg
       ? resolveQueuedTurnRole({
@@ -193,6 +199,7 @@ export async function runQueuedGroupTurn(args: {
           taskStatus,
           hasHumanMessage: false,
           lastTurnOutputRole,
+          lastTurnOutputVerdict,
         })
     : 'owner';
   if (!turnRole) {

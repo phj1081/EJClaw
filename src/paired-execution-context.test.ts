@@ -742,6 +742,65 @@ describe('paired execution context', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('keeps an active task in owner follow-up mode when the owner reports STEP_DONE', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        round_trip_count: 1,
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'STEP_DONE\n1단계 완료, 후속 작업 계속',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        owner_failure_count: 0,
+      }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).not.toHaveBeenCalled();
+    expect(db.updatePairedTask).not.toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'active',
+      }),
+    );
+  });
+
+  it('returns merge_ready owner finalize output to active when the owner reports STEP_DONE', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+        round_trip_count: 1,
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'STEP_DONE\n남은 범위가 있어서 계속 진행',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'active',
+        owner_failure_count: 0,
+      }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).not.toHaveBeenCalled();
+  });
+
   it('re-triggers review once when owner reports DONE_WITH_CONCERNS during finalize', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({

@@ -29,6 +29,7 @@ import {
   type ScheduledPairedFollowUpIntentKind,
 } from './paired-follow-up-scheduler.js';
 import { hasReviewerLease } from './service-routing.js';
+import { parseVisibleVerdict } from './paired-execution-context-shared.js';
 import type {
   Channel,
   NewMessage,
@@ -127,6 +128,9 @@ export function buildPendingPairedTurn(args: {
   const nextTurnAction = resolveNextTurnAction({
     taskStatus,
     lastTurnOutputRole: lastTurnOutput?.role ?? null,
+    lastTurnOutputVerdict: lastTurnOutput?.output_text
+      ? parseVisibleVerdict(lastTurnOutput.output_text)
+      : null,
   });
   const recentMessages = getRecentChatMessages(chatJid, 20);
   const lastHumanMessage = getLastHumanMessageContent(chatJid);

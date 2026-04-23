@@ -14,6 +14,7 @@ import {
   completePairedExecutionContext,
   type PreparedPairedExecutionContext,
 } from './paired-execution-context.js';
+import { parseVisibleVerdict } from './paired-execution-context-shared.js';
 import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
 import { enqueuePairedFollowUpAfterEvent } from './message-runtime-follow-up.js';
 import type { PairedTurnIdentity } from './paired-turn-identity.js';
@@ -438,6 +439,7 @@ export function createPairedExecutionLifecycle(args: {
               executionStatus: effectiveStatus,
               sawOutput: sawOutputForFollowUp,
               taskStatus: finishedTask?.status ?? null,
+              outputSummary: pairedExecutionSummary,
             });
       if (queueAction !== 'pending' || !finishedTask) {
         return;
@@ -452,6 +454,10 @@ export function createPairedExecutionLifecycle(args: {
         executionStatus: effectiveStatus,
         sawOutput: sawOutputForFollowUp,
         fallbackLastTurnOutputRole: sawOutputForFollowUp ? completedRole : null,
+        fallbackLastTurnOutputVerdict:
+          sawOutputForFollowUp && pairedExecutionSummary
+            ? parseVisibleVerdict(pairedExecutionSummary)
+            : null,
         enqueueMessageCheck,
       });
       if (followUpResult.kind !== 'paired-follow-up') {

@@ -2,6 +2,7 @@ import {
   resolveFollowUpDispatch,
   resolveNextTurnAction,
 } from './message-runtime-rules.js';
+import { parseVisibleVerdict } from './paired-execution-context-shared.js';
 import type { PairedRoomRole, PairedTaskStatus } from './types.js';
 export {
   isRetryableClaudeSessionFailureAttempt,
@@ -20,10 +21,15 @@ export function resolvePairedFollowUpQueueAction(args: {
   executionStatus: 'succeeded' | 'failed';
   sawOutput: boolean;
   taskStatus: PairedTaskStatus | null;
+  outputSummary?: string | null;
 }): PairedFollowUpQueueAction {
   const nextTurnAction = resolveNextTurnAction({
     taskStatus: args.taskStatus,
     lastTurnOutputRole: args.sawOutput ? args.completedRole : null,
+    lastTurnOutputVerdict:
+      args.sawOutput && args.outputSummary
+        ? parseVisibleVerdict(args.outputSummary)
+        : null,
   });
   const dispatch = resolveFollowUpDispatch({
     source: 'executor-recovery',
