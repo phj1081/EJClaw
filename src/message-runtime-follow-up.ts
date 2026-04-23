@@ -1,7 +1,5 @@
 import { getPairedTurnOutputs } from './db.js';
-import {
-  type VisibleVerdict,
-} from './paired-execution-context-shared.js';
+import { type VisibleVerdict } from './paired-execution-context-shared.js';
 import { resolveStoredVisibleVerdict } from './paired-verdict.js';
 import {
   matchesExpectedPairedFollowUpIntent,
@@ -59,7 +57,9 @@ export function resolveLatestPairedTurnOutputContext(args: {
       resolveStoredVisibleVerdict({
         verdict: latestOutput?.verdict ?? null,
         outputText: latestOutput?.output_text ?? null,
-      }) ?? args.fallbackLastTurnOutputVerdict ?? null,
+      }) ??
+      args.fallbackLastTurnOutputVerdict ??
+      null,
   };
 }
 

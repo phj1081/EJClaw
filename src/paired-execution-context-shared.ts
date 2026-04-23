@@ -3,10 +3,7 @@ import { execFileSync } from 'child_process';
 import { isArbiterEnabled } from './config.js';
 import { updatePairedTaskIfUnchanged } from './db.js';
 import { logger } from './logger.js';
-import {
-  parseVisibleVerdict,
-  type VisibleVerdict,
-} from './paired-verdict.js';
+import { parseVisibleVerdict, type VisibleVerdict } from './paired-verdict.js';
 import type { PairedTaskStatus } from './types.js';
 
 export type CompletionSignal =

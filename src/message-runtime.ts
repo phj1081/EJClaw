@@ -401,7 +401,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       : null;
     let openWorkItem = getOpenWorkItemForChat(chatJid, SERVICE_SESSION_SCOPE);
     if (openWorkItem?.delivery_role === 'owner' && pendingTask) {
-      const freshHumanMessages = getFreshHumanPreflightMessages(chatJid, channel);
+      const freshHumanMessages = getFreshHumanPreflightMessages(
+        chatJid,
+        channel,
+      );
       if (
         pendingTask.status === 'merge_ready' &&
         freshHumanMessages.length > 0
