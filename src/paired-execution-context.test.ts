@@ -802,12 +802,21 @@ describe('paired execution context', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('keeps an active task in owner follow-up mode when the owner reports STEP_DONE', () => {
+  it('requests review when the owner reports STEP_DONE in active mode', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({
         status: 'active',
         round_trip_count: 1,
       }),
+    );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', '/tmp/paired/task-1/owner'),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
     );
 
     completePairedExecutionContext({
@@ -820,22 +829,17 @@ describe('paired execution context', () => {
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({
-        owner_failure_count: 0,
-        owner_step_done_streak: 1,
+        round_trip_count: 2,
+        owner_step_done_streak: 0,
+        empty_step_done_streak: 0,
       }),
     );
     expect(
       pairedWorkspaceManager.markPairedTaskReviewReady,
-    ).not.toHaveBeenCalled();
-    expect(db.updatePairedTask).not.toHaveBeenCalledWith(
-      'task-1',
-      expect.objectContaining({
-        status: 'active',
-      }),
-    );
+    ).toHaveBeenCalledWith('task-1');
   });
 
-  it('requests arbiter when active STEP_DONE repeats without code changes', () => {
+  it('requests review instead of arbiter when active STEP_DONE repeats without code changes', () => {
     vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
 
     const repoDir = createCanonicalRepoWithCommit('active step done loop');
@@ -851,6 +855,15 @@ describe('paired execution context', () => {
     vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
       role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
     );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', repoDir),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
+    );
 
     completePairedExecutionContext({
       taskId: 'task-1',
@@ -862,22 +875,43 @@ describe('paired execution context', () => {
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({
-        status: 'arbiter_requested',
-        owner_step_done_streak: 3,
-        empty_step_done_streak: 3,
+        round_trip_count: 1,
+        owner_step_done_streak: 0,
+        empty_step_done_streak: 0,
       }),
     );
     expect(
       pairedWorkspaceManager.markPairedTaskReviewReady,
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledWith('task-1');
+    expect(db.updatePairedTask).not.toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'arbiter_requested',
+      }),
+    );
   });
 
-  it('returns merge_ready owner finalize output to active when the owner reports STEP_DONE', () => {
+  it('re-triggers review when the owner reports STEP_DONE during finalize', () => {
+    const repoDir = createCanonicalRepoWithCommit('reviewed');
+    const approvedSourceRef = resolveTreeRef(repoDir);
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({
         status: 'merge_ready',
+        source_ref: approvedSourceRef,
         round_trip_count: 1,
       }),
+    );
+    vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
+      role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
+    );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', repoDir),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
     );
 
     completePairedExecutionContext({
@@ -893,11 +927,20 @@ describe('paired execution context', () => {
         status: 'active',
         owner_failure_count: 0,
         finalize_step_done_count: 1,
+        empty_step_done_streak: 1,
+      }),
+    );
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        round_trip_count: 2,
+        finalize_step_done_count: 1,
+        empty_step_done_streak: 1,
       }),
     );
     expect(
       pairedWorkspaceManager.markPairedTaskReviewReady,
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledWith('task-1');
   });
 
   it('requests arbiter when finalize STEP_DONE repeats without code changes', () => {

@@ -146,8 +146,7 @@ export function resolveNextTurnAction(args: {
         ? { kind: 'none' }
         : { kind: 'finalize-owner-turn' };
     case 'active':
-      return args.lastTurnOutputVerdict === 'step_done' ||
-        args.lastTurnOutputRole === 'reviewer' ||
+      return args.lastTurnOutputRole === 'reviewer' ||
         args.lastTurnOutputRole === 'arbiter'
         ? { kind: 'owner-follow-up' }
         : { kind: 'none' };

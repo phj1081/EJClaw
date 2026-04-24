@@ -2126,7 +2126,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     expect(pending?.prompt).toContain('이전 reviewer 피드백');
   });
 
-  it('builds an owner follow-up pending turn when the latest owner output is STEP_DONE on an active task', () => {
+  it('does not build an owner follow-up pending turn from owner STEP_DONE on an active task', () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const task = {
@@ -2170,12 +2170,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
       resolveChannel: () => makeChannel(chatJid),
     });
 
-    expect(pending).not.toBeNull();
-    expect(pending).toMatchObject({
-      role: 'owner',
-      intentKind: 'owner-follow-up',
-      taskId: task.id,
-    });
+    expect(pending).toBeNull();
   });
 
   it('builds a reviewer pending turn when a review_ready task follows owner TASK_DONE output', () => {
@@ -2335,7 +2330,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     );
   });
 
-  it('re-enqueues owner follow-up after a successful owner STEP_DONE delivery keeps the task active', async () => {
+  it('does not re-enqueue owner follow-up after a successful owner STEP_DONE delivery keeps the task active', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const ownerChannel: Channel = {
@@ -2445,17 +2440,12 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
       chatJid,
       'STEP_DONE\n리팩토링 1단계 완료, 다음 단계 진행',
     );
-    expect(enqueueMessageCheck).toHaveBeenCalledWith(chatJid);
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
     expect(pairedTask.status).toBe('active');
     expect(pairedTask.round_trip_count).toBe(1);
     expect(pairedTask.owner_failure_count).toBe(0);
-    expect(logger.info).toHaveBeenCalledWith(
+    expect(logger.info).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        chatJid,
-        runId: 'run-owner-step-done-follow-up',
-        completedRole: 'owner',
-        taskId: 'task-owner-step-done-follow-up',
-        taskStatus: 'active',
         intentKind: 'owner-follow-up',
       }),
       'Queued paired follow-up after successful owner delivery',
