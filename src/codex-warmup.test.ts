@@ -106,6 +106,8 @@ describe('Codex warm-up scheduler', () => {
         isRateLimited: false,
         cachedUsagePct: 0,
         cachedUsageD7Pct: 0,
+        resetAt: '2026-04-24T14:00:00.000Z',
+        resetD7At: '2026-05-01T09:00:00.000Z',
       },
     ]);
     vi.mocked(rotation.getCodexAuthPath).mockImplementation(
@@ -160,7 +162,67 @@ describe('Codex warm-up scheduler', () => {
     const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
     expect(state.lastWarmupAt).toBe('2026-04-24T09:00:00.000Z');
     expect(state.accounts['2'].lastWarmupAt).toBe('2026-04-24T09:00:00.000Z');
+    expect(state.accounts['2'].zeroUsageWarmupUntil).toBe(
+      '2026-05-01T09:00:00.000Z',
+    );
     expect(state.consecutiveFailures).toBe(0);
+  });
+
+  it('does not repeat warm-up while the same zero-usage quota window is already marked warmed', async () => {
+    const childProcess = await import('child_process');
+    const rotation = await import('./codex-token-rotation.js');
+    const { runCodexWarmupCycle } = await import('./codex-warmup.js');
+    const now = new Date('2026-04-24T15:00:00Z').getTime();
+
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        lastWarmupAt: '2026-04-24T09:00:00.000Z',
+        consecutiveFailures: 0,
+        accounts: {
+          '0': {
+            lastWarmupAt: '2026-04-24T09:00:00.000Z',
+            zeroUsageWarmupUntil: '2026-05-01T09:00:00.000Z',
+          },
+        },
+      }),
+    );
+    vi.mocked(rotation.getAllCodexAccounts).mockReturnValue([
+      {
+        index: 0,
+        accountId: 'fresh-account-still-rounded-zero',
+        planType: 'pro',
+        isActive: false,
+        isRateLimited: false,
+        cachedUsagePct: 0,
+        cachedUsageD7Pct: 0,
+        resetAt: '2026-04-24T14:00:00.000Z',
+        resetD7At: '2026-05-01T09:00:00.000Z',
+      },
+    ]);
+
+    const result = await runCodexWarmupCycle(
+      {
+        enabled: true,
+        prompt: 'Reply exactly OK. Do not run tools.',
+        model: 'gpt-5.5',
+        intervalMs: 300_000,
+        minIntervalMs: 18_300_000,
+        staggerMs: 0,
+        maxUsagePct: 0,
+        maxD7UsagePct: 0,
+        commandTimeoutMs: 120_000,
+        failureCooldownMs: 21_600_000,
+        maxConsecutiveFailures: 2,
+      },
+      { nowMs: now, statePath },
+    );
+
+    expect(result).toEqual({
+      status: 'skipped',
+      reason: 'no_eligible_accounts',
+    });
+    expect(childProcess.spawn).not.toHaveBeenCalled();
   });
 
   it('auto-backs off after repeated codex exec failures so OpenAI-side blocking does not hammer accounts', async () => {

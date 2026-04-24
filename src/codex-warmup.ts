@@ -17,6 +17,7 @@ interface CodexWarmupAccountState {
   lastWarmupAt?: string;
   lastAttemptAt?: string;
   lastErrorAt?: string;
+  zeroUsageWarmupUntil?: string;
   failures?: number;
 }
 
@@ -41,6 +42,7 @@ export type CodexWarmupCycleResult =
   | { status: 'failed'; accountIndex: number; reason: string };
 
 const DEFAULT_STATE_FILE = path.join(DATA_DIR, 'codex-warmup-state.json');
+const DEFAULT_ZERO_USAGE_WARMUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 function parseTimestamp(value?: string): number | null {
   if (!value) return null;
@@ -103,7 +105,7 @@ function selectWarmupCandidate(
   config: CodexWarmupConfig,
   state: CodexWarmupState,
   nowMs: number,
-): { accountIndex: number } | { reason: string } {
+): { accountIndex: number; zeroUsageWarmupUntil: string } | { reason: string } {
   const disabledUntilMs = parseTimestamp(state.disabledUntil);
   if (disabledUntilMs != null && disabledUntilMs > nowMs) {
     return { reason: 'disabled_cooldown' };
@@ -129,12 +131,30 @@ function selectWarmupCandidate(
     if (account.cachedUsageD7Pct > config.maxD7UsagePct) continue;
 
     const accountState = state.accounts?.[String(account.index)];
+    const zeroUsageWarmupUntilMs = parseTimestamp(
+      accountState?.zeroUsageWarmupUntil,
+    );
+    if (zeroUsageWarmupUntilMs != null && zeroUsageWarmupUntilMs > nowMs) {
+      continue;
+    }
+
     const lastWarmupMs = parseTimestamp(accountState?.lastWarmupAt);
     if (lastWarmupMs != null && nowMs - lastWarmupMs < config.minIntervalMs) {
       continue;
     }
 
-    return { accountIndex: account.index };
+    const resetD7Ms = parseTimestamp(account.resetD7At);
+    const zeroUsageWarmupUntilMsForState =
+      resetD7Ms != null && resetD7Ms > nowMs
+        ? resetD7Ms
+        : nowMs + DEFAULT_ZERO_USAGE_WARMUP_WINDOW_MS;
+
+    return {
+      accountIndex: account.index,
+      zeroUsageWarmupUntil: new Date(
+        zeroUsageWarmupUntilMsForState,
+      ).toISOString(),
+    };
   }
 
   return { reason: 'no_eligible_accounts' };
@@ -259,6 +279,7 @@ export async function runCodexWarmupCycle(
     state.consecutiveFailures = 0;
     delete state.disabledUntil;
     accountState.lastWarmupAt = nowIso;
+    accountState.zeroUsageWarmupUntil = selected.zeroUsageWarmupUntil;
     accountState.failures = 0;
     writeWarmupState(statePath, state);
     logger.info(
