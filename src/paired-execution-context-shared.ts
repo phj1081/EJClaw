@@ -9,7 +9,6 @@ import type { PairedTaskStatus } from './types.js';
 export type CompletionSignal =
   | { kind: 'request_reviewer'; resetStatusToActive: boolean }
   | { kind: 'request_owner_finalize' }
-  | { kind: 'request_owner_continue'; resetStatusToActive: boolean }
   | { kind: 'request_owner_changes' }
   | { kind: 'request_arbiter' }
   | { kind: 'complete'; completionReason: 'done' | 'escalated' }
@@ -38,12 +37,6 @@ export function resolveOwnerCompletionSignal(args: {
   }
 
   if (phase === 'normal') {
-    if (visibleVerdict === 'step_done') {
-      return {
-        kind: 'request_owner_continue',
-        resetStatusToActive: false,
-      };
-    }
     return {
       kind: 'request_reviewer',
       resetStatusToActive: false,
@@ -52,7 +45,7 @@ export function resolveOwnerCompletionSignal(args: {
 
   if (visibleVerdict === 'step_done') {
     return {
-      kind: 'request_owner_continue',
+      kind: 'request_reviewer',
       resetStatusToActive: true,
     };
   }

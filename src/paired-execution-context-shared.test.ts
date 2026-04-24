@@ -27,7 +27,7 @@ describe('paired execution context shared verdict helpers', () => {
         visibleVerdict: 'step_done',
       }),
     ).toEqual({
-      kind: 'request_owner_continue',
+      kind: 'request_reviewer',
       resetStatusToActive: false,
     });
     expect(
@@ -57,7 +57,7 @@ describe('paired execution context shared verdict helpers', () => {
         deadlockThreshold: 2,
       }),
     ).toEqual({
-      kind: 'request_owner_continue',
+      kind: 'request_reviewer',
       resetStatusToActive: true,
     });
     expect(

@@ -20,10 +20,9 @@ import {
 } from './paired-execution-context-shared.js';
 import type { PairedTask } from './types.js';
 
-type OwnerFinalizeOutcome = 'stop' | 're_review' | 'continue_owner';
+type OwnerFinalizeOutcome = 'stop' | 're_review';
 const OWNER_FAILURE_ESCALATION_THRESHOLD = 2;
 const EMPTY_STEP_DONE_THRESHOLD = 2;
-const OWNER_STEP_DONE_LOOP_THRESHOLD = 3;
 
 export function handleFailedOwnerExecution(args: {
   task: PairedTask;
@@ -157,7 +156,7 @@ function handleOwnerFinalizeCompletion(args: {
   }
 
   if (
-    signal.kind === 'request_owner_continue' &&
+    ownerVerdict === 'step_done' &&
     hasNewChanges === false &&
     nextEmptyStepDoneStreak >= EMPTY_STEP_DONE_THRESHOLD
   ) {
@@ -200,7 +199,8 @@ function handleOwnerFinalizeCompletion(args: {
           owner_failure_count: 0,
           owner_step_done_streak: 0,
           finalize_step_done_count: nextFinalizeStepDoneCount,
-          empty_step_done_streak: 0,
+          empty_step_done_streak:
+            ownerVerdict === 'step_done' ? nextEmptyStepDoneStreak : 0,
         },
       });
     }
@@ -213,36 +213,27 @@ function handleOwnerFinalizeCompletion(args: {
       },
       ownerVerdict === 'done_with_concerns'
         ? 'Owner raised concerns during finalize — task set back to active'
-        : 'Owner made changes after reviewer approval — task set back to active before re-review',
+        : ownerVerdict === 'step_done'
+          ? 'Owner reported STEP_DONE during finalize — task set back to active before review'
+          : 'Owner made changes after reviewer approval — task set back to active before re-review',
     );
-    return 're_review';
-  }
-
-  if (signal.kind === 'request_owner_continue') {
-    transitionPairedTaskStatus({
+    maybeAutoTriggerReviewerAfterOwnerCompletion({
+      task,
       taskId,
-      currentStatus: task.status,
-      nextStatus: 'active',
-      expectedUpdatedAt: task.updated_at,
-      updatedAt: now,
-      patch: {
-        owner_failure_count: 0,
-        owner_step_done_streak: 0,
-        finalize_step_done_count: nextFinalizeStepDoneCount,
-        empty_step_done_streak: nextEmptyStepDoneStreak,
-      },
+      now,
+      logMessage:
+        ownerVerdict === 'step_done'
+          ? 'Auto-triggered reviewer after owner finalize STEP_DONE'
+          : 'Auto-triggered reviewer after owner finalize required re-review',
+      patch:
+        ownerVerdict === 'step_done'
+          ? {
+              finalize_step_done_count: nextFinalizeStepDoneCount,
+              empty_step_done_streak: nextEmptyStepDoneStreak,
+            }
+          : undefined,
     });
-    logger.info(
-      {
-        taskId,
-        ownerVerdict,
-        emptyStepDoneStreak: nextEmptyStepDoneStreak,
-        finalizeStepDoneCount: nextFinalizeStepDoneCount,
-        summary: summary?.slice(0, 100),
-      },
-      'Owner marked finalize output as an intermediate step — task returned to active without re-review',
-    );
-    return 'continue_owner';
+    return 'stop';
   }
 
   transitionPairedTaskStatus({
@@ -271,6 +262,11 @@ function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
   taskId: string;
   now: string;
   logMessage: string;
+  patch?: {
+    owner_step_done_streak?: number;
+    finalize_step_done_count?: number;
+    empty_step_done_streak?: number;
+  };
 }): void {
   const { task, taskId, now, logMessage } = args;
   if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
@@ -300,6 +296,7 @@ function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
         owner_failure_count: 0,
         owner_step_done_streak: 0,
         empty_step_done_streak: 0,
+        ...args.patch,
       },
     });
     if (hasActiveCiWatcherForChat(task.chat_jid)) {
@@ -345,16 +342,8 @@ export function handleOwnerCompletion(args: {
   }
 
   const ownerVerdict = parseVisibleVerdict(summary);
-  const workspace = getPairedWorkspace(task.id, 'owner');
-  const hasNewChanges = workspace?.workspace_dir
-    ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
-    : null;
   const nextOwnerStepDoneStreak =
     ownerVerdict === 'step_done' ? (task.owner_step_done_streak ?? 0) + 1 : 0;
-  const nextEmptyStepDoneStreak =
-    ownerVerdict === 'step_done' && hasNewChanges === false
-      ? (task.empty_step_done_streak ?? 0) + 1
-      : 0;
   const signal = resolveOwnerCompletionSignal({
     phase: 'normal',
     visibleVerdict: ownerVerdict,
@@ -372,86 +361,23 @@ export function handleOwnerCompletion(args: {
         taskId,
         ownerVerdict,
         ownerStepDoneStreak: nextOwnerStepDoneStreak,
-        emptyStepDoneStreak: nextEmptyStepDoneStreak,
         summary: summary?.slice(0, 100),
       },
       patch: {
         owner_failure_count: 0,
         owner_step_done_streak: nextOwnerStepDoneStreak,
-        empty_step_done_streak: nextEmptyStepDoneStreak,
       },
     });
     return;
   }
 
-  if (
-    signal.kind === 'request_owner_continue' &&
-    hasNewChanges === false &&
-    nextOwnerStepDoneStreak >= OWNER_STEP_DONE_LOOP_THRESHOLD &&
-    nextEmptyStepDoneStreak >= OWNER_STEP_DONE_LOOP_THRESHOLD
-  ) {
-    requestArbiterOrEscalate({
-      taskId,
-      currentStatus: task.status,
-      expectedUpdatedAt: task.updated_at,
-      now,
-      arbiterLogMessage:
-        'Owner repeated STEP_DONE in active mode without code changes — requesting arbiter',
-      escalateLogMessage:
-        'Owner repeated STEP_DONE in active mode without code changes — escalating to user',
-      logContext: {
-        taskId,
-        ownerVerdict,
-        hasNewChanges,
-        ownerStepDoneStreak: nextOwnerStepDoneStreak,
-        emptyStepDoneStreak: nextEmptyStepDoneStreak,
-        summary: summary?.slice(0, 100),
-      },
-      patch: {
-        owner_failure_count: 0,
-        owner_step_done_streak: nextOwnerStepDoneStreak,
-        empty_step_done_streak: nextEmptyStepDoneStreak,
-      },
-    });
-    return;
-  }
-
-  if (signal.kind === 'request_owner_continue') {
-    applyPairedTaskPatch({
-      taskId,
-      expectedUpdatedAt: task.updated_at,
-      updatedAt: now,
-      patch: {
-        owner_failure_count: 0,
-        owner_step_done_streak: nextOwnerStepDoneStreak,
-        empty_step_done_streak: nextEmptyStepDoneStreak,
-      },
-    });
-    logger.info(
-      {
-        taskId,
-        ownerVerdict,
-        hasNewChanges,
-        ownerStepDoneStreak: nextOwnerStepDoneStreak,
-        emptyStepDoneStreak: nextEmptyStepDoneStreak,
-        summary: summary?.slice(0, 100),
-      },
-      'Owner marked the current output as an intermediate completed step — keeping task active for follow-up',
-    );
-    return;
-  }
-
-  if (
-    nextOwnerStepDoneStreak !== (task.owner_step_done_streak ?? 0) ||
-    nextEmptyStepDoneStreak !== (task.empty_step_done_streak ?? 0)
-  ) {
+  if (nextOwnerStepDoneStreak !== (task.owner_step_done_streak ?? 0)) {
     applyPairedTaskPatch({
       taskId,
       expectedUpdatedAt: task.updated_at,
       updatedAt: now,
       patch: {
         owner_step_done_streak: nextOwnerStepDoneStreak,
-        empty_step_done_streak: nextEmptyStepDoneStreak,
       },
     });
   }

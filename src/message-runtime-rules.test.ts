@@ -120,7 +120,7 @@ describe('message-runtime-rules', () => {
         lastTurnOutputVerdict: 'step_done',
         intentKind: 'owner-follow-up',
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('maps active tasks with reviewer output to an owner follow-up', () => {
@@ -132,14 +132,14 @@ describe('message-runtime-rules', () => {
     ).toEqual({ kind: 'owner-follow-up' });
   });
 
-  it('maps active tasks with owner STEP_DONE output to an owner follow-up', () => {
+  it('does not map active owner STEP_DONE output to an owner follow-up', () => {
     expect(
       resolveNextTurnAction({
         taskStatus: 'active',
         lastTurnOutputRole: 'owner',
         lastTurnOutputVerdict: 'step_done',
       }),
-    ).toEqual({ kind: 'owner-follow-up' });
+    ).toEqual({ kind: 'none' });
   });
 
   it('returns none when an active task has no reviewer or arbiter handoff output', () => {
@@ -329,7 +329,7 @@ describe('message-runtime-rules', () => {
         lastTurnOutputRole: 'owner',
         lastTurnOutputVerdict: 'step_done',
       }),
-    ).toBe('owner');
+    ).toBeNull();
   });
 
   it('resolves reviewer execution target from review_ready task status', () => {
