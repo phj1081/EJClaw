@@ -139,6 +139,7 @@ describe('config/env loading', () => {
     let config = await import('./config.js');
     expect(config.CODEX_WARMUP_CONFIG.enabled).toBe(false);
     expect(config.CODEX_WARMUP_CONFIG.maxUsagePct).toBe(0);
+    expect(config.CODEX_WARMUP_CONFIG.maxD7UsagePct).toBe(0);
     expect(
       config.CODEX_WARMUP_CONFIG.maxConsecutiveFailures,
     ).toBeGreaterThanOrEqual(1);
