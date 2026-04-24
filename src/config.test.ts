@@ -31,6 +31,17 @@ describe('config/env loading', () => {
     delete process.env.DISCORD_CODEX_REVIEW_BOT_TOKEN;
     delete process.env.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL;
     delete process.env.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION;
+    delete process.env.CODEX_WARMUP_ENABLED;
+    delete process.env.CODEX_WARMUP_PROMPT;
+    delete process.env.CODEX_WARMUP_MODEL;
+    delete process.env.CODEX_WARMUP_INTERVAL_MS;
+    delete process.env.CODEX_WARMUP_MIN_INTERVAL_MS;
+    delete process.env.CODEX_WARMUP_STAGGER_MS;
+    delete process.env.CODEX_WARMUP_MAX_USAGE_PCT;
+    delete process.env.CODEX_WARMUP_MAX_D7_USAGE_PCT;
+    delete process.env.CODEX_WARMUP_COMMAND_TIMEOUT_MS;
+    delete process.env.CODEX_WARMUP_FAILURE_COOLDOWN_MS;
+    delete process.env.CODEX_WARMUP_MAX_CONSECUTIVE_FAILURES;
     delete process.env.SESSION_COMMAND_USER_IDS;
     vi.resetModules();
   });
@@ -122,6 +133,33 @@ describe('config/env loading', () => {
     process.env.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION = 'true';
     config = await import('./config.js');
     expect(config.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION).toBe(true);
+  });
+
+  it('keeps Codex warm-up disabled by default and exposes conservative opt-in env config', async () => {
+    let config = await import('./config.js');
+    expect(config.CODEX_WARMUP_CONFIG.enabled).toBe(false);
+    expect(config.CODEX_WARMUP_CONFIG.maxUsagePct).toBe(0);
+    expect(
+      config.CODEX_WARMUP_CONFIG.maxConsecutiveFailures,
+    ).toBeGreaterThanOrEqual(1);
+
+    vi.resetModules();
+    process.env.CODEX_MODEL = 'gpt-5.5';
+    process.env.CODEX_WARMUP_ENABLED = 'true';
+    process.env.CODEX_WARMUP_PROMPT = '.';
+    process.env.CODEX_WARMUP_STAGGER_MS = '600000';
+    process.env.CODEX_WARMUP_MAX_CONSECUTIVE_FAILURES = '1';
+    config = await import('./config.js');
+
+    expect(config.CODEX_WARMUP_CONFIG).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        prompt: '.',
+        model: 'gpt-5.5',
+        staggerMs: 600000,
+        maxConsecutiveFailures: 1,
+      }),
+    );
   });
 
   it('fails fast when a legacy Discord token alias is configured', async () => {

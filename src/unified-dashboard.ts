@@ -14,6 +14,7 @@ import {
   STATUS_SHOW_ROOM_DETAILS,
   STATUS_SHOW_ROOMS,
   USAGE_DASHBOARD_ENABLED,
+  CODEX_WARMUP_CONFIG,
   getMoaConfig,
 } from './config.js';
 import { fetchKimiUsage, buildKimiUsageRows } from './kimi-usage.js';
@@ -28,6 +29,7 @@ import {
   refreshActiveCodexUsage,
   refreshAllCodexAccountUsage,
 } from './codex-usage-collector.js';
+import { runCodexWarmupCycle } from './codex-warmup.js';
 import {
   composeDashboardContent,
   formatElapsed,
@@ -735,18 +737,49 @@ export async function startUnifiedDashboard(
     cachedCodexUsageRows = result.rows;
     if (result.fetchedAt) codexUsageFetchedAt = result.fetchedAt;
   };
-  void refreshAllCodexAccountUsage().then((r) => {
-    applyCodexRefresh(r);
-    return refreshActiveCodexUsage().then(applyCodexRefresh);
-  });
+  const isWarmupRuntimeBusy = () => {
+    const groups = opts.roomBindings();
+    return opts.queue
+      .getStatuses(Object.keys(groups))
+      .some((status) => status.status === 'processing');
+  };
+  let codexWarmupInFlight = false;
+  const runCodexWarmup = async () => {
+    if (!CODEX_WARMUP_CONFIG.enabled || codexWarmupInFlight) return;
+    codexWarmupInFlight = true;
+    try {
+      const result = await runCodexWarmupCycle(CODEX_WARMUP_CONFIG, {
+        shouldSkip: isWarmupRuntimeBusy,
+      });
+      if (result.status === 'warmed') {
+        applyCodexRefresh(await refreshAllCodexAccountUsage());
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Codex warm-up cycle failed unexpectedly');
+    } finally {
+      codexWarmupInFlight = false;
+    }
+  };
+  void refreshAllCodexAccountUsage()
+    .then((r) => {
+      applyCodexRefresh(r);
+      return refreshActiveCodexUsage().then(applyCodexRefresh);
+    })
+    .then(() => runCodexWarmup());
   setInterval(
     () => void refreshActiveCodexUsage().then(applyCodexRefresh),
     opts.usageUpdateInterval,
   );
   setInterval(
-    () => void refreshAllCodexAccountUsage().then(applyCodexRefresh),
+    () =>
+      void refreshAllCodexAccountUsage()
+        .then(applyCodexRefresh)
+        .then(() => runCodexWarmup()),
     CODEX_FULL_SCAN_INTERVAL,
   );
+  if (CODEX_WARMUP_CONFIG.enabled) {
+    setInterval(() => void runCodexWarmup(), CODEX_WARMUP_CONFIG.intervalMs);
+  }
 
   logger.info(
     {

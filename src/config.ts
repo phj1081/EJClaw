@@ -140,6 +140,7 @@ export const USAGE_UPDATE_INTERVAL = CONFIG.status.usageUpdateInterval;
 export const STATUS_SHOW_ROOMS = CONFIG.status.showRooms;
 export const STATUS_SHOW_ROOM_DETAILS = CONFIG.status.showRoomDetails;
 export const USAGE_DASHBOARD_ENABLED = CONFIG.status.usageDashboardEnabled;
+export const CODEX_WARMUP_CONFIG = CONFIG.codexWarmup;
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default

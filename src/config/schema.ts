@@ -78,6 +78,19 @@ export interface AppConfig {
     usageDashboardEnabled: boolean;
     timezone: string;
   };
+  codexWarmup: {
+    enabled: boolean;
+    prompt: string;
+    model: string;
+    intervalMs: number;
+    minIntervalMs: number;
+    staggerMs: number;
+    maxUsagePct: number;
+    maxD7UsagePct: number;
+    commandTimeoutMs: number;
+    failureCooldownMs: number;
+    maxConsecutiveFailures: number;
+  };
   sessionCommands: {
     allowedSenders: Set<string>;
   };
