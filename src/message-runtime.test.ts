@@ -842,6 +842,127 @@ describe('createMessageRuntime', () => {
     );
   });
 
+  it('suppresses a stale owner work item when a new human message arrives while the paired task is still active', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const channel = makeChannel(chatJid);
+    const enqueueMessageCheck = vi.fn();
+    const activeTask = {
+      id: 'task-active-owner-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 0,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:05.000Z',
+    } as any;
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getOpenWorkItem).mockReturnValue({
+      id: 109,
+      group_folder: group.folder,
+      chat_jid: chatJid,
+      agent_type: 'codex',
+      service_id: 'claude',
+      delivery_role: 'owner',
+      status: 'delivery_retry',
+      start_seq: 1,
+      end_seq: 1,
+      result_payload: '이전 step 결과입니다.',
+      delivery_attempts: 1,
+      created_at: '2026-03-30T00:00:05.000Z',
+      updated_at: '2026-03-30T00:00:05.000Z',
+      delivered_at: null,
+      delivery_message_id: null,
+      last_error: 'discord send failed',
+    });
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-2',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '이전 답 말고 이 방향으로 진행해줘',
+        timestamp: '2026-03-30T00:00:10.000Z',
+        seq: 2,
+      },
+    ]);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(activeTask);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, input, _onProcess, onOutput) => {
+        expect(input.prompt).toContain('이 방향으로 진행해줘');
+        expect(input.prompt).not.toContain('이전 step 결과입니다.');
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'STEP_DONE\n새 입력 기준으로 계속 진행',
+          output: {
+            visibility: 'public',
+            text: 'STEP_DONE\n새 입력 기준으로 계속 진행',
+          },
+        } as any);
+        return {
+          status: 'success',
+          result: 'STEP_DONE\n새 입력 기준으로 계속 진행',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRoomBindings: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-suppress-stale-active-owner-work-item',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(db.markWorkItemDelivered).toHaveBeenCalledWith(109);
+    expect(channel.sendMessage).not.toHaveBeenCalledWith(
+      chatJid,
+      '이전 step 결과입니다.',
+    );
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid,
+        workItemId: 109,
+        taskId: 'task-active-owner-follow-up',
+        taskStatus: 'active',
+      }),
+      'Suppressed stale owner delivery retry because a new human message arrived while the paired task was still active',
+    );
+  });
+
   it('suppresses duplicate stale work item delivery and logs the suppression reason', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -1632,8 +1753,9 @@ describe('createMessageRuntime', () => {
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toBe(
-          `The reviewer approved your work (DONE). Finalize and report the result.
-If you intend to close this paired turn now, your first line must be DONE.
+          `The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.
+If you intend to close this paired turn now, your first line must be TASK_DONE.
+If the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.
 If your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.\n\nReviewer's final assessment:\n${truncatedReviewerOutput}`,
         );
         expect(input.prompt).not.toContain(longReviewerOutput);
@@ -1741,7 +1863,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toBe(
-          "The reviewer approved your work (DONE). Finalize and report the result.\nIf you intend to close this paired turn now, your first line must be DONE.\nIf your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.\n\nReviewer's final assessment:\n리뷰 승인 요약",
+          "The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.\nIf you intend to close this paired turn now, your first line must be TASK_DONE.\nIf the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.\nIf your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.\n\nReviewer's final assessment:\n리뷰 승인 요약",
         );
         expect(input.prompt).not.toContain('DONE\n승인합니다.');
         await onOutput?.({
@@ -2004,6 +2126,105 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     expect(pending?.prompt).toContain('이전 reviewer 피드백');
   });
 
+  it('does not build an owner follow-up pending turn from owner STEP_DONE on an active task', () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const task = {
+      id: 'task-owner-step-done-pending',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:10.000Z',
+      updated_at: '2026-03-30T00:00:10.000Z',
+    } as any;
+
+    vi.mocked(db.getLatestPreviousPairedTaskForChat).mockReturnValue(undefined);
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: task.id,
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'STEP_DONE\n1단계는 끝났고 2단계로 이어가야 함',
+        created_at: '2026-03-30T00:00:11.000Z',
+      },
+    ] as any);
+
+    const pending = buildPendingPairedTurn({
+      chatJid,
+      timezone: 'UTC',
+      task,
+      rawMissedMessages: [{ seq: 42, timestamp: '2026-03-30T00:00:12.000Z' }],
+      recentHumanMessages: [],
+      labeledRecentMessages: [],
+      resolveChannel: () => makeChannel(chatJid),
+    });
+
+    expect(pending).toBeNull();
+  });
+
+  it('builds a reviewer pending turn when a review_ready task follows owner TASK_DONE output', () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const task = {
+      id: 'task-owner-task-done-pending',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: '2026-03-30T00:00:10.000Z',
+      round_trip_count: 1,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:10.000Z',
+      updated_at: '2026-03-30T00:00:10.000Z',
+    } as any;
+
+    vi.mocked(db.getLatestPreviousPairedTaskForChat).mockReturnValue(undefined);
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: task.id,
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'TASK_DONE\n요청 범위 전체 완료',
+        created_at: '2026-03-30T00:00:11.000Z',
+      },
+    ] as any);
+
+    const pending = buildPendingPairedTurn({
+      chatJid,
+      timezone: 'UTC',
+      task,
+      rawMissedMessages: [{ seq: 42, timestamp: '2026-03-30T00:00:12.000Z' }],
+      recentHumanMessages: [],
+      labeledRecentMessages: [],
+      resolveChannel: () => makeChannel(chatJid, 'discord-review', false),
+    });
+
+    expect(pending).not.toBeNull();
+    expect(pending).toMatchObject({
+      role: 'reviewer',
+      intentKind: 'reviewer-turn',
+      taskId: task.id,
+    });
+  });
+
   it('re-enqueues reviewer after a successful owner delivery moves the task to review_ready', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
@@ -2104,6 +2325,128 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
         completedRole: 'owner',
         taskId: 'task-owner-delivery-follow-up',
         taskStatus: 'review_ready',
+      }),
+      'Queued paired follow-up after successful owner delivery',
+    );
+  });
+
+  it('does not re-enqueue owner follow-up after a successful owner STEP_DONE delivery keeps the task active', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('codex');
+    const ownerChannel: Channel = {
+      ...makeChannel(chatJid),
+      isOwnMessage: vi.fn((msg) => msg.sender === 'owner-bot@test'),
+    };
+    const reviewerChannel = makeChannel(chatJid, 'discord-review', false);
+    const enqueueMessageCheck = vi.fn();
+    const pairedTask = {
+      id: 'task-owner-step-done-follow-up',
+      chat_jid: chatJid,
+      group_folder: group.folder,
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 1,
+      owner_failure_count: 2,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    } as any;
+    let turnOutputs: any[] = [];
+
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
+      () => pairedTask,
+    );
+    vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) =>
+      taskId === pairedTask.id ? turnOutputs : [],
+    );
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'human-step-done-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: '이 리팩토링 이어서 해줘',
+        timestamp: '2026-03-30T00:00:00.000Z',
+        seq: 1,
+        is_bot_message: false,
+      } as any,
+    ]);
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        pairedTask.status = 'active';
+        pairedTask.owner_failure_count = 0;
+        turnOutputs = [
+          {
+            id: 1,
+            task_id: pairedTask.id,
+            turn_number: 1,
+            role: 'owner',
+            output_text: 'STEP_DONE\n리팩토링 1단계 완료, 다음 단계 진행',
+            created_at: '2026-03-30T00:00:01.000Z',
+          },
+        ];
+        await onOutput?.({
+          status: 'success',
+          phase: 'final',
+          result: 'STEP_DONE\n리팩토링 1단계 완료, 다음 단계 진행',
+          newSessionId: 'session-owner-step-done-follow-up',
+        });
+        return {
+          status: 'success',
+          result: 'STEP_DONE\n리팩토링 1단계 완료, 다음 단계 진행',
+          newSessionId: 'session-owner-step-done-follow-up',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [ownerChannel, reviewerChannel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin: vi.fn(),
+        notifyIdle: vi.fn(),
+        enqueueMessageCheck,
+      } as any,
+      getRoomBindings: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
+      persistSession: vi.fn(),
+      clearSession: vi.fn(),
+    });
+
+    const result = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-owner-step-done-follow-up',
+      reason: 'messages',
+    });
+
+    expect(result).toBe(true);
+    expect(ownerChannel.sendMessage).toHaveBeenCalledWith(
+      chatJid,
+      'STEP_DONE\n리팩토링 1단계 완료, 다음 단계 진행',
+    );
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(pairedTask.status).toBe('active');
+    expect(pairedTask.round_trip_count).toBe(1);
+    expect(pairedTask.owner_failure_count).toBe(0);
+    expect(logger.info).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        intentKind: 'owner-follow-up',
       }),
       'Queued paired follow-up after successful owner delivery',
     );

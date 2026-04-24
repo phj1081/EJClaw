@@ -51,6 +51,10 @@ export type PairedTaskUpdates = Partial<
     | 'review_requested_at'
     | 'round_trip_count'
     | 'owner_failure_count'
+    | 'owner_step_done_streak'
+    | 'finalize_step_done_count'
+    | 'task_done_then_user_reopen_count'
+    | 'empty_step_done_streak'
     | 'status'
     | 'arbiter_verdict'
     | 'arbiter_requested_at'
@@ -173,6 +177,10 @@ export function createPairedTaskInDatabase(
           review_requested_at,
           round_trip_count,
           owner_failure_count,
+          owner_step_done_streak,
+          finalize_step_done_count,
+          task_done_then_user_reopen_count,
+          empty_step_done_streak,
           status,
           arbiter_verdict,
           arbiter_requested_at,
@@ -180,7 +188,7 @@ export function createPairedTaskInDatabase(
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
     )
     .run(
@@ -198,6 +206,10 @@ export function createPairedTaskInDatabase(
       task.review_requested_at,
       task.round_trip_count,
       task.owner_failure_count ?? 0,
+      task.owner_step_done_streak ?? 0,
+      task.finalize_step_done_count ?? 0,
+      task.task_done_then_user_reopen_count ?? 0,
+      task.empty_step_done_streak ?? 0,
       task.status,
       task.arbiter_verdict,
       task.arbiter_requested_at,
@@ -306,6 +318,22 @@ export function updatePairedTaskInDatabase(
     fields.push('owner_failure_count = ?');
     values.push(updates.owner_failure_count);
   }
+  if (updates.owner_step_done_streak !== undefined) {
+    fields.push('owner_step_done_streak = ?');
+    values.push(updates.owner_step_done_streak);
+  }
+  if (updates.finalize_step_done_count !== undefined) {
+    fields.push('finalize_step_done_count = ?');
+    values.push(updates.finalize_step_done_count);
+  }
+  if (updates.task_done_then_user_reopen_count !== undefined) {
+    fields.push('task_done_then_user_reopen_count = ?');
+    values.push(updates.task_done_then_user_reopen_count);
+  }
+  if (updates.empty_step_done_streak !== undefined) {
+    fields.push('empty_step_done_streak = ?');
+    values.push(updates.empty_step_done_streak);
+  }
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
@@ -368,6 +396,22 @@ export function updatePairedTaskIfUnchangedInDatabase(
   if (updates.owner_failure_count !== undefined) {
     fields.push('owner_failure_count = ?');
     values.push(updates.owner_failure_count);
+  }
+  if (updates.owner_step_done_streak !== undefined) {
+    fields.push('owner_step_done_streak = ?');
+    values.push(updates.owner_step_done_streak);
+  }
+  if (updates.finalize_step_done_count !== undefined) {
+    fields.push('finalize_step_done_count = ?');
+    values.push(updates.finalize_step_done_count);
+  }
+  if (updates.task_done_then_user_reopen_count !== undefined) {
+    fields.push('task_done_then_user_reopen_count = ?');
+    values.push(updates.task_done_then_user_reopen_count);
+  }
+  if (updates.empty_step_done_streak !== undefined) {
+    fields.push('empty_step_done_streak = ?');
+    values.push(updates.empty_step_done_streak);
   }
   if (updates.status !== undefined) {
     fields.push('status = ?');

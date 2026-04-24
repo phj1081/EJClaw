@@ -1242,8 +1242,51 @@ describe('paired task state', () => {
     expect(outputs.map((output) => output.turn_number)).toEqual([1, 2]);
     expect(outputs[0].role).toBe('owner');
     expect(outputs[0].output_text).toHaveLength(50_000);
+    expect(outputs[0].verdict).toBe('continue');
     expect(outputs[1].output_text).toBe('review turn');
+    expect(outputs[1].verdict).toBe('continue');
     expect(getLatestTurnNumber('paired-task-turn-output')).toBe(2);
+  });
+
+  it('stores the parsed visible verdict with paired turn outputs', () => {
+    createPairedTask({
+      id: 'paired-task-turn-output-verdict',
+      chat_jid: 'dc:paired',
+      group_folder: 'paired-room',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'codex-review',
+      title: null,
+      source_ref: null,
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: null,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-28T00:00:00.000Z',
+      updated_at: '2026-03-28T00:00:00.000Z',
+    });
+
+    insertPairedTurnOutput(
+      'paired-task-turn-output-verdict',
+      1,
+      'owner',
+      'STEP_DONE\n1단계 완료',
+    );
+    insertPairedTurnOutput(
+      'paired-task-turn-output-verdict',
+      2,
+      'owner',
+      'TASK_DONE\n요청 범위 전체 완료',
+    );
+
+    const outputs = getPairedTurnOutputs('paired-task-turn-output-verdict');
+
+    expect(outputs.map((output) => output.verdict)).toEqual([
+      'step_done',
+      'task_done',
+    ]);
   });
 
   it('preserves explicit created_at when inserting a paired turn output', () => {

@@ -3,14 +3,8 @@ import { execFileSync } from 'child_process';
 import { isArbiterEnabled } from './config.js';
 import { updatePairedTaskIfUnchanged } from './db.js';
 import { logger } from './logger.js';
+import { parseVisibleVerdict, type VisibleVerdict } from './paired-verdict.js';
 import type { PairedTaskStatus } from './types.js';
-
-export type VisibleVerdict =
-  | 'done'
-  | 'done_with_concerns'
-  | 'blocked'
-  | 'needs_context'
-  | 'continue';
 
 export type CompletionSignal =
   | { kind: 'request_reviewer'; resetStatusToActive: boolean }
@@ -20,22 +14,8 @@ export type CompletionSignal =
   | { kind: 'complete'; completionReason: 'done' | 'escalated' }
   | { kind: 'preserve_review_ready' };
 
-export function parseVisibleVerdict(
-  summary: string | null | undefined,
-): VisibleVerdict {
-  if (!summary) return 'continue';
-  const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-  if (!cleaned) return 'continue';
-  const firstLine = cleaned.split('\n')[0].trim();
-  if (/^\*{0,2}BLOCKED\*{0,2}\b/i.test(firstLine)) return 'blocked';
-  if (/^\*{0,2}NEEDS_CONTEXT\*{0,2}\b/i.test(firstLine)) return 'needs_context';
-  if (/^\*{0,2}DONE_WITH_CONCERNS\*{0,2}\b/i.test(firstLine))
-    return 'done_with_concerns';
-  if (/^\*{0,2}DONE\*{0,2}\b/i.test(firstLine)) return 'done';
-  if (/^\*{0,2}Approved\.?\*{0,2}/i.test(firstLine)) return 'done';
-  if (/^\*{0,2}LGTM\*{0,2}/i.test(firstLine)) return 'done';
-  return 'continue';
-}
+export { parseVisibleVerdict };
+export type { VisibleVerdict };
 
 export function resolveOwnerCompletionSignal(args: {
   phase: 'normal' | 'finalize';
@@ -60,6 +40,13 @@ export function resolveOwnerCompletionSignal(args: {
     return {
       kind: 'request_reviewer',
       resetStatusToActive: false,
+    };
+  }
+
+  if (visibleVerdict === 'step_done') {
+    return {
+      kind: 'request_reviewer',
+      resetStatusToActive: true,
     };
   }
 
@@ -90,8 +77,11 @@ export function resolveReviewerCompletionSignal(args: {
   const { visibleVerdict, roundTripCount, deadlockThreshold } = args;
 
   switch (visibleVerdict) {
+    case 'task_done':
     case 'done':
       return { kind: 'request_owner_finalize' };
+    case 'step_done':
+      return { kind: 'request_owner_changes' };
     case 'blocked':
     case 'needs_context':
       return { kind: 'request_arbiter' };
@@ -111,6 +101,7 @@ export function resolveReviewerFailureSignal(args: {
   const { visibleVerdict } = args;
 
   switch (visibleVerdict) {
+    case 'task_done':
     case 'done':
       return { kind: 'request_owner_finalize' };
     case 'blocked':
@@ -248,6 +239,10 @@ export function transitionPairedTaskStatus(args: {
     review_requested_at?: string | null;
     round_trip_count?: number;
     owner_failure_count?: number;
+    owner_step_done_streak?: number;
+    finalize_step_done_count?: number;
+    task_done_then_user_reopen_count?: number;
+    empty_step_done_streak?: number;
     arbiter_verdict?: string | null;
     arbiter_requested_at?: string | null;
     completion_reason?: string | null;
@@ -292,6 +287,10 @@ export function applyPairedTaskPatch(args: {
     review_requested_at?: string | null;
     round_trip_count?: number;
     owner_failure_count?: number;
+    owner_step_done_streak?: number;
+    finalize_step_done_count?: number;
+    task_done_then_user_reopen_count?: number;
+    empty_step_done_streak?: number;
     status?: PairedTaskStatus;
     arbiter_verdict?: string | null;
     arbiter_requested_at?: string | null;
@@ -333,6 +332,10 @@ export function requestArbiterOrEscalate(args: {
     review_requested_at?: string | null;
     round_trip_count?: number;
     owner_failure_count?: number;
+    owner_step_done_streak?: number;
+    finalize_step_done_count?: number;
+    task_done_then_user_reopen_count?: number;
+    empty_step_done_streak?: number;
     arbiter_verdict?: string | null;
     arbiter_requested_at?: string | null;
     completion_reason?: string | null;

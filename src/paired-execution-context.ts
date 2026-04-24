@@ -30,6 +30,7 @@ import {
   hasActiveCiWatcherForChat,
   insertPairedTurnOutput,
   releasePairedTaskExecutionLease,
+  updatePairedTask,
   upsertPairedProject,
 } from './db.js';
 import { logger } from './logger.js';
@@ -71,6 +72,8 @@ import type {
   RoomRoleContext,
 } from './types.js';
 import { resolveRoleAgentPlan } from './role-agent-plan.js';
+
+const TASK_DONE_REOPEN_WINDOW_MS = 10 * 60_000;
 
 function ensurePairedProject(
   group: RegisteredGroup,
@@ -144,6 +147,10 @@ function createActiveTaskForRoom(args: {
     review_requested_at: null,
     round_trip_count: 0,
     owner_failure_count: 0,
+    owner_step_done_streak: 0,
+    finalize_step_done_count: 0,
+    task_done_then_user_reopen_count: 0,
+    empty_step_done_streak: 0,
     status: 'active',
     arbiter_verdict: null,
     arbiter_requested_at: null,
@@ -162,6 +169,39 @@ function createActiveTaskForRoom(args: {
     'Created active paired task for room',
   );
   return task;
+}
+
+function maybeRecordTaskDoneReopen(previousTask: PairedTask | null): void {
+  if (
+    !previousTask ||
+    previousTask.status !== 'completed' ||
+    previousTask.completion_reason !== 'done'
+  ) {
+    return;
+  }
+
+  const completedAt = Date.parse(previousTask.updated_at);
+  if (!Number.isFinite(completedAt)) {
+    return;
+  }
+  if (Date.now() - completedAt > TASK_DONE_REOPEN_WINDOW_MS) {
+    return;
+  }
+
+  updatePairedTask(previousTask.id, {
+    task_done_then_user_reopen_count:
+      (previousTask.task_done_then_user_reopen_count ?? 0) + 1,
+    updated_at: new Date().toISOString(),
+  });
+  logger.info(
+    {
+      taskId: previousTask.id,
+      chatJid: previousTask.chat_jid,
+      reopenCount: (previousTask.task_done_then_user_reopen_count ?? 0) + 1,
+      completionReason: previousTask.completion_reason,
+    },
+    'Recorded paired task reopen shortly after TASK_DONE completion',
+  );
 }
 
 function cancelOutstandingFinalizeOwnerTurn(task: PairedTask): void {
@@ -253,6 +293,7 @@ export function resolveOwnerTaskForHumanMessage(args: {
     args.existingTask ?? getLatestOpenPairedTaskForChat(args.chatJid) ?? null;
 
   if (!existing) {
+    maybeRecordTaskDoneReopen(getLatestPairedTaskForChat(args.chatJid) ?? null);
     return {
       task: canonicalWorkDir
         ? createActiveTaskForRoom({
@@ -432,7 +473,12 @@ export function preparePairedExecutionContext(args: {
           updatedAt: now,
           patch: {
             ...(hasHuman
-              ? { round_trip_count: 0, owner_failure_count: 0 }
+              ? {
+                  round_trip_count: 0,
+                  owner_failure_count: 0,
+                  owner_step_done_streak: 0,
+                  empty_step_done_streak: 0,
+                }
               : {}),
           },
         });
@@ -443,7 +489,12 @@ export function preparePairedExecutionContext(args: {
           updatedAt: now,
           patch: {
             ...(hasHuman
-              ? { round_trip_count: 0, owner_failure_count: 0 }
+              ? {
+                  round_trip_count: 0,
+                  owner_failure_count: 0,
+                  owner_step_done_streak: 0,
+                  empty_step_done_streak: 0,
+                }
               : {}),
           },
         });

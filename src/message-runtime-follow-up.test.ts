@@ -83,6 +83,33 @@ describe('message-runtime-follow-up', () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it('does not use fallback owner STEP_DONE verdict to schedule owner follow-ups while active', () => {
+    const enqueue = vi.fn();
+    const result = dispatchPairedFollowUpForEvent({
+      chatJid: 'group@test',
+      runId: 'run-owner-step-done',
+      task: {
+        id: 'task-owner-step-done',
+        status: 'active',
+        round_trip_count: 1,
+        updated_at: '2026-03-30T00:00:00.000Z',
+      },
+      source: 'owner-delivery-success',
+      completedRole: 'owner',
+      fallbackLastTurnOutputRole: 'owner',
+      fallbackLastTurnOutputVerdict: 'step_done',
+      enqueue,
+    });
+
+    expect(result).toMatchObject({
+      kind: 'none',
+      taskStatus: 'active',
+      lastTurnOutputRole: 'owner',
+      lastTurnOutputVerdict: 'step_done',
+    });
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it('prefers the latest persisted turn output over the fallback delivery role when both are present', () => {
     const enqueue = vi.fn();
     vi.mocked(getPairedTurnOutputs).mockReturnValue([

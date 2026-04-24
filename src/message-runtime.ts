@@ -56,6 +56,7 @@ import {
 } from './types.js';
 import { createScopedLogger, logger } from './logger.js';
 import { hasReviewerLease } from './service-routing.js';
+import type { WorkItem } from './db/work-items.js';
 export {
   resolveHandoffCursorKey,
   resolveHandoffRoleOverride,
@@ -112,6 +113,54 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const enqueueScopedGroupMessageCheck = buildScopedMessageCheckEnqueuer(
     deps.queue,
   );
+
+  const getFreshHumanPreflightMessages = (
+    chatJid: string,
+    channel: Channel,
+  ): NewMessage[] => {
+    const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
+    const preflightRawMessages = getMessagesSinceSeq(
+      chatJid,
+      sinceSeqCursor,
+      deps.assistantName,
+    );
+    const preflightMessages = filterLoopingPairedBotMessages(
+      chatJid,
+      getProcessableMessages(chatJid, preflightRawMessages, channel),
+      FAILURE_FINAL_TEXT,
+    );
+    return preflightMessages.filter(
+      (message) => message.is_from_me !== true && !message.is_bot_message,
+    );
+  };
+
+  const hasHumanMessageAfterWorkItem = (
+    openWorkItem: WorkItem,
+    freshHumanMessages: NewMessage[],
+  ): boolean => {
+    if (freshHumanMessages.length === 0) {
+      return false;
+    }
+
+    const workItemSeq = openWorkItem.end_seq ?? openWorkItem.start_seq ?? null;
+    const workItemUpdatedAt = Date.parse(openWorkItem.updated_at);
+
+    return freshHumanMessages.some((message) => {
+      if (message.seq != null && workItemSeq != null) {
+        return message.seq > workItemSeq;
+      }
+
+      const messageTimestamp = Date.parse(message.timestamp);
+      if (
+        Number.isFinite(messageTimestamp) &&
+        Number.isFinite(workItemUpdatedAt)
+      ) {
+        return messageTimestamp > workItemUpdatedAt;
+      }
+
+      return true;
+    });
+  };
 
   const scheduleQueuedPairedFollowUp = (args: {
     chatJid: string;
@@ -351,25 +400,15 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       ? getLatestOpenPairedTaskForChat(chatJid)
       : null;
     let openWorkItem = getOpenWorkItemForChat(chatJid, SERVICE_SESSION_SCOPE);
-    if (
-      pendingTask?.status === 'merge_ready' &&
-      openWorkItem?.delivery_role === 'owner'
-    ) {
-      const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
-      const preflightRawMessages = getMessagesSinceSeq(
+    if (openWorkItem?.delivery_role === 'owner' && pendingTask) {
+      const freshHumanMessages = getFreshHumanPreflightMessages(
         chatJid,
-        sinceSeqCursor,
-        deps.assistantName,
+        channel,
       );
-      const preflightMessages = filterLoopingPairedBotMessages(
-        chatJid,
-        getProcessableMessages(chatJid, preflightRawMessages, channel),
-        FAILURE_FINAL_TEXT,
-      );
-      const hasFreshHumanMessage = preflightMessages.some(
-        (message) => message.is_from_me !== true && !message.is_bot_message,
-      );
-      if (hasFreshHumanMessage) {
+      if (
+        pendingTask.status === 'merge_ready' &&
+        freshHumanMessages.length > 0
+      ) {
         const resolvedTask = resolveOwnerTaskForHumanMessage({
           group,
           chatJid,
@@ -389,6 +428,23 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           );
           openWorkItem = undefined;
         }
+      } else if (
+        pendingTask.status === 'active' &&
+        hasHumanMessageAfterWorkItem(openWorkItem, freshHumanMessages)
+      ) {
+        markWorkItemDelivered(openWorkItem.id);
+        log.info(
+          {
+            chatJid,
+            workItemId: openWorkItem.id,
+            taskId: pendingTask.id,
+            taskStatus: pendingTask.status,
+            workItemEndSeq: openWorkItem.end_seq ?? null,
+            freshHumanMessageCount: freshHumanMessages.length,
+          },
+          'Suppressed stale owner delivery retry because a new human message arrived while the paired task was still active',
+        );
+        openWorkItem = undefined;
       }
     }
     const openWorkItemOutcome = await processOpenWorkItemDelivery({

@@ -24,6 +24,7 @@ import {
 } from './message-runtime-rules.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
 import { buildPairedTurnIdentity } from './paired-turn-identity.js';
+import { resolveStoredVisibleVerdict } from './paired-verdict.js';
 import {
   claimPairedTurnExecution,
   type ScheduledPairedFollowUpIntentKind,
@@ -127,6 +128,10 @@ export function buildPendingPairedTurn(args: {
   const nextTurnAction = resolveNextTurnAction({
     taskStatus,
     lastTurnOutputRole: lastTurnOutput?.role ?? null,
+    lastTurnOutputVerdict: resolveStoredVisibleVerdict({
+      verdict: lastTurnOutput?.verdict ?? null,
+      outputText: lastTurnOutput?.output_text ?? null,
+    }),
   });
   const recentMessages = getRecentChatMessages(chatJid, 20);
   const lastHumanMessage = getLastHumanMessageContent(chatJid);

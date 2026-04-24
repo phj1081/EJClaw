@@ -216,6 +216,18 @@ describe('message-agent-executor-rules', () => {
     ).toBe('none');
   });
 
+  it('does not request a duplicate executor-side follow-up after successful owner STEP_DONE output', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'owner',
+        executionStatus: 'succeeded',
+        sawOutput: true,
+        taskStatus: 'active',
+        outputSummary: 'STEP_DONE\nkeep going',
+      }),
+    ).toBe('none');
+  });
+
   it('returns none after successful output when no next-turn action is needed', () => {
     expect(
       resolvePairedFollowUpQueueAction({

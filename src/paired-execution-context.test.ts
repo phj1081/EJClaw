@@ -143,6 +143,10 @@ function buildPairedTask(overrides: Partial<PairedTask> = {}): PairedTask {
     review_requested_at: null,
     round_trip_count: 0,
     owner_failure_count: 0,
+    owner_step_done_streak: 0,
+    finalize_step_done_count: 0,
+    task_done_then_user_reopen_count: 0,
+    empty_step_done_streak: 0,
     status: 'active',
     arbiter_verdict: null,
     arbiter_requested_at: null,
@@ -291,6 +295,62 @@ describe('paired execution context', () => {
     expect(db.createPairedTask).toHaveBeenCalledTimes(1);
     expect(result.supersededTask).toEqual(supersededTask);
     expect(db.insertPairedTurnOutput).not.toHaveBeenCalled();
+  });
+
+  it('records a quick reopen when a new owner task starts shortly after TASK_DONE completion', () => {
+    const previousTask = buildPairedTask({
+      id: 'task-completed',
+      status: 'completed',
+      completion_reason: 'done',
+      updated_at: new Date(Date.now() - 60_000).toISOString(),
+      task_done_then_user_reopen_count: 0,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
+    vi.mocked(db.getLatestPairedTaskForChat).mockReturnValue(previousTask);
+
+    const result = resolveOwnerTaskForHumanMessage({
+      group,
+      chatJid: 'dc:test',
+      roomRoleContext: ownerContext,
+      existingTask: null,
+    });
+
+    expect(result.task).not.toBeNull();
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-completed',
+      expect.objectContaining({
+        task_done_then_user_reopen_count: 1,
+      }),
+    );
+  });
+
+  it('resets active STEP_DONE loop counters when a new human message continues an active task', () => {
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        owner_failure_count: 1,
+        owner_step_done_streak: 2,
+        empty_step_done_streak: 2,
+      }),
+    );
+
+    preparePairedExecutionContext({
+      group,
+      chatJid: 'dc:test',
+      runId: 'run-human-reset-step-done-loop',
+      roomRoleContext: ownerContext,
+      hasHumanMessage: true,
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        round_trip_count: 0,
+        owner_failure_count: 0,
+        owner_step_done_streak: 0,
+        empty_step_done_streak: 0,
+      }),
+    );
   });
 
   it('uses room role context agent overrides when creating a paired task', () => {
@@ -736,6 +796,184 @@ describe('paired execution context', () => {
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({ status: 'completed' }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).not.toHaveBeenCalled();
+  });
+
+  it('requests review when the owner reports STEP_DONE in active mode', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        round_trip_count: 1,
+      }),
+    );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', '/tmp/paired/task-1/owner'),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'STEP_DONE\n1단계 완료, 후속 작업 계속',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        round_trip_count: 2,
+        owner_step_done_streak: 0,
+        empty_step_done_streak: 0,
+      }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
+  });
+
+  it('requests review instead of arbiter when active STEP_DONE repeats without code changes', () => {
+    vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
+
+    const repoDir = createCanonicalRepoWithCommit('active step done loop');
+    const sourceRef = resolveTreeRef(repoDir);
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        source_ref: sourceRef,
+        owner_step_done_streak: 2,
+        empty_step_done_streak: 2,
+      }),
+    );
+    vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
+      role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
+    );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', repoDir),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'STEP_DONE\n요약만 반복되고 코드 변경은 없음',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        round_trip_count: 1,
+        owner_step_done_streak: 0,
+        empty_step_done_streak: 0,
+      }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
+    expect(db.updatePairedTask).not.toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'arbiter_requested',
+      }),
+    );
+  });
+
+  it('re-triggers review when the owner reports STEP_DONE during finalize', () => {
+    const repoDir = createCanonicalRepoWithCommit('reviewed');
+    const approvedSourceRef = resolveTreeRef(repoDir);
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+        source_ref: approvedSourceRef,
+        round_trip_count: 1,
+      }),
+    );
+    vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
+      role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
+    );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', repoDir),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'STEP_DONE\n남은 범위가 있어서 계속 진행',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'active',
+        owner_failure_count: 0,
+        finalize_step_done_count: 1,
+        empty_step_done_streak: 1,
+      }),
+    );
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        round_trip_count: 2,
+        finalize_step_done_count: 1,
+        empty_step_done_streak: 1,
+      }),
+    );
+    expect(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).toHaveBeenCalledWith('task-1');
+  });
+
+  it('requests arbiter when finalize STEP_DONE repeats without code changes', () => {
+    vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
+
+    const repoDir = createCanonicalRepoWithCommit('reviewed');
+    const approvedSourceRef = resolveTreeRef(repoDir);
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+        source_ref: approvedSourceRef,
+        empty_step_done_streak: 1,
+        finalize_step_done_count: 1,
+      }),
+    );
+    vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
+      role === 'owner' ? buildWorkspace('owner', repoDir) : undefined,
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'STEP_DONE\n아직 남았지만 코드 변경은 없음',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'arbiter_requested',
+        empty_step_done_streak: 2,
+        finalize_step_done_count: 2,
+      }),
     );
     expect(
       pairedWorkspaceManager.markPairedTaskReviewReady,

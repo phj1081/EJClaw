@@ -78,6 +78,18 @@ function createExecutableWrapperDir(baseEnv: NodeJS.ProcessEnv): string {
   );
 }
 
+function prepareGitConfigSandbox(wrapperDir: string): {
+  gitConfigGlobalPath: string;
+} {
+  const configDir = path.join(wrapperDir, 'git-config');
+  fs.mkdirSync(configDir, { recursive: true });
+  const gitConfigGlobalPath = path.join(configDir, 'global.gitconfig');
+  if (!fs.existsSync(gitConfigGlobalPath)) {
+    fs.writeFileSync(gitConfigGlobalPath, '');
+  }
+  return { gitConfigGlobalPath };
+}
+
 export function buildReviewerGitGuardEnv(
   baseEnv: NodeJS.ProcessEnv,
   reviewerRuntime: boolean,
@@ -90,6 +102,7 @@ export function buildReviewerGitGuardEnv(
   const protectedWorkDir = baseEnv.EJCLAW_WORK_DIR || '';
   const wrapperDir = createExecutableWrapperDir(baseEnv);
   const wrapperPath = path.join(wrapperDir, 'git');
+  const { gitConfigGlobalPath } = prepareGitConfigSandbox(wrapperDir);
   const blocked = [...BLOCKED_GIT_SUBCOMMANDS]
     .map((value) => `'${value}'`)
     .join(' ');
@@ -179,6 +192,8 @@ exec "$real_git" "$@"
     ...baseEnv,
     EJCLAW_REAL_GIT: realGitPath,
     EJCLAW_PROTECTED_WORK_DIR: protectedWorkDir,
+    GIT_CONFIG_GLOBAL: gitConfigGlobalPath,
+    GIT_CONFIG_NOSYSTEM: '1',
     PATH: `${wrapperDir}:${baseEnv.PATH || ''}`,
   };
 }

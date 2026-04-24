@@ -22,6 +22,7 @@ import type { PairedTask } from './types.js';
 
 type OwnerFinalizeOutcome = 'stop' | 're_review';
 const OWNER_FAILURE_ESCALATION_THRESHOLD = 2;
+const EMPTY_STEP_DONE_THRESHOLD = 2;
 
 export function handleFailedOwnerExecution(args: {
   task: PairedTask;
@@ -101,6 +102,14 @@ function handleOwnerFinalizeCompletion(args: {
   const hasNewChanges = workspace?.workspace_dir
     ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
     : null;
+  const nextFinalizeStepDoneCount =
+    ownerVerdict === 'step_done'
+      ? (task.finalize_step_done_count ?? 0) + 1
+      : (task.finalize_step_done_count ?? 0);
+  const nextEmptyStepDoneStreak =
+    ownerVerdict === 'step_done' && hasNewChanges === false
+      ? (task.empty_step_done_streak ?? 0) + 1
+      : 0;
   const signal = resolveOwnerCompletionSignal({
     phase: 'finalize',
     visibleVerdict: ownerVerdict,
@@ -138,6 +147,41 @@ function handleOwnerFinalizeCompletion(args: {
       },
       patch: {
         owner_failure_count: 0,
+        owner_step_done_streak: 0,
+        finalize_step_done_count: nextFinalizeStepDoneCount,
+        empty_step_done_streak: nextEmptyStepDoneStreak,
+      },
+    });
+    return 'stop';
+  }
+
+  if (
+    ownerVerdict === 'step_done' &&
+    hasNewChanges === false &&
+    nextEmptyStepDoneStreak >= EMPTY_STEP_DONE_THRESHOLD
+  ) {
+    requestArbiterOrEscalate({
+      taskId,
+      currentStatus: task.status,
+      expectedUpdatedAt: task.updated_at,
+      now,
+      arbiterLogMessage:
+        'Owner repeated STEP_DONE during finalize without code changes — requesting arbiter',
+      escalateLogMessage:
+        'Owner repeated STEP_DONE during finalize without code changes — escalating to user',
+      logContext: {
+        taskId,
+        ownerVerdict,
+        hasNewChanges,
+        emptyStepDoneStreak: nextEmptyStepDoneStreak,
+        finalizeStepDoneCount: nextFinalizeStepDoneCount,
+        summary: summary?.slice(0, 100),
+      },
+      patch: {
+        owner_failure_count: 0,
+        owner_step_done_streak: 0,
+        finalize_step_done_count: nextFinalizeStepDoneCount,
+        empty_step_done_streak: nextEmptyStepDoneStreak,
       },
     });
     return 'stop';
@@ -153,6 +197,10 @@ function handleOwnerFinalizeCompletion(args: {
         updatedAt: now,
         patch: {
           owner_failure_count: 0,
+          owner_step_done_streak: 0,
+          finalize_step_done_count: nextFinalizeStepDoneCount,
+          empty_step_done_streak:
+            ownerVerdict === 'step_done' ? nextEmptyStepDoneStreak : 0,
         },
       });
     }
@@ -165,9 +213,27 @@ function handleOwnerFinalizeCompletion(args: {
       },
       ownerVerdict === 'done_with_concerns'
         ? 'Owner raised concerns during finalize — task set back to active'
-        : 'Owner made changes after reviewer approval — task set back to active before re-review',
+        : ownerVerdict === 'step_done'
+          ? 'Owner reported STEP_DONE during finalize — task set back to active before review'
+          : 'Owner made changes after reviewer approval — task set back to active before re-review',
     );
-    return 're_review';
+    maybeAutoTriggerReviewerAfterOwnerCompletion({
+      task,
+      taskId,
+      now,
+      logMessage:
+        ownerVerdict === 'step_done'
+          ? 'Auto-triggered reviewer after owner finalize STEP_DONE'
+          : 'Auto-triggered reviewer after owner finalize required re-review',
+      patch:
+        ownerVerdict === 'step_done'
+          ? {
+              finalize_step_done_count: nextFinalizeStepDoneCount,
+              empty_step_done_streak: nextEmptyStepDoneStreak,
+            }
+          : undefined,
+    });
+    return 'stop';
   }
 
   transitionPairedTaskStatus({
@@ -179,6 +245,9 @@ function handleOwnerFinalizeCompletion(args: {
     patch: {
       completion_reason: 'done',
       owner_failure_count: 0,
+      owner_step_done_streak: 0,
+      finalize_step_done_count: nextFinalizeStepDoneCount,
+      empty_step_done_streak: 0,
     },
   });
   logger.info(
@@ -193,6 +262,11 @@ function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
   taskId: string;
   now: string;
   logMessage: string;
+  patch?: {
+    owner_step_done_streak?: number;
+    finalize_step_done_count?: number;
+    empty_step_done_streak?: number;
+  };
 }): void {
   const { task, taskId, now, logMessage } = args;
   if (task.round_trip_count >= PAIRED_MAX_ROUND_TRIPS) {
@@ -220,6 +294,9 @@ function maybeAutoTriggerReviewerAfterOwnerCompletion(args: {
       patch: {
         round_trip_count: task.round_trip_count + 1,
         owner_failure_count: 0,
+        owner_step_done_streak: 0,
+        empty_step_done_streak: 0,
+        ...args.patch,
       },
     });
     if (hasActiveCiWatcherForChat(task.chat_jid)) {
@@ -265,6 +342,8 @@ export function handleOwnerCompletion(args: {
   }
 
   const ownerVerdict = parseVisibleVerdict(summary);
+  const nextOwnerStepDoneStreak =
+    ownerVerdict === 'step_done' ? (task.owner_step_done_streak ?? 0) + 1 : 0;
   const signal = resolveOwnerCompletionSignal({
     phase: 'normal',
     visibleVerdict: ownerVerdict,
@@ -281,15 +360,27 @@ export function handleOwnerCompletion(args: {
       logContext: {
         taskId,
         ownerVerdict,
+        ownerStepDoneStreak: nextOwnerStepDoneStreak,
         summary: summary?.slice(0, 100),
       },
       patch: {
         owner_failure_count: 0,
+        owner_step_done_streak: nextOwnerStepDoneStreak,
       },
     });
     return;
   }
 
+  if (nextOwnerStepDoneStreak !== (task.owner_step_done_streak ?? 0)) {
+    applyPairedTaskPatch({
+      taskId,
+      expectedUpdatedAt: task.updated_at,
+      updatedAt: now,
+      patch: {
+        owner_step_done_streak: nextOwnerStepDoneStreak,
+      },
+    });
+  }
   maybeAutoTriggerReviewerAfterOwnerCompletion({
     task,
     taskId,
