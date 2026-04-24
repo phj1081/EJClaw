@@ -19,6 +19,7 @@ export function applyBaseSchema(database: Database): void {
       seq INTEGER,
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
+      message_source_kind TEXT NOT NULL DEFAULT 'human',
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );

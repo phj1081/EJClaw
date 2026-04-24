@@ -13,6 +13,7 @@ vi.mock('child_process', () => ({
 }));
 
 import {
+  buildWorkspaceCommandEnvironment,
   buildWorkspaceScriptCommand,
   detectWorkspacePackageManager,
   ensureWorkspaceDependenciesInstalled,
@@ -139,6 +140,13 @@ describe('workspace package manager helpers', () => {
       packageManager: 'pnpm',
       commandText: 'corepack pnpm install --frozen-lockfile',
     });
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      'corepack',
+      ['pnpm', 'install', '--frozen-lockfile'],
+      expect.objectContaining({
+        cwd: repoDir,
+      }),
+    );
     expect(hasInstalledNodeModules(repoDir)).toBe(true);
 
     execFileSyncMock.mockClear();
@@ -208,5 +216,60 @@ describe('workspace package manager helpers', () => {
     });
     expect(hasInstalledNodeModules(repoDir)).toBe(true);
     expect(execFileSyncMock).not.toHaveBeenCalled();
+  });
+
+  it('disables corepack project specs only for lockfile-selected pnpm workspaces under a conflicting ancestor', () => {
+    const parentDir = path.join(tempRoot, 'parent');
+    fs.mkdirSync(parentDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(parentDir, 'package.json'),
+      JSON.stringify({ packageManager: 'bun@1.3.11' }),
+    );
+
+    const repoDir = path.join(parentDir, 'child');
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({ name: 'child', scripts: { typecheck: 'tsc --noEmit' } }),
+    );
+    fs.writeFileSync(
+      path.join(repoDir, 'pnpm-lock.yaml'),
+      'lockfileVersion: 9.0\n',
+    );
+
+    expect(
+      buildWorkspaceCommandEnvironment(repoDir, 'pnpm', { PATH: '/tmp/bin' }),
+    ).toMatchObject({
+      PATH: '/tmp/bin',
+      COREPACK_ENABLE_PROJECT_SPEC: '0',
+    });
+  });
+
+  it('keeps an explicitly pinned pnpm workspace packageManager under a bun ancestor', () => {
+    const parentDir = path.join(tempRoot, 'parent');
+    fs.mkdirSync(parentDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(parentDir, 'package.json'),
+      JSON.stringify({ packageManager: 'bun@1.3.11' }),
+    );
+
+    const repoDir = path.join(parentDir, 'child');
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        name: 'child',
+        packageManager: 'pnpm@10.11.0',
+        scripts: { typecheck: 'tsc --noEmit' },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(repoDir, 'pnpm-lock.yaml'),
+      'lockfileVersion: 9.0\n',
+    );
+
+    expect(
+      buildWorkspaceCommandEnvironment(repoDir, 'pnpm', { PATH: '/tmp/bin' }),
+    ).toEqual({ PATH: '/tmp/bin' });
   });
 });

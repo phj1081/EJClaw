@@ -1,5 +1,9 @@
 import { Database } from 'bun:sqlite';
 
+import {
+  inferMessageSourceKindFromBotFlag,
+  normalizeMessageSourceKind,
+} from '../message-source.js';
 import { NewMessage } from '../types.js';
 
 export interface ChatInfo {
@@ -14,12 +18,18 @@ function normalizeMessageRow(
   row: NewMessage & {
     is_from_me?: boolean | number;
     is_bot_message?: boolean | number;
+    message_source_kind?: unknown;
   },
 ): NewMessage {
+  const isBotMessage = !!row.is_bot_message;
   return {
     ...row,
     is_from_me: !!row.is_from_me,
-    is_bot_message: !!row.is_bot_message,
+    is_bot_message: isBotMessage,
+    message_source_kind: normalizeMessageSourceKind(
+      row.message_source_kind,
+      inferMessageSourceKindFromBotFlag(isBotMessage),
+    ),
   };
 }
 
@@ -106,15 +116,16 @@ export function storeMessageInDatabase(
     database
       .prepare(
         `INSERT INTO messages (
-         id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message, message_source_kind
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id, chat_jid) DO UPDATE SET
          sender = excluded.sender,
          sender_name = excluded.sender_name,
          content = excluded.content,
          timestamp = excluded.timestamp,
          is_from_me = excluded.is_from_me,
-         is_bot_message = excluded.is_bot_message`,
+         is_bot_message = excluded.is_bot_message,
+         message_source_kind = excluded.message_source_kind`,
       )
       .run(
         msg.id,
@@ -126,6 +137,10 @@ export function storeMessageInDatabase(
         seq,
         msg.is_from_me ? 1 : 0,
         msg.is_bot_message ? 1 : 0,
+        normalizeMessageSourceKind(
+          msg.message_source_kind,
+          inferMessageSourceKindFromBotFlag(msg.is_bot_message),
+        ),
       );
   })();
 }
@@ -142,7 +157,7 @@ export function getNewMessagesFromDatabase(
   const placeholders = jids.map(() => '?').join(',');
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, message_source_kind
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND content NOT LIKE ?
@@ -178,7 +193,7 @@ export function getMessagesSinceFromDatabase(
 ): NewMessage[] {
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, message_source_kind
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND content NOT LIKE ?
@@ -238,7 +253,7 @@ export function getNewMessagesBySeqFromDatabase(
 
   const placeholders = jids.map(() => '?').join(',');
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message, message_source_kind
     FROM messages
     WHERE seq > ? AND chat_jid IN (${placeholders})
       AND content NOT LIKE ?
@@ -273,7 +288,7 @@ export function getMessagesSinceSeqFromDatabase(
 ): NewMessage[] {
   const sinceSeq = normalizeSeqCursor(sinceSeqCursor);
   const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message
+    SELECT id, chat_jid, sender, sender_name, content, timestamp, seq, is_from_me, is_bot_message, message_source_kind
     FROM messages
     WHERE chat_jid = ? AND seq > ?
       AND content NOT LIKE ?
@@ -300,7 +315,7 @@ export function getRecentChatMessagesFromDatabase(
 ): NewMessage[] {
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, message_source_kind
       FROM messages
       WHERE chat_jid = ?
         AND content != '' AND content IS NOT NULL
