@@ -45,7 +45,7 @@ function platformCandidates(
     return [
       {
         pkg: `@anthropic-ai/claude-agent-sdk-darwin-${arch}`,
-        file: arch === 'arm64' ? 'cli' : 'cli',
+        file: 'claude',
       },
     ];
   }
@@ -53,7 +53,7 @@ function platformCandidates(
     return [
       {
         pkg: `@anthropic-ai/claude-agent-sdk-win32-${arch}`,
-        file: 'cli.exe',
+        file: 'claude.exe',
       },
     ];
   }
@@ -127,12 +127,22 @@ export function resolveBundledClaudeCodeExecutable(options?: {
  * Default package directory resolver. Uses `require.resolve` against this
  * module's location so it works regardless of whether agent-runner is invoked
  * from its own node_modules layout or via a parent workspace.
+ *
+ * Important: the SDK's optional native-binary packages may not expose a bare
+ * package entrypoint, so `require.resolve(pkg)` can fail even when the package
+ * and binary are installed. Resolve `package.json` first, then fall back to the
+ * bare package only for package layouts that do expose an entrypoint.
  */
 function defaultResolvePackageDir(pkg: string): string | null {
+  const req = createRequire(import.meta.url);
   try {
-    // Resolve the package entrypoint instead of package.json because the SDK's
-    // exports map does not expose `./package.json`.
-    const req = createRequire(import.meta.url);
+    const pkgJson = req.resolve(`${pkg}/package.json`);
+    return path.dirname(pkgJson);
+  } catch {
+    // Fall through to legacy/bare-entrypoint resolution below.
+  }
+
+  try {
     const entrypoint = req.resolve(pkg);
     return path.dirname(entrypoint);
   } catch {
@@ -142,5 +152,6 @@ function defaultResolvePackageDir(pkg: string): string | null {
 
 export const __test__ = {
   platformCandidates,
+  defaultResolvePackageDir,
   ENV_OVERRIDE,
 };
