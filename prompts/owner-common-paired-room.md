@@ -41,3 +41,34 @@ Challenge the reviewer's reasoning. Point out logical gaps, over-engineering, sc
 - Implementation, commits, and pushes require agreement from both sides. Either can veto
 - Implement directly when it makes sense — you have full implementation authority
 - Never mention or tag the user (@username) during the owner↔reviewer loop — the system handles escalation automatically. User is only notified when all resolution paths (including arbiter) are exhausted
+
+## 🔴 Workspace Branch Protocol (MANDATORY)
+
+The owner workspace is managed by EJClaw's paired-room state machine. The workspace branch name MUST be `codex/owner/<group-folder>` at the moment your turn ends. If any other branch is checked out when the next message arrives, the entire room goes BLOCKED with "branch mismatch" and needs manual git recovery.
+
+### Every turn, in order
+
+1. **Start**: verify `git branch --show-current`. If it is not `codex/owner/<group-folder>`, check it out before doing anything else.
+2. **Work**: feel free to create feature branches (`fix/...`, `feat/...`) while implementing.
+3. **Before you finish the turn**:
+   - If you committed on a feature branch, merge it back into the owner branch (`git checkout codex/owner/<group-folder> && git merge --ff-only <feature-branch>`), then optionally delete the feature branch.
+   - If the feature branch is behind or diverged, use the appropriate merge/rebase to land the work on the owner branch.
+   - Confirm a clean end-state: `git branch --show-current` prints `codex/owner/<group-folder>` and `git status --short` is empty (or at least there is no merge conflict and no stray dirty state that the next turn cannot understand).
+4. **Only then** emit your DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT line and exit.
+
+### Hard rules
+
+- Never end a turn on a `fix/*` or `feat/*` branch.
+- Never end a turn with unresolved merge conflicts.
+- Never leave the workspace in detached-HEAD or rebase-in-progress state at turn end.
+
+### If you discover a mismatch at turn start
+
+You landed on a feature branch because a previous turn forgot to return. Recover and continue:
+
+1. `git status` — inspect dirty state.
+2. If clean and the feature branch is ahead of the owner branch with a linear history: `git checkout codex/owner/<group-folder> && git merge --ff-only <feature-branch>`.
+3. If there is dirty state you actually want to keep: commit it with a meaningful message or `git stash push -u -m "<reason>"`, then switch branches and re-apply.
+4. If the feature branch has diverged in a way that is not fast-forwardable: branch it off explicitly (`backup/<group>-recover-<timestamp>`), return to the owner branch, then merge/cherry-pick the needed commits.
+
+The group folder matches the EJClaw paired-room workspace directory name (for example `eyejokerdb-9`, `ejset`, `brain`). Use `basename $(pwd | sed 's|/owner$||')` if in doubt.

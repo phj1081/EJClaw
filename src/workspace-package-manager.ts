@@ -18,6 +18,7 @@ export interface WorkspaceDependencyInstallResult {
   commandText?: string;
 }
 
+const COREPACK_PROJECT_SPEC_DISABLED = '0';
 const INSTALL_STATE_FILENAME = '.ejclaw-install-state.json';
 const NODE_MODULES_NOISE_ENTRIES = new Set([
   '.cache',
@@ -114,6 +115,52 @@ function buildCorepackCommand(
     file: 'corepack',
     args: [packageManager, ...args],
     commandText: buildCommandText('corepack', [packageManager, ...args]),
+  };
+}
+
+function findNearestAncestorPackageManager(
+  repoDir: string,
+): WorkspacePackageManager | null {
+  let currentDir = path.dirname(path.resolve(repoDir));
+
+  while (true) {
+    const packageManager = detectPackageManagerFromField(
+      readPackageJsonMetadata(currentDir)?.packageManager,
+    );
+    if (packageManager) {
+      return packageManager;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return null;
+    }
+    currentDir = parentDir;
+  }
+}
+
+export function buildWorkspaceCommandEnvironment(
+  repoDir: string,
+  packageManager: WorkspacePackageManager,
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  if (packageManager !== 'pnpm') {
+    return baseEnv;
+  }
+
+  const localPackageManager = readPackageJsonMetadata(repoDir)?.packageManager;
+  if (typeof localPackageManager === 'string' && localPackageManager.trim()) {
+    return baseEnv;
+  }
+
+  const ancestorPackageManager = findNearestAncestorPackageManager(repoDir);
+  if (!ancestorPackageManager || ancestorPackageManager === packageManager) {
+    return baseEnv;
+  }
+
+  return {
+    ...baseEnv,
+    COREPACK_ENABLE_PROJECT_SPEC: COREPACK_PROJECT_SPEC_DISABLED,
   };
 }
 
@@ -359,6 +406,7 @@ export function ensureWorkspaceDependenciesInstalled(
   try {
     execFileSync(command.file, command.args, {
       cwd: repoDir,
+      env: buildWorkspaceCommandEnvironment(repoDir, command.packageManager),
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -420,6 +468,7 @@ export function detectPnpmStorePath(workspaceDir: string): string | null {
     try {
       const storePath = execFileSync(file, args, {
         cwd: workspaceDir,
+        env: buildWorkspaceCommandEnvironment(workspaceDir, 'pnpm'),
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 5000,

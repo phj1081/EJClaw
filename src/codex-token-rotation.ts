@@ -78,46 +78,63 @@ let currentIndex = 0;
 let initialized = false;
 
 const ACCOUNTS_DIR = path.join(os.homedir(), '.codex-accounts');
+const DEFAULT_CODEX_DIR = path.join(os.homedir(), '.codex');
+const DEFAULT_AUTH_PATH = path.join(DEFAULT_CODEX_DIR, 'auth.json');
+
+function loadCodexAccount(
+  authPath: string,
+  fallbackAccountId: string,
+): boolean {
+  const data = readJsonFile<{
+    tokens?: { account_id?: string; id_token?: string };
+  }>(authPath);
+  if (!data) {
+    logger.warn({ authPath }, 'Failed to parse codex account auth.json');
+    return false;
+  }
+
+  const accountId = data?.tokens?.account_id || fallbackAccountId;
+  const jwt = parseJwtAuth(data?.tokens?.id_token || '');
+  accounts.push({
+    index: accounts.length,
+    authPath,
+    accountId,
+    planType: jwt.planType,
+    subscriptionUntil: jwt.expiresAt,
+    rateLimitedUntil: null,
+  });
+  return true;
+}
 
 export function initCodexTokenRotation(): void {
   if (initialized) return;
   initialized = true;
 
-  if (!fs.existsSync(ACCOUNTS_DIR)) {
-    logger.info(
-      { dir: ACCOUNTS_DIR },
-      'Codex accounts dir not found, skipping',
-    );
-    return;
-  }
+  const hasAccountsDir = fs.existsSync(ACCOUNTS_DIR);
+  const dirs = hasAccountsDir
+    ? fs
+        .readdirSync(ACCOUNTS_DIR)
+        .filter((d) => /^\d+$/.test(d))
+        .sort((a, b) => parseInt(a) - parseInt(b))
+    : [];
 
-  const dirs = fs
-    .readdirSync(ACCOUNTS_DIR)
-    .filter((d) => /^\d+$/.test(d))
-    .sort((a, b) => parseInt(a) - parseInt(b));
+  if (!hasAccountsDir) {
+    logger.info({ dir: ACCOUNTS_DIR }, 'Codex accounts dir not found');
+  }
 
   for (const dir of dirs) {
     const authPath = path.join(ACCOUNTS_DIR, dir, 'auth.json');
     if (!fs.existsSync(authPath)) continue;
+    loadCodexAccount(authPath, `account-${dir}`);
+  }
 
-    const data = readJsonFile<{
-      tokens?: { account_id?: string; id_token?: string };
-    }>(authPath);
-    if (!data) {
-      logger.warn({ authPath }, 'Failed to parse codex account auth.json');
-      continue;
+  if (dirs.length === 0 && fs.existsSync(DEFAULT_AUTH_PATH)) {
+    if (loadCodexAccount(DEFAULT_AUTH_PATH, 'default-account')) {
+      logger.info(
+        { authPath: DEFAULT_AUTH_PATH },
+        'Codex accounts dir absent/empty; using ~/.codex/auth.json fallback',
+      );
     }
-    const accountId = data?.tokens?.account_id || `account-${dir}`;
-    const jwt = parseJwtAuth(data?.tokens?.id_token || '');
-    const planType = jwt.planType;
-    accounts.push({
-      index: accounts.length,
-      authPath,
-      accountId,
-      planType,
-      subscriptionUntil: jwt.expiresAt,
-      rateLimitedUntil: null,
-    });
   }
 
   if (accounts.length > 1) loadCodexState();
@@ -236,8 +253,14 @@ export function reloadCodexStateFromDisk(): void {
 
 /** Get the auth.json path for the current active account. */
 export function getActiveCodexAuthPath(): string | null {
+  return getCodexAuthPath();
+}
+
+export function getCodexAuthPath(
+  accountIndex: number = currentIndex,
+): string | null {
   if (accounts.length === 0) return null;
-  return accounts[currentIndex]?.authPath ?? null;
+  return accounts[accountIndex]?.authPath ?? null;
 }
 
 export function detectCodexRotationTrigger(
