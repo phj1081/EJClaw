@@ -277,7 +277,7 @@ export function loadConfig(): AppConfig {
       ),
       staggerMs: Math.max(0, readInteger('CODEX_WARMUP_STAGGER_MS', 1800000)),
       maxUsagePct: readPercent('CODEX_WARMUP_MAX_USAGE_PCT', 0),
-      maxD7UsagePct: readPercent('CODEX_WARMUP_MAX_D7_USAGE_PCT', 99),
+      maxD7UsagePct: readPercent('CODEX_WARMUP_MAX_D7_USAGE_PCT', 0),
       commandTimeoutMs: readIntegerAtLeast(
         'CODEX_WARMUP_COMMAND_TIMEOUT_MS',
         120000,
