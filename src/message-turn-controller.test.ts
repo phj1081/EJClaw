@@ -356,13 +356,10 @@ describe('MessageTurnController outbound audit logging', () => {
     } as any);
     await controller.finish('success');
 
-    expect(deliverFinalText).toHaveBeenCalledWith(
-      '스크린샷을 첨부했습니다.',
-      {
-        replaceMessageId: null,
-        attachments,
-      },
-    );
+    expect(deliverFinalText).toHaveBeenCalledWith('스크린샷을 첨부했습니다.', {
+      replaceMessageId: null,
+      attachments,
+    });
     expect(getAuditEntries()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
