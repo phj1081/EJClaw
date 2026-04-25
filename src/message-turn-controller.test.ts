@@ -317,6 +317,62 @@ describe('MessageTurnController outbound audit logging', () => {
     );
   });
 
+  it('passes structured final attachments to final delivery', async () => {
+    const channel = makeChannel();
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const attachments = [
+      {
+        path: '/tmp/e2e-screenshot.png',
+        name: 'e2e-screenshot.png',
+        mime: 'image/png',
+      },
+    ];
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-review-attachments',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      deliveryRole: 'reviewer',
+      deliveryServiceId: 'codex-review',
+      pairedTurnIdentity: makeTurnIdentity(),
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'final',
+      result: '스크린샷을 첨부했습니다.',
+      output: {
+        visibility: 'public',
+        text: '스크린샷을 첨부했습니다.',
+        attachments,
+      },
+    } as any);
+    await controller.finish('success');
+
+    expect(deliverFinalText).toHaveBeenCalledWith(
+      '스크린샷을 첨부했습니다.',
+      {
+        replaceMessageId: null,
+        attachments,
+      },
+    );
+    expect(getAuditEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          auditEvent: 'final-delivery-attempt',
+          attachmentCount: 1,
+        }),
+      ]),
+    );
+  });
+
   it('replaces the tracked progress message when an owner final arrives', async () => {
     const channel = {
       ...makeChannel(),

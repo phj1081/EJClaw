@@ -9106,6 +9106,38 @@ describe('work items', () => {
     ).toBeUndefined();
   });
 
+  it('stores produced work item attachments for delivery retries', () => {
+    const item = createProducedWorkItem({
+      group_folder: 'discord_test',
+      chat_jid: 'dc:attachments',
+      agent_type: 'claude-code',
+      delivery_role: 'owner',
+      start_seq: 1,
+      end_seq: 2,
+      result_payload: 'image ready',
+      attachments: [
+        {
+          path: '/tmp/image.png',
+          name: 'image.png',
+          mime: 'image/png',
+        },
+      ],
+    });
+
+    const stored = getOpenWorkItem(
+      'dc:attachments',
+      'claude-code',
+      item.service_id,
+    );
+    expect(stored?.attachments).toEqual([
+      {
+        path: '/tmp/image.png',
+        name: 'image.png',
+        mime: 'image/png',
+      },
+    ]);
+  });
+
   it('finds pending delivery retries even when they were created by a fallback agent type', () => {
     const fallbackItem = createProducedWorkItem({
       group_folder: 'discord_test',

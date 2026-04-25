@@ -38,6 +38,7 @@ export function applyBaseSchema(database: Database): void {
       start_seq INTEGER,
       end_seq INTEGER,
       result_payload TEXT NOT NULL,
+      attachment_payload TEXT,
       delivery_attempts INTEGER NOT NULL DEFAULT 0,
       delivery_message_id TEXT,
       last_error TEXT,

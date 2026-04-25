@@ -6,7 +6,7 @@ import {
   inferRoleFromServiceShadow,
   resolveRoleServiceShadow,
 } from '../role-service-shadow.js';
-import { AgentType, PairedRoomRole } from '../types.js';
+import { AgentType, OutboundAttachment, PairedRoomRole } from '../types.js';
 
 export interface WorkItem {
   id: number;
@@ -19,6 +19,7 @@ export interface WorkItem {
   start_seq: number | null;
   end_seq: number | null;
   result_payload: string;
+  attachments?: OutboundAttachment[];
   delivery_attempts: number;
   delivery_message_id: string | null;
   last_error: string | null;
@@ -29,10 +30,11 @@ export interface WorkItem {
 
 interface StoredWorkItemRow extends Omit<
   WorkItem,
-  'agent_type' | 'service_id'
+  'agent_type' | 'service_id' | 'attachments'
 > {
   agent_type: string;
   service_id?: string | null;
+  attachment_payload?: string | null;
 }
 
 export interface CreateProducedWorkItemInput {
@@ -44,6 +46,7 @@ export interface CreateProducedWorkItemInput {
   start_seq: number | null;
   end_seq: number | null;
   result_payload: string;
+  attachments?: OutboundAttachment[];
 }
 
 function normalizeStoredAgentType(
@@ -96,7 +99,46 @@ function hydrateWorkItemRow(row: StoredWorkItemRow): WorkItem {
     ...row,
     agent_type: agentType,
     service_id: readStoredWorkItemServiceId(row),
+    attachments: parseAttachmentPayload(row.attachment_payload),
   };
+}
+
+function parseAttachmentPayload(
+  payload: string | null | undefined,
+): OutboundAttachment[] {
+  if (!payload) return [];
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (item): item is OutboundAttachment =>
+          item !== null &&
+          typeof item === 'object' &&
+          !Array.isArray(item) &&
+          typeof (item as { path?: unknown }).path === 'string',
+      )
+      .map((item) => ({
+        path: item.path,
+        ...(typeof item.name === 'string' ? { name: item.name } : {}),
+        ...(typeof item.mime === 'string' ? { mime: item.mime } : {}),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function serializeAttachmentPayload(
+  attachments: OutboundAttachment[] | undefined,
+): string | null {
+  if (!attachments?.length) return null;
+  return JSON.stringify(
+    attachments.map((attachment) => ({
+      path: attachment.path,
+      ...(attachment.name ? { name: attachment.name } : {}),
+      ...(attachment.mime ? { mime: attachment.mime } : {}),
+    })),
+  );
 }
 
 function resolvePreferredWorkItemRole(
@@ -220,10 +262,11 @@ export function createProducedWorkItemInDatabase(
          start_seq,
          end_seq,
        result_payload,
+       attachment_payload,
        delivery_attempts,
        created_at,
        updated_at
-       ) VALUES (?, ?, ?, ?, ?, 'produced', ?, ?, ?, 0, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, 'produced', ?, ?, ?, ?, 0, ?, ?)`,
     )
     .run(
       input.group_folder,
@@ -234,6 +277,7 @@ export function createProducedWorkItemInDatabase(
       input.start_seq,
       input.end_seq,
       input.result_payload,
+      serializeAttachmentPayload(input.attachments),
       now,
       now,
     );

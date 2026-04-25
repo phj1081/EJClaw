@@ -15,6 +15,7 @@ export {
   writeProtocolOutput,
   type NormalizedRunnerOutput,
   type RunnerOutputPhase,
+  type RunnerOutputAttachment,
   type RunnerOutputVerdict,
   type RunnerOutputVisibility,
   type RunnerStructuredOutput,

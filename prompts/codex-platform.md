@@ -28,9 +28,36 @@ Your output is sent directly to the Discord group.
 - Do not use generic recurring task registration from Codex
 - If the user wants a reminder or other non-CI recurring task, tell them to ask Claude/클코 to schedule it
 
+## Image attachments
+
+When you need to show a locally generated image, screenshot, or other raster output in Discord, do not rely on a raw file path in prose. Emit an EJClaw structured output with `attachments`.
+
+```json
+{
+  "ejclaw": {
+    "visibility": "public",
+    "text": "이미지를 생성했습니다.",
+    "verdict": "done",
+    "attachments": [
+      {
+        "path": "/absolute/path/image.png",
+        "name": "image.png",
+        "mime": "image/png"
+      }
+    ]
+  }
+}
+```
+
+- `attachments.path` must be an absolute local path; URLs and relative paths are ignored
+- Do not repeat the same file path in the visible text
+- Supported attachment formats are raster image files: PNG, JPEG, GIF, WebP, and BMP. SVG is not accepted.
+- Use this for generated images and e2e screenshots; the Discord channel validates and uploads the file
+
 ## CI 감시 (watch_ci)
 
 GitHub Actions run 감시는 structured 필드를 우선 사용:
+
 - ci_provider: "github", ci_repo: "owner/repo", ci_run_id: run ID
 - 이 조합 → host-driven fast path (LLM 토큰 소모 없음, 15초 polling)
 - structured 필드 없이 generic 등록 시 매 tick LLM 실행됨

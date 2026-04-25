@@ -34,6 +34,16 @@ export function getAgentOutputText(output: {
   return stringifyLegacyAgentResult(output.result);
 }
 
+export function getAgentOutputAttachments(output: {
+  output?: StructuredAgentOutput;
+}): NonNullable<
+  Extract<StructuredAgentOutput, { visibility: 'public' }>['attachments']
+> {
+  const structured = getStructuredAgentOutput(output);
+  if (structured?.visibility !== 'public') return [];
+  return structured.attachments ?? [];
+}
+
 export function hasAgentOutputPayload(output: {
   output?: StructuredAgentOutput;
   result?: string | object | null;
