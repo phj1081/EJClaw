@@ -26,6 +26,22 @@ export type VisiblePhase = 'silent' | 'progress' | 'final';
 
 export type AgentVisibility = 'public' | 'silent';
 
+export interface OutboundAttachment {
+  path: string;
+  name?: string;
+  mime?: string;
+}
+
+export interface SendMessageOptions {
+  attachments?: OutboundAttachment[];
+  /**
+   * Extra realpath roots that are valid for this delivery attempt. Runtime
+   * callers can pass the active project/workspace directory without widening
+   * the global Discord attachment allowlist.
+   */
+  attachmentBaseDirs?: string[];
+}
+
 export type PairedRoomRole = 'owner' | 'reviewer' | 'arbiter';
 
 export type PairedTaskStatus =
@@ -126,6 +142,7 @@ export type StructuredAgentOutput =
   | {
       visibility: 'public';
       text: string;
+      attachments?: OutboundAttachment[];
     }
   | {
       visibility: 'silent';
@@ -234,7 +251,11 @@ export interface ChannelOutboundAuditMeta {
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(
+    jid: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   // Optional: whether a stored inbound message was authored by this channel's own bot/user.

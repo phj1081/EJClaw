@@ -210,6 +210,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     clearSession: deps.clearSession,
     deliverFinalText: async ({
       text,
+      attachments,
       chatJid,
       runId,
       channel,
@@ -248,11 +249,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         start_seq: startSeq,
         end_seq: endSeq,
         result_payload: text,
+        attachments,
       });
       return deliverOpenWorkItem({
         channel,
         item: workItem,
         log: logger,
+        attachmentBaseDirs: group.workDir ? [group.workDir] : undefined,
         replaceMessageId,
         isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,
         openContinuation: (targetChatJid) =>
@@ -455,6 +458,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       channel,
       roleToChannel,
       log,
+      attachmentBaseDirs: group.workDir ? [group.workDir] : undefined,
       isPairedRoom: hasReviewerLease(chatJid),
       getMissingRoleChannelMessage,
       isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,

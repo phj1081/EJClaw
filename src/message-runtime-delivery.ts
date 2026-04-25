@@ -28,11 +28,14 @@ export async function deliverOpenWorkItem(args: {
   channel: Channel;
   item: WorkItem;
   log: RuntimeDeliveryLog;
+  attachmentBaseDirs?: string[];
   replaceMessageId?: string | null;
   isDuplicateOfLastBotFinal: (chatJid: string, text: string) => boolean;
   openContinuation: (chatJid: string) => void;
 }): Promise<boolean> {
   const replaceMessageId = args.replaceMessageId ?? null;
+  const attachments = args.item.attachments ?? [];
+  const hasAttachments = attachments.length > 0;
 
   const isDuplicate = args.isDuplicateOfLastBotFinal(
     args.item.chat_jid,
@@ -52,7 +55,7 @@ export async function deliverOpenWorkItem(args: {
   }
 
   try {
-    if (replaceMessageId && args.channel.editMessage) {
+    if (replaceMessageId && args.channel.editMessage && !hasAttachments) {
       args.log.info(
         buildDeliveryLogContext(args.channel, args.item, {
           deliveryAttempts: args.item.delivery_attempts + 1,
@@ -93,19 +96,32 @@ export async function deliverOpenWorkItem(args: {
   try {
     args.log.info(
       buildDeliveryLogContext(args.channel, args.item, {
+        attachmentCount: attachments.length,
         deliveryAttempts: args.item.delivery_attempts + 1,
         deliveryMode: 'send',
       }),
       'Attempting to deliver produced work item as a new message',
     );
-    await args.channel.sendMessage(
-      args.item.chat_jid,
-      args.item.result_payload,
-    );
+    if (hasAttachments) {
+      await args.channel.sendMessage(
+        args.item.chat_jid,
+        args.item.result_payload,
+        {
+          attachmentBaseDirs: args.attachmentBaseDirs,
+          attachments,
+        },
+      );
+    } else {
+      await args.channel.sendMessage(
+        args.item.chat_jid,
+        args.item.result_payload,
+      );
+    }
     markWorkItemDelivered(args.item.id);
     args.openContinuation(args.item.chat_jid);
     args.log.info(
       buildDeliveryLogContext(args.channel, args.item, {
+        attachmentCount: attachments.length,
         deliveryAttempts: args.item.delivery_attempts + 1,
         deliveryMode: 'send',
       }),
@@ -117,6 +133,7 @@ export async function deliverOpenWorkItem(args: {
     markWorkItemDeliveryRetry(args.item.id, errorMessage);
     args.log.warn(
       buildDeliveryLogContext(args.channel, args.item, {
+        attachmentCount: attachments.length,
         deliveryAttempts: args.item.delivery_attempts + 1,
         deliveryMode: 'send',
         err,
@@ -135,6 +152,7 @@ export async function processOpenWorkItemDelivery(args: {
   channel: Channel;
   roleToChannel: Record<'owner' | 'reviewer' | 'arbiter', Channel | null>;
   log: RuntimeDeliveryLog;
+  attachmentBaseDirs?: string[];
   isPairedRoom: boolean;
   getMissingRoleChannelMessage: (role: 'reviewer' | 'arbiter') => string;
   isDuplicateOfLastBotFinal: (chatJid: string, text: string) => boolean;
@@ -186,6 +204,7 @@ export async function processOpenWorkItemDelivery(args: {
     channel: deliveryChannel,
     item: openWorkItem,
     log: args.log,
+    attachmentBaseDirs: args.attachmentBaseDirs,
     isDuplicateOfLastBotFinal: args.isDuplicateOfLastBotFinal,
     openContinuation: args.openContinuation,
   });

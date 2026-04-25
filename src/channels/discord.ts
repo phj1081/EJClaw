@@ -19,8 +19,11 @@ import {
 } from '../config.js';
 import { getEnv } from '../env.js';
 import { logger } from '../logger.js';
+import { extractImageTagPaths } from '../agent-protocol.js';
+import { validateOutboundAttachments } from '../outbound-attachments.js';
 import { formatOutbound } from '../router.js';
 import { hasReviewerLease } from '../service-routing.js';
+import type { OutboundAttachment, SendMessageOptions } from '../types.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
 const TRANSCRIPTION_CACHE_DIR = path.join(CACHE_DIR, 'transcriptions');
@@ -30,6 +33,45 @@ const DISCORD_ARBITER_CHANNEL = 'discord-arbiter';
 const DISCORD_OWNER_TOKEN_KEY = 'DISCORD_OWNER_BOT_TOKEN';
 const DISCORD_REVIEWER_TOKEN_KEY = 'DISCORD_REVIEWER_BOT_TOKEN';
 const DISCORD_ARBITER_TOKEN_KEY = 'DISCORD_ARBITER_BOT_TOKEN';
+const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|bmp)$/i;
+const MD_LINK_RE = /\[[^\]]*\]\((\/[^)]+)\)/g;
+
+function extractMarkdownImageAttachments(text: string): {
+  cleanText: string;
+  attachments: OutboundAttachment[];
+} {
+  const attachments: OutboundAttachment[] = [];
+  const seen = new Set<string>();
+
+  const cleanText = text.replace(MD_LINK_RE, (_full, rawPath: string) => {
+    const trimmed = rawPath.trim();
+    if (IMAGE_EXTS.test(trimmed)) {
+      if (!seen.has(trimmed)) {
+        attachments.push({
+          path: trimmed,
+          name: path.basename(trimmed),
+        });
+        seen.add(trimmed);
+      }
+      return '';
+    }
+
+    const basename = path.basename(trimmed.replace(/#.*$/, ''));
+    const lineMatch = trimmed.match(/#L(\d+)/);
+    return lineMatch ? `\`${basename}:${lineMatch[1]}\`` : `\`${basename}\``;
+  });
+
+  return { cleanText, attachments };
+}
+
+function imageTagPathsToAttachments(paths: string[]): OutboundAttachment[] {
+  return paths
+    .filter((filePath) => IMAGE_EXTS.test(filePath))
+    .map((filePath) => ({
+      path: filePath,
+      name: path.basename(filePath),
+    }));
+}
 
 /**
  * Download a Discord attachment to local disk.
@@ -403,7 +445,11 @@ export class DiscordChannel implements Channel {
     });
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(
+    jid: string,
+    text: string,
+    options: SendMessageOptions = {},
+  ): Promise<void> {
     if (!this.client) {
       logger.warn('Discord client not initialized');
       return;
@@ -420,37 +466,43 @@ export class DiscordChannel implements Channel {
 
       const textChannel = channel as TextChannel;
 
-      // Extract image attachments from markdown links with image extensions
-      // e.g. [name.png](/absolute/path/name.png)
-      const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
-      const MD_LINK_RE = /\[[^\]]*\]\((\/[^)]+)\)/g;
-      const imageFiles: string[] = [];
-      const seen = new Set<string>();
-      let match;
+      const structuredAttachments = options.attachments ?? [];
+      const hasStructuredAttachments = structuredAttachments.length > 0;
+      const markdownExtracted = extractMarkdownImageAttachments(text);
+      const imageTagExtracted = extractImageTagPaths(
+        markdownExtracted.cleanText,
+      );
+      const legacyImageTagAttachments = imageTagPathsToAttachments(
+        imageTagExtracted.imagePaths,
+      );
+      const outboundAttachments = hasStructuredAttachments
+        ? structuredAttachments
+        : [...markdownExtracted.attachments, ...legacyImageTagAttachments];
+      const attachmentSource = hasStructuredAttachments
+        ? 'structured'
+        : markdownExtracted.attachments.length > 0
+          ? 'md-link'
+          : legacyImageTagAttachments.length > 0
+            ? 'image-tag'
+            : 'none';
+      const validation = validateOutboundAttachments(outboundAttachments, {
+        baseDirs: options.attachmentBaseDirs,
+      });
+      const files = validation.files;
 
-      while ((match = MD_LINK_RE.exec(text)) !== null) {
-        const imgPath = match[1].trim();
-        if (
-          !seen.has(imgPath) &&
-          IMAGE_EXTS.test(imgPath) &&
-          fs.existsSync(imgPath)
-        ) {
-          imageFiles.push(imgPath);
-          seen.add(imgPath);
-        }
+      if (validation.rejected.length > 0) {
+        logger.warn(
+          {
+            jid,
+            channelName: this.name,
+            attachmentSource,
+            rejected: validation.rejected,
+          },
+          'Rejected outbound Discord attachments',
+        );
       }
-      let cleaned = text
-        .replace(MD_LINK_RE, (full, p, _offset, _str, groups) => {
-          const trimmed = p.trim();
-          // Image links: remove entirely (attached as files)
-          if (IMAGE_EXTS.test(trimmed) && seen.has(trimmed)) return '';
-          // Non-image local path links: convert to readable filename
-          const basename = path.basename(trimmed.replace(/#.*$/, ''));
-          const lineMatch = trimmed.match(/#L(\d+)/);
-          return lineMatch
-            ? `\`${basename}:${lineMatch[1]}\``
-            : `\`${basename}\``;
-        })
+
+      let cleaned = imageTagExtracted.cleanText
         .replace(/^[ \t]*[•\-\*][ \t]*$/gm, '') // remove empty bullet lines
         .replace(/\n{3,}/g, '\n\n') // collapse excessive blank lines
         .trim();
@@ -467,10 +519,6 @@ export class DiscordChannel implements Channel {
       // Discord has a 2000 character limit per message and 10 attachments per message
       const MAX_LENGTH = 2000;
       const MAX_ATTACHMENTS = 10;
-      const files = imageFiles.map((f) => ({
-        attachment: f,
-        name: path.basename(f),
-      }));
       const sentMessageIds: string[] = [];
       let chunkCount = 0;
 
@@ -544,6 +592,7 @@ export class DiscordChannel implements Channel {
           deliveryMode: 'send',
           chunkCount,
           attachmentCount: files.length,
+          attachmentSource,
           messageId: sentMessageIds[0] ?? null,
           messageIds: sentMessageIds,
           botUserId: this.client.user?.id ?? null,
