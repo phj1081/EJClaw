@@ -666,7 +666,10 @@ export class MessageTurnController {
       await this.flushPendingProgress(options.flushPendingText);
     }
 
-    const replaceMessageId = this.consumeProgressForFinalDelivery();
+    const hasAttachments = (options?.attachments?.length ?? 0) > 0;
+    const replaceMessageId = hasAttachments
+      ? this.discardProgressForAttachmentFinalDelivery()
+      : this.consumeProgressForFinalDelivery();
     await this.deliverFinalText(text, {
       ...(options?.attachments?.length
         ? { attachments: options.attachments }
@@ -688,6 +691,20 @@ export class MessageTurnController {
     );
     this.resetProgressState();
     return replaceMessageId;
+  }
+
+  private discardProgressForAttachmentFinalDelivery(): null {
+    this.log.info(
+      {
+        progressMessageId: this.progressMessageId,
+        latestProgressText: this.latestProgressText,
+      },
+      this.progressMessageId
+        ? 'Discarding tracked progress replacement for final attachment delivery'
+        : 'Delivering final attachment output without a tracked progress message to replace',
+    );
+    this.resetProgressState();
+    return null;
   }
 
   private async deliverFinalText(

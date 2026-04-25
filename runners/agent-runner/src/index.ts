@@ -356,7 +356,7 @@ async function runQuery(
       writeOutput({
         status: 'success',
         phase: 'intermediate',
-        result: pendingProgressText,
+        ...normalizeStructuredOutput(pendingProgressText),
         newSessionId,
       });
       pendingProgressText = null;
