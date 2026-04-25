@@ -41,6 +41,7 @@ For locally generated images or e2e screenshots that should appear in Discord, p
 }
 ```
 
+- When emitting this as your final runner output, emit the JSON envelope directly. Do not wrap it in Markdown fences or add prose outside the JSON.
 - Use absolute local paths only
 - Do not duplicate the same path in the visible text
 - Supported attachment formats are raster image files: PNG, JPEG, GIF, WebP, and BMP. SVG is not accepted.
