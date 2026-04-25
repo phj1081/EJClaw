@@ -4,6 +4,7 @@ import path from 'path';
 const ALLOWED_DATA_JSON_PATTERNS = [
   /^token-rotation-state\.json$/,
   /^codex-rotation-state\.json$/,
+  /^codex-warmup-state\.json$/,
   /^claude-usage-cache\.json$/,
   /^restart-context\..+\.json$/,
 ];
