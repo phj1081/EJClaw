@@ -11,9 +11,10 @@ import { resolvePairedTurnRunOwnership } from './paired-turn-run-ownership.js';
 import { normalizeMessageForDedupe } from './router.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
 import type {
+  AgentType,
   Channel,
   NewMessage,
-  AgentType,
+  OutboundAttachment,
   PairedRoomRole,
   RegisteredGroup,
 } from './types.js';
@@ -100,6 +101,7 @@ interface CreateExecuteTurnDeps {
   clearSession: (groupFolder: string, opts?: { allRoles?: boolean }) => void;
   deliverFinalText: (args: {
     text: string;
+    attachments?: OutboundAttachment[];
     chatJid: string;
     runId: string;
     channel: Channel;
@@ -202,6 +204,9 @@ export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
         try {
           return await deps.deliverFinalText({
             text,
+            ...(options?.attachments?.length
+              ? { attachments: options.attachments }
+              : {}),
             chatJid,
             runId,
             channel,

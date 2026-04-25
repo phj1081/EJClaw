@@ -1,3 +1,7 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 // --- Mocks ---
@@ -126,6 +130,18 @@ import { getEnv } from '../env.js';
 import { logger } from '../logger.js';
 
 // --- Test helpers ---
+
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'base64',
+);
+
+function createTempPng(name = 'image.png'): { dir: string; filePath: string } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-discord-image-'));
+  const filePath = path.join(dir, name);
+  fs.writeFileSync(filePath, ONE_PIXEL_PNG);
+  return { dir, filePath };
+}
 
 function createTestOpts(
   overrides?: Partial<DiscordChannelOpts>,
@@ -837,6 +853,59 @@ describe('DiscordChannel', () => {
         files: undefined,
         flags: 1 << 2,
       });
+    });
+
+    it('sends structured attachments as Discord files', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+      const { dir, filePath } = createTempPng('structured.png');
+      const mockChannel = {
+        send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
+        sendTyping: vi.fn(),
+      };
+      currentClient().channels.fetch.mockResolvedValue(mockChannel);
+
+      await channel.sendMessage(
+        'dc:1234567890123456',
+        '이미지를 생성했습니다.',
+        {
+          attachments: [
+            { path: filePath, name: 'result.png', mime: 'image/png' },
+          ],
+        },
+      );
+
+      expect(mockChannel.send).toHaveBeenCalledWith({
+        content: '이미지를 생성했습니다.',
+        files: [{ attachment: filePath, name: 'result.png' }],
+        flags: 1 << 2,
+      });
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    it('uses legacy image tags as Discord attachment fallback', async () => {
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('test-token', opts);
+      await channel.connect();
+      const { dir, filePath } = createTempPng('screenshot.png');
+      const mockChannel = {
+        send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
+        sendTyping: vi.fn(),
+      };
+      currentClient().channels.fetch.mockResolvedValue(mockChannel);
+
+      await channel.sendMessage(
+        'dc:1234567890123456',
+        `스크린샷입니다.\n[Image: screenshot.png → ${filePath}]`,
+      );
+
+      expect(mockChannel.send).toHaveBeenCalledWith({
+        content: '스크린샷입니다.',
+        files: [{ attachment: filePath, name: 'screenshot.png' }],
+        flags: 1 << 2,
+      });
+      fs.rmSync(dir, { recursive: true, force: true });
     });
 
     it('logs channel name and Discord message ids after sending', async () => {

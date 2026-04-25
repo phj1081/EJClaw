@@ -10,6 +10,7 @@ export {
   OUTPUT_START_MARKER,
   writeProtocolOutput,
   type NormalizedRunnerOutput,
+  type RunnerOutputAttachment,
   type RunnerOutputPhase,
   type RunnerOutputVerdict,
   type RunnerOutputVisibility,

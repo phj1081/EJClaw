@@ -13,6 +13,7 @@ import { PAIRED_TURN_PROVENANCE_UPGRADE_MIGRATION } from './010_paired-turn-prov
 import { OWNER_FAILURE_COUNT_MIGRATION } from './011_owner-failure-count.js';
 import { PAIRED_VERDICT_AND_STEP_TELEMETRY_MIGRATION } from './012_paired-verdict-and-step-telemetry.js';
 import { MESSAGE_SOURCE_KIND_MIGRATION } from './013_message-source-kind.js';
+import { WORK_ITEM_ATTACHMENTS_MIGRATION } from './014_work-item-attachments.js';
 import type {
   SchemaMigrationArgs,
   SchemaMigrationDefinition,
@@ -34,6 +35,7 @@ const ORDERED_SCHEMA_MIGRATIONS: readonly SchemaMigrationDefinition[] = [
   OWNER_FAILURE_COUNT_MIGRATION,
   PAIRED_VERDICT_AND_STEP_TELEMETRY_MIGRATION,
   MESSAGE_SOURCE_KIND_MIGRATION,
+  WORK_ITEM_ATTACHMENTS_MIGRATION,
 ];
 
 function ensureSchemaMigrationsTable(database: Database): void {

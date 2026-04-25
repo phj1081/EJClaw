@@ -3,7 +3,7 @@ import path from 'path';
 
 import {
   extractImageTagPaths,
-  normalizePublicTextOutput,
+  normalizeEjclawStructuredOutput,
   type RunnerStructuredOutput,
   writeProtocolOutput,
 } from 'ejclaw-runners-shared';
@@ -151,7 +151,7 @@ export function normalizeStructuredOutput(result: string | null): {
   result: string | null;
   output?: RunnerOutput['output'];
 } {
-  return normalizePublicTextOutput(result);
+  return normalizeEjclawStructuredOutput(result);
 }
 
 export function extractAssistantText(message: unknown): string | null {

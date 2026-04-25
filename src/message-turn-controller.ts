@@ -1,5 +1,8 @@
 import { type AgentOutput } from './agent-runner.js';
-import { getAgentOutputText } from './agent-output.js';
+import {
+  getAgentOutputAttachments,
+  getAgentOutputText,
+} from './agent-output.js';
 import { createScopedLogger, logger } from './logger.js';
 import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
@@ -11,6 +14,7 @@ import {
   toVisiblePhase,
   type AgentOutputPhase,
   type Channel,
+  type OutboundAttachment,
   type PairedRoomRole,
   type RegisteredGroup,
   type VisiblePhase,
@@ -35,7 +39,10 @@ interface MessageTurnControllerOptions {
   requestClose: (reason: string) => void;
   deliverFinalText: (
     text: string,
-    options?: { replaceMessageId?: string | null },
+    options?: {
+      attachments?: OutboundAttachment[];
+      replaceMessageId?: string | null;
+    },
   ) => Promise<boolean>;
   canDeliverFinalText?: () => boolean;
   allowProgressReplayWithoutFinal?: boolean;
@@ -160,6 +167,7 @@ export class MessageTurnController {
 
     const raw = getAgentOutputText(result);
     const text = raw ? formatOutbound(raw) : null;
+    const attachments = getAgentOutputAttachments(result);
 
     if (raw) {
       this.log.info(
@@ -297,6 +305,7 @@ export class MessageTurnController {
     // then discard the pending buffer so it never shows up.
     if (text) {
       await this.publishTerminalText(text, {
+        attachments,
         flushPendingText: text,
       });
     } else if (raw) {
@@ -648,14 +657,22 @@ export class MessageTurnController {
 
   private async publishTerminalText(
     text: string,
-    options?: { flushPendingText?: string | null },
+    options?: {
+      attachments?: OutboundAttachment[];
+      flushPendingText?: string | null;
+    },
   ): Promise<void> {
     if (options?.flushPendingText) {
       await this.flushPendingProgress(options.flushPendingText);
     }
 
     const replaceMessageId = this.consumeProgressForFinalDelivery();
-    await this.deliverFinalText(text, { replaceMessageId });
+    await this.deliverFinalText(text, {
+      ...(options?.attachments?.length
+        ? { attachments: options.attachments }
+        : {}),
+      replaceMessageId,
+    });
   }
 
   private consumeProgressForFinalDelivery(): string | null {
@@ -675,7 +692,10 @@ export class MessageTurnController {
 
   private async deliverFinalText(
     text: string,
-    options?: { replaceMessageId?: string | null },
+    options?: {
+      attachments?: OutboundAttachment[];
+      replaceMessageId?: string | null;
+    },
   ): Promise<void> {
     await this.activateTyping('turn:deliver-final');
     this.visiblePhase = toVisiblePhase('final');
@@ -697,14 +717,19 @@ export class MessageTurnController {
       return;
     }
     this.logOutboundAudit('final-delivery-attempt', {
+      attachmentCount: options?.attachments?.length ?? 0,
       messageId: replaceMessageId,
       textLength: text.length,
       deliveryMode: replaceMessageId ? 'edit' : 'send',
     });
     const delivered = await this.options.deliverFinalText(text, {
+      ...(options?.attachments?.length
+        ? { attachments: options.attachments }
+        : {}),
       replaceMessageId,
     });
     this.logOutboundAudit('final-delivery-result', {
+      attachmentCount: options?.attachments?.length ?? 0,
       messageId: replaceMessageId,
       textLength: text.length,
       deliveryMode: replaceMessageId ? 'edit' : 'send',

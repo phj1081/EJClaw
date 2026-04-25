@@ -13,6 +13,12 @@ describe('shared agent protocol helpers', () => {
       cleanText: 'hello',
       imagePaths: ['/tmp/a.png'],
     });
+    expect(
+      extractImageTagPaths('hello [Image: screenshot.png → /tmp/a.png]'),
+    ).toEqual({
+      cleanText: 'hello',
+      imagePaths: ['/tmp/a.png'],
+    });
     expect(extractImageTagPaths('[Image: /tmp/b.png] second')).toEqual({
       cleanText: 'second',
       imagePaths: ['/tmp/b.png'],
@@ -41,6 +47,41 @@ describe('shared agent protocol helpers', () => {
       output: {
         visibility: 'silent',
         verdict: 'silent',
+      },
+    });
+  });
+
+  it('parses public ejclaw attachments', () => {
+    expect(
+      normalizeEjclawStructuredOutput(
+        JSON.stringify({
+          ejclaw: {
+            visibility: 'public',
+            text: '이미지를 생성했습니다.',
+            verdict: 'done',
+            attachments: [
+              {
+                path: '/tmp/image.png',
+                name: 'image.png',
+                mime: 'image/png',
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual({
+      result: '이미지를 생성했습니다.',
+      output: {
+        visibility: 'public',
+        text: '이미지를 생성했습니다.',
+        verdict: 'done',
+        attachments: [
+          {
+            path: '/tmp/image.png',
+            name: 'image.png',
+            mime: 'image/png',
+          },
+        ],
       },
     });
   });
