@@ -121,6 +121,77 @@ describe('shared agent protocol helpers', () => {
     });
   });
 
+  it('parses fenced ejclaw envelopes with leading invisible control characters', () => {
+    expect(
+      normalizeEjclawStructuredOutput(`\u2063\u2063\u2063\`\`\`json
+{
+  "ejclaw": {
+    "visibility": "public",
+    "text": "최종 이미지를 첨부했습니다.",
+    "verdict": "done",
+    "attachments": [
+      {
+        "path": "/tmp/ejclaw-discord-image-final.png",
+        "name": "final.png",
+        "mime": "image/png"
+      }
+    ]
+  }
+}
+\`\`\``),
+    ).toEqual({
+      result: '최종 이미지를 첨부했습니다.',
+      output: {
+        visibility: 'public',
+        text: '최종 이미지를 첨부했습니다.',
+        verdict: 'done',
+        attachments: [
+          {
+            path: '/tmp/ejclaw-discord-image-final.png',
+            name: 'final.png',
+            mime: 'image/png',
+          },
+        ],
+      },
+    });
+  });
+
+  it('parses in_progress public envelopes instead of leaking raw structured JSON', () => {
+    const raw = JSON.stringify({
+      ejclaw: {
+        visibility: 'public',
+        text: '이미지를 생성하는 중입니다.',
+        verdict: 'in_progress',
+        attachments: [
+          {
+            path: '/tmp/ejclaw-discord-image-draft.png',
+            name: 'draft.png',
+            mime: 'image/png',
+          },
+        ],
+      },
+    });
+
+    const normalized = normalizeEjclawStructuredOutput(raw);
+
+    expect(normalized).toEqual({
+      result: '이미지를 생성하는 중입니다.',
+      output: {
+        visibility: 'public',
+        text: '이미지를 생성하는 중입니다.',
+        verdict: 'in_progress',
+        attachments: [
+          {
+            path: '/tmp/ejclaw-discord-image-draft.png',
+            name: 'draft.png',
+            mime: 'image/png',
+          },
+        ],
+      },
+    });
+    expect(normalized.result).not.toContain('"ejclaw"');
+  });
+
   it('parses unlabeled fenced ejclaw envelopes', () => {
     expect(
       normalizeEjclawStructuredOutput(`\`\`\`
