@@ -802,6 +802,42 @@ describe('paired execution context', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('re-anchors the owner workspace before handling a successful owner completion', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        round_trip_count: 1,
+      }),
+    );
+    vi.mocked(pairedWorkspaceManager.markPairedTaskReviewReady).mockReturnValue(
+      {
+        ownerWorkspace: buildWorkspace('owner', '/tmp/paired/task-1/owner'),
+        reviewerWorkspace: buildWorkspace(
+          'reviewer',
+          '/tmp/paired/task-1/reviewer',
+        ),
+      },
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'succeeded',
+      summary: 'STEP_DONE\n1단계 완료, 후속 작업 계속',
+    });
+
+    expect(
+      pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
+    ).toHaveBeenCalledWith('task-1');
+    const reanchorCallOrder = vi.mocked(
+      pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
+    ).mock.invocationCallOrder[0];
+    const reviewReadyCallOrder = vi.mocked(
+      pairedWorkspaceManager.markPairedTaskReviewReady,
+    ).mock.invocationCallOrder[0];
+    expect(reanchorCallOrder).toBeLessThan(reviewReadyCallOrder);
+  });
+
   it('requests review when the owner reports STEP_DONE in active mode', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({

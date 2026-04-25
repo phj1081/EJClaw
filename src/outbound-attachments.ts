@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';
@@ -16,6 +17,10 @@ export interface ValidateOutboundAttachmentsResult {
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|bmp)$/i;
+const DEFAULT_TEMP_ATTACHMENT_DIR_PREFIXES = [
+  'ejclaw-attachment-',
+  'ejclaw-discord-image-',
+] as const;
 
 function unique(values: Array<string | null | undefined>): string[] {
   return [
@@ -38,8 +43,9 @@ export function getDefaultAttachmentBaseDirs(): string[] {
     process.env.CODEX_HOME || (home ? path.join(home, '.codex') : null);
   // Keep defaults narrow. Runtime-specific workspaces must be passed via
   // attachmentBaseDirs so one room cannot attach another room's files by path.
+  // Ad-hoc generated files under os.tmpdir()/ejclaw-attachment-* are handled
+  // separately after resolving symlinks, without allowlisting all of /tmp.
   return unique([
-    '/tmp',
     path.join(DATA_DIR, 'attachments'),
     codexHome ? path.join(codexHome, 'generated_images') : null,
   ])
@@ -57,6 +63,24 @@ function isWithinBaseDir(realPath: string, baseDir: string): boolean {
 
 function matchesAllowedBaseDir(realPath: string, baseDirs: string[]): boolean {
   return baseDirs.some((baseDir) => isWithinBaseDir(realPath, baseDir));
+}
+
+function isWithinDefaultTempAttachmentDir(
+  realPath: string,
+  tempDir: string | null,
+): boolean {
+  if (!tempDir) return false;
+  const relative = path.relative(tempDir, realPath);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return false;
+  }
+  const [firstSegment, ...rest] = relative.split(path.sep);
+  return (
+    rest.length > 0 &&
+    DEFAULT_TEMP_ATTACHMENT_DIR_PREFIXES.some((prefix) =>
+      firstSegment.startsWith(prefix),
+    )
+  );
 }
 
 function detectImageMime(filePath: string): string | null {
@@ -114,6 +138,7 @@ export function validateOutboundAttachments(
     ...getDefaultAttachmentBaseDirs(),
     ...(options.baseDirs ?? []).map(resolveExistingDir),
   ]).filter((dir): dir is string => Boolean(dir));
+  const defaultTempDir = resolveExistingDir(os.tmpdir());
   const files: ValidatedOutboundAttachment[] = [];
   const rejected: Array<{ path: string; reason: string }> = [];
   const seen = new Set<string>();
@@ -144,7 +169,10 @@ export function validateOutboundAttachments(
         rejected.push({ path: requestedPath, reason: 'too-large' });
         continue;
       }
-      if (!matchesAllowedBaseDir(realPath, baseDirs)) {
+      if (
+        !matchesAllowedBaseDir(realPath, baseDirs) &&
+        !isWithinDefaultTempAttachmentDir(realPath, defaultTempDir)
+      ) {
         rejected.push({ path: requestedPath, reason: 'outside-allowed-dirs' });
         continue;
       }

@@ -44,23 +44,25 @@ Challenge the reviewer's reasoning. Point out logical gaps, over-engineering, sc
 
 ## 🔴 Workspace Branch Protocol (MANDATORY)
 
-The owner workspace is managed by EJClaw's paired-room state machine. The workspace branch name MUST be `codex/owner/<group-folder>` at the moment your turn ends. If any other branch is checked out when the next message arrives, the entire room goes BLOCKED with "branch mismatch" and needs manual git recovery.
+The owner workspace is managed by EJClaw's paired-room state machine. The persistent owner workspace branch name MUST remain `codex/owner/<group-folder>`. Treat this as an invariant for the whole turn, not just a cleanup step at the end. If any other branch is checked out when the next message arrives, the entire room can go BLOCKED with "branch mismatch" and need manual git recovery.
 
 ### Every turn, in order
 
-1. **Start**: verify `git branch --show-current`. If it is not `codex/owner/<group-folder>`, check it out before doing anything else.
-2. **Work**: feel free to create feature branches (`fix/...`, `feat/...`) while implementing.
-3. **Before you finish the turn**:
-   - If you committed on a feature branch, merge it back into the owner branch (`git checkout codex/owner/<group-folder> && git merge --ff-only <feature-branch>`), then optionally delete the feature branch.
-   - If the feature branch is behind or diverged, use the appropriate merge/rebase to land the work on the owner branch.
-   - Confirm a clean end-state: `git branch --show-current` prints `codex/owner/<group-folder>` and `git status --short` is empty (or at least there is no merge conflict and no stray dirty state that the next turn cannot understand).
-4. **Only then** emit your DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT line and exit.
+1. **Start**: verify `git branch --show-current`. It must print `codex/owner/<group-folder>` before you modify files.
+2. **Work in place on the owner branch** by default. Do not run `git checkout -b`, `git switch -c`, or switch the persistent owner workspace to `fix/*`, `feat/*`, `codex/main-*`, or any other branch.
+3. **If a temporary branch is truly necessary**, create it in a separate worktree outside the persistent owner workspace (for example under `/tmp`) and merge/cherry-pick the finished commits back into `codex/owner/<group-folder>`. Do not leave the persistent `/owner` workspace checked out on that temporary branch.
+4. **Before you finish the turn**:
+   - Confirm the invariant again: `git branch --show-current` prints `codex/owner/<group-folder>`.
+   - Confirm there is no unresolved git operation: no merge conflict, no detached HEAD, no rebase/cherry-pick in progress.
+   - `git status --short` should be empty unless the task intentionally requires uncommitted files for the next owner step; if so, explain that state explicitly in your status line.
+5. **Only then** emit your DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT line and exit.
 
 ### Hard rules
 
-- Never end a turn on a `fix/*` or `feat/*` branch.
+- Never switch the persistent owner workspace itself to a `fix/*`, `feat/*`, `codex/main-*`, `codex/hotfix-*`, or detached-HEAD branch.
+- Never end a turn on any branch except `codex/owner/<group-folder>`.
 - Never end a turn with unresolved merge conflicts.
-- Never leave the workspace in detached-HEAD or rebase-in-progress state at turn end.
+- Never leave the workspace in detached-HEAD, rebase-in-progress, cherry-pick-in-progress, or bisect state at turn end.
 
 ### If you discover a mismatch at turn start
 
