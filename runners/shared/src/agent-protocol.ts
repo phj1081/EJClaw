@@ -124,6 +124,13 @@ function normalizeAttachments(value: unknown): RunnerOutputAttachment[] {
   return attachments;
 }
 
+function extractStructuredJsonCandidate(trimmed: string): string {
+  const fencedJson = trimmed.match(
+    /^```(?:json|JSON)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/,
+  );
+  return fencedJson?.[1]?.trim() ?? trimmed;
+}
+
 export function normalizeEjclawStructuredOutput(
   result: string | null,
 ): NormalizedRunnerOutput {
@@ -132,8 +139,9 @@ export function normalizeEjclawStructuredOutput(
   }
 
   const trimmed = result.trim();
+  const jsonCandidate = extractStructuredJsonCandidate(trimmed);
   try {
-    const parsed = JSON.parse(trimmed) as {
+    const parsed = JSON.parse(jsonCandidate) as {
       ejclaw?: {
         visibility?: unknown;
         text?: unknown;
