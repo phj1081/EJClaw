@@ -676,6 +676,27 @@ export function completePairedExecutionContext(args: {
     }
 
     if (role === 'owner') {
+      try {
+        provisionOwnerWorkspaceForPairedTask(taskId);
+      } catch (error) {
+        if (isOwnerWorkspaceRepairNeededError(error)) {
+          logger.warn(
+            {
+              taskId,
+              role,
+              repairMessage: error.blockMessage || error.message,
+            },
+            'Owner workspace post-run guard blocked completion handling',
+          );
+          handleFailedOwnerExecution({
+            task,
+            taskId,
+            summary: error.blockMessage || error.message,
+          });
+          return;
+        }
+        throw error;
+      }
       handleOwnerCompletion({ task, taskId, summary: args.summary });
       return;
     }
