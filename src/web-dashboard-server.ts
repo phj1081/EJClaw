@@ -14,6 +14,7 @@ import {
   hasMessage,
   storeChatMetadata,
   storeMessage,
+  updatePairedTaskIfUnchanged,
   updateTask,
 } from './db.js';
 import { logger } from './logger.js';
@@ -89,6 +90,16 @@ export interface WebDashboardHandlerOptions {
   deleteTask?: (id: string) => void;
   getPairedTasks?: () => PairedTask[];
   getPairedTaskById?: (id: string) => PairedTask | undefined;
+  updatePairedTaskIfUnchanged?: (
+    id: string,
+    expectedUpdatedAt: string,
+    updates: Partial<
+      Pick<
+        PairedTask,
+        'status' | 'updated_at' | 'arbiter_requested_at' | 'completion_reason'
+      >
+    >,
+  ) => boolean;
   schedulePairedFollowUp?: WebPairedFollowUpScheduler;
   getRoomBindings?: () => Record<string, RegisteredGroup>;
   storeChatMetadata?: (
@@ -182,7 +193,13 @@ function serveStaticFile(staticDir: string, pathname: string): Response {
 }
 
 type TaskAction = 'pause' | 'resume' | 'cancel';
-type InboxAction = 'run';
+type InboxAction = 'run' | 'decline' | 'dismiss';
+
+interface InboxActionRequest {
+  action: InboxAction;
+  requestId: string | null;
+  lastOccurredAt: string | null;
+}
 
 function parseTaskPath(pathname: string): string | null {
   const match = pathname.match(/^\/api\/tasks\/([^/]+)$/);
@@ -258,7 +275,7 @@ function isAgentType(value: unknown): value is AgentType {
 }
 
 function isInboxAction(value: unknown): value is InboxAction {
-  return value === 'run';
+  return value === 'run' || value === 'decline' || value === 'dismiss';
 }
 
 function isPairedTaskStatus(value: unknown): value is PairedTask['status'] {
@@ -282,10 +299,24 @@ async function readTaskAction(request: Request): Promise<TaskAction | null> {
   }
 }
 
-async function readInboxAction(request: Request): Promise<InboxAction | null> {
+async function readInboxAction(
+  request: Request,
+): Promise<InboxActionRequest | null> {
   try {
-    const body = (await request.json()) as { action?: unknown };
-    return isInboxAction(body.action) ? body.action : null;
+    const body = (await request.json()) as {
+      action?: unknown;
+      requestId?: unknown;
+      lastOccurredAt?: unknown;
+    };
+    if (!isInboxAction(body.action)) return null;
+    return {
+      action: body.action,
+      requestId: sanitizeInboxActionRequestId(body.requestId),
+      lastOccurredAt:
+        typeof body.lastOccurredAt === 'string' && body.lastOccurredAt.trim()
+          ? body.lastOccurredAt.trim()
+          : null,
+    };
   } catch {
     return null;
   }
@@ -433,6 +464,40 @@ function makeWebRunId(prefix: string): string {
   return `web-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function sanitizeInboxActionRequestId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const safe = trimmed.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 120);
+  return safe || null;
+}
+
+function makeInboxDismissKey(
+  inboxId: string,
+  lastOccurredAt: string | null,
+): string {
+  return lastOccurredAt ? `${inboxId}\0${lastOccurredAt}` : inboxId;
+}
+
+function makeWebInboxMessageId(requestId: string | null): string {
+  return requestId
+    ? `web-inbox-${requestId}`
+    : `web-inbox-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function declinedInboxMessage(status: PairedTask['status']): string {
+  if (status === 'review_ready' || status === 'in_review') {
+    return 'Dashboard declined review. Continue with the owner turn.';
+  }
+  if (status === 'merge_ready') {
+    return 'Dashboard declined finalization. Continue with the owner turn.';
+  }
+  if (status === 'arbiter_requested' || status === 'in_arbitration') {
+    return 'Dashboard declined arbiter escalation. Continue with the owner turn.';
+  }
+  return 'Dashboard declined this inbox item. Continue with the owner turn.';
+}
+
 function pairedFollowUpIntentForStatus(
   status: PairedTask['status'],
 ): ScheduledPairedFollowUpIntentKind | null {
@@ -459,6 +524,8 @@ export function createWebDashboardHandler(
   const removeTask = opts.deleteTask ?? deleteTask;
   const loadPairedTasks = opts.getPairedTasks ?? getAllOpenPairedTasks;
   const loadPairedTaskById = opts.getPairedTaskById ?? getPairedTaskById;
+  const mutatePairedTaskIfUnchanged =
+    opts.updatePairedTaskIfUnchanged ?? updatePairedTaskIfUnchanged;
   const schedulePairedFollowUp =
     opts.schedulePairedFollowUp ?? schedulePairedFollowUpIntent;
   const loadRoomBindings = opts.getRoomBindings;
@@ -470,6 +537,7 @@ export function createWebDashboardHandler(
   const statusMaxAgeMs = opts.statusMaxAgeMs ?? DEFAULT_STATUS_MAX_AGE_MS;
   const seenRoomMessageIds: string[] = [];
   const seenRoomMessageIdSet = new Set<string>();
+  const dismissedInboxKeys = new Set<string>();
 
   function rememberRoomMessageId(id: string): boolean {
     if (seenRoomMessageIdSet.has(id)) return false;
@@ -480,6 +548,16 @@ export function createWebDashboardHandler(
       if (oldest) seenRoomMessageIdSet.delete(oldest);
     }
     return true;
+  }
+
+  function isInboxItemDismissed(item: {
+    id: string;
+    lastOccurredAt: string;
+  }): boolean {
+    return (
+      dismissedInboxKeys.has(item.id) ||
+      dismissedInboxKeys.has(makeInboxDismissKey(item.id, item.lastOccurredAt))
+    );
   }
 
   return async (request: Request): Promise<Response> => {
@@ -533,9 +611,16 @@ export function createWebDashboardHandler(
         return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
       }
 
-      const action = await readInboxAction(request);
-      if (!action) {
+      const inboxRequest = await readInboxAction(request);
+      if (!inboxRequest) {
         return jsonResponse({ error: 'Invalid inbox action' }, { status: 400 });
+      }
+
+      if (inboxRequest.action === 'dismiss') {
+        dismissedInboxKeys.add(
+          makeInboxDismissKey(actionInboxId, inboxRequest.lastOccurredAt),
+        );
+        return jsonResponse({ ok: true, id: actionInboxId, dismissed: true });
       }
 
       const pairedTarget = parsePairedInboxTarget(actionInboxId);
@@ -561,6 +646,19 @@ export function createWebDashboardHandler(
         );
       }
 
+      if (inboxRequest.action === 'decline') {
+        const messageId = makeWebInboxMessageId(inboxRequest.requestId);
+        if (inboxRequest.requestId && messageExists(task.chat_jid, messageId)) {
+          return jsonResponse({
+            ok: true,
+            id: actionInboxId,
+            taskId: task.id,
+            queued: false,
+            duplicate: true,
+          });
+        }
+      }
+
       if (task.status !== pairedTarget.status) {
         return jsonResponse(
           {
@@ -569,6 +667,69 @@ export function createWebDashboardHandler(
           },
           { status: 409 },
         );
+      }
+
+      if (inboxRequest.action === 'decline') {
+        const timestamp = opts.now?.() ?? new Date().toISOString();
+        const messageId = makeWebInboxMessageId(inboxRequest.requestId);
+        const updates: Partial<
+          Pick<
+            PairedTask,
+            | 'status'
+            | 'updated_at'
+            | 'arbiter_requested_at'
+            | 'completion_reason'
+          >
+        > = {
+          status: 'active',
+          updated_at: timestamp,
+        };
+        if (
+          task.status === 'arbiter_requested' ||
+          task.status === 'in_arbitration'
+        ) {
+          updates.arbiter_requested_at = null;
+        }
+
+        const updated = mutatePairedTaskIfUnchanged(
+          task.id,
+          task.updated_at,
+          updates,
+        );
+        if (!updated) {
+          return jsonResponse(
+            { error: 'Inbox item is stale', status: task.status },
+            { status: 409 },
+          );
+        }
+
+        writeChatMetadata(
+          task.chat_jid,
+          timestamp,
+          undefined,
+          'web-dashboard',
+          true,
+        );
+        writeMessage({
+          id: messageId,
+          chat_jid: task.chat_jid,
+          sender: 'web-dashboard',
+          sender_name: 'Web Dashboard',
+          content: declinedInboxMessage(task.status),
+          timestamp,
+          is_from_me: false,
+          is_bot_message: false,
+          message_source_kind: 'ipc_injected_human',
+        });
+        enqueueMessageCheck(task.chat_jid, task.group_folder);
+
+        return jsonResponse({
+          ok: true,
+          id: actionInboxId,
+          taskId: task.id,
+          status: 'active',
+          queued: true,
+        });
       }
 
       const intentKind = pairedFollowUpIntentForStatus(task.status);
@@ -825,14 +986,16 @@ export function createWebDashboardHandler(
       const snapshots = readSnapshots(statusMaxAgeMs);
       const tasks = loadTasks();
       const pairedTasks = loadPairedTasks();
-      return jsonResponse(
-        buildWebDashboardOverview({
-          now: opts.now?.(),
-          snapshots,
-          tasks,
-          pairedTasks,
-        }),
-      );
+      const overview = buildWebDashboardOverview({
+        now: opts.now?.(),
+        snapshots,
+        tasks,
+        pairedTasks,
+      });
+      return jsonResponse({
+        ...overview,
+        inbox: overview.inbox.filter((item) => !isInboxItemDismissed(item)),
+      });
     }
 
     if (url.pathname === '/api/status-snapshots') {
