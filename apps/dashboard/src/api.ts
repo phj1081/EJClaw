@@ -101,7 +101,7 @@ export interface DashboardTask {
 }
 
 export type DashboardTaskAction = 'pause' | 'resume' | 'cancel';
-export type DashboardInboxAction = 'run';
+export type DashboardInboxAction = 'run' | 'decline' | 'dismiss';
 export type DashboardTaskScheduleType = 'cron' | 'interval' | 'once';
 export type DashboardTaskContextMode = 'group' | 'isolated';
 
@@ -214,15 +214,21 @@ export async function updateScheduledTask(
 export async function runInboxAction(
   inboxId: string,
   action: DashboardInboxAction,
+  options: { requestId?: string; lastOccurredAt?: string } = {},
 ): Promise<{
   ok: true;
   id: string;
-  taskId: string;
-  intentKind: string;
-  queued: boolean;
+  taskId?: string;
+  intentKind?: string;
+  status?: string;
+  queued?: boolean;
+  dismissed?: boolean;
+  duplicate?: boolean;
 }> {
   return postJson(`/api/inbox/${encodeURIComponent(inboxId)}/actions`, {
     action,
+    lastOccurredAt: options.lastOccurredAt,
+    requestId: options.requestId,
   });
 }
 

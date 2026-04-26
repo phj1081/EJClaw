@@ -390,15 +390,15 @@ function readTaskForm(
 }
 
 function inboxActionsFor(item: InboxItem): DashboardInboxAction[] {
-  if (item.source !== 'paired-task') return [];
   if (
-    item.kind === 'reviewer-request' ||
-    item.kind === 'approval' ||
-    item.kind === 'arbiter-request'
+    item.source === 'paired-task' &&
+    (item.kind === 'reviewer-request' ||
+      item.kind === 'approval' ||
+      item.kind === 'arbiter-request')
   ) {
-    return ['run'];
+    return ['run', 'decline', 'dismiss'];
   }
-  return [];
+  return ['dismiss'];
 }
 
 function inboxActionLabel(
@@ -406,7 +406,8 @@ function inboxActionLabel(
   action: DashboardInboxAction,
   t: Messages,
 ): string {
-  if (action !== 'run') return action;
+  if (action === 'dismiss') return t.inbox.actions.dismiss;
+  if (action === 'decline') return t.inbox.actions.decline;
   if (item.kind === 'reviewer-request') return t.inbox.actions.runReview;
   if (item.kind === 'approval') return t.inbox.actions.finalize;
   if (item.kind === 'arbiter-request') return t.inbox.actions.runArbiter;
@@ -1785,10 +1786,21 @@ function App() {
     item: InboxItem,
     action: DashboardInboxAction,
   ) {
+    if (
+      action === 'decline' &&
+      typeof window !== 'undefined' &&
+      !window.confirm(t.inbox.actions.confirmDecline)
+    ) {
+      return;
+    }
+
     const actionKey: InboxActionKey = `${item.id}:${action}`;
     setInboxActionKey(actionKey);
     try {
-      await runInboxAction(item.id, action);
+      await runInboxAction(item.id, action, {
+        lastOccurredAt: item.lastOccurredAt,
+        requestId: makeClientRequestId(),
+      });
       await refresh(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

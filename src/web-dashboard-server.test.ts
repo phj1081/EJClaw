@@ -238,6 +238,79 @@ describe('web dashboard server handler', () => {
     expect(ciFailure?.summary).not.toContain('plain-secret-value');
   });
 
+  it('dismisses inbox items until they change', async () => {
+    const snapshots: StatusSnapshot[] = [
+      {
+        serviceId: 'codex-main',
+        agentType: 'codex',
+        assistantName: 'Codex',
+        updatedAt: '2026-04-26T05:00:00.000Z',
+        entries: [
+          {
+            jid: 'dc:ops',
+            name: '#ops',
+            folder: 'ops',
+            agentType: 'codex',
+            status: 'waiting',
+            elapsedMs: 2500,
+            pendingMessages: true,
+            pendingTasks: 1,
+          },
+        ],
+      },
+    ];
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => snapshots,
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      now: () => '2026-04-26T05:10:00.000Z',
+    });
+
+    const firstOverview = await handler(
+      new Request('http://localhost/api/overview'),
+    );
+    expect(firstOverview.status).toBe(200);
+    const firstBody = (await firstOverview.json()) as {
+      inbox: Array<{ id: string; lastOccurredAt: string }>;
+    };
+    expect(firstBody.inbox).toHaveLength(1);
+
+    const dismiss = await handler(
+      new Request(
+        `http://localhost/api/inbox/${encodeURIComponent(firstBody.inbox[0]!.id)}/actions`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            action: 'dismiss',
+            lastOccurredAt: firstBody.inbox[0]!.lastOccurredAt,
+            requestId: 'dismiss-1',
+          }),
+        },
+      ),
+    );
+    expect(dismiss.status).toBe(200);
+
+    const dismissedOverview = await handler(
+      new Request('http://localhost/api/overview'),
+    );
+    expect(dismissedOverview.status).toBe(200);
+    await expect(dismissedOverview.json()).resolves.toMatchObject({
+      inbox: [],
+    });
+
+    snapshots[0] = {
+      ...snapshots[0]!,
+      updatedAt: '2026-04-26T05:01:00.000Z',
+    };
+    const changedOverview = await handler(
+      new Request('http://localhost/api/overview'),
+    );
+    expect(changedOverview.status).toBe(200);
+    const changedBody = (await changedOverview.json()) as { inbox: unknown[] };
+    expect(changedBody.inbox).toHaveLength(1);
+  });
+
   it('mutates scheduled tasks through explicit action endpoints', async () => {
     let task: ScheduledTask | undefined = makeTask({
       id: 'ci-watch-1',
@@ -742,6 +815,114 @@ describe('web dashboard server handler', () => {
       { chatJid: 'dc:general', groupFolder: 'general' },
       { chatJid: 'dc:general', groupFolder: 'general' },
     ]);
+  });
+
+  it('declines paired inbox actions back to the owner queue', async () => {
+    const pairedTasks = new Map<string, PairedTask>([
+      [
+        'merge-1',
+        makePairedTask({
+          id: 'merge-1',
+          status: 'merge_ready',
+          updated_at: '2026-04-26T05:02:00.000Z',
+        }),
+      ],
+    ]);
+    const messages: NewMessage[] = [];
+    const metadata: Array<{
+      chatJid: string;
+      timestamp: string;
+      channel?: string;
+      isGroup?: boolean;
+    }> = [];
+    const queued: Array<{ chatJid: string; groupFolder: string }> = [];
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [...pairedTasks.values()],
+      getPairedTaskById: (id) => pairedTasks.get(id),
+      updatePairedTaskIfUnchanged: (id, expectedUpdatedAt, updates) => {
+        const task = pairedTasks.get(id);
+        if (!task || task.updated_at !== expectedUpdatedAt) return false;
+        pairedTasks.set(id, { ...task, ...updates });
+        return true;
+      },
+      schedulePairedFollowUp: () => {
+        throw new Error('schedulePairedFollowUp should not be called');
+      },
+      storeChatMetadata: (chatJid, timestamp, _name, channel, isGroup) => {
+        metadata.push({ chatJid, timestamp, channel, isGroup });
+      },
+      storeMessage: (message) => {
+        messages.push(message);
+      },
+      hasMessage: (chatJid, id) =>
+        messages.some(
+          (message) => message.chat_jid === chatJid && message.id === id,
+        ),
+      enqueueMessageCheck: (chatJid, groupFolder) => {
+        queued.push({ chatJid, groupFolder });
+      },
+      now: () => '2026-04-26T05:15:00.000Z',
+    });
+    const decline = () =>
+      handler(
+        new Request(
+          'http://localhost/api/inbox/paired%3Amerge-1%3Amerge_ready/actions',
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              action: 'decline',
+              requestId: 'decline-merge-1',
+            }),
+          },
+        ),
+      );
+
+    const response = await decline();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      taskId: 'merge-1',
+      status: 'active',
+      queued: true,
+    });
+    expect(pairedTasks.get('merge-1')).toMatchObject({
+      status: 'active',
+      updated_at: '2026-04-26T05:15:00.000Z',
+    });
+    expect(metadata).toEqual([
+      {
+        chatJid: 'dc:general',
+        timestamp: '2026-04-26T05:15:00.000Z',
+        channel: 'web-dashboard',
+        isGroup: true,
+      },
+    ]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      id: 'web-inbox-decline-merge-1',
+      chat_jid: 'dc:general',
+      sender: 'web-dashboard',
+      sender_name: 'Web Dashboard',
+      content: 'Dashboard declined finalization. Continue with the owner turn.',
+      timestamp: '2026-04-26T05:15:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+      message_source_kind: 'ipc_injected_human',
+    });
+    expect(queued).toEqual([{ chatJid: 'dc:general', groupFolder: 'general' }]);
+
+    const duplicate = await decline();
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({
+      ok: true,
+      duplicate: true,
+      queued: false,
+    });
+    expect(messages).toHaveLength(1);
+    expect(queued).toHaveLength(1);
   });
 
   it('rejects invalid paired inbox actions', async () => {

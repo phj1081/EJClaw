@@ -110,6 +110,9 @@ export interface Messages {
       runReview: string;
       finalize: string;
       runArbiter: string;
+      decline: string;
+      dismiss: string;
+      confirmDecline: string;
     };
   };
   rooms: {
@@ -358,6 +361,9 @@ export const messages = {
         runReview: 'Run review',
         finalize: 'Finalize',
         runArbiter: 'Run arbiter',
+        decline: 'Decline',
+        dismiss: 'Dismiss',
+        confirmDecline: 'Decline this item?',
       },
     },
     rooms: {
@@ -590,6 +596,9 @@ export const messages = {
         runReview: 'Run review',
         finalize: 'Finalize',
         runArbiter: 'Run arbiter',
+        decline: 'Decline',
+        dismiss: 'Dismiss',
+        confirmDecline: 'Decline this item?',
       },
     },
     rooms: {
@@ -822,6 +831,9 @@ export const messages = {
         runReview: '运行评审',
         finalize: '完成',
         runArbiter: '运行仲裁',
+        decline: '拒绝',
+        dismiss: '忽略',
+        confirmDecline: '确认拒绝此项？',
       },
     },
     rooms: {
@@ -1054,6 +1066,9 @@ export const messages = {
         runReview: 'レビュー実行',
         finalize: 'Finalize',
         runArbiter: '仲裁実行',
+        decline: '拒否',
+        dismiss: '非表示',
+        confirmDecline: 'この項目を拒否しますか？',
       },
     },
     rooms: {
