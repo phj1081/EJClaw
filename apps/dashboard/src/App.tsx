@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
+  type DashboardTaskAction,
   type DashboardOverview,
   type DashboardTask,
   type StatusSnapshot,
   fetchDashboardData,
+  runScheduledTaskAction,
 } from './api';
 import {
   LOCALES,
@@ -32,6 +34,7 @@ type UsageLimitWindow = 'h5' | 'd7';
 type DashboardView = 'usage' | 'inbox' | 'health' | 'rooms' | 'scheduled';
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
 type TaskResultTone = 'ok' | 'fail' | 'none';
+type TaskActionKey = `${string}:${DashboardTaskAction}`;
 type InboxFilter = 'all' | InboxItem['kind'];
 type HealthLevel = 'ok' | 'stale' | 'down';
 
@@ -276,6 +279,12 @@ function taskDisplayName(task: DashboardTask, t: Messages): string {
   if (task.isWatcher) return t.tasks.ciWatch;
   if (task.scheduleType) return task.scheduleType;
   return task.id;
+}
+
+function taskActionsFor(task: DashboardTask): DashboardTaskAction[] {
+  if (task.status === 'active') return ['pause', 'cancel'];
+  if (task.status === 'paused') return ['resume', 'cancel'];
+  return [];
 }
 
 const INBOX_FILTERS: InboxFilter[] = [
@@ -1089,10 +1098,14 @@ function UsagePanel({
 function TaskPanel({
   tasks,
   locale,
+  onTaskAction,
+  taskActionKey,
   t,
 }: {
   tasks: DashboardTask[];
   locale: Locale;
+  onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
+  taskActionKey: TaskActionKey | null;
   t: Messages;
 }) {
   const taskGroups = useMemo(() => {
@@ -1155,6 +1168,7 @@ function TaskPanel({
                   task.lastResult,
                   t.tasks.noResult,
                 );
+                const taskActions = taskActionsFor(task);
                 return (
                   <article
                     className={`task-card task-card-${group.key}`}
@@ -1176,6 +1190,28 @@ function TaskPanel({
                         ) : null}
                       </div>
                     </div>
+
+                    {taskActions.length > 0 ? (
+                      <div className="task-actions">
+                        {taskActions.map((action) => {
+                          const actionKey: TaskActionKey = `${task.id}:${action}`;
+                          const busy = taskActionKey === actionKey;
+                          return (
+                            <button
+                              className={`task-action task-action-${action}`}
+                              disabled={busy}
+                              key={action}
+                              onClick={() => onTaskAction(task, action)}
+                              type="button"
+                            >
+                              {busy
+                                ? t.tasks.actions.busy
+                                : t.tasks.actions[action]}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
 
                     <div className="task-time-grid">
                       <span>
@@ -1278,6 +1314,9 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeView, setActiveView] = useState<DashboardView>(readViewFromHash);
   const [locale, setLocale] = useState<Locale>(readInitialLocale);
+  const [taskActionKey, setTaskActionKey] = useState<TaskActionKey | null>(
+    null,
+  );
   const t = messages[locale];
 
   function setDashboardLocale(nextLocale: Locale) {
@@ -1303,6 +1342,26 @@ function App() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  }
+
+  async function handleTaskAction(
+    task: DashboardTask,
+    action: DashboardTaskAction,
+  ) {
+    if (action === 'cancel' && !window.confirm(t.tasks.actions.confirmCancel)) {
+      return;
+    }
+
+    const actionKey: TaskActionKey = `${task.id}:${action}`;
+    setTaskActionKey(actionKey);
+    try {
+      await runScheduledTaskAction(task.id, action);
+      await refresh(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTaskActionKey(null);
     }
   }
 
@@ -1430,7 +1489,15 @@ function App() {
                   <h2>{t.panels.scheduled}</h2>
                   <span>{t.panels.promptPreviews}</span>
                 </div>
-                <TaskPanel locale={locale} tasks={data.tasks} t={t} />
+                <TaskPanel
+                  locale={locale}
+                  onTaskAction={(task, action) =>
+                    void handleTaskAction(task, action)
+                  }
+                  taskActionKey={taskActionKey}
+                  tasks={data.tasks}
+                  t={t}
+                />
               </section>
             ) : null}
           </div>
