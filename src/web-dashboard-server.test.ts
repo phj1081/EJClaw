@@ -397,6 +397,7 @@ describe('web dashboard server handler', () => {
         body: JSON.stringify({
           roomJid: 'dc:ops',
           prompt: '  run hourly dashboard audit  ',
+          requestId: 'task-create-1',
           scheduleType: 'once',
           scheduleValue: '2026-04-26T05:20:00.000Z',
           contextMode: 'group',
@@ -422,6 +423,50 @@ describe('web dashboard server handler', () => {
       status: 'active',
     });
 
+    const duplicateCreate = await handler(
+      new Request('http://localhost/api/tasks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          roomJid: 'dc:ops',
+          prompt: 'run hourly dashboard audit',
+          requestId: 'task-create-1',
+          scheduleType: 'once',
+          scheduleValue: '2026-04-26T05:20:00.000Z',
+          contextMode: 'group',
+        }),
+      }),
+    );
+    expect(duplicateCreate.status).toBe(200);
+    await expect(duplicateCreate.json()).resolves.toMatchObject({
+      duplicate: true,
+      task: { id: created.task.id },
+    });
+    expect(tasks.size).toBe(1);
+
+    tasks.set(created.task.id, {
+      ...tasks.get(created.task.id)!,
+      next_run: '2026-04-26T06:00:00.000Z',
+      suspended_until: '2026-04-26T05:45:00.000Z',
+    });
+    const promptOnlyUpdate = await handler(
+      new Request(`http://localhost/api/tasks/${created.task.id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          prompt: 'watch dashboard with same schedule',
+        }),
+      }),
+    );
+
+    expect(promptOnlyUpdate.status).toBe(200);
+    expect(tasks.get(created.task.id)).toMatchObject({
+      next_run: '2026-04-26T06:00:00.000Z',
+      prompt: 'watch dashboard with same schedule',
+      schedule_type: 'once',
+      suspended_until: '2026-04-26T05:45:00.000Z',
+    });
+
     const update = await handler(
       new Request(`http://localhost/api/tasks/${created.task.id}`, {
         method: 'PATCH',
@@ -443,6 +488,27 @@ describe('web dashboard server handler', () => {
       suspended_until: null,
     });
     expect(nudges).toEqual([]);
+
+    const longPrompt = await handler(
+      new Request('http://localhost/api/tasks', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          roomJid: 'dc:ops',
+          prompt: 'x'.repeat(8_100),
+          requestId: 'task-create-long',
+          scheduleType: 'once',
+          scheduleValue: '2026-04-26T05:20:00.000Z',
+          contextMode: 'isolated',
+        }),
+      }),
+    );
+    expect(longPrompt.status).toBe(200);
+    const longCreated = (await longPrompt.json()) as {
+      task: { id: string; promptLength: number };
+    };
+    expect(longCreated.task.promptLength).toBe(8_000);
+    expect(tasks.get(longCreated.task.id)?.prompt).toHaveLength(8_000);
   });
 
   it('rejects invalid scheduled task create and edit requests', async () => {
@@ -450,15 +516,25 @@ describe('web dashboard server handler', () => {
       id: 'completed-task',
       status: 'completed',
     });
+    const active = makeTask({
+      id: 'active-task',
+      status: 'active',
+    });
     const watch = makeTask({
       id: 'watch-task',
       prompt: '[BACKGROUND CI WATCH]\nwatch',
     });
     const handler = createWebDashboardHandler({
       readStatusSnapshots: () => [],
-      getTasks: () => [completed, watch],
+      getTasks: () => [completed, active, watch],
       getTaskById: (id) =>
-        id === completed.id ? completed : id === watch.id ? watch : undefined,
+        id === completed.id
+          ? completed
+          : id === active.id
+            ? active
+            : id === watch.id
+              ? watch
+              : undefined,
       createTask: () => {
         throw new Error('createTask should not be called');
       },
@@ -539,6 +615,21 @@ describe('web dashboard server handler', () => {
       }),
     );
     expect(watcherEdit.status).toBe(409);
+
+    const unsupportedEdit = await handler(
+      new Request('http://localhost/api/tasks/active-task', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          agentType: 'codex',
+          contextMode: 'group',
+          prompt: 'run again',
+          scheduleType: 'interval',
+          scheduleValue: '60000',
+        }),
+      }),
+    );
+    expect(unsupportedEdit.status).toBe(400);
   });
 
   it('queues paired inbox actions through the paired follow-up scheduler', async () => {

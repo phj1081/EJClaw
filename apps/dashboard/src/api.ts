@@ -111,6 +111,7 @@ export interface CreateScheduledTaskInput {
   scheduleType: DashboardTaskScheduleType;
   scheduleValue: string;
   contextMode: DashboardTaskContextMode;
+  requestId?: string;
 }
 
 export interface UpdateScheduledTaskInput {

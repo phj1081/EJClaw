@@ -1756,7 +1756,7 @@ function App() {
   async function handleTaskCreate(input: CreateScheduledTaskInput) {
     setTaskActionKey('create');
     try {
-      await createScheduledTask(input);
+      await createScheduledTask({ ...input, requestId: makeClientRequestId() });
       await refresh(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
