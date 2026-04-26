@@ -120,10 +120,16 @@ function SectionNav({
   return (
     <nav className="section-nav" aria-label="Dashboard sections">
       <a href="#overview">Summary</a>
-      <a href="#agents">Agents</a>
+      <a href="#usage">Quota</a>
       <a href="#rooms">Rooms</a>
       <a href="#work">Work</a>
-      <button disabled={refreshing} onClick={onRefresh} type="button">
+      <button
+        aria-busy={refreshing}
+        aria-label={refreshing ? '새로고침 중' : '새로고침'}
+        disabled={refreshing}
+        onClick={onRefresh}
+        type="button"
+      >
         {refreshing ? '...' : 'Refresh'}
       </button>
       <span>Updated {formatDate(lastRefreshed)}</span>

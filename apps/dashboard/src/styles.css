@@ -771,6 +771,10 @@ progress::-moz-progress-bar {
     font-weight: 900;
   }
 
+  .section-nav button:disabled::before {
+    content: '…';
+  }
+
   .metrics-grid,
   .control-rail {
     grid-template-columns: repeat(2, minmax(0, 1fr));
