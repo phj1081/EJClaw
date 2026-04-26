@@ -33,6 +33,20 @@ function formatPct(value: number): string {
   return `${Math.round(value)}%`;
 }
 
+function usagePeak(row: DashboardOverview['usage']['rows'][number]): number {
+  return Math.max(row.h5pct, row.d7pct);
+}
+
+function usageRisk(row: DashboardOverview['usage']['rows'][number]): {
+  level: 'ok' | 'warn' | 'critical';
+  label: string;
+} {
+  const peak = usagePeak(row);
+  if (peak >= 85) return { level: 'critical', label: 'Limit risk' };
+  if (peak >= 65) return { level: 'warn', label: 'Watch' };
+  return { level: 'ok', label: 'Clear' };
+}
+
 function statusLabel(status: string): string {
   switch (status) {
     case 'processing':
@@ -109,31 +123,102 @@ function LoadingSkeleton() {
 }
 
 function SectionNav({
+  drawerOpen,
   lastRefreshed,
+  onCloseDrawer,
+  onOpenDrawer,
   refreshing,
   onRefresh,
 }: {
+  drawerOpen: boolean;
   lastRefreshed: string | null;
+  onCloseDrawer: () => void;
+  onOpenDrawer: () => void;
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const navItems = [
+    { href: '#overview', label: 'Health' },
+    { href: '#agents', label: 'Agents' },
+    { href: '#usage', label: 'Usage' },
+    { href: '#rooms', label: 'Rooms' },
+    { href: '#work', label: 'Scheduled' },
+  ];
+
   return (
-    <nav className="section-nav" aria-label="Dashboard sections">
-      <a href="#overview">Summary</a>
-      <a href="#usage">Quota</a>
-      <a href="#rooms">Rooms</a>
-      <a href="#work">Work</a>
-      <button
-        aria-busy={refreshing}
-        aria-label={refreshing ? '새로고침 중' : '새로고침'}
-        disabled={refreshing}
-        onClick={onRefresh}
-        type="button"
-      >
-        {refreshing ? '...' : 'Refresh'}
-      </button>
-      <span>Updated {formatDate(lastRefreshed)}</span>
-    </nav>
+    <>
+      <nav className="section-nav" aria-label="Dashboard sections">
+        <button
+          aria-controls="dashboard-menu"
+          aria-expanded={drawerOpen}
+          aria-label={drawerOpen ? '메뉴 닫기' : '메뉴 열기'}
+          className="menu-button"
+          onClick={drawerOpen ? onCloseDrawer : onOpenDrawer}
+          type="button"
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+        <a href="#overview">Health</a>
+        <a href="#usage">Usage</a>
+        <a href="#work">Work</a>
+        <button
+          aria-busy={refreshing}
+          aria-label={refreshing ? '새로고침 중' : '새로고침'}
+          className="refresh-button"
+          disabled={refreshing}
+          onClick={onRefresh}
+          type="button"
+        >
+          {refreshing ? '...' : 'Refresh'}
+        </button>
+        <span>Updated {formatDate(lastRefreshed)}</span>
+      </nav>
+
+      {drawerOpen ? (
+        <>
+          <button
+            aria-label="메뉴 닫기"
+            className="drawer-backdrop"
+            onClick={onCloseDrawer}
+            type="button"
+          />
+          <aside
+            aria-label="Dashboard menu"
+            aria-modal="true"
+            className="nav-drawer"
+            id="dashboard-menu"
+            role="dialog"
+          >
+            <div className="drawer-head">
+              <div>
+                <span className="eyebrow">EJClaw</span>
+                <strong>Operations</strong>
+              </div>
+              <button
+                aria-label="메뉴 닫기"
+                onClick={onCloseDrawer}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+            <nav aria-label="Dashboard drawer sections">
+              {navItems.map((item) => (
+                <a href={item.href} key={item.href} onClick={onCloseDrawer}>
+                  {item.label}
+                </a>
+              ))}
+            </nav>
+            <div className="drawer-meta">
+              <span>Updated</span>
+              <strong>{formatDate(lastRefreshed)}</strong>
+            </div>
+          </aside>
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -184,12 +269,7 @@ function ControlRail({ data }: { data: DashboardState }) {
 
 function ServicePanel({ overview }: { overview: DashboardOverview }) {
   if (overview.services.length === 0) {
-    return (
-      <EmptyState>
-        최근 status snapshot이 없어. 서비스가 아직 heartbeat를 안 쓴 상태일 수
-        있어.
-      </EmptyState>
-    );
+    return <EmptyState>No heartbeat yet. Check service logs.</EmptyState>;
   }
 
   return (
@@ -235,7 +315,7 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
   );
 
   if (entries.length === 0) {
-    return <EmptyState>표시할 룸 상태가 없어.</EmptyState>;
+    return <EmptyState>No rooms yet.</EmptyState>;
   }
 
   return (
@@ -323,37 +403,73 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
 }
 
 function UsagePanel({ overview }: { overview: DashboardOverview }) {
-  if (overview.usage.rows.length === 0) {
-    return (
-      <EmptyState>
-        사용량 snapshot이 없어. usage dashboard가 꺼져 있거나 아직 수집 전일 수
-        있어.
-      </EmptyState>
-    );
+  const rows = useMemo(
+    () => [...overview.usage.rows].sort((a, b) => usagePeak(b) - usagePeak(a)),
+    [overview.usage.rows],
+  );
+  const watched = rows.filter((row) => usagePeak(row) >= 65).length;
+
+  if (rows.length === 0) {
+    return <EmptyState>No usage snapshot. Check collector.</EmptyState>;
   }
 
+  const highest = rows[0];
+
   return (
-    <div className="usage-list">
-      {overview.usage.rows.map((row) => (
-        <section className="usage-row" key={row.name}>
-          <div className="usage-title">
-            <strong>{row.name}</strong>
-            <span>fetched {formatDate(overview.usage.fetchedAt)}</span>
-          </div>
-          <div className="bar-line">
-            <span>5h</span>
-            <progress max={100} value={row.h5pct} />
-            <strong>{formatPct(row.h5pct)}</strong>
-            <small>{row.h5reset}</small>
-          </div>
-          <div className="bar-line">
-            <span>7d</span>
-            <progress max={100} value={row.d7pct} />
-            <strong>{formatPct(row.d7pct)}</strong>
-            <small>{row.d7reset}</small>
-          </div>
-        </section>
-      ))}
+    <div className="usage-dashboard">
+      <div className="usage-summary">
+        <div>
+          <span>Highest</span>
+          <strong>
+            {highest.name} · {formatPct(usagePeak(highest))}
+          </strong>
+        </div>
+        <div>
+          <span>Watch</span>
+          <strong>{watched}</strong>
+        </div>
+        <div>
+          <span>Updated</span>
+          <strong>{formatDate(overview.usage.fetchedAt)}</strong>
+        </div>
+      </div>
+
+      <div className="usage-grid">
+        {rows.map((row) => {
+          const risk = usageRisk(row);
+          return (
+            <section
+              className={`usage-card usage-${risk.level}`}
+              key={row.name}
+            >
+              <div className="usage-card-head">
+                <strong>{row.name}</strong>
+                <span className={`pill pill-${risk.level}`}>{risk.label}</span>
+              </div>
+              <div className="usage-score">
+                <span>Peak</span>
+                <strong>{formatPct(usagePeak(row))}</strong>
+              </div>
+              <div className="usage-meter">
+                <div>
+                  <span>5h</span>
+                  <strong>{formatPct(row.h5pct)}</strong>
+                </div>
+                <progress max={100} value={row.h5pct} />
+                <small>reset {row.h5reset}</small>
+              </div>
+              <div className="usage-meter">
+                <div>
+                  <span>7d</span>
+                  <strong>{formatPct(row.d7pct)}</strong>
+                </div>
+                <progress max={100} value={row.d7pct} />
+                <small>reset {row.d7reset}</small>
+              </div>
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -373,7 +489,7 @@ function TaskPanel({ tasks }: { tasks: DashboardTask[] }) {
   );
 
   if (sortedTasks.length === 0) {
-    return <EmptyState>등록된 scheduled task가 없어.</EmptyState>;
+    return <EmptyState>No scheduled work.</EmptyState>;
   }
 
   return (
@@ -469,6 +585,7 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   async function refresh(showSpinner = false) {
     if (showSpinner) setRefreshing(true);
@@ -493,6 +610,17 @@ function App() {
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    if (!drawerOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setDrawerOpen(false);
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [drawerOpen]);
+
   if (loading && !data) {
     return <LoadingSkeleton />;
   }
@@ -501,12 +629,9 @@ function App() {
     <main className="shell">
       <header className="hero">
         <div>
-          <span className="eyebrow">EJClaw Control Plane · read-only MVP</span>
-          <h1>Agent factory control room</h1>
-          <p>
-            Discord는 pager와 승인 호출로 남기고, 여기서는 agent heartbeat, room
-            queue, scheduled work, quota, audit preview를 한 화면에서 본다.
-          </p>
+          <span className="eyebrow">EJClaw · read-only</span>
+          <h1>Operations</h1>
+          <p>Health · Queue · Usage · Rooms · Scheduled</p>
         </div>
         <button disabled={refreshing} onClick={() => void refresh(true)}>
           {refreshing ? '새로고침 중' : '새로고침'}
@@ -514,7 +639,10 @@ function App() {
       </header>
 
       <SectionNav
+        drawerOpen={drawerOpen}
         lastRefreshed={lastRefreshed}
+        onCloseDrawer={() => setDrawerOpen(false)}
+        onOpenDrawer={() => setDrawerOpen(true)}
         onRefresh={() => void refresh(true)}
         refreshing={refreshing}
       />
@@ -557,8 +685,8 @@ function App() {
 
           <section className="panel" id="agents">
             <div className="panel-title">
-              <h2>Agent Heartbeats</h2>
-              <span>최근 heartbeat 기준</span>
+              <h2>Health</h2>
+              <span>Heartbeat</span>
             </div>
             <ServicePanel overview={data.overview} />
           </section>
@@ -566,15 +694,15 @@ function App() {
           <section className="panel split-panel">
             <div id="usage">
               <div className="panel-title">
-                <h2>Cost & Quota</h2>
-                <span>5h / 7d usage snapshot</span>
+                <h2>Usage</h2>
+                <span>5h / 7d</span>
               </div>
               <UsagePanel overview={data.overview} />
             </div>
             <div id="rooms">
               <div className="panel-title">
-                <h2>Rooms & Queues</h2>
-                <span>processing / waiting / inactive</span>
+                <h2>Rooms</h2>
+                <span>Queue</span>
               </div>
               <RoomPanel snapshots={data.snapshots} />
             </div>
@@ -582,8 +710,8 @@ function App() {
 
           <section className="panel" id="work">
             <div className="panel-title">
-              <h2>Scheduled Work</h2>
-              <span>watchers, heartbeats, redacted prompt previews</span>
+              <h2>Scheduled</h2>
+              <span>Redacted previews</span>
             </div>
             <TaskPanel tasks={data.tasks} />
           </section>
