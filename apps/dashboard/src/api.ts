@@ -100,12 +100,36 @@ export interface DashboardTask {
   isWatcher: boolean;
 }
 
+export type DashboardTaskAction = 'pause' | 'resume' | 'cancel';
+
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
     headers: { accept: 'application/json' },
   });
   if (!response.ok) {
     throw new Error(`${path} failed: ${response.status}`);
+  }
+  return (await response.json()) as T;
+}
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    let message = `${path} failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) message = payload.error;
+    } catch {
+      // Keep the status-based message when the server body is not JSON.
+    }
+    throw new Error(message);
   }
   return (await response.json()) as T;
 }
@@ -122,4 +146,18 @@ export async function fetchDashboardData(): Promise<{
   ]);
 
   return { overview, snapshots, tasks };
+}
+
+export async function runScheduledTaskAction(
+  taskId: string,
+  action: DashboardTaskAction,
+): Promise<{
+  ok: true;
+  id?: string;
+  deleted?: boolean;
+  task?: DashboardTask | null;
+}> {
+  return postJson(`/api/tasks/${encodeURIComponent(taskId)}/actions`, {
+    action,
+  });
 }

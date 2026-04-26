@@ -1198,6 +1198,43 @@ progress::-moz-progress-bar {
   background: rgba(43, 55, 38, 0.08);
 }
 
+.task-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.task-action {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid rgba(43, 55, 38, 0.12);
+  border-radius: 999px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 900;
+  background: rgba(255, 250, 240, 0.84);
+  cursor: pointer;
+}
+
+.task-action:hover,
+.task-action:focus-visible {
+  border-color: rgba(191, 95, 44, 0.42);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(191, 95, 44, 0.12);
+}
+
+.task-action:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
+
+.task-action-cancel {
+  color: #8f2f22;
+  border-color: rgba(183, 71, 52, 0.22);
+  background: rgba(183, 71, 52, 0.08);
+}
+
 .task-time-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1666,6 +1703,11 @@ progress::-moz-progress-bar {
   .task-card {
     gap: 7px;
     padding: 9px;
+  }
+
+  .task-action {
+    min-height: 32px;
+    padding-inline: 10px;
   }
 
   .task-card-main {

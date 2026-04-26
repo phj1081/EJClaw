@@ -2,7 +2,13 @@ import fs from 'fs';
 import path from 'path';
 
 import { WEB_DASHBOARD } from './config.js';
-import { getAllOpenPairedTasks, getAllTasks } from './db.js';
+import {
+  deleteTask,
+  getAllOpenPairedTasks,
+  getAllTasks,
+  getTaskById,
+  updateTask,
+} from './db.js';
 import { logger } from './logger.js';
 import {
   readStatusSnapshots,
@@ -21,6 +27,12 @@ export interface WebDashboardHandlerOptions {
   statusMaxAgeMs?: number;
   readStatusSnapshots?: (maxAgeMs: number) => StatusSnapshot[];
   getTasks?: () => ScheduledTask[];
+  getTaskById?: (id: string) => ScheduledTask | undefined;
+  updateTask?: (
+    id: string,
+    updates: Partial<Pick<ScheduledTask, 'status' | 'suspended_until'>>,
+  ) => void;
+  deleteTask?: (id: string) => void;
   getPairedTasks?: () => PairedTask[];
   now?: () => string;
 }
@@ -101,16 +113,84 @@ function serveStaticFile(staticDir: string, pathname: string): Response {
   });
 }
 
+type TaskAction = 'pause' | 'resume' | 'cancel';
+
+function parseTaskActionPath(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/tasks\/([^/]+)\/actions$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function isTaskAction(value: unknown): value is TaskAction {
+  return value === 'pause' || value === 'resume' || value === 'cancel';
+}
+
+async function readTaskAction(request: Request): Promise<TaskAction | null> {
+  try {
+    const body = (await request.json()) as { action?: unknown };
+    return isTaskAction(body.action) ? body.action : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createWebDashboardHandler(
   opts: WebDashboardHandlerOptions = {},
 ): (request: Request) => Response | Promise<Response> {
   const readSnapshots = opts.readStatusSnapshots ?? readStatusSnapshots;
   const loadTasks = opts.getTasks ?? getAllTasks;
+  const loadTaskById = opts.getTaskById ?? getTaskById;
+  const mutateTask = opts.updateTask ?? updateTask;
+  const removeTask = opts.deleteTask ?? deleteTask;
   const loadPairedTasks = opts.getPairedTasks ?? getAllOpenPairedTasks;
   const statusMaxAgeMs = opts.statusMaxAgeMs ?? DEFAULT_STATUS_MAX_AGE_MS;
 
-  return (request: Request): Response => {
+  return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
+    const actionTaskId = parseTaskActionPath(url.pathname);
+
+    if (actionTaskId) {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
+      }
+
+      const action = await readTaskAction(request);
+      if (!action) {
+        return jsonResponse({ error: 'Invalid task action' }, { status: 400 });
+      }
+
+      const task = loadTaskById(actionTaskId);
+      if (!task) {
+        return jsonResponse({ error: 'Task not found' }, { status: 404 });
+      }
+
+      if (task.status === 'completed' && action !== 'cancel') {
+        return jsonResponse(
+          { error: 'Completed tasks cannot be changed' },
+          { status: 409 },
+        );
+      }
+
+      if (action === 'cancel') {
+        removeTask(actionTaskId);
+        return jsonResponse({ ok: true, id: actionTaskId, deleted: true });
+      }
+
+      mutateTask(actionTaskId, {
+        status: action === 'pause' ? 'paused' : 'active',
+        suspended_until: null,
+      });
+
+      const updatedTask = loadTaskById(actionTaskId);
+      return jsonResponse({
+        ok: true,
+        task: updatedTask ? sanitizeScheduledTask(updatedTask) : null,
+      });
+    }
 
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return jsonResponse({ error: 'Method not allowed' }, { status: 405 });

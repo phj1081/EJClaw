@@ -177,6 +177,13 @@ export interface Messages {
     noResult: string;
     noTime: string;
     now: string;
+    actions: {
+      pause: string;
+      resume: string;
+      cancel: string;
+      busy: string;
+      confirmCancel: string;
+    };
   };
   status: {
     processing: string;
@@ -386,6 +393,13 @@ export const messages = {
       noResult: '결과 없음',
       noTime: '-',
       now: '지금',
+      actions: {
+        pause: 'Pause',
+        resume: 'Resume',
+        cancel: 'Cancel',
+        busy: 'Working',
+        confirmCancel: 'Cancel this scheduled work?',
+      },
     },
     status: {
       processing: '처리중',
@@ -579,6 +593,13 @@ export const messages = {
       noResult: 'no result',
       noTime: '-',
       now: 'now',
+      actions: {
+        pause: 'Pause',
+        resume: 'Resume',
+        cancel: 'Cancel',
+        busy: 'Working',
+        confirmCancel: 'Cancel this scheduled work?',
+      },
     },
     status: {
       processing: 'processing',
@@ -772,6 +793,13 @@ export const messages = {
       noResult: '无结果',
       noTime: '-',
       now: '现在',
+      actions: {
+        pause: 'Pause',
+        resume: 'Resume',
+        cancel: 'Cancel',
+        busy: 'Working',
+        confirmCancel: 'Cancel this scheduled work?',
+      },
     },
     status: {
       processing: '处理中',
@@ -965,6 +993,13 @@ export const messages = {
       noResult: '結果なし',
       noTime: '-',
       now: '今',
+      actions: {
+        pause: 'Pause',
+        resume: 'Resume',
+        cancel: 'Cancel',
+        busy: 'Working',
+        confirmCancel: 'Cancel this scheduled work?',
+      },
     },
     status: {
       processing: '処理中',

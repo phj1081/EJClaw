@@ -233,6 +233,117 @@ describe('web dashboard server handler', () => {
     expect(ciFailure?.summary).not.toContain('plain-secret-value');
   });
 
+  it('mutates scheduled tasks through explicit action endpoints', async () => {
+    let task: ScheduledTask | undefined = makeTask({
+      id: 'ci-watch-1',
+      prompt: '[BACKGROUND CI WATCH]\nwatch',
+    });
+    const updates: Array<Partial<ScheduledTask>> = [];
+    const deleted: string[] = [];
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => (task ? [task] : []),
+      getTaskById: (id) => (task?.id === id ? task : undefined),
+      updateTask: (id, update) => {
+        expect(id).toBe('ci-watch-1');
+        updates.push(update);
+        task = task ? { ...task, ...update } : task;
+      },
+      deleteTask: (id) => {
+        deleted.push(id);
+        task = undefined;
+      },
+      getPairedTasks: () => [],
+    });
+
+    const pause = await handler(
+      new Request('http://localhost/api/tasks/ci-watch-1/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'pause' }),
+      }),
+    );
+    expect(pause.status).toBe(200);
+    await expect(pause.json()).resolves.toMatchObject({
+      ok: true,
+      task: { id: 'ci-watch-1', status: 'paused' },
+    });
+    expect(updates.at(-1)).toMatchObject({
+      status: 'paused',
+      suspended_until: null,
+    });
+
+    const resume = await handler(
+      new Request('http://localhost/api/tasks/ci-watch-1/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'resume' }),
+      }),
+    );
+    expect(resume.status).toBe(200);
+    await expect(resume.json()).resolves.toMatchObject({
+      ok: true,
+      task: { id: 'ci-watch-1', status: 'active' },
+    });
+    expect(updates.at(-1)).toMatchObject({
+      status: 'active',
+      suspended_until: null,
+    });
+
+    const cancel = await handler(
+      new Request('http://localhost/api/tasks/ci-watch-1/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel' }),
+      }),
+    );
+    expect(cancel.status).toBe(200);
+    await expect(cancel.json()).resolves.toEqual({
+      ok: true,
+      id: 'ci-watch-1',
+      deleted: true,
+    });
+    expect(deleted).toEqual(['ci-watch-1']);
+  });
+
+  it('rejects invalid scheduled task actions', async () => {
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getTaskById: (id) =>
+        id === 'task-1' ? makeTask({ id: 'task-1' }) : undefined,
+      updateTask: () => {
+        throw new Error('updateTask should not be called');
+      },
+      getPairedTasks: () => [],
+    });
+
+    const invalid = await handler(
+      new Request('http://localhost/api/tasks/task-1/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'restart-everything' }),
+      }),
+    );
+    expect(invalid.status).toBe(400);
+
+    const missing = await handler(
+      new Request('http://localhost/api/tasks/missing/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'pause' }),
+      }),
+    );
+    expect(missing.status).toBe(404);
+
+    const wrongMethod = await handler(
+      new Request('http://localhost/api/tasks/task-1/actions', {
+        method: 'GET',
+      }),
+    );
+    expect(wrongMethod.status).toBe(405);
+  });
+
   it('serves Vite static assets and falls back to index for SPA routes', async () => {
     const staticDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-dashboard-'),
