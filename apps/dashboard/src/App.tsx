@@ -36,7 +36,7 @@ type InboxFilter = 'all' | InboxItem['kind'];
 type HealthLevel = 'ok' | 'stale' | 'down';
 
 const REFRESH_INTERVAL_MS = 15_000;
-const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale';
+const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale.v2';
 const DEFAULT_VIEW: DashboardView = 'inbox';
 const HEALTH_STALE_MS = 5 * 60_000;
 const HEALTH_DOWN_MS = 15 * 60_000;
@@ -75,7 +75,7 @@ function readInitialLocale(): Locale {
     if (matched) return matched;
   }
 
-  return 'ko';
+  return 'en';
 }
 
 function formatDate(value: string | null | undefined, locale: Locale): string {

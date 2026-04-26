@@ -520,12 +520,12 @@ export const messages = {
     },
     usage: {
       empty: 'No usage snapshot. Check collector.',
-      current: 'In use',
-      tightest: 'Lowest',
+      current: 'Active',
+      tightest: 'Tightest',
       watch: 'Watch',
       remaining: 'Left',
-      speed: 'Speed',
-      inUse: 'in use',
+      speed: 'Rate',
+      inUse: 'active',
       reset: 'reset',
       noReset: 'no reset',
       limitBasis: {
@@ -540,12 +540,12 @@ export const messages = {
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
       risk: {
-        ok: 'Clear',
+        ok: 'OK',
         warn: 'Watch',
-        critical: 'Limit risk',
+        critical: 'Risk',
       },
       speedLabel: {
-        ok: 'Normal',
+        ok: 'OK',
         warn: 'Fast',
         critical: 'Too fast',
       },
