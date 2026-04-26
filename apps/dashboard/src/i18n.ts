@@ -130,6 +130,10 @@ export interface Messages {
       h5: string;
       d7: string;
     };
+    quota: {
+      h5: string;
+      d7: string;
+    };
     usage: string;
     groupPrimary: string;
     groupCodex: string;
@@ -335,6 +339,10 @@ export const messages = {
         h5: '5시간 기준',
         d7: '7일 기준',
       },
+      quota: {
+        h5: '5시간',
+        d7: '7일',
+      },
       usage: '사용량',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
@@ -523,6 +531,10 @@ export const messages = {
       limitBasis: {
         h5: '5h basis',
         d7: '7d basis',
+      },
+      quota: {
+        h5: '5h',
+        d7: '7d',
       },
       usage: 'usage',
       groupPrimary: 'Claude / Kimi',
@@ -713,6 +725,10 @@ export const messages = {
         h5: '按5小时',
         d7: '按7天',
       },
+      quota: {
+        h5: '5小时',
+        d7: '7天',
+      },
       usage: '用量',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
@@ -901,6 +917,10 @@ export const messages = {
       limitBasis: {
         h5: '5時間基準',
         d7: '7日基準',
+      },
+      quota: {
+        h5: '5時間',
+        d7: '7日',
       },
       usage: '使用量',
       groupPrimary: 'Claude / Kimi',
