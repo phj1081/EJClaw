@@ -164,12 +164,9 @@ function LanguageSelector({
 function LoadingSkeleton({ t }: { t: Messages }) {
   return (
     <main className="shell shell-loading" aria-busy="true">
-      <section className="hero skeleton-hero">
-        <div>
-          <span className="skeleton-line skeleton-short" />
-          <span className="skeleton-line skeleton-title" />
-          <span className="skeleton-line skeleton-copy" />
-        </div>
+      <section className="section-nav skeleton-topbar">
+        <span className="skeleton-button" />
+        <span className="skeleton-line skeleton-copy" />
         <span className="skeleton-button" />
       </section>
       <section className="metrics-grid" aria-label={t.app.loading}>
@@ -254,13 +251,7 @@ function SectionNav({
           <span />
           <span />
         </button>
-        {navItems(t)
-          .slice(0, 3)
-          .map((item) => (
-            <a href={item.href} key={item.href}>
-              {item.label}
-            </a>
-          ))}
+        <strong className="topbar-label">EJClaw</strong>
         <button
           aria-busy={refreshing}
           aria-label={refreshing ? t.actions.refreshing : t.actions.refresh}
@@ -811,17 +802,6 @@ function App() {
         t={t}
       />
       <main className="dashboard-content">
-        <header className="hero">
-          <div>
-            <span className="eyebrow">EJClaw · {t.app.readOnly}</span>
-            <h1>{t.app.title}</h1>
-            <p>{t.app.subtitle}</p>
-          </div>
-          <button disabled={refreshing} onClick={() => void refresh(true)}>
-            {refreshing ? t.actions.refreshing : t.actions.refresh}
-          </button>
-        </header>
-
         <SectionNav
           drawerOpen={drawerOpen}
           lastRefreshed={lastRefreshed}
@@ -847,6 +827,14 @@ function App() {
 
         {data ? (
           <>
+            <section className="panel usage-first" id="usage">
+              <div className="panel-title">
+                <h2>{t.panels.usage}</h2>
+                <span>{t.panels.usageWindow}</span>
+              </div>
+              <UsagePanel locale={locale} overview={data.overview} t={t} />
+            </section>
+
             <ControlRail data={data} t={t} />
 
             <section className="metrics-grid">
@@ -880,21 +868,12 @@ function App() {
               <ServicePanel locale={locale} overview={data.overview} t={t} />
             </section>
 
-            <section className="panel split-panel">
-              <div id="usage">
-                <div className="panel-title">
-                  <h2>{t.panels.usage}</h2>
-                  <span>{t.panels.usageWindow}</span>
-                </div>
-                <UsagePanel locale={locale} overview={data.overview} t={t} />
+            <section className="panel" id="rooms">
+              <div className="panel-title">
+                <h2>{t.panels.rooms}</h2>
+                <span>{t.panels.queue}</span>
               </div>
-              <div id="rooms">
-                <div className="panel-title">
-                  <h2>{t.panels.rooms}</h2>
-                  <span>{t.panels.queue}</span>
-                </div>
-                <RoomPanel snapshots={data.snapshots} t={t} />
-              </div>
+              <RoomPanel snapshots={data.snapshots} t={t} />
             </section>
 
             <section className="panel" id="work">

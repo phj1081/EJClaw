@@ -278,7 +278,7 @@ export const messages = {
     app: {
       loading: 'Loading dashboard',
       readOnly: 'read-only',
-      title: 'Operations',
+      title: 'Ops',
       subtitle: 'Health · Queue · Usage · Rooms · Scheduled',
     },
     actions: {
@@ -293,7 +293,7 @@ export const messages = {
       drawerNavAria: 'Dashboard menu sections',
       menuOpen: 'Open menu',
       menuClose: 'Close menu',
-      operations: 'Operations',
+      operations: 'Ops',
       updated: 'Updated',
       health: 'Health',
       agents: 'Agents',
