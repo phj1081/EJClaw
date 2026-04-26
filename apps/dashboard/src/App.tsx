@@ -593,11 +593,17 @@ function ControlRail({ data, t }: { data: DashboardState; t: Messages }) {
 
 function InboxPanel({
   overview,
+  tasks,
   locale,
+  onTaskAction,
+  taskActionKey,
   t,
 }: {
   overview: DashboardOverview;
+  tasks: DashboardTask[];
   locale: Locale;
+  onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
+  taskActionKey: TaskActionKey | null;
   t: Messages;
 }) {
   const [filter, setFilter] = useState<InboxFilter>('all');
@@ -672,6 +678,13 @@ function InboxPanel({
       <div className="inbox-list" aria-label={t.inbox.cardsAria}>
         {filteredItems.map((item) => {
           const href = inboxTargetHref(item);
+          const linkedTask =
+            item.source === 'scheduled-task' && item.taskId
+              ? tasks.find((task) => task.id === item.taskId)
+              : undefined;
+          const linkedTaskActions = linkedTask
+            ? taskActionsFor(linkedTask)
+            : [];
           return (
             <article
               className={`inbox-card inbox-${item.severity}`}
@@ -716,6 +729,25 @@ function InboxPanel({
                 <a className="inbox-target" href={href}>
                   {item.taskId ? t.inbox.openTask : t.inbox.openRoom}
                 </a>
+              ) : null}
+              {linkedTask && linkedTaskActions.length > 0 ? (
+                <div className="task-actions inbox-actions">
+                  {linkedTaskActions.map((action) => {
+                    const actionKey: TaskActionKey = `${linkedTask.id}:${action}`;
+                    const busy = taskActionKey === actionKey;
+                    return (
+                      <button
+                        className={`task-action task-action-${action}`}
+                        disabled={busy}
+                        key={action}
+                        onClick={() => onTaskAction(linkedTask, action)}
+                        type="button"
+                      >
+                        {busy ? t.tasks.actions.busy : t.tasks.actions[action]}
+                      </button>
+                    );
+                  })}
+                </div>
               ) : null}
             </article>
           );
@@ -1459,7 +1491,16 @@ function App() {
                   <h2>{t.panels.inbox}</h2>
                   <span>{t.panels.inboxQueue}</span>
                 </div>
-                <InboxPanel locale={locale} overview={data.overview} t={t} />
+                <InboxPanel
+                  locale={locale}
+                  onTaskAction={(task, action) =>
+                    void handleTaskAction(task, action)
+                  }
+                  overview={data.overview}
+                  taskActionKey={taskActionKey}
+                  tasks={data.tasks}
+                  t={t}
+                />
               </section>
             ) : null}
 

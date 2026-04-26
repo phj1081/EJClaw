@@ -1000,6 +1000,10 @@ progress::-moz-progress-bar {
   text-decoration: none;
 }
 
+.inbox-actions {
+  padding-top: 2px;
+}
+
 .health-overview {
   display: flex;
   gap: 10px;
