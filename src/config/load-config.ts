@@ -260,6 +260,15 @@ export function loadConfig(): AppConfig {
       timezone:
         readText('TZ') ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     },
+    webDashboard: {
+      enabled: readBoolean('WEB_DASHBOARD_ENABLED', false),
+      host: readNonEmptyText('WEB_DASHBOARD_HOST') ?? '127.0.0.1',
+      port: readIntegerAtLeast('WEB_DASHBOARD_PORT', 8734, 1),
+      staticDir: path.resolve(
+        readNonEmptyText('WEB_DASHBOARD_STATIC_DIR') ??
+          path.join(projectRoot, 'apps', 'dashboard', 'dist'),
+      ),
+    },
     codexWarmup: {
       enabled: readBoolean('CODEX_WARMUP_ENABLED', false),
       prompt:

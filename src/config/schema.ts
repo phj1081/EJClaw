@@ -78,6 +78,12 @@ export interface AppConfig {
     usageDashboardEnabled: boolean;
     timezone: string;
   };
+  webDashboard: {
+    enabled: boolean;
+    host: string;
+    port: number;
+    staticDir: string;
+  };
   codexWarmup: {
     enabled: boolean;
     prompt: string;
