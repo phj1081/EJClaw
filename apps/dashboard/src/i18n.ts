@@ -114,20 +114,27 @@ export interface Messages {
     status: string;
     queue: string;
     elapsed: string;
+    details: string;
   };
   usage: {
     empty: string;
-    highest: string;
+    current: string;
+    tightest: string;
     watch: string;
-    updated: string;
-    peak: string;
+    remaining: string;
+    speed: string;
+    inUse: string;
     reset: string;
+    noReset: string;
     usage: string;
-    window5h: string;
-    window7d: string;
     groupPrimary: string;
     groupCodex: string;
     risk: {
+      ok: string;
+      warn: string;
+      critical: string;
+    };
+    speedLabel: {
       ok: string;
       warn: string;
       critical: string;
@@ -244,7 +251,7 @@ export const messages = {
       inbox: '인입',
       inboxQueue: '대기 항목',
       usage: '사용량',
-      usageWindow: '5시간 / 7일',
+      usageWindow: '남음 / 속도',
       rooms: '룸',
       queue: '큐',
       scheduled: '예약',
@@ -308,23 +315,30 @@ export const messages = {
       status: '상태',
       queue: '큐',
       elapsed: '경과',
+      details: '세부',
     },
     usage: {
       empty: '사용량 스냅샷 없음. 수집기 확인.',
-      highest: '최고',
+      current: '사용중',
+      tightest: '가장 적음',
       watch: '주의',
-      updated: '갱신',
-      peak: '피크',
+      remaining: '남음',
+      speed: '속도',
+      inUse: '사용중',
       reset: '리셋',
+      noReset: '리셋 없음',
       usage: '사용량',
-      window5h: '5시간',
-      window7d: '7일',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
       risk: {
         ok: '여유',
         warn: '주의',
         critical: '위험',
+      },
+      speedLabel: {
+        ok: '보통',
+        warn: '빠름',
+        critical: '너무 빠름',
       },
     },
     tasks: {
@@ -422,7 +436,7 @@ export const messages = {
       inbox: 'Inbox',
       inboxQueue: 'Work intake',
       usage: 'Usage',
-      usageWindow: '5h / 7d',
+      usageWindow: 'Remaining / speed',
       rooms: 'Rooms',
       queue: 'Queue',
       scheduled: 'Scheduled',
@@ -486,23 +500,30 @@ export const messages = {
       status: 'status',
       queue: 'queue',
       elapsed: 'elapsed',
+      details: 'details',
     },
     usage: {
       empty: 'No usage snapshot. Check collector.',
-      highest: 'Highest',
+      current: 'In use',
+      tightest: 'Lowest',
       watch: 'Watch',
-      updated: 'Updated',
-      peak: 'Peak',
+      remaining: 'Left',
+      speed: 'Speed',
+      inUse: 'in use',
       reset: 'reset',
+      noReset: 'no reset',
       usage: 'usage',
-      window5h: '5h',
-      window7d: '7d',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
       risk: {
         ok: 'Clear',
         warn: 'Watch',
         critical: 'Limit risk',
+      },
+      speedLabel: {
+        ok: 'Normal',
+        warn: 'Fast',
+        critical: 'Too fast',
       },
     },
     tasks: {
@@ -600,7 +621,7 @@ export const messages = {
       inbox: '收件',
       inboxQueue: '待处理',
       usage: '用量',
-      usageWindow: '5小时 / 7天',
+      usageWindow: '剩余 / 速度',
       rooms: '房间',
       queue: '队列',
       scheduled: '计划',
@@ -617,7 +638,7 @@ export const messages = {
       system: '系统',
       signals: '健康信号',
       services: '服务',
-      fresh: '心跳正常',
+      fresh: '正常',
       stale: '延迟',
       queue: '队列',
       ciFailures: 'CI 失败',
@@ -664,23 +685,30 @@ export const messages = {
       status: '状态',
       queue: '队列',
       elapsed: '耗时',
+      details: '详情',
     },
     usage: {
       empty: '暂无用量快照。检查采集器。',
-      highest: '最高',
+      current: '使用中',
+      tightest: '剩余最少',
       watch: '关注',
-      updated: '更新',
-      peak: '峰值',
+      remaining: '剩余',
+      speed: '速度',
+      inUse: '使用中',
       reset: '重置',
+      noReset: '无重置',
       usage: '用量',
-      window5h: '5小时',
-      window7d: '7天',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
       risk: {
         ok: '充足',
         warn: '关注',
         critical: '接近上限',
+      },
+      speedLabel: {
+        ok: '正常',
+        warn: '较快',
+        critical: '过快',
       },
     },
     tasks: {
@@ -778,7 +806,7 @@ export const messages = {
       inbox: '受信',
       inboxQueue: '対応待ち',
       usage: '使用量',
-      usageWindow: '5時間 / 7日',
+      usageWindow: '残量 / 速度',
       rooms: 'ルーム',
       queue: 'キュー',
       scheduled: '予定',
@@ -842,23 +870,30 @@ export const messages = {
       status: '状態',
       queue: 'キュー',
       elapsed: '経過',
+      details: '詳細',
     },
     usage: {
       empty: '使用量スナップショットなし。収集器を確認。',
-      highest: '最高',
+      current: '使用中',
+      tightest: '残量最少',
       watch: '注意',
-      updated: '更新',
-      peak: 'ピーク',
+      remaining: '残量',
+      speed: '速度',
+      inUse: '使用中',
       reset: 'リセット',
+      noReset: 'リセットなし',
       usage: '使用量',
-      window5h: '5時間',
-      window7d: '7日',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
       risk: {
         ok: '余裕',
         warn: '注意',
         critical: '上限注意',
+      },
+      speedLabel: {
+        ok: '通常',
+        warn: '速い',
+        critical: '速すぎ',
       },
     },
     tasks: {

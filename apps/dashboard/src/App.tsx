@@ -36,7 +36,7 @@ type HealthLevel = 'ok' | 'stale' | 'down';
 
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale';
-const DEFAULT_VIEW: DashboardView = 'usage';
+const DEFAULT_VIEW: DashboardView = 'inbox';
 const HEALTH_STALE_MS = 5 * 60_000;
 const HEALTH_DOWN_MS = 15 * 60_000;
 
@@ -139,11 +139,60 @@ function usagePeak(row: UsageRow): number {
   return Math.max(row.h5pct, row.d7pct);
 }
 
+function usageRemaining(row: UsageRow): number | null {
+  const peak = usagePeak(row);
+  if (peak < 0) return null;
+  return Math.max(0, 100 - peak);
+}
+
 function usageRiskLevel(row: UsageRow): RiskLevel {
   const peak = usagePeak(row);
   if (peak >= 85) return 'critical';
   if (peak >= 65) return 'warn';
   return 'ok';
+}
+
+function usageActive(row: UsageRow): boolean {
+  return row.name.includes('*');
+}
+
+function usageLimited(row: UsageRow): boolean {
+  return row.name.includes('!');
+}
+
+function usageNameParts(row: UsageRow): {
+  account: string;
+  plan: string | null;
+} {
+  const cleaned = row.name.replace(/[*!]/g, '').replace(/\s+/g, ' ').trim();
+  const parts = cleaned.split(' ');
+  const plan = parts.at(-1) ?? null;
+  if (plan && ['max', 'mid', 'pro', 'team'].includes(plan.toLowerCase())) {
+    return { account: parts.slice(0, -1).join(' ') || cleaned, plan };
+  }
+  return { account: cleaned, plan: null };
+}
+
+function usageLimitReset(row: UsageRow): string {
+  return (row.d7pct >= row.h5pct ? row.d7reset : row.h5reset).trim();
+}
+
+function usageBurnRate(row: UsageRow): number | null {
+  if (row.h5pct < 0) return null;
+  return row.h5pct / 5;
+}
+
+function usageSpeedLevel(rate: number | null): RiskLevel {
+  if (rate === null) return 'ok';
+  if (rate >= 12) return 'critical';
+  if (rate >= 7) return 'warn';
+  return 'ok';
+}
+
+function formatUsageRate(rate: number | null): string {
+  if (rate === null) return '-';
+  if (rate > 0 && rate < 1) return '<1%/h';
+  return `${Math.round(rate)}%/h`;
 }
 
 function usageGroup(row: UsageRow): UsageGroup {
@@ -322,7 +371,6 @@ function LoadingSkeleton({ t }: { t: Messages }) {
 
 function SideRail({
   activeView,
-  lastRefreshed,
   locale,
   onNavigate,
   onLocaleChange,
@@ -331,7 +379,6 @@ function SideRail({
   t,
 }: {
   activeView: DashboardView;
-  lastRefreshed: string | null;
   locale: Locale;
   onNavigate: (view: DashboardView) => void;
   onLocaleChange: (locale: Locale) => void;
@@ -368,10 +415,6 @@ function SideRail({
       >
         {refreshing ? t.actions.refreshing : t.actions.refresh}
       </button>
-      <div className="drawer-meta">
-        <span>{t.nav.updated}</span>
-        <strong>{formatDate(lastRefreshed, locale)}</strong>
-      </div>
     </aside>
   );
 }
@@ -379,7 +422,6 @@ function SideRail({
 function SectionNav({
   activeView,
   drawerOpen,
-  lastRefreshed,
   locale,
   onCloseDrawer,
   onLocaleChange,
@@ -391,7 +433,6 @@ function SectionNav({
 }: {
   activeView: DashboardView;
   drawerOpen: boolean;
-  lastRefreshed: string | null;
   locale: Locale;
   onCloseDrawer: () => void;
   onLocaleChange: (locale: Locale) => void;
@@ -430,9 +471,6 @@ function SectionNav({
         >
           {refreshing ? '...' : t.actions.refresh}
         </button>
-        <span>
-          {t.nav.updated} {formatDate(lastRefreshed, locale)}
-        </span>
       </nav>
 
       {drawerOpen ? (
@@ -484,10 +522,6 @@ function SectionNav({
               onLocaleChange={onLocaleChange}
               t={t}
             />
-            <div className="drawer-meta">
-              <span>{t.nav.updated}</span>
-              <strong>{formatDate(lastRefreshed, locale)}</strong>
-            </div>
           </aside>
         </>
       ) : null}
@@ -631,9 +665,14 @@ function InboxPanel({
                   <span className="eyebrow">{t.inbox.kinds[item.kind]}</span>
                   <strong>{item.title}</strong>
                 </div>
-                <span className={`pill pill-${item.severity}`}>
-                  {t.inbox.severity[item.severity]}
-                </span>
+                <div className="inbox-card-badges">
+                  <span className={`pill pill-${item.severity}`}>
+                    {t.inbox.severity[item.severity]}
+                  </span>
+                  {item.occurrences > 1 ? (
+                    <span className="pill pill-info">x{item.occurrences}</span>
+                  ) : null}
+                </div>
               </div>
               <p>{item.summary || t.inbox.noSummary}</p>
               <div className="inbox-meta">
@@ -696,9 +735,11 @@ function HealthPanel({
     },
     { pendingTasks: 0, pendingMessageRooms: 0 },
   );
-  const ciFailures = data.overview.inbox.filter(
-    (item) => item.kind === 'ci-failure',
-  ).length;
+  const ciFailures = data.overview.inbox.reduce(
+    (count, item) =>
+      item.kind === 'ci-failure' ? count + item.occurrences : count,
+    0,
+  );
   const healthLevel: HealthLevel =
     down > 0 ? 'down' : stale > 0 || ciFailures > 0 ? 'stale' : 'ok';
   const affectedServices = serviceLevels.filter((item) => item.level !== 'ok');
@@ -735,9 +776,6 @@ function HealthPanel({
         <div>
           <span>{t.health.ciFailures}</span>
           <strong>{ciFailures}</strong>
-          <small>
-            {data.overview.tasks.watchers.paused} {t.status.paused}
-          </small>
         </div>
       </section>
 
@@ -803,10 +841,9 @@ function RoomPanel({
           <thead>
             <tr>
               <th>{t.rooms.room}</th>
-              <th>{t.rooms.service}</th>
-              <th>{t.rooms.agent}</th>
               <th>{t.rooms.status}</th>
               <th>{t.rooms.queue}</th>
+              <th>{t.rooms.elapsed}</th>
             </tr>
           </thead>
           <tbody>
@@ -814,21 +851,23 @@ function RoomPanel({
               <tr key={`${entry.serviceId}:${entry.jid}`}>
                 <td>
                   <strong>{entry.name}</strong>
-                  <span>
-                    {entry.folder} · {entry.jid}
-                  </span>
+                  <details className="record-details">
+                    <summary>{t.rooms.details}</summary>
+                    <span>
+                      {entry.folder} · {entry.jid} · {entry.serviceId} ·{' '}
+                      {entry.agentType}
+                    </span>
+                  </details>
                 </td>
-                <td>{entry.serviceId}</td>
-                <td>{entry.agentType}</td>
                 <td>
                   <span className={`pill pill-${entry.status}`}>
                     {statusLabel(entry.status, t)}
                   </span>
-                  <small>{formatDuration(entry.elapsedMs, t)}</small>
                 </td>
                 <td>
                   {queueLabel(entry.pendingTasks, entry.pendingMessages, t)}
                 </td>
+                <td>{formatDuration(entry.elapsedMs, t)}</td>
               </tr>
             ))}
           </tbody>
@@ -858,19 +897,17 @@ function RoomPanel({
                 </strong>
               </span>
               <span>
-                <small>{t.rooms.agent}</small>
-                <strong>{entry.agentType}</strong>
-              </span>
-              <span>
-                <small>{t.rooms.service}</small>
-                <strong>{entry.serviceId}</strong>
-              </span>
-              <span>
                 <small>{t.rooms.elapsed}</small>
                 <strong>{formatDuration(entry.elapsedMs, t)}</strong>
               </span>
             </div>
-            <p className="record-id">{entry.jid}</p>
+            <details className="record-details">
+              <summary>{t.rooms.details}</summary>
+              <p className="record-id">
+                {entry.folder} · {entry.jid} · {entry.serviceId} ·{' '}
+                {entry.agentType}
+              </p>
+            </details>
           </article>
         ))}
       </div>
@@ -878,54 +915,80 @@ function RoomPanel({
   );
 }
 
-function UsageMeter({
-  label,
-  pct,
-  reset,
+function UsageRemainingMeter({
+  row,
   rowName,
   t,
 }: {
-  label: string;
-  pct: number;
-  reset: string;
+  row: UsageRow;
   rowName: string;
   t: Messages;
 }) {
+  const remaining = usageRemaining(row);
+  const reset = usageLimitReset(row);
+
   return (
-    <div className="usage-window">
+    <div className="usage-remaining">
       <div>
-        <span>{label}</span>
-        <strong>{formatPct(pct)}</strong>
+        <span>{t.usage.remaining}</span>
+        <strong>{remaining === null ? '-' : formatPct(remaining)}</strong>
       </div>
       <progress
-        aria-label={`${rowName} ${label} ${t.usage.usage} ${formatPct(pct)}`}
+        aria-label={`${rowName} ${t.usage.remaining} ${
+          remaining === null ? '-' : formatPct(remaining)
+        }`}
         max={100}
-        value={Math.max(0, pct)}
+        value={remaining ?? 0}
       />
-      <small>
-        {t.usage.reset} {reset || '-'}
-      </small>
+      <small>{reset ? `${t.usage.reset} ${reset}` : t.usage.noReset}</small>
+    </div>
+  );
+}
+
+function UsageSpeed({ row, t }: { row: UsageRow; t: Messages }) {
+  const rate = usageBurnRate(row);
+  const level = usageSpeedLevel(rate);
+
+  return (
+    <div className={`usage-speed usage-speed-${level}`}>
+      <span>{t.usage.speed}</span>
+      <strong>{formatUsageRate(rate)}</strong>
+      <small>{t.usage.speedLabel[level]}</small>
     </div>
   );
 }
 
 function UsagePanel({
   overview,
-  locale,
   t,
 }: {
   overview: DashboardOverview;
-  locale: Locale;
   t: Messages;
 }) {
-  const rows = useMemo(() => [...overview.usage.rows], [overview.usage.rows]);
+  const rows = useMemo(
+    () =>
+      [...overview.usage.rows].sort((a, b) => {
+        if (usageActive(a) !== usageActive(b)) return usageActive(a) ? -1 : 1;
+        return usagePeak(b) - usagePeak(a);
+      }),
+    [overview.usage.rows],
+  );
   const watched = rows.filter((row) => usagePeak(row) >= 65).length;
 
   if (rows.length === 0) {
     return <EmptyState>{t.usage.empty}</EmptyState>;
   }
 
-  const highest = rows[0];
+  const activeRows = rows.filter(usageActive);
+  const focusRows = activeRows.length > 0 ? activeRows : rows.slice(0, 1);
+  const focusLabel = activeRows.length > 0 ? t.usage.current : t.usage.tightest;
+  const focusValue = focusRows
+    .map((row) => {
+      const { account } = usageNameParts(row);
+      const remaining = usageRemaining(row);
+      return `${account} ${remaining === null ? '-' : formatPct(remaining)}`;
+    })
+    .join(' · ');
   const groups = [
     {
       key: 'primary' as const,
@@ -943,26 +1006,20 @@ function UsagePanel({
     <div className="usage-dashboard">
       <div className="usage-summary">
         <div>
-          <span>{t.usage.highest}</span>
-          <strong>
-            {highest.name} · {formatPct(usagePeak(highest))}
-          </strong>
+          <span>{focusLabel}</span>
+          <strong>{focusValue}</strong>
         </div>
         <div>
           <span>{t.usage.watch}</span>
           <strong>{watched}</strong>
-        </div>
-        <div>
-          <span>{t.usage.updated}</span>
-          <strong>{formatDate(overview.usage.fetchedAt, locale)}</strong>
         </div>
       </div>
 
       <div className="usage-matrix" role="table" aria-label={t.panels.usage}>
         <div className="usage-matrix-head" role="row">
           <span>{t.usage.usage}</span>
-          <span>{t.usage.window5h}</span>
-          <span>{t.usage.window7d}</span>
+          <span>{t.usage.remaining}</span>
+          <span>{t.usage.speed}</span>
         </div>
         {groups.map((group) => (
           <div className="usage-group" key={group.key} role="rowgroup">
@@ -971,28 +1028,25 @@ function UsagePanel({
             </div>
             {group.rows.map((row) => {
               const risk = usageRiskLevel(row);
+              const { account, plan } = usageNameParts(row);
               return (
                 <section className={`usage-row usage-${risk}`} key={row.name}>
                   <div className="usage-account">
-                    <strong>{row.name}</strong>
-                    <span className={`pill pill-${risk}`}>
-                      {t.usage.risk[risk]}
-                    </span>
+                    <strong>{account}</strong>
+                    <div>
+                      {usageActive(row) ? (
+                        <span className="pill pill-info">{t.usage.inUse}</span>
+                      ) : null}
+                      {plan ? <span className="mono-chip">{plan}</span> : null}
+                      {usageLimited(row) || risk !== 'ok' ? (
+                        <span className={`pill pill-${risk}`}>
+                          {t.usage.risk[risk]}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                  <UsageMeter
-                    label={t.usage.window5h}
-                    pct={row.h5pct}
-                    reset={row.h5reset}
-                    rowName={row.name}
-                    t={t}
-                  />
-                  <UsageMeter
-                    label={t.usage.window7d}
-                    pct={row.d7pct}
-                    reset={row.d7reset}
-                    rowName={row.name}
-                    t={t}
-                  />
+                  <UsageRemainingMeter row={row} rowName={account} t={t} />
+                  <UsageSpeed row={row} t={t} />
                 </section>
               );
             })}
@@ -1192,7 +1246,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeView, setActiveView] = useState<DashboardView>(readViewFromHash);
   const [locale, setLocale] = useState<Locale>(readInitialLocale);
@@ -1215,7 +1268,6 @@ function App() {
     try {
       const nextData = await fetchDashboardData();
       setData(nextData);
-      setLastRefreshed(new Date().toISOString());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1266,7 +1318,6 @@ function App() {
     <div className="shell">
       <SideRail
         activeView={activeView}
-        lastRefreshed={lastRefreshed}
         locale={locale}
         onNavigate={navigateToView}
         onLocaleChange={setDashboardLocale}
@@ -1278,7 +1329,6 @@ function App() {
         <SectionNav
           activeView={activeView}
           drawerOpen={drawerOpen}
-          lastRefreshed={lastRefreshed}
           locale={locale}
           onCloseDrawer={() => setDrawerOpen(false)}
           onLocaleChange={setDashboardLocale}
@@ -1309,7 +1359,7 @@ function App() {
                     <h2>{t.panels.usage}</h2>
                     <span>{t.panels.usageWindow}</span>
                   </div>
-                  <UsagePanel locale={locale} overview={data.overview} t={t} />
+                  <UsagePanel overview={data.overview} t={t} />
                 </section>
                 <ControlRail data={data} t={t} />
               </>

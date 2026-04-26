@@ -37,6 +37,7 @@ export interface DashboardOverview {
   };
   inbox: Array<{
     id: string;
+    groupKey: string;
     kind:
       | 'pending-room'
       | 'reviewer-request'
@@ -48,7 +49,9 @@ export interface DashboardOverview {
     title: string;
     summary: string;
     occurredAt: string;
+    lastOccurredAt: string;
     createdAt: string;
+    occurrences: number;
     source: 'status-snapshot' | 'paired-task' | 'scheduled-task';
     roomJid?: string;
     roomName?: string;

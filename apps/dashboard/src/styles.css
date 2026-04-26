@@ -206,17 +206,6 @@ button:disabled {
   white-space: nowrap;
 }
 
-.section-nav span {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 750;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .side-rail {
   position: sticky;
   top: 18px;
@@ -381,19 +370,6 @@ button:disabled {
 .nav-drawer nav a::after {
   color: var(--muted);
   content: '↘';
-}
-
-.drawer-meta {
-  display: grid;
-  gap: 4px;
-  padding: 14px;
-  border-radius: 18px;
-  color: var(--muted);
-  background: rgba(43, 55, 38, 0.06);
-}
-
-.drawer-meta strong {
-  color: var(--bg-ink);
 }
 
 .error-card,
@@ -627,7 +603,7 @@ td small {
 
 .usage-summary {
   display: grid;
-  grid-template-columns: 1.1fr 0.46fr 0.9fr;
+  grid-template-columns: minmax(0, 1fr) minmax(90px, 0.28fr);
   gap: 8px;
 }
 
@@ -646,7 +622,7 @@ td small {
 }
 
 .usage-summary span,
-.usage-window small {
+.usage-remaining small {
   color: var(--muted);
 }
 
@@ -666,7 +642,10 @@ td small {
 .usage-matrix-head,
 .usage-row {
   display: grid;
-  grid-template-columns: minmax(120px, 0.72fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(132px, 0.78fr) minmax(0, 1fr) minmax(
+      96px,
+      0.46fr
+    );
   gap: 8px;
   align-items: center;
 }
@@ -714,7 +693,7 @@ td small {
 }
 
 .usage-account,
-.usage-window div {
+.usage-remaining div {
   display: flex;
   min-width: 0;
   gap: 8px;
@@ -723,7 +702,16 @@ td small {
 }
 
 .usage-account {
-  justify-content: flex-start;
+  display: grid;
+  gap: 5px;
+  justify-content: stretch;
+}
+
+.usage-account div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
 .usage-account strong {
@@ -735,7 +723,8 @@ td small {
   white-space: nowrap;
 }
 
-.usage-window span {
+.usage-remaining span,
+.usage-speed span {
   color: var(--muted);
   font-size: 11px;
   font-weight: 850;
@@ -743,10 +732,36 @@ td small {
   text-transform: uppercase;
 }
 
-.usage-window {
+.usage-remaining,
+.usage-speed {
   display: grid;
   min-width: 0;
   gap: 5px;
+}
+
+.usage-speed {
+  min-height: 54px;
+  align-content: center;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(43, 55, 38, 0.045);
+}
+
+.usage-speed strong {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.usage-speed small {
+  color: var(--muted);
+}
+
+.usage-speed-warn {
+  background: rgba(181, 138, 34, 0.16);
+}
+
+.usage-speed-critical {
+  background: rgba(183, 71, 52, 0.16);
 }
 
 progress {
@@ -904,6 +919,13 @@ progress::-moz-progress-bar {
   align-items: start;
 }
 
+.inbox-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
 .inbox-card-head strong,
 .inbox-card p,
 .inbox-meta strong,
@@ -1026,6 +1048,23 @@ progress::-moz-progress-bar {
 
 .health-service em {
   font-style: normal;
+}
+
+.record-details {
+  margin-top: 4px;
+}
+
+.record-details summary {
+  display: inline-flex;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+  list-style: none;
+}
+
+.record-details summary::-webkit-details-marker {
+  display: none;
 }
 
 .task-board {
@@ -1462,10 +1501,6 @@ progress::-moz-progress-bar {
     font-size: 12px;
   }
 
-  .section-nav span {
-    display: none;
-  }
-
   .section-nav .menu-button span {
     display: block;
   }
@@ -1520,11 +1555,7 @@ progress::-moz-progress-bar {
   }
 
   .usage-summary {
-    grid-template-columns: minmax(0, 1fr) minmax(78px, 0.55fr);
-  }
-
-  .usage-summary div:last-child {
-    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 1fr) minmax(78px, 0.4fr);
   }
 
   .usage-matrix-head {
@@ -1532,7 +1563,7 @@ progress::-moz-progress-bar {
   }
 
   .usage-row {
-    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(90px, 0.5fr);
     gap: 6px;
     padding: 9px;
   }
@@ -1542,15 +1573,16 @@ progress::-moz-progress-bar {
     gap: 5px;
   }
 
-  .usage-window {
+  .usage-remaining,
+  .usage-speed {
     gap: 4px;
   }
 
-  .usage-window div {
+  .usage-remaining div {
     gap: 6px;
   }
 
-  .usage-window small {
+  .usage-remaining small {
     overflow: hidden;
     font-size: 11px;
     text-overflow: ellipsis;
@@ -1650,7 +1682,6 @@ progress::-moz-progress-bar {
 
   .usage-account {
     grid-column: 1 / -1;
-    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .skeleton-grid,

@@ -69,12 +69,15 @@ export type InboxItemSeverity = 'info' | 'warn' | 'error';
 
 export interface InboxItem {
   id: string;
+  groupKey: string;
   kind: InboxItemKind;
   severity: InboxItemSeverity;
   title: string;
   summary: string;
   occurredAt: string;
+  lastOccurredAt: string;
   createdAt: string;
+  occurrences: number;
   source: 'status-snapshot' | 'paired-task' | 'scheduled-task';
   roomJid?: string;
   roomName?: string;
@@ -106,6 +109,14 @@ function buildPromptPreview(prompt: string): string {
 
 function buildInboxPreview(value: string): string {
   return truncateText(redactSensitiveText(value).replace(/\s+/g, ' ').trim());
+}
+
+function stableHash(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) | 0;
+  }
+  return Math.abs(hash).toString(36);
 }
 
 function collectUsageRows(snapshots: StatusSnapshot[]): UsageRowSnapshot[] {
@@ -174,12 +185,15 @@ function collectInboxItems(args: {
 
       items.push({
         id: `room:${snapshot.serviceId}:${entry.jid}`,
+        groupKey: `room:${snapshot.serviceId}:${entry.jid}`,
         kind: 'pending-room',
         severity: entry.pendingTasks > 0 ? 'warn' : 'info',
         title: entry.name || entry.folder || entry.jid,
         summary: parts.join(' · '),
         occurredAt: snapshot.updatedAt,
+        lastOccurredAt: snapshot.updatedAt,
         createdAt: args.createdAt,
+        occurrences: 1,
         source: 'status-snapshot',
         roomJid: entry.jid,
         roomName: entry.name,
@@ -195,9 +209,9 @@ function collectInboxItems(args: {
 
     items.push({
       id: `paired:${task.id}:${task.status}`,
+      groupKey: `paired:${task.id}:${task.status}`,
       kind,
-      severity:
-        kind === 'approval' || kind === 'arbiter-request' ? 'error' : 'warn',
+      severity: kind === 'arbiter-request' ? 'error' : 'warn',
       title: task.title || task.group_folder,
       summary: task.status,
       occurredAt:
@@ -206,7 +220,14 @@ function collectInboxItems(args: {
           : kind === 'reviewer-request'
             ? (task.review_requested_at ?? task.updated_at)
             : task.updated_at,
+      lastOccurredAt:
+        kind === 'arbiter-request'
+          ? (task.arbiter_requested_at ?? task.updated_at)
+          : kind === 'reviewer-request'
+            ? (task.review_requested_at ?? task.updated_at)
+            : task.updated_at,
       createdAt: args.createdAt,
+      occurrences: 1,
       source: 'paired-task',
       roomJid: task.chat_jid,
       groupFolder: task.group_folder,
@@ -226,12 +247,15 @@ function collectInboxItems(args: {
 
     items.push({
       id: `ci:${task.id}`,
+      groupKey: `ci:${stableHash(result.toLowerCase())}`,
       kind: 'ci-failure',
       severity: task.status === 'paused' ? 'error' : 'warn',
       title: 'CI watcher failed',
       summary: result,
       occurredAt: task.last_run ?? task.created_at,
+      lastOccurredAt: task.last_run ?? task.created_at,
       createdAt: args.createdAt,
+      occurrences: 1,
       source: 'scheduled-task',
       roomJid: task.chat_jid,
       groupFolder: task.group_folder,
@@ -247,11 +271,40 @@ function collectInboxItems(args: {
     info: 2,
   };
 
-  return items
+  const groupedItems = new Map<string, InboxItem>();
+  for (const item of items) {
+    const existing = groupedItems.get(item.groupKey);
+    if (!existing) {
+      groupedItems.set(item.groupKey, item);
+      continue;
+    }
+
+    const occurrences = existing.occurrences + item.occurrences;
+    const severity =
+      severityRank[item.severity] < severityRank[existing.severity]
+        ? item.severity
+        : existing.severity;
+    const latest =
+      item.lastOccurredAt.localeCompare(existing.lastOccurredAt) > 0
+        ? item
+        : existing;
+
+    groupedItems.set(item.groupKey, {
+      ...latest,
+      severity,
+      occurrences,
+      lastOccurredAt:
+        item.lastOccurredAt.localeCompare(existing.lastOccurredAt) > 0
+          ? item.lastOccurredAt
+          : existing.lastOccurredAt,
+    });
+  }
+
+  return [...groupedItems.values()]
     .sort((a, b) => {
       const severityDelta = severityRank[a.severity] - severityRank[b.severity];
       if (severityDelta !== 0) return severityDelta;
-      return b.occurredAt.localeCompare(a.occurredAt);
+      return b.lastOccurredAt.localeCompare(a.lastOccurredAt);
     })
     .slice(0, 50);
 }
