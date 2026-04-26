@@ -126,6 +126,10 @@ export interface Messages {
     inUse: string;
     reset: string;
     noReset: string;
+    limitBasis: {
+      h5: string;
+      d7: string;
+    };
     usage: string;
     groupPrimary: string;
     groupCodex: string;
@@ -327,6 +331,10 @@ export const messages = {
       inUse: '사용중',
       reset: '리셋',
       noReset: '리셋 없음',
+      limitBasis: {
+        h5: '5시간 기준',
+        d7: '7일 기준',
+      },
       usage: '사용량',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
@@ -512,6 +520,10 @@ export const messages = {
       inUse: 'in use',
       reset: 'reset',
       noReset: 'no reset',
+      limitBasis: {
+        h5: '5h basis',
+        d7: '7d basis',
+      },
       usage: 'usage',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
@@ -697,6 +709,10 @@ export const messages = {
       inUse: '使用中',
       reset: '重置',
       noReset: '无重置',
+      limitBasis: {
+        h5: '按5小时',
+        d7: '按7天',
+      },
       usage: '用量',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',
@@ -882,6 +898,10 @@ export const messages = {
       inUse: '使用中',
       reset: 'リセット',
       noReset: 'リセットなし',
+      limitBasis: {
+        h5: '5時間基準',
+        d7: '7日基準',
+      },
       usage: '使用量',
       groupPrimary: 'Claude / Kimi',
       groupCodex: 'Codex',

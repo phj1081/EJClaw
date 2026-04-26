@@ -28,6 +28,7 @@ type UsageRow = DashboardOverview['usage']['rows'][number];
 type InboxItem = DashboardOverview['inbox'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
 type UsageGroup = 'primary' | 'codex';
+type UsageLimitWindow = 'h5' | 'd7';
 type DashboardView = 'usage' | 'inbox' | 'health' | 'rooms' | 'scheduled';
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
 type TaskResultTone = 'ok' | 'fail' | 'none';
@@ -145,6 +146,10 @@ function usageRemaining(row: UsageRow): number | null {
   return Math.max(0, 100 - peak);
 }
 
+function usageLimitWindow(row: UsageRow): UsageLimitWindow {
+  return row.d7pct >= row.h5pct ? 'd7' : 'h5';
+}
+
 function usageRiskLevel(row: UsageRow): RiskLevel {
   const peak = usagePeak(row);
   if (peak >= 85) return 'critical';
@@ -174,7 +179,7 @@ function usageNameParts(row: UsageRow): {
 }
 
 function usageLimitReset(row: UsageRow): string {
-  return (row.d7pct >= row.h5pct ? row.d7reset : row.h5reset).trim();
+  return (usageLimitWindow(row) === 'd7' ? row.d7reset : row.h5reset).trim();
 }
 
 function usageBurnRate(row: UsageRow): number | null {
@@ -925,6 +930,7 @@ function UsageRemainingMeter({
   t: Messages;
 }) {
   const remaining = usageRemaining(row);
+  const window = usageLimitWindow(row);
   const reset = usageLimitReset(row);
 
   return (
@@ -940,7 +946,10 @@ function UsageRemainingMeter({
         max={100}
         value={remaining ?? 0}
       />
-      <small>{reset ? `${t.usage.reset} ${reset}` : t.usage.noReset}</small>
+      <small>
+        {remaining === null ? '-' : t.usage.limitBasis[window]}
+        {reset ? ` · ${t.usage.reset} ${reset}` : ` · ${t.usage.noReset}`}
+      </small>
     </div>
   );
 }
