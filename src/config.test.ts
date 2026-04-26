@@ -42,6 +42,10 @@ describe('config/env loading', () => {
     delete process.env.CODEX_WARMUP_COMMAND_TIMEOUT_MS;
     delete process.env.CODEX_WARMUP_FAILURE_COOLDOWN_MS;
     delete process.env.CODEX_WARMUP_MAX_CONSECUTIVE_FAILURES;
+    delete process.env.WEB_DASHBOARD_ENABLED;
+    delete process.env.WEB_DASHBOARD_HOST;
+    delete process.env.WEB_DASHBOARD_PORT;
+    delete process.env.WEB_DASHBOARD_STATIC_DIR;
     delete process.env.SESSION_COMMAND_USER_IDS;
     vi.resetModules();
   });
@@ -163,8 +167,32 @@ describe('config/env loading', () => {
     );
   });
 
+  it('keeps the web dashboard disabled by default and loads explicit bind/static settings', async () => {
+    let config = await import('./config.js');
+    expect(config.WEB_DASHBOARD.enabled).toBe(false);
+    expect(config.WEB_DASHBOARD.host).toBe('127.0.0.1');
+    expect(config.WEB_DASHBOARD.port).toBe(8734);
+    expect(config.WEB_DASHBOARD.staticDir).toBe(
+      path.resolve(tempRoot, 'apps', 'dashboard', 'dist'),
+    );
+
+    vi.resetModules();
+    process.env.WEB_DASHBOARD_ENABLED = 'true';
+    process.env.WEB_DASHBOARD_HOST = '0.0.0.0';
+    process.env.WEB_DASHBOARD_PORT = '9001';
+    process.env.WEB_DASHBOARD_STATIC_DIR = './custom-dashboard-dist';
+    config = await import('./config.js');
+
+    expect(config.WEB_DASHBOARD).toEqual({
+      enabled: true,
+      host: '0.0.0.0',
+      port: 9001,
+      staticDir: path.resolve(tempRoot, 'custom-dashboard-dist'),
+    });
+  });
+
   it('fails fast when a legacy Discord token alias is configured', async () => {
-    process.env.DISCORD_BOT_TOKEN = 'legacy-owner-token';
+    process.env.DISCORD_BOT_TOKEN = 'legacy...oken';
 
     const { loadConfig } = await import('./config/load-config.js');
 

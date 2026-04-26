@@ -10,6 +10,7 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
   USAGE_UPDATE_INTERVAL,
+  WEB_DASHBOARD,
 } from './config.js';
 import './channels/index.js';
 import {
@@ -54,6 +55,7 @@ import {
 import { createMessageRuntime } from './message-runtime.js';
 import { nudgeSchedulerLoop, startSchedulerLoop } from './task-scheduler.js';
 import { startUnifiedDashboard } from './unified-dashboard.js';
+import { startWebDashboardServer } from './web-dashboard-server.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
@@ -248,6 +250,7 @@ async function main(): Promise<void> {
 
   // Graceful shutdown handlers
   let leaseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
+  let webDashboardServer: ReturnType<typeof startWebDashboardServer> = null;
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     stopTokenRefreshLoop();
@@ -255,6 +258,8 @@ async function main(): Promise<void> {
       clearInterval(leaseRecoveryTimer);
       leaseRecoveryTimer = null;
     }
+    webDashboardServer?.stop();
+    webDashboardServer = null;
     const roomBindings = runtimeState.getRoomBindings();
     const interruptedGroups = queue
       .getStatuses(Object.keys(roomBindings))
@@ -516,6 +521,7 @@ async function main(): Promise<void> {
     },
     purgeOnStart: true,
   });
+  webDashboardServer = startWebDashboardServer(WEB_DASHBOARD);
 
   leaseRecoveryTimer = setInterval(() => {
     const failover = getGlobalFailoverInfo();
