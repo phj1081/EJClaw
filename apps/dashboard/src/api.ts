@@ -102,6 +102,22 @@ export interface DashboardTask {
 
 export type DashboardTaskAction = 'pause' | 'resume' | 'cancel';
 export type DashboardInboxAction = 'run';
+export type DashboardTaskScheduleType = 'cron' | 'interval' | 'once';
+export type DashboardTaskContextMode = 'group' | 'isolated';
+
+export interface CreateScheduledTaskInput {
+  roomJid: string;
+  prompt: string;
+  scheduleType: DashboardTaskScheduleType;
+  scheduleValue: string;
+  contextMode: DashboardTaskContextMode;
+}
+
+export interface UpdateScheduledTaskInput {
+  prompt?: string;
+  scheduleType: DashboardTaskScheduleType;
+  scheduleValue: string;
+}
 
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
@@ -161,6 +177,37 @@ export async function runScheduledTaskAction(
   return postJson(`/api/tasks/${encodeURIComponent(taskId)}/actions`, {
     action,
   });
+}
+
+export async function createScheduledTask(
+  input: CreateScheduledTaskInput,
+): Promise<{ ok: true; task: DashboardTask | null }> {
+  return postJson('/api/tasks', input);
+}
+
+export async function updateScheduledTask(
+  taskId: string,
+  input: UpdateScheduledTaskInput,
+): Promise<{ ok: true; task: DashboardTask | null }> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}`, {
+    method: 'PATCH',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let message = `/api/tasks/${taskId} failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) message = payload.error;
+    } catch {
+      // Keep the status-based message when the server body is not JSON.
+    }
+    throw new Error(message);
+  }
+  return (await response.json()) as { ok: true; task: DashboardTask | null };
 }
 
 export async function runInboxAction(

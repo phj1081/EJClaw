@@ -188,7 +188,28 @@ export interface Messages {
     noResult: string;
     noTime: string;
     now: string;
+    createTitle: string;
+    createSubtitle: string;
+    room: string;
+    selectRoom: string;
+    scheduleType: string;
+    scheduleValue: string;
+    scheduleValueHint: string;
+    promptPlaceholder: string;
+    editPromptPlaceholder: string;
+    scheduleTypes: {
+      once: string;
+      interval: string;
+      cron: string;
+    };
+    contextModes: {
+      isolated: string;
+      group: string;
+    };
     actions: {
+      create: string;
+      edit: string;
+      save: string;
       pause: string;
       resume: string;
       cancel: string;
@@ -415,7 +436,28 @@ export const messages = {
       noResult: '결과 없음',
       noTime: '-',
       now: '지금',
+      createTitle: 'Create task',
+      createSubtitle: 'Schedule work from web',
+      room: 'Room',
+      selectRoom: 'Select room',
+      scheduleType: 'Type',
+      scheduleValue: 'Value',
+      scheduleValueHint: 'ISO time, ms, or cron',
+      promptPlaceholder: 'What should the agent do?',
+      editPromptPlaceholder: 'Leave blank to keep prompt',
+      scheduleTypes: {
+        once: 'Once',
+        interval: 'Interval',
+        cron: 'Cron',
+      },
+      contextModes: {
+        isolated: 'Isolated',
+        group: 'Group',
+      },
       actions: {
+        create: 'Create',
+        edit: 'Edit',
+        save: 'Save',
         pause: 'Pause',
         resume: 'Resume',
         cancel: 'Cancel',
@@ -626,7 +668,28 @@ export const messages = {
       noResult: 'no result',
       noTime: '-',
       now: 'now',
+      createTitle: 'Create task',
+      createSubtitle: 'Schedule work from web',
+      room: 'Room',
+      selectRoom: 'Select room',
+      scheduleType: 'Type',
+      scheduleValue: 'Value',
+      scheduleValueHint: 'ISO time, ms, or cron',
+      promptPlaceholder: 'What should the agent do?',
+      editPromptPlaceholder: 'Leave blank to keep prompt',
+      scheduleTypes: {
+        once: 'Once',
+        interval: 'Interval',
+        cron: 'Cron',
+      },
+      contextModes: {
+        isolated: 'Isolated',
+        group: 'Group',
+      },
       actions: {
+        create: 'Create',
+        edit: 'Edit',
+        save: 'Save',
         pause: 'Pause',
         resume: 'Resume',
         cancel: 'Cancel',
@@ -837,7 +900,28 @@ export const messages = {
       noResult: '无结果',
       noTime: '-',
       now: '现在',
+      createTitle: 'Create task',
+      createSubtitle: 'Schedule work from web',
+      room: 'Room',
+      selectRoom: 'Select room',
+      scheduleType: 'Type',
+      scheduleValue: 'Value',
+      scheduleValueHint: 'ISO time, ms, or cron',
+      promptPlaceholder: 'What should the agent do?',
+      editPromptPlaceholder: 'Leave blank to keep prompt',
+      scheduleTypes: {
+        once: 'Once',
+        interval: 'Interval',
+        cron: 'Cron',
+      },
+      contextModes: {
+        isolated: 'Isolated',
+        group: 'Group',
+      },
       actions: {
+        create: 'Create',
+        edit: 'Edit',
+        save: 'Save',
         pause: 'Pause',
         resume: 'Resume',
         cancel: 'Cancel',
@@ -1048,7 +1132,28 @@ export const messages = {
       noResult: '結果なし',
       noTime: '-',
       now: '今',
+      createTitle: 'Create task',
+      createSubtitle: 'Schedule work from web',
+      room: 'Room',
+      selectRoom: 'Select room',
+      scheduleType: 'Type',
+      scheduleValue: 'Value',
+      scheduleValueHint: 'ISO time, ms, or cron',
+      promptPlaceholder: 'What should the agent do?',
+      editPromptPlaceholder: 'Leave blank to keep prompt',
+      scheduleTypes: {
+        once: 'Once',
+        interval: 'Interval',
+        cron: 'Cron',
+      },
+      contextModes: {
+        isolated: 'Isolated',
+        group: 'Group',
+      },
       actions: {
+        create: 'Create',
+        edit: 'Edit',
+        save: 'Save',
         pause: 'Pause',
         resume: 'Resume',
         cancel: 'Cancel',
