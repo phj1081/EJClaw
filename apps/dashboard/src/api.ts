@@ -35,6 +35,28 @@ export interface DashboardOverview {
     }>;
     fetchedAt: string | null;
   };
+  inbox: Array<{
+    id: string;
+    kind:
+      | 'pending-room'
+      | 'reviewer-request'
+      | 'approval'
+      | 'arbiter-request'
+      | 'ci-failure'
+      | 'mention';
+    severity: 'info' | 'warn' | 'error';
+    title: string;
+    summary: string;
+    occurredAt: string;
+    createdAt: string;
+    source: 'status-snapshot' | 'paired-task' | 'scheduled-task';
+    roomJid?: string;
+    roomName?: string;
+    groupFolder?: string;
+    serviceId?: string;
+    taskId?: string;
+    taskStatus?: string;
+  }>;
 }
 
 export interface StatusSnapshot {
