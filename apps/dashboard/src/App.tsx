@@ -371,7 +371,6 @@ function LoadingSkeleton({ t }: { t: Messages }) {
 
 function SideRail({
   activeView,
-  lastRefreshed,
   locale,
   onNavigate,
   onLocaleChange,
@@ -380,7 +379,6 @@ function SideRail({
   t,
 }: {
   activeView: DashboardView;
-  lastRefreshed: string | null;
   locale: Locale;
   onNavigate: (view: DashboardView) => void;
   onLocaleChange: (locale: Locale) => void;
@@ -417,10 +415,6 @@ function SideRail({
       >
         {refreshing ? t.actions.refreshing : t.actions.refresh}
       </button>
-      <div className="drawer-meta">
-        <span>{t.nav.updated}</span>
-        <strong>{formatDate(lastRefreshed, locale)}</strong>
-      </div>
     </aside>
   );
 }
@@ -428,7 +422,6 @@ function SideRail({
 function SectionNav({
   activeView,
   drawerOpen,
-  lastRefreshed,
   locale,
   onCloseDrawer,
   onLocaleChange,
@@ -440,7 +433,6 @@ function SectionNav({
 }: {
   activeView: DashboardView;
   drawerOpen: boolean;
-  lastRefreshed: string | null;
   locale: Locale;
   onCloseDrawer: () => void;
   onLocaleChange: (locale: Locale) => void;
@@ -479,9 +471,6 @@ function SectionNav({
         >
           {refreshing ? '...' : t.actions.refresh}
         </button>
-        <span>
-          {t.nav.updated} {formatDate(lastRefreshed, locale)}
-        </span>
       </nav>
 
       {drawerOpen ? (
@@ -533,10 +522,6 @@ function SectionNav({
               onLocaleChange={onLocaleChange}
               t={t}
             />
-            <div className="drawer-meta">
-              <span>{t.nav.updated}</span>
-              <strong>{formatDate(lastRefreshed, locale)}</strong>
-            </div>
           </aside>
         </>
       ) : null}
@@ -1261,7 +1246,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeView, setActiveView] = useState<DashboardView>(readViewFromHash);
   const [locale, setLocale] = useState<Locale>(readInitialLocale);
@@ -1284,7 +1268,6 @@ function App() {
     try {
       const nextData = await fetchDashboardData();
       setData(nextData);
-      setLastRefreshed(new Date().toISOString());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1335,7 +1318,6 @@ function App() {
     <div className="shell">
       <SideRail
         activeView={activeView}
-        lastRefreshed={lastRefreshed}
         locale={locale}
         onNavigate={navigateToView}
         onLocaleChange={setDashboardLocale}
@@ -1347,7 +1329,6 @@ function App() {
         <SectionNav
           activeView={activeView}
           drawerOpen={drawerOpen}
-          lastRefreshed={lastRefreshed}
           locale={locale}
           onCloseDrawer={() => setDrawerOpen(false)}
           onLocaleChange={setDashboardLocale}
