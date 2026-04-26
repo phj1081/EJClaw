@@ -7,6 +7,9 @@ import {
   getAllOpenPairedTasks,
   getAllTasks,
   getTaskById,
+  hasMessage,
+  storeChatMetadata,
+  storeMessage,
   updateTask,
 } from './db.js';
 import { logger } from './logger.js';
@@ -14,13 +17,19 @@ import {
   readStatusSnapshots,
   type StatusSnapshot,
 } from './status-dashboard.js';
-import type { PairedTask, ScheduledTask } from './types.js';
+import type {
+  NewMessage,
+  PairedTask,
+  RegisteredGroup,
+  ScheduledTask,
+} from './types.js';
 import {
   buildWebDashboardOverview,
   sanitizeScheduledTask,
 } from './web-dashboard-data.js';
 
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
+const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
 
 export interface WebDashboardHandlerOptions {
   staticDir?: string;
@@ -34,6 +43,17 @@ export interface WebDashboardHandlerOptions {
   ) => void;
   deleteTask?: (id: string) => void;
   getPairedTasks?: () => PairedTask[];
+  getRoomBindings?: () => Record<string, RegisteredGroup>;
+  storeChatMetadata?: (
+    chatJid: string,
+    timestamp: string,
+    name?: string,
+    channel?: string,
+    isGroup?: boolean,
+  ) => void;
+  storeMessage?: (message: NewMessage) => void;
+  hasMessage?: (chatJid: string, id: string) => boolean;
+  enqueueMessageCheck?: (chatJid: string, groupFolder: string) => void;
   now?: () => string;
 }
 
@@ -125,6 +145,16 @@ function parseTaskActionPath(pathname: string): string | null {
   }
 }
 
+function parseRoomMessagePath(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/rooms\/([^/]+)\/messages$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 function isTaskAction(value: unknown): value is TaskAction {
   return value === 'pause' || value === 'resume' || value === 'cancel';
 }
@@ -138,6 +168,42 @@ async function readTaskAction(request: Request): Promise<TaskAction | null> {
   }
 }
 
+function sanitizeRoomMessageRequestId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const safe = trimmed.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 120);
+  return safe || null;
+}
+
+async function readRoomMessageBody(
+  request: Request,
+): Promise<{ text: string; requestId: string | null } | null> {
+  try {
+    const body = (await request.json()) as {
+      text?: unknown;
+      requestId?: unknown;
+    };
+    if (typeof body.text !== 'string') return null;
+    const text = body.text.trim();
+    if (!text) return null;
+    return {
+      text: text.length > 8000 ? text.slice(0, 8000) : text,
+      requestId: sanitizeRoomMessageRequestId(body.requestId),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function makeWebMessageId(): string {
+  return `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function makeWebMessageIdFromRequest(requestId: string | null): string {
+  return requestId ? `web-${requestId}` : makeWebMessageId();
+}
+
 export function createWebDashboardHandler(
   opts: WebDashboardHandlerOptions = {},
 ): (request: Request) => Response | Promise<Response> {
@@ -147,11 +213,30 @@ export function createWebDashboardHandler(
   const mutateTask = opts.updateTask ?? updateTask;
   const removeTask = opts.deleteTask ?? deleteTask;
   const loadPairedTasks = opts.getPairedTasks ?? getAllOpenPairedTasks;
+  const loadRoomBindings = opts.getRoomBindings;
+  const writeChatMetadata = opts.storeChatMetadata ?? storeChatMetadata;
+  const writeMessage = opts.storeMessage ?? storeMessage;
+  const messageExists = opts.hasMessage ?? hasMessage;
+  const enqueueMessageCheck = opts.enqueueMessageCheck;
   const statusMaxAgeMs = opts.statusMaxAgeMs ?? DEFAULT_STATUS_MAX_AGE_MS;
+  const seenRoomMessageIds: string[] = [];
+  const seenRoomMessageIdSet = new Set<string>();
+
+  function rememberRoomMessageId(id: string): boolean {
+    if (seenRoomMessageIdSet.has(id)) return false;
+    seenRoomMessageIdSet.add(id);
+    seenRoomMessageIds.push(id);
+    if (seenRoomMessageIds.length > ROOM_MESSAGE_ID_CACHE_LIMIT) {
+      const oldest = seenRoomMessageIds.shift();
+      if (oldest) seenRoomMessageIdSet.delete(oldest);
+    }
+    return true;
+  }
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const actionTaskId = parseTaskActionPath(url.pathname);
+    const messageRoomJid = parseRoomMessagePath(url.pathname);
 
     if (actionTaskId) {
       if (request.method !== 'POST') {
@@ -190,6 +275,64 @@ export function createWebDashboardHandler(
         ok: true,
         task: updatedTask ? sanitizeScheduledTask(updatedTask) : null,
       });
+    }
+
+    if (messageRoomJid) {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
+      }
+
+      if (!loadRoomBindings || !enqueueMessageCheck) {
+        return jsonResponse(
+          { error: 'Room message injection is not configured' },
+          { status: 503 },
+        );
+      }
+
+      const body = await readRoomMessageBody(request);
+      if (!body) {
+        return jsonResponse(
+          { error: 'Message text is required' },
+          { status: 400 },
+        );
+      }
+
+      const binding = loadRoomBindings()[messageRoomJid];
+      if (!binding) {
+        return jsonResponse({ error: 'Room not found' }, { status: 404 });
+      }
+
+      const timestamp = opts.now?.() ?? new Date().toISOString();
+      const id = makeWebMessageIdFromRequest(body.requestId);
+      if (body.requestId && messageExists(messageRoomJid, id)) {
+        return jsonResponse({ ok: true, id, queued: false, duplicate: true });
+      }
+
+      if (!rememberRoomMessageId(`${messageRoomJid}:${id}`)) {
+        return jsonResponse({ ok: true, id, queued: false, duplicate: true });
+      }
+
+      writeChatMetadata(
+        messageRoomJid,
+        timestamp,
+        binding.name,
+        'web-dashboard',
+        true,
+      );
+      writeMessage({
+        id,
+        chat_jid: messageRoomJid,
+        sender: 'web-dashboard',
+        sender_name: 'Web Dashboard',
+        content: body.text,
+        timestamp,
+        is_from_me: false,
+        is_bot_message: false,
+        message_source_kind: 'ipc_injected_human',
+      });
+      enqueueMessageCheck(messageRoomJid, binding.folder);
+
+      return jsonResponse({ ok: true, id, queued: true });
     }
 
     if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -242,6 +385,8 @@ export function startWebDashboardServer(
     host?: string;
     port?: number;
     staticDir?: string;
+    getRoomBindings?: () => Record<string, RegisteredGroup>;
+    enqueueMessageCheck?: (chatJid: string, groupFolder: string) => void;
   } = {},
 ): StartedWebDashboardServer | null {
   const enabled = opts.enabled ?? WEB_DASHBOARD.enabled;
@@ -253,7 +398,11 @@ export function startWebDashboardServer(
   const server = Bun.serve({
     hostname: host,
     port,
-    fetch: createWebDashboardHandler({ staticDir }),
+    fetch: createWebDashboardHandler({
+      staticDir,
+      getRoomBindings: opts.getRoomBindings,
+      enqueueMessageCheck: opts.enqueueMessageCheck,
+    }),
   });
   const url = `http://${host}:${server.port}`;
 

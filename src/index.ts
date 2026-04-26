@@ -521,7 +521,12 @@ async function main(): Promise<void> {
     },
     purgeOnStart: true,
   });
-  webDashboardServer = startWebDashboardServer(WEB_DASHBOARD);
+  webDashboardServer = startWebDashboardServer({
+    ...WEB_DASHBOARD,
+    getRoomBindings: runtimeState.getRoomBindings,
+    enqueueMessageCheck: (chatJid, groupFolder) =>
+      queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder)),
+  });
 
   leaseRecoveryTimer = setInterval(() => {
     const failover = getGlobalFailoverInfo();

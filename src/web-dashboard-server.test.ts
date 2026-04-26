@@ -5,7 +5,12 @@ import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { StatusSnapshot } from './status-dashboard.js';
-import type { PairedTask, ScheduledTask } from './types.js';
+import type {
+  NewMessage,
+  PairedTask,
+  RegisteredGroup,
+  ScheduledTask,
+} from './types.js';
 import { createWebDashboardHandler } from './web-dashboard-server.js';
 
 const tempDirs: string[] = [];
@@ -342,6 +347,263 @@ describe('web dashboard server handler', () => {
       }),
     );
     expect(wrongMethod.status).toBe(405);
+  });
+
+  it('injects room messages and queues room work from the web dashboard', async () => {
+    const messages: NewMessage[] = [];
+    const metadata: Array<{
+      chatJid: string;
+      timestamp: string;
+      name?: string;
+      channel?: string;
+      isGroup?: boolean;
+    }> = [];
+    const queued: Array<{ chatJid: string; groupFolder: string }> = [];
+    const rooms: Record<string, RegisteredGroup> = {
+      'dc:ops': {
+        name: '#ops',
+        folder: 'ops-room',
+        added_at: '2026-04-26T05:00:00.000Z',
+      },
+    };
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      getRoomBindings: () => rooms,
+      storeChatMetadata: (chatJid, timestamp, name, channel, isGroup) => {
+        metadata.push({ chatJid, timestamp, name, channel, isGroup });
+      },
+      storeMessage: (message) => {
+        messages.push(message);
+      },
+      hasMessage: () => false,
+      enqueueMessageCheck: (chatJid, groupFolder) => {
+        queued.push({ chatJid, groupFolder });
+      },
+      now: () => '2026-04-26T05:10:00.000Z',
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:ops')}/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            requestId: 'room-compose-1',
+            text: '  run a dashboard check  ',
+          }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      queued: true,
+    });
+    expect(metadata).toEqual([
+      {
+        chatJid: 'dc:ops',
+        timestamp: '2026-04-26T05:10:00.000Z',
+        name: '#ops',
+        channel: 'web-dashboard',
+        isGroup: true,
+      },
+    ]);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      chat_jid: 'dc:ops',
+      sender: 'web-dashboard',
+      sender_name: 'Web Dashboard',
+      content: 'run a dashboard check',
+      timestamp: '2026-04-26T05:10:00.000Z',
+      is_from_me: false,
+      is_bot_message: false,
+      message_source_kind: 'ipc_injected_human',
+    });
+    expect(messages[0]?.id).toBe('web-room-compose-1');
+    expect(queued).toEqual([{ chatJid: 'dc:ops', groupFolder: 'ops-room' }]);
+  });
+
+  it('deduplicates repeated room message request ids', async () => {
+    const messages: NewMessage[] = [];
+    const queued: Array<{ chatJid: string; groupFolder: string }> = [];
+    const existing = new Set<string>();
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      getRoomBindings: () => ({
+        'dc:ops': {
+          name: '#ops',
+          folder: 'ops-room',
+          added_at: '2026-04-26T05:00:00.000Z',
+        },
+      }),
+      storeChatMetadata: () => undefined,
+      storeMessage: (message) => {
+        messages.push(message);
+        existing.add(`${message.chat_jid}:${message.id}`);
+      },
+      hasMessage: (chatJid, id) => existing.has(`${chatJid}:${id}`),
+      enqueueMessageCheck: (chatJid, groupFolder) => {
+        queued.push({ chatJid, groupFolder });
+      },
+    });
+    const request = () =>
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:ops')}/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            requestId: 'same-submit',
+            text: 'repeat me',
+          }),
+        },
+      );
+
+    const first = await handler(request());
+    const second = await handler(request());
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({
+      id: 'web-same-submit',
+      queued: true,
+    });
+    await expect(second.json()).resolves.toMatchObject({
+      id: 'web-same-submit',
+      queued: false,
+      duplicate: true,
+    });
+    expect(messages).toHaveLength(1);
+    expect(queued).toHaveLength(1);
+  });
+
+  it('deduplicates existing room message request ids after restart', async () => {
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      getRoomBindings: () => ({
+        'dc:ops': {
+          name: '#ops',
+          folder: 'ops-room',
+          added_at: '2026-04-26T05:00:00.000Z',
+        },
+      }),
+      storeChatMetadata: () => {
+        throw new Error('storeChatMetadata should not be called');
+      },
+      storeMessage: () => {
+        throw new Error('storeMessage should not be called');
+      },
+      hasMessage: (chatJid, id) =>
+        chatJid === 'dc:ops' && id === 'web-previous-submit',
+      enqueueMessageCheck: () => {
+        throw new Error('enqueueMessageCheck should not be called');
+      },
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:ops')}/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            requestId: 'previous-submit',
+            text: 'repeat after restart',
+          }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      id: 'web-previous-submit',
+      queued: false,
+      duplicate: true,
+    });
+  });
+
+  it('rejects invalid room message requests', async () => {
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      getRoomBindings: () => ({
+        'dc:ops': {
+          name: '#ops',
+          folder: 'ops-room',
+          added_at: '2026-04-26T05:00:00.000Z',
+        },
+      }),
+      storeMessage: () => {
+        throw new Error('storeMessage should not be called');
+      },
+      enqueueMessageCheck: () => {
+        throw new Error('enqueueMessageCheck should not be called');
+      },
+    });
+
+    const empty = await handler(
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:ops')}/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: '  ' }),
+        },
+      ),
+    );
+    expect(empty.status).toBe(400);
+
+    const missing = await handler(
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:missing')}/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'hello' }),
+        },
+      ),
+    );
+    expect(missing.status).toBe(404);
+
+    const wrongMethod = await handler(
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:ops')}/messages`,
+        {
+          method: 'GET',
+        },
+      ),
+    );
+    expect(wrongMethod.status).toBe(405);
+  });
+
+  it('returns 503 when room message injection is not wired', async () => {
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:ops')}/messages`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text: 'hello' }),
+        },
+      ),
+    );
+
+    expect(response.status).toBe(503);
   });
 
   it('serves Vite static assets and falls back to index for SPA routes', async () => {

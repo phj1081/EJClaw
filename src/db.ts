@@ -22,6 +22,7 @@ export {
   getOpenWorkItem,
   getOpenWorkItemForChat,
   getRecentChatMessages,
+  hasMessage,
   hasRecentRestartAnnouncement,
   markWorkItemDelivered,
   markWorkItemDeliveryRetry,

@@ -513,7 +513,7 @@ dd,
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 720px;
+  min-width: 860px;
 }
 
 th,
@@ -1093,6 +1093,44 @@ progress::-moz-progress-bar {
 
 .record-details summary::-webkit-details-marker {
   display: none;
+}
+
+.room-compose {
+  display: grid;
+  min-width: min(240px, 100%);
+  gap: 8px;
+}
+
+.room-compose textarea {
+  width: 100%;
+  min-height: 54px;
+  resize: vertical;
+  border: 1px solid rgba(43, 55, 38, 0.14);
+  border-radius: 14px;
+  padding: 10px 11px;
+  color: var(--ink);
+  background: rgba(255, 250, 240, 0.68);
+  font: inherit;
+  line-height: 1.3;
+}
+
+.room-compose textarea:focus-visible {
+  outline: 3px solid rgba(191, 95, 44, 0.22);
+}
+
+.room-compose button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 999px;
+  color: #fffaf0;
+  background: var(--ink);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.room-compose button:disabled {
+  cursor: not-allowed;
+  opacity: 0.44;
 }
 
 .task-board {

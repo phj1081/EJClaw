@@ -115,6 +115,10 @@ export interface Messages {
     queue: string;
     elapsed: string;
     details: string;
+    message: string;
+    messagePlaceholder: string;
+    send: string;
+    sending: string;
   };
   usage: {
     empty: string;
@@ -331,6 +335,10 @@ export const messages = {
       queue: '큐',
       elapsed: '경과',
       details: '세부',
+      message: 'Message',
+      messagePlaceholder: 'Type request...',
+      send: 'Send',
+      sending: 'Sending',
     },
     usage: {
       empty: '사용량 스냅샷 없음. 수집기 확인.',
@@ -531,6 +539,10 @@ export const messages = {
       queue: 'queue',
       elapsed: 'elapsed',
       details: 'details',
+      message: 'message',
+      messagePlaceholder: 'Type request...',
+      send: 'Send',
+      sending: 'Sending',
     },
     usage: {
       empty: 'No usage snapshot. Check collector.',
@@ -731,6 +743,10 @@ export const messages = {
       queue: '队列',
       elapsed: '耗时',
       details: '详情',
+      message: 'Message',
+      messagePlaceholder: 'Type request...',
+      send: 'Send',
+      sending: 'Sending',
     },
     usage: {
       empty: '暂无用量快照。检查采集器。',
@@ -931,6 +947,10 @@ export const messages = {
       queue: 'キュー',
       elapsed: '経過',
       details: '詳細',
+      message: 'Message',
+      messagePlaceholder: 'Type request...',
+      send: 'Send',
+      sending: 'Sending',
     },
     usage: {
       empty: '使用量スナップショットなし。収集器を確認。',

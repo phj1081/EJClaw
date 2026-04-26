@@ -7,6 +7,7 @@ import {
   type StatusSnapshot,
   fetchDashboardData,
   runScheduledTaskAction,
+  sendRoomMessage,
 } from './api';
 import {
   LOCALES,
@@ -43,6 +44,10 @@ const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale.v2';
 const DEFAULT_VIEW: DashboardView = 'inbox';
 const HEALTH_STALE_MS = 5 * 60_000;
 const HEALTH_DOWN_MS = 15 * 60_000;
+
+function makeClientRequestId(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function isDashboardView(
   value: string | null | undefined,
@@ -865,13 +870,58 @@ function HealthPanel({
   );
 }
 
+function RoomMessageForm({
+  busy,
+  onChange,
+  onSubmit,
+  t,
+  value,
+}: {
+  busy: boolean;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  t: Messages;
+  value: string;
+}) {
+  return (
+    <form
+      className="room-compose"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <textarea
+        aria-label={t.rooms.message}
+        maxLength={8000}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={t.rooms.messagePlaceholder}
+        rows={2}
+        value={value}
+      />
+      <button disabled={busy || !value.trim()} type="submit">
+        {busy ? t.rooms.sending : t.rooms.send}
+      </button>
+    </form>
+  );
+}
+
 function RoomPanel({
+  onSendRoomMessage,
+  roomMessageKey,
   snapshots,
   t,
 }: {
+  onSendRoomMessage: (
+    roomJid: string,
+    text: string,
+    requestId: string,
+  ) => Promise<boolean>;
+  roomMessageKey: string | null;
   snapshots: StatusSnapshot[];
   t: Messages;
 }) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const entries = snapshots.flatMap((snapshot) =>
     snapshot.entries.map((entry) => ({
       ...entry,
@@ -881,6 +931,19 @@ function RoomPanel({
 
   if (entries.length === 0) {
     return <EmptyState>{t.rooms.empty}</EmptyState>;
+  }
+
+  function setDraft(jid: string, value: string) {
+    setDrafts((previous) => ({ ...previous, [jid]: value }));
+  }
+
+  async function submitRoomMessage(jid: string) {
+    const text = drafts[jid]?.trim();
+    if (!text) return;
+    const success = await onSendRoomMessage(jid, text, makeClientRequestId());
+    if (success) {
+      setDraft(jid, '');
+    }
   }
 
   return (
@@ -893,6 +956,7 @@ function RoomPanel({
               <th>{t.rooms.status}</th>
               <th>{t.rooms.queue}</th>
               <th>{t.rooms.elapsed}</th>
+              <th>{t.rooms.message}</th>
             </tr>
           </thead>
           <tbody>
@@ -917,6 +981,15 @@ function RoomPanel({
                   {queueLabel(entry.pendingTasks, entry.pendingMessages, t)}
                 </td>
                 <td>{formatDuration(entry.elapsedMs, t)}</td>
+                <td>
+                  <RoomMessageForm
+                    busy={roomMessageKey === entry.jid}
+                    onChange={(value) => setDraft(entry.jid, value)}
+                    onSubmit={() => void submitRoomMessage(entry.jid)}
+                    t={t}
+                    value={drafts[entry.jid] ?? ''}
+                  />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -950,6 +1023,13 @@ function RoomPanel({
                 <strong>{formatDuration(entry.elapsedMs, t)}</strong>
               </span>
             </div>
+            <RoomMessageForm
+              busy={roomMessageKey === entry.jid}
+              onChange={(value) => setDraft(entry.jid, value)}
+              onSubmit={() => void submitRoomMessage(entry.jid)}
+              t={t}
+              value={drafts[entry.jid] ?? ''}
+            />
             <details className="record-details">
               <summary>{t.rooms.details}</summary>
               <p className="record-id">
@@ -1349,6 +1429,7 @@ function App() {
   const [taskActionKey, setTaskActionKey] = useState<TaskActionKey | null>(
     null,
   );
+  const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
   const t = messages[locale];
 
   function setDashboardLocale(nextLocale: Locale) {
@@ -1394,6 +1475,24 @@ function App() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setTaskActionKey(null);
+    }
+  }
+
+  async function handleRoomMessage(
+    roomJid: string,
+    text: string,
+    requestId: string,
+  ) {
+    setRoomMessageKey(roomJid);
+    try {
+      await sendRoomMessage(roomJid, text, requestId);
+      await refresh(false);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    } finally {
+      setRoomMessageKey(null);
     }
   }
 
@@ -1520,7 +1619,12 @@ function App() {
                   <h2>{t.panels.rooms}</h2>
                   <span>{t.panels.queue}</span>
                 </div>
-                <RoomPanel snapshots={data.snapshots} t={t} />
+                <RoomPanel
+                  onSendRoomMessage={handleRoomMessage}
+                  roomMessageKey={roomMessageKey}
+                  snapshots={data.snapshots}
+                  t={t}
+                />
               </section>
             ) : null}
 
