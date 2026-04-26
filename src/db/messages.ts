@@ -95,6 +95,17 @@ export function getAllChatsFromDatabase(database: Database): ChatInfo[] {
     .all() as ChatInfo[];
 }
 
+export function hasMessageInDatabase(
+  database: Database,
+  chatJid: string,
+  id: string,
+): boolean {
+  const row = database
+    .prepare('SELECT 1 FROM messages WHERE chat_jid = ? AND id = ? LIMIT 1')
+    .get(chatJid, id);
+  return !!row;
+}
+
 export function storeMessageInDatabase(
   database: Database,
   msg: NewMessage,

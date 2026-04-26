@@ -26,6 +26,7 @@ import {
   getNewMessagesBySeqFromDatabase,
   getNewMessagesFromDatabase,
   getRecentChatMessagesFromDatabase,
+  hasMessageInDatabase,
   hasRecentRestartAnnouncementInDatabase,
   storeChatMetadataInDatabase,
   storeMessageInDatabase,
@@ -139,6 +140,10 @@ export function getAllChats(): ChatInfo[] {
 
 export function storeMessage(msg: NewMessage): void {
   storeMessageInDatabase(requireDatabase(), msg);
+}
+
+export function hasMessage(chatJid: string, id: string): boolean {
+  return hasMessageInDatabase(requireDatabase(), chatJid, id);
 }
 
 export function getNewMessages(

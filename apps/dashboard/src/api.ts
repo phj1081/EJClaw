@@ -161,3 +161,14 @@ export async function runScheduledTaskAction(
     action,
   });
 }
+
+export async function sendRoomMessage(
+  roomJid: string,
+  text: string,
+  requestId: string,
+): Promise<{ ok: true; id: string; queued: boolean }> {
+  return postJson(`/api/rooms/${encodeURIComponent(roomJid)}/messages`, {
+    requestId,
+    text,
+  });
+}
