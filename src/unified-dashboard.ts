@@ -102,6 +102,8 @@ let dashboardUpdateLogged = false;
 let cachedCodexUsageRows: UsageRow[] = [];
 /** Codex service only: ISO timestamp of last successful usage fetch. */
 let codexUsageFetchedAt: string | null = null;
+/** Renderer service only: ISO timestamp of last successful Claude/Kimi usage render. */
+let rendererUsageFetchedAt: string | null = null;
 
 export interface WatcherTaskSummary {
   active: number;
@@ -231,9 +233,32 @@ function formatRoomName(
   return base;
 }
 
+function buildUsageSnapshotRows(opts: UnifiedDashboardOptions): {
+  rows: UsageRow[];
+  fetchedAt: string | null;
+} {
+  const rows: UsageRow[] = [];
+
+  if (opts.serviceAgentType === 'claude-code') {
+    rows.push(...buildClaudeUsageRows(cachedClaudeAccounts));
+    rows.push(...buildKimiUsageRows(cachedKimiUsage));
+  }
+
+  rows.push(...cachedCodexUsageRows);
+
+  const fetchedAt =
+    [rendererUsageFetchedAt, codexUsageFetchedAt]
+      .filter((value): value is string => !!value)
+      .sort()
+      .at(-1) ?? null;
+
+  return { rows, fetchedAt };
+}
+
 function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
   const groups = opts.roomBindings();
   const statuses = opts.queue.getStatuses(Object.keys(groups));
+  const usageSnapshot = buildUsageSnapshotRows(opts);
 
   writeStatusSnapshot({
     serviceId: opts.serviceId,
@@ -267,8 +292,10 @@ function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
       pendingMessages: boolean;
       pendingTasks: number;
     }>,
-    ...(cachedCodexUsageRows.length > 0 && { usageRows: cachedCodexUsageRows }),
-    ...(codexUsageFetchedAt && { usageRowsFetchedAt: codexUsageFetchedAt }),
+    ...(usageSnapshot.rows.length > 0 && { usageRows: usageSnapshot.rows }),
+    ...(usageSnapshot.fetchedAt && {
+      usageRowsFetchedAt: usageSnapshot.fetchedAt,
+    }),
   });
 }
 
@@ -647,6 +674,7 @@ async function refreshUsageCache(): Promise<void> {
   usageUpdateInProgress = true;
   try {
     cachedUsageContent = await buildUsageContent();
+    rendererUsageFetchedAt = new Date().toISOString();
   } catch (err) {
     logger.warn({ err }, 'Failed to build usage content');
   } finally {

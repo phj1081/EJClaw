@@ -6,6 +6,16 @@ import {
   type StatusSnapshot,
   fetchDashboardData,
 } from './api';
+import {
+  LOCALES,
+  isLocale,
+  languageNames,
+  localeTags,
+  matchLocale,
+  messages,
+  type Locale,
+  type Messages,
+} from './i18n';
 import './styles.css';
 
 interface DashboardState {
@@ -14,13 +24,36 @@ interface DashboardState {
   tasks: DashboardTask[];
 }
 
-const REFRESH_INTERVAL_MS = 15_000;
+type UsageRow = DashboardOverview['usage']['rows'][number];
+type RiskLevel = 'ok' | 'warn' | 'critical';
 
-function formatDate(value: string | null | undefined): string {
+const REFRESH_INTERVAL_MS = 15_000;
+const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale';
+
+function readInitialLocale(): Locale {
+  const stored =
+    typeof window === 'undefined'
+      ? null
+      : window.localStorage.getItem(LOCALE_STORAGE_KEY);
+  if (isLocale(stored)) return stored;
+
+  const languages =
+    typeof navigator === 'undefined'
+      ? []
+      : [...(navigator.languages || []), navigator.language];
+  for (const language of languages) {
+    const matched = matchLocale(language);
+    if (matched) return matched;
+  }
+
+  return 'ko';
+}
+
+function formatDate(value: string | null | undefined, locale: Locale): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat('ko-KR', {
+  return new Intl.DateTimeFormat(localeTags[locale], {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
@@ -30,50 +63,53 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function formatPct(value: number): string {
+  if (value < 0) return '-';
   return `${Math.round(value)}%`;
 }
 
-function usagePeak(row: DashboardOverview['usage']['rows'][number]): number {
+function usagePeak(row: UsageRow): number {
   return Math.max(row.h5pct, row.d7pct);
 }
 
-function usageRisk(row: DashboardOverview['usage']['rows'][number]): {
-  level: 'ok' | 'warn' | 'critical';
-  label: string;
-} {
+function usageRiskLevel(row: UsageRow): RiskLevel {
   const peak = usagePeak(row);
-  if (peak >= 85) return { level: 'critical', label: 'Limit risk' };
-  if (peak >= 65) return { level: 'warn', label: 'Watch' };
-  return { level: 'ok', label: 'Clear' };
+  if (peak >= 85) return 'critical';
+  if (peak >= 65) return 'warn';
+  return 'ok';
 }
 
-function statusLabel(status: string): string {
-  switch (status) {
-    case 'processing':
-      return '처리중';
-    case 'waiting':
-      return '대기';
-    case 'inactive':
-      return '휴면';
-    case 'active':
-      return '활성';
-    case 'paused':
-      return '일시정지';
-    case 'completed':
-      return '완료';
-    default:
-      return status;
-  }
+function statusLabel(status: string, t: Messages): string {
+  if (status in t.status) return t.status[status as keyof Messages['status']];
+  return status;
 }
 
-function formatDuration(value: number | null): string {
+function formatDuration(value: number | null, t: Messages): string {
   if (value === null) return '-';
   const seconds = Math.floor(value / 1000);
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return `${seconds}${t.units.second}`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return `${minutes}${t.units.minute}`;
   const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  return `${hours}${t.units.hour} ${minutes % 60}${t.units.minute}`;
+}
+
+function queueLabel(
+  pendingTasks: number,
+  pendingMessages: boolean,
+  t: Messages,
+) {
+  const parts = [`${pendingTasks} ${t.units.task}`];
+  if (pendingMessages) parts.push(t.units.messageShort);
+  return parts.join(' · ');
+}
+
+function navItems(t: Messages) {
+  return [
+    { href: '#overview', label: t.nav.health },
+    { href: '#usage', label: t.nav.usage },
+    { href: '#rooms', label: t.nav.rooms },
+    { href: '#work', label: t.nav.scheduled },
+  ];
 }
 
 function Card({
@@ -98,7 +134,34 @@ function EmptyState({ children }: { children: ReactNode }) {
   return <div className="empty-state">{children}</div>;
 }
 
-function LoadingSkeleton() {
+function LanguageSelector({
+  locale,
+  onLocaleChange,
+  t,
+}: {
+  locale: Locale;
+  onLocaleChange: (locale: Locale) => void;
+  t: Messages;
+}) {
+  return (
+    <label className="language-select">
+      <span>{t.language.label}</span>
+      <select
+        aria-label={t.language.label}
+        onChange={(event) => onLocaleChange(event.target.value as Locale)}
+        value={locale}
+      >
+        {LOCALES.map((item) => (
+          <option key={item} value={item}>
+            {languageNames[item]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function LoadingSkeleton({ t }: { t: Messages }) {
   return (
     <main className="shell shell-loading" aria-busy="true">
       <section className="hero skeleton-hero">
@@ -109,7 +172,7 @@ function LoadingSkeleton() {
         </div>
         <span className="skeleton-button" />
       </section>
-      <section className="metrics-grid">
+      <section className="metrics-grid" aria-label={t.app.loading}>
         {Array.from({ length: 4 }, (_, index) => (
           <div className="card metric-card skeleton-card" key={index}>
             <span className="skeleton-line skeleton-short" />
@@ -122,36 +185,67 @@ function LoadingSkeleton() {
   );
 }
 
+function SideRail({
+  lastRefreshed,
+  locale,
+  onLocaleChange,
+  t,
+}: {
+  lastRefreshed: string | null;
+  locale: Locale;
+  onLocaleChange: (locale: Locale) => void;
+  t: Messages;
+}) {
+  return (
+    <aside className="side-rail" aria-label={t.nav.drawerAria}>
+      <div className="side-rail-brand">
+        <span className="eyebrow">EJClaw</span>
+        <strong>{t.nav.operations}</strong>
+      </div>
+      <nav aria-label={t.nav.drawerNavAria}>
+        {navItems(t).map((item) => (
+          <a href={item.href} key={item.href}>
+            {item.label}
+          </a>
+        ))}
+      </nav>
+      <LanguageSelector locale={locale} onLocaleChange={onLocaleChange} t={t} />
+      <div className="drawer-meta">
+        <span>{t.nav.updated}</span>
+        <strong>{formatDate(lastRefreshed, locale)}</strong>
+      </div>
+    </aside>
+  );
+}
+
 function SectionNav({
   drawerOpen,
   lastRefreshed,
+  locale,
   onCloseDrawer,
+  onLocaleChange,
   onOpenDrawer,
   refreshing,
   onRefresh,
+  t,
 }: {
   drawerOpen: boolean;
   lastRefreshed: string | null;
+  locale: Locale;
   onCloseDrawer: () => void;
+  onLocaleChange: (locale: Locale) => void;
   onOpenDrawer: () => void;
   refreshing: boolean;
   onRefresh: () => void;
+  t: Messages;
 }) {
-  const navItems = [
-    { href: '#overview', label: 'Health' },
-    { href: '#agents', label: 'Agents' },
-    { href: '#usage', label: 'Usage' },
-    { href: '#rooms', label: 'Rooms' },
-    { href: '#work', label: 'Scheduled' },
-  ];
-
   return (
     <>
-      <nav className="section-nav" aria-label="Dashboard sections">
+      <nav className="section-nav" aria-label={t.nav.aria}>
         <button
           aria-controls="dashboard-menu"
           aria-expanded={drawerOpen}
-          aria-label={drawerOpen ? '메뉴 닫기' : '메뉴 열기'}
+          aria-label={drawerOpen ? t.nav.menuClose : t.nav.menuOpen}
           className="menu-button"
           onClick={drawerOpen ? onCloseDrawer : onOpenDrawer}
           type="button"
@@ -160,32 +254,38 @@ function SectionNav({
           <span />
           <span />
         </button>
-        <a href="#overview">Health</a>
-        <a href="#usage">Usage</a>
-        <a href="#work">Work</a>
+        {navItems(t)
+          .slice(0, 3)
+          .map((item) => (
+            <a href={item.href} key={item.href}>
+              {item.label}
+            </a>
+          ))}
         <button
           aria-busy={refreshing}
-          aria-label={refreshing ? '새로고침 중' : '새로고침'}
+          aria-label={refreshing ? t.actions.refreshing : t.actions.refresh}
           className="refresh-button"
           disabled={refreshing}
           onClick={onRefresh}
           type="button"
         >
-          {refreshing ? '...' : 'Refresh'}
+          {refreshing ? '...' : t.actions.refresh}
         </button>
-        <span>Updated {formatDate(lastRefreshed)}</span>
+        <span>
+          {t.nav.updated} {formatDate(lastRefreshed, locale)}
+        </span>
       </nav>
 
       {drawerOpen ? (
         <>
           <button
-            aria-label="메뉴 닫기"
+            aria-label={t.nav.menuClose}
             className="drawer-backdrop"
             onClick={onCloseDrawer}
             type="button"
           />
           <aside
-            aria-label="Dashboard menu"
+            aria-label={t.nav.drawerAria}
             aria-modal="true"
             className="nav-drawer"
             id="dashboard-menu"
@@ -194,26 +294,31 @@ function SectionNav({
             <div className="drawer-head">
               <div>
                 <span className="eyebrow">EJClaw</span>
-                <strong>Operations</strong>
+                <strong>{t.nav.operations}</strong>
               </div>
               <button
-                aria-label="메뉴 닫기"
+                aria-label={t.nav.menuClose}
                 onClick={onCloseDrawer}
                 type="button"
               >
-                Close
+                {t.actions.close}
               </button>
             </div>
-            <nav aria-label="Dashboard drawer sections">
-              {navItems.map((item) => (
+            <nav aria-label={t.nav.drawerNavAria}>
+              {navItems(t).map((item) => (
                 <a href={item.href} key={item.href} onClick={onCloseDrawer}>
                   {item.label}
                 </a>
               ))}
             </nav>
+            <LanguageSelector
+              locale={locale}
+              onLocaleChange={onLocaleChange}
+              t={t}
+            />
             <div className="drawer-meta">
-              <span>Updated</span>
-              <strong>{formatDate(lastRefreshed)}</strong>
+              <span>{t.nav.updated}</span>
+              <strong>{formatDate(lastRefreshed, locale)}</strong>
             </div>
           </aside>
         </>
@@ -222,7 +327,7 @@ function SectionNav({
   );
 }
 
-function ControlRail({ data }: { data: DashboardState }) {
+function ControlRail({ data, t }: { data: DashboardState; t: Messages }) {
   const queue = data.snapshots.reduce(
     (acc, snapshot) => {
       for (const entry of snapshot.entries) {
@@ -235,41 +340,47 @@ function ControlRail({ data }: { data: DashboardState }) {
   );
 
   return (
-    <section
-      className="control-rail"
-      id="overview"
-      aria-label="control plane summary"
-    >
+    <section className="control-rail" id="overview" aria-label={t.control.aria}>
       <div>
-        <span className="eyebrow">agent heartbeat</span>
+        <span className="eyebrow">{t.control.heartbeat}</span>
         <strong>
           {data.overview.rooms.active + data.overview.rooms.waiting}/
           {data.overview.rooms.total}
         </strong>
-        <small>processing + waiting rooms</small>
+        <small>{t.control.activeRooms}</small>
       </div>
       <div>
-        <span className="eyebrow">work queue</span>
+        <span className="eyebrow">{t.control.queue}</span>
         <strong>{queue.pendingTasks}</strong>
-        <small>{queue.pendingMessageRooms} rooms with pending messages</small>
+        <small>
+          {queue.pendingMessageRooms} {t.control.pendingRooms}
+        </small>
       </div>
       <div>
-        <span className="eyebrow">governance</span>
-        <strong>read only</strong>
-        <small>no approvals, merges, or worker kills in MVP</small>
+        <span className="eyebrow">{t.control.governance}</span>
+        <strong>{t.control.readOnly}</strong>
+        <small>{t.control.writesDisabled}</small>
       </div>
       <div>
-        <span className="eyebrow">audit safety</span>
-        <strong>redacted</strong>
-        <small>task prompts are preview-only</small>
+        <span className="eyebrow">{t.control.audit}</span>
+        <strong>{t.control.redacted}</strong>
+        <small>{t.control.previewOnly}</small>
       </div>
     </section>
   );
 }
 
-function ServicePanel({ overview }: { overview: DashboardOverview }) {
+function ServicePanel({
+  overview,
+  locale,
+  t,
+}: {
+  overview: DashboardOverview;
+  locale: Locale;
+  t: Messages;
+}) {
   if (overview.services.length === 0) {
-    return <EmptyState>No heartbeat yet. Check service logs.</EmptyState>;
+    return <EmptyState>{t.service.empty}</EmptyState>;
   }
 
   return (
@@ -282,22 +393,24 @@ function ServicePanel({ overview }: { overview: DashboardOverview }) {
           </div>
           <div className="heartbeat-line">
             <span />
-            <small>heartbeat {formatDate(service.updatedAt)}</small>
+            <small>
+              {t.service.heartbeat} {formatDate(service.updatedAt, locale)}
+            </small>
           </div>
           <dl>
             <div>
-              <dt>service</dt>
+              <dt>{t.service.service}</dt>
               <dd>{service.serviceId}</dd>
             </div>
             <div>
-              <dt>rooms</dt>
+              <dt>{t.service.rooms}</dt>
               <dd>
-                {service.activeRooms}/{service.totalRooms} active
+                {service.activeRooms}/{service.totalRooms} {t.status.active}
               </dd>
             </div>
             <div>
-              <dt>updated</dt>
-              <dd>{formatDate(service.updatedAt)}</dd>
+              <dt>{t.service.updated}</dt>
+              <dd>{formatDate(service.updatedAt, locale)}</dd>
             </div>
           </dl>
         </section>
@@ -306,7 +419,13 @@ function ServicePanel({ overview }: { overview: DashboardOverview }) {
   );
 }
 
-function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
+function RoomPanel({
+  snapshots,
+  t,
+}: {
+  snapshots: StatusSnapshot[];
+  t: Messages;
+}) {
   const entries = snapshots.flatMap((snapshot) =>
     snapshot.entries.map((entry) => ({
       ...entry,
@@ -315,7 +434,7 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
   );
 
   if (entries.length === 0) {
-    return <EmptyState>No rooms yet.</EmptyState>;
+    return <EmptyState>{t.rooms.empty}</EmptyState>;
   }
 
   return (
@@ -324,11 +443,11 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
         <table>
           <thead>
             <tr>
-              <th>room</th>
-              <th>service</th>
-              <th>agent</th>
-              <th>status</th>
-              <th>queue</th>
+              <th>{t.rooms.room}</th>
+              <th>{t.rooms.service}</th>
+              <th>{t.rooms.agent}</th>
+              <th>{t.rooms.status}</th>
+              <th>{t.rooms.queue}</th>
             </tr>
           </thead>
           <tbody>
@@ -344,13 +463,12 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
                 <td>{entry.agentType}</td>
                 <td>
                   <span className={`pill pill-${entry.status}`}>
-                    {statusLabel(entry.status)}
+                    {statusLabel(entry.status, t)}
                   </span>
-                  <small>{formatDuration(entry.elapsedMs)}</small>
+                  <small>{formatDuration(entry.elapsedMs, t)}</small>
                 </td>
                 <td>
-                  {entry.pendingTasks} task
-                  {entry.pendingMessages ? ' · msg' : ''}
+                  {queueLabel(entry.pendingTasks, entry.pendingMessages, t)}
                 </td>
               </tr>
             ))}
@@ -358,7 +476,7 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
         </table>
       </div>
 
-      <div className="mobile-record-list" aria-label="Room status cards">
+      <div className="mobile-record-list" aria-label={t.rooms.cardsAria}>
         {entries.map((entry) => (
           <article
             className="record-card"
@@ -370,28 +488,27 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
                 <span className="mono-chip">{entry.folder}</span>
               </div>
               <span className={`pill pill-${entry.status}`}>
-                {statusLabel(entry.status)}
+                {statusLabel(entry.status, t)}
               </span>
             </div>
             <div className="record-card-grid">
               <span>
-                <small>queue</small>
+                <small>{t.rooms.queue}</small>
                 <strong>
-                  {entry.pendingTasks} task
-                  {entry.pendingMessages ? ' + msg' : ''}
+                  {queueLabel(entry.pendingTasks, entry.pendingMessages, t)}
                 </strong>
               </span>
               <span>
-                <small>agent</small>
+                <small>{t.rooms.agent}</small>
                 <strong>{entry.agentType}</strong>
               </span>
               <span>
-                <small>service</small>
+                <small>{t.rooms.service}</small>
                 <strong>{entry.serviceId}</strong>
               </span>
               <span>
-                <small>elapsed</small>
-                <strong>{formatDuration(entry.elapsedMs)}</strong>
+                <small>{t.rooms.elapsed}</small>
+                <strong>{formatDuration(entry.elapsedMs, t)}</strong>
               </span>
             </div>
             <p className="record-id">{entry.jid}</p>
@@ -402,7 +519,46 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
   );
 }
 
-function UsagePanel({ overview }: { overview: DashboardOverview }) {
+function UsageMeter({
+  label,
+  pct,
+  reset,
+  rowName,
+  t,
+}: {
+  label: string;
+  pct: number;
+  reset: string;
+  rowName: string;
+  t: Messages;
+}) {
+  return (
+    <div className="usage-window">
+      <div>
+        <span>{label}</span>
+        <strong>{formatPct(pct)}</strong>
+      </div>
+      <progress
+        aria-label={`${rowName} ${label} ${t.usage.usage} ${formatPct(pct)}`}
+        max={100}
+        value={Math.max(0, pct)}
+      />
+      <small>
+        {t.usage.reset} {reset || '-'}
+      </small>
+    </div>
+  );
+}
+
+function UsagePanel({
+  overview,
+  locale,
+  t,
+}: {
+  overview: DashboardOverview;
+  locale: Locale;
+  t: Messages;
+}) {
   const rows = useMemo(
     () => [...overview.usage.rows].sort((a, b) => usagePeak(b) - usagePeak(a)),
     [overview.usage.rows],
@@ -410,7 +566,7 @@ function UsagePanel({ overview }: { overview: DashboardOverview }) {
   const watched = rows.filter((row) => usagePeak(row) >= 65).length;
 
   if (rows.length === 0) {
-    return <EmptyState>No usage snapshot. Check collector.</EmptyState>;
+    return <EmptyState>{t.usage.empty}</EmptyState>;
   }
 
   const highest = rows[0];
@@ -419,53 +575,51 @@ function UsagePanel({ overview }: { overview: DashboardOverview }) {
     <div className="usage-dashboard">
       <div className="usage-summary">
         <div>
-          <span>Highest</span>
+          <span>{t.usage.highest}</span>
           <strong>
             {highest.name} · {formatPct(usagePeak(highest))}
           </strong>
         </div>
         <div>
-          <span>Watch</span>
+          <span>{t.usage.watch}</span>
           <strong>{watched}</strong>
         </div>
         <div>
-          <span>Updated</span>
-          <strong>{formatDate(overview.usage.fetchedAt)}</strong>
+          <span>{t.usage.updated}</span>
+          <strong>{formatDate(overview.usage.fetchedAt, locale)}</strong>
         </div>
       </div>
 
-      <div className="usage-grid">
+      <div className="usage-matrix" role="table" aria-label={t.panels.usage}>
+        <div className="usage-matrix-head" role="row">
+          <span>{t.usage.usage}</span>
+          <span>{t.usage.window5h}</span>
+          <span>{t.usage.window7d}</span>
+        </div>
         {rows.map((row) => {
-          const risk = usageRisk(row);
+          const risk = usageRiskLevel(row);
           return (
-            <section
-              className={`usage-card usage-${risk.level}`}
-              key={row.name}
-            >
-              <div className="usage-card-head">
+            <section className={`usage-row usage-${risk}`} key={row.name}>
+              <div className="usage-account">
                 <strong>{row.name}</strong>
-                <span className={`pill pill-${risk.level}`}>{risk.label}</span>
+                <span className={`pill pill-${risk}`}>
+                  {t.usage.risk[risk]}
+                </span>
               </div>
-              <div className="usage-score">
-                <span>Peak</span>
-                <strong>{formatPct(usagePeak(row))}</strong>
-              </div>
-              <div className="usage-meter">
-                <div>
-                  <span>5h</span>
-                  <strong>{formatPct(row.h5pct)}</strong>
-                </div>
-                <progress max={100} value={row.h5pct} />
-                <small>reset {row.h5reset}</small>
-              </div>
-              <div className="usage-meter">
-                <div>
-                  <span>7d</span>
-                  <strong>{formatPct(row.d7pct)}</strong>
-                </div>
-                <progress max={100} value={row.d7pct} />
-                <small>reset {row.d7reset}</small>
-              </div>
+              <UsageMeter
+                label={t.usage.window5h}
+                pct={row.h5pct}
+                reset={row.h5reset}
+                rowName={row.name}
+                t={t}
+              />
+              <UsageMeter
+                label={t.usage.window7d}
+                pct={row.d7pct}
+                reset={row.d7reset}
+                rowName={row.name}
+                t={t}
+              />
             </section>
           );
         })}
@@ -474,7 +628,15 @@ function UsagePanel({ overview }: { overview: DashboardOverview }) {
   );
 }
 
-function TaskPanel({ tasks }: { tasks: DashboardTask[] }) {
+function TaskPanel({
+  tasks,
+  locale,
+  t,
+}: {
+  tasks: DashboardTask[];
+  locale: Locale;
+  t: Messages;
+}) {
   const sortedTasks = useMemo(
     () =>
       [...tasks].sort((a, b) => {
@@ -489,7 +651,7 @@ function TaskPanel({ tasks }: { tasks: DashboardTask[] }) {
   );
 
   if (sortedTasks.length === 0) {
-    return <EmptyState>No scheduled work.</EmptyState>;
+    return <EmptyState>{t.tasks.empty}</EmptyState>;
   }
 
   return (
@@ -498,38 +660,40 @@ function TaskPanel({ tasks }: { tasks: DashboardTask[] }) {
         <table>
           <thead>
             <tr>
-              <th>task</th>
-              <th>status</th>
-              <th>schedule</th>
-              <th>next</th>
-              <th>last</th>
+              <th>{t.tasks.task}</th>
+              <th>{t.tasks.status}</th>
+              <th>{t.tasks.schedule}</th>
+              <th>{t.tasks.next}</th>
+              <th>{t.tasks.last}</th>
             </tr>
           </thead>
           <tbody>
             {sortedTasks.map((task) => (
               <tr key={task.id}>
                 <td>
-                  <strong>{task.isWatcher ? 'CI Watch' : task.id}</strong>
-                  <span>{task.promptPreview || '(empty prompt preview)'}</span>
+                  <strong>{task.isWatcher ? t.tasks.ciWatch : task.id}</strong>
+                  <span>{task.promptPreview || t.tasks.emptyPrompt}</span>
                   <small>
-                    {task.groupFolder} · {task.promptLength} chars
+                    {task.groupFolder} · {task.promptLength} {t.units.chars}
                   </small>
                 </td>
                 <td>
                   <span className={`pill pill-${task.status}`}>
-                    {statusLabel(task.status)}
+                    {statusLabel(task.status, t)}
                   </span>
                   {task.suspendedUntil ? (
-                    <small>until {formatDate(task.suspendedUntil)}</small>
+                    <small>
+                      {t.tasks.until} {formatDate(task.suspendedUntil, locale)}
+                    </small>
                   ) : null}
                 </td>
                 <td>
                   {task.scheduleType} · {task.scheduleValue}
                   <small>{task.contextMode}</small>
                 </td>
-                <td>{formatDate(task.nextRun)}</td>
+                <td>{formatDate(task.nextRun, locale)}</td>
                 <td>
-                  {formatDate(task.lastRun)}
+                  {formatDate(task.lastRun, locale)}
                   {task.lastResult ? <small>{task.lastResult}</small> : null}
                 </td>
               </tr>
@@ -538,39 +702,41 @@ function TaskPanel({ tasks }: { tasks: DashboardTask[] }) {
         </table>
       </div>
 
-      <div className="mobile-record-list" aria-label="Scheduled task cards">
+      <div className="mobile-record-list" aria-label={t.tasks.cardsAria}>
         {sortedTasks.map((task) => (
           <article className="record-card task-card" key={task.id}>
             <div className="record-card-head">
               <div>
-                <strong>{task.isWatcher ? 'CI Watch' : task.id}</strong>
+                <strong>{task.isWatcher ? t.tasks.ciWatch : task.id}</strong>
                 <span className="mono-chip">{task.groupFolder}</span>
               </div>
               <span className={`pill pill-${task.status}`}>
-                {statusLabel(task.status)}
+                {statusLabel(task.status, t)}
               </span>
             </div>
-            <p>{task.promptPreview || '(empty prompt preview)'}</p>
+            <p>{task.promptPreview || t.tasks.emptyPrompt}</p>
             <div className="record-card-grid">
               <span>
-                <small>schedule</small>
+                <small>{t.tasks.schedule}</small>
                 <strong>{task.scheduleType}</strong>
               </span>
               <span>
-                <small>next</small>
-                <strong>{formatDate(task.nextRun)}</strong>
+                <small>{t.tasks.next}</small>
+                <strong>{formatDate(task.nextRun, locale)}</strong>
               </span>
               <span>
-                <small>last</small>
-                <strong>{formatDate(task.lastRun)}</strong>
+                <small>{t.tasks.last}</small>
+                <strong>{formatDate(task.lastRun, locale)}</strong>
               </span>
               <span>
-                <small>context</small>
+                <small>{t.tasks.context}</small>
                 <strong>{task.contextMode}</strong>
               </span>
             </div>
             {task.lastResult ? (
-              <p className="record-id">last result: {task.lastResult}</p>
+              <p className="record-id">
+                {t.tasks.lastResult}: {task.lastResult}
+              </p>
             ) : null}
           </article>
         ))}
@@ -586,6 +752,13 @@ function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [locale, setLocale] = useState<Locale>(readInitialLocale);
+  const t = messages[locale];
+
+  function setDashboardLocale(nextLocale: Locale) {
+    setLocale(nextLocale);
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, nextLocale);
+  }
 
   async function refresh(showSpinner = false) {
     if (showSpinner) setRefreshing(true);
@@ -601,6 +774,10 @@ function App() {
       setRefreshing(false);
     }
   }
+
+  useEffect(() => {
+    document.documentElement.lang = localeTags[locale];
+  }, [locale]);
 
   useEffect(() => {
     void refresh();
@@ -622,102 +799,115 @@ function App() {
   }, [drawerOpen]);
 
   if (loading && !data) {
-    return <LoadingSkeleton />;
+    return <LoadingSkeleton t={t} />;
   }
 
   return (
-    <main className="shell">
-      <header className="hero">
-        <div>
-          <span className="eyebrow">EJClaw · read-only</span>
-          <h1>Operations</h1>
-          <p>Health · Queue · Usage · Rooms · Scheduled</p>
-        </div>
-        <button disabled={refreshing} onClick={() => void refresh(true)}>
-          {refreshing ? '새로고침 중' : '새로고침'}
-        </button>
-      </header>
-
-      <SectionNav
-        drawerOpen={drawerOpen}
+    <div className="shell">
+      <SideRail
         lastRefreshed={lastRefreshed}
-        onCloseDrawer={() => setDrawerOpen(false)}
-        onOpenDrawer={() => setDrawerOpen(true)}
-        onRefresh={() => void refresh(true)}
-        refreshing={refreshing}
+        locale={locale}
+        onLocaleChange={setDashboardLocale}
+        t={t}
       />
-
-      {error ? (
-        <section className="error-card">
-          <span>API 오류: {error}</span>
+      <main className="dashboard-content">
+        <header className="hero">
+          <div>
+            <span className="eyebrow">EJClaw · {t.app.readOnly}</span>
+            <h1>{t.app.title}</h1>
+            <p>{t.app.subtitle}</p>
+          </div>
           <button disabled={refreshing} onClick={() => void refresh(true)}>
-            다시 시도
+            {refreshing ? t.actions.refreshing : t.actions.refresh}
           </button>
-        </section>
-      ) : null}
+        </header>
 
-      {data ? (
-        <>
-          <ControlRail data={data} />
+        <SectionNav
+          drawerOpen={drawerOpen}
+          lastRefreshed={lastRefreshed}
+          locale={locale}
+          onCloseDrawer={() => setDrawerOpen(false)}
+          onLocaleChange={setDashboardLocale}
+          onOpenDrawer={() => setDrawerOpen(true)}
+          onRefresh={() => void refresh(true)}
+          refreshing={refreshing}
+          t={t}
+        />
 
-          <section className="metrics-grid">
-            <Card
-              label="agents"
-              value={data.overview.services.length}
-              hint={formatDate(data.overview.generatedAt)}
-            />
-            <Card
-              label="rooms"
-              value={data.overview.rooms.total}
-              hint={`${data.overview.rooms.active} processing · ${data.overview.rooms.waiting} waiting`}
-            />
-            <Card
-              label="tasks"
-              value={data.overview.tasks.total}
-              hint={`${data.overview.tasks.active} active · ${data.overview.tasks.paused} paused`}
-            />
-            <Card
-              label="CI watchers"
-              value={data.overview.tasks.watchers.active}
-              hint={`${data.overview.tasks.watchers.paused} paused · ${data.overview.tasks.watchers.completed} done`}
-            />
+        {error ? (
+          <section className="error-card">
+            <span>
+              {t.error.api}: {error}
+            </span>
+            <button disabled={refreshing} onClick={() => void refresh(true)}>
+              {t.actions.retry}
+            </button>
           </section>
+        ) : null}
 
-          <section className="panel" id="agents">
-            <div className="panel-title">
-              <h2>Health</h2>
-              <span>Heartbeat</span>
-            </div>
-            <ServicePanel overview={data.overview} />
-          </section>
+        {data ? (
+          <>
+            <ControlRail data={data} t={t} />
 
-          <section className="panel split-panel">
-            <div id="usage">
+            <section className="metrics-grid">
+              <Card
+                label={t.metrics.agents}
+                value={data.overview.services.length}
+                hint={formatDate(data.overview.generatedAt, locale)}
+              />
+              <Card
+                label={t.metrics.rooms}
+                value={data.overview.rooms.total}
+                hint={`${data.overview.rooms.active} ${t.status.processing} · ${data.overview.rooms.waiting} ${t.status.waiting}`}
+              />
+              <Card
+                label={t.metrics.tasks}
+                value={data.overview.tasks.total}
+                hint={`${data.overview.tasks.active} ${t.status.active} · ${data.overview.tasks.paused} ${t.status.paused}`}
+              />
+              <Card
+                label={t.metrics.ciWatchers}
+                value={data.overview.tasks.watchers.active}
+                hint={`${data.overview.tasks.watchers.paused} ${t.status.paused} · ${data.overview.tasks.watchers.completed} ${t.metrics.done}`}
+              />
+            </section>
+
+            <section className="panel" id="agents">
               <div className="panel-title">
-                <h2>Usage</h2>
-                <span>5h / 7d</span>
+                <h2>{t.panels.health}</h2>
+                <span>{t.panels.heartbeat}</span>
               </div>
-              <UsagePanel overview={data.overview} />
-            </div>
-            <div id="rooms">
-              <div className="panel-title">
-                <h2>Rooms</h2>
-                <span>Queue</span>
-              </div>
-              <RoomPanel snapshots={data.snapshots} />
-            </div>
-          </section>
+              <ServicePanel locale={locale} overview={data.overview} t={t} />
+            </section>
 
-          <section className="panel" id="work">
-            <div className="panel-title">
-              <h2>Scheduled</h2>
-              <span>Redacted previews</span>
-            </div>
-            <TaskPanel tasks={data.tasks} />
-          </section>
-        </>
-      ) : null}
-    </main>
+            <section className="panel split-panel">
+              <div id="usage">
+                <div className="panel-title">
+                  <h2>{t.panels.usage}</h2>
+                  <span>{t.panels.usageWindow}</span>
+                </div>
+                <UsagePanel locale={locale} overview={data.overview} t={t} />
+              </div>
+              <div id="rooms">
+                <div className="panel-title">
+                  <h2>{t.panels.rooms}</h2>
+                  <span>{t.panels.queue}</span>
+                </div>
+                <RoomPanel snapshots={data.snapshots} t={t} />
+              </div>
+            </section>
+
+            <section className="panel" id="work">
+              <div className="panel-title">
+                <h2>{t.panels.scheduled}</h2>
+                <span>{t.panels.redactedPreviews}</span>
+              </div>
+              <TaskPanel locale={locale} tasks={data.tasks} t={t} />
+            </section>
+          </>
+        ) : null}
+      </main>
+    </div>
   );
 }
 

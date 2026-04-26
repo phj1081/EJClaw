@@ -94,6 +94,83 @@ describe('web dashboard data', () => {
     expect(overview.usage.rows).toHaveLength(1);
   });
 
+  it('deduplicates full usage rows from renderer and codex snapshots', () => {
+    const snapshots: StatusSnapshot[] = [
+      {
+        serviceId: 'codex-main',
+        agentType: 'codex',
+        assistantName: 'Codex',
+        updatedAt: '2026-04-26T04:59:00.000Z',
+        entries: [],
+        usageRowsFetchedAt: '2026-04-26T04:59:00.000Z',
+        usageRows: [
+          {
+            name: 'Codex1',
+            h5pct: 20,
+            h5reset: '1h',
+            d7pct: 30,
+            d7reset: '2d',
+          },
+          {
+            name: 'Codex2',
+            h5pct: 15,
+            h5reset: '1h',
+            d7pct: 18,
+            d7reset: '2d',
+          },
+        ],
+      },
+      {
+        serviceId: 'claude-main',
+        agentType: 'claude-code',
+        assistantName: 'Claude',
+        updatedAt: '2026-04-26T05:00:00.000Z',
+        entries: [],
+        usageRowsFetchedAt: '2026-04-26T05:00:00.000Z',
+        usageRows: [
+          {
+            name: 'Claude1 Max',
+            h5pct: 66,
+            h5reset: '2h',
+            d7pct: 40,
+            d7reset: '4d',
+          },
+          {
+            name: 'Kimi',
+            h5pct: 10,
+            h5reset: '3h',
+            d7pct: 12,
+            d7reset: '5d',
+          },
+          {
+            name: 'Codex1',
+            h5pct: 25,
+            h5reset: '55m',
+            d7pct: 35,
+            d7reset: '2d',
+          },
+        ],
+      },
+    ];
+
+    const overview = buildWebDashboardOverview({
+      now: '2026-04-26T05:01:00.000Z',
+      snapshots,
+      tasks: [],
+    });
+
+    expect(overview.usage.rows.map((row) => row.name)).toEqual([
+      'Claude1 Max',
+      'Kimi',
+      'Codex1',
+      'Codex2',
+    ]);
+    expect(
+      overview.usage.rows.filter((row) => row.name === 'Codex1'),
+    ).toHaveLength(1);
+    expect(overview.usage.fetchedAt).toBe('2026-04-26T05:00:00.000Z');
+  });
+
   it('does not expose full scheduled task prompts through API payloads', () => {
     const sanitized = sanitizeScheduledTask(
       makeTask({

@@ -76,6 +76,26 @@ function buildPromptPreview(prompt: string): string {
   return truncateText(redactSensitiveText(prompt).replace(/\s+/g, ' ').trim());
 }
 
+function collectUsageRows(snapshots: StatusSnapshot[]): UsageRowSnapshot[] {
+  const rows: UsageRowSnapshot[] = [];
+  const seen = new Set<string>();
+  const sortedSnapshots = [...snapshots].sort((a, b) =>
+    (b.usageRowsFetchedAt ?? b.updatedAt).localeCompare(
+      a.usageRowsFetchedAt ?? a.updatedAt,
+    ),
+  );
+
+  for (const snapshot of sortedSnapshots) {
+    for (const row of snapshot.usageRows ?? []) {
+      if (seen.has(row.name)) continue;
+      seen.add(row.name);
+      rows.push(row);
+    }
+  }
+
+  return rows;
+}
+
 export function sanitizeScheduledTask(
   task: ScheduledTask,
 ): SanitizedScheduledTask {
@@ -162,9 +182,7 @@ export function buildWebDashboardOverview(args: {
     }
   }
 
-  const usageRows = args.snapshots.flatMap(
-    (snapshot) => snapshot.usageRows ?? [],
-  );
+  const usageRows = collectUsageRows(args.snapshots);
   const usageFetchedAt =
     args.snapshots
       .map((snapshot) => snapshot.usageRowsFetchedAt)
