@@ -1045,6 +1045,10 @@ progress::-moz-progress-bar {
     display: none;
   }
 
+  .section-nav .menu-button span {
+    display: block;
+  }
+
   .section-nav button {
     min-width: 0;
     color: transparent;
