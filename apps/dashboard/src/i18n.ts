@@ -90,6 +90,14 @@ export interface Messages {
   tasks: {
     empty: string;
     cardsAria: string;
+    groups: {
+      watchers: string;
+      scheduled: string;
+      paused: string;
+      completed: string;
+    };
+    count: string;
+    groupEmpty: string;
     task: string;
     status: string;
     schedule: string;
@@ -98,8 +106,16 @@ export interface Messages {
     context: string;
     ciWatch: string;
     emptyPrompt: string;
+    prompt: string;
     until: string;
+    suspendedUntil: string;
     lastResult: string;
+    result: string;
+    resultOk: string;
+    resultFail: string;
+    noResult: string;
+    noTime: string;
+    now: string;
   };
   status: {
     processing: string;
@@ -222,6 +238,14 @@ export const messages = {
     tasks: {
       empty: '예약 작업 없음.',
       cardsAria: '예약 작업 카드',
+      groups: {
+        watchers: 'CI 감시',
+        scheduled: '예약',
+        paused: '일시정지',
+        completed: '완료',
+      },
+      count: '개',
+      groupEmpty: '해당 없음',
       task: '작업',
       status: '상태',
       schedule: '스케줄',
@@ -230,8 +254,16 @@ export const messages = {
       context: '컨텍스트',
       ciWatch: 'CI 감시',
       emptyPrompt: '(빈 미리보기)',
+      prompt: '프롬프트',
       until: '까지',
+      suspendedUntil: '정지 해제',
       lastResult: '최근 결과',
+      result: '결과 없음',
+      resultOk: '정상',
+      resultFail: '실패',
+      noResult: '결과 없음',
+      noTime: '-',
+      now: '지금',
     },
     status: {
       processing: '처리중',
@@ -338,6 +370,14 @@ export const messages = {
     tasks: {
       empty: 'No scheduled work.',
       cardsAria: 'Scheduled task cards',
+      groups: {
+        watchers: 'CI watch',
+        scheduled: 'Scheduled',
+        paused: 'Paused',
+        completed: 'Completed',
+      },
+      count: 'items',
+      groupEmpty: 'None',
       task: 'task',
       status: 'status',
       schedule: 'schedule',
@@ -346,8 +386,16 @@ export const messages = {
       context: 'context',
       ciWatch: 'CI Watch',
       emptyPrompt: '(empty preview)',
+      prompt: 'prompt',
       until: 'until',
+      suspendedUntil: 'resume',
       lastResult: 'last result',
+      result: 'no result',
+      resultOk: 'ok',
+      resultFail: 'failed',
+      noResult: 'no result',
+      noTime: '-',
+      now: 'now',
     },
     status: {
       processing: 'processing',
@@ -454,6 +502,14 @@ export const messages = {
     tasks: {
       empty: '暂无计划任务。',
       cardsAria: '计划任务卡片',
+      groups: {
+        watchers: 'CI 监控',
+        scheduled: '计划',
+        paused: '暂停',
+        completed: '完成',
+      },
+      count: '项',
+      groupEmpty: '无',
       task: '任务',
       status: '状态',
       schedule: '计划',
@@ -462,8 +518,16 @@ export const messages = {
       context: '上下文',
       ciWatch: 'CI 监控',
       emptyPrompt: '（空预览）',
+      prompt: '提示',
       until: '直到',
+      suspendedUntil: '恢复',
       lastResult: '最近结果',
+      result: '无结果',
+      resultOk: '正常',
+      resultFail: '失败',
+      noResult: '无结果',
+      noTime: '-',
+      now: '现在',
     },
     status: {
       processing: '处理中',
@@ -570,6 +634,14 @@ export const messages = {
     tasks: {
       empty: '予定作業なし。',
       cardsAria: '予定作業カード',
+      groups: {
+        watchers: 'CI監視',
+        scheduled: '予定',
+        paused: '一時停止',
+        completed: '完了',
+      },
+      count: '件',
+      groupEmpty: 'なし',
       task: '作業',
       status: '状態',
       schedule: '予定',
@@ -578,8 +650,16 @@ export const messages = {
       context: 'コンテキスト',
       ciWatch: 'CI監視',
       emptyPrompt: '（空のプレビュー）',
+      prompt: 'プロンプト',
       until: 'まで',
+      suspendedUntil: '再開',
       lastResult: '直近結果',
+      result: '結果なし',
+      resultOk: '正常',
+      resultFail: '失敗',
+      noResult: '結果なし',
+      noTime: '-',
+      now: '今',
     },
     status: {
       processing: '処理中',

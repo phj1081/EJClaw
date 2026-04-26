@@ -28,6 +28,8 @@ type UsageRow = DashboardOverview['usage']['rows'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
 type UsageGroup = 'primary' | 'codex';
 type DashboardView = 'usage' | 'health' | 'rooms' | 'scheduled';
+type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
+type TaskResultTone = 'ok' | 'fail' | 'none';
 
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale';
@@ -82,6 +84,46 @@ function formatDate(value: string | null | undefined, locale: Locale): string {
   }).format(date);
 }
 
+function formatTaskDate(
+  value: string | null | undefined,
+  locale: Locale,
+): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(localeTags[locale], {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function formatRelativeDate(
+  value: string | null | undefined,
+  locale: Locale,
+  t: Messages,
+): string {
+  if (!value) return t.tasks.noTime;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const diffMs = date.getTime() - Date.now();
+  const absMs = Math.abs(diffMs);
+  if (absMs < 45_000) return t.tasks.now;
+
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['day', 86_400_000],
+    ['hour', 3_600_000],
+    ['minute', 60_000],
+  ];
+  const [unit, unitMs] =
+    units.find(([, threshold]) => absMs >= threshold) ?? units.at(-1)!;
+  return new Intl.RelativeTimeFormat(localeTags[locale], {
+    numeric: 'auto',
+    style: 'short',
+  }).format(Math.round(diffMs / unitMs), unit);
+}
+
 function formatPct(value: number): string {
   if (value < 0) return '-';
   return `${Math.round(value)}%`;
@@ -125,6 +167,52 @@ function queueLabel(
   const parts = [`${pendingTasks} ${t.units.task}`];
   if (pendingMessages) parts.push(t.units.messageShort);
   return parts.join(' · ');
+}
+
+const SECRET_ASSIGNMENT_RE =
+  /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH|PRIVATE_KEY)[A-Z0-9_]*)\s*=\s*([^\s"'`]+)/gi;
+const SECRET_VALUE_RE =
+  /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})\b/g;
+
+function safePreview(
+  value: string | null | undefined,
+  fallback: string,
+): string {
+  const cleaned = (value ?? '')
+    .replace(SECRET_ASSIGNMENT_RE, '$1=<redacted>')
+    .replace(SECRET_VALUE_RE, '<redacted-token>')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return fallback;
+  return cleaned.length > 120 ? `${cleaned.slice(0, 120)}...` : cleaned;
+}
+
+function taskGroupKey(task: DashboardTask): TaskGroupKey {
+  if (task.status === 'completed') return 'completed';
+  if (task.status === 'paused') return 'paused';
+  if (task.isWatcher) return 'watchers';
+  return 'scheduled';
+}
+
+function taskResultTone(task: DashboardTask): TaskResultTone {
+  if (!task.lastResult) return 'none';
+  const normalized = task.lastResult.toLowerCase();
+  if (
+    normalized.includes('fail') ||
+    normalized.includes('error') ||
+    normalized.includes('timeout') ||
+    normalized.includes('cancel') ||
+    normalized.includes('reject')
+  ) {
+    return 'fail';
+  }
+  return 'ok';
+}
+
+function taskDisplayName(task: DashboardTask, t: Messages): string {
+  if (task.isWatcher) return t.tasks.ciWatch;
+  if (task.scheduleType) return task.scheduleType;
+  return task.id;
 }
 
 function navItems(t: Messages) {
@@ -691,111 +779,178 @@ function TaskPanel({
   locale: Locale;
   t: Messages;
 }) {
-  const sortedTasks = useMemo(
-    () =>
-      [...tasks].sort((a, b) => {
-        const statusRank = { active: 0, paused: 1, completed: 2 } as const;
-        const rankDelta = statusRank[a.status] - statusRank[b.status];
-        if (rankDelta !== 0) return rankDelta;
-        return (a.nextRun ?? a.createdAt).localeCompare(
-          b.nextRun ?? b.createdAt,
-        );
-      }),
-    [tasks],
-  );
+  const taskGroups = useMemo(() => {
+    const groups: Record<TaskGroupKey, DashboardTask[]> = {
+      watchers: [],
+      scheduled: [],
+      paused: [],
+      completed: [],
+    };
 
-  if (sortedTasks.length === 0) {
+    for (const task of tasks) {
+      groups[taskGroupKey(task)].push(task);
+    }
+
+    for (const groupTasks of Object.values(groups)) {
+      groupTasks.sort((a, b) =>
+        (a.nextRun ?? a.lastRun ?? a.createdAt).localeCompare(
+          b.nextRun ?? b.lastRun ?? b.createdAt,
+        ),
+      );
+    }
+
+    return [
+      { key: 'watchers' as const, tasks: groups.watchers },
+      { key: 'scheduled' as const, tasks: groups.scheduled },
+      { key: 'paused' as const, tasks: groups.paused },
+      { key: 'completed' as const, tasks: groups.completed },
+    ];
+  }, [tasks]);
+
+  if (tasks.length === 0) {
     return <EmptyState>{t.tasks.empty}</EmptyState>;
   }
 
   return (
-    <>
-      <div className="table-wrap desktop-table">
-        <table>
-          <thead>
-            <tr>
-              <th>{t.tasks.task}</th>
-              <th>{t.tasks.status}</th>
-              <th>{t.tasks.schedule}</th>
-              <th>{t.tasks.next}</th>
-              <th>{t.tasks.last}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedTasks.map((task) => (
-              <tr key={task.id}>
-                <td>
-                  <strong>{task.isWatcher ? t.tasks.ciWatch : task.id}</strong>
-                  <span>{task.promptPreview || t.tasks.emptyPrompt}</span>
-                  <small>
-                    {task.groupFolder} · {task.promptLength} {t.units.chars}
-                  </small>
-                </td>
-                <td>
-                  <span className={`pill pill-${task.status}`}>
-                    {statusLabel(task.status, t)}
-                  </span>
-                  {task.suspendedUntil ? (
-                    <small>
-                      {t.tasks.until} {formatDate(task.suspendedUntil, locale)}
-                    </small>
-                  ) : null}
-                </td>
-                <td>
-                  {task.scheduleType} · {task.scheduleValue}
-                  <small>{task.contextMode}</small>
-                </td>
-                <td>{formatDate(task.nextRun, locale)}</td>
-                <td>
-                  {formatDate(task.lastRun, locale)}
-                  {task.lastResult ? <small>{task.lastResult}</small> : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+    <div className="task-board" aria-label={t.tasks.cardsAria}>
+      {taskGroups.map((group) => {
+        const label = t.tasks.groups[group.key];
+        const groupHead = (
+          <div className="task-group-head">
+            <div>
+              <span className="eyebrow">{label}</span>
+              <strong>
+                {group.tasks.length} {t.tasks.count}
+              </strong>
+            </div>
+            <span className={`pill pill-${group.key}`}>
+              {group.tasks.length}
+            </span>
+          </div>
+        );
+        const groupBody =
+          group.tasks.length === 0 ? (
+            <div className="task-group-empty">{t.tasks.groupEmpty}</div>
+          ) : (
+            <div className="task-list">
+              {group.tasks.map((task) => {
+                const resultTone = taskResultTone(task);
+                const lastResult = safePreview(
+                  task.lastResult,
+                  t.tasks.noResult,
+                );
+                return (
+                  <article
+                    className={`task-card task-card-${group.key}`}
+                    key={task.id}
+                  >
+                    <div className="task-card-main">
+                      <div className="task-title">
+                        <strong>{taskDisplayName(task, t)}</strong>
+                        <span className="mono-chip">{task.groupFolder}</span>
+                      </div>
+                      <div className="task-status-line">
+                        <span className={`pill pill-${task.status}`}>
+                          {statusLabel(task.status, t)}
+                        </span>
+                        {task.ciProvider ? (
+                          <span className="task-provider">
+                            {task.ciProvider}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
 
-      <div className="mobile-record-list" aria-label={t.tasks.cardsAria}>
-        {sortedTasks.map((task) => (
-          <article className="record-card task-card" key={task.id}>
-            <div className="record-card-head">
-              <div>
-                <strong>{task.isWatcher ? t.tasks.ciWatch : task.id}</strong>
-                <span className="mono-chip">{task.groupFolder}</span>
-              </div>
-              <span className={`pill pill-${task.status}`}>
-                {statusLabel(task.status, t)}
-              </span>
+                    <div className="task-time-grid">
+                      <span>
+                        <small>{t.tasks.next}</small>
+                        <strong>{formatTaskDate(task.nextRun, locale)}</strong>
+                        <em>{formatRelativeDate(task.nextRun, locale, t)}</em>
+                      </span>
+                      <span>
+                        <small>{t.tasks.last}</small>
+                        <strong>{formatTaskDate(task.lastRun, locale)}</strong>
+                        <em>{formatRelativeDate(task.lastRun, locale, t)}</em>
+                      </span>
+                      <span>
+                        <small>{t.tasks.schedule}</small>
+                        <strong>{task.scheduleType}</strong>
+                        <em>{task.scheduleValue}</em>
+                      </span>
+                    </div>
+
+                    {task.suspendedUntil ? (
+                      <div className="task-suspended">
+                        <span>{t.tasks.suspendedUntil}</span>
+                        <strong>
+                          {formatTaskDate(task.suspendedUntil, locale)}
+                        </strong>
+                        <em>
+                          {formatRelativeDate(task.suspendedUntil, locale, t)}
+                        </em>
+                      </div>
+                    ) : null}
+
+                    <div className={`task-result result-${resultTone}`}>
+                      <span>
+                        {resultTone === 'fail'
+                          ? t.tasks.resultFail
+                          : resultTone === 'ok'
+                            ? t.tasks.resultOk
+                            : t.tasks.result}
+                      </span>
+                      <strong>{lastResult}</strong>
+                    </div>
+
+                    <details className="task-prompt">
+                      <summary>{t.tasks.prompt}</summary>
+                      <p>
+                        {safePreview(task.promptPreview, t.tasks.emptyPrompt)}
+                      </p>
+                      <small>
+                        {task.id} · {task.contextMode} · {task.promptLength}{' '}
+                        {t.units.chars}
+                      </small>
+                    </details>
+                  </article>
+                );
+              })}
             </div>
-            <p>{task.promptPreview || t.tasks.emptyPrompt}</p>
-            <div className="record-card-grid">
-              <span>
-                <small>{t.tasks.schedule}</small>
-                <strong>{task.scheduleType}</strong>
-              </span>
-              <span>
-                <small>{t.tasks.next}</small>
-                <strong>{formatDate(task.nextRun, locale)}</strong>
-              </span>
-              <span>
-                <small>{t.tasks.last}</small>
-                <strong>{formatDate(task.lastRun, locale)}</strong>
-              </span>
-              <span>
-                <small>{t.tasks.context}</small>
-                <strong>{task.contextMode}</strong>
-              </span>
-            </div>
-            {task.lastResult ? (
-              <p className="record-id">
-                {t.tasks.lastResult}: {task.lastResult}
-              </p>
-            ) : null}
-          </article>
-        ))}
-      </div>
-    </>
+          );
+
+        if (group.key === 'completed') {
+          return (
+            <details
+              className="task-group task-group-completed"
+              key={group.key}
+            >
+              <summary className="task-group-head">
+                <div>
+                  <span className="eyebrow">{label}</span>
+                  <strong>
+                    {group.tasks.length} {t.tasks.count}
+                  </strong>
+                </div>
+                <span className={`pill pill-${group.key}`}>
+                  {group.tasks.length}
+                </span>
+              </summary>
+              {groupBody}
+            </details>
+          );
+        }
+
+        return (
+          <section
+            className={`task-group task-group-${group.key}`}
+            key={group.key}
+          >
+            {groupHead}
+            {groupBody}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
