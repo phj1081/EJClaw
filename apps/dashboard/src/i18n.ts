@@ -104,6 +104,13 @@ export interface Messages {
       warn: string;
       error: string;
     };
+    actions: {
+      run: string;
+      busy: string;
+      runReview: string;
+      finalize: string;
+      runArbiter: string;
+    };
   };
   rooms: {
     empty: string;
@@ -324,6 +331,13 @@ export const messages = {
         warn: '주의',
         error: '위험',
       },
+      actions: {
+        run: 'Run',
+        busy: 'Running...',
+        runReview: 'Run review',
+        finalize: 'Finalize',
+        runArbiter: 'Run arbiter',
+      },
     },
     rooms: {
       empty: '룸 없음.',
@@ -527,6 +541,13 @@ export const messages = {
         info: 'Info',
         warn: 'Warn',
         error: 'Risk',
+      },
+      actions: {
+        run: 'Run',
+        busy: 'Running...',
+        runReview: 'Run review',
+        finalize: 'Finalize',
+        runArbiter: 'Run arbiter',
       },
     },
     rooms: {
@@ -732,6 +753,13 @@ export const messages = {
         warn: '关注',
         error: '风险',
       },
+      actions: {
+        run: '运行',
+        busy: '运行中...',
+        runReview: '运行评审',
+        finalize: '完成',
+        runArbiter: '运行仲裁',
+      },
     },
     rooms: {
       empty: '暂无房间。',
@@ -935,6 +963,13 @@ export const messages = {
         info: '情報',
         warn: '注意',
         error: '危険',
+      },
+      actions: {
+        run: '実行',
+        busy: '実行中...',
+        runReview: 'レビュー実行',
+        finalize: 'Finalize',
+        runArbiter: '仲裁実行',
       },
     },
     rooms: {

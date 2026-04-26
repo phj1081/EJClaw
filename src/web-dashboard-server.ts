@@ -6,6 +6,7 @@ import {
   deleteTask,
   getAllOpenPairedTasks,
   getAllTasks,
+  getPairedTaskById,
   getTaskById,
   hasMessage,
   storeChatMetadata,
@@ -13,6 +14,8 @@ import {
   updateTask,
 } from './db.js';
 import { logger } from './logger.js';
+import { schedulePairedFollowUpIntent } from './message-runtime-follow-up.js';
+import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import {
   readStatusSnapshots,
   type StatusSnapshot,
@@ -31,6 +34,19 @@ import {
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
 const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
 
+type PairedFollowUpTask = Pick<
+  PairedTask,
+  'id' | 'status' | 'round_trip_count' | 'updated_at'
+>;
+
+type WebPairedFollowUpScheduler = (args: {
+  chatJid: string;
+  runId: string;
+  task: PairedFollowUpTask;
+  intentKind: ScheduledPairedFollowUpIntentKind;
+  enqueue: () => void;
+}) => boolean;
+
 export interface WebDashboardHandlerOptions {
   staticDir?: string;
   statusMaxAgeMs?: number;
@@ -43,6 +59,8 @@ export interface WebDashboardHandlerOptions {
   ) => void;
   deleteTask?: (id: string) => void;
   getPairedTasks?: () => PairedTask[];
+  getPairedTaskById?: (id: string) => PairedTask | undefined;
+  schedulePairedFollowUp?: WebPairedFollowUpScheduler;
   getRoomBindings?: () => Record<string, RegisteredGroup>;
   storeChatMetadata?: (
     chatJid: string,
@@ -134,9 +152,20 @@ function serveStaticFile(staticDir: string, pathname: string): Response {
 }
 
 type TaskAction = 'pause' | 'resume' | 'cancel';
+type InboxAction = 'run';
 
 function parseTaskActionPath(pathname: string): string | null {
   const match = pathname.match(/^\/api\/tasks\/([^/]+)\/actions$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function parseInboxActionPath(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/inbox\/([^/]+)\/actions$/);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
@@ -155,14 +184,54 @@ function parseRoomMessagePath(pathname: string): string | null {
   }
 }
 
+function parsePairedInboxTarget(
+  inboxId: string,
+): { taskId: string; status: PairedTask['status'] } | null {
+  if (!inboxId.startsWith('paired:')) return null;
+  const rest = inboxId.slice('paired:'.length);
+  const separatorIndex = rest.lastIndexOf(':');
+  if (separatorIndex <= 0 || separatorIndex === rest.length - 1) return null;
+  const status = rest.slice(separatorIndex + 1);
+  if (!isPairedTaskStatus(status)) return null;
+  return {
+    taskId: rest.slice(0, separatorIndex),
+    status,
+  };
+}
+
 function isTaskAction(value: unknown): value is TaskAction {
   return value === 'pause' || value === 'resume' || value === 'cancel';
+}
+
+function isInboxAction(value: unknown): value is InboxAction {
+  return value === 'run';
+}
+
+function isPairedTaskStatus(value: unknown): value is PairedTask['status'] {
+  return (
+    value === 'active' ||
+    value === 'review_ready' ||
+    value === 'in_review' ||
+    value === 'merge_ready' ||
+    value === 'completed' ||
+    value === 'arbiter_requested' ||
+    value === 'in_arbitration'
+  );
 }
 
 async function readTaskAction(request: Request): Promise<TaskAction | null> {
   try {
     const body = (await request.json()) as { action?: unknown };
     return isTaskAction(body.action) ? body.action : null;
+  } catch {
+    return null;
+  }
+}
+
+async function readInboxAction(request: Request): Promise<InboxAction | null> {
+  try {
+    const body = (await request.json()) as { action?: unknown };
+    return isInboxAction(body.action) ? body.action : null;
   } catch {
     return null;
   }
@@ -204,6 +273,25 @@ function makeWebMessageIdFromRequest(requestId: string | null): string {
   return requestId ? `web-${requestId}` : makeWebMessageId();
 }
 
+function makeWebRunId(prefix: string): string {
+  return `web-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function pairedFollowUpIntentForStatus(
+  status: PairedTask['status'],
+): ScheduledPairedFollowUpIntentKind | null {
+  if (status === 'review_ready' || status === 'in_review') {
+    return 'reviewer-turn';
+  }
+  if (status === 'merge_ready') {
+    return 'finalize-owner-turn';
+  }
+  if (status === 'arbiter_requested' || status === 'in_arbitration') {
+    return 'arbiter-turn';
+  }
+  return null;
+}
+
 export function createWebDashboardHandler(
   opts: WebDashboardHandlerOptions = {},
 ): (request: Request) => Response | Promise<Response> {
@@ -213,6 +301,9 @@ export function createWebDashboardHandler(
   const mutateTask = opts.updateTask ?? updateTask;
   const removeTask = opts.deleteTask ?? deleteTask;
   const loadPairedTasks = opts.getPairedTasks ?? getAllOpenPairedTasks;
+  const loadPairedTaskById = opts.getPairedTaskById ?? getPairedTaskById;
+  const schedulePairedFollowUp =
+    opts.schedulePairedFollowUp ?? schedulePairedFollowUpIntent;
   const loadRoomBindings = opts.getRoomBindings;
   const writeChatMetadata = opts.storeChatMetadata ?? storeChatMetadata;
   const writeMessage = opts.storeMessage ?? storeMessage;
@@ -236,6 +327,7 @@ export function createWebDashboardHandler(
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const actionTaskId = parseTaskActionPath(url.pathname);
+    const actionInboxId = parseInboxActionPath(url.pathname);
     const messageRoomJid = parseRoomMessagePath(url.pathname);
 
     if (actionTaskId) {
@@ -274,6 +366,74 @@ export function createWebDashboardHandler(
       return jsonResponse({
         ok: true,
         task: updatedTask ? sanitizeScheduledTask(updatedTask) : null,
+      });
+    }
+
+    if (actionInboxId) {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
+      }
+
+      const action = await readInboxAction(request);
+      if (!action) {
+        return jsonResponse({ error: 'Invalid inbox action' }, { status: 400 });
+      }
+
+      const pairedTarget = parsePairedInboxTarget(actionInboxId);
+      if (!pairedTarget) {
+        return jsonResponse(
+          { error: 'Unsupported inbox action target' },
+          { status: 400 },
+        );
+      }
+
+      if (!enqueueMessageCheck) {
+        return jsonResponse(
+          { error: 'Paired follow-up queue is not configured' },
+          { status: 503 },
+        );
+      }
+
+      const task = loadPairedTaskById(pairedTarget.taskId);
+      if (!task) {
+        return jsonResponse(
+          { error: 'Paired task not found' },
+          { status: 404 },
+        );
+      }
+
+      if (task.status !== pairedTarget.status) {
+        return jsonResponse(
+          {
+            error: 'Inbox item is stale',
+            status: task.status,
+          },
+          { status: 409 },
+        );
+      }
+
+      const intentKind = pairedFollowUpIntentForStatus(task.status);
+      if (!intentKind) {
+        return jsonResponse(
+          { error: 'Paired task is not actionable' },
+          { status: 409 },
+        );
+      }
+
+      const queued = schedulePairedFollowUp({
+        chatJid: task.chat_jid,
+        runId: makeWebRunId('inbox'),
+        task,
+        intentKind,
+        enqueue: () => enqueueMessageCheck(task.chat_jid, task.group_folder),
+      });
+
+      return jsonResponse({
+        ok: true,
+        id: actionInboxId,
+        taskId: task.id,
+        intentKind,
+        queued,
       });
     }
 

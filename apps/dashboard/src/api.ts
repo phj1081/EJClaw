@@ -101,6 +101,7 @@ export interface DashboardTask {
 }
 
 export type DashboardTaskAction = 'pause' | 'resume' | 'cancel';
+export type DashboardInboxAction = 'run';
 
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(path, {
@@ -158,6 +159,21 @@ export async function runScheduledTaskAction(
   task?: DashboardTask | null;
 }> {
   return postJson(`/api/tasks/${encodeURIComponent(taskId)}/actions`, {
+    action,
+  });
+}
+
+export async function runInboxAction(
+  inboxId: string,
+  action: DashboardInboxAction,
+): Promise<{
+  ok: true;
+  id: string;
+  taskId: string;
+  intentKind: string;
+  queued: boolean;
+}> {
+  return postJson(`/api/inbox/${encodeURIComponent(inboxId)}/actions`, {
     action,
   });
 }
