@@ -140,12 +140,6 @@ function usagePeak(row: UsageRow): number {
   return Math.max(row.h5pct, row.d7pct);
 }
 
-function usageRemaining(row: UsageRow): number | null {
-  const peak = usagePeak(row);
-  if (peak < 0) return null;
-  return Math.max(0, 100 - peak);
-}
-
 function usageLimitWindow(row: UsageRow): UsageLimitWindow {
   return row.d7pct >= row.h5pct ? 'd7' : 'h5';
 }
@@ -187,8 +181,8 @@ function usageNameParts(row: UsageRow): {
   return { account: cleaned, plan: null };
 }
 
-function usageLimitReset(row: UsageRow): string {
-  return (usageLimitWindow(row) === 'd7' ? row.d7reset : row.h5reset).trim();
+function usageWindowReset(row: UsageRow, window: UsageLimitWindow): string {
+  return (window === 'd7' ? row.d7reset : row.h5reset).trim();
 }
 
 function usageBurnRate(row: UsageRow): number | null {
@@ -929,50 +923,36 @@ function RoomPanel({
   );
 }
 
-function UsageRemainingMeter({
+function UsageQuotaMeter({
   row,
   rowName,
+  window,
   t,
 }: {
   row: UsageRow;
   rowName: string;
+  window: UsageLimitWindow;
   t: Messages;
 }) {
-  const remaining = usageRemaining(row);
-  const window = usageLimitWindow(row);
-  const h5Remaining = usageWindowRemaining(row, 'h5');
-  const d7Remaining = usageWindowRemaining(row, 'd7');
-  const reset = usageLimitReset(row);
+  const remaining = usageWindowRemaining(row, window);
+  const reset = usageWindowReset(row, window);
+  const tightest = usageLimitWindow(row) === window;
+  const label = t.usage.quota[window];
 
   return (
-    <div className="usage-remaining">
+    <div className={`usage-quota ${tightest ? 'usage-quota-tight' : ''}`}>
       <div>
-        <span>{t.usage.remaining}</span>
+        <span>{label}</span>
         <strong>{remaining === null ? '-' : formatPct(remaining)}</strong>
       </div>
       <progress
-        aria-label={`${rowName} ${t.usage.remaining} ${
+        aria-label={`${rowName} ${label} ${
           remaining === null ? '-' : formatPct(remaining)
         }`}
         max={100}
         value={remaining ?? 0}
       />
-      <div className="quota-pair" aria-label={`${rowName} quota windows`}>
-        <span className={window === 'h5' ? 'is-tight' : undefined}>
-          <b>{t.usage.quota.h5}</b>
-          <em>{h5Remaining === null ? '-' : formatPct(h5Remaining)}</em>
-          <progress max={100} value={h5Remaining ?? 0} />
-        </span>
-        <span className={window === 'd7' ? 'is-tight' : undefined}>
-          <b>{t.usage.quota.d7}</b>
-          <em>{d7Remaining === null ? '-' : formatPct(d7Remaining)}</em>
-          <progress max={100} value={d7Remaining ?? 0} />
-        </span>
-      </div>
-      <small>
-        {remaining === null ? '-' : t.usage.limitBasis[window]}
-        {reset ? ` · ${t.usage.reset} ${reset}` : ` · ${t.usage.noReset}`}
-      </small>
+      <small>{reset ? `${t.usage.reset} ${reset}` : t.usage.noReset}</small>
     </div>
   );
 }
@@ -1017,8 +997,13 @@ function UsagePanel({
   const focusValue = focusRows
     .map((row) => {
       const { account } = usageNameParts(row);
-      const remaining = usageRemaining(row);
-      return `${account} ${remaining === null ? '-' : formatPct(remaining)}`;
+      const h5Remaining = usageWindowRemaining(row, 'h5');
+      const d7Remaining = usageWindowRemaining(row, 'd7');
+      return `${account} ${t.usage.quota.h5} ${
+        h5Remaining === null ? '-' : formatPct(h5Remaining)
+      } · ${t.usage.quota.d7} ${
+        d7Remaining === null ? '-' : formatPct(d7Remaining)
+      }`;
     })
     .join(' · ');
   const groups = [
@@ -1050,7 +1035,8 @@ function UsagePanel({
       <div className="usage-matrix" role="table" aria-label={t.panels.usage}>
         <div className="usage-matrix-head" role="row">
           <span>{t.usage.usage}</span>
-          <span>{t.usage.remaining}</span>
+          <span>{t.usage.quota.h5}</span>
+          <span>{t.usage.quota.d7}</span>
           <span>{t.usage.speed}</span>
         </div>
         {groups.map((group) => (
@@ -1077,7 +1063,18 @@ function UsagePanel({
                       ) : null}
                     </div>
                   </div>
-                  <UsageRemainingMeter row={row} rowName={account} t={t} />
+                  <UsageQuotaMeter
+                    row={row}
+                    rowName={account}
+                    window="h5"
+                    t={t}
+                  />
+                  <UsageQuotaMeter
+                    row={row}
+                    rowName={account}
+                    window="d7"
+                    t={t}
+                  />
                   <UsageSpeed row={row} t={t} />
                 </section>
               );

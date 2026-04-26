@@ -622,7 +622,7 @@ td small {
 }
 
 .usage-summary span,
-.usage-remaining small {
+.usage-quota small {
   color: var(--muted);
 }
 
@@ -642,10 +642,9 @@ td small {
 .usage-matrix-head,
 .usage-row {
   display: grid;
-  grid-template-columns: minmax(132px, 0.78fr) minmax(0, 1fr) minmax(
-      96px,
-      0.46fr
-    );
+  grid-template-columns:
+    minmax(132px, 0.82fr) minmax(82px, 0.42fr) minmax(82px, 0.42fr)
+    minmax(84px, 0.34fr);
   gap: 8px;
   align-items: center;
 }
@@ -693,7 +692,7 @@ td small {
 }
 
 .usage-account,
-.usage-remaining div {
+.usage-quota div {
   display: flex;
   min-width: 0;
   gap: 8px;
@@ -723,7 +722,7 @@ td small {
   white-space: nowrap;
 }
 
-.usage-remaining span,
+.usage-quota span,
 .usage-speed span {
   color: var(--muted);
   font-size: 11px;
@@ -732,57 +731,42 @@ td small {
   text-transform: uppercase;
 }
 
-.usage-remaining,
+.usage-quota,
 .usage-speed {
   display: grid;
   min-width: 0;
   gap: 5px;
 }
 
-.quota-pair {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
+.usage-quota {
+  padding: 6px;
+  border-radius: 13px;
+  background: rgba(43, 55, 38, 0.035);
 }
 
-.quota-pair span {
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-  padding: 5px;
-  border-radius: 11px;
-  background: rgba(43, 55, 38, 0.045);
-}
-
-.quota-pair span.is-tight {
-  background: rgba(191, 95, 44, 0.11);
+.usage-quota-tight {
+  background: rgba(191, 95, 44, 0.1);
   box-shadow: inset 0 0 0 1px rgba(191, 95, 44, 0.16);
 }
 
-.quota-pair b,
-.quota-pair em {
+.usage-quota strong {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.usage-quota small {
   min-width: 0;
   overflow: hidden;
+  color: var(--muted);
   font-size: 10px;
-  font-style: normal;
-  font-weight: 900;
-  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.quota-pair b {
-  color: var(--muted);
-}
-
-.quota-pair progress {
-  height: 5px;
-}
-
 .usage-speed {
-  min-height: 54px;
+  min-height: 48px;
   align-content: center;
-  padding: 8px;
+  padding: 6px;
   border-radius: 14px;
   background: rgba(43, 55, 38, 0.045);
 }
@@ -1603,8 +1587,10 @@ progress::-moz-progress-bar {
   }
 
   .usage-row {
-    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr) minmax(90px, 0.5fr);
-    gap: 6px;
+    grid-template-columns:
+      minmax(86px, 0.86fr) minmax(62px, 0.54fr) minmax(62px, 0.54fr)
+      minmax(58px, 0.4fr);
+    gap: 5px;
     padding: 9px;
   }
 
@@ -1613,28 +1599,24 @@ progress::-moz-progress-bar {
     gap: 5px;
   }
 
-  .usage-remaining,
+  .usage-quota,
   .usage-speed {
     gap: 4px;
   }
 
-  .usage-remaining div {
+  .usage-quota {
+    padding: 5px;
+  }
+
+  .usage-quota div {
     gap: 6px;
   }
 
-  .usage-remaining small {
+  .usage-quota small {
     overflow: hidden;
-    font-size: 11px;
+    font-size: 10px;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .quota-pair {
-    gap: 4px;
-  }
-
-  .quota-pair span {
-    padding: 4px;
   }
 
   .record-card-grid {
@@ -1730,6 +1712,14 @@ progress::-moz-progress-bar {
 
   .usage-account {
     grid-column: 1 / -1;
+  }
+
+  .usage-speed {
+    grid-column: 1 / -1;
+    display: flex;
+    min-height: auto;
+    align-items: center;
+    justify-content: space-between;
   }
 
   .skeleton-grid,
