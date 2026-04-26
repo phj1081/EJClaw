@@ -84,6 +84,53 @@ function EmptyState({ children }: { children: ReactNode }) {
   return <div className="empty-state">{children}</div>;
 }
 
+function LoadingSkeleton() {
+  return (
+    <main className="shell shell-loading" aria-busy="true">
+      <section className="hero skeleton-hero">
+        <div>
+          <span className="skeleton-line skeleton-short" />
+          <span className="skeleton-line skeleton-title" />
+          <span className="skeleton-line skeleton-copy" />
+        </div>
+        <span className="skeleton-button" />
+      </section>
+      <section className="metrics-grid">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div className="card metric-card skeleton-card" key={index}>
+            <span className="skeleton-line skeleton-short" />
+            <span className="skeleton-line skeleton-number" />
+            <span className="skeleton-line skeleton-copy" />
+          </div>
+        ))}
+      </section>
+    </main>
+  );
+}
+
+function SectionNav({
+  lastRefreshed,
+  refreshing,
+  onRefresh,
+}: {
+  lastRefreshed: string | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <nav className="section-nav" aria-label="Dashboard sections">
+      <a href="#overview">Summary</a>
+      <a href="#agents">Agents</a>
+      <a href="#rooms">Rooms</a>
+      <a href="#work">Work</a>
+      <button disabled={refreshing} onClick={onRefresh} type="button">
+        {refreshing ? '...' : 'Refresh'}
+      </button>
+      <span>Updated {formatDate(lastRefreshed)}</span>
+    </nav>
+  );
+}
+
 function ControlRail({ data }: { data: DashboardState }) {
   const queue = data.snapshots.reduce(
     (acc, snapshot) => {
@@ -97,7 +144,11 @@ function ControlRail({ data }: { data: DashboardState }) {
   );
 
   return (
-    <section className="control-rail" aria-label="control plane summary">
+    <section
+      className="control-rail"
+      id="overview"
+      aria-label="control plane summary"
+    >
       <div>
         <span className="eyebrow">agent heartbeat</span>
         <strong>
@@ -113,7 +164,7 @@ function ControlRail({ data }: { data: DashboardState }) {
       </div>
       <div>
         <span className="eyebrow">governance</span>
-        <strong>read-only</strong>
+        <strong>read only</strong>
         <small>no approvals, merges, or worker kills in MVP</small>
       </div>
       <div>
@@ -182,42 +233,86 @@ function RoomPanel({ snapshots }: { snapshots: StatusSnapshot[] }) {
   }
 
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>room</th>
-            <th>service</th>
-            <th>agent</th>
-            <th>status</th>
-            <th>queue</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry) => (
-            <tr key={`${entry.serviceId}:${entry.jid}`}>
-              <td>
-                <strong>{entry.name}</strong>
-                <span>
-                  {entry.folder} · {entry.jid}
-                </span>
-              </td>
-              <td>{entry.serviceId}</td>
-              <td>{entry.agentType}</td>
-              <td>
-                <span className={`pill pill-${entry.status}`}>
-                  {statusLabel(entry.status)}
-                </span>
-                <small>{formatDuration(entry.elapsedMs)}</small>
-              </td>
-              <td>
-                {entry.pendingTasks} task{entry.pendingMessages ? ' · msg' : ''}
-              </td>
+    <>
+      <div className="table-wrap desktop-table">
+        <table>
+          <thead>
+            <tr>
+              <th>room</th>
+              <th>service</th>
+              <th>agent</th>
+              <th>status</th>
+              <th>queue</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr key={`${entry.serviceId}:${entry.jid}`}>
+                <td>
+                  <strong>{entry.name}</strong>
+                  <span>
+                    {entry.folder} · {entry.jid}
+                  </span>
+                </td>
+                <td>{entry.serviceId}</td>
+                <td>{entry.agentType}</td>
+                <td>
+                  <span className={`pill pill-${entry.status}`}>
+                    {statusLabel(entry.status)}
+                  </span>
+                  <small>{formatDuration(entry.elapsedMs)}</small>
+                </td>
+                <td>
+                  {entry.pendingTasks} task
+                  {entry.pendingMessages ? ' · msg' : ''}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mobile-record-list" aria-label="Room status cards">
+        {entries.map((entry) => (
+          <article
+            className="record-card"
+            key={`${entry.serviceId}:${entry.jid}`}
+          >
+            <div className="record-card-head">
+              <div>
+                <strong>{entry.name}</strong>
+                <span className="mono-chip">{entry.folder}</span>
+              </div>
+              <span className={`pill pill-${entry.status}`}>
+                {statusLabel(entry.status)}
+              </span>
+            </div>
+            <div className="record-card-grid">
+              <span>
+                <small>queue</small>
+                <strong>
+                  {entry.pendingTasks} task
+                  {entry.pendingMessages ? ' + msg' : ''}
+                </strong>
+              </span>
+              <span>
+                <small>agent</small>
+                <strong>{entry.agentType}</strong>
+              </span>
+              <span>
+                <small>service</small>
+                <strong>{entry.serviceId}</strong>
+              </span>
+              <span>
+                <small>elapsed</small>
+                <strong>{formatDuration(entry.elapsedMs)}</strong>
+              </span>
+            </div>
+            <p className="record-id">{entry.jid}</p>
+          </article>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -276,49 +371,89 @@ function TaskPanel({ tasks }: { tasks: DashboardTask[] }) {
   }
 
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>task</th>
-            <th>status</th>
-            <th>schedule</th>
-            <th>next</th>
-            <th>last</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sortedTasks.map((task) => (
-            <tr key={task.id}>
-              <td>
-                <strong>{task.isWatcher ? 'CI Watch' : task.id}</strong>
-                <span>{task.promptPreview || '(empty prompt preview)'}</span>
-                <small>
-                  {task.groupFolder} · {task.promptLength} chars
-                </small>
-              </td>
-              <td>
-                <span className={`pill pill-${task.status}`}>
-                  {statusLabel(task.status)}
-                </span>
-                {task.suspendedUntil ? (
-                  <small>until {formatDate(task.suspendedUntil)}</small>
-                ) : null}
-              </td>
-              <td>
-                {task.scheduleType} · {task.scheduleValue}
-                <small>{task.contextMode}</small>
-              </td>
-              <td>{formatDate(task.nextRun)}</td>
-              <td>
-                {formatDate(task.lastRun)}
-                {task.lastResult ? <small>{task.lastResult}</small> : null}
-              </td>
+    <>
+      <div className="table-wrap desktop-table">
+        <table>
+          <thead>
+            <tr>
+              <th>task</th>
+              <th>status</th>
+              <th>schedule</th>
+              <th>next</th>
+              <th>last</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {sortedTasks.map((task) => (
+              <tr key={task.id}>
+                <td>
+                  <strong>{task.isWatcher ? 'CI Watch' : task.id}</strong>
+                  <span>{task.promptPreview || '(empty prompt preview)'}</span>
+                  <small>
+                    {task.groupFolder} · {task.promptLength} chars
+                  </small>
+                </td>
+                <td>
+                  <span className={`pill pill-${task.status}`}>
+                    {statusLabel(task.status)}
+                  </span>
+                  {task.suspendedUntil ? (
+                    <small>until {formatDate(task.suspendedUntil)}</small>
+                  ) : null}
+                </td>
+                <td>
+                  {task.scheduleType} · {task.scheduleValue}
+                  <small>{task.contextMode}</small>
+                </td>
+                <td>{formatDate(task.nextRun)}</td>
+                <td>
+                  {formatDate(task.lastRun)}
+                  {task.lastResult ? <small>{task.lastResult}</small> : null}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mobile-record-list" aria-label="Scheduled task cards">
+        {sortedTasks.map((task) => (
+          <article className="record-card task-card" key={task.id}>
+            <div className="record-card-head">
+              <div>
+                <strong>{task.isWatcher ? 'CI Watch' : task.id}</strong>
+                <span className="mono-chip">{task.groupFolder}</span>
+              </div>
+              <span className={`pill pill-${task.status}`}>
+                {statusLabel(task.status)}
+              </span>
+            </div>
+            <p>{task.promptPreview || '(empty prompt preview)'}</p>
+            <div className="record-card-grid">
+              <span>
+                <small>schedule</small>
+                <strong>{task.scheduleType}</strong>
+              </span>
+              <span>
+                <small>next</small>
+                <strong>{formatDate(task.nextRun)}</strong>
+              </span>
+              <span>
+                <small>last</small>
+                <strong>{formatDate(task.lastRun)}</strong>
+              </span>
+              <span>
+                <small>context</small>
+                <strong>{task.contextMode}</strong>
+              </span>
+            </div>
+            {task.lastResult ? (
+              <p className="record-id">last result: {task.lastResult}</p>
+            ) : null}
+          </article>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -327,12 +462,14 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
 
   async function refresh(showSpinner = false) {
     if (showSpinner) setRefreshing(true);
     try {
       const nextData = await fetchDashboardData();
       setData(nextData);
+      setLastRefreshed(new Date().toISOString());
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -351,9 +488,7 @@ function App() {
   }, []);
 
   if (loading && !data) {
-    return (
-      <main className="shell loading">EJClaw Dashboard 불러오는 중...</main>
-    );
+    return <LoadingSkeleton />;
   }
 
   return (
@@ -372,8 +507,19 @@ function App() {
         </button>
       </header>
 
+      <SectionNav
+        lastRefreshed={lastRefreshed}
+        onRefresh={() => void refresh(true)}
+        refreshing={refreshing}
+      />
+
       {error ? (
-        <section className="error-card">API 오류: {error}</section>
+        <section className="error-card">
+          <span>API 오류: {error}</span>
+          <button disabled={refreshing} onClick={() => void refresh(true)}>
+            다시 시도
+          </button>
+        </section>
       ) : null}
 
       {data ? (
@@ -403,7 +549,7 @@ function App() {
             />
           </section>
 
-          <section className="panel">
+          <section className="panel" id="agents">
             <div className="panel-title">
               <h2>Agent Heartbeats</h2>
               <span>최근 heartbeat 기준</span>
@@ -412,14 +558,14 @@ function App() {
           </section>
 
           <section className="panel split-panel">
-            <div>
+            <div id="usage">
               <div className="panel-title">
                 <h2>Cost & Quota</h2>
                 <span>5h / 7d usage snapshot</span>
               </div>
               <UsagePanel overview={data.overview} />
             </div>
-            <div>
+            <div id="rooms">
               <div className="panel-title">
                 <h2>Rooms & Queues</h2>
                 <span>processing / waiting / inactive</span>
@@ -428,7 +574,7 @@ function App() {
             </div>
           </section>
 
-          <section className="panel">
+          <section className="panel" id="work">
             <div className="panel-title">
               <h2>Scheduled Work</h2>
               <span>watchers, heartbeats, redacted prompt previews</span>
