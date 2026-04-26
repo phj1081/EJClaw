@@ -701,15 +701,13 @@ function HealthPanel({
   ).length;
   const healthLevel: HealthLevel =
     down > 0 ? 'down' : stale > 0 || ciFailures > 0 ? 'stale' : 'ok';
+  const affectedServices = serviceLevels.filter((item) => item.level !== 'ok');
 
   return (
     <div className="health-board">
       <section className={`health-overview health-${healthLevel}`}>
-        <div>
-          <span className="eyebrow">{t.health.system}</span>
-          <strong>{t.health.levels[healthLevel]}</strong>
-        </div>
-        <p>{t.health.summary}</p>
+        <span className="eyebrow">{t.health.system}</span>
+        <strong>{t.health.levels[healthLevel]}</strong>
       </section>
 
       <section className="health-signals" aria-label={t.health.signals}>
@@ -745,32 +743,36 @@ function HealthPanel({
 
       {services.length === 0 ? (
         <EmptyState>{t.service.empty}</EmptyState>
-      ) : (
-        <div className="health-service-list">
-          {serviceLevels.map(({ service, level, age }) => (
-            <article className="health-service" key={service.serviceId}>
-              <div>
-                <span className="eyebrow">{service.agentType}</span>
-                <strong>{service.assistantName}</strong>
-                <small>{service.serviceId}</small>
-              </div>
-              <span className={`pill pill-${level}`}>
-                {t.health.levels[level]}
-              </span>
-              <div>
-                <small>{t.service.updated}</small>
-                <strong>{formatDate(service.updatedAt, locale)}</strong>
-                <em>{formatDuration(age, t)}</em>
-              </div>
-              <div>
-                <small>{t.service.rooms}</small>
-                <strong>
-                  {service.activeRooms}/{service.totalRooms}
-                </strong>
-              </div>
-            </article>
-          ))}
-        </div>
+      ) : affectedServices.length === 0 ? null : (
+        <details className="health-service-details">
+          <summary>
+            {t.health.affectedServices}
+            <strong>{affectedServices.length}</strong>
+          </summary>
+          <div className="health-service-list">
+            {affectedServices.map(({ service, level, age }) => (
+              <article className="health-service" key={service.serviceId}>
+                <div>
+                  <strong>{service.assistantName || service.serviceId}</strong>
+                </div>
+                <span className={`pill pill-${level}`}>
+                  {t.health.levels[level]}
+                </span>
+                <div>
+                  <small>{t.service.updated}</small>
+                  <strong>{formatDate(service.updatedAt, locale)}</strong>
+                  <em>{formatDuration(age, t)}</em>
+                </div>
+                <div>
+                  <small>{t.service.rooms}</small>
+                  <strong>
+                    {service.activeRooms}/{service.totalRooms}
+                  </strong>
+                </div>
+              </article>
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );

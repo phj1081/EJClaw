@@ -813,7 +813,8 @@ progress::-moz-progress-bar {
 .health-signals div,
 .health-overview,
 .inbox-card,
-.health-service {
+.health-service,
+.health-service-details {
   border: 1px solid rgba(43, 55, 38, 0.1);
   border-radius: 18px;
   background: rgba(255, 250, 240, 0.64);
@@ -954,23 +955,17 @@ progress::-moz-progress-bar {
 }
 
 .health-overview {
-  display: grid;
-  grid-template-columns: minmax(0, 0.42fr) minmax(0, 1fr);
-  gap: 14px;
+  display: flex;
+  gap: 10px;
   align-items: center;
-  padding: 16px;
+  justify-content: space-between;
+  padding: 11px 12px;
 }
 
 .health-overview strong {
   display: block;
-  margin-top: 4px;
-  font-size: clamp(24px, 3vw, 40px);
-  letter-spacing: -0.05em;
-}
-
-.health-overview p {
-  margin: 0;
-  color: var(--muted);
+  font-size: clamp(20px, 2vw, 28px);
+  letter-spacing: -0.04em;
 }
 
 .health-down {
@@ -984,6 +979,30 @@ progress::-moz-progress-bar {
 .health-service-list {
   display: grid;
   gap: 8px;
+}
+
+.health-service-details {
+  padding: 10px;
+}
+
+.health-service-details summary {
+  display: flex;
+  min-height: 34px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--bg-ink);
+  font-size: 13px;
+  font-weight: 900;
+  list-style: none;
+}
+
+.health-service-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.health-service-details[open] summary {
+  margin-bottom: 8px;
 }
 
 .health-service {
