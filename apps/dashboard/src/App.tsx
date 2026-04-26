@@ -682,7 +682,9 @@ function InboxPanel({
             item.source === 'scheduled-task' && item.taskId
               ? tasks.find((task) => task.id === item.taskId)
               : undefined;
-          const linkedTaskActions = linkedTask ? taskActionsFor(linkedTask) : [];
+          const linkedTaskActions = linkedTask
+            ? taskActionsFor(linkedTask)
+            : [];
           return (
             <article
               className={`inbox-card inbox-${item.severity}`}
@@ -741,9 +743,7 @@ function InboxPanel({
                         onClick={() => onTaskAction(linkedTask, action)}
                         type="button"
                       >
-                        {busy
-                          ? t.tasks.actions.busy
-                          : t.tasks.actions[action]}
+                        {busy ? t.tasks.actions.busy : t.tasks.actions[action]}
                       </button>
                     );
                   })}
