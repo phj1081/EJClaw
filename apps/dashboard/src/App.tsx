@@ -160,7 +160,10 @@ function usageLimited(row: UsageRow): boolean {
   return row.name.includes('!');
 }
 
-function usageNameParts(row: UsageRow): { account: string; plan: string | null } {
+function usageNameParts(row: UsageRow): {
+  account: string;
+  plan: string | null;
+} {
   const cleaned = row.name.replace(/[*!]/g, '').replace(/\s+/g, ' ').trim();
   const parts = cleaned.split(' ');
   const plan = parts.at(-1) ?? null;

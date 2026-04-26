@@ -666,7 +666,10 @@ td small {
 .usage-matrix-head,
 .usage-row {
   display: grid;
-  grid-template-columns: minmax(132px, 0.78fr) minmax(0, 1fr) minmax(96px, 0.46fr);
+  grid-template-columns: minmax(132px, 0.78fr) minmax(0, 1fr) minmax(
+      96px,
+      0.46fr
+    );
   gap: 8px;
   align-items: center;
 }
