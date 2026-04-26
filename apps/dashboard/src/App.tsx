@@ -26,6 +26,7 @@ interface DashboardState {
 
 type UsageRow = DashboardOverview['usage']['rows'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
+type UsageGroup = 'primary' | 'codex';
 
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale';
@@ -78,6 +79,10 @@ function usageRiskLevel(row: UsageRow): RiskLevel {
   return 'ok';
 }
 
+function usageGroup(row: UsageRow): UsageGroup {
+  return row.name.toLowerCase().startsWith('codex') ? 'codex' : 'primary';
+}
+
 function statusLabel(status: string, t: Messages): string {
   if (status in t.status) return t.status[status as keyof Messages['status']];
   return status;
@@ -110,24 +115,6 @@ function navItems(t: Messages) {
     { href: '#rooms', label: t.nav.rooms },
     { href: '#work', label: t.nav.scheduled },
   ];
-}
-
-function Card({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-}) {
-  return (
-    <section className="card metric-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {hint ? <small>{hint}</small> : null}
-    </section>
-  );
 }
 
 function EmptyState({ children }: { children: ReactNode }) {
@@ -169,9 +156,9 @@ function LoadingSkeleton({ t }: { t: Messages }) {
         <span className="skeleton-line skeleton-copy" />
         <span className="skeleton-button" />
       </section>
-      <section className="metrics-grid" aria-label={t.app.loading}>
+      <section className="skeleton-grid" aria-label={t.app.loading}>
         {Array.from({ length: 4 }, (_, index) => (
-          <div className="card metric-card skeleton-card" key={index}>
+          <div className="card skeleton-card" key={index}>
             <span className="skeleton-line skeleton-short" />
             <span className="skeleton-line skeleton-number" />
             <span className="skeleton-line skeleton-copy" />
@@ -186,11 +173,15 @@ function SideRail({
   lastRefreshed,
   locale,
   onLocaleChange,
+  onRefresh,
+  refreshing,
   t,
 }: {
   lastRefreshed: string | null;
   locale: Locale;
   onLocaleChange: (locale: Locale) => void;
+  onRefresh: () => void;
+  refreshing: boolean;
   t: Messages;
 }) {
   return (
@@ -207,6 +198,15 @@ function SideRail({
         ))}
       </nav>
       <LanguageSelector locale={locale} onLocaleChange={onLocaleChange} t={t} />
+      <button
+        aria-busy={refreshing}
+        className="side-refresh"
+        disabled={refreshing}
+        onClick={onRefresh}
+        type="button"
+      >
+        {refreshing ? t.actions.refreshing : t.actions.refresh}
+      </button>
       <div className="drawer-meta">
         <span>{t.nav.updated}</span>
         <strong>{formatDate(lastRefreshed, locale)}</strong>
@@ -251,7 +251,7 @@ function SectionNav({
           <span />
           <span />
         </button>
-        <strong className="topbar-label">EJClaw</strong>
+        <strong className="topbar-label">{t.nav.usage}</strong>
         <button
           aria-busy={refreshing}
           aria-label={refreshing ? t.actions.refreshing : t.actions.refresh}
@@ -331,9 +331,9 @@ function ControlRail({ data, t }: { data: DashboardState; t: Messages }) {
   );
 
   return (
-    <section className="control-rail" id="overview" aria-label={t.control.aria}>
+    <section className="ops-strip" id="overview" aria-label={t.control.aria}>
       <div>
-        <span className="eyebrow">{t.control.heartbeat}</span>
+        <span>{t.metrics.rooms}</span>
         <strong>
           {data.overview.rooms.active + data.overview.rooms.waiting}/
           {data.overview.rooms.total}
@@ -341,21 +341,23 @@ function ControlRail({ data, t }: { data: DashboardState; t: Messages }) {
         <small>{t.control.activeRooms}</small>
       </div>
       <div>
-        <span className="eyebrow">{t.control.queue}</span>
+        <span>{t.control.queue}</span>
         <strong>{queue.pendingTasks}</strong>
         <small>
           {queue.pendingMessageRooms} {t.control.pendingRooms}
         </small>
       </div>
       <div>
-        <span className="eyebrow">{t.control.governance}</span>
-        <strong>{t.control.readOnly}</strong>
-        <small>{t.control.writesDisabled}</small>
+        <span>{t.metrics.agents}</span>
+        <strong>{data.overview.services.length}</strong>
+        <small>{t.panels.heartbeat}</small>
       </div>
       <div>
-        <span className="eyebrow">{t.control.audit}</span>
-        <strong>{t.control.redacted}</strong>
-        <small>{t.control.previewOnly}</small>
+        <span>{t.metrics.ciWatchers}</span>
+        <strong>{data.overview.tasks.watchers.active}</strong>
+        <small>
+          {data.overview.tasks.watchers.paused} {t.status.paused}
+        </small>
       </div>
     </section>
   );
@@ -550,10 +552,7 @@ function UsagePanel({
   locale: Locale;
   t: Messages;
 }) {
-  const rows = useMemo(
-    () => [...overview.usage.rows].sort((a, b) => usagePeak(b) - usagePeak(a)),
-    [overview.usage.rows],
-  );
+  const rows = useMemo(() => [...overview.usage.rows], [overview.usage.rows]);
   const watched = rows.filter((row) => usagePeak(row) >= 65).length;
 
   if (rows.length === 0) {
@@ -561,6 +560,18 @@ function UsagePanel({
   }
 
   const highest = rows[0];
+  const groups = [
+    {
+      key: 'primary' as const,
+      label: t.usage.groupPrimary,
+      rows: rows.filter((row) => usageGroup(row) === 'primary'),
+    },
+    {
+      key: 'codex' as const,
+      label: t.usage.groupCodex,
+      rows: rows.filter((row) => usageGroup(row) === 'codex'),
+    },
+  ].filter((group) => group.rows.length > 0);
 
   return (
     <div className="usage-dashboard">
@@ -587,33 +598,40 @@ function UsagePanel({
           <span>{t.usage.window5h}</span>
           <span>{t.usage.window7d}</span>
         </div>
-        {rows.map((row) => {
-          const risk = usageRiskLevel(row);
-          return (
-            <section className={`usage-row usage-${risk}`} key={row.name}>
-              <div className="usage-account">
-                <strong>{row.name}</strong>
-                <span className={`pill pill-${risk}`}>
-                  {t.usage.risk[risk]}
-                </span>
-              </div>
-              <UsageMeter
-                label={t.usage.window5h}
-                pct={row.h5pct}
-                reset={row.h5reset}
-                rowName={row.name}
-                t={t}
-              />
-              <UsageMeter
-                label={t.usage.window7d}
-                pct={row.d7pct}
-                reset={row.d7reset}
-                rowName={row.name}
-                t={t}
-              />
-            </section>
-          );
-        })}
+        {groups.map((group) => (
+          <div className="usage-group" key={group.key} role="rowgroup">
+            <div className="usage-group-label" role="row">
+              <span>{group.label}</span>
+            </div>
+            {group.rows.map((row) => {
+              const risk = usageRiskLevel(row);
+              return (
+                <section className={`usage-row usage-${risk}`} key={row.name}>
+                  <div className="usage-account">
+                    <strong>{row.name}</strong>
+                    <span className={`pill pill-${risk}`}>
+                      {t.usage.risk[risk]}
+                    </span>
+                  </div>
+                  <UsageMeter
+                    label={t.usage.window5h}
+                    pct={row.h5pct}
+                    reset={row.h5reset}
+                    rowName={row.name}
+                    t={t}
+                  />
+                  <UsageMeter
+                    label={t.usage.window7d}
+                    pct={row.d7pct}
+                    reset={row.d7reset}
+                    rowName={row.name}
+                    t={t}
+                  />
+                </section>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -799,6 +817,8 @@ function App() {
         lastRefreshed={lastRefreshed}
         locale={locale}
         onLocaleChange={setDashboardLocale}
+        onRefresh={() => void refresh(true)}
+        refreshing={refreshing}
         t={t}
       />
       <main className="dashboard-content">
@@ -837,29 +857,6 @@ function App() {
 
             <ControlRail data={data} t={t} />
 
-            <section className="metrics-grid">
-              <Card
-                label={t.metrics.agents}
-                value={data.overview.services.length}
-                hint={formatDate(data.overview.generatedAt, locale)}
-              />
-              <Card
-                label={t.metrics.rooms}
-                value={data.overview.rooms.total}
-                hint={`${data.overview.rooms.active} ${t.status.processing} · ${data.overview.rooms.waiting} ${t.status.waiting}`}
-              />
-              <Card
-                label={t.metrics.tasks}
-                value={data.overview.tasks.total}
-                hint={`${data.overview.tasks.active} ${t.status.active} · ${data.overview.tasks.paused} ${t.status.paused}`}
-              />
-              <Card
-                label={t.metrics.ciWatchers}
-                value={data.overview.tasks.watchers.active}
-                hint={`${data.overview.tasks.watchers.paused} ${t.status.paused} · ${data.overview.tasks.watchers.completed} ${t.metrics.done}`}
-              />
-            </section>
-
             <section className="panel" id="agents">
               <div className="panel-title">
                 <h2>{t.panels.health}</h2>
@@ -879,7 +876,7 @@ function App() {
             <section className="panel" id="work">
               <div className="panel-title">
                 <h2>{t.panels.scheduled}</h2>
-                <span>{t.panels.redactedPreviews}</span>
+                <span>{t.panels.promptPreviews}</span>
               </div>
               <TaskPanel locale={locale} tasks={data.tasks} t={t} />
             </section>

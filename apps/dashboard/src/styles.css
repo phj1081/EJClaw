@@ -248,6 +248,19 @@ button:disabled {
   background: rgba(191, 95, 44, 0.12);
 }
 
+.side-refresh {
+  width: 100%;
+  min-height: 44px;
+  color: var(--bg-ink);
+  background: rgba(43, 55, 38, 0.08);
+  box-shadow: none;
+  font-weight: 900;
+}
+
+.side-refresh:hover {
+  background: rgba(191, 95, 44, 0.12);
+}
+
 .language-select {
   display: grid;
   gap: 8px;
@@ -390,14 +403,14 @@ button:disabled {
   flex: none;
 }
 
-.metrics-grid {
+.skeleton-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin: 0;
 }
 
-.control-rail {
+.ops-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;
@@ -409,11 +422,11 @@ button:disabled {
   box-shadow: 0 18px 50px rgba(44, 39, 25, 0.08);
 }
 
-.control-rail div {
+.ops-strip div {
   display: grid;
-  gap: 8px;
-  min-height: 116px;
-  padding: 20px;
+  gap: 5px;
+  min-height: 74px;
+  padding: 12px 14px;
   background:
     linear-gradient(
       145deg,
@@ -427,27 +440,34 @@ button:disabled {
     );
 }
 
-.control-rail strong {
-  font-size: clamp(22px, 3vw, 38px);
+.ops-strip span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ops-strip strong {
+  font-size: clamp(18px, 2vw, 28px);
   line-height: 1;
   letter-spacing: -0.05em;
 }
 
-.control-rail small {
+.ops-strip small {
   color: var(--muted);
+  font-size: 12px;
   line-height: 1.35;
 }
 
-.metric-card {
+.skeleton-card {
   display: grid;
   gap: 8px;
-  min-height: 142px;
+  min-height: 112px;
   padding: 22px;
   border-radius: 26px;
 }
 
-.metric-card span,
-.metric-card small,
 td span,
 td small,
 dd,
@@ -455,18 +475,6 @@ dd,
 .usage-title span,
 .bar-line small {
   color: var(--muted);
-}
-
-.metric-card span {
-  font-weight: 850;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.metric-card strong {
-  font-size: clamp(36px, 5vw, 66px);
-  line-height: 0.9;
-  letter-spacing: -0.07em;
 }
 
 .panel {
@@ -709,6 +717,24 @@ td small {
   background: rgba(43, 55, 38, 0.055);
 }
 
+.usage-group {
+  display: grid;
+}
+
+.usage-group + .usage-group {
+  border-top: 1px solid rgba(43, 55, 38, 0.12);
+}
+
+.usage-group-label {
+  padding: 7px 10px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: rgba(191, 95, 44, 0.07);
+}
+
 .usage-row {
   --meter: var(--green);
   padding: 8px 10px;
@@ -926,7 +952,7 @@ progress::-moz-progress-bar {
 }
 
 @media (min-width: 981px) {
-  .section-nav .menu-button {
+  .section-nav {
     display: none;
   }
 }
@@ -940,11 +966,11 @@ progress::-moz-progress-bar {
     display: none;
   }
 
-  .metrics-grid {
+  .skeleton-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .control-rail {
+  .ops-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1023,25 +1049,23 @@ progress::-moz-progress-bar {
     content: '…';
   }
 
-  .metrics-grid,
-  .control-rail {
+  .skeleton-grid,
+  .ops-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
   }
 
-  .control-rail div,
-  .metric-card {
-    min-height: 112px;
+  .ops-strip div,
+  .skeleton-card {
+    min-height: 84px;
     padding: 14px;
   }
 
-  .control-rail strong,
-  .metric-card strong {
-    font-size: clamp(28px, 10vw, 42px);
+  .ops-strip strong {
+    font-size: clamp(22px, 8vw, 34px);
   }
 
-  .metric-card small,
-  .control-rail small {
+  .ops-strip small {
     font-size: 12px;
   }
 
@@ -1119,8 +1143,8 @@ progress::-moz-progress-bar {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .metrics-grid,
-  .control-rail {
+  .skeleton-grid,
+  .ops-strip {
     gap: 8px;
   }
 

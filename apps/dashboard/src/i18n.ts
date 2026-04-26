@@ -5,9 +5,6 @@ export type Locale = (typeof LOCALES)[number];
 export interface Messages {
   app: {
     loading: string;
-    readOnly: string;
-    title: string;
-    subtitle: string;
   };
   actions: {
     close: string;
@@ -24,10 +21,8 @@ export interface Messages {
     operations: string;
     updated: string;
     health: string;
-    agents: string;
     usage: string;
     rooms: string;
-    work: string;
     scheduled: string;
   };
   language: {
@@ -38,23 +33,14 @@ export interface Messages {
   };
   control: {
     aria: string;
-    heartbeat: string;
     queue: string;
-    governance: string;
-    audit: string;
     activeRooms: string;
     pendingRooms: string;
-    readOnly: string;
-    writesDisabled: string;
-    redacted: string;
-    previewOnly: string;
   };
   metrics: {
     agents: string;
     rooms: string;
-    tasks: string;
     ciWatchers: string;
-    done: string;
   };
   panels: {
     health: string;
@@ -64,7 +50,7 @@ export interface Messages {
     rooms: string;
     queue: string;
     scheduled: string;
-    redactedPreviews: string;
+    promptPreviews: string;
   };
   service: {
     empty: string;
@@ -93,6 +79,8 @@ export interface Messages {
     usage: string;
     window5h: string;
     window7d: string;
+    groupPrimary: string;
+    groupCodex: string;
     risk: {
       ok: string;
       warn: string;
@@ -149,9 +137,6 @@ export const messages = {
   ko: {
     app: {
       loading: '대시보드 로딩 중',
-      readOnly: '읽기 전용',
-      title: '운영',
-      subtitle: '상태 · 큐 · 사용량 · 룸 · 예약',
     },
     actions: {
       close: '닫기',
@@ -168,10 +153,8 @@ export const messages = {
       operations: '운영',
       updated: '갱신',
       health: '상태',
-      agents: '에이전트',
       usage: '사용량',
       rooms: '룸',
-      work: '작업',
       scheduled: '예약',
     },
     language: {
@@ -182,23 +165,14 @@ export const messages = {
     },
     control: {
       aria: '컨트롤 플레인 요약',
-      heartbeat: '에이전트 상태',
       queue: '작업 큐',
-      governance: '권한',
-      audit: '감사',
       activeRooms: '처리 + 대기 룸',
       pendingRooms: '메시지 대기 룸',
-      readOnly: '읽기 전용',
-      writesDisabled: '쓰기 작업 비활성',
-      redacted: '마스킹',
-      previewOnly: '120자 미리보기만',
     },
     metrics: {
       agents: '에이전트',
       rooms: '룸',
-      tasks: '작업',
       ciWatchers: 'CI 감시',
-      done: '완료',
     },
     panels: {
       health: '상태',
@@ -208,7 +182,7 @@ export const messages = {
       rooms: '룸',
       queue: '큐',
       scheduled: '예약',
-      redactedPreviews: '마스킹 미리보기',
+      promptPreviews: '프롬프트 미리보기',
     },
     service: {
       empty: '하트비트 없음. 서비스 로그 확인.',
@@ -237,6 +211,8 @@ export const messages = {
       usage: '사용량',
       window5h: '5시간',
       window7d: '7일',
+      groupPrimary: 'Claude / Kimi',
+      groupCodex: 'Codex',
       risk: {
         ok: '여유',
         warn: '주의',
@@ -277,9 +253,6 @@ export const messages = {
   en: {
     app: {
       loading: 'Loading dashboard',
-      readOnly: 'read-only',
-      title: 'Ops',
-      subtitle: 'Health · Queue · Usage · Rooms · Scheduled',
     },
     actions: {
       close: 'Close',
@@ -296,10 +269,8 @@ export const messages = {
       operations: 'Ops',
       updated: 'Updated',
       health: 'Health',
-      agents: 'Agents',
       usage: 'Usage',
       rooms: 'Rooms',
-      work: 'Work',
       scheduled: 'Scheduled',
     },
     language: {
@@ -310,23 +281,14 @@ export const messages = {
     },
     control: {
       aria: 'Control plane summary',
-      heartbeat: 'Agent heartbeat',
       queue: 'Work queue',
-      governance: 'Governance',
-      audit: 'Audit',
       activeRooms: 'processing + waiting rooms',
       pendingRooms: 'rooms with pending messages',
-      readOnly: 'read only',
-      writesDisabled: 'writes disabled',
-      redacted: 'redacted',
-      previewOnly: '120-char preview only',
     },
     metrics: {
       agents: 'agents',
       rooms: 'rooms',
-      tasks: 'tasks',
       ciWatchers: 'CI watchers',
-      done: 'done',
     },
     panels: {
       health: 'Health',
@@ -336,7 +298,7 @@ export const messages = {
       rooms: 'Rooms',
       queue: 'Queue',
       scheduled: 'Scheduled',
-      redactedPreviews: 'Redacted previews',
+      promptPreviews: 'Prompt previews',
     },
     service: {
       empty: 'No heartbeat yet. Check service logs.',
@@ -365,6 +327,8 @@ export const messages = {
       usage: 'usage',
       window5h: '5h',
       window7d: '7d',
+      groupPrimary: 'Claude / Kimi',
+      groupCodex: 'Codex',
       risk: {
         ok: 'Clear',
         warn: 'Watch',
@@ -405,9 +369,6 @@ export const messages = {
   zh: {
     app: {
       loading: '正在加载仪表盘',
-      readOnly: '只读',
-      title: '运营',
-      subtitle: '健康 · 队列 · 用量 · 房间 · 计划',
     },
     actions: {
       close: '关闭',
@@ -424,10 +385,8 @@ export const messages = {
       operations: '运营',
       updated: '更新',
       health: '健康',
-      agents: '代理',
       usage: '用量',
       rooms: '房间',
-      work: '任务',
       scheduled: '计划',
     },
     language: {
@@ -438,23 +397,14 @@ export const messages = {
     },
     control: {
       aria: '控制平面摘要',
-      heartbeat: '代理心跳',
       queue: '任务队列',
-      governance: '治理',
-      audit: '审计',
       activeRooms: '处理中 + 等待房间',
       pendingRooms: '有待处理消息的房间',
-      readOnly: '只读',
-      writesDisabled: '写入已禁用',
-      redacted: '已脱敏',
-      previewOnly: '仅 120 字预览',
     },
     metrics: {
       agents: '代理',
       rooms: '房间',
-      tasks: '任务',
       ciWatchers: 'CI 监控',
-      done: '完成',
     },
     panels: {
       health: '健康',
@@ -464,7 +414,7 @@ export const messages = {
       rooms: '房间',
       queue: '队列',
       scheduled: '计划',
-      redactedPreviews: '脱敏预览',
+      promptPreviews: '提示预览',
     },
     service: {
       empty: '暂无心跳。检查服务日志。',
@@ -493,6 +443,8 @@ export const messages = {
       usage: '用量',
       window5h: '5小时',
       window7d: '7天',
+      groupPrimary: 'Claude / Kimi',
+      groupCodex: 'Codex',
       risk: {
         ok: '充足',
         warn: '关注',
@@ -533,9 +485,6 @@ export const messages = {
   ja: {
     app: {
       loading: 'ダッシュボードを読み込み中',
-      readOnly: '読み取り専用',
-      title: '運用',
-      subtitle: '状態 · キュー · 使用量 · ルーム · 予定',
     },
     actions: {
       close: '閉じる',
@@ -552,10 +501,8 @@ export const messages = {
       operations: '運用',
       updated: '更新',
       health: '状態',
-      agents: 'エージェント',
       usage: '使用量',
       rooms: 'ルーム',
-      work: '作業',
       scheduled: '予定',
     },
     language: {
@@ -566,23 +513,14 @@ export const messages = {
     },
     control: {
       aria: 'コントロールプレーン概要',
-      heartbeat: 'エージェント状態',
       queue: '作業キュー',
-      governance: '権限',
-      audit: '監査',
       activeRooms: '処理中 + 待機ルーム',
       pendingRooms: 'メッセージ待ちルーム',
-      readOnly: '読み取り専用',
-      writesDisabled: '書き込み無効',
-      redacted: 'マスク済み',
-      previewOnly: '120字プレビューのみ',
     },
     metrics: {
       agents: 'エージェント',
       rooms: 'ルーム',
-      tasks: '作業',
       ciWatchers: 'CI監視',
-      done: '完了',
     },
     panels: {
       health: '状態',
@@ -592,7 +530,7 @@ export const messages = {
       rooms: 'ルーム',
       queue: 'キュー',
       scheduled: '予定',
-      redactedPreviews: 'マスク済みプレビュー',
+      promptPreviews: 'プロンプトプレビュー',
     },
     service: {
       empty: 'ハートビートなし。サービスログを確認。',
@@ -621,6 +559,8 @@ export const messages = {
       usage: '使用量',
       window5h: '5時間',
       window7d: '7日',
+      groupPrimary: 'Claude / Kimi',
+      groupCodex: 'Codex',
       risk: {
         ok: '余裕',
         warn: '注意',
