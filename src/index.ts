@@ -526,6 +526,7 @@ async function main(): Promise<void> {
     getRoomBindings: runtimeState.getRoomBindings,
     enqueueMessageCheck: (chatJid, groupFolder) =>
       queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder)),
+    nudgeScheduler: nudgeSchedulerLoop,
   });
 
   leaseRecoveryTimer = setInterval(() => {

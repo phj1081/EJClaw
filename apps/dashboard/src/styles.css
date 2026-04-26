@@ -1138,6 +1138,104 @@ progress::-moz-progress-bar {
   gap: 12px;
 }
 
+.task-create-form,
+.task-edit-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid rgba(43, 55, 38, 0.11);
+  border-radius: 22px;
+  background: rgba(255, 250, 240, 0.72);
+}
+
+.task-edit-form {
+  grid-template-columns:
+    minmax(0, 1.4fr) minmax(110px, 0.6fr) minmax(0, 1fr)
+    auto;
+  margin-top: 8px;
+  padding: 9px;
+  border-radius: 16px;
+}
+
+.task-create-head {
+  align-self: center;
+}
+
+.task-create-head strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 16px;
+  letter-spacing: -0.03em;
+}
+
+.task-create-form label,
+.task-edit-form label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.task-create-form input,
+.task-create-form select,
+.task-create-form textarea,
+.task-edit-form input,
+.task-edit-form select,
+.task-edit-form textarea {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(43, 55, 38, 0.14);
+  border-radius: 13px;
+  padding: 8px 10px;
+  color: var(--ink);
+  background: rgba(255, 250, 240, 0.86);
+  font: inherit;
+  font-size: 13px;
+}
+
+.task-create-form textarea,
+.task-edit-form textarea {
+  min-height: 38px;
+  resize: vertical;
+}
+
+.task-create-form input:focus-visible,
+.task-create-form select:focus-visible,
+.task-create-form textarea:focus-visible,
+.task-edit-form input:focus-visible,
+.task-edit-form select:focus-visible,
+.task-edit-form textarea:focus-visible {
+  outline: 3px solid rgba(191, 95, 44, 0.18);
+}
+
+.task-create-form button,
+.task-edit-form button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 14px;
+  color: #fffaf0;
+  background: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.task-create-form button:disabled,
+.task-edit-form button:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
+
+.task-form-wide {
+  grid-column: span 2;
+}
+
 .task-group {
   display: grid;
   gap: 10px;
@@ -1350,6 +1448,7 @@ progress::-moz-progress-bar {
   color: var(--muted);
 }
 
+.task-edit summary,
 .task-prompt summary {
   min-height: 32px;
   color: var(--accent-strong);
@@ -1735,6 +1834,17 @@ progress::-moz-progress-bar {
 
   .task-group {
     padding: 10px;
+  }
+
+  .task-create-form,
+  .task-edit-form {
+    grid-template-columns: 1fr;
+    gap: 7px;
+    padding: 10px;
+  }
+
+  .task-form-wide {
+    grid-column: auto;
   }
 
   .task-list {

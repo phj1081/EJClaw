@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
+  type CreateScheduledTaskInput,
   type DashboardInboxAction,
+  type DashboardTaskContextMode,
+  type DashboardTaskScheduleType,
   type DashboardTaskAction,
   type DashboardOverview,
   type DashboardTask,
+  type UpdateScheduledTaskInput,
   type StatusSnapshot,
+  createScheduledTask,
   fetchDashboardData,
   runInboxAction,
   runScheduledTaskAction,
   sendRoomMessage,
+  updateScheduledTask,
 } from './api';
 import {
   LOCALES,
@@ -37,10 +43,19 @@ type UsageLimitWindow = 'h5' | 'd7';
 type DashboardView = 'usage' | 'inbox' | 'health' | 'rooms' | 'scheduled';
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
 type TaskResultTone = 'ok' | 'fail' | 'none';
-type TaskActionKey = `${string}:${DashboardTaskAction}`;
+type TaskActionKey =
+  | 'create'
+  | `${string}:edit`
+  | `${string}:${DashboardTaskAction}`;
 type InboxActionKey = `${string}:${DashboardInboxAction}`;
 type InboxFilter = 'all' | InboxItem['kind'];
 type HealthLevel = 'ok' | 'stale' | 'down';
+
+interface RoomOption {
+  jid: string;
+  name: string;
+  folder: string;
+}
 
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale.v2';
@@ -293,6 +308,85 @@ function taskActionsFor(task: DashboardTask): DashboardTaskAction[] {
   if (task.status === 'active') return ['pause', 'cancel'];
   if (task.status === 'paused') return ['resume', 'cancel'];
   return [];
+}
+
+function buildRoomOptions(snapshots: StatusSnapshot[]): RoomOption[] {
+  const rooms = new Map<string, RoomOption>();
+  for (const snapshot of snapshots) {
+    for (const entry of snapshot.entries) {
+      if (!rooms.has(entry.jid)) {
+        rooms.set(entry.jid, {
+          jid: entry.jid,
+          name: entry.name || entry.folder || entry.jid,
+          folder: entry.folder,
+        });
+      }
+    }
+  }
+  return [...rooms.values()].sort((a, b) =>
+    `${a.name} ${a.folder}`.localeCompare(`${b.name} ${b.folder}`),
+  );
+}
+
+function isTaskScheduleType(
+  value: FormDataEntryValue | null,
+): value is DashboardTaskScheduleType {
+  return value === 'cron' || value === 'interval' || value === 'once';
+}
+
+function isTaskContextMode(
+  value: FormDataEntryValue | null,
+): value is DashboardTaskContextMode {
+  return value === 'group' || value === 'isolated';
+}
+
+function readRequiredText(form: FormData, name: string): string | null {
+  const value = form.get(name);
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function readTaskForm(
+  form: FormData,
+  includeRoom: true,
+): CreateScheduledTaskInput | null;
+function readTaskForm(
+  form: FormData,
+  includeRoom: false,
+): UpdateScheduledTaskInput | null;
+function readTaskForm(
+  form: FormData,
+  includeRoom: boolean,
+): CreateScheduledTaskInput | UpdateScheduledTaskInput | null {
+  const prompt = readRequiredText(form, 'prompt');
+  const scheduleValue = readRequiredText(form, 'scheduleValue');
+  const scheduleTypeValue = form.get('scheduleType');
+  if (!scheduleValue || !isTaskScheduleType(scheduleTypeValue)) {
+    return null;
+  }
+  const scheduleType = scheduleTypeValue;
+
+  if (!includeRoom) {
+    return prompt
+      ? { prompt, scheduleType, scheduleValue }
+      : { scheduleType, scheduleValue };
+  }
+
+  if (!prompt) {
+    return null;
+  }
+
+  const roomJid = readRequiredText(form, 'roomJid');
+  const contextMode = form.get('contextMode');
+  if (!roomJid || !isTaskContextMode(contextMode)) return null;
+  return {
+    contextMode,
+    prompt,
+    roomJid,
+    scheduleType,
+    scheduleValue,
+  };
 }
 
 function inboxActionsFor(item: InboxItem): DashboardInboxAction[] {
@@ -1262,14 +1356,20 @@ function UsagePanel({
 
 function TaskPanel({
   tasks,
+  rooms,
   locale,
   onTaskAction,
+  onTaskCreate,
+  onTaskUpdate,
   taskActionKey,
   t,
 }: {
   tasks: DashboardTask[];
+  rooms: RoomOption[];
   locale: Locale;
   onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
+  onTaskCreate: (input: CreateScheduledTaskInput) => void;
+  onTaskUpdate: (task: DashboardTask, input: UpdateScheduledTaskInput) => void;
   taskActionKey: TaskActionKey | null;
   t: Messages;
 }) {
@@ -1301,12 +1401,73 @@ function TaskPanel({
     ];
   }, [tasks]);
 
-  if (tasks.length === 0) {
-    return <EmptyState>{t.tasks.empty}</EmptyState>;
-  }
-
   return (
     <div className="task-board" aria-label={t.tasks.cardsAria}>
+      <form
+        className="task-create-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const input = readTaskForm(form, true);
+          if (!input) return;
+          onTaskCreate(input);
+          event.currentTarget.reset();
+        }}
+      >
+        <div className="task-create-head">
+          <span className="eyebrow">{t.tasks.createTitle}</span>
+          <strong>{t.tasks.createSubtitle}</strong>
+        </div>
+        <label>
+          <span>{t.tasks.room}</span>
+          <select name="roomJid" required>
+            <option value="">{t.tasks.selectRoom}</option>
+            {rooms.map((room) => (
+              <option key={room.jid} value={room.jid}>
+                {room.name} · {room.folder}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="task-form-wide">
+          <span>{t.tasks.prompt}</span>
+          <textarea
+            name="prompt"
+            placeholder={t.tasks.promptPlaceholder}
+            required
+          />
+        </label>
+        <label>
+          <span>{t.tasks.scheduleType}</span>
+          <select name="scheduleType" required>
+            <option value="once">{t.tasks.scheduleTypes.once}</option>
+            <option value="interval">{t.tasks.scheduleTypes.interval}</option>
+            <option value="cron">{t.tasks.scheduleTypes.cron}</option>
+          </select>
+        </label>
+        <label>
+          <span>{t.tasks.scheduleValue}</span>
+          <input
+            name="scheduleValue"
+            placeholder={t.tasks.scheduleValueHint}
+            required
+          />
+        </label>
+        <label>
+          <span>{t.tasks.context}</span>
+          <select name="contextMode" required>
+            <option value="isolated">{t.tasks.contextModes.isolated}</option>
+            <option value="group">{t.tasks.contextModes.group}</option>
+          </select>
+        </label>
+        <button disabled={taskActionKey === 'create'} type="submit">
+          {taskActionKey === 'create'
+            ? t.tasks.actions.busy
+            : t.tasks.actions.create}
+        </button>
+      </form>
+
+      {tasks.length === 0 ? <EmptyState>{t.tasks.empty}</EmptyState> : null}
       {taskGroups.map((group) => {
         const label = t.tasks.groups[group.key];
         const groupHead = (
@@ -1429,6 +1590,64 @@ function TaskPanel({
                         {t.units.chars}
                       </small>
                     </details>
+
+                    {!task.isWatcher && task.status !== 'completed' ? (
+                      <details className="task-edit">
+                        <summary>{t.tasks.actions.edit}</summary>
+                        <form
+                          className="task-edit-form"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            const form = new FormData(event.currentTarget);
+                            const input = readTaskForm(form, false);
+                            if (!input) return;
+                            onTaskUpdate(task, input);
+                          }}
+                        >
+                          <label className="task-form-wide">
+                            <span>{t.tasks.prompt}</span>
+                            <textarea
+                              name="prompt"
+                              placeholder={t.tasks.editPromptPlaceholder}
+                            />
+                          </label>
+                          <label>
+                            <span>{t.tasks.scheduleType}</span>
+                            <select
+                              name="scheduleType"
+                              defaultValue={task.scheduleType}
+                              required
+                            >
+                              <option value="once">
+                                {t.tasks.scheduleTypes.once}
+                              </option>
+                              <option value="interval">
+                                {t.tasks.scheduleTypes.interval}
+                              </option>
+                              <option value="cron">
+                                {t.tasks.scheduleTypes.cron}
+                              </option>
+                            </select>
+                          </label>
+                          <label>
+                            <span>{t.tasks.scheduleValue}</span>
+                            <input
+                              name="scheduleValue"
+                              defaultValue={task.scheduleValue}
+                              required
+                            />
+                          </label>
+                          <button
+                            disabled={taskActionKey === `${task.id}:edit`}
+                            type="submit"
+                          >
+                            {taskActionKey === `${task.id}:edit`
+                              ? t.tasks.actions.busy
+                              : t.tasks.actions.save}
+                          </button>
+                        </form>
+                      </details>
+                    ) : null}
                   </article>
                 );
               })}
@@ -1534,6 +1753,34 @@ function App() {
     }
   }
 
+  async function handleTaskCreate(input: CreateScheduledTaskInput) {
+    setTaskActionKey('create');
+    try {
+      await createScheduledTask(input);
+      await refresh(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTaskActionKey(null);
+    }
+  }
+
+  async function handleTaskUpdate(
+    task: DashboardTask,
+    input: UpdateScheduledTaskInput,
+  ) {
+    const actionKey: TaskActionKey = `${task.id}:edit`;
+    setTaskActionKey(actionKey);
+    try {
+      await updateScheduledTask(task.id, input);
+      await refresh(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTaskActionKey(null);
+    }
+  }
+
   async function handleInboxAction(
     item: InboxItem,
     action: DashboardInboxAction,
@@ -1604,6 +1851,8 @@ function App() {
   if (loading && !data) {
     return <LoadingSkeleton t={t} />;
   }
+
+  const roomOptions = data ? buildRoomOptions(data.snapshots) : [];
 
   return (
     <div className="shell">
@@ -1715,6 +1964,11 @@ function App() {
                   onTaskAction={(task, action) =>
                     void handleTaskAction(task, action)
                   }
+                  onTaskCreate={(input) => void handleTaskCreate(input)}
+                  onTaskUpdate={(task, input) =>
+                    void handleTaskUpdate(task, input)
+                  }
+                  rooms={roomOptions}
                   taskActionKey={taskActionKey}
                   tasks={data.tasks}
                   t={t}
