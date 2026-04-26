@@ -1,6 +1,6 @@
 import { isWatchCiTask } from './task-watch-status.js';
 import type { StatusSnapshot, UsageRowSnapshot } from './status-dashboard.js';
-import type { ScheduledTask } from './types.js';
+import type { PairedTask, ScheduledTask } from './types.js';
 
 export interface SanitizedScheduledTask {
   id: string;
@@ -54,6 +54,34 @@ export interface WebDashboardOverview {
     rows: UsageRowSnapshot[];
     fetchedAt: string | null;
   };
+  inbox: InboxItem[];
+}
+
+export type InboxItemKind =
+  | 'pending-room'
+  | 'reviewer-request'
+  | 'approval'
+  | 'arbiter-request'
+  | 'ci-failure'
+  | 'mention';
+
+export type InboxItemSeverity = 'info' | 'warn' | 'error';
+
+export interface InboxItem {
+  id: string;
+  kind: InboxItemKind;
+  severity: InboxItemSeverity;
+  title: string;
+  summary: string;
+  occurredAt: string;
+  createdAt: string;
+  source: 'status-snapshot' | 'paired-task' | 'scheduled-task';
+  roomJid?: string;
+  roomName?: string;
+  groupFolder?: string;
+  serviceId?: string;
+  taskId?: string;
+  taskStatus?: string;
 }
 
 const SECRET_ASSIGNMENT_RE =
@@ -76,6 +104,10 @@ function buildPromptPreview(prompt: string): string {
   return truncateText(redactSensitiveText(prompt).replace(/\s+/g, ' ').trim());
 }
 
+function buildInboxPreview(value: string): string {
+  return truncateText(redactSensitiveText(value).replace(/\s+/g, ' ').trim());
+}
+
 function collectUsageRows(snapshots: StatusSnapshot[]): UsageRowSnapshot[] {
   const rows: UsageRowSnapshot[] = [];
   const seen = new Set<string>();
@@ -94,6 +126,134 @@ function collectUsageRows(snapshots: StatusSnapshot[]): UsageRowSnapshot[] {
   }
 
   return rows;
+}
+
+function failedTaskResult(task: ScheduledTask): string | null {
+  if (!task.last_result) return null;
+  const normalized = task.last_result.toLowerCase();
+  if (
+    normalized.includes('fail') ||
+    normalized.includes('error') ||
+    normalized.includes('timeout') ||
+    normalized.includes('cancel') ||
+    normalized.includes('reject')
+  ) {
+    return buildInboxPreview(task.last_result);
+  }
+  return null;
+}
+
+function pairedTaskInboxKind(
+  status: PairedTask['status'],
+): InboxItemKind | null {
+  if (status === 'merge_ready') return 'approval';
+  if (status === 'review_ready' || status === 'in_review') {
+    return 'reviewer-request';
+  }
+  if (status === 'arbiter_requested' || status === 'in_arbitration') {
+    return 'arbiter-request';
+  }
+  return null;
+}
+
+function collectInboxItems(args: {
+  snapshots: StatusSnapshot[];
+  tasks: ScheduledTask[];
+  pairedTasks: PairedTask[];
+  createdAt: string;
+}): InboxItem[] {
+  const items: InboxItem[] = [];
+
+  for (const snapshot of args.snapshots) {
+    for (const entry of snapshot.entries) {
+      if (!entry.pendingMessages && entry.pendingTasks === 0) continue;
+
+      const parts: string[] = [];
+      if (entry.pendingMessages) parts.push('pending messages');
+      if (entry.pendingTasks > 0) parts.push(`${entry.pendingTasks} tasks`);
+
+      items.push({
+        id: `room:${snapshot.serviceId}:${entry.jid}`,
+        kind: 'pending-room',
+        severity: entry.pendingTasks > 0 ? 'warn' : 'info',
+        title: entry.name || entry.folder || entry.jid,
+        summary: parts.join(' · '),
+        occurredAt: snapshot.updatedAt,
+        createdAt: args.createdAt,
+        source: 'status-snapshot',
+        roomJid: entry.jid,
+        roomName: entry.name,
+        groupFolder: entry.folder,
+        serviceId: snapshot.serviceId,
+      });
+    }
+  }
+
+  for (const task of args.pairedTasks) {
+    const kind = pairedTaskInboxKind(task.status);
+    if (!kind) continue;
+
+    items.push({
+      id: `paired:${task.id}:${task.status}`,
+      kind,
+      severity:
+        kind === 'approval' || kind === 'arbiter-request' ? 'error' : 'warn',
+      title: task.title || task.group_folder,
+      summary: task.status,
+      occurredAt:
+        kind === 'arbiter-request'
+          ? (task.arbiter_requested_at ?? task.updated_at)
+          : kind === 'reviewer-request'
+            ? (task.review_requested_at ?? task.updated_at)
+            : task.updated_at,
+      createdAt: args.createdAt,
+      source: 'paired-task',
+      roomJid: task.chat_jid,
+      groupFolder: task.group_folder,
+      serviceId:
+        kind === 'reviewer-request'
+          ? task.reviewer_service_id
+          : task.owner_service_id,
+      taskId: task.id,
+      taskStatus: task.status,
+    });
+  }
+
+  for (const task of args.tasks) {
+    if (!isWatchCiTask(task)) continue;
+    const result = failedTaskResult(task);
+    if (!result) continue;
+
+    items.push({
+      id: `ci:${task.id}`,
+      kind: 'ci-failure',
+      severity: task.status === 'paused' ? 'error' : 'warn',
+      title: 'CI watcher failed',
+      summary: result,
+      occurredAt: task.last_run ?? task.created_at,
+      createdAt: args.createdAt,
+      source: 'scheduled-task',
+      roomJid: task.chat_jid,
+      groupFolder: task.group_folder,
+      serviceId: task.agent_type ?? undefined,
+      taskId: task.id,
+      taskStatus: task.status,
+    });
+  }
+
+  const severityRank: Record<InboxItemSeverity, number> = {
+    error: 0,
+    warn: 1,
+    info: 2,
+  };
+
+  return items
+    .sort((a, b) => {
+      const severityDelta = severityRank[a.severity] - severityRank[b.severity];
+      if (severityDelta !== 0) return severityDelta;
+      return b.occurredAt.localeCompare(a.occurredAt);
+    })
+    .slice(0, 50);
 }
 
 export function sanitizeScheduledTask(
@@ -125,7 +285,9 @@ export function buildWebDashboardOverview(args: {
   now?: string;
   snapshots: StatusSnapshot[];
   tasks: ScheduledTask[];
+  pairedTasks?: PairedTask[];
 }): WebDashboardOverview {
+  const generatedAt = args.now ?? new Date().toISOString();
   const rooms = {
     total: 0,
     active: 0,
@@ -191,7 +353,7 @@ export function buildWebDashboardOverview(args: {
       .at(-1) ?? null;
 
   return {
-    generatedAt: args.now ?? new Date().toISOString(),
+    generatedAt,
     services,
     rooms,
     tasks,
@@ -199,5 +361,11 @@ export function buildWebDashboardOverview(args: {
       rows: usageRows,
       fetchedAt: usageFetchedAt,
     },
+    inbox: collectInboxItems({
+      snapshots: args.snapshots,
+      tasks: args.tasks,
+      pairedTasks: args.pairedTasks ?? [],
+      createdAt: generatedAt,
+    }),
   };
 }

@@ -266,6 +266,22 @@ export function getLatestOpenPairedTaskForChatFromDatabase(
   return row ? hydratePairedTaskRow(database, row) : undefined;
 }
 
+export function getAllOpenPairedTasksFromDatabase(
+  database: Database,
+): PairedTask[] {
+  const rows = database
+    .prepare(
+      `
+        SELECT *
+          FROM paired_tasks
+         WHERE status NOT IN ('completed')
+         ORDER BY updated_at DESC, created_at DESC
+      `,
+    )
+    .all() as StoredPairedTaskRow[];
+  return rows.map((row) => hydratePairedTaskRow(database, row));
+}
+
 export function getLatestPreviousPairedTaskForChatFromDatabase(
   database: Database,
   chatJid: string,

@@ -24,6 +24,7 @@ import {
   clearPairedTurnReservationsInDatabase,
   type PairedTaskUpdates,
   createPairedTaskInDatabase,
+  getAllOpenPairedTasksFromDatabase,
   getLastBotFinalMessageFromDatabase,
   getLatestOpenPairedTaskForChatFromDatabase,
   getLatestPreviousPairedTaskForChatFromDatabase,
@@ -111,6 +112,10 @@ export function getLatestPreviousPairedTaskForChat(
     chatJid,
     currentTaskId,
   );
+}
+
+export function getAllOpenPairedTasks(): PairedTask[] {
+  return getAllOpenPairedTasksFromDatabase(requireDatabase());
 }
 
 export function updatePairedTask(id: string, updates: PairedTaskUpdates): void {
