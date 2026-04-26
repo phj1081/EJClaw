@@ -21,6 +21,7 @@ export interface Messages {
     operations: string;
     updated: string;
     health: string;
+    inbox: string;
     usage: string;
     rooms: string;
     scheduled: string;
@@ -45,6 +46,9 @@ export interface Messages {
   panels: {
     health: string;
     heartbeat: string;
+    healthSignals: string;
+    inbox: string;
+    inboxQueue: string;
     usage: string;
     usageWindow: string;
     rooms: string;
@@ -58,6 +62,48 @@ export interface Messages {
     service: string;
     rooms: string;
     updated: string;
+  };
+  health: {
+    system: string;
+    summary: string;
+    signals: string;
+    services: string;
+    fresh: string;
+    stale: string;
+    queue: string;
+    ciFailures: string;
+    levels: {
+      ok: string;
+      stale: string;
+      down: string;
+    };
+  };
+  inbox: {
+    empty: string;
+    cardsAria: string;
+    summary: string;
+    total: string;
+    filters: string;
+    all: string;
+    noSummary: string;
+    occurred: string;
+    source: string;
+    target: string;
+    openTask: string;
+    openRoom: string;
+    kinds: {
+      'pending-room': string;
+      'reviewer-request': string;
+      approval: string;
+      'arbiter-request': string;
+      'ci-failure': string;
+      mention: string;
+    };
+    severity: {
+      info: string;
+      warn: string;
+      error: string;
+    };
   };
   rooms: {
     empty: string;
@@ -169,6 +215,7 @@ export const messages = {
       operations: '운영',
       updated: '갱신',
       health: '상태',
+      inbox: '인입',
       usage: '사용량',
       rooms: '룸',
       scheduled: '예약',
@@ -193,6 +240,9 @@ export const messages = {
     panels: {
       health: '상태',
       heartbeat: '하트비트',
+      healthSignals: '운영 신호',
+      inbox: '인입',
+      inboxQueue: '대기 항목',
       usage: '사용량',
       usageWindow: '5시간 / 7일',
       rooms: '룸',
@@ -206,6 +256,48 @@ export const messages = {
       service: '서비스',
       rooms: '룸',
       updated: '갱신',
+    },
+    health: {
+      system: '시스템',
+      summary: '헬스는 heartbeat, 큐, CI 실패를 합산합니다.',
+      signals: '헬스 신호',
+      services: '서비스',
+      fresh: '정상 heartbeat',
+      stale: '지연',
+      queue: '큐',
+      ciFailures: 'CI 실패',
+      levels: {
+        ok: '정상',
+        stale: '주의',
+        down: '중단',
+      },
+    },
+    inbox: {
+      empty: '인입 없음.',
+      cardsAria: '인입 항목',
+      summary: '인입 요약',
+      total: '전체',
+      filters: '인입 필터',
+      all: '전체',
+      noSummary: '요약 없음',
+      occurred: '발생',
+      source: '소스',
+      target: '대상',
+      openTask: '예약 보기',
+      openRoom: '룸 보기',
+      kinds: {
+        'pending-room': '대기 룸',
+        'reviewer-request': '리뷰 요청',
+        approval: '승인',
+        'arbiter-request': '중재 요청',
+        'ci-failure': 'CI 실패',
+        mention: '멘션',
+      },
+      severity: {
+        info: '정보',
+        warn: '주의',
+        error: '위험',
+      },
     },
     rooms: {
       empty: '룸 없음.',
@@ -301,6 +393,7 @@ export const messages = {
       operations: 'Ops',
       updated: 'Updated',
       health: 'Health',
+      inbox: 'Inbox',
       usage: 'Usage',
       rooms: 'Rooms',
       scheduled: 'Scheduled',
@@ -325,6 +418,9 @@ export const messages = {
     panels: {
       health: 'Health',
       heartbeat: 'Heartbeat',
+      healthSignals: 'Signals',
+      inbox: 'Inbox',
+      inboxQueue: 'Work intake',
       usage: 'Usage',
       usageWindow: '5h / 7d',
       rooms: 'Rooms',
@@ -338,6 +434,48 @@ export const messages = {
       service: 'service',
       rooms: 'rooms',
       updated: 'updated',
+    },
+    health: {
+      system: 'System',
+      summary: 'Health combines heartbeat, queue, and CI failures.',
+      signals: 'Health signals',
+      services: 'Services',
+      fresh: 'fresh heartbeat',
+      stale: 'stale',
+      queue: 'Queue',
+      ciFailures: 'CI failures',
+      levels: {
+        ok: 'OK',
+        stale: 'Watch',
+        down: 'Down',
+      },
+    },
+    inbox: {
+      empty: 'No inbound work.',
+      cardsAria: 'Inbox items',
+      summary: 'Inbox summary',
+      total: 'Total',
+      filters: 'Inbox filters',
+      all: 'All',
+      noSummary: 'No summary',
+      occurred: 'Occurred',
+      source: 'Source',
+      target: 'Target',
+      openTask: 'Open scheduled',
+      openRoom: 'Open room',
+      kinds: {
+        'pending-room': 'Pending room',
+        'reviewer-request': 'Review request',
+        approval: 'Approval',
+        'arbiter-request': 'Arbiter request',
+        'ci-failure': 'CI failure',
+        mention: 'Mention',
+      },
+      severity: {
+        info: 'Info',
+        warn: 'Warn',
+        error: 'Risk',
+      },
     },
     rooms: {
       empty: 'No rooms yet.',
@@ -433,6 +571,7 @@ export const messages = {
       operations: '运营',
       updated: '更新',
       health: '健康',
+      inbox: '收件',
       usage: '用量',
       rooms: '房间',
       scheduled: '计划',
@@ -457,6 +596,9 @@ export const messages = {
     panels: {
       health: '健康',
       heartbeat: '心跳',
+      healthSignals: '运行信号',
+      inbox: '收件',
+      inboxQueue: '待处理',
       usage: '用量',
       usageWindow: '5小时 / 7天',
       rooms: '房间',
@@ -470,6 +612,48 @@ export const messages = {
       service: '服务',
       rooms: '房间',
       updated: '更新',
+    },
+    health: {
+      system: '系统',
+      summary: '健康状态汇总心跳、队列和 CI 失败。',
+      signals: '健康信号',
+      services: '服务',
+      fresh: '心跳正常',
+      stale: '延迟',
+      queue: '队列',
+      ciFailures: 'CI 失败',
+      levels: {
+        ok: '正常',
+        stale: '关注',
+        down: '中断',
+      },
+    },
+    inbox: {
+      empty: '暂无收件。',
+      cardsAria: '收件项',
+      summary: '收件摘要',
+      total: '全部',
+      filters: '收件筛选',
+      all: '全部',
+      noSummary: '无摘要',
+      occurred: '发生',
+      source: '来源',
+      target: '目标',
+      openTask: '查看计划',
+      openRoom: '查看房间',
+      kinds: {
+        'pending-room': '待处理房间',
+        'reviewer-request': '评审请求',
+        approval: '审批',
+        'arbiter-request': '仲裁请求',
+        'ci-failure': 'CI 失败',
+        mention: '提及',
+      },
+      severity: {
+        info: '信息',
+        warn: '关注',
+        error: '风险',
+      },
     },
     rooms: {
       empty: '暂无房间。',
@@ -565,6 +749,7 @@ export const messages = {
       operations: '運用',
       updated: '更新',
       health: '状態',
+      inbox: '受信',
       usage: '使用量',
       rooms: 'ルーム',
       scheduled: '予定',
@@ -589,6 +774,9 @@ export const messages = {
     panels: {
       health: '状態',
       heartbeat: 'ハートビート',
+      healthSignals: '運用シグナル',
+      inbox: '受信',
+      inboxQueue: '対応待ち',
       usage: '使用量',
       usageWindow: '5時間 / 7日',
       rooms: 'ルーム',
@@ -602,6 +790,48 @@ export const messages = {
       service: 'サービス',
       rooms: 'ルーム',
       updated: '更新',
+    },
+    health: {
+      system: 'システム',
+      summary: '状態はハートビート、キュー、CI失敗を集計します。',
+      signals: '状態シグナル',
+      services: 'サービス',
+      fresh: '正常ハートビート',
+      stale: '遅延',
+      queue: 'キュー',
+      ciFailures: 'CI失敗',
+      levels: {
+        ok: '正常',
+        stale: '注意',
+        down: '停止',
+      },
+    },
+    inbox: {
+      empty: '受信なし。',
+      cardsAria: '受信項目',
+      summary: '受信サマリー',
+      total: '全体',
+      filters: '受信フィルター',
+      all: '全体',
+      noSummary: '概要なし',
+      occurred: '発生',
+      source: 'ソース',
+      target: '対象',
+      openTask: '予定を見る',
+      openRoom: 'ルームを見る',
+      kinds: {
+        'pending-room': '待機ルーム',
+        'reviewer-request': 'レビュー依頼',
+        approval: '承認',
+        'arbiter-request': '仲裁依頼',
+        'ci-failure': 'CI失敗',
+        mention: 'メンション',
+      },
+      severity: {
+        info: '情報',
+        warn: '注意',
+        error: '危険',
+      },
     },
     rooms: {
       empty: 'ルームなし。',

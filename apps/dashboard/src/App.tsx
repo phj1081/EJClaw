@@ -25,21 +25,27 @@ interface DashboardState {
 }
 
 type UsageRow = DashboardOverview['usage']['rows'][number];
+type InboxItem = DashboardOverview['inbox'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
 type UsageGroup = 'primary' | 'codex';
-type DashboardView = 'usage' | 'health' | 'rooms' | 'scheduled';
+type DashboardView = 'usage' | 'inbox' | 'health' | 'rooms' | 'scheduled';
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
 type TaskResultTone = 'ok' | 'fail' | 'none';
+type InboxFilter = 'all' | InboxItem['kind'];
+type HealthLevel = 'ok' | 'stale' | 'down';
 
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale';
 const DEFAULT_VIEW: DashboardView = 'usage';
+const HEALTH_STALE_MS = 5 * 60_000;
+const HEALTH_DOWN_MS = 15 * 60_000;
 
 function isDashboardView(
   value: string | null | undefined,
 ): value is DashboardView {
   return (
     value === 'usage' ||
+    value === 'inbox' ||
     value === 'health' ||
     value === 'rooms' ||
     value === 'scheduled'
@@ -215,9 +221,47 @@ function taskDisplayName(task: DashboardTask, t: Messages): string {
   return task.id;
 }
 
+const INBOX_FILTERS: InboxFilter[] = [
+  'all',
+  'ci-failure',
+  'approval',
+  'reviewer-request',
+  'arbiter-request',
+  'pending-room',
+  'mention',
+];
+
+function serviceAgeMs(
+  service: DashboardOverview['services'][number],
+  generatedAt: string,
+): number | null {
+  const updated = new Date(service.updatedAt).getTime();
+  const now = new Date(generatedAt).getTime();
+  if (Number.isNaN(updated) || Number.isNaN(now)) return null;
+  return Math.max(0, now - updated);
+}
+
+function serviceHealthLevel(
+  service: DashboardOverview['services'][number],
+  generatedAt: string,
+): HealthLevel {
+  const age = serviceAgeMs(service, generatedAt);
+  if (age === null) return 'stale';
+  if (age >= HEALTH_DOWN_MS) return 'down';
+  if (age >= HEALTH_STALE_MS) return 'stale';
+  return 'ok';
+}
+
+function inboxTargetHref(item: InboxItem): string | null {
+  if (item.taskId) return '#/scheduled';
+  if (item.roomJid || item.groupFolder) return '#/rooms';
+  return null;
+}
+
 function navItems(t: Messages) {
   return [
     { href: '#/usage', label: t.nav.usage, view: 'usage' as const },
+    { href: '#/inbox', label: t.nav.inbox, view: 'inbox' as const },
     { href: '#/health', label: t.nav.health, view: 'health' as const },
     { href: '#/rooms', label: t.nav.rooms, view: 'rooms' as const },
     { href: '#/scheduled', label: t.nav.scheduled, view: 'scheduled' as const },
@@ -496,7 +540,7 @@ function ControlRail({ data, t }: { data: DashboardState; t: Messages }) {
   );
 }
 
-function ServicePanel({
+function InboxPanel({
   overview,
   locale,
   t,
@@ -505,42 +549,229 @@ function ServicePanel({
   locale: Locale;
   t: Messages;
 }) {
-  if (overview.services.length === 0) {
-    return <EmptyState>{t.service.empty}</EmptyState>;
+  const [filter, setFilter] = useState<InboxFilter>('all');
+  const items = overview.inbox ?? [];
+  const counts = useMemo(() => {
+    const next: Record<InboxFilter, number> = {
+      all: items.length,
+      'pending-room': 0,
+      'reviewer-request': 0,
+      approval: 0,
+      'arbiter-request': 0,
+      'ci-failure': 0,
+      mention: 0,
+    };
+    for (const item of items) next[item.kind] += 1;
+    return next;
+  }, [items]);
+  const filteredItems =
+    filter === 'all' ? items : items.filter((item) => item.kind === filter);
+  const severityCounts = items.reduce(
+    (acc, item) => {
+      acc[item.severity] += 1;
+      return acc;
+    },
+    { error: 0, warn: 0, info: 0 },
+  );
+
+  if (items.length === 0) {
+    return <EmptyState>{t.inbox.empty}</EmptyState>;
   }
 
   return (
-    <div className="service-grid">
-      {overview.services.map((service) => (
-        <section className="card service-card" key={service.serviceId}>
-          <div>
-            <span className="eyebrow">{service.agentType}</span>
-            <h3>{service.assistantName}</h3>
-          </div>
-          <div className="heartbeat-line">
-            <span />
-            <small>
-              {t.service.heartbeat} {formatDate(service.updatedAt, locale)}
-            </small>
-          </div>
-          <dl>
-            <div>
-              <dt>{t.service.service}</dt>
-              <dd>{service.serviceId}</dd>
-            </div>
-            <div>
-              <dt>{t.service.rooms}</dt>
-              <dd>
-                {service.activeRooms}/{service.totalRooms} {t.status.active}
-              </dd>
-            </div>
-            <div>
-              <dt>{t.service.updated}</dt>
-              <dd>{formatDate(service.updatedAt, locale)}</dd>
-            </div>
-          </dl>
-        </section>
-      ))}
+    <div className="inbox-board">
+      <section className="inbox-summary" aria-label={t.inbox.summary}>
+        <div>
+          <span>{t.inbox.total}</span>
+          <strong>{items.length}</strong>
+        </div>
+        <div>
+          <span>{t.inbox.severity.error}</span>
+          <strong>{severityCounts.error}</strong>
+        </div>
+        <div>
+          <span>{t.inbox.severity.warn}</span>
+          <strong>{severityCounts.warn}</strong>
+        </div>
+        <div>
+          <span>{t.inbox.severity.info}</span>
+          <strong>{severityCounts.info}</strong>
+        </div>
+      </section>
+
+      <div className="inbox-filters" aria-label={t.inbox.filters}>
+        {INBOX_FILTERS.map((item) => {
+          if (item !== 'all' && counts[item] === 0) return null;
+          const label = item === 'all' ? t.inbox.all : t.inbox.kinds[item];
+          return (
+            <button
+              aria-pressed={filter === item}
+              className={filter === item ? 'is-active' : undefined}
+              key={item}
+              onClick={() => setFilter(item)}
+              type="button"
+            >
+              {label}
+              <span>{counts[item]}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="inbox-list" aria-label={t.inbox.cardsAria}>
+        {filteredItems.map((item) => {
+          const href = inboxTargetHref(item);
+          return (
+            <article
+              className={`inbox-card inbox-${item.severity}`}
+              key={item.id}
+            >
+              <div className="inbox-card-head">
+                <div>
+                  <span className="eyebrow">{t.inbox.kinds[item.kind]}</span>
+                  <strong>{item.title}</strong>
+                </div>
+                <span className={`pill pill-${item.severity}`}>
+                  {t.inbox.severity[item.severity]}
+                </span>
+              </div>
+              <p>{item.summary || t.inbox.noSummary}</p>
+              <div className="inbox-meta">
+                <span>
+                  <small>{t.inbox.occurred}</small>
+                  <strong>{formatDate(item.occurredAt, locale)}</strong>
+                </span>
+                <span>
+                  <small>{t.inbox.source}</small>
+                  <strong>{item.source}</strong>
+                </span>
+                <span>
+                  <small>{t.inbox.target}</small>
+                  <strong>
+                    {item.taskId ??
+                      item.roomName ??
+                      item.groupFolder ??
+                      item.roomJid ??
+                      '-'}
+                  </strong>
+                </span>
+              </div>
+              {href ? (
+                <a className="inbox-target" href={href}>
+                  {item.taskId ? t.inbox.openTask : t.inbox.openRoom}
+                </a>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function HealthPanel({
+  data,
+  locale,
+  t,
+}: {
+  data: DashboardState;
+  locale: Locale;
+  t: Messages;
+}) {
+  const services = data.overview.services;
+  const serviceLevels = services.map((service) => ({
+    service,
+    level: serviceHealthLevel(service, data.overview.generatedAt),
+    age: serviceAgeMs(service, data.overview.generatedAt),
+  }));
+  const down = serviceLevels.filter((item) => item.level === 'down').length;
+  const stale = serviceLevels.filter((item) => item.level === 'stale').length;
+  const queue = data.snapshots.reduce(
+    (acc, snapshot) => {
+      for (const entry of snapshot.entries) {
+        acc.pendingTasks += entry.pendingTasks;
+        if (entry.pendingMessages) acc.pendingMessageRooms += 1;
+      }
+      return acc;
+    },
+    { pendingTasks: 0, pendingMessageRooms: 0 },
+  );
+  const ciFailures = data.overview.inbox.filter(
+    (item) => item.kind === 'ci-failure',
+  ).length;
+  const healthLevel: HealthLevel =
+    down > 0 ? 'down' : stale > 0 || ciFailures > 0 ? 'stale' : 'ok';
+
+  return (
+    <div className="health-board">
+      <section className={`health-overview health-${healthLevel}`}>
+        <div>
+          <span className="eyebrow">{t.health.system}</span>
+          <strong>{t.health.levels[healthLevel]}</strong>
+        </div>
+        <p>{t.health.summary}</p>
+      </section>
+
+      <section className="health-signals" aria-label={t.health.signals}>
+        <div>
+          <span>{t.health.services}</span>
+          <strong>
+            {services.length - stale - down}/{services.length}
+          </strong>
+          <small>{t.health.fresh}</small>
+        </div>
+        <div>
+          <span>{t.health.stale}</span>
+          <strong>{stale + down}</strong>
+          <small>
+            {down} {t.health.levels.down}
+          </small>
+        </div>
+        <div>
+          <span>{t.health.queue}</span>
+          <strong>{queue.pendingTasks}</strong>
+          <small>
+            {queue.pendingMessageRooms} {t.control.pendingRooms}
+          </small>
+        </div>
+        <div>
+          <span>{t.health.ciFailures}</span>
+          <strong>{ciFailures}</strong>
+          <small>
+            {data.overview.tasks.watchers.paused} {t.status.paused}
+          </small>
+        </div>
+      </section>
+
+      {services.length === 0 ? (
+        <EmptyState>{t.service.empty}</EmptyState>
+      ) : (
+        <div className="health-service-list">
+          {serviceLevels.map(({ service, level, age }) => (
+            <article className="health-service" key={service.serviceId}>
+              <div>
+                <span className="eyebrow">{service.agentType}</span>
+                <strong>{service.assistantName}</strong>
+                <small>{service.serviceId}</small>
+              </div>
+              <span className={`pill pill-${level}`}>
+                {t.health.levels[level]}
+              </span>
+              <div>
+                <small>{t.service.updated}</small>
+                <strong>{formatDate(service.updatedAt, locale)}</strong>
+                <em>{formatDuration(age, t)}</em>
+              </div>
+              <div>
+                <small>{t.service.rooms}</small>
+                <strong>
+                  {service.activeRooms}/{service.totalRooms}
+                </strong>
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1082,13 +1313,23 @@ function App() {
               </>
             ) : null}
 
+            {activeView === 'inbox' ? (
+              <section className="panel view-panel" id="inbox">
+                <div className="panel-title">
+                  <h2>{t.panels.inbox}</h2>
+                  <span>{t.panels.inboxQueue}</span>
+                </div>
+                <InboxPanel locale={locale} overview={data.overview} t={t} />
+              </section>
+            ) : null}
+
             {activeView === 'health' ? (
               <section className="panel view-panel" id="health">
                 <div className="panel-title">
                   <h2>{t.panels.health}</h2>
-                  <span>{t.panels.heartbeat}</span>
+                  <span>{t.panels.healthSignals}</span>
                 </div>
-                <ServicePanel locale={locale} overview={data.overview} t={t} />
+                <HealthPanel data={data} locale={locale} t={t} />
               </section>
             ) : null}
 
