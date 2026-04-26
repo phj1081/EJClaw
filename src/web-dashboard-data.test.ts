@@ -292,6 +292,14 @@ describe('web dashboard data', () => {
           status: 'paused',
         }),
         makeTask({
+          id: 'ci-2',
+          prompt:
+            '[BACKGROUND CI WATCH]\nWatch target:\nPR #22\n\nCheck instructions:\nwatch',
+          last_run: '2026-04-26T05:07:00.000Z',
+          last_result: 'Error: BOT_TOKEN=plain-secret-value failed',
+          status: 'active',
+        }),
+        makeTask({
           id: 'cron-1',
           prompt: 'regular cron',
           last_run: '2026-04-26T05:06:00.000Z',
@@ -329,10 +337,12 @@ describe('web dashboard data', () => {
     );
     const ciFailure = overview.inbox.find((item) => item.kind === 'ci-failure');
     expect(ciFailure).toMatchObject({
-      id: 'ci:ci-1',
+      id: 'ci:ci-2',
       severity: 'error',
+      occurrences: 2,
       source: 'scheduled-task',
-      taskId: 'ci-1',
+      taskId: 'ci-2',
+      lastOccurredAt: '2026-04-26T05:07:00.000Z',
     });
     expect(ciFailure?.summary).toContain('BOT_TOKEN=<redacted>');
     expect(ciFailure?.summary).not.toContain('plain-secret-value');
