@@ -27,9 +27,28 @@ interface DashboardState {
 type UsageRow = DashboardOverview['usage']['rows'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
 type UsageGroup = 'primary' | 'codex';
+type DashboardView = 'usage' | 'health' | 'rooms' | 'scheduled';
 
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale';
+const DEFAULT_VIEW: DashboardView = 'usage';
+
+function isDashboardView(
+  value: string | null | undefined,
+): value is DashboardView {
+  return (
+    value === 'usage' ||
+    value === 'health' ||
+    value === 'rooms' ||
+    value === 'scheduled'
+  );
+}
+
+function readViewFromHash(): DashboardView {
+  if (typeof window === 'undefined') return DEFAULT_VIEW;
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  return isDashboardView(raw) ? raw : DEFAULT_VIEW;
+}
 
 function readInitialLocale(): Locale {
   const stored =
@@ -110,10 +129,10 @@ function queueLabel(
 
 function navItems(t: Messages) {
   return [
-    { href: '#overview', label: t.nav.health },
-    { href: '#usage', label: t.nav.usage },
-    { href: '#rooms', label: t.nav.rooms },
-    { href: '#work', label: t.nav.scheduled },
+    { href: '#/usage', label: t.nav.usage, view: 'usage' as const },
+    { href: '#/health', label: t.nav.health, view: 'health' as const },
+    { href: '#/rooms', label: t.nav.rooms, view: 'rooms' as const },
+    { href: '#/scheduled', label: t.nav.scheduled, view: 'scheduled' as const },
   ];
 }
 
@@ -170,15 +189,19 @@ function LoadingSkeleton({ t }: { t: Messages }) {
 }
 
 function SideRail({
+  activeView,
   lastRefreshed,
   locale,
+  onNavigate,
   onLocaleChange,
   onRefresh,
   refreshing,
   t,
 }: {
+  activeView: DashboardView;
   lastRefreshed: string | null;
   locale: Locale;
+  onNavigate: (view: DashboardView) => void;
   onLocaleChange: (locale: Locale) => void;
   onRefresh: () => void;
   refreshing: boolean;
@@ -192,7 +215,13 @@ function SideRail({
       </div>
       <nav aria-label={t.nav.drawerNavAria}>
         {navItems(t).map((item) => (
-          <a href={item.href} key={item.href}>
+          <a
+            aria-current={activeView === item.view ? 'page' : undefined}
+            className={activeView === item.view ? 'is-active' : undefined}
+            href={item.href}
+            key={item.href}
+            onClick={() => onNavigate(item.view)}
+          >
             {item.label}
           </a>
         ))}
@@ -216,26 +245,33 @@ function SideRail({
 }
 
 function SectionNav({
+  activeView,
   drawerOpen,
   lastRefreshed,
   locale,
   onCloseDrawer,
   onLocaleChange,
+  onNavigate,
   onOpenDrawer,
   refreshing,
   onRefresh,
   t,
 }: {
+  activeView: DashboardView;
   drawerOpen: boolean;
   lastRefreshed: string | null;
   locale: Locale;
   onCloseDrawer: () => void;
   onLocaleChange: (locale: Locale) => void;
+  onNavigate: (view: DashboardView) => void;
   onOpenDrawer: () => void;
   refreshing: boolean;
   onRefresh: () => void;
   t: Messages;
 }) {
+  const activeLabel =
+    navItems(t).find((item) => item.view === activeView)?.label ?? t.nav.usage;
+
   return (
     <>
       <nav className="section-nav" aria-label={t.nav.aria}>
@@ -251,7 +287,7 @@ function SectionNav({
           <span />
           <span />
         </button>
-        <strong className="topbar-label">{t.nav.usage}</strong>
+        <strong className="topbar-label">{activeLabel}</strong>
         <button
           aria-busy={refreshing}
           aria-label={refreshing ? t.actions.refreshing : t.actions.refresh}
@@ -297,7 +333,16 @@ function SectionNav({
             </div>
             <nav aria-label={t.nav.drawerNavAria}>
               {navItems(t).map((item) => (
-                <a href={item.href} key={item.href} onClick={onCloseDrawer}>
+                <a
+                  aria-current={activeView === item.view ? 'page' : undefined}
+                  className={activeView === item.view ? 'is-active' : undefined}
+                  href={item.href}
+                  key={item.href}
+                  onClick={() => {
+                    onNavigate(item.view);
+                    onCloseDrawer();
+                  }}
+                >
                   {item.label}
                 </a>
               ))}
@@ -761,12 +806,20 @@ function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeView, setActiveView] = useState<DashboardView>(readViewFromHash);
   const [locale, setLocale] = useState<Locale>(readInitialLocale);
   const t = messages[locale];
 
   function setDashboardLocale(nextLocale: Locale) {
     setLocale(nextLocale);
     window.localStorage.setItem(LOCALE_STORAGE_KEY, nextLocale);
+  }
+
+  function navigateToView(view: DashboardView) {
+    setActiveView(view);
+    if (window.location.hash !== `#/${view}`) {
+      window.location.hash = `/${view}`;
+    }
   }
 
   async function refresh(showSpinner = false) {
@@ -787,6 +840,16 @@ function App() {
   useEffect(() => {
     document.documentElement.lang = localeTags[locale];
   }, [locale]);
+
+  useEffect(() => {
+    function handleHashChange() {
+      setActiveView(readViewFromHash());
+    }
+
+    handleHashChange();
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   useEffect(() => {
     void refresh();
@@ -814,8 +877,10 @@ function App() {
   return (
     <div className="shell">
       <SideRail
+        activeView={activeView}
         lastRefreshed={lastRefreshed}
         locale={locale}
+        onNavigate={navigateToView}
         onLocaleChange={setDashboardLocale}
         onRefresh={() => void refresh(true)}
         refreshing={refreshing}
@@ -823,11 +888,13 @@ function App() {
       />
       <main className="dashboard-content">
         <SectionNav
+          activeView={activeView}
           drawerOpen={drawerOpen}
           lastRefreshed={lastRefreshed}
           locale={locale}
           onCloseDrawer={() => setDrawerOpen(false)}
           onLocaleChange={setDashboardLocale}
+          onNavigate={navigateToView}
           onOpenDrawer={() => setDrawerOpen(true)}
           onRefresh={() => void refresh(true)}
           refreshing={refreshing}
@@ -846,41 +913,50 @@ function App() {
         ) : null}
 
         {data ? (
-          <>
-            <section className="panel usage-first" id="usage">
-              <div className="panel-title">
-                <h2>{t.panels.usage}</h2>
-                <span>{t.panels.usageWindow}</span>
-              </div>
-              <UsagePanel locale={locale} overview={data.overview} t={t} />
-            </section>
+          <div className={`view-stack view-${activeView}`}>
+            {activeView === 'usage' ? (
+              <>
+                <section className="panel usage-first" id="usage">
+                  <div className="panel-title">
+                    <h2>{t.panels.usage}</h2>
+                    <span>{t.panels.usageWindow}</span>
+                  </div>
+                  <UsagePanel locale={locale} overview={data.overview} t={t} />
+                </section>
+                <ControlRail data={data} t={t} />
+              </>
+            ) : null}
 
-            <ControlRail data={data} t={t} />
+            {activeView === 'health' ? (
+              <section className="panel view-panel" id="health">
+                <div className="panel-title">
+                  <h2>{t.panels.health}</h2>
+                  <span>{t.panels.heartbeat}</span>
+                </div>
+                <ServicePanel locale={locale} overview={data.overview} t={t} />
+              </section>
+            ) : null}
 
-            <section className="panel" id="agents">
-              <div className="panel-title">
-                <h2>{t.panels.health}</h2>
-                <span>{t.panels.heartbeat}</span>
-              </div>
-              <ServicePanel locale={locale} overview={data.overview} t={t} />
-            </section>
+            {activeView === 'rooms' ? (
+              <section className="panel view-panel" id="rooms">
+                <div className="panel-title">
+                  <h2>{t.panels.rooms}</h2>
+                  <span>{t.panels.queue}</span>
+                </div>
+                <RoomPanel snapshots={data.snapshots} t={t} />
+              </section>
+            ) : null}
 
-            <section className="panel" id="rooms">
-              <div className="panel-title">
-                <h2>{t.panels.rooms}</h2>
-                <span>{t.panels.queue}</span>
-              </div>
-              <RoomPanel snapshots={data.snapshots} t={t} />
-            </section>
-
-            <section className="panel" id="work">
-              <div className="panel-title">
-                <h2>{t.panels.scheduled}</h2>
-                <span>{t.panels.promptPreviews}</span>
-              </div>
-              <TaskPanel locale={locale} tasks={data.tasks} t={t} />
-            </section>
-          </>
+            {activeView === 'scheduled' ? (
+              <section className="panel view-panel" id="scheduled">
+                <div className="panel-title">
+                  <h2>{t.panels.scheduled}</h2>
+                  <span>{t.panels.promptPreviews}</span>
+                </div>
+                <TaskPanel locale={locale} tasks={data.tasks} t={t} />
+              </section>
+            ) : null}
+          </div>
         ) : null}
       </main>
     </div>
