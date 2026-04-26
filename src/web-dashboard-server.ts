@@ -2,13 +2,13 @@ import fs from 'fs';
 import path from 'path';
 
 import { WEB_DASHBOARD } from './config.js';
-import { getAllTasks } from './db.js';
+import { getAllOpenPairedTasks, getAllTasks } from './db.js';
 import { logger } from './logger.js';
 import {
   readStatusSnapshots,
   type StatusSnapshot,
 } from './status-dashboard.js';
-import type { ScheduledTask } from './types.js';
+import type { PairedTask, ScheduledTask } from './types.js';
 import {
   buildWebDashboardOverview,
   sanitizeScheduledTask,
@@ -21,6 +21,7 @@ export interface WebDashboardHandlerOptions {
   statusMaxAgeMs?: number;
   readStatusSnapshots?: (maxAgeMs: number) => StatusSnapshot[];
   getTasks?: () => ScheduledTask[];
+  getPairedTasks?: () => PairedTask[];
   now?: () => string;
 }
 
@@ -105,6 +106,7 @@ export function createWebDashboardHandler(
 ): (request: Request) => Response | Promise<Response> {
   const readSnapshots = opts.readStatusSnapshots ?? readStatusSnapshots;
   const loadTasks = opts.getTasks ?? getAllTasks;
+  const loadPairedTasks = opts.getPairedTasks ?? getAllOpenPairedTasks;
   const statusMaxAgeMs = opts.statusMaxAgeMs ?? DEFAULT_STATUS_MAX_AGE_MS;
 
   return (request: Request): Response => {
@@ -121,11 +123,13 @@ export function createWebDashboardHandler(
     if (url.pathname === '/api/overview') {
       const snapshots = readSnapshots(statusMaxAgeMs);
       const tasks = loadTasks();
+      const pairedTasks = loadPairedTasks();
       return jsonResponse(
         buildWebDashboardOverview({
           now: opts.now?.(),
           snapshots,
           tasks,
+          pairedTasks,
         }),
       );
     }

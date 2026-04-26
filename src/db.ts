@@ -86,6 +86,7 @@ export {
   createServiceHandoff,
   failPairedTurn,
   failServiceHandoff,
+  getAllOpenPairedTasks,
   getAllChannelOwnerLeases,
   getAllPendingServiceHandoffs,
   getChannelOwnerLease,
