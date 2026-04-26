@@ -150,6 +150,15 @@ function usageLimitWindow(row: UsageRow): UsageLimitWindow {
   return row.d7pct >= row.h5pct ? 'd7' : 'h5';
 }
 
+function usageWindowRemaining(
+  row: UsageRow,
+  window: UsageLimitWindow,
+): number | null {
+  const pct = window === 'h5' ? row.h5pct : row.d7pct;
+  if (pct < 0) return null;
+  return Math.max(0, 100 - pct);
+}
+
 function usageRiskLevel(row: UsageRow): RiskLevel {
   const peak = usagePeak(row);
   if (peak >= 85) return 'critical';
@@ -931,6 +940,8 @@ function UsageRemainingMeter({
 }) {
   const remaining = usageRemaining(row);
   const window = usageLimitWindow(row);
+  const h5Remaining = usageWindowRemaining(row, 'h5');
+  const d7Remaining = usageWindowRemaining(row, 'd7');
   const reset = usageLimitReset(row);
 
   return (
@@ -946,6 +957,18 @@ function UsageRemainingMeter({
         max={100}
         value={remaining ?? 0}
       />
+      <div className="quota-pair" aria-label={`${rowName} quota windows`}>
+        <span className={window === 'h5' ? 'is-tight' : undefined}>
+          <b>{t.usage.quota.h5}</b>
+          <em>{h5Remaining === null ? '-' : formatPct(h5Remaining)}</em>
+          <progress max={100} value={h5Remaining ?? 0} />
+        </span>
+        <span className={window === 'd7' ? 'is-tight' : undefined}>
+          <b>{t.usage.quota.d7}</b>
+          <em>{d7Remaining === null ? '-' : formatPct(d7Remaining)}</em>
+          <progress max={100} value={d7Remaining ?? 0} />
+        </span>
+      </div>
       <small>
         {remaining === null ? '-' : t.usage.limitBasis[window]}
         {reset ? ` · ${t.usage.reset} ${reset}` : ` · ${t.usage.noReset}`}

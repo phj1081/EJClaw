@@ -739,6 +739,46 @@ td small {
   gap: 5px;
 }
 
+.quota-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.quota-pair span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 5px;
+  border-radius: 11px;
+  background: rgba(43, 55, 38, 0.045);
+}
+
+.quota-pair span.is-tight {
+  background: rgba(191, 95, 44, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(191, 95, 44, 0.16);
+}
+
+.quota-pair b,
+.quota-pair em {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quota-pair b {
+  color: var(--muted);
+}
+
+.quota-pair progress {
+  height: 5px;
+}
+
 .usage-speed {
   min-height: 54px;
   align-content: center;
@@ -1587,6 +1627,14 @@ progress::-moz-progress-bar {
     font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .quota-pair {
+    gap: 4px;
+  }
+
+  .quota-pair span {
+    padding: 4px;
   }
 
   .record-card-grid {
