@@ -349,6 +349,212 @@ describe('web dashboard server handler', () => {
     expect(wrongMethod.status).toBe(405);
   });
 
+  it('queues paired inbox actions through the paired follow-up scheduler', async () => {
+    const pairedTasks = new Map<string, PairedTask>([
+      [
+        'review-1',
+        makePairedTask({
+          id: 'review-1',
+          status: 'review_ready',
+          updated_at: '2026-04-26T05:01:00.000Z',
+        }),
+      ],
+      [
+        'merge-1',
+        makePairedTask({
+          id: 'merge-1',
+          status: 'merge_ready',
+          updated_at: '2026-04-26T05:02:00.000Z',
+        }),
+      ],
+      [
+        'arbiter-1',
+        makePairedTask({
+          id: 'arbiter-1',
+          status: 'arbiter_requested',
+          updated_at: '2026-04-26T05:03:00.000Z',
+        }),
+      ],
+    ]);
+    const scheduled: Array<{
+      chatJid: string;
+      taskId: string;
+      intentKind: string;
+    }> = [];
+    const queued: Array<{ chatJid: string; groupFolder: string }> = [];
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [...pairedTasks.values()],
+      getPairedTaskById: (id) => pairedTasks.get(id),
+      schedulePairedFollowUp: (args) => {
+        scheduled.push({
+          chatJid: args.chatJid,
+          taskId: args.task.id,
+          intentKind: args.intentKind,
+        });
+        args.enqueue();
+        return true;
+      },
+      enqueueMessageCheck: (chatJid, groupFolder) => {
+        queued.push({ chatJid, groupFolder });
+      },
+    });
+    const run = (inboxId: string) =>
+      handler(
+        new Request(
+          `http://localhost/api/inbox/${encodeURIComponent(inboxId)}/actions`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action: 'run' }),
+          },
+        ),
+      );
+
+    const reviewer = await run('paired:review-1:review_ready');
+    const finalize = await run('paired:merge-1:merge_ready');
+    const arbiter = await run('paired:arbiter-1:arbiter_requested');
+
+    expect(reviewer.status).toBe(200);
+    expect(finalize.status).toBe(200);
+    expect(arbiter.status).toBe(200);
+    await expect(reviewer.json()).resolves.toMatchObject({
+      ok: true,
+      taskId: 'review-1',
+      intentKind: 'reviewer-turn',
+      queued: true,
+    });
+    await expect(finalize.json()).resolves.toMatchObject({
+      ok: true,
+      taskId: 'merge-1',
+      intentKind: 'finalize-owner-turn',
+      queued: true,
+    });
+    await expect(arbiter.json()).resolves.toMatchObject({
+      ok: true,
+      taskId: 'arbiter-1',
+      intentKind: 'arbiter-turn',
+      queued: true,
+    });
+    expect(scheduled).toEqual([
+      {
+        chatJid: 'dc:general',
+        taskId: 'review-1',
+        intentKind: 'reviewer-turn',
+      },
+      {
+        chatJid: 'dc:general',
+        taskId: 'merge-1',
+        intentKind: 'finalize-owner-turn',
+      },
+      {
+        chatJid: 'dc:general',
+        taskId: 'arbiter-1',
+        intentKind: 'arbiter-turn',
+      },
+    ]);
+    expect(queued).toEqual([
+      { chatJid: 'dc:general', groupFolder: 'general' },
+      { chatJid: 'dc:general', groupFolder: 'general' },
+      { chatJid: 'dc:general', groupFolder: 'general' },
+    ]);
+  });
+
+  it('rejects invalid paired inbox actions', async () => {
+    const pairedTask = makePairedTask({
+      id: 'paired-1',
+      status: 'review_ready',
+    });
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [pairedTask],
+      getPairedTaskById: (id) =>
+        id === pairedTask.id ? pairedTask : undefined,
+      schedulePairedFollowUp: () => {
+        throw new Error('schedulePairedFollowUp should not be called');
+      },
+      enqueueMessageCheck: () => undefined,
+    });
+    const post = (inboxId: string, body: unknown = { action: 'run' }) =>
+      handler(
+        new Request(
+          `http://localhost/api/inbox/${encodeURIComponent(inboxId)}/actions`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          },
+        ),
+      );
+
+    const invalidBody = await post('paired:paired-1:review_ready', {
+      action: 'approve',
+    });
+    expect(invalidBody.status).toBe(400);
+
+    const unsupportedTarget = await post('ci:task-1');
+    expect(unsupportedTarget.status).toBe(400);
+
+    const missingTask = await post('paired:missing:review_ready');
+    expect(missingTask.status).toBe(404);
+
+    const stale = await post('paired:paired-1:merge_ready');
+    expect(stale.status).toBe(409);
+
+    const completedHandler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      getPairedTaskById: () =>
+        makePairedTask({ id: 'done-1', status: 'completed' }),
+      schedulePairedFollowUp: () => {
+        throw new Error('schedulePairedFollowUp should not be called');
+      },
+      enqueueMessageCheck: () => undefined,
+    });
+    const completed = await completedHandler(
+      new Request(
+        'http://localhost/api/inbox/paired%3Adone-1%3Acompleted/actions',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'run' }),
+        },
+      ),
+    );
+    expect(completed.status).toBe(409);
+
+    const wrongMethod = await handler(
+      new Request(
+        'http://localhost/api/inbox/paired%3Apaired-1%3Areview_ready/actions',
+        {
+          method: 'GET',
+        },
+      ),
+    );
+    expect(wrongMethod.status).toBe(405);
+
+    const notWired = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      getPairedTaskById: () => pairedTask,
+    });
+    const noQueue = await notWired(
+      new Request(
+        'http://localhost/api/inbox/paired%3Apaired-1%3Areview_ready/actions',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'run' }),
+        },
+      ),
+    );
+    expect(noQueue.status).toBe(503);
+  });
+
   it('injects room messages and queues room work from the web dashboard', async () => {
     const messages: NewMessage[] = [];
     const metadata: Array<{

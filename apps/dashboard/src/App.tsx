@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import {
+  type DashboardInboxAction,
   type DashboardTaskAction,
   type DashboardOverview,
   type DashboardTask,
   type StatusSnapshot,
   fetchDashboardData,
+  runInboxAction,
   runScheduledTaskAction,
   sendRoomMessage,
 } from './api';
@@ -36,6 +38,7 @@ type DashboardView = 'usage' | 'inbox' | 'health' | 'rooms' | 'scheduled';
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
 type TaskResultTone = 'ok' | 'fail' | 'none';
 type TaskActionKey = `${string}:${DashboardTaskAction}`;
+type InboxActionKey = `${string}:${DashboardInboxAction}`;
 type InboxFilter = 'all' | InboxItem['kind'];
 type HealthLevel = 'ok' | 'stale' | 'down';
 
@@ -290,6 +293,30 @@ function taskActionsFor(task: DashboardTask): DashboardTaskAction[] {
   if (task.status === 'active') return ['pause', 'cancel'];
   if (task.status === 'paused') return ['resume', 'cancel'];
   return [];
+}
+
+function inboxActionsFor(item: InboxItem): DashboardInboxAction[] {
+  if (item.source !== 'paired-task') return [];
+  if (
+    item.kind === 'reviewer-request' ||
+    item.kind === 'approval' ||
+    item.kind === 'arbiter-request'
+  ) {
+    return ['run'];
+  }
+  return [];
+}
+
+function inboxActionLabel(
+  item: InboxItem,
+  action: DashboardInboxAction,
+  t: Messages,
+): string {
+  if (action !== 'run') return action;
+  if (item.kind === 'reviewer-request') return t.inbox.actions.runReview;
+  if (item.kind === 'approval') return t.inbox.actions.finalize;
+  if (item.kind === 'arbiter-request') return t.inbox.actions.runArbiter;
+  return t.inbox.actions.run;
 }
 
 const INBOX_FILTERS: InboxFilter[] = [
@@ -600,14 +627,18 @@ function InboxPanel({
   overview,
   tasks,
   locale,
+  onInboxAction,
   onTaskAction,
+  inboxActionKey,
   taskActionKey,
   t,
 }: {
   overview: DashboardOverview;
   tasks: DashboardTask[];
   locale: Locale;
+  onInboxAction: (item: InboxItem, action: DashboardInboxAction) => void;
   onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
+  inboxActionKey: InboxActionKey | null;
   taskActionKey: TaskActionKey | null;
   t: Messages;
 }) {
@@ -690,6 +721,7 @@ function InboxPanel({
           const linkedTaskActions = linkedTask
             ? taskActionsFor(linkedTask)
             : [];
+          const inboxActions = inboxActionsFor(item);
           return (
             <article
               className={`inbox-card inbox-${item.severity}`}
@@ -749,6 +781,27 @@ function InboxPanel({
                         type="button"
                       >
                         {busy ? t.tasks.actions.busy : t.tasks.actions[action]}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {inboxActions.length > 0 ? (
+                <div className="task-actions inbox-actions">
+                  {inboxActions.map((action) => {
+                    const actionKey: InboxActionKey = `${item.id}:${action}`;
+                    const busy = inboxActionKey === actionKey;
+                    return (
+                      <button
+                        className={`task-action task-action-${action}`}
+                        disabled={busy}
+                        key={action}
+                        onClick={() => onInboxAction(item, action)}
+                        type="button"
+                      >
+                        {busy
+                          ? t.inbox.actions.busy
+                          : inboxActionLabel(item, action, t)}
                       </button>
                     );
                   })}
@@ -1429,6 +1482,9 @@ function App() {
   const [taskActionKey, setTaskActionKey] = useState<TaskActionKey | null>(
     null,
   );
+  const [inboxActionKey, setInboxActionKey] = useState<InboxActionKey | null>(
+    null,
+  );
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
   const t = messages[locale];
 
@@ -1475,6 +1531,22 @@ function App() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setTaskActionKey(null);
+    }
+  }
+
+  async function handleInboxAction(
+    item: InboxItem,
+    action: DashboardInboxAction,
+  ) {
+    const actionKey: InboxActionKey = `${item.id}:${action}`;
+    setInboxActionKey(actionKey);
+    try {
+      await runInboxAction(item.id, action);
+      await refresh(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInboxActionKey(null);
     }
   }
 
@@ -1591,7 +1663,11 @@ function App() {
                   <span>{t.panels.inboxQueue}</span>
                 </div>
                 <InboxPanel
+                  inboxActionKey={inboxActionKey}
                   locale={locale}
+                  onInboxAction={(item, action) =>
+                    void handleInboxAction(item, action)
+                  }
                   onTaskAction={(task, action) =>
                     void handleTaskAction(task, action)
                   }
