@@ -38,6 +38,7 @@ import {
 
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
 const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
+const WEB_TASK_PROMPT_MAX_LENGTH = 8000;
 
 type PairedFollowUpTask = Pick<
   PairedTask,
@@ -298,6 +299,7 @@ interface ScheduledTaskMutationBody {
   scheduleValue?: unknown;
   contextMode?: unknown;
   agentType?: unknown;
+  requestId?: unknown;
 }
 
 async function readScheduledTaskMutationBody(
@@ -314,6 +316,14 @@ function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeTaskPrompt(value: unknown): string | null {
+  const prompt = normalizeNonEmptyString(value);
+  if (!prompt) return null;
+  return prompt.length > WEB_TASK_PROMPT_MAX_LENGTH
+    ? prompt.slice(0, WEB_TASK_PROMPT_MAX_LENGTH)
+    : prompt;
 }
 
 function computeInitialNextRun(
@@ -369,6 +379,18 @@ function resolveTaskRoom(
 
 function makeWebTaskId(): string {
   return `web-task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sanitizeScheduledTaskRequestId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const safe = trimmed.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 120);
+  return safe || null;
+}
+
+function makeWebTaskIdFromRequest(requestId: string | null): string {
+  return requestId ? `web-task-${requestId}` : makeWebTaskId();
 }
 
 function sanitizeRoomMessageRequestId(value: unknown): string | null {
@@ -641,7 +663,7 @@ export function createWebDashboardHandler(
       }
 
       const body = await readScheduledTaskMutationBody(request);
-      const prompt = normalizeNonEmptyString(body?.prompt);
+      const prompt = normalizeTaskPrompt(body?.prompt);
       const scheduleType =
         body && isScheduleType(body.scheduleType) ? body.scheduleType : null;
       const scheduleValue = normalizeNonEmptyString(body?.scheduleValue);
@@ -672,7 +694,17 @@ export function createWebDashboardHandler(
       const agentType = isAgentType(body.agentType)
         ? body.agentType
         : (room.group.agentType ?? 'claude-code');
-      const id = makeWebTaskId();
+      const requestId = sanitizeScheduledTaskRequestId(body.requestId);
+      const id = makeWebTaskIdFromRequest(requestId);
+      const existing = requestId ? loadTaskById(id) : undefined;
+      if (existing) {
+        return jsonResponse({
+          ok: true,
+          duplicate: true,
+          task: sanitizeScheduledTask(existing),
+        });
+      }
+
       createScheduledTask({
         id,
         group_folder: room.group.folder,
@@ -722,11 +754,24 @@ export function createWebDashboardHandler(
       if (!body) {
         return jsonResponse({ error: 'Invalid task update' }, { status: 400 });
       }
+      if (
+        body.roomJid !== undefined ||
+        body.groupFolder !== undefined ||
+        body.contextMode !== undefined ||
+        body.agentType !== undefined
+      ) {
+        return jsonResponse(
+          { error: 'Task room, context, and agent cannot be edited here' },
+          { status: 400 },
+        );
+      }
 
       const prompt =
         body.prompt === undefined
           ? task.prompt
-          : normalizeNonEmptyString(body.prompt);
+          : normalizeTaskPrompt(body.prompt);
+      const scheduleChanged =
+        body.scheduleType !== undefined || body.scheduleValue !== undefined;
       const scheduleType =
         body.scheduleType === undefined
           ? task.schedule_type
@@ -741,22 +786,26 @@ export function createWebDashboardHandler(
         return jsonResponse({ error: 'Invalid task update' }, { status: 400 });
       }
 
-      const next = computeInitialNextRun(
-        scheduleType,
-        scheduleValue,
-        opts.now?.() ?? new Date().toISOString(),
-      );
-      if (next.error) {
-        return jsonResponse({ error: next.error }, { status: 400 });
-      }
-
-      mutateTask(taskId, {
+      const updates: Parameters<typeof mutateTask>[1] = {
         prompt,
         schedule_type: scheduleType,
         schedule_value: scheduleValue,
-        next_run: next.nextRun,
-        suspended_until: null,
-      });
+      };
+
+      if (scheduleChanged) {
+        const next = computeInitialNextRun(
+          scheduleType,
+          scheduleValue,
+          opts.now?.() ?? new Date().toISOString(),
+        );
+        if (next.error) {
+          return jsonResponse({ error: next.error }, { status: 400 });
+        }
+        updates.next_run = next.nextRun;
+        updates.suspended_until = null;
+      }
+
+      mutateTask(taskId, updates);
       const updatedTask = loadTaskById(taskId);
       return jsonResponse({
         ok: true,
