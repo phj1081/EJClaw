@@ -13,6 +13,7 @@ import {
   createScheduledTask,
   fetchDashboardData,
   runInboxAction,
+  runServiceAction,
   runScheduledTaskAction,
   sendRoomMessage,
   updateScheduledTask,
@@ -48,6 +49,7 @@ type TaskActionKey =
   | `${string}:edit`
   | `${string}:${DashboardTaskAction}`;
 type InboxActionKey = `${string}:${DashboardInboxAction}`;
+type ServiceActionKey = 'stack:restart';
 type InboxFilter = 'all' | InboxItem['kind'];
 type HealthLevel = 'ok' | 'stale' | 'down';
 
@@ -913,13 +915,18 @@ function InboxPanel({
 function HealthPanel({
   data,
   locale,
+  onRestartStack,
+  serviceActionKey,
   t,
 }: {
   data: DashboardState;
   locale: Locale;
+  onRestartStack: () => void;
+  serviceActionKey: ServiceActionKey | null;
   t: Messages;
 }) {
   const services = data.overview.services;
+  const restarts = data.overview.operations?.serviceRestarts ?? [];
   const serviceLevels = services.map((service) => ({
     service,
     level: serviceHealthLevel(service, data.overview.generatedAt),
@@ -980,6 +987,71 @@ function HealthPanel({
           <strong>{ciFailures}</strong>
         </div>
       </section>
+
+      <section className="health-actions" aria-label={t.health.restart}>
+        <div>
+          <span className="eyebrow">{t.health.restart}</span>
+          <strong>{t.health.restartStack}</strong>
+          <small>{t.health.restartHint}</small>
+        </div>
+        <button
+          disabled={serviceActionKey === 'stack:restart'}
+          onClick={onRestartStack}
+          type="button"
+        >
+          {serviceActionKey === 'stack:restart'
+            ? t.health.restarting
+            : t.health.restartStack}
+        </button>
+      </section>
+
+      {restarts.length > 0 ? (
+        <details className="health-restart-log">
+          <summary>
+            {t.health.restartLog}
+            <strong>{restarts.length}</strong>
+          </summary>
+          <div className="health-restart-list">
+            {restarts.map((restart) => {
+              const pill =
+                restart.status === 'success'
+                  ? 'ok'
+                  : restart.status === 'failed'
+                    ? 'error'
+                    : 'stale';
+              return (
+                <article className="health-restart-record" key={restart.id}>
+                  <div>
+                    <small>{t.health.restartTarget}</small>
+                    <strong>{restart.target}</strong>
+                  </div>
+                  <span
+                    aria-label={`${t.health.restartStatus}: ${restart.status}`}
+                    className={`pill pill-${pill}`}
+                  >
+                    {restart.status}
+                  </span>
+                  <div>
+                    <small>{t.health.restartRequested}</small>
+                    <strong>{formatDate(restart.requestedAt, locale)}</strong>
+                  </div>
+                  <div>
+                    <small>{t.health.restartServices}</small>
+                    <strong>
+                      {restart.services.length > 0
+                        ? restart.services.join(', ')
+                        : '-'}
+                    </strong>
+                  </div>
+                  {restart.error ? (
+                    <p className="health-restart-error">{restart.error}</p>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        </details>
+      ) : null}
 
       {services.length === 0 ? (
         <EmptyState>{t.service.empty}</EmptyState>
@@ -1705,6 +1777,8 @@ function App() {
   const [inboxActionKey, setInboxActionKey] = useState<InboxActionKey | null>(
     null,
   );
+  const [serviceActionKey, setServiceActionKey] =
+    useState<ServiceActionKey | null>(null);
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
   const t = messages[locale];
 
@@ -1806,6 +1880,27 @@ function App() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setInboxActionKey(null);
+    }
+  }
+
+  async function handleServiceRestart() {
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(t.health.confirmRestart)
+    ) {
+      return;
+    }
+
+    setServiceActionKey('stack:restart');
+    try {
+      await runServiceAction('stack', 'restart', {
+        requestId: makeClientRequestId(),
+      });
+      await refresh(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setServiceActionKey(null);
     }
   }
 
@@ -1946,7 +2041,13 @@ function App() {
                   <h2>{t.panels.health}</h2>
                   <span>{t.panels.healthSignals}</span>
                 </div>
-                <HealthPanel data={data} locale={locale} t={t} />
+                <HealthPanel
+                  data={data}
+                  locale={locale}
+                  onRestartStack={() => void handleServiceRestart()}
+                  serviceActionKey={serviceActionKey}
+                  t={t}
+                />
               </section>
             ) : null}
 

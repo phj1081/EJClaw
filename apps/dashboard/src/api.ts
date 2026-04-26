@@ -35,6 +35,9 @@ export interface DashboardOverview {
     }>;
     fetchedAt: string | null;
   };
+  operations?: {
+    serviceRestarts: DashboardServiceRestart[];
+  };
   inbox: Array<{
     id: string;
     groupKey: string;
@@ -60,6 +63,16 @@ export interface DashboardOverview {
     taskId?: string;
     taskStatus?: string;
   }>;
+}
+
+export interface DashboardServiceRestart {
+  id: string;
+  target: 'stack';
+  requestedAt: string;
+  completedAt: string | null;
+  status: 'running' | 'success' | 'failed';
+  services: string[];
+  error?: string;
 }
 
 export interface StatusSnapshot {
@@ -102,6 +115,7 @@ export interface DashboardTask {
 
 export type DashboardTaskAction = 'pause' | 'resume' | 'cancel';
 export type DashboardInboxAction = 'run' | 'decline' | 'dismiss';
+export type DashboardServiceAction = 'restart';
 export type DashboardTaskScheduleType = 'cron' | 'interval' | 'once';
 export type DashboardTaskContextMode = 'group' | 'isolated';
 
@@ -228,6 +242,21 @@ export async function runInboxAction(
   return postJson(`/api/inbox/${encodeURIComponent(inboxId)}/actions`, {
     action,
     lastOccurredAt: options.lastOccurredAt,
+    requestId: options.requestId,
+  });
+}
+
+export async function runServiceAction(
+  serviceId: 'stack',
+  action: DashboardServiceAction,
+  options: { requestId?: string } = {},
+): Promise<{
+  ok: true;
+  duplicate?: boolean;
+  restart: DashboardServiceRestart;
+}> {
+  return postJson(`/api/services/${encodeURIComponent(serviceId)}/actions`, {
+    action,
     requestId: options.requestId,
   });
 }
