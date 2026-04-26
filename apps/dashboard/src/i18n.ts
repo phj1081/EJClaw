@@ -65,13 +65,13 @@ export interface Messages {
   };
   health: {
     system: string;
-    summary: string;
     signals: string;
     services: string;
     fresh: string;
     stale: string;
     queue: string;
     ciFailures: string;
+    affectedServices: string;
     levels: {
       ok: string;
       stale: string;
@@ -259,13 +259,13 @@ export const messages = {
     },
     health: {
       system: '시스템',
-      summary: '헬스는 heartbeat, 큐, CI 실패를 합산합니다.',
       signals: '헬스 신호',
       services: '서비스',
-      fresh: '정상 heartbeat',
+      fresh: '정상',
       stale: '지연',
       queue: '큐',
       ciFailures: 'CI 실패',
+      affectedServices: '이상 서비스',
       levels: {
         ok: '정상',
         stale: '주의',
@@ -437,13 +437,13 @@ export const messages = {
     },
     health: {
       system: 'System',
-      summary: 'Health combines heartbeat, queue, and CI failures.',
       signals: 'Health signals',
       services: 'Services',
-      fresh: 'fresh heartbeat',
+      fresh: 'Fresh',
       stale: 'stale',
       queue: 'Queue',
       ciFailures: 'CI failures',
+      affectedServices: 'Affected services',
       levels: {
         ok: 'OK',
         stale: 'Watch',
@@ -615,13 +615,13 @@ export const messages = {
     },
     health: {
       system: '系统',
-      summary: '健康状态汇总心跳、队列和 CI 失败。',
       signals: '健康信号',
       services: '服务',
       fresh: '心跳正常',
       stale: '延迟',
       queue: '队列',
       ciFailures: 'CI 失败',
+      affectedServices: '异常服务',
       levels: {
         ok: '正常',
         stale: '关注',
@@ -793,13 +793,13 @@ export const messages = {
     },
     health: {
       system: 'システム',
-      summary: '状態はハートビート、キュー、CI失敗を集計します。',
       signals: '状態シグナル',
       services: 'サービス',
-      fresh: '正常ハートビート',
+      fresh: '正常',
       stale: '遅延',
       queue: 'キュー',
       ciFailures: 'CI失敗',
+      affectedServices: '異常サービス',
       levels: {
         ok: '正常',
         stale: '注意',
