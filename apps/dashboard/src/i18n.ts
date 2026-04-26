@@ -72,6 +72,16 @@ export interface Messages {
     queue: string;
     ciFailures: string;
     affectedServices: string;
+    restart: string;
+    restartStack: string;
+    restarting: string;
+    restartHint: string;
+    confirmRestart: string;
+    restartLog: string;
+    restartTarget: string;
+    restartStatus: string;
+    restartRequested: string;
+    restartServices: string;
     levels: {
       ok: string;
       stale: string;
@@ -323,6 +333,16 @@ export const messages = {
       queue: '큐',
       ciFailures: 'CI 실패',
       affectedServices: '이상 서비스',
+      restart: 'Restart',
+      restartStack: 'Restart stack',
+      restarting: 'Restarting...',
+      restartHint: '서비스 전체 재시작',
+      confirmRestart: 'Restart stack now?',
+      restartLog: 'Restart log',
+      restartTarget: 'Target',
+      restartStatus: 'Status',
+      restartRequested: 'Requested',
+      restartServices: 'Services',
       levels: {
         ok: '정상',
         stale: '주의',
@@ -558,6 +578,16 @@ export const messages = {
       queue: 'Queue',
       ciFailures: 'CI failures',
       affectedServices: 'Affected services',
+      restart: 'Restart',
+      restartStack: 'Restart stack',
+      restarting: 'Restarting...',
+      restartHint: 'Restart all services',
+      confirmRestart: 'Restart stack now?',
+      restartLog: 'Restart log',
+      restartTarget: 'Target',
+      restartStatus: 'Status',
+      restartRequested: 'Requested',
+      restartServices: 'Services',
       levels: {
         ok: 'OK',
         stale: 'Watch',
@@ -793,6 +823,16 @@ export const messages = {
       queue: '队列',
       ciFailures: 'CI 失败',
       affectedServices: '异常服务',
+      restart: '重启',
+      restartStack: '重启 stack',
+      restarting: '重启中...',
+      restartHint: '重启全部服务',
+      confirmRestart: '现在重启 stack?',
+      restartLog: '重启记录',
+      restartTarget: '目标',
+      restartStatus: '状态',
+      restartRequested: '请求',
+      restartServices: '服务',
       levels: {
         ok: '正常',
         stale: '关注',
@@ -1028,6 +1068,16 @@ export const messages = {
       queue: 'キュー',
       ciFailures: 'CI失敗',
       affectedServices: '異常サービス',
+      restart: '再起動',
+      restartStack: 'Stack再起動',
+      restarting: '再起動中...',
+      restartHint: '全サービス再起動',
+      confirmRestart: 'Stackを再起動しますか?',
+      restartLog: '再起動ログ',
+      restartTarget: '対象',
+      restartStatus: '状態',
+      restartRequested: '要求',
+      restartServices: 'サービス',
       levels: {
         ok: '正常',
         stale: '注意',

@@ -851,9 +851,12 @@ progress::-moz-progress-bar {
 .inbox-summary div,
 .health-signals div,
 .health-overview,
+.health-actions,
 .inbox-card,
 .health-service,
-.health-service-details {
+.health-service-details,
+.health-restart-log,
+.health-restart-record {
   border: 1px solid rgba(43, 55, 38, 0.1);
   border-radius: 18px;
   background: rgba(255, 250, 240, 0.64);
@@ -1016,6 +1019,100 @@ progress::-moz-progress-bar {
   display: block;
   font-size: clamp(20px, 2vw, 28px);
   letter-spacing: -0.04em;
+}
+
+.health-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+}
+
+.health-actions > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.health-actions strong,
+.health-actions small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-actions small {
+  color: var(--muted);
+}
+
+.health-actions button {
+  min-height: 44px;
+  flex: none;
+}
+
+.health-restart-log {
+  padding: 10px;
+}
+
+.health-restart-log summary {
+  display: flex;
+  min-height: 34px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--bg-ink);
+  font-size: 13px;
+  font-weight: 900;
+  list-style: none;
+}
+
+.health-restart-log summary::-webkit-details-marker {
+  display: none;
+}
+
+.health-restart-log[open] summary {
+  margin-bottom: 8px;
+}
+
+.health-restart-list {
+  display: grid;
+  gap: 8px;
+}
+
+.health-restart-record {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+}
+
+.health-restart-record > div {
+  min-width: 0;
+}
+
+.health-restart-record small,
+.health-restart-record strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-restart-record small {
+  color: var(--muted);
+}
+
+.health-restart-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #7c2518;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .health-down {
@@ -1823,6 +1920,23 @@ progress::-moz-progress-bar {
     gap: 8px;
   }
 
+  .health-actions {
+    display: grid;
+  }
+
+  .health-actions button {
+    width: 100%;
+  }
+
+  .health-restart-record {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .health-restart-record > div:nth-of-type(2),
+  .health-restart-record > div:nth-of-type(3) {
+    grid-column: 1 / -1;
+  }
+
   .health-service {
     grid-template-columns: minmax(0, 1fr) auto;
   }
@@ -1927,6 +2041,10 @@ progress::-moz-progress-bar {
 
   .inbox-meta,
   .health-signals {
+    grid-template-columns: 1fr;
+  }
+
+  .health-restart-record {
     grid-template-columns: 1fr;
   }
 

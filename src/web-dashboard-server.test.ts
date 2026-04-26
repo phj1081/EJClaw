@@ -1019,6 +1019,162 @@ describe('web dashboard server handler', () => {
     expect(noQueue.status).toBe(503);
   });
 
+  it('restarts the service stack through the health action endpoint', async () => {
+    let restartCalls = 0;
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      restartServiceStack: () => {
+        restartCalls += 1;
+        return ['ejclaw'];
+      },
+      now: () => '2026-04-26T05:30:00.000Z',
+    });
+    const restart = () =>
+      handler(
+        new Request('http://localhost/api/services/stack/actions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            action: 'restart',
+            requestId: 'stack-restart-1',
+          }),
+        }),
+      );
+
+    const response = await restart();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      restart: {
+        id: 'web-restart-stack-restart-1',
+        target: 'stack',
+        requestedAt: '2026-04-26T05:30:00.000Z',
+        completedAt: '2026-04-26T05:30:00.000Z',
+        status: 'success',
+        services: ['ejclaw'],
+      },
+    });
+    expect(restartCalls).toBe(1);
+
+    const duplicate = await restart();
+    expect(duplicate.status).toBe(200);
+    await expect(duplicate.json()).resolves.toMatchObject({
+      ok: true,
+      duplicate: true,
+      restart: {
+        id: 'web-restart-stack-restart-1',
+        status: 'success',
+      },
+    });
+    expect(restartCalls).toBe(1);
+
+    const overview = await handler(
+      new Request('http://localhost/api/overview'),
+    );
+    expect(overview.status).toBe(200);
+    await expect(overview.json()).resolves.toMatchObject({
+      operations: {
+        serviceRestarts: [
+          {
+            id: 'web-restart-stack-restart-1',
+            status: 'success',
+            services: ['ejclaw'],
+          },
+        ],
+      },
+    });
+  });
+
+  it('records failed service stack restarts', async () => {
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      restartServiceStack: () => {
+        throw new Error('systemctl failed');
+      },
+      now: () => '2026-04-26T05:35:00.000Z',
+    });
+
+    const response = await handler(
+      new Request('http://localhost/api/services/stack/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'restart',
+          requestId: 'stack-restart-fail',
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'systemctl failed',
+      restart: {
+        id: 'web-restart-stack-restart-fail',
+        target: 'stack',
+        status: 'failed',
+        error: 'systemctl failed',
+      },
+    });
+
+    const overview = await handler(
+      new Request('http://localhost/api/overview'),
+    );
+    await expect(overview.json()).resolves.toMatchObject({
+      operations: {
+        serviceRestarts: [
+          {
+            id: 'web-restart-stack-restart-fail',
+            status: 'failed',
+            error: 'systemctl failed',
+          },
+        ],
+      },
+    });
+  });
+
+  it('rejects invalid service restart requests', async () => {
+    let restartCalls = 0;
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+      restartServiceStack: () => {
+        restartCalls += 1;
+        return ['ejclaw'];
+      },
+    });
+
+    const invalidAction = await handler(
+      new Request('http://localhost/api/services/stack/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'stop' }),
+      }),
+    );
+    expect(invalidAction.status).toBe(400);
+
+    const invalidTarget = await handler(
+      new Request('http://localhost/api/services/ejclaw/actions', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'restart' }),
+      }),
+    );
+    expect(invalidTarget.status).toBe(400);
+
+    const wrongMethod = await handler(
+      new Request('http://localhost/api/services/stack/actions', {
+        method: 'GET',
+      }),
+    );
+    expect(wrongMethod.status).toBe(405);
+    expect(restartCalls).toBe(0);
+  });
+
   it('injects room messages and queues room work from the web dashboard', async () => {
     const messages: NewMessage[] = [];
     const metadata: Array<{
