@@ -70,8 +70,20 @@ table {
 
 .dashboard-content {
   display: grid;
+  align-content: start;
   gap: 12px;
   min-width: 0;
+  min-height: calc(100vh - 36px);
+}
+
+.view-stack {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.view-panel {
+  min-height: calc(100vh - 36px);
 }
 
 .shell::before {
@@ -246,6 +258,15 @@ button:disabled {
 
 .side-rail nav a:hover {
   background: rgba(191, 95, 44, 0.12);
+}
+
+.side-rail nav a.is-active,
+.side-rail nav a[aria-current='page'],
+.nav-drawer nav a.is-active,
+.nav-drawer nav a[aria-current='page'] {
+  color: #fffaf0;
+  background: linear-gradient(135deg, #2b3726, #1c211c);
+  box-shadow: inset 0 0 0 1px rgba(255, 250, 240, 0.18);
 }
 
 .side-refresh {
@@ -1022,6 +1043,10 @@ progress::-moz-progress-bar {
 
   .section-nav span {
     display: none;
+  }
+
+  .section-nav .menu-button span {
+    display: block;
   }
 
   .section-nav button {
