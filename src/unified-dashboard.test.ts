@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { UsageRow } from './dashboard-usage-rows.js';
 import {
+  buildWebUsageRowsForSnapshot,
   formatStatusHeader,
   renderUsageTable,
   summarizeWatcherTasks,
@@ -105,5 +106,96 @@ describe('renderUsageTable', () => {
   it('returns fallback text when both groups are empty', () => {
     const lines = renderUsageTable([], []);
     expect(lines).toEqual(['_조회 불가_']);
+  });
+});
+
+describe('buildWebUsageRowsForSnapshot', () => {
+  it('keeps real Claude and Kimi rows ahead of Codex rows for web snapshots', () => {
+    const rows = buildWebUsageRowsForSnapshot({
+      serviceAgentType: 'claude-code',
+      claudeAccounts: [
+        {
+          index: 0,
+          masked: 'claude-1',
+          isActive: true,
+          isRateLimited: false,
+          usage: {
+            five_hour: {
+              utilization: 0.2,
+              resets_at: '2026-04-26T12:00:00.000Z',
+            },
+            seven_day: {
+              utilization: 0.4,
+              resets_at: '2026-04-27T12:00:00.000Z',
+            },
+          },
+        },
+        {
+          index: 1,
+          masked: 'claude-2',
+          isActive: false,
+          isRateLimited: false,
+          usage: {
+            five_hour: {
+              utilization: 0.3,
+              resets_at: '2026-04-26T12:00:00.000Z',
+            },
+            seven_day: {
+              utilization: 0.5,
+              resets_at: '2026-04-27T12:00:00.000Z',
+            },
+          },
+        },
+      ],
+      kimiUsage: {
+        fiveHour: { pct: 18, resetTime: '2026-04-26T12:00:00.000Z' },
+        weekly: { pct: 29, resetTime: '2026-04-27T12:00:00.000Z' },
+      },
+      codexRows: [
+        {
+          name: 'Codex1',
+          h5pct: 25,
+          h5reset: '1h',
+          d7pct: 35,
+          d7reset: '2d',
+        },
+      ],
+    });
+
+    const names = rows.map((row) => row.name);
+    expect(names[0]).toMatch(/^Claude1/);
+    expect(names[1]).toMatch(/^Claude2/);
+    expect(names[2]).toMatch(/^Kimi/);
+    expect(names[3]).toBe('Codex1');
+  });
+
+  it('does not invent Claude or Kimi rows for codex-only services', () => {
+    const rows = buildWebUsageRowsForSnapshot({
+      serviceAgentType: 'codex',
+      claudeAccounts: [
+        {
+          index: 0,
+          masked: 'claude-1',
+          isActive: true,
+          isRateLimited: false,
+          usage: null,
+        },
+      ],
+      kimiUsage: {
+        fiveHour: { pct: 18, resetTime: '2026-04-26T12:00:00.000Z' },
+        weekly: { pct: 29, resetTime: '2026-04-27T12:00:00.000Z' },
+      },
+      codexRows: [
+        {
+          name: 'Codex1',
+          h5pct: 25,
+          h5reset: '1h',
+          d7pct: 35,
+          d7reset: '2d',
+        },
+      ],
+    });
+
+    expect(rows.map((row) => row.name)).toEqual(['Codex1']);
   });
 });

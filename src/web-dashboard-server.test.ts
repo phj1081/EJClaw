@@ -37,6 +37,59 @@ describe('web dashboard server handler', () => {
     expect(body.tasks.total).toBe(0);
   });
 
+  it('serves full Claude, Kimi, and Codex usage rows through overview JSON', async () => {
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [
+        {
+          serviceId: 'renderer',
+          agentType: 'claude-code',
+          assistantName: 'Claude',
+          updatedAt: '2026-04-26T11:59:00.000Z',
+          entries: [],
+          usageRowsFetchedAt: '2026-04-26T11:59:00.000Z',
+          usageRows: [
+            {
+              name: 'Claude1 Max',
+              h5pct: 66,
+              h5reset: '2h',
+              d7pct: 40,
+              d7reset: '4d',
+            },
+            {
+              name: 'Kimi',
+              h5pct: 10,
+              h5reset: '3h',
+              d7pct: 12,
+              d7reset: '5d',
+            },
+            {
+              name: 'Codex1',
+              h5pct: 25,
+              h5reset: '55m',
+              d7pct: 35,
+              d7reset: '2d',
+            },
+          ],
+        },
+      ],
+      getTasks: () => [],
+    });
+
+    const overview = await handler(
+      new Request('http://localhost/api/overview'),
+    );
+    expect(overview.status).toBe(200);
+    const body = (await overview.json()) as {
+      usage: { rows: Array<{ name: string }> };
+    };
+
+    expect(body.usage.rows.map((row) => row.name)).toEqual([
+      'Claude1 Max',
+      'Kimi',
+      'Codex1',
+    ]);
+  });
+
   it('serves Vite static assets and falls back to index for SPA routes', async () => {
     const staticDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-dashboard-'),

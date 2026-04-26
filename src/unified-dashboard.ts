@@ -17,7 +17,11 @@ import {
   CODEX_WARMUP_CONFIG,
   getMoaConfig,
 } from './config.js';
-import { fetchKimiUsage, buildKimiUsageRows } from './kimi-usage.js';
+import {
+  fetchKimiUsage,
+  buildKimiUsageRows,
+  type KimiUsageData,
+} from './kimi-usage.js';
 import { getGlobalFailoverInfo } from './service-routing.js';
 import {
   fetchAllClaudeUsage,
@@ -93,7 +97,7 @@ const RENDERER_USAGE_REFRESH_MS = 30_000;
 let statusMessageId: string | null = null;
 let cachedUsageContent = '';
 let cachedClaudeAccounts: ClaudeAccountUsage[] = [];
-let cachedKimiUsage: import('./kimi-usage.js').KimiUsageData | null = null;
+let cachedKimiUsage: KimiUsageData | null = null;
 let usageUpdateInProgress = false;
 let channelMetaCache = new Map<string, ChannelMeta>();
 let channelMetaLastRefresh = 0;
@@ -102,6 +106,8 @@ let dashboardUpdateLogged = false;
 let cachedCodexUsageRows: UsageRow[] = [];
 /** Codex service only: ISO timestamp of last successful usage fetch. */
 let codexUsageFetchedAt: string | null = null;
+/** Renderer service only: ISO timestamp of last successful Claude/Kimi usage render. */
+let rendererUsageFetchedAt: string | null = null;
 
 export interface WatcherTaskSummary {
   active: number;
@@ -231,9 +237,47 @@ function formatRoomName(
   return base;
 }
 
+export function buildWebUsageRowsForSnapshot(args: {
+  serviceAgentType: AgentType;
+  claudeAccounts: ClaudeAccountUsage[];
+  kimiUsage: KimiUsageData | null;
+  codexRows: UsageRow[];
+}): UsageRow[] {
+  const rows: UsageRow[] = [];
+
+  if (args.serviceAgentType === 'claude-code') {
+    rows.push(...buildClaudeUsageRows(args.claudeAccounts));
+    rows.push(...buildKimiUsageRows(args.kimiUsage));
+  }
+
+  rows.push(...args.codexRows);
+  return rows;
+}
+
+function buildUsageSnapshotRows(opts: UnifiedDashboardOptions): {
+  rows: UsageRow[];
+  fetchedAt: string | null;
+} {
+  const rows = buildWebUsageRowsForSnapshot({
+    serviceAgentType: opts.serviceAgentType,
+    claudeAccounts: cachedClaudeAccounts,
+    kimiUsage: cachedKimiUsage,
+    codexRows: cachedCodexUsageRows,
+  });
+
+  const fetchedAt =
+    [rendererUsageFetchedAt, codexUsageFetchedAt]
+      .filter((value): value is string => !!value)
+      .sort()
+      .at(-1) ?? null;
+
+  return { rows, fetchedAt };
+}
+
 function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
   const groups = opts.roomBindings();
   const statuses = opts.queue.getStatuses(Object.keys(groups));
+  const usageSnapshot = buildUsageSnapshotRows(opts);
 
   writeStatusSnapshot({
     serviceId: opts.serviceId,
@@ -267,8 +311,10 @@ function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
       pendingMessages: boolean;
       pendingTasks: number;
     }>,
-    ...(cachedCodexUsageRows.length > 0 && { usageRows: cachedCodexUsageRows }),
-    ...(codexUsageFetchedAt && { usageRowsFetchedAt: codexUsageFetchedAt }),
+    ...(usageSnapshot.rows.length > 0 && { usageRows: usageSnapshot.rows }),
+    ...(usageSnapshot.fetchedAt && {
+      usageRowsFetchedAt: usageSnapshot.fetchedAt,
+    }),
   });
 }
 
@@ -647,6 +693,7 @@ async function refreshUsageCache(): Promise<void> {
   usageUpdateInProgress = true;
   try {
     cachedUsageContent = await buildUsageContent();
+    rendererUsageFetchedAt = new Date().toISOString();
   } catch (err) {
     logger.warn({ err }, 'Failed to build usage content');
   } finally {
