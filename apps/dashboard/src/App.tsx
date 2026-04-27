@@ -34,7 +34,6 @@ import {
   fetchAccounts,
   fetchDashboardData,
   fetchModelConfig,
-  fetchRoomsTimelineBatch,
   runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
@@ -52,6 +51,10 @@ import {
   type Locale,
   type Messages,
 } from './i18n';
+import {
+  useSelectedRoomActivity,
+  type RoomActivityMap,
+} from './useRoomActivity';
 import './styles.css';
 
 interface DashboardState {
@@ -59,8 +62,6 @@ interface DashboardState {
   snapshots: StatusSnapshot[];
   tasks: DashboardTask[];
 }
-
-type RoomActivityMap = Record<string, DashboardRoomActivity>;
 
 type UsageRow = DashboardOverview['usage']['rows'][number];
 type InboxItem = DashboardOverview['inbox'][number];
@@ -2568,7 +2569,9 @@ function RoomBoardV2({
   roomActivity,
   roomActivityLoading,
   roomMessageKey,
+  selectedJid,
   locale,
+  onSelectedJidChange,
   snapshots,
   t,
 }: {
@@ -2585,13 +2588,14 @@ function RoomBoardV2({
   roomActivity: RoomActivityMap;
   roomActivityLoading: boolean;
   roomMessageKey: string | null;
+  selectedJid: string | null;
   locale: Locale;
+  onSelectedJidChange: (jid: string | null) => void;
   snapshots: StatusSnapshot[];
   t: Messages;
 }) {
   const [filter, setFilter] = useState<RoomFilter>('all');
   const [sort, setSort] = useState<RoomSort>('recent');
-  const [selectedJid, setSelectedJid] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const allEntries: RoomEntryWithService[] = snapshots.flatMap((snapshot) =>
@@ -2600,10 +2604,6 @@ function RoomBoardV2({
       serviceId: snapshot.serviceId,
     })),
   );
-
-  if (allEntries.length === 0) {
-    return <EmptyState>{t.rooms.empty}</EmptyState>;
-  }
 
   const counts = {
     all: allEntries.length,
@@ -2631,6 +2631,15 @@ function RoomBoardV2({
 
   const selectedEntry =
     sorted.find((e) => e.jid === selectedJid) ?? sorted[0] ?? null;
+
+  useEffect(() => {
+    const nextJid = selectedEntry?.jid ?? null;
+    if (nextJid !== selectedJid) onSelectedJidChange(nextJid);
+  }, [onSelectedJidChange, selectedEntry?.jid, selectedJid]);
+
+  if (allEntries.length === 0) {
+    return <EmptyState>{t.rooms.empty}</EmptyState>;
+  }
 
   function setDraft(jid: string, value: string) {
     setDrafts((previous) => ({ ...previous, [jid]: value }));
@@ -2705,7 +2714,7 @@ function RoomBoardV2({
                   aria-current={active ? 'page' : undefined}
                   className={`rooms-list-item status-${entry.status}${active ? ' is-active' : ''}`}
                   key={`${entry.serviceId}:${entry.jid}`}
-                  onClick={() => setSelectedJid(entry.jid)}
+                  onClick={() => onSelectedJidChange(entry.jid)}
                   type="button"
                 >
                   <span className={`room-pulse pulse-${entry.status}`}>
@@ -3788,8 +3797,15 @@ function App() {
   const [serviceActionKey, setServiceActionKey] =
     useState<ServiceActionKey | null>(null);
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
-  const [roomActivity, setRoomActivity] = useState<RoomActivityMap>({});
-  const [roomActivityLoading, setRoomActivityLoading] = useState(false);
+  const [selectedRoomJid, setSelectedRoomJid] = useState<string | null>(null);
+  const {
+    refreshRoom: refreshRoomActivity,
+    roomActivity,
+    roomActivityLoading,
+  } = useSelectedRoomActivity({
+    active: activeView === 'rooms',
+    selectedRoomJid: selectedRoomJid,
+  });
   const [pendingMessages, setPendingMessages] = useState<
     Record<string, Array<DashboardRoomActivity['messages'][number]>>
   >({});
@@ -3956,8 +3972,7 @@ function App() {
     try {
       await sendRoomMessage(roomJid, text, requestId, nickname || null);
       try {
-        const fresh = await fetchRoomsTimelineBatch();
-        setRoomActivity(fresh);
+        await refreshRoomActivity(roomJid);
       } catch {
         /* refresh will retry on next poll */
       }
@@ -4125,102 +4140,6 @@ function App() {
     return () => window.clearInterval(id);
   }, []);
 
-  const roomsJidsKey = useMemo(() => {
-    if (!data) return '';
-    return [
-      ...new Set(
-        data.snapshots.flatMap((snapshot) =>
-          snapshot.entries.map((entry) => entry.jid),
-        ),
-      ),
-    ]
-      .sort()
-      .join('|');
-  }, [data]);
-
-  const roomsLastUpdatedKey = useMemo(() => {
-    if (!data) return '';
-    return data.snapshots
-      .map((s) => s.updatedAt)
-      .sort()
-      .join('|');
-  }, [data]);
-
-  useEffect(() => {
-    if (activeView !== 'rooms' || !data) return;
-    if (!roomsJidsKey) {
-      setRoomActivity({});
-      return;
-    }
-
-    let cancelled = false;
-    let inFlight = false;
-    let pollIntervalId: number | null = null;
-    let es: EventSource | null = null;
-
-    const applyMap = (map: RoomActivityMap) => {
-      if (!cancelled) setRoomActivity(map);
-    };
-
-    const fetchOnce = async (initial: boolean) => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
-      if (initial) setRoomActivityLoading(true);
-      try {
-        applyMap(await fetchRoomsTimelineBatch());
-      } catch {
-        /* keep last good state */
-      } finally {
-        inFlight = false;
-        if (!cancelled && initial) setRoomActivityLoading(false);
-      }
-    };
-
-    const startPollingFallback = () => {
-      if (pollIntervalId !== null) return;
-      pollIntervalId = window.setInterval(() => void fetchOnce(false), 2000);
-    };
-
-    const stopPollingFallback = () => {
-      if (pollIntervalId === null) return;
-      window.clearInterval(pollIntervalId);
-      pollIntervalId = null;
-    };
-
-    if (typeof window !== 'undefined' && 'EventSource' in window) {
-      void fetchOnce(true);
-      try {
-        es = new EventSource('/api/stream');
-        es.addEventListener('rooms-timeline', (event) => {
-          try {
-            const parsed = JSON.parse(
-              (event as MessageEvent).data,
-            ) as RoomActivityMap;
-            applyMap(parsed);
-            stopPollingFallback();
-          } catch {
-            /* malformed event, ignore */
-          }
-        });
-        es.onerror = () => {
-          // Browser auto-reconnects; meanwhile keep data fresh via polling.
-          startPollingFallback();
-        };
-      } catch {
-        startPollingFallback();
-      }
-    } else {
-      void fetchOnce(true);
-      startPollingFallback();
-    }
-
-    return () => {
-      cancelled = true;
-      stopPollingFallback();
-      es?.close();
-    };
-  }, [activeView, roomsJidsKey]);
-
   useEffect(() => {
     setPendingMessages((prev) => {
       const next: typeof prev = {};
@@ -4385,6 +4304,8 @@ function App() {
                   roomActivityLoading={roomActivityLoading}
                   roomMessageKey={roomMessageKey}
                   locale={locale}
+                  onSelectedJidChange={setSelectedRoomJid}
+                  selectedJid={selectedRoomJid}
                   snapshots={data.snapshots}
                   t={t}
                 />
