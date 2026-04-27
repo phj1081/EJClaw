@@ -3573,6 +3573,55 @@ function App() {
   }, [locale]);
 
   useEffect(() => {
+    const debug =
+      typeof window !== 'undefined' &&
+      /[?&]debug=1/.test(window.location.search);
+    document.body.classList.toggle('debug-outlines', debug);
+    if (
+      typeof window !== 'undefined' &&
+      /[?&]measure=1/.test(window.location.search)
+    ) {
+      const tick = () => {
+        const sels = [
+          '.shell',
+          '.dashboard-content',
+          '.view-stack.view-rooms .view-panel',
+          '.rooms-twopane',
+          '.rooms-list',
+          '.rooms-detail',
+          '.rooms-detail .room-card-v2',
+          '.room-card-head',
+          '.room-thread-section',
+          '.room-thread-section .room-timeline-item',
+          '.room-section.room-compose-section',
+          '.room-compose',
+          '.room-compose textarea',
+        ];
+        const out = sels
+          .map((s) => {
+            const el = document.querySelector(s);
+            if (!el) return `${s}: NOT FOUND`;
+            const r = el.getBoundingClientRect();
+            return `${s}: x=${Math.round(r.x)} w=${Math.round(r.width)}`;
+          })
+          .join('\n');
+        let pre = document.getElementById('__measure');
+        if (!pre) {
+          pre = document.createElement('pre');
+          pre.id = '__measure';
+          pre.style.cssText =
+            'position:fixed;top:0;left:0;background:#fff;color:#000;font:11px monospace;padding:8px;z-index:99999;max-width:520px;white-space:pre;line-height:1.4;';
+          document.body.appendChild(pre);
+        }
+        pre.textContent = out;
+      };
+      const id = window.setTimeout(tick, 1500);
+      return () => window.clearTimeout(id);
+    }
+    return undefined;
+  });
+
+  useEffect(() => {
     function handleOnline() {
       setOnline(true);
     }

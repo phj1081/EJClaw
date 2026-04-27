@@ -1,3 +1,18 @@
+.debug-outlines .shell { outline: 2px dashed red; }
+.debug-outlines .dashboard-content { outline: 2px dashed orange; }
+.debug-outlines .view-stack.view-rooms { outline: 2px dashed yellow; }
+.debug-outlines .view-stack.view-rooms .view-panel { outline: 2px dashed lime; }
+.debug-outlines .rooms-v2 { outline: 2px dashed cyan; }
+.debug-outlines .rooms-twopane { outline: 2px dashed deepskyblue; }
+.debug-outlines .rooms-list { outline: 2px dashed magenta; }
+.debug-outlines .rooms-detail { outline: 2px dashed pink; }
+.debug-outlines .room-card-v2 { outline: 2px dotted white; }
+.debug-outlines .room-card-head { outline: 2px dotted gold; }
+.debug-outlines .room-thread-section { outline: 2px dotted lime; }
+.debug-outlines .room-compose-section { outline: 2px dotted red; }
+.debug-outlines .room-compose textarea { outline: 2px solid white; }
+.debug-outlines .room-timeline-item { outline: 1px dotted aqua; }
+
 :root {
   color-scheme: dark;
   --bg: #0c1110;
@@ -3925,6 +3940,17 @@ progress::-moz-progress-bar {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.room-timeline-body .parsed-body,
+.room-timeline-body .parsed-body p,
+.room-timeline-body .parsed-body li,
+.room-timeline-body .parsed-body blockquote {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+  -webkit-box-orient: unset;
+  max-height: none;
 }
 
 /* thread — flat */
