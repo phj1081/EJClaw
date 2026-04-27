@@ -24,6 +24,7 @@ import {
   type DashboardTaskAction,
   type DashboardOverview,
   type DashboardTask,
+  type FastModeSnapshot,
   type ModelConfigSnapshot,
   type ModelRoleConfig,
   type UpdateScheduledTaskInput,
@@ -33,12 +34,16 @@ import {
   deleteAccount,
   fetchAccounts,
   fetchDashboardData,
+  fetchFastMode,
   fetchModelConfig,
-  fetchRoomsTimelineBatch,
+  refreshAllCodexAccounts as refreshAllCodexAccountsApi,
+  refreshCodexAccount as refreshCodexAccountApi,
   runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
   sendRoomMessage,
+  setCurrentCodexAccount as setCurrentCodexAccountApi,
+  updateFastMode,
   updateModels,
   updateScheduledTask,
 } from './api';
@@ -52,6 +57,10 @@ import {
   type Locale,
   type Messages,
 } from './i18n';
+import {
+  useSelectedRoomActivity,
+  type RoomActivityMap,
+} from './useRoomActivity';
 import './styles.css';
 
 interface DashboardState {
@@ -59,8 +68,6 @@ interface DashboardState {
   snapshots: StatusSnapshot[];
   tasks: DashboardTask[];
 }
-
-type RoomActivityMap = Record<string, DashboardRoomActivity>;
 
 type UsageRow = DashboardOverview['usage']['rows'][number];
 type InboxItem = DashboardOverview['inbox'][number];
@@ -1097,6 +1104,8 @@ function SettingsPanel({
 
       <ModelSettings onRestartStack={onRestartStack} />
 
+      <FastModeSettings />
+
       <AccountSettings onRestartStack={onRestartStack} />
     </div>
   );
@@ -1233,12 +1242,129 @@ function ModelSettings({ onRestartStack }: { onRestartStack: () => void }) {
   );
 }
 
+function FastModeSettings() {
+  const [state, setState] = useState<FastModeSnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchFastMode()
+      .then((s) => {
+        if (cancelled) return;
+        setState(s);
+        setError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggle(provider: keyof FastModeSnapshot) {
+    if (!state) return;
+    const next = !state[provider];
+    const optimistic = { ...state, [provider]: next };
+    setState(optimistic);
+    setBusy(true);
+    setError(null);
+    try {
+      const fresh = await updateFastMode({ [provider]: next });
+      setState(fresh);
+    } catch (err) {
+      setState(state);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>패스트 모드</h3>
+      {error ? <p className="settings-error">{error}</p> : null}
+      {!state ? (
+        <p className="settings-hint">불러오는 중…</p>
+      ) : (
+        <>
+          <label className="settings-toggle-row">
+            <span className="settings-toggle-label">
+              <span className="settings-toggle-title">Codex (GPT)</span>
+              <small className="settings-hint">
+                ~/.codex/config.toml [features].fast_mode — 사용량 더 소모하지만
+                응답이 빨라집니다.
+              </small>
+            </span>
+            <input
+              checked={state.codex}
+              disabled={busy}
+              onChange={() => void toggle('codex')}
+              type="checkbox"
+            />
+          </label>
+          <label className="settings-toggle-row">
+            <span className="settings-toggle-label">
+              <span className="settings-toggle-title">Claude</span>
+              <small className="settings-hint">
+                ~/.claude/settings.json fastMode — 인터랙티브 세션의 /fast 와
+                동일 키. opus-4-6 한정으로 동작.
+              </small>
+            </span>
+            <input
+              checked={state.claude}
+              disabled={busy}
+              onChange={() => void toggle('claude')}
+              type="checkbox"
+            />
+          </label>
+        </>
+      )}
+    </section>
+  );
+}
+
+function formatExpiry(
+  iso: string | null,
+): { label: string; cls: string } | null {
+  if (!iso) return null;
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return null;
+  const days = (dt.getTime() - Date.now()) / 86400000;
+  const dateStr = dt.toLocaleDateString('ko-KR', {
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  if (days < 0) {
+    const ago = Math.ceil(-days);
+    return {
+      label: `결제 만료 ${dateStr} (${ago}일 전)`,
+      cls: 'is-expired',
+    };
+  }
+  if (days < 7) {
+    return {
+      label: `결제 ${dateStr}까지 (${Math.floor(days)}일)`,
+      cls: 'is-soon',
+    };
+  }
+  return {
+    label: `결제 ${dateStr}까지 (${Math.floor(days)}일)`,
+    cls: 'is-active',
+  };
+}
+
 function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
   const [data, setData] = useState<{
     claude: ClaudeAccountSummary[];
     codex: CodexAccountSummary[];
+    codexCurrentIndex?: number;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [perRowBusy, setPerRowBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState('');
 
@@ -1295,6 +1421,50 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
     }
   }
 
+  async function handleCodexRefresh(index: number) {
+    setPerRowBusy(`refresh:${index}`);
+    setError(null);
+    try {
+      await refreshCodexAccountApi(index);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPerRowBusy(null);
+    }
+  }
+
+  async function handleRefreshAllCodex() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await refreshAllCodexAccountsApi();
+      await refresh();
+      if (result.failed.length > 0) {
+        setError(
+          `일부 갱신 실패: ${result.failed.map((f) => `#${f.index}`).join(', ')}`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSwitchCodex(index: number) {
+    setPerRowBusy(`switch:${index}`);
+    setError(null);
+    try {
+      await setCurrentCodexAccountApi(index);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPerRowBusy(null);
+    }
+  }
+
   return (
     <section className="settings-section">
       <h3>계정</h3>
@@ -1310,13 +1480,17 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
           <ul className="settings-account-list">
             {data.claude.map((acc) => (
               <li key={acc.index} className="settings-account-row">
-                <span className="settings-account-tag">#{acc.index}</span>
-                <span className="settings-account-meta">
-                  {acc.subscriptionType ?? 'unknown'}
-                  {acc.expiresAt
-                    ? ` · 만료 ${new Date(acc.expiresAt).toLocaleDateString()}`
-                    : ''}
-                </span>
+                <div className="settings-account-main">
+                  <span className="settings-account-tag">#{acc.index}</span>
+                  <span className="settings-account-email">
+                    {acc.subscriptionType ?? 'unknown'}
+                    {acc.rateLimitTier ? ` · ${acc.rateLimitTier}` : ''}
+                  </span>
+                  <span className="settings-account-plan">claude</span>
+                  <span className="settings-account-badge is-active">
+                    토큰 자동갱신
+                  </span>
+                </div>
                 {acc.index > 0 ? (
                   <button
                     className="settings-delete"
@@ -1351,41 +1525,103 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
       </div>
 
       <div className="settings-account-group">
-        <h4>Codex</h4>
+        <div className="settings-account-group-head">
+          <h4>Codex</h4>
+          <button
+            className="settings-secondary"
+            disabled={busy}
+            onClick={() => void handleRefreshAllCodex()}
+            type="button"
+          >
+            전체 갱신
+          </button>
+        </div>
         {!data ? (
           <p className="settings-hint">{busy ? '불러오는 중…' : '없음'}</p>
         ) : data.codex.length === 0 ? (
           <p className="settings-hint">계정 없음</p>
         ) : (
           <ul className="settings-account-list">
-            {data.codex.map((acc) => (
-              <li key={acc.index} className="settings-account-row">
-                <span className="settings-account-tag">#{acc.index}</span>
-                <span className="settings-account-meta">
-                  {acc.planType ?? 'unknown'}
-                  {acc.subscriptionUntil
-                    ? ` · ${acc.subscriptionUntil}까지`
-                    : ''}
-                </span>
-                {acc.index > 0 ? (
-                  <button
-                    className="settings-delete"
-                    disabled={busy}
-                    onClick={() => void handleDelete('codex', acc.index)}
-                    type="button"
-                  >
-                    삭제
-                  </button>
-                ) : (
-                  <span className="settings-account-default">기본</span>
-                )}
-              </li>
-            ))}
+            {data.codex.map((acc) => {
+              const expiry = formatExpiry(acc.subscriptionUntil);
+              const isActive = data.codexCurrentIndex === acc.index;
+              const refreshing = perRowBusy === `refresh:${acc.index}`;
+              const switching = perRowBusy === `switch:${acc.index}`;
+              return (
+                <li
+                  key={acc.index}
+                  className={`settings-account-row${isActive ? ' is-active-account' : ''}`}
+                >
+                  <div className="settings-account-main">
+                    <span className="settings-account-tag">
+                      {isActive ? '●' : ''}#{acc.index}
+                    </span>
+                    {acc.email ? (
+                      <span
+                        className="settings-account-email"
+                        title={acc.email}
+                      >
+                        {acc.email}
+                      </span>
+                    ) : null}
+                    <span className="settings-account-plan">
+                      {acc.planType ?? 'unknown'}
+                    </span>
+                    {expiry ? (
+                      <span
+                        className={`settings-account-badge ${expiry.cls}`}
+                        title={
+                          acc.subscriptionLastChecked
+                            ? `last checked: ${acc.subscriptionLastChecked.slice(0, 10)}`
+                            : undefined
+                        }
+                      >
+                        {expiry.label}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="settings-account-actions">
+                    <button
+                      className="settings-secondary"
+                      disabled={busy || perRowBusy !== null}
+                      onClick={() => void handleCodexRefresh(acc.index)}
+                      title="OAuth 토큰을 다시 받아 구독 상태를 갱신합니다"
+                      type="button"
+                    >
+                      {refreshing ? '갱신중…' : '갱신'}
+                    </button>
+                    {!isActive ? (
+                      <button
+                        className="settings-secondary"
+                        disabled={busy || perRowBusy !== null}
+                        onClick={() => void handleSwitchCodex(acc.index)}
+                        title="이 계정으로 즉시 전환합니다 (다음 codex 호출부터 적용)"
+                        type="button"
+                      >
+                        {switching ? '전환중…' : '전환'}
+                      </button>
+                    ) : (
+                      <span className="settings-account-default">사용중</span>
+                    )}
+                    {acc.index > 0 ? (
+                      <button
+                        className="settings-delete"
+                        disabled={busy || perRowBusy !== null}
+                        onClick={() => void handleDelete('codex', acc.index)}
+                        type="button"
+                      >
+                        삭제
+                      </button>
+                    ) : null}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
         <p className="settings-hint">
-          Codex 계정 추가는 <code>codex login</code> CLI로 진행한 뒤
-          ~/.codex-accounts/N/ 디렉터리에 auth.json 파일이 생성되면 됩니다.
+          OAuth 토큰은 6시간마다 자동 갱신됩니다. plan 변경/해지가 즉시 반영되게
+          하려면 수동으로 “전체 갱신”을 누르세요.
         </p>
       </div>
 
@@ -2568,7 +2804,9 @@ function RoomBoardV2({
   roomActivity,
   roomActivityLoading,
   roomMessageKey,
+  selectedJid,
   locale,
+  onSelectedJidChange,
   snapshots,
   t,
 }: {
@@ -2585,13 +2823,14 @@ function RoomBoardV2({
   roomActivity: RoomActivityMap;
   roomActivityLoading: boolean;
   roomMessageKey: string | null;
+  selectedJid: string | null;
   locale: Locale;
+  onSelectedJidChange: (jid: string | null) => void;
   snapshots: StatusSnapshot[];
   t: Messages;
 }) {
   const [filter, setFilter] = useState<RoomFilter>('all');
   const [sort, setSort] = useState<RoomSort>('recent');
-  const [selectedJid, setSelectedJid] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const allEntries: RoomEntryWithService[] = snapshots.flatMap((snapshot) =>
@@ -2600,10 +2839,6 @@ function RoomBoardV2({
       serviceId: snapshot.serviceId,
     })),
   );
-
-  if (allEntries.length === 0) {
-    return <EmptyState>{t.rooms.empty}</EmptyState>;
-  }
 
   const counts = {
     all: allEntries.length,
@@ -2631,6 +2866,15 @@ function RoomBoardV2({
 
   const selectedEntry =
     sorted.find((e) => e.jid === selectedJid) ?? sorted[0] ?? null;
+
+  useEffect(() => {
+    const nextJid = selectedEntry?.jid ?? null;
+    if (nextJid !== selectedJid) onSelectedJidChange(nextJid);
+  }, [onSelectedJidChange, selectedEntry?.jid, selectedJid]);
+
+  if (allEntries.length === 0) {
+    return <EmptyState>{t.rooms.empty}</EmptyState>;
+  }
 
   function setDraft(jid: string, value: string) {
     setDrafts((previous) => ({ ...previous, [jid]: value }));
@@ -2705,7 +2949,7 @@ function RoomBoardV2({
                   aria-current={active ? 'page' : undefined}
                   className={`rooms-list-item status-${entry.status}${active ? ' is-active' : ''}`}
                   key={`${entry.serviceId}:${entry.jid}`}
-                  onClick={() => setSelectedJid(entry.jid)}
+                  onClick={() => onSelectedJidChange(entry.jid)}
                   type="button"
                 >
                   <span className={`room-pulse pulse-${entry.status}`}>
@@ -3788,8 +4032,15 @@ function App() {
   const [serviceActionKey, setServiceActionKey] =
     useState<ServiceActionKey | null>(null);
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
-  const [roomActivity, setRoomActivity] = useState<RoomActivityMap>({});
-  const [roomActivityLoading, setRoomActivityLoading] = useState(false);
+  const [selectedRoomJid, setSelectedRoomJid] = useState<string | null>(null);
+  const {
+    refreshRoom: refreshRoomActivity,
+    roomActivity,
+    roomActivityLoading,
+  } = useSelectedRoomActivity({
+    active: activeView === 'rooms',
+    selectedRoomJid: selectedRoomJid,
+  });
   const [pendingMessages, setPendingMessages] = useState<
     Record<string, Array<DashboardRoomActivity['messages'][number]>>
   >({});
@@ -3956,8 +4207,7 @@ function App() {
     try {
       await sendRoomMessage(roomJid, text, requestId, nickname || null);
       try {
-        const fresh = await fetchRoomsTimelineBatch();
-        setRoomActivity(fresh);
+        await refreshRoomActivity(roomJid);
       } catch {
         /* refresh will retry on next poll */
       }
@@ -4125,102 +4375,6 @@ function App() {
     return () => window.clearInterval(id);
   }, []);
 
-  const roomsJidsKey = useMemo(() => {
-    if (!data) return '';
-    return [
-      ...new Set(
-        data.snapshots.flatMap((snapshot) =>
-          snapshot.entries.map((entry) => entry.jid),
-        ),
-      ),
-    ]
-      .sort()
-      .join('|');
-  }, [data]);
-
-  const roomsLastUpdatedKey = useMemo(() => {
-    if (!data) return '';
-    return data.snapshots
-      .map((s) => s.updatedAt)
-      .sort()
-      .join('|');
-  }, [data]);
-
-  useEffect(() => {
-    if (activeView !== 'rooms' || !data) return;
-    if (!roomsJidsKey) {
-      setRoomActivity({});
-      return;
-    }
-
-    let cancelled = false;
-    let inFlight = false;
-    let pollIntervalId: number | null = null;
-    let es: EventSource | null = null;
-
-    const applyMap = (map: RoomActivityMap) => {
-      if (!cancelled) setRoomActivity(map);
-    };
-
-    const fetchOnce = async (initial: boolean) => {
-      if (cancelled || inFlight) return;
-      inFlight = true;
-      if (initial) setRoomActivityLoading(true);
-      try {
-        applyMap(await fetchRoomsTimelineBatch());
-      } catch {
-        /* keep last good state */
-      } finally {
-        inFlight = false;
-        if (!cancelled && initial) setRoomActivityLoading(false);
-      }
-    };
-
-    const startPollingFallback = () => {
-      if (pollIntervalId !== null) return;
-      pollIntervalId = window.setInterval(() => void fetchOnce(false), 2000);
-    };
-
-    const stopPollingFallback = () => {
-      if (pollIntervalId === null) return;
-      window.clearInterval(pollIntervalId);
-      pollIntervalId = null;
-    };
-
-    if (typeof window !== 'undefined' && 'EventSource' in window) {
-      void fetchOnce(true);
-      try {
-        es = new EventSource('/api/stream');
-        es.addEventListener('rooms-timeline', (event) => {
-          try {
-            const parsed = JSON.parse(
-              (event as MessageEvent).data,
-            ) as RoomActivityMap;
-            applyMap(parsed);
-            stopPollingFallback();
-          } catch {
-            /* malformed event, ignore */
-          }
-        });
-        es.onerror = () => {
-          // Browser auto-reconnects; meanwhile keep data fresh via polling.
-          startPollingFallback();
-        };
-      } catch {
-        startPollingFallback();
-      }
-    } else {
-      void fetchOnce(true);
-      startPollingFallback();
-    }
-
-    return () => {
-      cancelled = true;
-      stopPollingFallback();
-      es?.close();
-    };
-  }, [activeView, roomsJidsKey]);
-
   useEffect(() => {
     setPendingMessages((prev) => {
       const next: typeof prev = {};
@@ -4385,6 +4539,8 @@ function App() {
                   roomActivityLoading={roomActivityLoading}
                   roomMessageKey={roomMessageKey}
                   locale={locale}
+                  onSelectedJidChange={setSelectedRoomJid}
+                  selectedJid={selectedRoomJid}
                   snapshots={data.snapshots}
                   t={t}
                 />

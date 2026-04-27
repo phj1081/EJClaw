@@ -48,10 +48,16 @@ import {
 } from './web-dashboard-data.js';
 import {
   addClaudeAccountFromToken,
+  getActiveCodexSettingsIndex,
+  getFastMode,
   getModelConfig,
   listClaudeAccounts,
   listCodexAccounts,
+  refreshAllCodexAccounts,
+  refreshCodexAccount,
   removeAccountDirectory,
+  setActiveCodexSettingsIndex,
+  updateFastMode,
   updateModelConfig,
 } from './settings-store.js';
 
@@ -1271,6 +1277,31 @@ export function createWebDashboardHandler(
       }
     }
 
+    if (
+      url.pathname === '/api/settings/fast-mode' &&
+      (request.method === 'PUT' || request.method === 'PATCH')
+    ) {
+      let body: unknown = null;
+      try {
+        body = await request.json();
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      if (!body || typeof body !== 'object') {
+        return jsonResponse(
+          { error: 'Body must be a JSON object' },
+          { status: 400 },
+        );
+      }
+      try {
+        const next = updateFastMode(body as Record<string, unknown>);
+        return jsonResponse(next);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ error: message }, { status: 500 });
+      }
+    }
+
     {
       const accountAddMatch = url.pathname.match(
         /^\/api\/settings\/accounts\/(claude)$/,
@@ -1310,6 +1341,64 @@ export function createWebDashboardHandler(
           const message = err instanceof Error ? err.message : String(err);
           return jsonResponse({ error: message }, { status: 400 });
         }
+      }
+    }
+
+    {
+      const refreshMatch = url.pathname.match(
+        /^\/api\/settings\/accounts\/codex\/(\d+)\/refresh$/,
+      );
+      if (refreshMatch && request.method === 'POST') {
+        const index = Number.parseInt(refreshMatch[1], 10);
+        try {
+          const updated = await refreshCodexAccount(index);
+          return jsonResponse({ ok: true, account: updated });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResponse({ error: message }, { status: 400 });
+        }
+      }
+    }
+
+    if (
+      url.pathname === '/api/settings/accounts/codex/refresh-all' &&
+      request.method === 'POST'
+    ) {
+      try {
+        const result = await refreshAllCodexAccounts();
+        return jsonResponse({ ok: true, ...result });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ error: message }, { status: 500 });
+      }
+    }
+
+    if (
+      url.pathname === '/api/settings/accounts/codex/current' &&
+      request.method === 'PUT'
+    ) {
+      let body: { index?: unknown } | null = null;
+      try {
+        body = (await request.json()) as { index?: unknown };
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      const idx = typeof body?.index === 'number' ? body.index : Number.NaN;
+      if (!Number.isInteger(idx)) {
+        return jsonResponse(
+          { error: 'index must be an integer' },
+          { status: 400 },
+        );
+      }
+      try {
+        setActiveCodexSettingsIndex(idx);
+        return jsonResponse({
+          ok: true,
+          codexCurrentIndex: getActiveCodexSettingsIndex(),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ error: message }, { status: 400 });
       }
     }
 
@@ -1511,11 +1600,16 @@ export function createWebDashboardHandler(
       return jsonResponse({
         claude: listClaudeAccounts(),
         codex: listCodexAccounts(),
+        codexCurrentIndex: getActiveCodexSettingsIndex(),
       });
     }
 
     if (url.pathname === '/api/settings/models') {
       return jsonResponse(getModelConfig());
+    }
+
+    if (url.pathname === '/api/settings/fast-mode') {
+      return jsonResponse(getFastMode());
     }
 
     if (url.pathname === '/api/stream') {
