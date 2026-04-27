@@ -519,7 +519,10 @@ export function updatePairedTurnProgressTextFromDatabase(
   stmt.run(progressText, new Date().toISOString(), turnId);
 }
 
-const latestPairedTurnStmtCache = new WeakMap<Database, ReturnType<Database['prepare']>>();
+const latestPairedTurnStmtCache = new WeakMap<
+  Database,
+  ReturnType<Database['prepare']>
+>();
 
 export function getLatestPairedTurnForTaskFromDatabase(
   database: Database,

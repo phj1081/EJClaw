@@ -12,8 +12,8 @@
   --panel-border-strong: rgba(255, 255, 255, 0.12);
   --divider: rgba(255, 255, 255, 0.05);
   --card-shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 4px 12px rgba(0, 0, 0, 0.18);
-  --card-shadow-strong: 0 1px 0 rgba(0, 0, 0, 0.4),
-    0 12px 36px rgba(0, 0, 0, 0.32);
+  --card-shadow-strong:
+    0 1px 0 rgba(0, 0, 0, 0.4), 0 12px 36px rgba(0, 0, 0, 0.32);
   --muted: #8d9189;
   --muted-soft: #6a6e68;
   --faint: #4d514c;
@@ -2759,7 +2759,9 @@ progress::-moz-progress-bar {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
 }
 
 .rooms-filters button span {

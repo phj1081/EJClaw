@@ -319,7 +319,10 @@ export function getMessagesSinceSeqFromDatabase(
   return rows.map(normalizeMessageRow);
 }
 
-const recentChatMessagesStmtCache = new WeakMap<Database, ReturnType<Database['prepare']>>();
+const recentChatMessagesStmtCache = new WeakMap<
+  Database,
+  ReturnType<Database['prepare']>
+>();
 
 export function getRecentChatMessagesFromDatabase(
   database: Database,

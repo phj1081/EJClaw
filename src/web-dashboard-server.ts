@@ -542,9 +542,7 @@ function sanitizeRoomMessageRequestId(value: unknown): string | null {
   return safe || null;
 }
 
-async function readRoomMessageBody(
-  request: Request,
-): Promise<{
+async function readRoomMessageBody(request: Request): Promise<{
   text: string;
   requestId: string | null;
   nickname: string | null;
@@ -722,8 +720,7 @@ export function createWebDashboardHandler(
   const loadPairedTurnOutputs =
     opts.getPairedTurnOutputs ?? getPairedTurnOutputs;
   const loadRecentPairedTurnOutputsForChat =
-    opts.getRecentPairedTurnOutputsForChat ??
-    getRecentPairedTurnOutputsForChat;
+    opts.getRecentPairedTurnOutputsForChat ?? getRecentPairedTurnOutputsForChat;
   const loadPairedTurnAttempts =
     opts.getPairedTurnAttempts ?? getPairedTurnAttempts;
   const loadRecentChatMessages =
@@ -763,12 +760,16 @@ export function createWebDashboardHandler(
         }
       }
     }
-    const result: Record<string, ReturnType<typeof buildWebDashboardRoomActivity>> = {};
+    const result: Record<
+      string,
+      ReturnType<typeof buildWebDashboardRoomActivity>
+    > = {};
     for (const [jid, { snapshot, entry }] of uniqueByJid) {
       const pairedTask = loadLatestPairedTaskForChat(jid) ?? null;
       const messages = loadRecentChatMessages(jid, 8);
       const outputs = loadRecentPairedTurnOutputsForChat(jid, 8);
-      if (!pairedTask && messages.length === 0 && outputs.length === 0) continue;
+      if (!pairedTask && messages.length === 0 && outputs.length === 0)
+        continue;
       const latestTurn = pairedTask
         ? loadLatestPairedTurnForTask(pairedTask.id)
         : null;

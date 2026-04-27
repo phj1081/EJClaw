@@ -229,7 +229,10 @@ export function getPairedTaskByIdFromDatabase(
   return row ? hydratePairedTaskRow(database, row) : undefined;
 }
 
-const latestPairedTaskStmtCache = new WeakMap<Database, ReturnType<Database['prepare']>>();
+const latestPairedTaskStmtCache = new WeakMap<
+  Database,
+  ReturnType<Database['prepare']>
+>();
 
 export function getLatestPairedTaskForChatFromDatabase(
   database: Database,

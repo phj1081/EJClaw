@@ -552,9 +552,12 @@ function formatDate(value: string | null | undefined, locale: Locale): string {
     minute: '2-digit',
     hour12: false,
   }).format(date);
-  if (locale === 'ko') return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
-  if (locale === 'ja') return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
-  if (locale === 'zh') return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  if (locale === 'ko')
+    return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
+  if (locale === 'ja')
+    return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  if (locale === 'zh')
+    return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
   return new Intl.DateTimeFormat(localeTags[locale], {
     month: 'short',
     day: 'numeric',
@@ -2233,8 +2236,8 @@ function RoomBoardV2({
     }
     const aA = roomActivity[a.jid]?.pairedTask?.updatedAt;
     const bA = roomActivity[b.jid]?.pairedTask?.updatedAt;
-    const aT = aA ? new Date(aA).getTime() : a.elapsedMs ?? 0;
-    const bT = bA ? new Date(bA).getTime() : b.elapsedMs ?? 0;
+    const aT = aA ? new Date(aA).getTime() : (a.elapsedMs ?? 0);
+    const bT = bA ? new Date(bA).getTime() : (b.elapsedMs ?? 0);
     return bT - aT;
   });
 
@@ -2289,7 +2292,8 @@ function RoomBoardV2({
           <aside className="rooms-list" aria-label={t.rooms.cardsAria}>
             {sorted.map((entry) => {
               const items = inbox.filter((it) => it.roomJid === entry.jid);
-              const queue = entry.pendingTasks + (entry.pendingMessages ? 1 : 0);
+              const queue =
+                entry.pendingTasks + (entry.pendingMessages ? 1 : 0);
               const active = (selectedEntry?.jid ?? null) === entry.jid;
               return (
                 <button
@@ -2338,9 +2342,7 @@ function RoomBoardV2({
                 key={`${selectedEntry.serviceId}:${selectedEntry.jid}`}
                 locale={locale}
                 onDraftChange={(v) => setDraft(selectedEntry.jid, v)}
-                onSendMessage={() =>
-                  void submitRoomMessage(selectedEntry.jid)
-                }
+                onSendMessage={() => void submitRoomMessage(selectedEntry.jid)}
                 onToggle={() => {}}
                 pinned={true}
                 t={t}
@@ -2428,8 +2430,7 @@ function RoomCardV2({
   };
   const humanMessages: ThreadEntry[] = messages
     .filter(
-      (m) =>
-        m.sourceKind === 'human' || m.sourceKind === 'ipc_injected_human',
+      (m) => m.sourceKind === 'human' || m.sourceKind === 'ipc_injected_human',
     )
     .map((m) => ({
       id: m.id,
@@ -2524,7 +2525,9 @@ function RoomCardV2({
             ) : null}
           </span>
           {task && task.roundTripCount > 0 ? (
-            <small>· {t.rooms.round} {task.roundTripCount}</small>
+            <small>
+              · {t.rooms.round} {task.roundTripCount}
+            </small>
           ) : null}
           {lastUpdated ? (
             <small style={{ marginLeft: 'auto' }}>
@@ -2534,7 +2537,8 @@ function RoomCardV2({
         </div>
       ) : null}
 
-      {(queueChips.length > 0 || (entry.elapsedMs && entry.elapsedMs > 0 && isProcessing)) ? (
+      {queueChips.length > 0 ||
+      (entry.elapsedMs && entry.elapsedMs > 0 && isProcessing) ? (
         <div className="room-card-meta">
           {queueChips.length > 0 ? (
             <span className="meta-cell">
@@ -2556,7 +2560,9 @@ function RoomCardV2({
             <span className="live-label">LIVE</span>
             <strong className={senderRoleClass(turn.role)}>{turn.role}</strong>
             <em>{turn.intentKind}</em>
-            <span className="live-state pill pill-processing">{turn.state}</span>
+            <span className="live-state pill pill-processing">
+              {turn.state}
+            </span>
             {turn.executorServiceId ? (
               <span className="live-exec">{turn.executorServiceId}</span>
             ) : null}
@@ -2635,10 +2641,9 @@ function RoomCardV2({
                         ? 'done'
                         : 'info'
                     : null;
-                  const sectionClass = senderRoleClass(entry.senderName).replace(
-                    'role-',
-                    'role-section-',
-                  );
+                  const sectionClass = senderRoleClass(
+                    entry.senderName,
+                  ).replace('role-', 'role-section-');
                   return (
                     <li
                       className={`room-timeline-item ${sectionClass}`}
@@ -2702,19 +2707,9 @@ function RoomCardV2({
                           +{formatDuration(liveElapsedMs, t)}
                         </span>
                       ) : null}
-                      <span
-                        className={
-                          isProcessing ? 'live-label' : 'live-label paused'
-                        }
-                      >
-                        {isProcessing ? 'LIVE' : '중단됨'}
-                      </span>
-                      <em>{turn.intentKind}</em>
-                      <span
-                        className={`live-state pill pill-${isProcessing ? 'processing' : 'inactive'}`}
-                      >
-                        {turn.state}
-                      </span>
+                      {!isProcessing ? (
+                        <span className="live-label paused">중단됨</span>
+                      ) : null}
                     </header>
                     <div className="room-timeline-body">
                       {turn.progressText && turn.progressText.trim() ? (
