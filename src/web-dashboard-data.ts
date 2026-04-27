@@ -431,6 +431,10 @@ function sanitizeRoomMessage(message: NewMessage): WebDashboardRoomMessage {
  */
 const TASK_STATUS_PREFIX = '⁣⁣⁣';
 
+function isTaskStatusMessage(message: NewMessage): boolean {
+  return (message.content ?? '').startsWith(TASK_STATUS_PREFIX);
+}
+
 function turnRoleFromSenderName(name: string | null | undefined): string {
   const v = (name ?? '').toLowerCase();
   if (v.includes('오너') || v.includes('owner')) return 'owner';
@@ -533,6 +537,7 @@ export function buildWebDashboardRoomActivity(args: {
   attempts: PairedTurnAttemptRecord[];
   outputs: PairedTurnOutput[];
   messages: NewMessage[];
+  progressMessages?: NewMessage[];
   outputLimit?: number;
 }): WebDashboardRoomActivity {
   const latestAttemptByTurnId = new Map<string, PairedTurnAttemptRecord>();
@@ -561,7 +566,9 @@ export function buildWebDashboardRoomActivity(args: {
     elapsedMs: args.entry.elapsedMs,
     pendingMessages: args.entry.pendingMessages,
     pendingTasks: args.entry.pendingTasks,
-    messages: args.messages.map(sanitizeRoomMessage),
+    messages: args.messages
+      .filter((message) => !isTaskStatusMessage(message))
+      .map(sanitizeRoomMessage),
     pairedTask: args.pairedTask
       ? {
           id: args.pairedTask.id,
@@ -570,7 +577,11 @@ export function buildWebDashboardRoomActivity(args: {
           roundTripCount: args.pairedTask.round_trip_count,
           updatedAt: args.pairedTask.updated_at,
           currentTurn: currentTurn
-            ? sanitizeRoomTurn(currentTurn, currentAttempt, args.messages)
+            ? sanitizeRoomTurn(
+                currentTurn,
+                currentAttempt,
+                args.progressMessages ?? args.messages,
+              )
             : null,
           outputs: args.outputs.slice(-outputLimit).map(sanitizeRoomTurnOutput),
         }
