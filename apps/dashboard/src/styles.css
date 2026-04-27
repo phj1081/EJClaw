@@ -4112,8 +4112,8 @@ progress::-moz-progress-bar {
 
 .room-timeline-item {
   display: grid;
-  gap: 2px;
-  padding: 6px 0 6px 8px;
+  gap: 6px;
+  padding: 8px 0 8px 8px;
   border: 0;
   border-left: 2px solid var(--panel-border-strong);
   border-radius: 0;
@@ -4121,7 +4121,7 @@ progress::-moz-progress-bar {
 }
 
 .room-timeline-item + .room-timeline-item {
-  margin-top: 1px;
+  margin-top: 2px;
   border-top: 1px solid var(--divider);
 }
 
