@@ -48,10 +48,12 @@ import {
 } from './web-dashboard-data.js';
 import {
   addClaudeAccountFromToken,
+  getFastMode,
   getModelConfig,
   listClaudeAccounts,
   listCodexAccounts,
   removeAccountDirectory,
+  updateFastMode,
   updateModelConfig,
 } from './settings-store.js';
 
@@ -1271,6 +1273,31 @@ export function createWebDashboardHandler(
       }
     }
 
+    if (
+      url.pathname === '/api/settings/fast-mode' &&
+      (request.method === 'PUT' || request.method === 'PATCH')
+    ) {
+      let body: unknown = null;
+      try {
+        body = await request.json();
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      if (!body || typeof body !== 'object') {
+        return jsonResponse(
+          { error: 'Body must be a JSON object' },
+          { status: 400 },
+        );
+      }
+      try {
+        const next = updateFastMode(body as Record<string, unknown>);
+        return jsonResponse(next);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ error: message }, { status: 500 });
+      }
+    }
+
     {
       const accountAddMatch = url.pathname.match(
         /^\/api\/settings\/accounts\/(claude)$/,
@@ -1516,6 +1543,10 @@ export function createWebDashboardHandler(
 
     if (url.pathname === '/api/settings/models') {
       return jsonResponse(getModelConfig());
+    }
+
+    if (url.pathname === '/api/settings/fast-mode') {
+      return jsonResponse(getFastMode());
     }
 
     if (url.pathname === '/api/stream') {

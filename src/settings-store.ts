@@ -45,6 +45,11 @@ export interface ModelConfigSnapshot {
   arbiter: ModelRoleConfig;
 }
 
+export interface FastModeSnapshot {
+  codex: boolean;
+  claude: boolean;
+}
+
 const ROLE_KEYS = ['OWNER', 'REVIEWER', 'ARBITER'] as const;
 type RoleKey = (typeof ROLE_KEYS)[number];
 
@@ -270,6 +275,99 @@ export function updateModelConfig(
   fs.renameSync(tempPath, file);
 
   return getModelConfig();
+}
+
+function codexConfigPath(): string {
+  return path.join(os.homedir(), '.codex', 'config.toml');
+}
+
+function claudeSettingsPath(): string {
+  return path.join(os.homedir(), '.claude', 'settings.json');
+}
+
+function readCodexFastMode(): boolean {
+  const file = codexConfigPath();
+  if (!fs.existsSync(file)) return false;
+  const content = fs.readFileSync(file, 'utf-8');
+  // [features] section, look for fast_mode = true|false
+  const featuresMatch = content.match(/\[features\][\s\S]*?(?=^\[|\Z)/m);
+  const block = featuresMatch ? featuresMatch[0] : content;
+  const m = block.match(/^\s*fast_mode\s*=\s*(true|false)\s*$/m);
+  return m ? m[1] === 'true' : false;
+}
+
+function writeCodexFastMode(value: boolean): void {
+  const file = codexConfigPath();
+  let content = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
+  if (/^\s*fast_mode\s*=\s*(true|false)\s*$/m.test(content)) {
+    content = content.replace(
+      /^\s*fast_mode\s*=\s*(true|false)\s*$/m,
+      `fast_mode = ${value}`,
+    );
+  } else if (/^\[features\]/m.test(content)) {
+    content = content.replace(
+      /^\[features\]\s*$/m,
+      `[features]\nfast_mode = ${value}`,
+    );
+  } else {
+    const trimmed = content.replace(/\s*$/, '');
+    content = `${trimmed}\n\n[features]\nfast_mode = ${value}\n`;
+  }
+  const tempPath = `${file}.tmp`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(tempPath, content, { mode: 0o600 });
+  fs.renameSync(tempPath, file);
+}
+
+function readClaudeFastMode(): boolean {
+  const file = claudeSettingsPath();
+  if (!fs.existsSync(file)) return false;
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<
+      string,
+      unknown
+    >;
+    return data.fastMode === true;
+  } catch {
+    return false;
+  }
+}
+
+function writeClaudeFastMode(value: boolean): void {
+  const file = claudeSettingsPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  let data: Record<string, unknown> = {};
+  if (fs.existsSync(file)) {
+    try {
+      data = JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      data = {};
+    }
+  }
+  data.fastMode = value;
+  const tempPath = `${file}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  fs.renameSync(tempPath, file);
+}
+
+export function getFastMode(): FastModeSnapshot {
+  return {
+    codex: readCodexFastMode(),
+    claude: readClaudeFastMode(),
+  };
+}
+
+export function updateFastMode(
+  input: Partial<FastModeSnapshot>,
+): FastModeSnapshot {
+  if (typeof input.codex === 'boolean') writeCodexFastMode(input.codex);
+  if (typeof input.claude === 'boolean') writeClaudeFastMode(input.claude);
+  return getFastMode();
 }
 
 export function removeAccountDirectory(

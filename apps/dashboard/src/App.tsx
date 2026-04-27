@@ -24,6 +24,7 @@ import {
   type DashboardTaskAction,
   type DashboardOverview,
   type DashboardTask,
+  type FastModeSnapshot,
   type ModelConfigSnapshot,
   type ModelRoleConfig,
   type UpdateScheduledTaskInput,
@@ -33,11 +34,13 @@ import {
   deleteAccount,
   fetchAccounts,
   fetchDashboardData,
+  fetchFastMode,
   fetchModelConfig,
   runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
   sendRoomMessage,
+  updateFastMode,
   updateModels,
   updateScheduledTask,
 } from './api';
@@ -1098,6 +1101,8 @@ function SettingsPanel({
 
       <ModelSettings onRestartStack={onRestartStack} />
 
+      <FastModeSettings />
+
       <AccountSettings onRestartStack={onRestartStack} />
     </div>
   );
@@ -1228,6 +1233,90 @@ function ModelSettings({ onRestartStack }: { onRestartStack: () => void }) {
               스택 재시작
             </button>
           </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function FastModeSettings() {
+  const [state, setState] = useState<FastModeSnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchFastMode()
+      .then((s) => {
+        if (cancelled) return;
+        setState(s);
+        setError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggle(provider: keyof FastModeSnapshot) {
+    if (!state) return;
+    const next = !state[provider];
+    const optimistic = { ...state, [provider]: next };
+    setState(optimistic);
+    setBusy(true);
+    setError(null);
+    try {
+      const fresh = await updateFastMode({ [provider]: next });
+      setState(fresh);
+    } catch (err) {
+      setState(state);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>패스트 모드</h3>
+      {error ? <p className="settings-error">{error}</p> : null}
+      {!state ? (
+        <p className="settings-hint">불러오는 중…</p>
+      ) : (
+        <>
+          <label className="settings-toggle-row">
+            <span className="settings-toggle-label">
+              <span className="settings-toggle-title">Codex (GPT)</span>
+              <small className="settings-hint">
+                ~/.codex/config.toml [features].fast_mode — 사용량 더 소모하지만
+                응답이 빨라집니다.
+              </small>
+            </span>
+            <input
+              checked={state.codex}
+              disabled={busy}
+              onChange={() => void toggle('codex')}
+              type="checkbox"
+            />
+          </label>
+          <label className="settings-toggle-row">
+            <span className="settings-toggle-label">
+              <span className="settings-toggle-title">Claude</span>
+              <small className="settings-hint">
+                ~/.claude/settings.json fastMode — 인터랙티브 세션의 /fast 와
+                동일 키. opus-4-6 한정으로 동작.
+              </small>
+            </span>
+            <input
+              checked={state.claude}
+              disabled={busy}
+              onChange={() => void toggle('claude')}
+              type="checkbox"
+            />
+          </label>
         </>
       )}
     </section>
