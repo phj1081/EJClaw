@@ -1821,7 +1821,7 @@ progress::-moz-progress-bar {
 .room-compose-section {
   padding: 8px 12px;
   border-top: 1px solid var(--divider);
-  background: var(--bg);
+  background: var(--panel);
 }
 
 .room-activity-cell {
