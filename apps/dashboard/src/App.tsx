@@ -52,6 +52,12 @@ type InboxActionKey = `${string}:${DashboardInboxAction}`;
 type ServiceActionKey = 'stack:restart';
 type InboxFilter = 'all' | InboxItem['kind'];
 type HealthLevel = 'ok' | 'stale' | 'down';
+type FreshnessLevel = 'fresh' | 'stale' | 'offline';
+
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+};
 
 interface RoomOption {
   jid: string;
@@ -64,6 +70,7 @@ const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale.v2';
 const DEFAULT_VIEW: DashboardView = 'inbox';
 const HEALTH_STALE_MS = 5 * 60_000;
 const HEALTH_DOWN_MS = 15 * 60_000;
+const DASHBOARD_STALE_MS = 75_000;
 
 function makeClientRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -117,6 +124,47 @@ function formatDate(value: string | null | undefined, locale: Locale): string {
     minute: '2-digit',
     second: '2-digit',
   }).format(date);
+}
+
+function dashboardAgeMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.max(0, Date.now() - date.getTime());
+}
+
+function dashboardFreshness(
+  online: boolean,
+  generatedAt: string | null | undefined,
+): FreshnessLevel {
+  if (!online) return 'offline';
+  const age = dashboardAgeMs(generatedAt);
+  if (age !== null && age > DASHBOARD_STALE_MS) return 'stale';
+  return 'fresh';
+}
+
+function freshnessLabel(level: FreshnessLevel, t: Messages): string {
+  if (level === 'offline') return t.pwa.offline;
+  if (level === 'stale') return t.pwa.stale;
+  return t.pwa.fresh;
+}
+
+function isStandaloneDisplay(): boolean {
+  if (typeof window === 'undefined') return false;
+  const standaloneNavigator = navigator as Navigator & { standalone?: boolean };
+  return (
+    standaloneNavigator.standalone === true ||
+    (typeof window.matchMedia === 'function' &&
+      window.matchMedia('(display-mode: standalone)').matches)
+  );
+}
+
+function canUsePwaCore(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.isSecureContext &&
+    'serviceWorker' in navigator
+  );
 }
 
 function formatTaskDate(
@@ -517,21 +565,41 @@ function LoadingSkeleton({ t }: { t: Messages }) {
 
 function SideRail({
   activeView,
+  canInstall,
+  installed,
   locale,
   onNavigate,
+  onInstall,
   onLocaleChange,
   onRefresh,
+  online,
+  offlineReady,
   refreshing,
+  secureContext,
   t,
 }: {
   activeView: DashboardView;
+  canInstall: boolean;
+  installed: boolean;
   locale: Locale;
   onNavigate: (view: DashboardView) => void;
+  onInstall: () => void;
   onLocaleChange: (locale: Locale) => void;
   onRefresh: () => void;
+  online: boolean;
+  offlineReady: boolean;
   refreshing: boolean;
+  secureContext: boolean;
   t: Messages;
 }) {
+  const pwaState = !secureContext
+    ? t.pwa.secureRequired
+    : installed
+      ? t.pwa.installed
+      : offlineReady
+        ? t.pwa.ready
+        : t.pwa.app;
+
   return (
     <aside className="side-rail" aria-label={t.nav.drawerAria}>
       <div className="side-rail-brand">
@@ -552,6 +620,15 @@ function SideRail({
         ))}
       </nav>
       <LanguageSelector locale={locale} onLocaleChange={onLocaleChange} t={t} />
+      <div className={`pwa-card ${online ? 'is-online' : 'is-offline'}`}>
+        <span>{online ? t.pwa.online : t.pwa.offline}</span>
+        <strong>{pwaState}</strong>
+      </div>
+      {canInstall ? (
+        <button className="side-install" onClick={onInstall} type="button">
+          {t.pwa.install}
+        </button>
+      ) : null}
       <button
         aria-busy={refreshing}
         className="side-refresh"
@@ -568,24 +645,36 @@ function SideRail({
 function SectionNav({
   activeView,
   drawerOpen,
+  freshness,
+  installed,
   locale,
+  canInstall,
   onCloseDrawer,
+  onInstall,
   onLocaleChange,
   onNavigate,
   onOpenDrawer,
+  offlineReady,
   refreshing,
   onRefresh,
+  secureContext,
   t,
 }: {
   activeView: DashboardView;
   drawerOpen: boolean;
+  freshness: FreshnessLevel;
+  installed: boolean;
   locale: Locale;
+  canInstall: boolean;
   onCloseDrawer: () => void;
+  onInstall: () => void;
   onLocaleChange: (locale: Locale) => void;
   onNavigate: (view: DashboardView) => void;
   onOpenDrawer: () => void;
+  offlineReady: boolean;
   refreshing: boolean;
   onRefresh: () => void;
+  secureContext: boolean;
   t: Messages;
 }) {
   const activeLabel =
@@ -607,6 +696,9 @@ function SectionNav({
           <span />
         </button>
         <strong className="topbar-label">{activeLabel}</strong>
+        <span className={`topbar-status topbar-status-${freshness}`}>
+          {freshnessLabel(freshness, t)}
+        </span>
         <button
           aria-busy={refreshing}
           aria-label={refreshing ? t.actions.refreshing : t.actions.refresh}
@@ -668,6 +760,22 @@ function SectionNav({
               onLocaleChange={onLocaleChange}
               t={t}
             />
+            <div className="drawer-pwa-row">
+              <span>
+                {!secureContext
+                  ? t.pwa.secureRequired
+                  : installed
+                    ? t.pwa.installed
+                    : offlineReady
+                      ? t.pwa.ready
+                      : t.pwa.app}
+              </span>
+              {canInstall ? (
+                <button onClick={onInstall} type="button">
+                  {t.pwa.install}
+                </button>
+              ) : null}
+            </div>
           </aside>
         </>
       ) : null}
@@ -675,7 +783,27 @@ function SectionNav({
   );
 }
 
-function ControlRail({ data, t }: { data: DashboardState; t: Messages }) {
+function ControlRail({
+  canInstall,
+  data,
+  installed,
+  locale,
+  offlineReady,
+  onInstall,
+  online,
+  secureContext,
+  t,
+}: {
+  canInstall: boolean;
+  data: DashboardState;
+  installed: boolean;
+  locale: Locale;
+  offlineReady: boolean;
+  onInstall: () => void;
+  online: boolean;
+  secureContext: boolean;
+  t: Messages;
+}) {
   const queue = data.snapshots.reduce(
     (acc, snapshot) => {
       for (const entry of snapshot.entries) {
@@ -686,9 +814,44 @@ function ControlRail({ data, t }: { data: DashboardState; t: Messages }) {
     },
     { pendingTasks: 0, pendingMessageRooms: 0 },
   );
+  const freshness = dashboardFreshness(online, data.overview.generatedAt);
+  const age = dashboardAgeMs(data.overview.generatedAt);
 
   return (
     <section className="ops-strip" id="overview" aria-label={t.control.aria}>
+      <div className={`ops-tile-freshness ops-${freshness}`}>
+        <span>{t.pwa.updated}</span>
+        <strong>{freshnessLabel(freshness, t)}</strong>
+        <small>
+          {formatDate(data.overview.generatedAt, locale)}
+          {age === null ? '' : ` · ${formatDuration(age, t)}`}
+        </small>
+      </div>
+      <div className="ops-tile-pwa">
+        <span>{t.pwa.app}</span>
+        <strong>
+          {!secureContext
+            ? t.pwa.secureRequired
+            : installed
+              ? t.pwa.installed
+              : offlineReady
+                ? t.pwa.ready
+                : t.pwa.app}
+        </strong>
+        {canInstall ? (
+          <button onClick={onInstall} type="button">
+            {t.pwa.install}
+          </button>
+        ) : (
+          <small>
+            {!secureContext
+              ? t.pwa.secureRequired
+              : offlineReady
+                ? t.pwa.cached
+                : t.pwa.online}
+          </small>
+        )}
+      </div>
       <div>
         <span>{t.metrics.rooms}</span>
         <strong>
@@ -1771,6 +1934,13 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeView, setActiveView] = useState<DashboardView>(readViewFromHash);
   const [locale, setLocale] = useState<Locale>(readInitialLocale);
+  const [online, setOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine,
+  );
+  const [offlineReady, setOfflineReady] = useState(false);
+  const [installPrompt, setInstallPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+  const [installed, setInstalled] = useState(isStandaloneDisplay);
   const [taskActionKey, setTaskActionKey] = useState<TaskActionKey | null>(
     null,
   );
@@ -1781,6 +1951,8 @@ function App() {
     useState<ServiceActionKey | null>(null);
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
   const t = messages[locale];
+  const secureContext =
+    typeof window === 'undefined' ? true : window.isSecureContext;
 
   function setDashboardLocale(nextLocale: Locale) {
     setLocale(nextLocale);
@@ -1922,9 +2094,89 @@ function App() {
     }
   }
 
+  async function handleInstallApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+    setInstalled(isStandaloneDisplay());
+  }
+
   useEffect(() => {
     document.documentElement.lang = localeTags[locale];
   }, [locale]);
+
+  useEffect(() => {
+    function handleOnline() {
+      setOnline(true);
+    }
+
+    function handleOffline() {
+      setOnline(false);
+    }
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!import.meta.env.PROD || !canUsePwaCore()) {
+      setOfflineReady(false);
+      return;
+    }
+
+    let cancelled = false;
+    void navigator.serviceWorker
+      .register('/sw.js')
+      .then((registration) => {
+        if (!cancelled) {
+          setOfflineReady(
+            Boolean(
+              registration.active ||
+              registration.waiting ||
+              registration.installing,
+            ),
+          );
+        }
+        return navigator.serviceWorker.ready;
+      })
+      .then(() => {
+        if (!cancelled) setOfflineReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setOfflineReady(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleBeforeInstallPrompt(event: Event) {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    }
+
+    function handleInstalled() {
+      setInstalled(true);
+      setInstallPrompt(null);
+    }
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleInstalled);
+    return () => {
+      window.removeEventListener(
+        'beforeinstallprompt',
+        handleBeforeInstallPrompt,
+      );
+      window.removeEventListener('appinstalled', handleInstalled);
+    };
+  }, []);
 
   useEffect(() => {
     function handleHashChange() {
@@ -1960,29 +2212,43 @@ function App() {
   }
 
   const roomOptions = data ? buildRoomOptions(data.snapshots) : [];
+  const freshness = dashboardFreshness(online, data?.overview.generatedAt);
+  const canInstall = Boolean(secureContext && installPrompt && !installed);
 
   return (
     <div className="shell">
       <SideRail
         activeView={activeView}
+        canInstall={canInstall}
+        installed={installed}
         locale={locale}
+        offlineReady={offlineReady}
+        online={online}
+        onInstall={() => void handleInstallApp()}
         onNavigate={navigateToView}
         onLocaleChange={setDashboardLocale}
         onRefresh={() => void refresh(true)}
         refreshing={refreshing}
+        secureContext={secureContext}
         t={t}
       />
       <main className="dashboard-content">
         <SectionNav
           activeView={activeView}
+          canInstall={canInstall}
           drawerOpen={drawerOpen}
+          freshness={freshness}
+          installed={installed}
           locale={locale}
           onCloseDrawer={() => setDrawerOpen(false)}
+          onInstall={() => void handleInstallApp()}
           onLocaleChange={setDashboardLocale}
           onNavigate={navigateToView}
           onOpenDrawer={() => setDrawerOpen(true)}
+          offlineReady={offlineReady}
           onRefresh={() => void refresh(true)}
           refreshing={refreshing}
+          secureContext={secureContext}
           t={t}
         />
 
@@ -2008,7 +2274,17 @@ function App() {
                   </div>
                   <UsagePanel overview={data.overview} t={t} />
                 </section>
-                <ControlRail data={data} t={t} />
+                <ControlRail
+                  canInstall={canInstall}
+                  data={data}
+                  installed={installed}
+                  locale={locale}
+                  offlineReady={offlineReady}
+                  online={online}
+                  onInstall={() => void handleInstallApp()}
+                  secureContext={secureContext}
+                  t={t}
+                />
               </>
             ) : null}
 
