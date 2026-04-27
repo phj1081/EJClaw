@@ -230,7 +230,7 @@ body:has(.view-stack.view-rooms) .error-card {
 }
 
 .view-stack.view-rooms .rooms-detail .room-thread-section {
-  padding: 8px 14px;
+  padding: 4px 12px;
 }
 
 .view-stack.view-rooms .rooms-detail .room-compose-section {
@@ -3863,9 +3863,8 @@ progress::-moz-progress-bar {
 .room-timeline-item {
   display: grid;
   gap: 2px;
-  padding: 8px 10px 8px 12px;
+  padding: 8px 0;
   border: 0;
-  border-left: 3px solid var(--panel-border-strong);
   border-radius: 0;
   background: transparent;
 }
@@ -3875,20 +3874,12 @@ progress::-moz-progress-bar {
   border-top: 1px solid var(--divider);
 }
 
-.room-timeline-item.role-section-owner {
-  border-left-color: var(--blue);
-}
-
-.room-timeline-item.role-section-reviewer {
-  border-left-color: var(--accent);
-}
-
-.room-timeline-item.role-section-arbiter {
-  border-left-color: var(--green);
-}
-
-.room-timeline-item.role-section-human {
-  border-left-color: var(--yellow);
+/* Color is conveyed by the role-chip; no left border needed */
+.room-timeline-item.role-section-owner .role-chip,
+.room-timeline-item.role-section-reviewer .role-chip,
+.room-timeline-item.role-section-arbiter .role-chip,
+.room-timeline-item.role-section-human .role-chip {
+  font-weight: 800;
 }
 
 .room-timeline-header {

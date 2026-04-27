@@ -507,13 +507,15 @@ function ParsedBody({
   );
 }
 
-function isInternalProtocolPayload(content: string | null | undefined): boolean {
+function isInternalProtocolPayload(
+  content: string | null | undefined,
+): boolean {
   if (!content) return false;
-  const trimmed = content.trim();
-  if (!trimmed.startsWith('{')) return false;
-  if (!/"author"\s*:/.test(trimmed)) return false;
-  if (!/"recipient"\s*:/.test(trimmed)) return false;
-  return true;
+  if (/<\/?(sub-agent[-\w]*|tool-call|internal)\b/i.test(content)) return true;
+  if (/"author"\s*:\s*"[^"]+"\s*,\s*"recipient"\s*:\s*"[^"]+"/.test(content)) {
+    return true;
+  }
+  return false;
 }
 
 function senderRoleClass(value: string | null | undefined): string {
