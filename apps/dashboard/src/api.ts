@@ -373,9 +373,15 @@ export interface ModelConfigSnapshot {
   arbiter: ModelRoleConfig;
 }
 
+export interface FastModeSnapshot {
+  codex: boolean;
+  claude: boolean;
+}
+
 export async function fetchAccounts(): Promise<{
   claude: ClaudeAccountSummary[];
   codex: CodexAccountSummary[];
+  codexCurrentIndex?: number;
 }> {
   return fetchJson('/api/settings/accounts');
 }
@@ -410,6 +416,92 @@ export async function updateModels(
     throw new Error(msg);
   }
   return (await response.json()) as ModelConfigSnapshot;
+}
+
+export async function refreshCodexAccount(
+  index: number,
+): Promise<CodexAccountSummary> {
+  const response = await fetch(
+    `/api/settings/accounts/codex/${index}/refresh`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    let msg = `refresh failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const json = (await response.json()) as { account: CodexAccountSummary };
+  return json.account;
+}
+
+export async function refreshAllCodexAccounts(): Promise<{
+  refreshed: number[];
+  failed: Array<{ index: number; error: string }>;
+}> {
+  const response = await fetch('/api/settings/accounts/codex/refresh-all', {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(`refresh-all failed: ${response.status}`);
+  }
+  return (await response.json()) as {
+    refreshed: number[];
+    failed: Array<{ index: number; error: string }>;
+  };
+}
+
+export async function setCurrentCodexAccount(
+  index: number,
+): Promise<{ codexCurrentIndex: number }> {
+  const response = await fetch('/api/settings/accounts/codex/current', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ index }),
+  });
+  if (!response.ok) {
+    let msg = `switch failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as { codexCurrentIndex: number };
+}
+
+export async function fetchFastMode(): Promise<FastModeSnapshot> {
+  return fetchJson('/api/settings/fast-mode');
+}
+
+export async function updateFastMode(
+  input: Partial<FastModeSnapshot>,
+): Promise<FastModeSnapshot> {
+  const response = await fetch('/api/settings/fast-mode', {
+    method: 'PUT',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let msg = `update fast mode failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as FastModeSnapshot;
 }
 
 export async function deleteAccount(

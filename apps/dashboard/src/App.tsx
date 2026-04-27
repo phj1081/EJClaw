@@ -24,6 +24,7 @@ import {
   type DashboardTaskAction,
   type DashboardOverview,
   type DashboardTask,
+  type FastModeSnapshot,
   type ModelConfigSnapshot,
   type ModelRoleConfig,
   type UpdateScheduledTaskInput,
@@ -33,11 +34,16 @@ import {
   deleteAccount,
   fetchAccounts,
   fetchDashboardData,
+  fetchFastMode,
   fetchModelConfig,
+  refreshAllCodexAccounts as refreshAllCodexAccountsApi,
+  refreshCodexAccount as refreshCodexAccountApi,
   runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
   sendRoomMessage,
+  setCurrentCodexAccount as setCurrentCodexAccountApi,
+  updateFastMode,
   updateModels,
   updateScheduledTask,
 } from './api';
@@ -1098,6 +1104,8 @@ function SettingsPanel({
 
       <ModelSettings onRestartStack={onRestartStack} />
 
+      <FastModeSettings />
+
       <AccountSettings onRestartStack={onRestartStack} />
     </div>
   );
@@ -1234,6 +1242,90 @@ function ModelSettings({ onRestartStack }: { onRestartStack: () => void }) {
   );
 }
 
+function FastModeSettings() {
+  const [state, setState] = useState<FastModeSnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchFastMode()
+      .then((s) => {
+        if (cancelled) return;
+        setState(s);
+        setError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggle(provider: keyof FastModeSnapshot) {
+    if (!state) return;
+    const next = !state[provider];
+    const optimistic = { ...state, [provider]: next };
+    setState(optimistic);
+    setBusy(true);
+    setError(null);
+    try {
+      const fresh = await updateFastMode({ [provider]: next });
+      setState(fresh);
+    } catch (err) {
+      setState(state);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>패스트 모드</h3>
+      {error ? <p className="settings-error">{error}</p> : null}
+      {!state ? (
+        <p className="settings-hint">불러오는 중…</p>
+      ) : (
+        <>
+          <label className="settings-toggle-row">
+            <span className="settings-toggle-label">
+              <span className="settings-toggle-title">Codex (GPT)</span>
+              <small className="settings-hint">
+                ~/.codex/config.toml [features].fast_mode — 사용량 더 소모하지만
+                응답이 빨라집니다.
+              </small>
+            </span>
+            <input
+              checked={state.codex}
+              disabled={busy}
+              onChange={() => void toggle('codex')}
+              type="checkbox"
+            />
+          </label>
+          <label className="settings-toggle-row">
+            <span className="settings-toggle-label">
+              <span className="settings-toggle-title">Claude</span>
+              <small className="settings-hint">
+                ~/.claude/settings.json fastMode — 인터랙티브 세션의 /fast 와
+                동일 키. opus-4-6 한정으로 동작.
+              </small>
+            </span>
+            <input
+              checked={state.claude}
+              disabled={busy}
+              onChange={() => void toggle('claude')}
+              type="checkbox"
+            />
+          </label>
+        </>
+      )}
+    </section>
+  );
+}
+
 function formatExpiry(
   iso: string | null,
 ): { label: string; cls: string } | null {
@@ -1248,16 +1340,19 @@ function formatExpiry(
   });
   if (days < 0) {
     const ago = Math.ceil(-days);
-    return { label: `${dateStr} 만료 (${ago}일 전)`, cls: 'is-expired' };
+    return {
+      label: `결제 만료 ${dateStr} (${ago}일 전)`,
+      cls: 'is-expired',
+    };
   }
   if (days < 7) {
     return {
-      label: `${dateStr}까지 (${Math.floor(days)}일)`,
+      label: `결제 ${dateStr}까지 (${Math.floor(days)}일)`,
       cls: 'is-soon',
     };
   }
   return {
-    label: `${dateStr}까지 (${Math.floor(days)}일)`,
+    label: `결제 ${dateStr}까지 (${Math.floor(days)}일)`,
     cls: 'is-active',
   };
 }
@@ -1266,8 +1361,10 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
   const [data, setData] = useState<{
     claude: ClaudeAccountSummary[];
     codex: CodexAccountSummary[];
+    codexCurrentIndex?: number;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [perRowBusy, setPerRowBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState('');
 
@@ -1324,6 +1421,50 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
     }
   }
 
+  async function handleCodexRefresh(index: number) {
+    setPerRowBusy(`refresh:${index}`);
+    setError(null);
+    try {
+      await refreshCodexAccountApi(index);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPerRowBusy(null);
+    }
+  }
+
+  async function handleRefreshAllCodex() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await refreshAllCodexAccountsApi();
+      await refresh();
+      if (result.failed.length > 0) {
+        setError(
+          `일부 갱신 실패: ${result.failed.map((f) => `#${f.index}`).join(', ')}`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSwitchCodex(index: number) {
+    setPerRowBusy(`switch:${index}`);
+    setError(null);
+    try {
+      await setCurrentCodexAccountApi(index);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPerRowBusy(null);
+    }
+  }
+
   return (
     <section className="settings-section">
       <h3>계정</h3>
@@ -1337,39 +1478,33 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
           <p className="settings-hint">계정 없음</p>
         ) : (
           <ul className="settings-account-list">
-            {data.claude.map((acc) => {
-              const expiry = formatExpiry(
-                acc.expiresAt ? new Date(acc.expiresAt).toISOString() : null,
-              );
-              return (
-                <li key={acc.index} className="settings-account-row">
-                  <div className="settings-account-main">
-                    <span className="settings-account-tag">#{acc.index}</span>
-                    <span className="settings-account-email">
-                      {acc.subscriptionType ?? 'unknown'}
-                      {acc.rateLimitTier ? ` · ${acc.rateLimitTier}` : ''}
-                    </span>
-                    {expiry ? (
-                      <span className={`settings-account-badge ${expiry.cls}`}>
-                        {expiry.label}
-                      </span>
-                    ) : null}
-                  </div>
-                  {acc.index > 0 ? (
-                    <button
-                      className="settings-delete"
-                      disabled={busy}
-                      onClick={() => void handleDelete('claude', acc.index)}
-                      type="button"
-                    >
-                      삭제
-                    </button>
-                  ) : (
-                    <span className="settings-account-default">기본</span>
-                  )}
-                </li>
-              );
-            })}
+            {data.claude.map((acc) => (
+              <li key={acc.index} className="settings-account-row">
+                <div className="settings-account-main">
+                  <span className="settings-account-tag">#{acc.index}</span>
+                  <span className="settings-account-email">
+                    {acc.subscriptionType ?? 'unknown'}
+                    {acc.rateLimitTier ? ` · ${acc.rateLimitTier}` : ''}
+                  </span>
+                  <span className="settings-account-plan">claude</span>
+                  <span className="settings-account-badge is-active">
+                    토큰 자동갱신
+                  </span>
+                </div>
+                {acc.index > 0 ? (
+                  <button
+                    className="settings-delete"
+                    disabled={busy}
+                    onClick={() => void handleDelete('claude', acc.index)}
+                    type="button"
+                  >
+                    삭제
+                  </button>
+                ) : (
+                  <span className="settings-account-default">기본</span>
+                )}
+              </li>
+            ))}
           </ul>
         )}
         <div className="settings-add-token">
@@ -1390,7 +1525,17 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
       </div>
 
       <div className="settings-account-group">
-        <h4>Codex</h4>
+        <div className="settings-account-group-head">
+          <h4>Codex</h4>
+          <button
+            className="settings-secondary"
+            disabled={busy}
+            onClick={() => void handleRefreshAllCodex()}
+            type="button"
+          >
+            전체 갱신
+          </button>
+        </div>
         {!data ? (
           <p className="settings-hint">{busy ? '불러오는 중…' : '없음'}</p>
         ) : data.codex.length === 0 ? (
@@ -1399,10 +1544,18 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
           <ul className="settings-account-list">
             {data.codex.map((acc) => {
               const expiry = formatExpiry(acc.subscriptionUntil);
+              const isActive = data.codexCurrentIndex === acc.index;
+              const refreshing = perRowBusy === `refresh:${acc.index}`;
+              const switching = perRowBusy === `switch:${acc.index}`;
               return (
-                <li key={acc.index} className="settings-account-row">
+                <li
+                  key={acc.index}
+                  className={`settings-account-row${isActive ? ' is-active-account' : ''}`}
+                >
                   <div className="settings-account-main">
-                    <span className="settings-account-tag">#{acc.index}</span>
+                    <span className="settings-account-tag">
+                      {isActive ? '●' : ''}#{acc.index}
+                    </span>
                     {acc.email ? (
                       <span
                         className="settings-account-email"
@@ -1427,26 +1580,48 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
                       </span>
                     ) : null}
                   </div>
-                  {acc.index > 0 ? (
+                  <div className="settings-account-actions">
                     <button
-                      className="settings-delete"
-                      disabled={busy}
-                      onClick={() => void handleDelete('codex', acc.index)}
+                      className="settings-secondary"
+                      disabled={busy || perRowBusy !== null}
+                      onClick={() => void handleCodexRefresh(acc.index)}
+                      title="OAuth 토큰을 다시 받아 구독 상태를 갱신합니다"
                       type="button"
                     >
-                      삭제
+                      {refreshing ? '갱신중…' : '갱신'}
                     </button>
-                  ) : (
-                    <span className="settings-account-default">기본</span>
-                  )}
+                    {!isActive ? (
+                      <button
+                        className="settings-secondary"
+                        disabled={busy || perRowBusy !== null}
+                        onClick={() => void handleSwitchCodex(acc.index)}
+                        title="이 계정으로 즉시 전환합니다 (다음 codex 호출부터 적용)"
+                        type="button"
+                      >
+                        {switching ? '전환중…' : '전환'}
+                      </button>
+                    ) : (
+                      <span className="settings-account-default">사용중</span>
+                    )}
+                    {acc.index > 0 ? (
+                      <button
+                        className="settings-delete"
+                        disabled={busy || perRowBusy !== null}
+                        onClick={() => void handleDelete('codex', acc.index)}
+                        type="button"
+                      >
+                        삭제
+                      </button>
+                    ) : null}
+                  </div>
                 </li>
               );
             })}
           </ul>
         )}
         <p className="settings-hint">
-          Codex 계정 추가는 <code>codex login</code> CLI로 진행한 뒤
-          ~/.codex-accounts/N/ 디렉터리에 auth.json 파일이 생성되면 됩니다.
+          OAuth 토큰은 6시간마다 자동 갱신됩니다. plan 변경/해지가 즉시 반영되게
+          하려면 수동으로 “전체 갱신”을 누르세요.
         </p>
       </div>
 
