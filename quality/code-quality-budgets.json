@@ -1,0 +1,248 @@
+{
+  "defaults": {
+    "maxLines": 900,
+    "maxFunctionLines": 180,
+    "maxComplexity": 40,
+    "maxNesting": 6
+  },
+  "testDefaults": {
+    "maxLines": 1600,
+    "maxFunctionLines": 260,
+    "maxComplexity": 55,
+    "maxNesting": 7
+  },
+  "overrides": {
+    "apps/dashboard/src/App.tsx": {
+      "maxLines": 4361,
+      "maxFunctionLines": 583,
+      "maxComplexity": 79,
+      "maxNesting": 4,
+      "owner": "dashboard shell hotspot"
+    },
+    "apps/dashboard/src/i18n.ts": {
+      "maxLines": 1330,
+      "owner": "dashboard i18n hotspot"
+    },
+    "apps/dashboard/src/styles.css": {
+      "maxLines": 4654,
+      "owner": "dashboard stylesheet hotspot"
+    },
+    "runners/agent-runner/src/index.ts": {
+      "maxFunctionLines": 506,
+      "maxComplexity": 81,
+      "owner": "agent runner hotspot"
+    },
+    "runners/agent-runner/test/reviewer-runtime.test.ts": {
+      "maxFunctionLines": 271,
+      "owner": "agent runner test hotspot"
+    },
+    "runners/shared/test/agent-protocol.test.ts": {
+      "maxFunctionLines": 279,
+      "owner": "runner shared test hotspot"
+    },
+    "setup/migrate-room-registrations.test.ts": {
+      "maxFunctionLines": 393,
+      "owner": "setup test hotspot"
+    },
+    "setup/room-registration-state.test.ts": {
+      "maxFunctionLines": 292,
+      "owner": "setup test hotspot"
+    },
+    "setup/verify-state.test.ts": {
+      "maxFunctionLines": 297,
+      "owner": "setup test hotspot"
+    },
+    "src/agent-runner-environment.test.ts": {
+      "maxFunctionLines": 261,
+      "owner": "agent runner test hotspot"
+    },
+    "src/agent-runner-process.ts": {
+      "maxFunctionLines": 387,
+      "owner": "agent runner process hotspot"
+    },
+    "src/agent-runner.test.ts": {
+      "maxFunctionLines": 548,
+      "owner": "agent runner test hotspot"
+    },
+    "src/channels/discord.test.ts": {
+      "maxFunctionLines": 816,
+      "owner": "discord test hotspot"
+    },
+    "src/channels/discord.ts": {
+      "maxLines": 903,
+      "maxFunctionLines": 191,
+      "owner": "discord channel hotspot"
+    },
+    "src/codex-warmup.test.ts": {
+      "maxFunctionLines": 277,
+      "owner": "codex warmup test hotspot"
+    },
+    "src/config/load-config.ts": {
+      "maxFunctionLines": 187,
+      "owner": "config loading hotspot"
+    },
+    "src/db/base-schema.ts": {
+      "maxFunctionLines": 436,
+      "owner": "db schema hotspot"
+    },
+    "src/db/paired-state.ts": {
+      "maxLines": 951,
+      "maxFunctionLines": 217,
+      "owner": "paired db state hotspot"
+    },
+    "src/db/paired-turn-provenance-schema.ts": {
+      "maxLines": 2062,
+      "maxFunctionLines": 343,
+      "owner": "paired turn provenance schema hotspot"
+    },
+    "src/db.test.ts": {
+      "maxLines": 9380,
+      "maxFunctionLines": 4990,
+      "maxComplexity": 29,
+      "maxNesting": 2,
+      "owner": "db test hotspot"
+    },
+    "src/duplicate-suppression.test.ts": {
+      "maxFunctionLines": 310,
+      "owner": "duplicate suppression test hotspot"
+    },
+    "src/group-queue.test.ts": {
+      "maxFunctionLines": 720,
+      "owner": "group queue test hotspot"
+    },
+    "src/group-queue.ts": {
+      "maxLines": 929,
+      "owner": "group queue hotspot"
+    },
+    "src/index.ts": {
+      "maxFunctionLines": 312,
+      "owner": "main service entrypoint hotspot"
+    },
+    "src/ipc-task-processor.ts": {
+      "maxFunctionLines": 566,
+      "maxComplexity": 107,
+      "owner": "ipc task processor hotspot"
+    },
+    "src/message-agent-executor-attempt-runner.ts": {
+      "maxFunctionLines": 275,
+      "maxComplexity": 47,
+      "owner": "message executor attempt runner hotspot"
+    },
+    "src/message-agent-executor-lifecycle.ts": {
+      "maxFunctionLines": 417,
+      "owner": "message executor lifecycle hotspot"
+    },
+    "src/message-agent-executor-paired.ts": {
+      "maxFunctionLines": 440,
+      "owner": "message executor paired hotspot"
+    },
+    "src/message-agent-executor-target.ts": {
+      "maxFunctionLines": 274,
+      "maxComplexity": 48,
+      "owner": "message executor target hotspot"
+    },
+    "src/message-agent-executor.test.ts": {
+      "maxLines": 3847,
+      "maxFunctionLines": 2500,
+      "owner": "message executor test hotspot"
+    },
+    "src/message-agent-executor.ts": {
+      "maxFunctionLines": 239,
+      "owner": "message executor hotspot"
+    },
+    "src/message-runtime-handoffs.ts": {
+      "maxFunctionLines": 207,
+      "owner": "message runtime handoffs hotspot"
+    },
+    "src/message-runtime-queue.test.ts": {
+      "maxFunctionLines": 366,
+      "owner": "message runtime queue test hotspot"
+    },
+    "src/message-runtime-queue.ts": {
+      "maxFunctionLines": 228,
+      "owner": "message runtime queue hotspot"
+    },
+    "src/message-runtime-rules.test.ts": {
+      "maxFunctionLines": 447,
+      "owner": "message runtime rules test hotspot"
+    },
+    "src/message-runtime.test.ts": {
+      "maxLines": 5840,
+      "maxFunctionLines": 5506,
+      "maxComplexity": 7,
+      "maxNesting": 1,
+      "owner": "message runtime test hotspot"
+    },
+    "src/message-runtime.ts": {
+      "maxFunctionLines": 620,
+      "owner": "message runtime hotspot"
+    },
+    "src/message-turn-controller.test.ts": {
+      "maxFunctionLines": 730,
+      "owner": "message turn controller test hotspot"
+    },
+    "src/message-turn-controller.ts": {
+      "maxLines": 948,
+      "maxFunctionLines": 204,
+      "owner": "message turn controller hotspot"
+    },
+    "src/paired-execution-context.test.ts": {
+      "maxFunctionLines": 1269,
+      "owner": "paired execution context test hotspot"
+    },
+    "src/paired-execution-context.ts": {
+      "maxFunctionLines": 206,
+      "maxComplexity": 43,
+      "owner": "paired execution context hotspot"
+    },
+    "src/paired-follow-up-scheduler.test.ts": {
+      "maxFunctionLines": 830,
+      "owner": "paired follow-up scheduler test hotspot"
+    },
+    "src/paired-workspace-manager.test.ts": {
+      "maxFunctionLines": 1199,
+      "owner": "paired workspace manager test hotspot"
+    },
+    "src/paired-workspace-manager.ts": {
+      "maxLines": 1056,
+      "owner": "paired workspace manager hotspot"
+    },
+    "src/service-routing.test.ts": {
+      "maxFunctionLines": 272,
+      "owner": "service routing test hotspot"
+    },
+    "src/streamed-output-evaluator.test.ts": {
+      "maxFunctionLines": 465,
+      "owner": "streamed output evaluator test hotspot"
+    },
+    "src/task-scheduler.test.ts": {
+      "maxLines": 1968,
+      "maxFunctionLines": 1790,
+      "owner": "task scheduler test hotspot"
+    },
+    "src/task-scheduler.ts": {
+      "maxFunctionLines": 367,
+      "owner": "task scheduler hotspot"
+    },
+    "src/verification.test.ts": {
+      "maxFunctionLines": 534,
+      "owner": "verification test hotspot"
+    },
+    "src/web-dashboard-data.test.ts": {
+      "maxFunctionLines": 411,
+      "owner": "web dashboard data test hotspot"
+    },
+    "src/web-dashboard-server.test.ts": {
+      "maxLines": 1629,
+      "maxFunctionLines": 1552,
+      "owner": "web dashboard server test hotspot"
+    },
+    "src/web-dashboard-server.ts": {
+      "maxLines": 1660,
+      "maxFunctionLines": 914,
+      "maxComplexity": 134,
+      "maxNesting": 3,
+      "owner": "web dashboard server hotspot"
+    }
+  }
+}

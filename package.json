@@ -21,9 +21,13 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "typecheck:all": "bun run install:runners && bunx tsc --noEmit -p tsconfig.check.json && bunx tsc --noEmit -p apps/dashboard/tsconfig.json && bunx tsc --noEmit -p runners/shared/tsconfig.json && bunx tsc --noEmit -p runners/agent-runner/tsconfig.json && bunx tsc --noEmit -p runners/codex-runner/tsconfig.json",
-    "format:fix": "prettier --write \"{src,setup,shared,test,scripts,apps}/**/*.{ts,tsx,js,jsx,css,html}\" \"runners/**/*.{ts,js}\" \"vitest*.ts\"",
-    "format:check": "prettier --check \"{src,setup,shared,test,scripts,apps}/**/*.{ts,tsx,js,jsx,css,html}\" \"runners/**/*.{ts,js}\" \"vitest*.ts\"",
-    "check": "bun run format:check && bun run typecheck:all && bun run test && bun run build:all",
+    "lint": "eslint \"{src,setup,scripts,apps/dashboard/src,runners}/**/*.{ts,tsx,js,jsx}\" \"vitest*.ts\" --quiet",
+    "lint:report": "eslint \"{src,setup,scripts,apps/dashboard/src,runners}/**/*.{ts,tsx,js,jsx}\" \"vitest*.ts\"",
+    "lint:complexity": "bun scripts/check-code-quality.ts",
+    "quality:check": "bun run lint && bun run lint:complexity",
+    "format:fix": "prettier --write \"{src,setup,shared,test,scripts,apps}/**/*.{ts,tsx,js,jsx,css,html}\" \"runners/**/*.{ts,js}\" \"vitest*.ts\" \"eslint.config.js\"",
+    "format:check": "prettier --check \"{src,setup,shared,test,scripts,apps}/**/*.{ts,tsx,js,jsx,css,html}\" \"runners/**/*.{ts,js}\" \"vitest*.ts\" \"eslint.config.js\"",
+    "check": "bun run format:check && bun run quality:check && bun run typecheck:all && bun run test && bun run build:all",
     "prepare": "husky",
     "setup": "bun setup/index.ts"
   },
@@ -43,6 +47,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "^1.3.11",
     "@types/node": "^22.10.0",
@@ -51,10 +56,13 @@
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.0.18",
     "better-sqlite3": "^12.8.0",
+    "eslint": "^10.2.1",
+    "globals": "^17.5.0",
     "husky": "^9.1.7",
     "playwright": "^1.59.1",
     "prettier": "^3.8.1",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.59.0",
     "vite": "^8.0.10",
     "vitest": "^4.0.18"
   },
