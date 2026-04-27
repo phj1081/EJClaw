@@ -4155,13 +4155,19 @@ function App() {
 
     let cancelled = false;
     let inFlight = false;
-    const tick = async (initial: boolean) => {
+    let pollIntervalId: number | null = null;
+    let es: EventSource | null = null;
+
+    const applyMap = (map: RoomActivityMap) => {
+      if (!cancelled) setRoomActivity(map);
+    };
+
+    const fetchOnce = async (initial: boolean) => {
       if (cancelled || inFlight) return;
       inFlight = true;
       if (initial) setRoomActivityLoading(true);
       try {
-        const map = await fetchRoomsTimelineBatch();
-        if (!cancelled) setRoomActivity(map);
+        applyMap(await fetchRoomsTimelineBatch());
       } catch {
         /* keep last good state */
       } finally {
@@ -4170,12 +4176,48 @@ function App() {
       }
     };
 
-    void tick(true);
-    const id = window.setInterval(() => void tick(false), 1500);
+    const startPollingFallback = () => {
+      if (pollIntervalId !== null) return;
+      pollIntervalId = window.setInterval(() => void fetchOnce(false), 2000);
+    };
+
+    const stopPollingFallback = () => {
+      if (pollIntervalId === null) return;
+      window.clearInterval(pollIntervalId);
+      pollIntervalId = null;
+    };
+
+    if (typeof window !== 'undefined' && 'EventSource' in window) {
+      void fetchOnce(true);
+      try {
+        es = new EventSource('/api/stream');
+        es.addEventListener('rooms-timeline', (event) => {
+          try {
+            const parsed = JSON.parse(
+              (event as MessageEvent).data,
+            ) as RoomActivityMap;
+            applyMap(parsed);
+            stopPollingFallback();
+          } catch {
+            /* malformed event, ignore */
+          }
+        });
+        es.onerror = () => {
+          // Browser auto-reconnects; meanwhile keep data fresh via polling.
+          startPollingFallback();
+        };
+      } catch {
+        startPollingFallback();
+      }
+    } else {
+      void fetchOnce(true);
+      startPollingFallback();
+    }
 
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      stopPollingFallback();
+      es?.close();
     };
   }, [activeView, roomsJidsKey]);
 

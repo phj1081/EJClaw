@@ -1518,6 +1518,73 @@ export function createWebDashboardHandler(
       return jsonResponse(getModelConfig());
     }
 
+    if (url.pathname === '/api/stream') {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          let lastBuiltAt = 0;
+          let closed = false;
+
+          const enqueue = (chunk: string) => {
+            if (closed) return;
+            try {
+              controller.enqueue(encoder.encode(chunk));
+            } catch {
+              closed = true;
+            }
+          };
+
+          // Initial: send retry hint and seed event
+          enqueue(`retry: 3000\n\n`);
+          try {
+            const cache = ensureRoomsTimelineCache();
+            lastBuiltAt = cache.builtAt;
+            enqueue(`event: rooms-timeline\ndata: ${cache.rawJson}\n\n`);
+          } catch {
+            /* warm-up failure is non-fatal */
+          }
+
+          const tick = () => {
+            if (closed) return;
+            try {
+              const cache = ensureRoomsTimelineCache();
+              if (cache.builtAt !== lastBuiltAt) {
+                lastBuiltAt = cache.builtAt;
+                enqueue(`event: rooms-timeline\ndata: ${cache.rawJson}\n\n`);
+              } else {
+                // heartbeat to keep connection alive through proxies
+                enqueue(`: ping ${Date.now()}\n\n`);
+              }
+            } catch {
+              /* skip this tick */
+            }
+          };
+
+          const interval = setInterval(tick, 1500);
+          const close = () => {
+            if (closed) return;
+            closed = true;
+            clearInterval(interval);
+            try {
+              controller.close();
+            } catch {
+              /* already closed */
+            }
+          };
+          request.signal.addEventListener('abort', close);
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        },
+      });
+    }
+
     if (url.pathname === '/api/rooms-timeline') {
       const cache = ensureRoomsTimelineCache();
       const acceptsGzip =
