@@ -27,8 +27,10 @@ export interface ClaudeAccountSummary {
 export interface CodexAccountSummary {
   index: number;
   accountId: string | null;
+  email: string | null;
   planType: string | null;
   subscriptionUntil: string | null;
+  subscriptionLastChecked: string | null;
   exists: boolean;
 }
 
@@ -105,8 +107,10 @@ function readCodexAccount(index: number): CodexAccountSummary | null {
     tokens?: { id_token?: string; access_token?: string };
   }>(file);
   let accountId: string | null = null;
+  let email: string | null = null;
   let planType: string | null = null;
   let subscriptionUntil: string | null = null;
+  let subscriptionLastChecked: string | null = null;
   const idToken = data?.tokens?.id_token;
   if (idToken && typeof idToken === 'string') {
     const parts = idToken.split('.');
@@ -116,6 +120,7 @@ function readCodexAccount(index: number): CodexAccountSummary | null {
           Buffer.from(parts[1], 'base64').toString('utf-8'),
         ) as Record<string, unknown>;
         if (typeof payload.sub === 'string') accountId = payload.sub;
+        if (typeof payload.email === 'string') email = payload.email;
         const auth = payload['https://api.openai.com/auth'] as
           | Record<string, unknown>
           | undefined;
@@ -126,6 +131,9 @@ function readCodexAccount(index: number): CodexAccountSummary | null {
           if (typeof auth.chatgpt_subscription_active_until === 'string') {
             subscriptionUntil = auth.chatgpt_subscription_active_until;
           }
+          if (typeof auth.chatgpt_subscription_last_checked === 'string') {
+            subscriptionLastChecked = auth.chatgpt_subscription_last_checked;
+          }
         }
       } catch {
         /* ignore parse errors */
@@ -135,8 +143,10 @@ function readCodexAccount(index: number): CodexAccountSummary | null {
   return {
     index,
     accountId,
+    email,
     planType,
     subscriptionUntil,
+    subscriptionLastChecked,
     exists: true,
   };
 }
@@ -149,6 +159,7 @@ export function listClaudeAccounts(): ClaudeAccountSummary[] {
   if (fs.existsSync(dir)) {
     const entries = fs.readdirSync(dir);
     const indices = entries
+      .filter((e) => /^\d+$/.test(e))
       .map((e) => Number.parseInt(e, 10))
       .filter((n) => Number.isFinite(n) && n >= 1)
       .sort((a, b) => a - b);
@@ -168,6 +179,7 @@ export function listCodexAccounts(): CodexAccountSummary[] {
   if (fs.existsSync(dir)) {
     const entries = fs.readdirSync(dir);
     const indices = entries
+      .filter((e) => /^\d+$/.test(e))
       .map((e) => Number.parseInt(e, 10))
       .filter((n) => Number.isFinite(n) && n >= 1)
       .sort((a, b) => a - b);
