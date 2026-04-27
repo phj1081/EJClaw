@@ -48,6 +48,7 @@ import {
 } from './web-dashboard-data.js';
 import {
   addClaudeAccountFromToken,
+  getActiveCodexSettingsIndex,
   getFastMode,
   getModelConfig,
   listClaudeAccounts,
@@ -55,13 +56,10 @@ import {
   refreshAllCodexAccounts,
   refreshCodexAccount,
   removeAccountDirectory,
+  setActiveCodexSettingsIndex,
   updateFastMode,
   updateModelConfig,
 } from './settings-store.js';
-import {
-  getCurrentCodexAccountIndex,
-  setCurrentCodexAccountIndex,
-} from './codex-token-rotation.js';
 
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
 const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
@@ -1393,10 +1391,10 @@ export function createWebDashboardHandler(
         );
       }
       try {
-        setCurrentCodexAccountIndex(idx);
+        setActiveCodexSettingsIndex(idx);
         return jsonResponse({
           ok: true,
-          codexCurrentIndex: getCurrentCodexAccountIndex(),
+          codexCurrentIndex: getActiveCodexSettingsIndex(),
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1602,7 +1600,7 @@ export function createWebDashboardHandler(
       return jsonResponse({
         claude: listClaudeAccounts(),
         codex: listCodexAccounts(),
-        codexCurrentIndex: getCurrentCodexAccountIndex(),
+        codexCurrentIndex: getActiveCodexSettingsIndex(),
       });
     }
 
