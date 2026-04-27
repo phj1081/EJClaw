@@ -117,6 +117,35 @@ table {
   min-height: calc(100vh - 24px);
 }
 
+.view-stack.view-rooms {
+  height: calc(100vh - 76px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.view-stack.view-rooms .view-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.view-stack.view-rooms .panel-title {
+  flex: none;
+}
+
+.view-stack.view-rooms .rooms-v2 {
+  flex: 1;
+  min-height: 0;
+}
+
+.view-stack.view-rooms .rooms-twopane {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
 .shell::before {
   display: none;
 }
@@ -305,7 +334,9 @@ button:disabled {
   color: var(--muted);
   background: transparent;
   text-decoration: none;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 
 .rail-item:hover {
@@ -2813,8 +2844,10 @@ progress::-moz-progress-bar {
    ============================================================ */
 
 .rooms-v2 {
-  display: grid;
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
 }
 
 .rooms-toolbar {
@@ -2915,8 +2948,9 @@ progress::-moz-progress-bar {
 .rooms-twopane {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
+  gap: 8px;
+  align-items: stretch;
+  min-height: 0;
 }
 
 @media (max-width: 900px) {
@@ -2933,10 +2967,8 @@ progress::-moz-progress-bar {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: var(--bg-elevated);
-  max-height: calc(100vh - 140px);
   overflow-y: auto;
-  position: sticky;
-  top: 76px;
+  min-height: 0;
 }
 
 .rooms-list-item {
@@ -3030,10 +3062,12 @@ progress::-moz-progress-bar {
 
 .rooms-detail {
   min-width: 0;
+  min-height: 0;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: var(--panel);
   padding: 0;
+  overflow-y: auto;
 }
 
 .rooms-detail .room-card-v2 {
