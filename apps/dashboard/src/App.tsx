@@ -507,6 +507,15 @@ function ParsedBody({
   );
 }
 
+function isInternalProtocolPayload(content: string | null | undefined): boolean {
+  if (!content) return false;
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('{')) return false;
+  if (!/"author"\s*:/.test(trimmed)) return false;
+  if (!/"recipient"\s*:/.test(trimmed)) return false;
+  return true;
+}
+
 function senderRoleClass(value: string | null | undefined): string {
   const v = (value ?? '').toLowerCase();
   if (v.includes('오너') || v.includes('owner')) return 'role-owner';
@@ -2481,7 +2490,9 @@ function RoomCardV2({
   };
   const humanMessages: ThreadEntry[] = messages
     .filter(
-      (m) => m.sourceKind === 'human' || m.sourceKind === 'ipc_injected_human',
+      (m) =>
+        (m.sourceKind === 'human' || m.sourceKind === 'ipc_injected_human') &&
+        !isInternalProtocolPayload(m.content),
     )
     .map((m) => ({
       id: m.id,
@@ -2506,17 +2517,19 @@ function RoomCardV2({
       isBotMessage: false,
       sourceKind: m.sourceKind,
     }));
-  const outputEntries: ThreadEntry[] = outputs.map((o) => ({
-    id: `out:${o.id}`,
-    senderName: o.role,
-    content: o.outputText,
-    timestamp: o.createdAt,
-    isFromMe: false,
-    isBotMessage: true,
-    sourceKind: 'agent_output',
-    verdict: o.verdict,
-    turnNumber: o.turnNumber,
-  }));
+  const outputEntries: ThreadEntry[] = outputs
+    .filter((o) => !isInternalProtocolPayload(o.outputText))
+    .map((o) => ({
+      id: `out:${o.id}`,
+      senderName: o.role,
+      content: o.outputText,
+      timestamp: o.createdAt,
+      isFromMe: false,
+      isBotMessage: true,
+      sourceKind: 'agent_output',
+      verdict: o.verdict,
+      turnNumber: o.turnNumber,
+    }));
   const agentMessages: ThreadEntry[] = [
     ...humanMessages,
     ...optimisticPending,

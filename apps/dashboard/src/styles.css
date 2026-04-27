@@ -1818,7 +1818,8 @@ progress::-moz-progress-bar {
   opacity: 0.44;
 }
 
-.room-compose-section {
+.room-section.room-compose-section {
+  display: block;
   padding: 8px 12px;
   border-top: 1px solid var(--divider);
   background: var(--panel);
