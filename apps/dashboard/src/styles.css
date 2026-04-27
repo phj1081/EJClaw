@@ -258,6 +258,13 @@ body:has(.view-stack.view-rooms) .error-card {
   margin: 0 !important;
 }
 
+/* The 2px green processing bar at the card's left edge collides with the
+   role-colored left border on each timeline item. The pulse dot in the
+   header already conveys "processing", so drop the bar in pinned mode. */
+.view-stack.view-rooms .rooms-detail .room-card-v2.is-pinned.status-processing::before {
+  display: none;
+}
+
 .view-stack.view-rooms .rooms-detail .room-card-v2.is-pinned > * {
   margin-left: 0 !important;
   margin-right: 0 !important;
