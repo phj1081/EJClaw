@@ -273,11 +273,11 @@ body:has(.view-stack.view-rooms) .error-card {
 }
 
 .view-stack.view-rooms .rooms-detail .room-thread-section {
-  padding: 4px 12px 4px 4px;
+  padding: 4px 12px 4px 0;
 }
 
 .view-stack.view-rooms .rooms-detail .room-card-head {
-  padding: 12px 14px 12px 8px;
+  padding: 10px 14px 10px 10px;
 }
 
 .view-stack.view-rooms .rooms-detail .room-compose-section {
@@ -1870,7 +1870,7 @@ progress::-moz-progress-bar {
 
 .room-section.room-compose-section {
   display: block;
-  padding: 8px 12px 8px 4px;
+  padding: 8px 12px 8px 0;
   border-top: 1px solid var(--divider);
   background: var(--panel);
 }
