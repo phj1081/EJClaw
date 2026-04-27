@@ -159,6 +159,14 @@ function isStandaloneDisplay(): boolean {
   );
 }
 
+function canUsePwaCore(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.isSecureContext &&
+    'serviceWorker' in navigator
+  );
+}
+
 function formatTaskDate(
   value: string | null | undefined,
   locale: Locale,
@@ -567,6 +575,7 @@ function SideRail({
   online,
   offlineReady,
   refreshing,
+  secureContext,
   t,
 }: {
   activeView: DashboardView;
@@ -580,8 +589,17 @@ function SideRail({
   online: boolean;
   offlineReady: boolean;
   refreshing: boolean;
+  secureContext: boolean;
   t: Messages;
 }) {
+  const pwaState = !secureContext
+    ? t.pwa.secureRequired
+    : installed
+      ? t.pwa.installed
+      : offlineReady
+        ? t.pwa.ready
+        : t.pwa.app;
+
   return (
     <aside className="side-rail" aria-label={t.nav.drawerAria}>
       <div className="side-rail-brand">
@@ -604,9 +622,7 @@ function SideRail({
       <LanguageSelector locale={locale} onLocaleChange={onLocaleChange} t={t} />
       <div className={`pwa-card ${online ? 'is-online' : 'is-offline'}`}>
         <span>{online ? t.pwa.online : t.pwa.offline}</span>
-        <strong>
-          {installed ? t.pwa.installed : offlineReady ? t.pwa.ready : t.pwa.app}
-        </strong>
+        <strong>{pwaState}</strong>
       </div>
       {canInstall ? (
         <button className="side-install" onClick={onInstall} type="button">
@@ -641,6 +657,7 @@ function SectionNav({
   offlineReady,
   refreshing,
   onRefresh,
+  secureContext,
   t,
 }: {
   activeView: DashboardView;
@@ -657,6 +674,7 @@ function SectionNav({
   offlineReady: boolean;
   refreshing: boolean;
   onRefresh: () => void;
+  secureContext: boolean;
   t: Messages;
 }) {
   const activeLabel =
@@ -744,11 +762,13 @@ function SectionNav({
             />
             <div className="drawer-pwa-row">
               <span>
-                {installed
-                  ? t.pwa.installed
-                  : offlineReady
-                    ? t.pwa.ready
-                    : t.pwa.app}
+                {!secureContext
+                  ? t.pwa.secureRequired
+                  : installed
+                    ? t.pwa.installed
+                    : offlineReady
+                      ? t.pwa.ready
+                      : t.pwa.app}
               </span>
               {canInstall ? (
                 <button onClick={onInstall} type="button">
@@ -771,6 +791,7 @@ function ControlRail({
   offlineReady,
   onInstall,
   online,
+  secureContext,
   t,
 }: {
   canInstall: boolean;
@@ -780,6 +801,7 @@ function ControlRail({
   offlineReady: boolean;
   onInstall: () => void;
   online: boolean;
+  secureContext: boolean;
   t: Messages;
 }) {
   const queue = data.snapshots.reduce(
@@ -808,14 +830,26 @@ function ControlRail({
       <div className="ops-tile-pwa">
         <span>{t.pwa.app}</span>
         <strong>
-          {installed ? t.pwa.installed : offlineReady ? t.pwa.ready : t.pwa.app}
+          {!secureContext
+            ? t.pwa.secureRequired
+            : installed
+              ? t.pwa.installed
+              : offlineReady
+                ? t.pwa.ready
+                : t.pwa.app}
         </strong>
         {canInstall ? (
           <button onClick={onInstall} type="button">
             {t.pwa.install}
           </button>
         ) : (
-          <small>{offlineReady ? t.pwa.cached : t.pwa.online}</small>
+          <small>
+            {!secureContext
+              ? t.pwa.secureRequired
+              : offlineReady
+                ? t.pwa.cached
+                : t.pwa.online}
+          </small>
         )}
       </div>
       <div>
@@ -1917,6 +1951,8 @@ function App() {
     useState<ServiceActionKey | null>(null);
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
   const t = messages[locale];
+  const secureContext =
+    typeof window === 'undefined' ? true : window.isSecureContext;
 
   function setDashboardLocale(nextLocale: Locale) {
     setLocale(nextLocale);
@@ -2088,7 +2124,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!('serviceWorker' in navigator) || !import.meta.env.PROD) return;
+    if (!import.meta.env.PROD || !canUsePwaCore()) {
+      setOfflineReady(false);
+      return;
+    }
 
     let cancelled = false;
     void navigator.serviceWorker
@@ -2174,7 +2213,7 @@ function App() {
 
   const roomOptions = data ? buildRoomOptions(data.snapshots) : [];
   const freshness = dashboardFreshness(online, data?.overview.generatedAt);
-  const canInstall = Boolean(installPrompt && !installed);
+  const canInstall = Boolean(secureContext && installPrompt && !installed);
 
   return (
     <div className="shell">
@@ -2190,6 +2229,7 @@ function App() {
         onLocaleChange={setDashboardLocale}
         onRefresh={() => void refresh(true)}
         refreshing={refreshing}
+        secureContext={secureContext}
         t={t}
       />
       <main className="dashboard-content">
@@ -2208,6 +2248,7 @@ function App() {
           offlineReady={offlineReady}
           onRefresh={() => void refresh(true)}
           refreshing={refreshing}
+          secureContext={secureContext}
           t={t}
         />
 
@@ -2241,6 +2282,7 @@ function App() {
                   offlineReady={offlineReady}
                   online={online}
                   onInstall={() => void handleInstallApp()}
+                  secureContext={secureContext}
                   t={t}
                 />
               </>

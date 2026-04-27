@@ -48,6 +48,7 @@ export interface Messages {
     offline: string;
     fresh: string;
     stale: string;
+    secureRequired: string;
     updated: string;
   };
   metrics: {
@@ -321,6 +322,7 @@ export const messages = {
       offline: '오프라인',
       fresh: '최신',
       stale: '지연',
+      secureRequired: 'HTTPS 필요',
       updated: '갱신',
     },
     metrics: {
@@ -578,6 +580,7 @@ export const messages = {
       offline: 'Offline',
       fresh: 'Fresh',
       stale: 'Stale',
+      secureRequired: 'HTTPS required',
       updated: 'Updated',
     },
     metrics: {
@@ -835,6 +838,7 @@ export const messages = {
       offline: '离线',
       fresh: '最新',
       stale: '延迟',
+      secureRequired: '需要 HTTPS',
       updated: '更新',
     },
     metrics: {
@@ -1092,6 +1096,7 @@ export const messages = {
       offline: 'オフライン',
       fresh: '最新',
       stale: '遅延',
+      secureRequired: 'HTTPS 必須',
       updated: '更新',
     },
     metrics: {
