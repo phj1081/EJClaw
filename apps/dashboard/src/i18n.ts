@@ -158,8 +158,11 @@ export interface Messages {
     attempt: string;
     updated: string;
     output: string;
+    latestOutput: string;
+    outputHistory: string;
     noOutput: string;
     recentMessages: string;
+    messageHistory: string;
     noMessages: string;
     details: string;
     message: string;
@@ -446,8 +449,11 @@ export const messages = {
       attempt: '시도',
       updated: '갱신',
       output: '출력',
+      latestOutput: '마지막 출력',
+      outputHistory: '출력 기록',
       noOutput: '출력 없음',
-      recentMessages: '최근 메시지',
+      recentMessages: '메시지 기록',
+      messageHistory: '메시지 기록',
       noMessages: '메시지 없음',
       details: '세부',
       message: 'Message',
@@ -718,8 +724,11 @@ export const messages = {
       attempt: 'attempt',
       updated: 'updated',
       output: 'output',
+      latestOutput: 'latest output',
+      outputHistory: 'output log',
       noOutput: 'No output',
-      recentMessages: 'Recent messages',
+      recentMessages: 'Message log',
+      messageHistory: 'Message log',
       noMessages: 'No messages',
       details: 'details',
       message: 'message',
@@ -990,8 +999,11 @@ export const messages = {
       attempt: '尝试',
       updated: '更新',
       output: '输出',
+      latestOutput: '最新输出',
+      outputHistory: '输出记录',
       noOutput: '暂无输出',
-      recentMessages: '最近消息',
+      recentMessages: '消息记录',
+      messageHistory: '消息记录',
       noMessages: '暂无消息',
       details: '详情',
       message: 'Message',
@@ -1262,8 +1274,11 @@ export const messages = {
       attempt: '試行',
       updated: '更新',
       output: '出力',
+      latestOutput: '最新出力',
+      outputHistory: '出力履歴',
       noOutput: '出力なし',
-      recentMessages: '最近のメッセージ',
+      recentMessages: 'メッセージ履歴',
+      messageHistory: 'メッセージ履歴',
       noMessages: 'メッセージなし',
       details: '詳細',
       message: 'Message',

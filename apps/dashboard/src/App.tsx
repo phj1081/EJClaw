@@ -1315,100 +1315,135 @@ function RoomActivityPanel({
   const task = activity.pairedTask;
   const turn = task?.currentTurn ?? null;
   const outputs = task?.outputs ?? [];
+  const latestOutput = outputs.at(-1) ?? null;
+  const progressText = turn
+    ? `${turn.role} · ${turn.intentKind} · ${t.rooms.attempt} ${turn.attemptNo}`
+    : t.rooms.noTurn;
 
   return (
     <div className="room-activity">
-      <div className="room-activity-grid">
-        <span>
-          <small>{t.rooms.task}</small>
-          <strong>{task?.title || task?.id || t.rooms.noTask}</strong>
-        </span>
-        <span>
-          <small>{t.rooms.currentTurn}</small>
-          <strong>
-            {turn
-              ? `${turn.role} · ${t.rooms.attempt} ${turn.attemptNo}`
-              : t.rooms.noTurn}
-          </strong>
-        </span>
-        <span>
-          <small>{t.rooms.round}</small>
-          <strong>{task ? task.roundTripCount : '-'}</strong>
-        </span>
-        <span>
-          <small>{t.rooms.updated}</small>
-          <strong>
-            {formatDate(turn?.updatedAt ?? task?.updatedAt, locale)}
-          </strong>
-        </span>
-      </div>
-
-      {turn ? (
-        <div className="room-turn-line">
+      <div className="room-progress-strip">
+        {turn ? (
           <span className={`pill pill-${turn.state}`}>
             {statusLabel(turn.state, t)}
           </span>
-          <span>{turn.intentKind}</span>
-          {turn.executorServiceId ? (
-            <span>{turn.executorServiceId}</span>
-          ) : null}
-          {turn.activeRunId ? (
-            <span className="mono-chip">{turn.activeRunId}</span>
-          ) : null}
-        </div>
-      ) : null}
-
-      {turn?.lastError ? (
-        <p className="room-activity-error">{turn.lastError}</p>
-      ) : null}
-
-      <div className="room-activity-columns">
-        <section>
-          <strong>{t.rooms.output}</strong>
-          {outputs.length === 0 ? (
-            <p className="room-muted">{t.rooms.noOutput}</p>
-          ) : (
-            <div className="room-output-list">
-              {[...outputs].reverse().map((output) => (
-                <article key={output.id} className="room-output-item">
-                  <header>
-                    <span>
-                      #{output.turnNumber} · {output.role}
-                      {output.verdict ? ` · ${output.verdict}` : ''}
-                    </span>
-                    <time>{formatDate(output.createdAt, locale)}</time>
-                  </header>
-                  <p>{output.outputText}</p>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
-        <section>
-          <strong>{t.rooms.recentMessages}</strong>
-          {activity.messages.length === 0 ? (
-            <p className="room-muted">{t.rooms.noMessages}</p>
-          ) : (
-            <div className="room-message-list">
-              {activity.messages.map((message) => (
-                <article
-                  className={`room-message-item ${
-                    message.isBotMessage ? 'room-message-bot' : ''
-                  }`}
-                  key={message.id}
-                >
-                  <header>
-                    <span>{message.senderName}</span>
-                    <time>{formatDate(message.timestamp, locale)}</time>
-                  </header>
-                  <p>{message.content}</p>
-                </article>
-              ))}
-            </div>
-          )}
-        </section>
+        ) : (
+          <span className="pill pill-inactive">{t.rooms.noTurn}</span>
+        )}
+        <strong>{progressText}</strong>
+        <span>{task ? `${t.rooms.round} ${task.roundTripCount}` : '-'}</span>
+        {turn?.executorServiceId ? <span>{turn.executorServiceId}</span> : null}
+        <time>{formatDate(turn?.updatedAt ?? task?.updatedAt, locale)}</time>
       </div>
+
+      <section className="room-latest-output">
+        <header>
+          <strong>{t.rooms.latestOutput}</strong>
+          {latestOutput ? (
+            <span>
+              #{latestOutput.turnNumber} · {latestOutput.role}
+              {latestOutput.verdict ? ` · ${latestOutput.verdict}` : ''}
+            </span>
+          ) : null}
+        </header>
+        {latestOutput ? (
+          <p>{latestOutput.outputText}</p>
+        ) : (
+          <p className="room-muted">{t.rooms.noOutput}</p>
+        )}
+      </section>
+
+      <details className="room-activity-details">
+        <summary>{t.rooms.details}</summary>
+        <div className="room-detail-grid">
+          <section>
+            <strong>{t.rooms.task}</strong>
+            <p className="room-muted">
+              {task?.title || task?.id || t.rooms.noTask}
+            </p>
+            <div className="room-turn-line">
+              {turn?.activeRunId ? (
+                <span className="mono-chip">{turn.activeRunId}</span>
+              ) : null}
+              {turn?.lastError ? (
+                <span className="room-activity-error">{turn.lastError}</span>
+              ) : null}
+            </div>
+          </section>
+          <section>
+            <strong>{t.rooms.outputHistory}</strong>
+            {outputs.length === 0 ? (
+              <p className="room-muted">{t.rooms.noOutput}</p>
+            ) : (
+              <div className="room-output-list">
+                {[...outputs].reverse().map((output) => (
+                  <article key={output.id} className="room-output-item">
+                    <header>
+                      <span>
+                        #{output.turnNumber} · {output.role}
+                        {output.verdict ? ` · ${output.verdict}` : ''}
+                      </span>
+                      <time>{formatDate(output.createdAt, locale)}</time>
+                    </header>
+                    <p>{output.outputText}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+          <section>
+            <strong>{t.rooms.messageHistory}</strong>
+            {activity.messages.length === 0 ? (
+              <p className="room-muted">{t.rooms.noMessages}</p>
+            ) : (
+              <div className="room-message-list">
+                {activity.messages.map((message) => (
+                  <article
+                    className={`room-message-item ${
+                      message.isBotMessage ? 'room-message-bot' : ''
+                    }`}
+                    key={message.id}
+                  >
+                    <header>
+                      <span>{message.senderName}</span>
+                      <time>{formatDate(message.timestamp, locale)}</time>
+                    </header>
+                    <p>{message.content}</p>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </details>
     </div>
+  );
+}
+
+function RoomComposeDetails({
+  busy,
+  onChange,
+  onSubmit,
+  t,
+  value,
+}: {
+  busy: boolean;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  t: Messages;
+  value: string;
+}) {
+  return (
+    <details className="room-compose-details">
+      <summary>{t.rooms.message}</summary>
+      <RoomMessageForm
+        busy={busy}
+        onChange={onChange}
+        onSubmit={onSubmit}
+        t={t}
+        value={value}
+      />
+    </details>
   );
 }
 
@@ -1502,8 +1537,8 @@ function RoomPanel({
                     t={t}
                   />
                 </td>
-                <td>
-                  <RoomMessageForm
+                <td className="room-message-cell">
+                  <RoomComposeDetails
                     busy={roomMessageKey === entry.jid}
                     onChange={(value) => setDraft(entry.jid, value)}
                     onSubmit={() => void submitRoomMessage(entry.jid)}
@@ -1550,7 +1585,7 @@ function RoomPanel({
               locale={locale}
               t={t}
             />
-            <RoomMessageForm
+            <RoomComposeDetails
               busy={roomMessageKey === entry.jid}
               onChange={(value) => setDraft(entry.jid, value)}
               onSubmit={() => void submitRoomMessage(entry.jid)}
