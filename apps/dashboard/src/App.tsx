@@ -532,6 +532,8 @@ function senderRoleClass(value: string | null | undefined): string {
   if (v.includes('오너') || v.includes('owner')) return 'role-owner';
   if (v.includes('리뷰어') || v.includes('reviewer')) return 'role-reviewer';
   if (v.includes('중재자') || v.includes('arbiter')) return 'role-arbiter';
+  if (v.includes('cron') || v.includes('sentry') || v.includes('webhook'))
+    return 'role-cron';
   return 'role-human';
 }
 
@@ -2846,10 +2848,11 @@ function RoomCardV2({
   if (entry.pendingMessages) queueChips.push(t.rooms.queueWaitingMessages);
   const lastUpdated = turn?.updatedAt ?? task?.updatedAt ?? null;
   const WATCHER_RE =
-    /^\s*(?:CI 완료|Build |Deploy |Lint |Release |Sentry |\[CI\]|\[Watcher\]|GitHub Actions)/i;
+    /^\s*(?:CI 완료|Build |Deploy |Lint |Release |\[CI\]|\[Watcher\]|GitHub Actions)/i;
   const isWatcherMsg = (m: (typeof messages)[number]) =>
-    m.sourceKind === 'trusted_external_bot' ||
-    (m.sourceKind === 'bot' && WATCHER_RE.test(m.content));
+    m.sourceKind === 'bot' && WATCHER_RE.test(m.content);
+  const isCronTriggerMsg = (m: (typeof messages)[number]) =>
+    m.sourceKind === 'trusted_external_bot';
   const lastWatcher = [...messages].reverse().find(isWatcherMsg) ?? null;
   const watcherCount = messages.filter(isWatcherMsg).length;
   const watcherMessages = messages.filter(isWatcherMsg);
@@ -2877,6 +2880,17 @@ function RoomCardV2({
       timestamp: m.timestamp,
       isFromMe: m.isFromMe,
       isBotMessage: false,
+      sourceKind: m.sourceKind,
+    }));
+  const cronMessages: ThreadEntry[] = messages
+    .filter((m) => isCronTriggerMsg(m) && !isInternalProtocolPayload(m.content))
+    .map((m) => ({
+      id: m.id,
+      senderName: m.senderName,
+      content: m.content,
+      timestamp: m.timestamp,
+      isFromMe: false,
+      isBotMessage: true,
       sourceKind: m.sourceKind,
     }));
   const confirmedKey = (m: { content: string; senderName: string }) =>
@@ -2909,6 +2923,7 @@ function RoomCardV2({
   const agentMessages: ThreadEntry[] = [
     ...humanMessages,
     ...optimisticPending,
+    ...cronMessages,
     ...outputEntries,
   ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
