@@ -1340,16 +1340,19 @@ function formatExpiry(
   });
   if (days < 0) {
     const ago = Math.ceil(-days);
-    return { label: `${dateStr} 만료 (${ago}일 전)`, cls: 'is-expired' };
+    return {
+      label: `결제 만료 ${dateStr} (${ago}일 전)`,
+      cls: 'is-expired',
+    };
   }
   if (days < 7) {
     return {
-      label: `${dateStr}까지 (${Math.floor(days)}일)`,
+      label: `결제 ${dateStr}까지 (${Math.floor(days)}일)`,
       cls: 'is-soon',
     };
   }
   return {
-    label: `${dateStr}까지 (${Math.floor(days)}일)`,
+    label: `결제 ${dateStr}까지 (${Math.floor(days)}일)`,
     cls: 'is-active',
   };
 }
@@ -1475,39 +1478,33 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
           <p className="settings-hint">계정 없음</p>
         ) : (
           <ul className="settings-account-list">
-            {data.claude.map((acc) => {
-              const expiry = formatExpiry(
-                acc.expiresAt ? new Date(acc.expiresAt).toISOString() : null,
-              );
-              return (
-                <li key={acc.index} className="settings-account-row">
-                  <div className="settings-account-main">
-                    <span className="settings-account-tag">#{acc.index}</span>
-                    <span className="settings-account-email">
-                      {acc.subscriptionType ?? 'unknown'}
-                      {acc.rateLimitTier ? ` · ${acc.rateLimitTier}` : ''}
-                    </span>
-                    {expiry ? (
-                      <span className={`settings-account-badge ${expiry.cls}`}>
-                        {expiry.label}
-                      </span>
-                    ) : null}
-                  </div>
-                  {acc.index > 0 ? (
-                    <button
-                      className="settings-delete"
-                      disabled={busy}
-                      onClick={() => void handleDelete('claude', acc.index)}
-                      type="button"
-                    >
-                      삭제
-                    </button>
-                  ) : (
-                    <span className="settings-account-default">기본</span>
-                  )}
-                </li>
-              );
-            })}
+            {data.claude.map((acc) => (
+              <li key={acc.index} className="settings-account-row">
+                <div className="settings-account-main">
+                  <span className="settings-account-tag">#{acc.index}</span>
+                  <span className="settings-account-email">
+                    {acc.subscriptionType ?? 'unknown'}
+                    {acc.rateLimitTier ? ` · ${acc.rateLimitTier}` : ''}
+                  </span>
+                  <span className="settings-account-plan">claude</span>
+                  <span className="settings-account-badge is-active">
+                    토큰 자동갱신
+                  </span>
+                </div>
+                {acc.index > 0 ? (
+                  <button
+                    className="settings-delete"
+                    disabled={busy}
+                    onClick={() => void handleDelete('claude', acc.index)}
+                    type="button"
+                  >
+                    삭제
+                  </button>
+                ) : (
+                  <span className="settings-account-default">기본</span>
+                )}
+              </li>
+            ))}
           </ul>
         )}
         <div className="settings-add-token">
