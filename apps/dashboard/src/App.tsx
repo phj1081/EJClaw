@@ -3583,26 +3583,18 @@ function App() {
     ) {
       const tick = () => {
         const sels = [
-          '.shell',
-          '.dashboard-content',
-          '.view-stack.view-rooms .view-panel',
-          '.rooms-twopane',
-          '.rooms-list',
-          '.rooms-detail',
           '.rooms-detail .room-card-v2',
           '.room-card-head',
           '.room-thread-section',
-          '.room-thread-section .room-timeline-item',
           '.room-section.room-compose-section',
-          '.room-compose',
-          '.room-compose textarea',
         ];
         const out = sels
           .map((s) => {
             const el = document.querySelector(s);
             if (!el) return `${s}: NOT FOUND`;
             const r = el.getBoundingClientRect();
-            return `${s}: x=${Math.round(r.x)} w=${Math.round(r.width)}`;
+            const cs = getComputedStyle(el);
+            return `${s}:\n  x=${Math.round(r.x)} w=${Math.round(r.width)}\n  display=${cs.display} pl=${cs.paddingLeft} ml=${cs.marginLeft}`;
           })
           .join('\n');
         let pre = document.getElementById('__measure');
