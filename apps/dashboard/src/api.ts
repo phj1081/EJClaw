@@ -373,6 +373,11 @@ export interface ModelConfigSnapshot {
   arbiter: ModelRoleConfig;
 }
 
+export interface FastModeSnapshot {
+  codex: boolean;
+  claude: boolean;
+}
+
 export async function fetchAccounts(): Promise<{
   claude: ClaudeAccountSummary[];
   codex: CodexAccountSummary[];
@@ -410,6 +415,34 @@ export async function updateModels(
     throw new Error(msg);
   }
   return (await response.json()) as ModelConfigSnapshot;
+}
+
+export async function fetchFastMode(): Promise<FastModeSnapshot> {
+  return fetchJson('/api/settings/fast-mode');
+}
+
+export async function updateFastMode(
+  input: Partial<FastModeSnapshot>,
+): Promise<FastModeSnapshot> {
+  const response = await fetch('/api/settings/fast-mode', {
+    method: 'PUT',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let msg = `update fast mode failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as FastModeSnapshot;
 }
 
 export async function deleteAccount(

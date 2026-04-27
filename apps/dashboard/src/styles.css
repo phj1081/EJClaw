@@ -814,6 +814,40 @@ button:disabled {
   margin-top: 8px;
 }
 
+.settings-toggle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-toggle-row + .settings-toggle-row {
+  margin-top: 6px;
+}
+
+.settings-toggle-label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-toggle-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bg-ink);
+}
+
+.settings-toggle-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 .settings-save,
 .settings-restart {
   min-height: 32px;
@@ -874,18 +908,18 @@ button:disabled {
 }
 
 .settings-account-main {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  gap: 10px;
   align-items: center;
   min-width: 0;
 }
 
 .settings-account-tag {
-  flex: none;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11px;
   color: var(--muted);
+  text-align: right;
 }
 
 .settings-account-email {
@@ -895,7 +929,7 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
+  min-width: 0;
 }
 
 .settings-account-plan {
