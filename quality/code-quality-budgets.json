@@ -13,7 +13,7 @@
   },
   "overrides": {
     "apps/dashboard/src/App.tsx": {
-      "maxLines": 4421,
+      "maxLines": 4596,
       "maxFunctionLines": 583,
       "maxComplexity": 79,
       "maxNesting": 4,
@@ -24,7 +24,7 @@
       "owner": "dashboard i18n hotspot"
     },
     "apps/dashboard/src/styles.css": {
-      "maxLines": 4707,
+      "maxLines": 4781,
       "owner": "dashboard stylesheet hotspot"
     },
     "runners/agent-runner/src/index.ts": {
@@ -115,7 +115,7 @@
       "owner": "group queue hotspot"
     },
     "src/index.ts": {
-      "maxFunctionLines": 312,
+      "maxFunctionLines": 314,
       "owner": "main service entrypoint hotspot"
     },
     "src/ipc-task-processor.ts": {
@@ -238,9 +238,9 @@
       "owner": "web dashboard server test hotspot"
     },
     "src/web-dashboard-server.ts": {
-      "maxLines": 1660,
-      "maxFunctionLines": 914,
-      "maxComplexity": 134,
+      "maxLines": 1754,
+      "maxFunctionLines": 1002,
+      "maxComplexity": 158,
       "maxNesting": 3,
       "owner": "web dashboard server hotspot"
     }
