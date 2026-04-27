@@ -258,13 +258,6 @@ body:has(.view-stack.view-rooms) .error-card {
   margin: 0 !important;
 }
 
-/* The 2px green processing bar at the card's left edge collides with the
-   role-colored left border on each timeline item. The pulse dot in the
-   header already conveys "processing", so drop the bar in pinned mode. */
-.view-stack.view-rooms .rooms-detail .room-card-v2.is-pinned.status-processing::before {
-  display: none;
-}
-
 .view-stack.view-rooms .rooms-detail .room-card-v2.is-pinned > * {
   margin-left: 0 !important;
   margin-right: 0 !important;
@@ -2028,59 +2021,89 @@ progress::-moz-progress-bar {
 .room-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
+  column-gap: 6px;
   align-items: end;
   width: 100%;
+  padding: 3px 4px 3px 14px;
+  border: 1px solid var(--panel-border-strong);
+  border-radius: 12px;
+  background: var(--bg-card);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.room-compose:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(214, 130, 88, 0.18);
 }
 
 .room-compose textarea {
+  display: block;
   width: 100%;
-  min-height: 36px;
-  max-height: 160px;
+  min-height: 22px;
+  max-height: 200px;
   resize: none;
   overflow-y: auto;
-  border: 1px solid var(--panel-border-strong);
-  border-radius: 8px;
-  padding: 8px 10px;
-  color: var(--ink);
-  background: rgba(255, 255, 255, 0.03);
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 4px 0;
+  color: var(--bg-ink);
+  background: transparent;
   font: inherit;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 14px;
+  line-height: 1.45;
+  vertical-align: middle;
+}
+
+.room-compose textarea::placeholder {
+  color: var(--muted-soft);
+  opacity: 1;
 }
 
 .room-compose textarea:focus-visible {
-  outline: 2px solid rgba(214, 130, 88, 0.4);
-  outline-offset: 1px;
-  border-color: var(--accent);
+  outline: 0;
 }
 
 .room-compose button {
   display: inline-flex;
-  width: 36px;
-  height: 36px;
+  align-self: end;
+  width: 28px;
+  height: 28px;
+  min-height: 0;
   align-items: center;
   justify-content: center;
   padding: 0;
+  margin: 0;
   border: 0;
-  border-radius: 8px;
-  color: var(--bg);
-  background: var(--accent);
+  border-radius: 999px;
+  color: var(--muted-soft);
+  background: transparent;
   cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.05s ease;
+}
+
+.room-compose button:not(:disabled) {
+  color: #1a0f0a;
+  background: var(--accent);
 }
 
 .room-compose button:hover:not(:disabled) {
   background: var(--accent-strong);
 }
 
+.room-compose button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
 .room-compose button:disabled {
   cursor: not-allowed;
-  opacity: 0.44;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--faint);
 }
 
 .room-section.room-compose-section {
   display: block;
-  padding: 8px 12px 8px 0;
+  padding: 8px 12px 14px;
   border-top: 1px solid var(--divider);
   background: var(--panel);
 }
@@ -3494,16 +3517,6 @@ progress::-moz-progress-bar {
   padding-bottom: 12px;
 }
 
-.room-card-v2.status-processing::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--status-ok);
-}
-
 .room-card-head {
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) auto auto;
@@ -4242,11 +4255,6 @@ progress::-moz-progress-bar {
   margin-left: auto;
   color: var(--muted-soft);
   font-variant-numeric: tabular-nums;
-}
-
-/* compose */
-.room-compose {
-  padding: 0;
 }
 
 .room-detail-fold {

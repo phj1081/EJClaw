@@ -497,12 +497,13 @@ function sanitizeRoomTurn(
     createdAt,
     updatedAt: attempt?.updated_at ?? turn.updated_at,
     completedAt,
-    lastError: (attempt?.last_error ?? turn.last_error)
-      ? buildRoomPreview(
-          attempt?.last_error ?? turn.last_error ?? '',
-          ROOM_MESSAGE_PREVIEW_MAX_LENGTH,
-        )
-      : null,
+    lastError:
+      (attempt?.last_error ?? turn.last_error)
+        ? buildRoomPreview(
+            attempt?.last_error ?? turn.last_error ?? '',
+            ROOM_MESSAGE_PREVIEW_MAX_LENGTH,
+          )
+        : null,
     progressText,
     progressUpdatedAt,
   };
