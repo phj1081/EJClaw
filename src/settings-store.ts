@@ -75,12 +75,7 @@ function codexAuthPath(index: number): string {
   if (index === 0) {
     return path.join(os.homedir(), '.codex', 'auth.json');
   }
-  return path.join(
-    os.homedir(),
-    '.codex-accounts',
-    String(index),
-    'auth.json',
-  );
+  return path.join(os.homedir(), '.codex-accounts', String(index), 'auth.json');
 }
 
 function readClaudeAccount(index: number): ClaudeAccountSummary | null {
@@ -90,17 +85,14 @@ function readClaudeAccount(index: number): ClaudeAccountSummary | null {
   const oauth = data?.claudeAiOauth ?? {};
   return {
     index,
-    expiresAt:
-      typeof oauth.expiresAt === 'number' ? oauth.expiresAt : null,
+    expiresAt: typeof oauth.expiresAt === 'number' ? oauth.expiresAt : null,
     scopes: Array.isArray(oauth.scopes) ? (oauth.scopes as string[]) : [],
     subscriptionType:
       typeof oauth.subscriptionType === 'string'
         ? oauth.subscriptionType
         : undefined,
     rateLimitTier:
-      typeof oauth.rateLimitTier === 'string'
-        ? oauth.rateLimitTier
-        : undefined,
+      typeof oauth.rateLimitTier === 'string' ? oauth.rateLimitTier : undefined,
     exists: true,
   };
 }
@@ -239,7 +231,9 @@ function setOrInsertEnvLine(
   return `${trimmed}\n${key}=${value}\n`;
 }
 
-export function updateModelConfig(input: ModelUpdateInput): ModelConfigSnapshot {
+export function updateModelConfig(
+  input: ModelUpdateInput,
+): ModelConfigSnapshot {
   const file = envFilePath();
   let content = '';
   if (fs.existsSync(file)) {
@@ -247,9 +241,9 @@ export function updateModelConfig(input: ModelUpdateInput): ModelConfigSnapshot 
   }
 
   for (const role of ROLE_KEYS) {
-    const update = (input as Record<string, Partial<ModelRoleConfig> | undefined>)[
-      role.toLowerCase()
-    ];
+    const update = (
+      input as Record<string, Partial<ModelRoleConfig> | undefined>
+    )[role.toLowerCase()];
     if (!update) continue;
     if (update.model !== undefined) {
       content = setOrInsertEnvLine(content, `${role}_MODEL`, update.model);
@@ -303,8 +297,7 @@ export function addClaudeAccountFromToken(token: string): {
     throw new Error('invalid OAuth token: payload not parseable');
   }
   const exp = typeof payload.exp === 'number' ? payload.exp * 1000 : 0;
-  const accountId =
-    typeof payload.sub === 'string' ? payload.sub : null;
+  const accountId = typeof payload.sub === 'string' ? payload.sub : null;
 
   const baseDir = path.join(os.homedir(), '.claude-accounts');
   if (!fs.existsSync(baseDir)) {

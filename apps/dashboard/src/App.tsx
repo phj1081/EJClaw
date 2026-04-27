@@ -1100,11 +1100,7 @@ function SettingsPanel({
   );
 }
 
-function ModelSettings({
-  onRestartStack,
-}: {
-  onRestartStack: () => void;
-}) {
+function ModelSettings({ onRestartStack }: { onRestartStack: () => void }) {
   const [config, setConfig] = useState<ModelConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<ModelConfigSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1149,7 +1145,10 @@ function ModelSettings({
     }
   }
 
-  function setRole(role: keyof ModelConfigSnapshot, patch: Partial<ModelRoleConfig>) {
+  function setRole(
+    role: keyof ModelConfigSnapshot,
+    patch: Partial<ModelRoleConfig>,
+  ) {
     setDraft((prev) =>
       prev
         ? {
@@ -1232,11 +1231,7 @@ function ModelSettings({
   );
 }
 
-function AccountSettings({
-  onRestartStack,
-}: {
-  onRestartStack: () => void;
-}) {
+function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
   const [data, setData] = useState<{
     claude: ClaudeAccountSummary[];
     codex: CodexAccountSummary[];

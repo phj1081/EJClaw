@@ -1257,7 +1257,10 @@ export function createWebDashboardHandler(
         return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
       }
       if (!body || typeof body !== 'object') {
-        return jsonResponse({ error: 'Body must be a JSON object' }, { status: 400 });
+        return jsonResponse(
+          { error: 'Body must be a JSON object' },
+          { status: 400 },
+        );
       }
       try {
         const next = updateModelConfig(body as Record<string, unknown>);
@@ -1279,8 +1282,7 @@ export function createWebDashboardHandler(
         } catch {
           return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
         }
-        const token =
-          typeof body?.token === 'string' ? body.token.trim() : '';
+        const token = typeof body?.token === 'string' ? body.token.trim() : '';
         if (!token) {
           return jsonResponse({ error: 'token is required' }, { status: 400 });
         }

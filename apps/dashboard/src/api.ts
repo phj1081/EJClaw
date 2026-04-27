@@ -414,10 +414,9 @@ export async function deleteAccount(
   provider: 'claude' | 'codex',
   index: number,
 ): Promise<{ ok: true; provider: string; index: number }> {
-  const response = await fetch(
-    `/api/settings/accounts/${provider}/${index}`,
-    { method: 'DELETE' },
-  );
+  const response = await fetch(`/api/settings/accounts/${provider}/${index}`, {
+    method: 'DELETE',
+  });
   if (!response.ok) {
     let msg = `delete account failed: ${response.status}`;
     try {
