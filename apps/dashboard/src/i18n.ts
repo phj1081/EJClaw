@@ -38,6 +38,18 @@ export interface Messages {
     activeRooms: string;
     pendingRooms: string;
   };
+  pwa: {
+    app: string;
+    install: string;
+    installed: string;
+    ready: string;
+    cached: string;
+    online: string;
+    offline: string;
+    fresh: string;
+    stale: string;
+    updated: string;
+  };
   metrics: {
     agents: string;
     rooms: string;
@@ -299,6 +311,18 @@ export const messages = {
       activeRooms: '처리 + 대기 룸',
       pendingRooms: '메시지 대기 룸',
     },
+    pwa: {
+      app: 'PWA',
+      install: '설치',
+      installed: '설치됨',
+      ready: '오프라인 준비',
+      cached: '캐시됨',
+      online: '온라인',
+      offline: '오프라인',
+      fresh: '최신',
+      stale: '지연',
+      updated: '갱신',
+    },
     metrics: {
       agents: '에이전트',
       rooms: '룸',
@@ -543,6 +567,18 @@ export const messages = {
       queue: 'Work queue',
       activeRooms: 'processing + waiting rooms',
       pendingRooms: 'rooms with pending messages',
+    },
+    pwa: {
+      app: 'PWA',
+      install: 'Install',
+      installed: 'Installed',
+      ready: 'Offline ready',
+      cached: 'Cached',
+      online: 'Online',
+      offline: 'Offline',
+      fresh: 'Fresh',
+      stale: 'Stale',
+      updated: 'Updated',
     },
     metrics: {
       agents: 'agents',
@@ -789,6 +825,18 @@ export const messages = {
       activeRooms: '处理中 + 等待房间',
       pendingRooms: '有待处理消息的房间',
     },
+    pwa: {
+      app: 'PWA',
+      install: '安装',
+      installed: '已安装',
+      ready: '离线可用',
+      cached: '已缓存',
+      online: '在线',
+      offline: '离线',
+      fresh: '最新',
+      stale: '延迟',
+      updated: '更新',
+    },
     metrics: {
       agents: '代理',
       rooms: '房间',
@@ -1033,6 +1081,18 @@ export const messages = {
       queue: '作業キュー',
       activeRooms: '処理中 + 待機ルーム',
       pendingRooms: 'メッセージ待ちルーム',
+    },
+    pwa: {
+      app: 'PWA',
+      install: 'インストール',
+      installed: 'インストール済み',
+      ready: 'オフライン可',
+      cached: 'キャッシュ済み',
+      online: 'オンライン',
+      offline: 'オフライン',
+      fresh: '最新',
+      stale: '遅延',
+      updated: '更新',
     },
     metrics: {
       agents: 'エージェント',

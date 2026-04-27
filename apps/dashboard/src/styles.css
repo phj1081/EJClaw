@@ -206,6 +206,29 @@ button:disabled {
   white-space: nowrap;
 }
 
+.topbar-status {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  padding: 0 11px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(43, 55, 38, 0.075);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.topbar-status-offline {
+  color: #7c2518;
+  background: rgba(183, 71, 52, 0.14);
+}
+
+.topbar-status-stale {
+  color: #6e4a05;
+  background: rgba(181, 138, 34, 0.16);
+}
+
 .side-rail {
   position: sticky;
   top: 18px;
@@ -269,6 +292,46 @@ button:disabled {
 
 .side-refresh:hover {
   background: rgba(191, 95, 44, 0.12);
+}
+
+.side-install {
+  width: 100%;
+  min-height: 44px;
+  background: linear-gradient(135deg, #2b3726, #1c211c);
+  box-shadow: 0 12px 26px rgba(28, 33, 28, 0.18);
+  font-weight: 950;
+}
+
+.pwa-card {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(43, 55, 38, 0.1);
+  border-radius: 17px;
+  background: rgba(43, 55, 38, 0.045);
+}
+
+.pwa-card span,
+.drawer-pwa-row span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.pwa-card strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pwa-card.is-offline {
+  border-color: rgba(183, 71, 52, 0.24);
+  background: rgba(183, 71, 52, 0.08);
 }
 
 .language-select {
@@ -347,6 +410,19 @@ button:disabled {
   box-shadow: none;
 }
 
+.drawer-pwa-row {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.drawer-pwa-row button {
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 950;
+}
+
 .nav-drawer nav {
   display: grid;
   align-content: start;
@@ -409,7 +485,7 @@ button:disabled {
 
 .ops-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 1px;
   margin: 0;
   overflow: hidden;
@@ -455,6 +531,27 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.ops-fresh {
+  border-color: rgba(63, 127, 81, 0.16);
+}
+
+.ops-stale {
+  border-color: rgba(181, 138, 34, 0.22);
+}
+
+.ops-offline {
+  border-color: rgba(183, 71, 52, 0.28);
+}
+
+.ops-tile-pwa button {
+  min-height: 30px;
+  width: fit-content;
+  padding: 0 10px;
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 950;
 }
 
 .skeleton-card {
@@ -1787,7 +1884,7 @@ progress::-moz-progress-bar {
     top: max(8px, env(safe-area-inset-top));
     right: 10px;
     left: 10px;
-    grid-template-columns: 52px minmax(0, 1fr) 54px;
+    grid-template-columns: 52px minmax(0, 1fr) auto 54px;
     gap: 6px;
     margin: 0;
     padding: 8px;
@@ -1816,6 +1913,12 @@ progress::-moz-progress-bar {
 
   .section-nav .refresh-button {
     min-width: 0;
+  }
+
+  .topbar-status {
+    min-height: 30px;
+    padding: 0 8px;
+    font-size: 10px;
   }
 
   .section-nav .refresh-button::before {
@@ -2004,6 +2107,12 @@ progress::-moz-progress-bar {
   .section-nav {
     right: 8px;
     left: 8px;
+    grid-template-columns: 48px minmax(0, 1fr) auto 50px;
+  }
+
+  .topbar-status {
+    padding: 0 7px;
+    letter-spacing: -0.01em;
   }
 
   .usage-summary {
@@ -2054,6 +2163,12 @@ progress::-moz-progress-bar {
 
   .task-time-grid > span:last-child {
     grid-column: auto;
+  }
+}
+
+@media (display-mode: standalone) {
+  .shell {
+    padding-top: max(18px, env(safe-area-inset-top));
   }
 }
 
