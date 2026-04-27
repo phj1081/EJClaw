@@ -2825,9 +2825,7 @@ function RoomCardV2({
     if (!isProcessing) return null;
     if (!turn) return null;
     if (turn.progressText && turn.progressText.trim()) return null;
-    const turnStartMs = turn.createdAt
-      ? new Date(turn.createdAt).getTime()
-      : 0;
+    const turnStartMs = turn.createdAt ? new Date(turn.createdAt).getTime() : 0;
     const turnRole = senderRoleClass(turn.role); // role-owner / -reviewer / -arbiter / -human
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
@@ -4156,23 +4154,30 @@ function App() {
     }
 
     let cancelled = false;
-    setRoomActivityLoading(true);
-    void fetchRoomsTimelineBatch()
-      .then((map) => {
-        if (cancelled) return;
-        setRoomActivity(map);
-      })
-      .catch(() => {
-        if (cancelled) return;
-      })
-      .finally(() => {
-        if (!cancelled) setRoomActivityLoading(false);
-      });
+    let inFlight = false;
+    const tick = async (initial: boolean) => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      if (initial) setRoomActivityLoading(true);
+      try {
+        const map = await fetchRoomsTimelineBatch();
+        if (!cancelled) setRoomActivity(map);
+      } catch {
+        /* keep last good state */
+      } finally {
+        inFlight = false;
+        if (!cancelled && initial) setRoomActivityLoading(false);
+      }
+    };
+
+    void tick(true);
+    const id = window.setInterval(() => void tick(false), 1500);
 
     return () => {
       cancelled = true;
+      window.clearInterval(id);
     };
-  }, [activeView, roomsJidsKey, roomsLastUpdatedKey]);
+  }, [activeView, roomsJidsKey]);
 
   useEffect(() => {
     setPendingMessages((prev) => {
