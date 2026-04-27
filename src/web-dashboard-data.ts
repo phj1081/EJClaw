@@ -1,6 +1,12 @@
 import { isWatchCiTask } from './task-watch-status.js';
+import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
 import type { StatusSnapshot, UsageRowSnapshot } from './status-dashboard.js';
-import type { PairedTask, ScheduledTask } from './types.js';
+import type {
+  NewMessage,
+  PairedTask,
+  PairedTurnOutput,
+  ScheduledTask,
+} from './types.js';
 
 export interface SanitizedScheduledTask {
   id: string;
@@ -57,6 +63,63 @@ export interface WebDashboardOverview {
   inbox: InboxItem[];
 }
 
+export interface WebDashboardRoomMessage {
+  id: string;
+  sender: string;
+  senderName: string;
+  content: string;
+  timestamp: string;
+  isFromMe: boolean;
+  isBotMessage: boolean;
+  sourceKind: NonNullable<NewMessage['message_source_kind']>;
+}
+
+export interface WebDashboardRoomTurn {
+  turnId: string;
+  role: PairedTurnRecord['role'];
+  intentKind: PairedTurnRecord['intent_kind'];
+  state: PairedTurnRecord['state'];
+  attemptNo: number;
+  executorServiceId: string | null;
+  executorAgentType: PairedTurnRecord['executor_agent_type'];
+  activeRunId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  lastError: string | null;
+}
+
+export interface WebDashboardRoomTurnOutput {
+  id: number;
+  turnNumber: number;
+  role: PairedTurnOutput['role'];
+  verdict: PairedTurnOutput['verdict'] | null;
+  createdAt: string;
+  outputText: string;
+}
+
+export interface WebDashboardRoomActivity {
+  serviceId: string;
+  jid: string;
+  name: string;
+  folder: string;
+  agentType: StatusSnapshot['agentType'];
+  status: StatusSnapshot['entries'][number]['status'];
+  elapsedMs: number | null;
+  pendingMessages: boolean;
+  pendingTasks: number;
+  messages: WebDashboardRoomMessage[];
+  pairedTask: {
+    id: string;
+    title: string | null;
+    status: PairedTask['status'];
+    roundTripCount: number;
+    updatedAt: string;
+    currentTurn: WebDashboardRoomTurn | null;
+    outputs: WebDashboardRoomTurnOutput[];
+  } | null;
+}
+
 export type InboxItemKind =
   | 'pending-room'
   | 'reviewer-request'
@@ -91,6 +154,8 @@ const SECRET_ASSIGNMENT_RE =
   /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH|PRIVATE_KEY)[A-Z0-9_]*)\s*=\s*([^\s"'`]+)/gi;
 const SECRET_VALUE_RE =
   /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})\b/g;
+const ROOM_MESSAGE_PREVIEW_MAX_LENGTH = 900;
+const ROOM_OUTPUT_PREVIEW_MAX_LENGTH = 1800;
 
 function redactSensitiveText(value: string): string {
   return value
@@ -109,6 +174,10 @@ function buildPromptPreview(prompt: string): string {
 
 function buildInboxPreview(value: string): string {
   return truncateText(redactSensitiveText(value).replace(/\s+/g, ' ').trim());
+}
+
+function buildRoomPreview(value: string, maxLength: number): string {
+  return truncateText(redactSensitiveText(value).trim(), maxLength);
 }
 
 function stableHash(value: string): string {
@@ -331,6 +400,117 @@ export function sanitizeScheduledTask(
     promptPreview: buildPromptPreview(task.prompt),
     promptLength: task.prompt.length,
     isWatcher: isWatchCiTask(task),
+  };
+}
+
+function sanitizeRoomMessage(message: NewMessage): WebDashboardRoomMessage {
+  return {
+    id: message.id,
+    sender: message.sender,
+    senderName: message.sender_name || message.sender,
+    content: buildRoomPreview(
+      message.content ?? '',
+      ROOM_MESSAGE_PREVIEW_MAX_LENGTH,
+    ),
+    timestamp: message.timestamp,
+    isFromMe: !!message.is_from_me,
+    isBotMessage: !!message.is_bot_message,
+    sourceKind: message.message_source_kind ?? 'human',
+  };
+}
+
+function sanitizeRoomTurn(
+  turn: PairedTurnRecord,
+  attempt: PairedTurnAttemptRecord | null,
+): WebDashboardRoomTurn {
+  return {
+    turnId: turn.turn_id,
+    role: attempt?.role ?? turn.role,
+    intentKind: attempt?.intent_kind ?? turn.intent_kind,
+    state: attempt?.state ?? turn.state,
+    attemptNo: attempt?.attempt_no ?? turn.attempt_no,
+    executorServiceId: attempt?.executor_service_id ?? turn.executor_service_id,
+    executorAgentType: attempt?.executor_agent_type ?? turn.executor_agent_type,
+    activeRunId: attempt?.active_run_id ?? null,
+    createdAt: attempt?.created_at ?? turn.created_at,
+    updatedAt: attempt?.updated_at ?? turn.updated_at,
+    completedAt: attempt?.completed_at ?? turn.completed_at,
+    lastError:
+      (attempt?.last_error ?? turn.last_error)
+        ? buildRoomPreview(
+            attempt?.last_error ?? turn.last_error ?? '',
+            ROOM_MESSAGE_PREVIEW_MAX_LENGTH,
+          )
+        : null,
+  };
+}
+
+function sanitizeRoomTurnOutput(
+  output: PairedTurnOutput,
+): WebDashboardRoomTurnOutput {
+  return {
+    id: output.id,
+    turnNumber: output.turn_number,
+    role: output.role,
+    verdict: output.verdict ?? null,
+    createdAt: output.created_at,
+    outputText: buildRoomPreview(
+      output.output_text,
+      ROOM_OUTPUT_PREVIEW_MAX_LENGTH,
+    ),
+  };
+}
+
+export function buildWebDashboardRoomActivity(args: {
+  serviceId: string;
+  entry: StatusSnapshot['entries'][number];
+  pairedTask: PairedTask | null;
+  turns: PairedTurnRecord[];
+  attempts: PairedTurnAttemptRecord[];
+  outputs: PairedTurnOutput[];
+  messages: NewMessage[];
+  outputLimit?: number;
+}): WebDashboardRoomActivity {
+  const latestAttemptByTurnId = new Map<string, PairedTurnAttemptRecord>();
+  for (const attempt of args.attempts) {
+    const previous = latestAttemptByTurnId.get(attempt.turn_id);
+    if (!previous || attempt.attempt_no > previous.attempt_no) {
+      latestAttemptByTurnId.set(attempt.turn_id, attempt);
+    }
+  }
+  const currentTurn =
+    [...args.turns].sort((a, b) =>
+      b.updated_at.localeCompare(a.updated_at),
+    )[0] ?? null;
+  const currentAttempt = currentTurn
+    ? (latestAttemptByTurnId.get(currentTurn.turn_id) ?? null)
+    : null;
+  const outputLimit = args.outputLimit ?? 4;
+
+  return {
+    serviceId: args.serviceId,
+    jid: args.entry.jid,
+    name: args.entry.name,
+    folder: args.entry.folder,
+    agentType: args.entry.agentType,
+    status: args.entry.status,
+    elapsedMs: args.entry.elapsedMs,
+    pendingMessages: args.entry.pendingMessages,
+    pendingTasks: args.entry.pendingTasks,
+    messages: args.messages.map(sanitizeRoomMessage),
+    pairedTask: args.pairedTask
+      ? {
+          id: args.pairedTask.id,
+          title: args.pairedTask.title,
+          status: args.pairedTask.status,
+          roundTripCount: args.pairedTask.round_trip_count,
+          updatedAt: args.pairedTask.updated_at,
+          currentTurn: currentTurn
+            ? sanitizeRoomTurn(currentTurn, currentAttempt)
+            : null,
+          outputs: args.outputs.slice(-outputLimit).map(sanitizeRoomTurnOutput),
+        }
+      : null,
   };
 }
 

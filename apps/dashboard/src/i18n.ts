@@ -147,6 +147,20 @@ export interface Messages {
     status: string;
     queue: string;
     elapsed: string;
+    activity: string;
+    loadingActivity: string;
+    noActivity: string;
+    task: string;
+    noTask: string;
+    currentTurn: string;
+    noTurn: string;
+    round: string;
+    attempt: string;
+    updated: string;
+    output: string;
+    noOutput: string;
+    recentMessages: string;
+    noMessages: string;
     details: string;
     message: string;
     messagePlaceholder: string;
@@ -421,6 +435,20 @@ export const messages = {
       status: '상태',
       queue: '큐',
       elapsed: '경과',
+      activity: '진행',
+      loadingActivity: '진행 로딩 중',
+      noActivity: '진행 없음',
+      task: '태스크',
+      noTask: '태스크 없음',
+      currentTurn: '현재 턴',
+      noTurn: '턴 없음',
+      round: '라운드',
+      attempt: '시도',
+      updated: '갱신',
+      output: '출력',
+      noOutput: '출력 없음',
+      recentMessages: '최근 메시지',
+      noMessages: '메시지 없음',
       details: '세부',
       message: 'Message',
       messagePlaceholder: 'Type request...',
@@ -679,6 +707,20 @@ export const messages = {
       status: 'status',
       queue: 'queue',
       elapsed: 'elapsed',
+      activity: 'activity',
+      loadingActivity: 'Loading activity',
+      noActivity: 'No activity',
+      task: 'task',
+      noTask: 'No task',
+      currentTurn: 'Current turn',
+      noTurn: 'No turn',
+      round: 'round',
+      attempt: 'attempt',
+      updated: 'updated',
+      output: 'output',
+      noOutput: 'No output',
+      recentMessages: 'Recent messages',
+      noMessages: 'No messages',
       details: 'details',
       message: 'message',
       messagePlaceholder: 'Type request...',
@@ -937,6 +979,20 @@ export const messages = {
       status: '状态',
       queue: '队列',
       elapsed: '耗时',
+      activity: '进展',
+      loadingActivity: '正在加载进展',
+      noActivity: '暂无进展',
+      task: '任务',
+      noTask: '无任务',
+      currentTurn: '当前回合',
+      noTurn: '无回合',
+      round: '轮次',
+      attempt: '尝试',
+      updated: '更新',
+      output: '输出',
+      noOutput: '暂无输出',
+      recentMessages: '最近消息',
+      noMessages: '暂无消息',
       details: '详情',
       message: 'Message',
       messagePlaceholder: 'Type request...',
@@ -1195,6 +1251,20 @@ export const messages = {
       status: '状態',
       queue: 'キュー',
       elapsed: '経過',
+      activity: '進行',
+      loadingActivity: '進行を読み込み中',
+      noActivity: '進行なし',
+      task: 'タスク',
+      noTask: 'タスクなし',
+      currentTurn: '現在ターン',
+      noTurn: 'ターンなし',
+      round: 'ラウンド',
+      attempt: '試行',
+      updated: '更新',
+      output: '出力',
+      noOutput: '出力なし',
+      recentMessages: '最近のメッセージ',
+      noMessages: 'メッセージなし',
       details: '詳細',
       message: 'Message',
       messagePlaceholder: 'Type request...',

@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import type { StatusSnapshot } from './status-dashboard.js';
-import type { PairedTask, ScheduledTask } from './types.js';
+import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
+import type {
+  NewMessage,
+  PairedTask,
+  PairedTurnOutput,
+  ScheduledTask,
+} from './types.js';
 import {
+  buildWebDashboardRoomActivity,
   buildWebDashboardOverview,
   sanitizeScheduledTask,
 } from './web-dashboard-data.js';
@@ -228,6 +235,125 @@ describe('web dashboard data', () => {
       'sk-abcdefghijklmnopqrstuvwxyz123456',
     );
     expect(sanitized.promptPreview).not.toContain('plain-secret-value');
+  });
+
+  it('builds redacted room activity from messages and paired turn output', () => {
+    const task = makePairedTask({
+      id: 'paired-room-1',
+      chat_jid: 'dc:ops',
+      status: 'in_review',
+      round_trip_count: 3,
+      updated_at: '2026-04-26T05:30:00.000Z',
+    });
+    const turn: PairedTurnRecord = {
+      turn_id: 'turn-1',
+      task_id: task.id,
+      task_updated_at: task.updated_at,
+      role: 'reviewer',
+      intent_kind: 'reviewer-turn',
+      state: 'queued',
+      executor_service_id: null,
+      executor_agent_type: null,
+      attempt_no: 0,
+      created_at: '2026-04-26T05:19:00.000Z',
+      updated_at: '2026-04-26T05:31:00.000Z',
+      completed_at: null,
+      last_error: null,
+    };
+    const attempt: PairedTurnAttemptRecord = {
+      attempt_id: 'turn-1:attempt:2',
+      parent_attempt_id: null,
+      parent_handoff_id: null,
+      continuation_handoff_id: null,
+      turn_id: 'turn-1',
+      task_id: task.id,
+      task_updated_at: task.updated_at,
+      role: 'reviewer',
+      intent_kind: 'reviewer-turn',
+      state: 'running',
+      executor_service_id: 'claude-reviewer',
+      executor_agent_type: 'claude-code',
+      active_run_id: 'run-reviewer-1',
+      attempt_no: 2,
+      created_at: '2026-04-26T05:20:00.000Z',
+      updated_at: '2026-04-26T05:31:00.000Z',
+      completed_at: null,
+      last_error: 'OPENAI_API_KEY=plain-secret-value',
+    };
+    const outputs: PairedTurnOutput[] = [
+      {
+        id: 1,
+        task_id: task.id,
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'owner output',
+        verdict: 'step_done',
+        created_at: '2026-04-26T05:25:00.000Z',
+      },
+      {
+        id: 2,
+        task_id: task.id,
+        turn_number: 2,
+        role: 'reviewer',
+        output_text: 'reviewer output with BOT_TOKEN=plain-secret-value',
+        verdict: null,
+        created_at: '2026-04-26T05:30:00.000Z',
+      },
+    ];
+    const messages: NewMessage[] = [
+      {
+        id: 'msg-1',
+        chat_jid: 'dc:ops',
+        sender: 'user-1',
+        sender_name: '눈쟁이',
+        content: 'latest message',
+        timestamp: '2026-04-26T05:29:00.000Z',
+        is_from_me: false,
+        is_bot_message: false,
+        message_source_kind: 'human',
+      },
+    ];
+
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'processing',
+        elapsedMs: 15_000,
+        pendingMessages: true,
+        pendingTasks: 1,
+      },
+      pairedTask: task,
+      turns: [turn],
+      attempts: [attempt],
+      outputs,
+      messages,
+      outputLimit: 1,
+    });
+
+    expect(activity.pairedTask).toMatchObject({
+      id: 'paired-room-1',
+      roundTripCount: 3,
+      currentTurn: {
+        role: 'reviewer',
+        state: 'running',
+        attemptNo: 2,
+        lastError: 'OPENAI_API_KEY=<redacted>',
+      },
+      outputs: [
+        {
+          turnNumber: 2,
+          role: 'reviewer',
+          outputText: 'reviewer output with BOT_TOKEN=<redacted>',
+        },
+      ],
+    });
+    expect(activity.messages).toMatchObject([
+      { senderName: '눈쟁이', content: 'latest message' },
+    ]);
   });
 
   it('builds typed inbox items from pending rooms, paired tasks, and CI failures', () => {

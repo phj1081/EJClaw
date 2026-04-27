@@ -10,7 +10,12 @@ import {
   deleteTask,
   getAllOpenPairedTasks,
   getAllTasks,
+  getLatestPairedTaskForChat,
   getPairedTaskById,
+  getPairedTurnAttempts,
+  getPairedTurnOutputs,
+  getPairedTurnsForTask,
+  getRecentChatMessages,
   getTaskById,
   hasMessage,
   storeChatMetadata,
@@ -34,6 +39,7 @@ import type {
 } from './types.js';
 import { isWatchCiTask } from './task-watch-status.js';
 import {
+  buildWebDashboardRoomActivity,
   buildWebDashboardOverview,
   sanitizeScheduledTask,
 } from './web-dashboard-data.js';
@@ -106,6 +112,11 @@ export interface WebDashboardHandlerOptions {
   }) => void;
   deleteTask?: (id: string) => void;
   getPairedTasks?: () => PairedTask[];
+  getLatestPairedTaskForChat?: (chatJid: string) => PairedTask | undefined;
+  getPairedTurnsForTask?: typeof getPairedTurnsForTask;
+  getPairedTurnAttempts?: typeof getPairedTurnAttempts;
+  getPairedTurnOutputs?: typeof getPairedTurnOutputs;
+  getRecentChatMessages?: typeof getRecentChatMessages;
   getPairedTaskById?: (id: string) => PairedTask | undefined;
   updatePairedTaskIfUnchanged?: (
     id: string,
@@ -257,6 +268,16 @@ function parseInboxActionPath(pathname: string): string | null {
 
 function parseRoomMessagePath(pathname: string): string | null {
   const match = pathname.match(/^\/api\/rooms\/([^/]+)\/messages$/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+function parseRoomTimelinePath(pathname: string): string | null {
+  const match = pathname.match(/^\/api\/rooms\/([^/]+)\/timeline$/);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
@@ -648,6 +669,16 @@ export function createWebDashboardHandler(
   const loadPairedTaskById = opts.getPairedTaskById ?? getPairedTaskById;
   const mutatePairedTaskIfUnchanged =
     opts.updatePairedTaskIfUnchanged ?? updatePairedTaskIfUnchanged;
+  const loadLatestPairedTaskForChat =
+    opts.getLatestPairedTaskForChat ?? getLatestPairedTaskForChat;
+  const loadPairedTurnsForTask =
+    opts.getPairedTurnsForTask ?? getPairedTurnsForTask;
+  const loadPairedTurnOutputs =
+    opts.getPairedTurnOutputs ?? getPairedTurnOutputs;
+  const loadPairedTurnAttempts =
+    opts.getPairedTurnAttempts ?? getPairedTurnAttempts;
+  const loadRecentChatMessages =
+    opts.getRecentChatMessages ?? getRecentChatMessages;
   const schedulePairedFollowUp =
     opts.schedulePairedFollowUp ?? schedulePairedFollowUpIntent;
   const loadRoomBindings = opts.getRoomBindings;
@@ -699,6 +730,7 @@ export function createWebDashboardHandler(
     const taskId = parseTaskPath(url.pathname);
     const actionInboxId = parseInboxActionPath(url.pathname);
     const messageRoomJid = parseRoomMessagePath(url.pathname);
+    const timelineRoomJid = parseRoomTimelinePath(url.pathname);
     const actionServiceId = parseServiceActionPath(url.pathname);
 
     if (actionTaskId) {
@@ -947,6 +979,47 @@ export function createWebDashboardHandler(
       enqueueMessageCheck(messageRoomJid, binding.folder);
 
       return jsonResponse({ ok: true, id, queued: true });
+    }
+
+    if (timelineRoomJid) {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
+      }
+
+      const snapshots = readSnapshots(statusMaxAgeMs);
+      const matched = snapshots
+        .flatMap((snapshot) =>
+          snapshot.entries
+            .filter((entry) => entry.jid === timelineRoomJid)
+            .map((entry) => ({ snapshot, entry })),
+        )
+        .sort((a, b) =>
+          b.snapshot.updatedAt.localeCompare(a.snapshot.updatedAt),
+        )
+        .at(0);
+      if (!matched) {
+        return jsonResponse(
+          { error: 'Room timeline not found' },
+          { status: 404 },
+        );
+      }
+
+      const pairedTask = loadLatestPairedTaskForChat(timelineRoomJid) ?? null;
+      const turns = pairedTask ? loadPairedTurnsForTask(pairedTask.id) : [];
+      const attempts = turns.flatMap((turn) =>
+        loadPairedTurnAttempts(turn.turn_id),
+      );
+      return jsonResponse(
+        buildWebDashboardRoomActivity({
+          serviceId: matched.snapshot.serviceId,
+          entry: matched.entry,
+          pairedTask,
+          turns,
+          attempts,
+          outputs: pairedTask ? loadPairedTurnOutputs(pairedTask.id) : [],
+          messages: loadRecentChatMessages(timelineRoomJid, 8),
+        }),
+      );
     }
 
     if (actionServiceId) {

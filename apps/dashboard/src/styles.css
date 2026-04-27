@@ -1327,6 +1327,165 @@ progress::-moz-progress-bar {
   opacity: 0.44;
 }
 
+.room-activity-cell {
+  min-width: 360px;
+}
+
+.room-activity {
+  display: grid;
+  min-width: min(360px, 100%);
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid rgba(43, 55, 38, 0.1);
+  border-radius: 18px;
+  background: rgba(255, 250, 240, 0.58);
+}
+
+.room-activity-empty,
+.room-muted {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.room-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.room-activity-grid > span {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 13px;
+  background: rgba(43, 55, 38, 0.045);
+}
+
+.room-activity-grid small,
+.room-activity-grid strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-activity-grid small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.room-activity-grid strong {
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.room-turn-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.room-turn-line .mono-chip {
+  margin-top: 0;
+}
+
+.room-activity-error {
+  margin: 0;
+  color: #7c2518;
+  font-size: 12px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.room-activity-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 9px;
+}
+
+.room-activity-columns > section {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 7px;
+}
+
+.room-activity-columns > section > strong {
+  color: var(--bg-ink);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.room-output-list,
+.room-message-list {
+  display: grid;
+  gap: 7px;
+}
+
+.room-output-item,
+.room-message-item {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 13px;
+  background: rgba(43, 55, 38, 0.045);
+}
+
+.room-message-bot {
+  background: rgba(191, 95, 44, 0.08);
+}
+
+.room-output-item header,
+.room-message-item header {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.room-output-item header span,
+.room-message-item header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-output-item time,
+.room-message-item time {
+  flex: none;
+}
+
+.room-output-item p,
+.room-message-item p,
+.room-muted {
+  margin: 0;
+}
+
+.room-output-item p,
+.room-message-item p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+
 .task-board {
   display: grid;
   gap: 12px;
@@ -1999,6 +2158,16 @@ progress::-moz-progress-bar {
 
   .record-card-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .room-activity,
+  .room-activity-cell {
+    min-width: 0;
+  }
+
+  .room-activity-grid,
+  .room-activity-columns {
+    grid-template-columns: 1fr;
   }
 
   .inbox-summary,
