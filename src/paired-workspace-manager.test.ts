@@ -1145,7 +1145,7 @@ describe('paired workspace manager', () => {
     ).toBe(ownerBranchName('named-existing-room'));
   });
 
-  it('blocks provisioning when a named owner workspace branch mismatch has local changes', async () => {
+  it('re-anchors a dirty named owner workspace without touching local changes', async () => {
     const { db, manager } = await loadModules();
     db._initTestDatabase();
 
@@ -1156,6 +1156,10 @@ describe('paired workspace manager', () => {
       groupFolder: 'dirty-named-room',
     });
 
+    runGit(
+      ['branch', ownerBranchName('dirty-named-room'), 'HEAD'],
+      canonicalDir,
+    );
     const workspaceDir = ownerWorkspacePath('dirty-named-room');
     fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
     runGit(
@@ -1173,14 +1177,90 @@ describe('paired workspace manager', () => {
       path.join(workspaceDir, 'README.md'),
       'dirty named branch\n',
     );
+    fs.writeFileSync(path.join(workspaceDir, 'NOTES.md'), 'untracked keep\n');
+    const dirtyBefore = runGit(['status', '--short'], workspaceDir);
 
-    expect(() =>
-      manager.provisionOwnerWorkspaceForPairedTask(
-        'paired-task-dirty-named-branch',
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-dirty-named-branch',
+    );
+
+    expect(
+      runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
+    ).toBe(ownerBranchName('dirty-named-room'));
+    expect(runGit(['status', '--short'], ownerWorkspace.workspace_dir)).toBe(
+      dirtyBefore,
+    );
+    expect(
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'README.md'),
+        'utf-8',
       ),
-    ).toThrow(/Owner workspace needs repair/);
-    expect(runGit(['branch', '--show-current'], workspaceDir)).toBe(
-      'codex/owner/dirty-named-room-sync',
+    ).toBe('dirty named branch\n');
+    expect(
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'NOTES.md'),
+        'utf-8',
+      ),
+    ).toBe('untracked keep\n');
+    expect(
+      runGit(['branch', '--list', 'backup/dirty-named-room-*'], canonicalDir),
+    ).toContain('backup/dirty-named-room-current-pre-reanchor-');
+  });
+
+  it('re-anchors a clean divergent named owner workspace to the current feature branch head', async () => {
+    const { db, manager } = await loadModules();
+    db._initTestDatabase();
+
+    const canonicalDir = path.join(tempRoot, 'canonical');
+    initCanonicalRepo(canonicalDir);
+    seedPairedTask(db, canonicalDir, {
+      taskId: 'paired-task-divergent-named-branch',
+      groupFolder: 'divergent-named-room',
+    });
+
+    runGit(
+      ['branch', ownerBranchName('divergent-named-room'), 'HEAD'],
+      canonicalDir,
+    );
+    const workspaceDir = ownerWorkspacePath('divergent-named-room');
+    fs.mkdirSync(path.dirname(workspaceDir), { recursive: true });
+    runGit(
+      [
+        'worktree',
+        'add',
+        '-b',
+        'codex/feature-divergent-named-room',
+        workspaceDir,
+        'HEAD',
+      ],
+      canonicalDir,
+    );
+    fs.writeFileSync(path.join(workspaceDir, 'README.md'), 'feature head\n');
+    runGit(['add', 'README.md'], workspaceDir);
+    runGit(['commit', '-m', 'feature work'], workspaceDir);
+    const featureHead = runGit(['rev-parse', 'HEAD'], workspaceDir);
+
+    const ownerWorkspace = manager.provisionOwnerWorkspaceForPairedTask(
+      'paired-task-divergent-named-branch',
+    );
+
+    expect(
+      runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
+    ).toBe(ownerBranchName('divergent-named-room'));
+    expect(
+      runGit(
+        ['rev-parse', ownerBranchName('divergent-named-room')],
+        canonicalDir,
+      ),
+    ).toBe(featureHead);
+    expect(
+      fs.readFileSync(
+        path.join(ownerWorkspace.workspace_dir, 'README.md'),
+        'utf-8',
+      ),
+    ).toBe('feature head\n');
+    expect(runGit(['status', '--short'], ownerWorkspace.workspace_dir)).toBe(
+      '',
     );
   });
 

@@ -10,6 +10,7 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
   USAGE_UPDATE_INTERVAL,
+  WEB_DASHBOARD,
 } from './config.js';
 import './channels/index.js';
 import {
@@ -54,6 +55,7 @@ import {
 import { createMessageRuntime } from './message-runtime.js';
 import { nudgeSchedulerLoop, startSchedulerLoop } from './task-scheduler.js';
 import { startUnifiedDashboard } from './unified-dashboard.js';
+import { startWebDashboardServer } from './web-dashboard-server.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
@@ -61,6 +63,10 @@ import {
   hasAvailableClaudeToken,
   initTokenRotation,
 } from './token-rotation.js';
+import {
+  isBotMessageSourceKind,
+  resolveInjectedMessageSourceKind,
+} from './message-source.js';
 import { parseVisibleVerdict } from './paired-execution-context-shared.js';
 
 export function isTerminalStatusMessage(text: string): boolean {
@@ -244,6 +250,7 @@ async function main(): Promise<void> {
 
   // Graceful shutdown handlers
   let leaseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
+  let webDashboardServer: ReturnType<typeof startWebDashboardServer> = null;
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     stopTokenRefreshLoop();
@@ -251,6 +258,8 @@ async function main(): Promise<void> {
       clearInterval(leaseRecoveryTimer);
       leaseRecoveryTimer = null;
     }
+    webDashboardServer?.stop();
+    webDashboardServer = null;
     const roomBindings = runtimeState.getRoomBindings();
     const interruptedGroups = queue
       .getStatuses(Object.keys(roomBindings))
@@ -412,6 +421,51 @@ async function main(): Promise<void> {
         queue.noteDirectTerminalDelivery(jid, senderRole, text);
       }
     },
+    injectInboundMessage: async (payload) => {
+      const jid = payload.chatJid;
+      const binding = runtimeState.getRoomBindings()[jid];
+      if (!binding) {
+        logger.warn(
+          { chatJid: jid, sender: payload.sender ?? null },
+          'inject_inbound_message: no room binding, dropping',
+        );
+        return;
+      }
+      const ts = payload.timestamp || new Date().toISOString();
+      const msgId =
+        payload.messageId ||
+        `ipc-inject-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const treatAsHuman = payload.treatAsHuman === true;
+      const messageSourceKind = resolveInjectedMessageSourceKind({
+        treatAsHuman,
+        sourceKind: payload.sourceKind,
+      });
+      storeChatMetadata(jid, ts, binding.name, 'discord', true);
+      storeMessage({
+        id: msgId,
+        chat_jid: jid,
+        sender: payload.sender || 'ipc-inject',
+        sender_name: payload.senderName || payload.sender || 'IPC Inject',
+        content: payload.text,
+        timestamp: ts,
+        is_from_me: false,
+        is_bot_message: isBotMessageSourceKind(messageSourceKind),
+        message_source_kind: messageSourceKind,
+      });
+      queue.enqueueMessageCheck(jid, resolveGroupIpcPath(binding.folder));
+      logger.info(
+        {
+          chatJid: jid,
+          sender: payload.sender ?? null,
+          senderName: payload.senderName ?? null,
+          treatAsHuman,
+          messageSourceKind,
+          messageId: msgId,
+          groupFolder: binding.folder,
+        },
+        'Injected inbound message via IPC',
+      );
+    },
     nudgeScheduler: nudgeSchedulerLoop,
     roomBindings: runtimeState.getRoomBindings,
     assignRoom: runtimeState.assignRoomForIpc,
@@ -466,6 +520,13 @@ async function main(): Promise<void> {
       }
     },
     purgeOnStart: true,
+  });
+  webDashboardServer = startWebDashboardServer({
+    ...WEB_DASHBOARD,
+    getRoomBindings: runtimeState.getRoomBindings,
+    enqueueMessageCheck: (chatJid, groupFolder) =>
+      queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder)),
+    nudgeScheduler: nudgeSchedulerLoop,
   });
 
   leaseRecoveryTimer = setInterval(() => {

@@ -14,9 +14,14 @@ import {
   STATUS_SHOW_ROOM_DETAILS,
   STATUS_SHOW_ROOMS,
   USAGE_DASHBOARD_ENABLED,
+  CODEX_WARMUP_CONFIG,
   getMoaConfig,
 } from './config.js';
-import { fetchKimiUsage, buildKimiUsageRows } from './kimi-usage.js';
+import {
+  fetchKimiUsage,
+  buildKimiUsageRows,
+  type KimiUsageData,
+} from './kimi-usage.js';
 import { getGlobalFailoverInfo } from './service-routing.js';
 import {
   fetchAllClaudeUsage,
@@ -28,6 +33,7 @@ import {
   refreshActiveCodexUsage,
   refreshAllCodexAccountUsage,
 } from './codex-usage-collector.js';
+import { runCodexWarmupCycle } from './codex-warmup.js';
 import {
   composeDashboardContent,
   formatElapsed,
@@ -91,7 +97,7 @@ const RENDERER_USAGE_REFRESH_MS = 30_000;
 let statusMessageId: string | null = null;
 let cachedUsageContent = '';
 let cachedClaudeAccounts: ClaudeAccountUsage[] = [];
-let cachedKimiUsage: import('./kimi-usage.js').KimiUsageData | null = null;
+let cachedKimiUsage: KimiUsageData | null = null;
 let usageUpdateInProgress = false;
 let channelMetaCache = new Map<string, ChannelMeta>();
 let channelMetaLastRefresh = 0;
@@ -100,6 +106,8 @@ let dashboardUpdateLogged = false;
 let cachedCodexUsageRows: UsageRow[] = [];
 /** Codex service only: ISO timestamp of last successful usage fetch. */
 let codexUsageFetchedAt: string | null = null;
+/** Renderer service only: ISO timestamp of last successful Claude/Kimi usage render. */
+let rendererUsageFetchedAt: string | null = null;
 
 export interface WatcherTaskSummary {
   active: number;
@@ -229,9 +237,47 @@ function formatRoomName(
   return base;
 }
 
+export function buildWebUsageRowsForSnapshot(args: {
+  serviceAgentType: AgentType;
+  claudeAccounts: ClaudeAccountUsage[];
+  kimiUsage: KimiUsageData | null;
+  codexRows: UsageRow[];
+}): UsageRow[] {
+  const rows: UsageRow[] = [];
+
+  if (args.serviceAgentType === 'claude-code') {
+    rows.push(...buildClaudeUsageRows(args.claudeAccounts));
+    rows.push(...buildKimiUsageRows(args.kimiUsage));
+  }
+
+  rows.push(...args.codexRows);
+  return rows;
+}
+
+function buildUsageSnapshotRows(opts: UnifiedDashboardOptions): {
+  rows: UsageRow[];
+  fetchedAt: string | null;
+} {
+  const rows = buildWebUsageRowsForSnapshot({
+    serviceAgentType: opts.serviceAgentType,
+    claudeAccounts: cachedClaudeAccounts,
+    kimiUsage: cachedKimiUsage,
+    codexRows: cachedCodexUsageRows,
+  });
+
+  const fetchedAt =
+    [rendererUsageFetchedAt, codexUsageFetchedAt]
+      .filter((value): value is string => !!value)
+      .sort()
+      .at(-1) ?? null;
+
+  return { rows, fetchedAt };
+}
+
 function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
   const groups = opts.roomBindings();
   const statuses = opts.queue.getStatuses(Object.keys(groups));
+  const usageSnapshot = buildUsageSnapshotRows(opts);
 
   writeStatusSnapshot({
     serviceId: opts.serviceId,
@@ -265,8 +311,10 @@ function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
       pendingMessages: boolean;
       pendingTasks: number;
     }>,
-    ...(cachedCodexUsageRows.length > 0 && { usageRows: cachedCodexUsageRows }),
-    ...(codexUsageFetchedAt && { usageRowsFetchedAt: codexUsageFetchedAt }),
+    ...(usageSnapshot.rows.length > 0 && { usageRows: usageSnapshot.rows }),
+    ...(usageSnapshot.fetchedAt && {
+      usageRowsFetchedAt: usageSnapshot.fetchedAt,
+    }),
   });
 }
 
@@ -645,6 +693,7 @@ async function refreshUsageCache(): Promise<void> {
   usageUpdateInProgress = true;
   try {
     cachedUsageContent = await buildUsageContent();
+    rendererUsageFetchedAt = new Date().toISOString();
   } catch (err) {
     logger.warn({ err }, 'Failed to build usage content');
   } finally {
@@ -735,18 +784,49 @@ export async function startUnifiedDashboard(
     cachedCodexUsageRows = result.rows;
     if (result.fetchedAt) codexUsageFetchedAt = result.fetchedAt;
   };
-  void refreshAllCodexAccountUsage().then((r) => {
-    applyCodexRefresh(r);
-    return refreshActiveCodexUsage().then(applyCodexRefresh);
-  });
+  const isWarmupRuntimeBusy = () => {
+    const groups = opts.roomBindings();
+    return opts.queue
+      .getStatuses(Object.keys(groups))
+      .some((status) => status.status === 'processing');
+  };
+  let codexWarmupInFlight = false;
+  const runCodexWarmup = async () => {
+    if (!CODEX_WARMUP_CONFIG.enabled || codexWarmupInFlight) return;
+    codexWarmupInFlight = true;
+    try {
+      const result = await runCodexWarmupCycle(CODEX_WARMUP_CONFIG, {
+        shouldSkip: isWarmupRuntimeBusy,
+      });
+      if (result.status === 'warmed') {
+        applyCodexRefresh(await refreshAllCodexAccountUsage());
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Codex warm-up cycle failed unexpectedly');
+    } finally {
+      codexWarmupInFlight = false;
+    }
+  };
+  void refreshAllCodexAccountUsage()
+    .then((r) => {
+      applyCodexRefresh(r);
+      return refreshActiveCodexUsage().then(applyCodexRefresh);
+    })
+    .then(() => runCodexWarmup());
   setInterval(
     () => void refreshActiveCodexUsage().then(applyCodexRefresh),
     opts.usageUpdateInterval,
   );
   setInterval(
-    () => void refreshAllCodexAccountUsage().then(applyCodexRefresh),
+    () =>
+      void refreshAllCodexAccountUsage()
+        .then(applyCodexRefresh)
+        .then(() => runCodexWarmup()),
     CODEX_FULL_SCAN_INTERVAL,
   );
+  if (CODEX_WARMUP_CONFIG.enabled) {
+    setInterval(() => void runCodexWarmup(), CODEX_WARMUP_CONFIG.intervalMs);
+  }
 
   logger.info(
     {

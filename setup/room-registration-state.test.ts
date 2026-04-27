@@ -243,7 +243,12 @@ describe('room registration state', () => {
       JSON.stringify({ last_timestamp: '1234' }),
     );
 
-    expect(detectRoomRegistrationState({ projectRoot: tempRoot })).toEqual({
+    expect(
+      detectRoomRegistrationState({
+        projectRoot: tempRoot,
+        dbPath: path.join(tempRoot, 'messages.db'),
+      }),
+    ).toEqual({
       assignedRooms: 0,
       roomsByOwnerAgent: {},
       legacyRegisteredGroupRows: 0,

@@ -37,6 +37,9 @@ function getExpectedSchemaMigrations(): Array<{
     { version: 10, name: 'paired_turn_provenance_upgrade' },
     { version: 11, name: 'owner_failure_count' },
     { version: 12, name: 'paired_verdict_and_step_telemetry' },
+    { version: 13, name: 'message_source_kind' },
+    { version: 14, name: 'work_item_attachments' },
+    { version: 15, name: 'turn_progress_text' },
   ];
 }
 

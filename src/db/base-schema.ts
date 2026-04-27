@@ -19,10 +19,12 @@ export function applyBaseSchema(database: Database): void {
       seq INTEGER,
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
+      message_source_kind TEXT NOT NULL DEFAULT 'human',
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp ON messages(chat_jid, timestamp DESC);
     CREATE TABLE IF NOT EXISTS message_sequence (
       id INTEGER PRIMARY KEY AUTOINCREMENT
     );

@@ -5,6 +5,7 @@ import path from 'path';
 
 import {
   getAllCodexAccounts,
+  getCodexAuthPath,
   updateCodexAccountUsage,
 } from './codex-token-rotation.js';
 import { formatResetRemaining, type UsageRow } from './dashboard-usage-rows.js';
@@ -27,10 +28,25 @@ export interface CodexUsageRefreshResult {
   fetchedAt: string | null;
 }
 
-const CODEX_ACCOUNTS_DIR = path.join(os.homedir(), '.codex-accounts');
-
 /** Full scan interval — exported so the orchestrator can schedule it. */
 export const CODEX_FULL_SCAN_INTERVAL = 3_600_000; // 1 hour
+
+function getPreferredCodexPathEntries(): string[] {
+  const entries = [
+    path.dirname(process.execPath),
+    path.join(os.homedir(), '.npm-global', 'bin'),
+  ];
+  if (process.versions.bun || path.basename(process.execPath) === 'bun') {
+    entries.push(path.join(os.homedir(), '.hermes', 'node', 'bin'));
+  }
+  return [...new Set(entries)];
+}
+
+function getCodexHomeForAccount(accountIndex?: number): string | null {
+  const authPath = getCodexAuthPath(accountIndex);
+  if (!authPath || !fs.existsSync(authPath)) return null;
+  return path.dirname(authPath);
+}
 
 export async function fetchCodexUsage(
   codexHomeOverride?: string,
@@ -59,11 +75,9 @@ export async function fetchCodexUsage(
 
     const spawnEnv: Record<string, string> = {
       ...(process.env as Record<string, string>),
-      PATH: [
-        path.dirname(process.execPath),
-        path.join(os.homedir(), '.npm-global', 'bin'),
-        process.env.PATH || '',
-      ].join(':'),
+      PATH: [...getPreferredCodexPathEntries(), process.env.PATH || '']
+        .filter(Boolean)
+        .join(path.delimiter),
     };
     if (codexHomeOverride) {
       spawnEnv.CODEX_HOME = codexHomeOverride;
@@ -243,8 +257,8 @@ export async function refreshAllCodexAccountUsage(): Promise<CodexUsageRefreshRe
 
   let anySuccess = false;
   for (const acct of codexAccounts) {
-    const accountDir = path.join(CODEX_ACCOUNTS_DIR, String(acct.index + 1));
-    if (!fs.existsSync(accountDir)) continue;
+    const accountDir = getCodexHomeForAccount(acct.index);
+    if (!accountDir) continue;
 
     try {
       const usage = await fetchCodexUsage(accountDir);
@@ -281,8 +295,8 @@ export async function refreshActiveCodexUsage(): Promise<CodexUsageRefreshResult
     return { rows: buildCodexUsageRowsFromState(), fetchedAt: null };
   }
 
-  const accountDir = path.join(CODEX_ACCOUNTS_DIR, String(active.index + 1));
-  if (!fs.existsSync(accountDir)) {
+  const accountDir = getCodexHomeForAccount(active.index);
+  if (!accountDir) {
     return { rows: buildCodexUsageRowsFromState(), fetchedAt: null };
   }
 

@@ -370,6 +370,71 @@ describe('MessageTurnController outbound audit logging', () => {
     );
   });
 
+  it('sends final attachments as a fresh final message instead of replacing text-only progress', async () => {
+    const channel = {
+      ...makeChannel(),
+      name: 'discord',
+    } satisfies Channel;
+    const deliverFinalText = vi.fn().mockResolvedValue(true);
+    const attachments = [
+      {
+        path: '/tmp/ejclaw-discord-image-final.png',
+        name: 'final.png',
+        mime: 'image/png',
+      },
+    ];
+    const controller = new MessageTurnController({
+      chatJid: 'dc:test-room',
+      group: makeGroup(),
+      runId: 'run-owner-final-attachment-send',
+      channel,
+      idleTimeout: 1_000,
+      failureFinalText: '실패',
+      isClaudeCodeAgent: true,
+      clearSession: vi.fn(),
+      requestClose: vi.fn(),
+      deliverFinalText,
+      deliveryRole: 'owner',
+      pairedTurnIdentity: {
+        turnId: 'task-1:2026-04-10T14:22:00.000Z:owner-turn',
+        taskId: 'task-1',
+        taskUpdatedAt: '2026-04-10T14:22:00.000Z',
+        intentKind: 'finalize-owner-turn',
+        role: 'owner',
+      },
+    });
+
+    await controller.start();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '이미지 렌더링 중',
+    } as any);
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'progress',
+      result: '이미지 파일 쓰는 중',
+    } as any);
+    await flushAsync();
+    await controller.handleOutput({
+      status: 'success',
+      phase: 'final',
+      result: '이미지 렌더 완료.',
+      output: {
+        visibility: 'public',
+        text: '이미지 렌더 완료.',
+        attachments,
+      },
+    } as any);
+    await controller.finish('success');
+
+    expect(channel.sendAndTrack).toHaveBeenCalledTimes(1);
+    expect(deliverFinalText).toHaveBeenCalledWith('이미지 렌더 완료.', {
+      replaceMessageId: null,
+      attachments,
+    });
+  });
+
   it('replaces the tracked progress message when an owner final arrives', async () => {
     const channel = {
       ...makeChannel(),

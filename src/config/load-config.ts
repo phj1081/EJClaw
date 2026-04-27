@@ -53,6 +53,11 @@ function readIntegerAtLeast(
   return Math.max(minimum, readInteger(key, fallback) || fallback);
 }
 
+function readPercent(key: string, fallback: number): number {
+  const value = readInteger(key, fallback);
+  return Math.min(100, Math.max(0, value));
+}
+
 function readAgentType(
   key: string,
   fallback?: AgentType,
@@ -254,6 +259,49 @@ export function loadConfig(): AppConfig {
       usageDashboardEnabled: readText('USAGE_DASHBOARD') === 'true',
       timezone:
         readText('TZ') ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+    },
+    webDashboard: {
+      enabled: readBoolean('WEB_DASHBOARD_ENABLED', false),
+      host: readNonEmptyText('WEB_DASHBOARD_HOST') ?? '127.0.0.1',
+      port: readIntegerAtLeast('WEB_DASHBOARD_PORT', 8734, 1),
+      staticDir: path.resolve(
+        readNonEmptyText('WEB_DASHBOARD_STATIC_DIR') ??
+          path.join(projectRoot, 'apps', 'dashboard', 'dist'),
+      ),
+    },
+    codexWarmup: {
+      enabled: readBoolean('CODEX_WARMUP_ENABLED', false),
+      prompt:
+        readNonEmptyText('CODEX_WARMUP_PROMPT') ??
+        'Reply exactly OK. Do not run tools.',
+      model:
+        readNonEmptyText('CODEX_WARMUP_MODEL') ??
+        readNonEmptyText('CODEX_MODEL') ??
+        'codex',
+      intervalMs: readIntegerAtLeast('CODEX_WARMUP_INTERVAL_MS', 300000, 60000),
+      minIntervalMs: readIntegerAtLeast(
+        'CODEX_WARMUP_MIN_INTERVAL_MS',
+        18300000,
+        60000,
+      ),
+      staggerMs: Math.max(0, readInteger('CODEX_WARMUP_STAGGER_MS', 1800000)),
+      maxUsagePct: readPercent('CODEX_WARMUP_MAX_USAGE_PCT', 0),
+      maxD7UsagePct: readPercent('CODEX_WARMUP_MAX_D7_USAGE_PCT', 0),
+      commandTimeoutMs: readIntegerAtLeast(
+        'CODEX_WARMUP_COMMAND_TIMEOUT_MS',
+        120000,
+        10000,
+      ),
+      failureCooldownMs: readIntegerAtLeast(
+        'CODEX_WARMUP_FAILURE_COOLDOWN_MS',
+        21600000,
+        60000,
+      ),
+      maxConsecutiveFailures: readIntegerAtLeast(
+        'CODEX_WARMUP_MAX_CONSECUTIVE_FAILURES',
+        2,
+        1,
+      ),
     },
     sessionCommands: {
       allowedSenders: new Set(

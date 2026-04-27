@@ -5,9 +5,11 @@ import path from 'path';
 
 import { TIMEZONE } from './config.js';
 import {
+  buildWorkspaceCommandEnvironment,
   buildWorkspaceScriptCommand,
   ensureWorkspaceDependenciesInstalled,
   hasInstalledNodeModules,
+  type WorkspacePackageManager,
 } from './workspace-package-manager.js';
 import { computeVerificationSnapshotId } from '../shared/verification-snapshot.js';
 
@@ -44,6 +46,7 @@ export interface VerificationSnapshot {
 }
 
 interface VerificationCommandSpec {
+  packageManager: WorkspacePackageManager;
   file: string;
   args: string[];
   commandText: string;
@@ -111,6 +114,7 @@ export function buildVerificationCommand(
               : 'lint';
   const command = buildWorkspaceScriptCommand(repoDir, scriptName);
   return {
+    packageManager: command.packageManager,
     file: command.file,
     args: command.args,
     commandText: command.commandText,
@@ -334,7 +338,11 @@ export async function runVerificationRequest(
         command.args,
         {
           cwd: repoDir,
-          env: directExecution.env,
+          env: buildWorkspaceCommandEnvironment(
+            repoDir,
+            command.packageManager,
+            directExecution.env,
+          ),
         },
       );
       const afterSnapshot = computeVerificationSnapshot(repoDir);

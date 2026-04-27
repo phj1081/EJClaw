@@ -56,6 +56,19 @@ function createFakeAccounts(homeDir: string, count: number): void {
   }
 }
 
+function createDefaultCodexAuth(homeDir: string): string {
+  const authPath = path.join(homeDir, '.codex', 'auth.json');
+  fs.mkdirSync(path.dirname(authPath), { recursive: true });
+  fs.writeFileSync(
+    authPath,
+    JSON.stringify({
+      auth_mode: 'chatgpt',
+      tokens: { account_id: 'default-acct', access_token: 'default-token' },
+    }),
+  );
+  return authPath;
+}
+
 describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
   let tempHome: string;
 
@@ -141,5 +154,47 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
       }),
       'Failed to persist Codex rotation state',
     );
+  });
+
+  it('does not append ~/.codex/auth.json fallback when numbered accounts exist', async () => {
+    const fallbackAuthPath = createDefaultCodexAuth(tempHome);
+
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    expect(mod.getCodexAccountCount()).toBe(4);
+    expect(mod.getActiveCodexAuthPath()).not.toBe(fallbackAuthPath);
+  });
+});
+
+describe('codex-token-rotation single-account fallback', () => {
+  let tempHome: string;
+
+  beforeEach(() => {
+    vi.resetModules();
+    tempHome = fs.mkdtempSync(path.join('/tmp', 'ejclaw-codex-fallback-'));
+    process.env.CODEX_ROT_TEST_HOME = tempHome;
+  });
+
+  afterEach(() => {
+    delete process.env.CODEX_ROT_TEST_HOME;
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  it('uses ~/.codex/auth.json fallback when ~/.codex-accounts is absent', async () => {
+    const fallbackAuthPath = createDefaultCodexAuth(tempHome);
+
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    expect(mod.getCodexAccountCount()).toBe(1);
+    expect(mod.getActiveCodexAuthPath()).toBe(fallbackAuthPath);
+    expect(mod.getAllCodexAccounts()).toEqual([
+      expect.objectContaining({
+        index: 0,
+        accountId: 'default-acct',
+        isActive: true,
+      }),
+    ]);
   });
 });

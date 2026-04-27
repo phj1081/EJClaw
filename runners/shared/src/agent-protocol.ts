@@ -18,6 +18,7 @@ export type RunnerOutputVerdict =
   | 'done'
   | 'done_with_concerns'
   | 'blocked'
+  | 'in_progress'
   | 'silent';
 
 export type RunnerOutputVisibility = 'public' | 'silent';
@@ -93,8 +94,18 @@ function isVisibleVerdict(
   value: unknown,
 ): value is Exclude<RunnerOutputVerdict, 'silent'> {
   return (
-    value === 'done' || value === 'done_with_concerns' || value === 'blocked'
+    value === 'done' ||
+    value === 'done_with_concerns' ||
+    value === 'blocked' ||
+    value === 'in_progress'
   );
+}
+
+const LEADING_STRUCTURED_OUTPUT_CONTROL_RE =
+  /^[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]+/u;
+
+function stripLeadingStructuredOutputControls(value: string): string {
+  return value.replace(LEADING_STRUCTURED_OUTPUT_CONTROL_RE, '').trimStart();
 }
 
 function normalizeAttachments(value: unknown): RunnerOutputAttachment[] {
@@ -124,6 +135,13 @@ function normalizeAttachments(value: unknown): RunnerOutputAttachment[] {
   return attachments;
 }
 
+function extractStructuredJsonCandidate(trimmed: string): string {
+  const fencedJson = trimmed.match(
+    /^```(?:json|JSON)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/,
+  );
+  return fencedJson?.[1]?.trim() ?? trimmed;
+}
+
 export function normalizeEjclawStructuredOutput(
   result: string | null,
 ): NormalizedRunnerOutput {
@@ -131,9 +149,10 @@ export function normalizeEjclawStructuredOutput(
     return { result };
   }
 
-  const trimmed = result.trim();
+  const trimmed = stripLeadingStructuredOutputControls(result.trim());
+  const jsonCandidate = extractStructuredJsonCandidate(trimmed);
   try {
-    const parsed = JSON.parse(trimmed) as {
+    const parsed = JSON.parse(jsonCandidate) as {
       ejclaw?: {
         visibility?: unknown;
         text?: unknown;

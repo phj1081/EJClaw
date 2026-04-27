@@ -33,6 +33,8 @@ export interface PairedTurnRecord {
   updated_at: string;
   completed_at: string | null;
   last_error: string | null;
+  progress_text?: string | null;
+  progress_updated_at?: string | null;
 }
 
 interface StoredPairedTurnRow {
@@ -43,6 +45,8 @@ interface StoredPairedTurnRow {
   intent_kind: PairedTurnIdentity['intentKind'];
   created_at: string;
   updated_at: string;
+  progress_text?: string | null;
+  progress_updated_at?: string | null;
 }
 
 function hydratePairedTurnRecord(
@@ -490,6 +494,56 @@ export function getPairedTurnByIdFromDatabase(
   return hydratePairedTurnRecord(
     row,
     getCurrentPairedTurnAttemptForTurnFromDatabase(database, turnId),
+  );
+}
+
+const updateProgressTextStmtCache = new WeakMap<
+  Database,
+  ReturnType<Database['prepare']>
+>();
+
+export function updatePairedTurnProgressTextFromDatabase(
+  database: Database,
+  turnId: string,
+  progressText: string | null,
+): void {
+  let stmt = updateProgressTextStmtCache.get(database);
+  if (!stmt) {
+    stmt = database.prepare(`
+      UPDATE paired_turns
+         SET progress_text = ?, progress_updated_at = ?
+       WHERE turn_id = ?
+    `);
+    updateProgressTextStmtCache.set(database, stmt);
+  }
+  stmt.run(progressText, new Date().toISOString(), turnId);
+}
+
+const latestPairedTurnStmtCache = new WeakMap<
+  Database,
+  ReturnType<Database['prepare']>
+>();
+
+export function getLatestPairedTurnForTaskFromDatabase(
+  database: Database,
+  taskId: string,
+): PairedTurnRecord | null {
+  let stmt = latestPairedTurnStmtCache.get(database);
+  if (!stmt) {
+    stmt = database.prepare(`
+      SELECT *
+        FROM paired_turns
+       WHERE task_id = ?
+       ORDER BY updated_at DESC, turn_id DESC
+       LIMIT 1
+    `);
+    latestPairedTurnStmtCache.set(database, stmt);
+  }
+  const row = stmt.get(taskId) as StoredPairedTurnRow | undefined;
+  if (!row) return null;
+  return hydratePairedTurnRecord(
+    row,
+    getCurrentPairedTurnAttemptForTurnFromDatabase(database, row.turn_id),
   );
 }
 

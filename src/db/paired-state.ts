@@ -229,21 +229,27 @@ export function getPairedTaskByIdFromDatabase(
   return row ? hydratePairedTaskRow(database, row) : undefined;
 }
 
+const latestPairedTaskStmtCache = new WeakMap<
+  Database,
+  ReturnType<Database['prepare']>
+>();
+
 export function getLatestPairedTaskForChatFromDatabase(
   database: Database,
   chatJid: string,
 ): PairedTask | undefined {
-  const row = database
-    .prepare(
-      `
-        SELECT *
-          FROM paired_tasks
-         WHERE chat_jid = ?
-         ORDER BY updated_at DESC
-         LIMIT 1
-      `,
-    )
-    .get(chatJid) as StoredPairedTaskRow | undefined;
+  let stmt = latestPairedTaskStmtCache.get(database);
+  if (!stmt) {
+    stmt = database.prepare(`
+      SELECT *
+        FROM paired_tasks
+       WHERE chat_jid = ?
+       ORDER BY updated_at DESC
+       LIMIT 1
+    `);
+    latestPairedTaskStmtCache.set(database, stmt);
+  }
+  const row = stmt.get(chatJid) as StoredPairedTaskRow | undefined;
   return row ? hydratePairedTaskRow(database, row) : undefined;
 }
 
@@ -264,6 +270,22 @@ export function getLatestOpenPairedTaskForChatFromDatabase(
     )
     .get(chatJid) as StoredPairedTaskRow | undefined;
   return row ? hydratePairedTaskRow(database, row) : undefined;
+}
+
+export function getAllOpenPairedTasksFromDatabase(
+  database: Database,
+): PairedTask[] {
+  const rows = database
+    .prepare(
+      `
+        SELECT *
+          FROM paired_tasks
+         WHERE status NOT IN ('completed')
+         ORDER BY updated_at DESC, created_at DESC
+      `,
+    )
+    .all() as StoredPairedTaskRow[];
+  return rows.map((row) => hydratePairedTaskRow(database, row));
 }
 
 export function getLatestPreviousPairedTaskForChatFromDatabase(

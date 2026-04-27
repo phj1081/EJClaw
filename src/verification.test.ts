@@ -106,6 +106,66 @@ describe('verification helpers', () => {
     });
   });
 
+  it('verifies nested pnpm workspaces under a bun parent without tripping corepack project specs', async () => {
+    const parentDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-verification-corepack-parent-'),
+    );
+    fs.writeFileSync(
+      path.join(parentDir, 'package.json'),
+      JSON.stringify({ packageManager: 'bun@1.3.11' }),
+    );
+
+    const repoDir = path.join(parentDir, 'owner');
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({
+        name: 'nested-pnpm-workspace',
+        scripts: {
+          typecheck:
+            'node -e "process.stdout.write(process.env.COREPACK_ENABLE_PROJECT_SPEC || \'missing\')"',
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(repoDir, 'pnpm-lock.yaml'),
+      [
+        "lockfileVersion: '6.0'",
+        'settings:',
+        '  autoInstallPeers: true',
+        '  excludeLinksFromLockfile: false',
+        'importers:',
+        '  .: {}',
+        '',
+      ].join('\n'),
+    );
+    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(repoDir, 'node_modules', '.bin', 'placeholder'),
+      '',
+    );
+
+    expect(hasInstalledNodeModules(repoDir)).toBe(false);
+
+    const expectedSnapshotId = computeVerificationSnapshot(repoDir).snapshotId;
+    const result = await runVerificationRequest(
+      {
+        requestId: 'req-corepack-parent-pnpm',
+        profile: 'typecheck',
+        expectedSnapshotId,
+      },
+      { repoDir },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.command).toBe('corepack pnpm run typecheck');
+    expect(result.stdout).toContain('0');
+    expect(result.snapshotId).toBe(expectedSnapshotId);
+  });
+
   it('computes a stable snapshot over the readable workspace inputs', () => {
     const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-snapshot-'));
     fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });

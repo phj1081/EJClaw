@@ -152,6 +152,74 @@ Workspace: \`${args.workspaceDir}\`
 Repair the owner workspace branch, then retry the task.`;
 }
 
+function buildOwnerReanchorBackupPrefix(targetBranch: string): string {
+  const groupFolder = targetBranch.startsWith('codex/owner/')
+    ? targetBranch.slice('codex/owner/'.length)
+    : targetBranch.replace(/\//g, '-');
+  return `backup/${groupFolder}`;
+}
+
+function buildOwnerReanchorBackupSuffix(): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:.TZ]/g, '')
+    .slice(0, 14);
+  return `${timestamp}-${crypto.randomBytes(3).toString('hex')}`;
+}
+
+function reanchorNamedOwnerWorkspaceBranch(args: {
+  canonicalWorkDir: string;
+  workspaceDir: string;
+  currentBranch: string;
+  targetBranch: string;
+  targetBranchCommit: string | null;
+  currentHeadCommit: string;
+  reason: string;
+}): boolean {
+  const {
+    canonicalWorkDir,
+    workspaceDir,
+    currentBranch,
+    targetBranch,
+    targetBranchCommit,
+    currentHeadCommit,
+    reason,
+  } = args;
+
+  ensureBranchNotCheckedOutElsewhere(
+    canonicalWorkDir,
+    workspaceDir,
+    targetBranch,
+  );
+
+  const backupPrefix = buildOwnerReanchorBackupPrefix(targetBranch);
+  const backupSuffix = buildOwnerReanchorBackupSuffix();
+  const currentBackupBranch = `${backupPrefix}-current-pre-reanchor-${backupSuffix}`;
+  const targetBackupBranch = `${backupPrefix}-target-pre-reanchor-${backupSuffix}`;
+
+  runGit(['branch', currentBackupBranch, currentBranch], workspaceDir);
+  if (targetBranchCommit) {
+    runGit(['branch', targetBackupBranch, targetBranch], workspaceDir);
+  }
+  runGit(['branch', '-f', targetBranch, currentHeadCommit], workspaceDir);
+  runGit(['symbolic-ref', 'HEAD', branchRefName(targetBranch)], workspaceDir);
+
+  logger.warn(
+    {
+      workspaceDir,
+      previousBranch: currentBranch,
+      targetBranch,
+      currentHeadCommit,
+      targetBranchCommit,
+      currentBackupBranch,
+      targetBackupBranch: targetBranchCommit ? targetBackupBranch : null,
+      reason,
+    },
+    'Re-anchored owner workspace branch mismatch while preserving worktree state',
+  );
+  return true;
+}
+
 function maybeRepairNamedOwnerWorkspaceBranch(args: {
   canonicalWorkDir: string;
   workspaceDir: string;
@@ -174,32 +242,39 @@ function maybeRepairNamedOwnerWorkspaceBranch(args: {
   }
 
   if (!isGitWorktreeClean(workspaceDir)) {
-    throw new OwnerWorkspaceRepairNeededError(
-      buildOwnerWorkspaceRepairBlockMessage({
-        workspaceDir,
-        currentBranch,
-        targetBranch,
-        reason:
-          'Automatic repair was skipped because the workspace has local changes.',
-      }),
-    );
+    return reanchorNamedOwnerWorkspaceBranch({
+      canonicalWorkDir,
+      workspaceDir,
+      currentBranch,
+      targetBranch,
+      targetBranchCommit,
+      currentHeadCommit,
+      reason: 'workspace has local changes',
+    });
   }
 
   if (!targetBranchCommit) {
-    runGit(['switch', '-c', targetBranch], workspaceDir);
-    return true;
+    return reanchorNamedOwnerWorkspaceBranch({
+      canonicalWorkDir,
+      workspaceDir,
+      currentBranch,
+      targetBranch,
+      targetBranchCommit,
+      currentHeadCommit,
+      reason: 'expected branch does not exist yet',
+    });
   }
 
   if (targetBranchCommit !== currentHeadCommit) {
-    throw new OwnerWorkspaceRepairNeededError(
-      buildOwnerWorkspaceRepairBlockMessage({
-        workspaceDir,
-        currentBranch,
-        targetBranch,
-        reason:
-          'Automatic repair was skipped because the expected branch points at a different commit.',
-      }),
-    );
+    return reanchorNamedOwnerWorkspaceBranch({
+      canonicalWorkDir,
+      workspaceDir,
+      currentBranch,
+      targetBranch,
+      targetBranchCommit,
+      currentHeadCommit,
+      reason: 'expected branch points at a different commit',
+    });
   }
 
   ensureBranchNotCheckedOutElsewhere(

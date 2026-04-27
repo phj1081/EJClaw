@@ -31,6 +31,21 @@ describe('config/env loading', () => {
     delete process.env.DISCORD_CODEX_REVIEW_BOT_TOKEN;
     delete process.env.PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL;
     delete process.env.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION;
+    delete process.env.CODEX_WARMUP_ENABLED;
+    delete process.env.CODEX_WARMUP_PROMPT;
+    delete process.env.CODEX_WARMUP_MODEL;
+    delete process.env.CODEX_WARMUP_INTERVAL_MS;
+    delete process.env.CODEX_WARMUP_MIN_INTERVAL_MS;
+    delete process.env.CODEX_WARMUP_STAGGER_MS;
+    delete process.env.CODEX_WARMUP_MAX_USAGE_PCT;
+    delete process.env.CODEX_WARMUP_MAX_D7_USAGE_PCT;
+    delete process.env.CODEX_WARMUP_COMMAND_TIMEOUT_MS;
+    delete process.env.CODEX_WARMUP_FAILURE_COOLDOWN_MS;
+    delete process.env.CODEX_WARMUP_MAX_CONSECUTIVE_FAILURES;
+    delete process.env.WEB_DASHBOARD_ENABLED;
+    delete process.env.WEB_DASHBOARD_HOST;
+    delete process.env.WEB_DASHBOARD_PORT;
+    delete process.env.WEB_DASHBOARD_STATIC_DIR;
     delete process.env.SESSION_COMMAND_USER_IDS;
     vi.resetModules();
   });
@@ -124,8 +139,60 @@ describe('config/env loading', () => {
     expect(config.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION).toBe(true);
   });
 
+  it('keeps Codex warm-up disabled by default and exposes conservative opt-in env config', async () => {
+    let config = await import('./config.js');
+    expect(config.CODEX_WARMUP_CONFIG.enabled).toBe(false);
+    expect(config.CODEX_WARMUP_CONFIG.maxUsagePct).toBe(0);
+    expect(config.CODEX_WARMUP_CONFIG.maxD7UsagePct).toBe(0);
+    expect(
+      config.CODEX_WARMUP_CONFIG.maxConsecutiveFailures,
+    ).toBeGreaterThanOrEqual(1);
+
+    vi.resetModules();
+    process.env.CODEX_MODEL = 'gpt-5.5';
+    process.env.CODEX_WARMUP_ENABLED = 'true';
+    process.env.CODEX_WARMUP_PROMPT = '.';
+    process.env.CODEX_WARMUP_STAGGER_MS = '600000';
+    process.env.CODEX_WARMUP_MAX_CONSECUTIVE_FAILURES = '1';
+    config = await import('./config.js');
+
+    expect(config.CODEX_WARMUP_CONFIG).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        prompt: '.',
+        model: 'gpt-5.5',
+        staggerMs: 600000,
+        maxConsecutiveFailures: 1,
+      }),
+    );
+  });
+
+  it('keeps the web dashboard disabled by default and loads explicit bind/static settings', async () => {
+    let config = await import('./config.js');
+    expect(config.WEB_DASHBOARD.enabled).toBe(false);
+    expect(config.WEB_DASHBOARD.host).toBe('127.0.0.1');
+    expect(config.WEB_DASHBOARD.port).toBe(8734);
+    expect(config.WEB_DASHBOARD.staticDir).toBe(
+      path.resolve(tempRoot, 'apps', 'dashboard', 'dist'),
+    );
+
+    vi.resetModules();
+    process.env.WEB_DASHBOARD_ENABLED = 'true';
+    process.env.WEB_DASHBOARD_HOST = '0.0.0.0';
+    process.env.WEB_DASHBOARD_PORT = '9001';
+    process.env.WEB_DASHBOARD_STATIC_DIR = './custom-dashboard-dist';
+    config = await import('./config.js');
+
+    expect(config.WEB_DASHBOARD).toEqual({
+      enabled: true,
+      host: '0.0.0.0',
+      port: 9001,
+      staticDir: path.resolve(tempRoot, 'custom-dashboard-dist'),
+    });
+  });
+
   it('fails fast when a legacy Discord token alias is configured', async () => {
-    process.env.DISCORD_BOT_TOKEN = 'legacy-owner-token';
+    process.env.DISCORD_BOT_TOKEN = 'legacy...oken';
 
     const { loadConfig } = await import('./config/load-config.js');
 
