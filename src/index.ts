@@ -387,7 +387,7 @@ async function main(): Promise<void> {
       editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
   });
   startIpcWatcher({
-    sendMessage: async (jid, text, senderRole, runId) => {
+    sendMessage: async (jid, text, senderRole, runId, attachments) => {
       if (
         runId &&
         (senderRole === 'reviewer' || senderRole === 'arbiter') &&
@@ -419,7 +419,7 @@ async function main(): Promise<void> {
         },
         'IPC relay routed message to channel',
       );
-      await route.channel.sendMessage(jid, text);
+      await route.channel.sendMessage(jid, text, { attachments });
       if (
         (senderRole === 'reviewer' || senderRole === 'arbiter') &&
         isTerminalStatusMessage(text)

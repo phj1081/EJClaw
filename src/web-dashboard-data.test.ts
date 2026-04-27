@@ -356,6 +356,99 @@ describe('web dashboard data', () => {
     ]);
   });
 
+  it('uses Discord live progress messages without exposing them as recent chat', () => {
+    const task = makePairedTask({
+      id: 'paired-room-progress',
+      chat_jid: 'dc:ops',
+      status: 'active',
+      updated_at: '2026-04-26T06:10:00.000Z',
+    });
+    const turn: PairedTurnRecord = {
+      turn_id: 'turn-progress',
+      task_id: task.id,
+      task_updated_at: task.updated_at,
+      role: 'owner',
+      intent_kind: 'owner-turn',
+      state: 'running',
+      executor_service_id: 'codex-main',
+      executor_agent_type: 'codex',
+      attempt_no: 1,
+      created_at: '2026-04-26T06:00:00.000Z',
+      updated_at: '2026-04-26T06:10:00.000Z',
+      completed_at: null,
+      last_error: null,
+    };
+    const statusPrefix = '⁣⁣⁣';
+    const messages: NewMessage[] = [
+      {
+        id: 'msg-latest',
+        chat_jid: 'dc:ops',
+        sender: 'user-1',
+        sender_name: '눈쟁이',
+        content: 'recent human message',
+        timestamp: '2026-04-26T06:09:00.000Z',
+        is_from_me: false,
+        is_bot_message: false,
+        message_source_kind: 'human',
+      },
+    ];
+    const progressMessages: NewMessage[] = [
+      {
+        id: 'msg-stale-progress',
+        chat_jid: 'dc:ops',
+        sender: 'bot-1',
+        sender_name: '오너',
+        content: `${statusPrefix}stale progress`,
+        timestamp: '2026-04-26T05:59:00.000Z',
+        is_from_me: true,
+        is_bot_message: true,
+        message_source_kind: 'bot',
+      },
+      {
+        id: 'msg-live-progress',
+        chat_jid: 'dc:ops',
+        sender: 'bot-1',
+        sender_name: '오너',
+        content: `${statusPrefix}building mobile parity\n\n12s`,
+        timestamp: '2026-04-26T06:08:00.000Z',
+        is_from_me: true,
+        is_bot_message: true,
+        message_source_kind: 'bot',
+      },
+    ];
+
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'processing',
+        elapsedMs: 20_000,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+      pairedTask: task,
+      turns: [turn],
+      attempts: [],
+      outputs: [],
+      messages,
+      progressMessages,
+    });
+
+    expect(activity.pairedTask?.currentTurn).toMatchObject({
+      progressText: 'building mobile parity',
+      progressUpdatedAt: '2026-04-26T06:08:00.000Z',
+    });
+    expect(activity.messages).toEqual([
+      expect.objectContaining({
+        senderName: '눈쟁이',
+        content: 'recent human message',
+      }),
+    ]);
+  });
+
   it('builds typed inbox items from pending rooms, paired tasks, and CI failures', () => {
     const snapshots: StatusSnapshot[] = [
       {

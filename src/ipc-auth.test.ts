@@ -556,6 +556,7 @@ describe('IPC message authorization', () => {
       'review text',
       'reviewer',
       'run-reviewer-ipc',
+      undefined,
     );
     expect(result).toEqual(
       expect.objectContaining({
@@ -563,6 +564,39 @@ describe('IPC message authorization', () => {
         senderRole: 'reviewer',
       }),
     );
+  });
+
+  it('forwards structured attachments through authorized IPC messages', async () => {
+    const sendMessage = vi.fn(async () => {});
+    const attachments = [
+      {
+        path: '/tmp/ejclaw-room-mobile-list-390.png',
+        name: 'room.png',
+        mime: 'image/png',
+      },
+    ];
+
+    const result = await forwardAuthorizedIpcMessage(
+      {
+        type: 'message',
+        chatJid: 'other@g.us',
+        text: '스크린샷입니다.',
+        attachments,
+      },
+      'other-group',
+      false,
+      groups,
+      sendMessage,
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      'other@g.us',
+      '스크린샷입니다.',
+      undefined,
+      undefined,
+      attachments,
+    );
+    expect(result.outcome).toBe('sent');
   });
 
   it('injects authorized inbound messages for the source group without routing them as outbound sends', async () => {

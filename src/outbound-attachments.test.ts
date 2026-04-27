@@ -12,6 +12,7 @@ const ONE_PIXEL_PNG = Buffer.from(
 );
 
 const cleanupDirs: string[] = [];
+const cleanupFiles: string[] = [];
 
 function makeTempDir(baseDir: string, prefix: string): string {
   const dir = fs.mkdtempSync(path.join(baseDir, prefix));
@@ -33,6 +34,9 @@ afterEach(() => {
   for (const dir of cleanupDirs.splice(0)) {
     fs.rmSync(dir, { force: true, recursive: true });
   }
+  for (const file of cleanupFiles.splice(0)) {
+    fs.rmSync(file, { force: true });
+  }
 });
 
 describe('validateOutboundAttachments', () => {
@@ -53,6 +57,31 @@ describe('validateOutboundAttachments', () => {
       {
         attachment: fs.realpathSync(imagePath),
         name: 'unsafe-name.png',
+      },
+    ]);
+  });
+
+  it('accepts direct EJClaw screenshot files under the temp directory', () => {
+    const imagePath = path.join(
+      os.tmpdir(),
+      `ejclaw-room-mobile-list-${Date.now()}.png`,
+    );
+    fs.writeFileSync(imagePath, ONE_PIXEL_PNG);
+    cleanupFiles.push(imagePath);
+
+    const result = validateOutboundAttachments([
+      {
+        path: imagePath,
+        name: 'room-list.png',
+        mime: 'image/png',
+      },
+    ]);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.files).toEqual([
+      {
+        attachment: fs.realpathSync(imagePath),
+        name: 'room-list.png',
       },
     ]);
   });

@@ -1,3 +1,4 @@
+import { normalizeEjclawStructuredOutput } from './agent-protocol.js';
 import { isWatchCiTask } from './task-watch-status.js';
 import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
 import type { StatusSnapshot, UsageRowSnapshot } from './status-dashboard.js';
@@ -180,6 +181,37 @@ function buildInboxPreview(value: string): string {
 
 function buildRoomPreview(value: string, maxLength: number): string {
   return truncateText(redactSensitiveText(value).trim(), maxLength);
+}
+
+function decodeCommonHtmlEntities(value: string): string {
+  return value
+    .replace(/&quot;|&#34;|&#x22;/gi, '"')
+    .replace(/&apos;|&#39;|&#x27;/gi, "'")
+    .replace(/&lt;|&#60;|&#x3c;/gi, '<')
+    .replace(/&gt;|&#62;|&#x3e;/gi, '>')
+    .replace(/&amp;|&#38;|&#x26;/gi, '&');
+}
+
+function hasStructuredOutputHint(value: string): boolean {
+  return value.includes('"ejclaw"') || /&quot;ejclaw&quot;/i.test(value);
+}
+
+function normalizeRoomMessageContent(value: string): string | null {
+  if (!hasStructuredOutputHint(value)) return value;
+
+  const candidates = [value, decodeCommonHtmlEntities(value)];
+  for (const candidate of candidates) {
+    const normalized = normalizeEjclawStructuredOutput(candidate);
+    if (normalized.output?.visibility === 'silent') return null;
+    if (
+      normalized.output?.visibility === 'public' &&
+      normalized.output.text !== candidate
+    ) {
+      return normalized.output.text;
+    }
+  }
+
+  return value;
 }
 
 function stableHash(value: string): string {
@@ -405,15 +437,17 @@ export function sanitizeScheduledTask(
   };
 }
 
-function sanitizeRoomMessage(message: NewMessage): WebDashboardRoomMessage {
+function sanitizeRoomMessage(
+  message: NewMessage,
+): WebDashboardRoomMessage | null {
+  const content = normalizeRoomMessageContent(message.content ?? '');
+  if (content === null) return null;
+
   return {
     id: message.id,
     sender: message.sender,
     senderName: message.sender_name || message.sender,
-    content: buildRoomPreview(
-      message.content ?? '',
-      ROOM_MESSAGE_PREVIEW_MAX_LENGTH,
-    ),
+    content: buildRoomPreview(content, ROOM_MESSAGE_PREVIEW_MAX_LENGTH),
     timestamp: message.timestamp,
     isFromMe: !!message.is_from_me,
     isBotMessage: !!message.is_bot_message,
@@ -430,6 +464,10 @@ function sanitizeRoomMessage(message: NewMessage): WebDashboardRoomMessage {
  * column for derivation.
  */
 const TASK_STATUS_PREFIX = '⁣⁣⁣';
+
+function isTaskStatusMessage(message: NewMessage): boolean {
+  return (message.content ?? '').startsWith(TASK_STATUS_PREFIX);
+}
 
 function turnRoleFromSenderName(name: string | null | undefined): string {
   const v = (name ?? '').toLowerCase();
@@ -533,6 +571,7 @@ export function buildWebDashboardRoomActivity(args: {
   attempts: PairedTurnAttemptRecord[];
   outputs: PairedTurnOutput[];
   messages: NewMessage[];
+  progressMessages?: NewMessage[];
   outputLimit?: number;
 }): WebDashboardRoomActivity {
   const latestAttemptByTurnId = new Map<string, PairedTurnAttemptRecord>();
@@ -561,7 +600,12 @@ export function buildWebDashboardRoomActivity(args: {
     elapsedMs: args.entry.elapsedMs,
     pendingMessages: args.entry.pendingMessages,
     pendingTasks: args.entry.pendingTasks,
-    messages: args.messages.map(sanitizeRoomMessage),
+    messages: args.messages
+      .filter((message) => !isTaskStatusMessage(message))
+      .map(sanitizeRoomMessage)
+      .filter((message): message is WebDashboardRoomMessage =>
+        Boolean(message),
+      ),
     pairedTask: args.pairedTask
       ? {
           id: args.pairedTask.id,
@@ -570,7 +614,11 @@ export function buildWebDashboardRoomActivity(args: {
           roundTripCount: args.pairedTask.round_trip_count,
           updatedAt: args.pairedTask.updated_at,
           currentTurn: currentTurn
-            ? sanitizeRoomTurn(currentTurn, currentAttempt, args.messages)
+            ? sanitizeRoomTurn(
+                currentTurn,
+                currentAttempt,
+                args.progressMessages ?? args.messages,
+              )
             : null,
           outputs: args.outputs.slice(-outputLimit).map(sanitizeRoomTurnOutput),
         }
