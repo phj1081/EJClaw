@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -20,6 +14,8 @@ import {
 } from 'lucide-react';
 
 import {
+  type ClaudeAccountSummary,
+  type CodexAccountSummary,
   type CreateScheduledTaskInput,
   type DashboardInboxAction,
   type DashboardRoomActivity,
@@ -28,15 +24,22 @@ import {
   type DashboardTaskAction,
   type DashboardOverview,
   type DashboardTask,
+  type ModelConfigSnapshot,
+  type ModelRoleConfig,
   type UpdateScheduledTaskInput,
   type StatusSnapshot,
+  addClaudeAccount,
   createScheduledTask,
+  deleteAccount,
+  fetchAccounts,
   fetchDashboardData,
+  fetchModelConfig,
   fetchRoomsTimelineBatch,
   runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
   sendRoomMessage,
+  updateModels,
   updateScheduledTask,
 } from './api';
 import {
@@ -1049,42 +1052,365 @@ function SettingsPanel({
   nickname,
   onLocaleChange,
   onNicknameChange,
+  onRestartStack,
   t,
 }: {
   locale: Locale;
   nickname: string;
   onLocaleChange: (locale: Locale) => void;
   onNicknameChange: (next: string) => void;
+  onRestartStack: () => void;
   t: Messages;
 }) {
   return (
     <div className="settings-panel">
-      <label className="settings-row">
-        <span className="settings-label">{t.settings.nicknameLabel}</span>
-        <input
-          maxLength={32}
-          onChange={(event) => onNicknameChange(event.target.value)}
-          placeholder={t.settings.nicknamePlaceholder}
-          type="text"
-          value={nickname}
-        />
-        <small className="settings-hint">{t.settings.nicknameHelp}</small>
-      </label>
-      <label className="settings-row">
-        <span className="settings-label">{t.settings.languageLabel}</span>
-        <select
-          aria-label={t.settings.languageLabel}
-          onChange={(event) => onLocaleChange(event.target.value as Locale)}
-          value={locale}
-        >
-          {LOCALES.map((item) => (
-            <option key={item} value={item}>
-              {languageNames[item]}
-            </option>
-          ))}
-        </select>
-      </label>
+      <section className="settings-section">
+        <h3>일반</h3>
+        <label className="settings-row">
+          <span className="settings-label">{t.settings.nicknameLabel}</span>
+          <input
+            maxLength={32}
+            onChange={(event) => onNicknameChange(event.target.value)}
+            placeholder={t.settings.nicknamePlaceholder}
+            type="text"
+            value={nickname}
+          />
+          <small className="settings-hint">{t.settings.nicknameHelp}</small>
+        </label>
+        <label className="settings-row">
+          <span className="settings-label">{t.settings.languageLabel}</span>
+          <select
+            aria-label={t.settings.languageLabel}
+            onChange={(event) => onLocaleChange(event.target.value as Locale)}
+            value={locale}
+          >
+            {LOCALES.map((item) => (
+              <option key={item} value={item}>
+                {languageNames[item]}
+              </option>
+            ))}
+          </select>
+        </label>
+      </section>
+
+      <ModelSettings onRestartStack={onRestartStack} />
+
+      <AccountSettings onRestartStack={onRestartStack} />
     </div>
+  );
+}
+
+function ModelSettings({
+  onRestartStack,
+}: {
+  onRestartStack: () => void;
+}) {
+  const [config, setConfig] = useState<ModelConfigSnapshot | null>(null);
+  const [draft, setDraft] = useState<ModelConfigSnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setBusy(true);
+    fetchModelConfig()
+      .then((c) => {
+        if (cancelled) return;
+        setConfig(c);
+        setDraft(c);
+        setError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function save() {
+    if (!draft || !config) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await updateModels(draft);
+      setConfig(next);
+      setDraft(next);
+      setSavedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setRole(role: keyof ModelConfigSnapshot, patch: Partial<ModelRoleConfig>) {
+    setDraft((prev) =>
+      prev
+        ? {
+            ...prev,
+            [role]: { ...prev[role], ...patch },
+          }
+        : prev,
+    );
+  }
+
+  const dirty =
+    draft !== null &&
+    config !== null &&
+    JSON.stringify(draft) !== JSON.stringify(config);
+
+  return (
+    <section className="settings-section">
+      <h3>모델</h3>
+      {error ? <p className="settings-error">{error}</p> : null}
+      {!draft ? (
+        <p className="settings-hint">
+          {busy ? '불러오는 중…' : '모델 정보 없음'}
+        </p>
+      ) : (
+        <>
+          {(['owner', 'reviewer', 'arbiter'] as const).map((role) => (
+            <div className="settings-row settings-row-inline" key={role}>
+              <span className="settings-label">{role}</span>
+              <input
+                aria-label={`${role} model`}
+                onChange={(e) => setRole(role, { model: e.target.value })}
+                placeholder="claude / codex / claude-opus-4-7 …"
+                type="text"
+                value={draft[role].model}
+              />
+              <input
+                aria-label={`${role} effort`}
+                className="settings-input-narrow"
+                onChange={(e) => setRole(role, { effort: e.target.value })}
+                placeholder="effort"
+                type="text"
+                value={draft[role].effort}
+              />
+            </div>
+          ))}
+          <div className="settings-actions">
+            <button
+              className="settings-save"
+              disabled={!dirty || busy}
+              onClick={() => void save()}
+              type="button"
+            >
+              {busy ? '저장 중…' : '저장'}
+            </button>
+            {savedAt && !dirty ? (
+              <small className="settings-hint">
+                저장됨. 적용하려면 스택 재시작 필요.
+              </small>
+            ) : null}
+            <button
+              className="settings-restart"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
+                  )
+                ) {
+                  onRestartStack();
+                }
+              }}
+              type="button"
+            >
+              스택 재시작
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function AccountSettings({
+  onRestartStack,
+}: {
+  onRestartStack: () => void;
+}) {
+  const [data, setData] = useState<{
+    claude: ClaudeAccountSummary[];
+    codex: CodexAccountSummary[];
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tokenInput, setTokenInput] = useState('');
+
+  async function refresh() {
+    setBusy(true);
+    setError(null);
+    try {
+      const fresh = await fetchAccounts();
+      setData(fresh);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function handleDelete(provider: 'claude' | 'codex', index: number) {
+    if (
+      !window.confirm(
+        `${provider} 계정 #${index} 디렉터리를 삭제합니다. 되돌릴 수 없습니다. 계속할까요?`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteAccount(provider, index);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAdd() {
+    const token = tokenInput.trim();
+    if (!token) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await addClaudeAccount(token);
+      setTokenInput('');
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>계정</h3>
+      {error ? <p className="settings-error">{error}</p> : null}
+
+      <div className="settings-account-group">
+        <h4>Claude</h4>
+        {!data ? (
+          <p className="settings-hint">{busy ? '불러오는 중…' : '없음'}</p>
+        ) : data.claude.length === 0 ? (
+          <p className="settings-hint">계정 없음</p>
+        ) : (
+          <ul className="settings-account-list">
+            {data.claude.map((acc) => (
+              <li key={acc.index} className="settings-account-row">
+                <span className="settings-account-tag">#{acc.index}</span>
+                <span className="settings-account-meta">
+                  {acc.subscriptionType ?? 'unknown'}
+                  {acc.expiresAt
+                    ? ` · 만료 ${new Date(acc.expiresAt).toLocaleDateString()}`
+                    : ''}
+                </span>
+                {acc.index > 0 ? (
+                  <button
+                    className="settings-delete"
+                    disabled={busy}
+                    onClick={() => void handleDelete('claude', acc.index)}
+                    type="button"
+                  >
+                    삭제
+                  </button>
+                ) : (
+                  <span className="settings-account-default">기본</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="settings-add-token">
+          <textarea
+            onChange={(e) => setTokenInput(e.target.value)}
+            placeholder="Claude OAuth 토큰 (claude CLI 로그인 후 ~/.claude/.credentials.json 에서 accessToken 값을 페이스트)"
+            rows={2}
+            value={tokenInput}
+          />
+          <button
+            disabled={!tokenInput.trim() || busy}
+            onClick={() => void handleAdd()}
+            type="button"
+          >
+            추가
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-account-group">
+        <h4>Codex</h4>
+        {!data ? (
+          <p className="settings-hint">{busy ? '불러오는 중…' : '없음'}</p>
+        ) : data.codex.length === 0 ? (
+          <p className="settings-hint">계정 없음</p>
+        ) : (
+          <ul className="settings-account-list">
+            {data.codex.map((acc) => (
+              <li key={acc.index} className="settings-account-row">
+                <span className="settings-account-tag">#{acc.index}</span>
+                <span className="settings-account-meta">
+                  {acc.planType ?? 'unknown'}
+                  {acc.subscriptionUntil
+                    ? ` · ${acc.subscriptionUntil}까지`
+                    : ''}
+                </span>
+                {acc.index > 0 ? (
+                  <button
+                    className="settings-delete"
+                    disabled={busy}
+                    onClick={() => void handleDelete('codex', acc.index)}
+                    type="button"
+                  >
+                    삭제
+                  </button>
+                ) : (
+                  <span className="settings-account-default">기본</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="settings-hint">
+          Codex 계정 추가는 <code>codex login</code> CLI로 진행한 뒤
+          ~/.codex-accounts/N/ 디렉터리에 auth.json 파일이 생성되면 됩니다.
+        </p>
+      </div>
+
+      <div className="settings-actions">
+        <button
+          className="settings-restart"
+          disabled={busy}
+          onClick={() => {
+            if (
+              window.confirm(
+                '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
+              )
+            ) {
+              onRestartStack();
+            }
+          }}
+          type="button"
+        >
+          스택 재시작 (변경 적용)
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -4006,6 +4332,7 @@ function App() {
                   nickname={nickname}
                   onLocaleChange={setDashboardLocale}
                   onNicknameChange={setNickname}
+                  onRestartStack={() => void handleServiceRestart()}
                   t={t}
                 />
               </section>

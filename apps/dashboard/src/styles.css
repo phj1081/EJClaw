@@ -762,6 +762,192 @@ button:disabled {
   font-size: 11px;
 }
 
+.settings-section {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 24px;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.settings-section h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.settings-section h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-row-inline {
+  grid-template-columns: 80px minmax(0, 1fr) 100px;
+  display: grid;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-row-inline > .settings-label {
+  margin: 0;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.settings-input-narrow {
+  width: 100% !important;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.settings-save,
+.settings-restart {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-save:disabled,
+.settings-restart:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.settings-restart {
+  background: rgba(224, 100, 75, 0.16);
+  color: var(--status-critical);
+  border: 1px solid rgba(224, 100, 75, 0.32);
+}
+
+.settings-error {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(224, 100, 75, 0.32);
+  border-radius: 6px;
+  background: rgba(224, 100, 75, 0.08);
+  color: var(--status-critical);
+  font-size: 12px;
+}
+
+.settings-account-group {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-account-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.settings-account-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-account-tag {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.settings-account-meta {
+  font-size: 12px;
+  color: var(--bg-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-account-default {
+  font-size: 11px;
+  color: var(--muted-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-delete {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(224, 100, 75, 0.32);
+  border-radius: 6px;
+  background: rgba(224, 100, 75, 0.06);
+  color: var(--status-critical);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-delete:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.settings-add-token {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.settings-add-token textarea {
+  width: 100%;
+  border: 1px solid var(--panel-border-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  color: var(--bg-ink);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  resize: vertical;
+}
+
+.settings-add-token button {
+  align-self: end;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-add-token button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .room-inbox-badges {
   display: inline-flex;
   gap: 4px;

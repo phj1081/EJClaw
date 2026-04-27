@@ -46,6 +46,14 @@ import {
   buildWebDashboardOverview,
   sanitizeScheduledTask,
 } from './web-dashboard-data.js';
+import {
+  addClaudeAccountFromToken,
+  getModelConfig,
+  listClaudeAccounts,
+  listCodexAccounts,
+  removeAccountDirectory,
+  updateModelConfig,
+} from './settings-store.js';
 
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
 const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
@@ -1238,6 +1246,71 @@ export function createWebDashboardHandler(
       }
     }
 
+    if (
+      url.pathname === '/api/settings/models' &&
+      (request.method === 'PUT' || request.method === 'PATCH')
+    ) {
+      let body: unknown = null;
+      try {
+        body = await request.json();
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      if (!body || typeof body !== 'object') {
+        return jsonResponse({ error: 'Body must be a JSON object' }, { status: 400 });
+      }
+      try {
+        const next = updateModelConfig(body as Record<string, unknown>);
+        return jsonResponse(next);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ error: message }, { status: 500 });
+      }
+    }
+
+    {
+      const accountAddMatch = url.pathname.match(
+        /^\/api\/settings\/accounts\/(claude)$/,
+      );
+      if (accountAddMatch && request.method === 'POST') {
+        let body: { token?: unknown } | null = null;
+        try {
+          body = (await request.json()) as { token?: unknown };
+        } catch {
+          return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
+        }
+        const token =
+          typeof body?.token === 'string' ? body.token.trim() : '';
+        if (!token) {
+          return jsonResponse({ error: 'token is required' }, { status: 400 });
+        }
+        try {
+          const result = addClaudeAccountFromToken(token);
+          return jsonResponse({ ok: true, ...result });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResponse({ error: message }, { status: 400 });
+        }
+      }
+    }
+
+    {
+      const accountDelMatch = url.pathname.match(
+        /^\/api\/settings\/accounts\/(claude|codex)\/(\d+)$/,
+      );
+      if (accountDelMatch && request.method === 'DELETE') {
+        const provider = accountDelMatch[1] as 'claude' | 'codex';
+        const index = Number.parseInt(accountDelMatch[2], 10);
+        try {
+          removeAccountDirectory(provider, index);
+          return jsonResponse({ ok: true, provider, index });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResponse({ error: message }, { status: 400 });
+        }
+      }
+    }
+
     if (url.pathname === '/api/tasks' && request.method === 'POST') {
       if (!loadRoomBindings) {
         return jsonResponse(
@@ -1430,6 +1503,17 @@ export function createWebDashboardHandler(
 
     if (url.pathname === '/api/tasks') {
       return jsonResponse(loadTasks().map(sanitizeScheduledTask));
+    }
+
+    if (url.pathname === '/api/settings/accounts') {
+      return jsonResponse({
+        claude: listClaudeAccounts(),
+        codex: listCodexAccounts(),
+      });
+    }
+
+    if (url.pathname === '/api/settings/models') {
+      return jsonResponse(getModelConfig());
     }
 
     if (url.pathname === '/api/rooms-timeline') {

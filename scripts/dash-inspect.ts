@@ -55,8 +55,12 @@ async function measure(page: Page, sel: string) {
   for (let i = 0; i < Math.min(all.length, 6); i++) {
     const el = all[i];
     const box = await el.boundingBox();
-    const style = await el.evaluate((node) => {
-      const cs = getComputedStyle(node as Element);
+    const style = await el.evaluate((node: object) => {
+      const cs = (
+        globalThis as unknown as {
+          getComputedStyle: (e: object) => Record<string, string>;
+        }
+      ).getComputedStyle(node);
       return {
         display: cs.display,
         position: cs.position,
@@ -89,8 +93,12 @@ async function dom(page: Page, sel: string) {
     console.log(`NOT FOUND: ${sel}`);
     return;
   }
-  const html = await el.evaluate((node) => (node as Element).outerHTML);
-  console.log(html.length > 4000 ? `${html.slice(0, 4000)}\n…(truncated)` : html);
+  const html = await el.evaluate(
+    (node: object) => (node as unknown as { outerHTML: string }).outerHTML,
+  );
+  console.log(
+    html.length > 4000 ? `${html.slice(0, 4000)}\n…(truncated)` : html,
+  );
 }
 
 async function clickAndShot(page: Page, sel: string) {
