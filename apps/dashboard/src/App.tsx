@@ -2832,6 +2832,7 @@ function RoomBoardV2({
   const [filter, setFilter] = useState<RoomFilter>('all');
   const [sort, setSort] = useState<RoomSort>('recent');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
 
   const allEntries: RoomEntryWithService[] = snapshots.flatMap((snapshot) =>
     snapshot.entries.map((entry) => ({
@@ -2869,7 +2870,10 @@ function RoomBoardV2({
 
   useEffect(() => {
     const nextJid = selectedEntry?.jid ?? null;
-    if (nextJid !== selectedJid) onSelectedJidChange(nextJid);
+    if (nextJid !== selectedJid) {
+      onSelectedJidChange(nextJid);
+      setMobileDetailOpen(false);
+    }
   }, [onSelectedJidChange, selectedEntry?.jid, selectedJid]);
 
   if (allEntries.length === 0) {
@@ -2937,7 +2941,9 @@ function RoomBoardV2({
       {sorted.length === 0 ? (
         <EmptyState>{t.rooms.empty}</EmptyState>
       ) : (
-        <div className="rooms-twopane">
+        <div
+          className={`rooms-twopane${mobileDetailOpen ? ' is-detail-open' : ''}`}
+        >
           <aside className="rooms-list" aria-label={t.rooms.cardsAria}>
             {sorted.map((entry) => {
               const items = inbox.filter((it) => it.roomJid === entry.jid);
@@ -2949,7 +2955,10 @@ function RoomBoardV2({
                   aria-current={active ? 'page' : undefined}
                   className={`rooms-list-item status-${entry.status}${active ? ' is-active' : ''}`}
                   key={`${entry.serviceId}:${entry.jid}`}
-                  onClick={() => onSelectedJidChange(entry.jid)}
+                  onClick={() => {
+                    onSelectedJidChange(entry.jid);
+                    setMobileDetailOpen(true);
+                  }}
                   type="button"
                 >
                   <span className={`room-pulse pulse-${entry.status}`}>
@@ -2977,6 +2986,13 @@ function RoomBoardV2({
             })}
           </aside>
           <main className="rooms-detail">
+            <button
+              className="rooms-mobile-back"
+              onClick={() => setMobileDetailOpen(false)}
+              type="button"
+            >
+              ← {t.panels.rooms}
+            </button>
             {selectedEntry ? (
               <RoomCardV2
                 activity={roomActivity[selectedEntry.jid]}

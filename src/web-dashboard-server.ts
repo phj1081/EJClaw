@@ -781,6 +781,9 @@ export function createWebDashboardHandler(
     for (const [jid, { snapshot, entry }] of uniqueByJid) {
       const pairedTask = loadLatestPairedTaskForChat(jid) ?? null;
       const messages = loadRecentChatMessages(jid, 8);
+      const progressMessages = pairedTask
+        ? loadRecentChatMessages(jid, 40)
+        : messages;
       const outputs = loadRecentPairedTurnOutputsForChat(jid, 8);
       if (!pairedTask && messages.length === 0 && outputs.length === 0)
         continue;
@@ -796,6 +799,7 @@ export function createWebDashboardHandler(
         attempts: [],
         outputs,
         messages,
+        progressMessages,
         outputLimit: 8,
       });
     }
@@ -1171,6 +1175,7 @@ export function createWebDashboardHandler(
           attempts,
           outputs: pairedTask ? loadPairedTurnOutputs(pairedTask.id) : [],
           messages: loadRecentChatMessages(timelineRoomJid, 8),
+          progressMessages: loadRecentChatMessages(timelineRoomJid, 40),
         }),
       );
     }

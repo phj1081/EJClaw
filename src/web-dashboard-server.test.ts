@@ -1506,6 +1506,22 @@ describe('web dashboard server handler', () => {
         message_source_kind: 'human',
       },
     ];
+    const statusPrefix = '⁣⁣⁣';
+    const progressMessages: NewMessage[] = [
+      ...messages,
+      {
+        id: 'msg-progress',
+        chat_jid: 'dc:ops',
+        sender: 'reviewer-bot',
+        sender_name: '리뷰어',
+        content: `${statusPrefix}checking current output\n\n9s`,
+        timestamp: '2026-04-26T05:20:00.000Z',
+        is_from_me: true,
+        is_bot_message: true,
+        message_source_kind: 'bot',
+      },
+    ];
+    const requestedMessageLimits: number[] = [];
     const handler = createWebDashboardHandler({
       readStatusSnapshots: () => [
         {
@@ -1535,7 +1551,10 @@ describe('web dashboard server handler', () => {
       getPairedTurnAttempts: (turnId) =>
         turnId === turns[0]!.turn_id ? attempts : [],
       getPairedTurnOutputs: () => outputs,
-      getRecentChatMessages: () => messages,
+      getRecentChatMessages: (_jid, limit) => {
+        requestedMessageLimits.push(limit ?? 20);
+        return limit && limit > 8 ? progressMessages : messages;
+      },
     });
 
     const response = await handler(
@@ -1555,6 +1574,8 @@ describe('web dashboard server handler', () => {
           state: string;
           attemptNo: number;
           lastError: string;
+          progressText: string;
+          progressUpdatedAt: string;
         };
         outputs: Array<{ outputText: string; turnNumber: number }>;
       };
@@ -1568,12 +1589,16 @@ describe('web dashboard server handler', () => {
       state: 'running',
       attemptNo: 2,
       lastError: 'OPENAI_API_KEY=<redacted>',
+      progressText: 'checking current output',
+      progressUpdatedAt: '2026-04-26T05:20:00.000Z',
     });
     expect(body.pairedTask.outputs).toMatchObject([
       { turnNumber: 1, outputText: 'owner final output' },
     ]);
+    expect(requestedMessageLimits).toEqual([8, 40]);
     expect(body.messages[0]?.content).toContain('BOT_TOKEN=<redacted>');
     expect(body.messages[0]?.senderName).toBe('눈쟁이');
+    expect(body.messages).toHaveLength(1);
   });
 
   it('returns 404 for missing room timelines', async () => {
