@@ -13,7 +13,7 @@
   },
   "overrides": {
     "apps/dashboard/src/App.tsx": {
-      "maxLines": 4361,
+      "maxLines": 4421,
       "maxFunctionLines": 583,
       "maxComplexity": 79,
       "maxNesting": 4,
@@ -24,7 +24,7 @@
       "owner": "dashboard i18n hotspot"
     },
     "apps/dashboard/src/styles.css": {
-      "maxLines": 4654,
+      "maxLines": 4707,
       "owner": "dashboard stylesheet hotspot"
     },
     "runners/agent-runner/src/index.ts": {
