@@ -1851,6 +1851,13 @@ function RoomMessageForm({
         aria-label={t.rooms.message}
         maxLength={8000}
         onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return;
+          if (event.shiftKey || event.nativeEvent.isComposing) return;
+          if (busy || !value.trim()) return;
+          event.preventDefault();
+          onSubmit();
+        }}
         placeholder={t.rooms.messagePlaceholder}
         rows={2}
         value={value}
