@@ -261,6 +261,16 @@ export function getCurrentCodexAccountIndex(): number {
   return accounts.length === 0 ? 0 : currentIndex;
 }
 
+/** Find the rotation-array index that owns the given auth.json path. */
+export function findCodexAccountIndexByAuthPath(
+  authPath: string,
+): number | null {
+  for (let i = 0; i < accounts.length; i += 1) {
+    if (accounts[i]?.authPath === authPath) return i;
+  }
+  return null;
+}
+
 /** Manually switch the active codex account. Clears its rate-limit cooldown. */
 export function setCurrentCodexAccountIndex(targetIndex: number): void {
   if (accounts.length === 0) {

@@ -15,6 +15,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+  findCodexAccountIndexByAuthPath,
+  getActiveCodexAuthPath,
+  setCurrentCodexAccountIndex as setRotationIndex,
+} from './codex-token-rotation.js';
+
 export interface ClaudeAccountSummary {
   index: number;
   expiresAt: number | null;
@@ -439,6 +445,54 @@ export async function refreshCodexAccount(
   if (!summary)
     throw new Error('failed to re-read codex account after refresh');
   return summary;
+}
+
+/**
+ * settings-store lists codex accounts in an order that includes the default
+ * `~/.codex/auth.json` as index 0 plus `~/.codex-accounts/{N}` as index N.
+ * The rotation array (codex-token-rotation) only loads `~/.codex-accounts/{N}`
+ * when those dirs exist (it ignores `~/.codex/auth.json` in that mode), so its
+ * array indices are off-by-one vs. the settings indices. Translate via path.
+ */
+export function getActiveCodexSettingsIndex(): number | null {
+  const activePath = getActiveCodexAuthPath();
+  if (!activePath) return null;
+  // Walk the same listing order as listCodexAccounts() to find the matching
+  // settings-store index.
+  if (codexAuthPath(0) === activePath && fs.existsSync(activePath)) {
+    return 0;
+  }
+  const dir = path.join(os.homedir(), '.codex-accounts');
+  if (fs.existsSync(dir)) {
+    const indices = fs
+      .readdirSync(dir)
+      .filter((e) => /^\d+$/.test(e))
+      .map((e) => Number.parseInt(e, 10))
+      .filter((n) => Number.isFinite(n) && n >= 1)
+      .sort((a, b) => a - b);
+    for (const i of indices) {
+      if (codexAuthPath(i) === activePath) return i;
+    }
+  }
+  return null;
+}
+
+export function setActiveCodexSettingsIndex(settingsIndex: number): void {
+  const file = codexAuthPath(settingsIndex);
+  if (!fs.existsSync(file)) {
+    throw new Error(
+      `codex auth.json not found for settings index ${settingsIndex}`,
+    );
+  }
+  const rotationIndex = findCodexAccountIndexByAuthPath(file);
+  if (rotationIndex === null) {
+    throw new Error(
+      `codex switch: settings #${settingsIndex} (${file}) is not part of the rotation pool. ` +
+        `Rotation only manages accounts under ~/.codex-accounts/. ` +
+        `If you want to use ~/.codex/auth.json directly, remove the ~/.codex-accounts dir first.`,
+    );
+  }
+  setRotationIndex(rotationIndex);
 }
 
 export async function refreshAllCodexAccounts(): Promise<{
