@@ -60,6 +60,10 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 import { initCodexTokenRotation } from './codex-token-rotation.js';
 import {
+  startCodexAccountRefreshLoop,
+  stopCodexAccountRefreshLoop,
+} from './settings-store.js';
+import {
   hasAvailableClaudeToken,
   initTokenRotation,
 } from './token-rotation.js';
@@ -245,6 +249,7 @@ async function main(): Promise<void> {
   initTokenRotation();
   initCodexTokenRotation();
   startTokenRefreshLoop();
+  startCodexAccountRefreshLoop();
 
   runtimeState.loadState();
 
@@ -254,6 +259,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     stopTokenRefreshLoop();
+    stopCodexAccountRefreshLoop();
     if (leaseRecoveryTimer) {
       clearInterval(leaseRecoveryTimer);
       leaseRecoveryTimer = null;

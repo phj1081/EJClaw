@@ -36,10 +36,13 @@ import {
   fetchDashboardData,
   fetchFastMode,
   fetchModelConfig,
+  refreshAllCodexAccounts as refreshAllCodexAccountsApi,
+  refreshCodexAccount as refreshCodexAccountApi,
   runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
   sendRoomMessage,
+  setCurrentCodexAccount as setCurrentCodexAccountApi,
   updateFastMode,
   updateModels,
   updateScheduledTask,
@@ -1355,8 +1358,10 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
   const [data, setData] = useState<{
     claude: ClaudeAccountSummary[];
     codex: CodexAccountSummary[];
+    codexCurrentIndex?: number;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [perRowBusy, setPerRowBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState('');
 
@@ -1410,6 +1415,50 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleCodexRefresh(index: number) {
+    setPerRowBusy(`refresh:${index}`);
+    setError(null);
+    try {
+      await refreshCodexAccountApi(index);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPerRowBusy(null);
+    }
+  }
+
+  async function handleRefreshAllCodex() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await refreshAllCodexAccountsApi();
+      await refresh();
+      if (result.failed.length > 0) {
+        setError(
+          `일부 갱신 실패: ${result.failed.map((f) => `#${f.index}`).join(', ')}`,
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSwitchCodex(index: number) {
+    setPerRowBusy(`switch:${index}`);
+    setError(null);
+    try {
+      await setCurrentCodexAccountApi(index);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPerRowBusy(null);
     }
   }
 
@@ -1479,7 +1528,17 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
       </div>
 
       <div className="settings-account-group">
-        <h4>Codex</h4>
+        <div className="settings-account-group-head">
+          <h4>Codex</h4>
+          <button
+            className="settings-secondary"
+            disabled={busy}
+            onClick={() => void handleRefreshAllCodex()}
+            type="button"
+          >
+            전체 갱신
+          </button>
+        </div>
         {!data ? (
           <p className="settings-hint">{busy ? '불러오는 중…' : '없음'}</p>
         ) : data.codex.length === 0 ? (
@@ -1488,10 +1547,18 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
           <ul className="settings-account-list">
             {data.codex.map((acc) => {
               const expiry = formatExpiry(acc.subscriptionUntil);
+              const isActive = data.codexCurrentIndex === acc.index;
+              const refreshing = perRowBusy === `refresh:${acc.index}`;
+              const switching = perRowBusy === `switch:${acc.index}`;
               return (
-                <li key={acc.index} className="settings-account-row">
+                <li
+                  key={acc.index}
+                  className={`settings-account-row${isActive ? ' is-active-account' : ''}`}
+                >
                   <div className="settings-account-main">
-                    <span className="settings-account-tag">#{acc.index}</span>
+                    <span className="settings-account-tag">
+                      {isActive ? '●' : ''}#{acc.index}
+                    </span>
                     {acc.email ? (
                       <span
                         className="settings-account-email"
@@ -1516,26 +1583,48 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
                       </span>
                     ) : null}
                   </div>
-                  {acc.index > 0 ? (
+                  <div className="settings-account-actions">
                     <button
-                      className="settings-delete"
-                      disabled={busy}
-                      onClick={() => void handleDelete('codex', acc.index)}
+                      className="settings-secondary"
+                      disabled={busy || perRowBusy !== null}
+                      onClick={() => void handleCodexRefresh(acc.index)}
+                      title="OAuth 토큰을 다시 받아 구독 상태를 갱신합니다"
                       type="button"
                     >
-                      삭제
+                      {refreshing ? '갱신중…' : '갱신'}
                     </button>
-                  ) : (
-                    <span className="settings-account-default">기본</span>
-                  )}
+                    {!isActive ? (
+                      <button
+                        className="settings-secondary"
+                        disabled={busy || perRowBusy !== null}
+                        onClick={() => void handleSwitchCodex(acc.index)}
+                        title="이 계정으로 즉시 전환합니다 (다음 codex 호출부터 적용)"
+                        type="button"
+                      >
+                        {switching ? '전환중…' : '전환'}
+                      </button>
+                    ) : (
+                      <span className="settings-account-default">사용중</span>
+                    )}
+                    {acc.index > 0 ? (
+                      <button
+                        className="settings-delete"
+                        disabled={busy || perRowBusy !== null}
+                        onClick={() => void handleDelete('codex', acc.index)}
+                        type="button"
+                      >
+                        삭제
+                      </button>
+                    ) : null}
+                  </div>
                 </li>
               );
             })}
           </ul>
         )}
         <p className="settings-hint">
-          Codex 계정 추가는 <code>codex login</code> CLI로 진행한 뒤
-          ~/.codex-accounts/N/ 디렉터리에 auth.json 파일이 생성되면 됩니다.
+          OAuth 토큰은 6시간마다 자동 갱신됩니다. plan 변경/해지가 즉시 반영되게
+          하려면 수동으로 “전체 갱신”을 누르세요.
         </p>
       </div>
 

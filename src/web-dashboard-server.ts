@@ -52,10 +52,16 @@ import {
   getModelConfig,
   listClaudeAccounts,
   listCodexAccounts,
+  refreshAllCodexAccounts,
+  refreshCodexAccount,
   removeAccountDirectory,
   updateFastMode,
   updateModelConfig,
 } from './settings-store.js';
+import {
+  getCurrentCodexAccountIndex,
+  setCurrentCodexAccountIndex,
+} from './codex-token-rotation.js';
 
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
 const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
@@ -1340,6 +1346,64 @@ export function createWebDashboardHandler(
       }
     }
 
+    {
+      const refreshMatch = url.pathname.match(
+        /^\/api\/settings\/accounts\/codex\/(\d+)\/refresh$/,
+      );
+      if (refreshMatch && request.method === 'POST') {
+        const index = Number.parseInt(refreshMatch[1], 10);
+        try {
+          const updated = await refreshCodexAccount(index);
+          return jsonResponse({ ok: true, account: updated });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResponse({ error: message }, { status: 400 });
+        }
+      }
+    }
+
+    if (
+      url.pathname === '/api/settings/accounts/codex/refresh-all' &&
+      request.method === 'POST'
+    ) {
+      try {
+        const result = await refreshAllCodexAccounts();
+        return jsonResponse({ ok: true, ...result });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ error: message }, { status: 500 });
+      }
+    }
+
+    if (
+      url.pathname === '/api/settings/accounts/codex/current' &&
+      request.method === 'PUT'
+    ) {
+      let body: { index?: unknown } | null = null;
+      try {
+        body = (await request.json()) as { index?: unknown };
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      const idx = typeof body?.index === 'number' ? body.index : Number.NaN;
+      if (!Number.isInteger(idx)) {
+        return jsonResponse(
+          { error: 'index must be an integer' },
+          { status: 400 },
+        );
+      }
+      try {
+        setCurrentCodexAccountIndex(idx);
+        return jsonResponse({
+          ok: true,
+          codexCurrentIndex: getCurrentCodexAccountIndex(),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ error: message }, { status: 400 });
+      }
+    }
+
     if (url.pathname === '/api/tasks' && request.method === 'POST') {
       if (!loadRoomBindings) {
         return jsonResponse(
@@ -1538,6 +1602,7 @@ export function createWebDashboardHandler(
       return jsonResponse({
         claude: listClaudeAccounts(),
         codex: listCodexAccounts(),
+        codexCurrentIndex: getCurrentCodexAccountIndex(),
       });
     }
 
