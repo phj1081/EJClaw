@@ -186,8 +186,9 @@ body:has(.view-stack.view-rooms) .error-card {
   flex: 1;
   min-height: 0;
   height: 100%;
+  width: 100%;
   gap: 8px;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: clamp(180px, 16vw, 240px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
 }
 
@@ -199,6 +200,7 @@ body:has(.view-stack.view-rooms) .error-card {
 }
 
 .view-stack.view-rooms .rooms-detail {
+  width: 100%;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: var(--panel);
@@ -208,6 +210,7 @@ body:has(.view-stack.view-rooms) .error-card {
 
 .view-stack.view-rooms .rooms-detail .room-card-v2.is-pinned {
   display: block;
+  width: 100%;
   padding: 0;
 }
 
