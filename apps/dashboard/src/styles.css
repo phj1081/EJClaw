@@ -1,17 +1,45 @@
-.debug-outlines .shell { outline: 2px dashed red; }
-.debug-outlines .dashboard-content { outline: 2px dashed orange; }
-.debug-outlines .view-stack.view-rooms { outline: 2px dashed yellow; }
-.debug-outlines .view-stack.view-rooms .view-panel { outline: 2px dashed lime; }
-.debug-outlines .rooms-v2 { outline: 2px dashed cyan; }
-.debug-outlines .rooms-twopane { outline: 2px dashed deepskyblue; }
-.debug-outlines .rooms-list { outline: 2px dashed magenta; }
-.debug-outlines .rooms-detail { outline: 2px dashed pink; }
-.debug-outlines .room-card-v2 { outline: 2px dotted white; }
-.debug-outlines .room-card-head { outline: 2px dotted gold; }
-.debug-outlines .room-thread-section { outline: 2px dotted lime; }
-.debug-outlines .room-compose-section { outline: 2px dotted red; }
-.debug-outlines .room-compose textarea { outline: 2px solid white; }
-.debug-outlines .room-timeline-item { outline: 1px dotted aqua; }
+.debug-outlines .shell {
+  outline: 2px dashed red;
+}
+.debug-outlines .dashboard-content {
+  outline: 2px dashed orange;
+}
+.debug-outlines .view-stack.view-rooms {
+  outline: 2px dashed yellow;
+}
+.debug-outlines .view-stack.view-rooms .view-panel {
+  outline: 2px dashed lime;
+}
+.debug-outlines .rooms-v2 {
+  outline: 2px dashed cyan;
+}
+.debug-outlines .rooms-twopane {
+  outline: 2px dashed deepskyblue;
+}
+.debug-outlines .rooms-list {
+  outline: 2px dashed magenta;
+}
+.debug-outlines .rooms-detail {
+  outline: 2px dashed pink;
+}
+.debug-outlines .room-card-v2 {
+  outline: 2px dotted white;
+}
+.debug-outlines .room-card-head {
+  outline: 2px dotted gold;
+}
+.debug-outlines .room-thread-section {
+  outline: 2px dotted lime;
+}
+.debug-outlines .room-compose-section {
+  outline: 2px dotted red;
+}
+.debug-outlines .room-compose textarea {
+  outline: 2px solid white;
+}
+.debug-outlines .room-timeline-item {
+  outline: 1px dotted aqua;
+}
 
 :root {
   color-scheme: dark;
@@ -153,12 +181,12 @@ body:has(.view-stack.view-rooms) .dashboard-content {
 body:has(.view-stack.view-rooms) .section-nav {
   position: static;
   flex: none;
-  margin: 8px 12px 0;
+  margin: 6px 8px 0;
 }
 
 body:has(.view-stack.view-rooms) .error-card {
   flex: none;
-  margin: 8px 12px;
+  margin: 6px 8px;
 }
 
 .view-stack.view-rooms {
@@ -178,7 +206,7 @@ body:has(.view-stack.view-rooms) .error-card {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  margin: 8px 12px;
+  margin: 6px 8px;
 }
 
 .view-stack.view-rooms .panel-title {
