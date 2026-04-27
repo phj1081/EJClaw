@@ -9,6 +9,7 @@ import {
   Inbox as InboxIcon,
   MessageSquare,
   RefreshCw,
+  Send,
   Settings,
 } from 'lucide-react';
 
@@ -1859,11 +1860,16 @@ function RoomMessageForm({
           onSubmit();
         }}
         placeholder={t.rooms.messagePlaceholder}
-        rows={2}
+        rows={1}
         value={value}
       />
-      <button disabled={busy || !value.trim()} type="submit">
-        {busy ? t.rooms.sending : t.rooms.send}
+      <button
+        aria-label={busy ? t.rooms.sending : t.rooms.send}
+        disabled={busy || !value.trim()}
+        title={busy ? t.rooms.sending : t.rooms.send}
+        type="submit"
+      >
+        <Send size={16} strokeWidth={2} aria-hidden />
       </button>
     </form>
   );
@@ -2683,7 +2689,7 @@ function RoomCardV2({
             </div>
           ) : null}
 
-          <section className="room-section">
+          <section className="room-section room-thread-section">
             <header>
               <h4>{t.rooms.activity}</h4>
               <small>{agentMessages.length}</small>
@@ -2806,10 +2812,7 @@ function RoomCardV2({
             </details>
           ) : null}
 
-          <section className="room-section room-compose">
-            <header>
-              <h4>{t.rooms.message}</h4>
-            </header>
+          <section className="room-section room-compose-section">
             <RoomMessageForm
               busy={busy}
               onChange={onDraftChange}
@@ -2817,13 +2820,6 @@ function RoomCardV2({
               t={t}
               value={draft}
             />
-            <details className="room-detail-fold">
-              <summary>{t.rooms.details}</summary>
-              <p className="room-id">
-                {entry.folder} · {entry.jid} · {entry.serviceId} ·{' '}
-                {entry.agentType}
-              </p>
-            </details>
           </section>
         </div>
       ) : null}
