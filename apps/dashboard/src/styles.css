@@ -722,7 +722,8 @@ button:disabled {
 .settings-panel {
   display: grid;
   gap: 14px;
-  max-width: 480px;
+  max-width: 760px;
+  width: 100%;
 }
 
 .settings-row {
@@ -909,7 +910,7 @@ button:disabled {
 
 .settings-account-main {
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  grid-template-columns: 28px minmax(0, 1fr) 60px 180px;
   gap: 10px;
   align-items: center;
   min-width: 0;
