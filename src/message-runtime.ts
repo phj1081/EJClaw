@@ -6,6 +6,7 @@ import {
   getLatestOpenPairedTaskForChat,
   markWorkItemDelivered,
   getPairedTaskById,
+  updatePairedTurnProgressText,
 } from './db.js';
 import {
   isSessionCommandSenderAllowed,
@@ -261,6 +262,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         openContinuation: (targetChatJid) =>
           continuationTracker.open(targetChatJid),
       });
+    },
+    recordTurnProgress: (turnId, progressText) => {
+      updatePairedTurnProgressText(turnId, progressText);
     },
     afterDeliverySuccess: async ({
       chatJid,

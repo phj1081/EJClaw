@@ -87,6 +87,8 @@ export interface WebDashboardRoomTurn {
   updatedAt: string;
   completedAt: string | null;
   lastError: string | null;
+  progressText: string | null;
+  progressUpdatedAt: string | null;
 }
 
 export interface WebDashboardRoomTurnOutput {
@@ -419,22 +421,82 @@ function sanitizeRoomMessage(message: NewMessage): WebDashboardRoomMessage {
   };
 }
 
+/**
+ * SSOT for live progress: scan the `messages` table for the most recent
+ * TASK_STATUS_MESSAGE_PREFIX-prefixed message that belongs to the current
+ * turn (sender role match + timestamp >= turn.created_at). The Discord
+ * bridge ingests every edit of the bot's live message back into messages,
+ * so this single source replaces the legacy paired_turns.progress_text
+ * column for derivation.
+ */
+const TASK_STATUS_PREFIX = '⁣⁣⁣';
+
+function turnRoleFromSenderName(name: string | null | undefined): string {
+  const v = (name ?? '').toLowerCase();
+  if (v.includes('오너') || v.includes('owner')) return 'owner';
+  if (v.includes('리뷰어') || v.includes('reviewer')) return 'reviewer';
+  if (v.includes('중재자') || v.includes('arbiter')) return 'arbiter';
+  return 'human';
+}
+
+function deriveLiveProgress(
+  turnRole: string,
+  turnCreatedAt: string,
+  messages: NewMessage[],
+): { progressText: string | null; progressUpdatedAt: string | null } {
+  const startMs = new Date(turnCreatedAt).getTime();
+  const targetRole = turnRoleFromSenderName(turnRole);
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    const content = m.content ?? '';
+    if (!content.startsWith(TASK_STATUS_PREFIX)) continue;
+    const ts = m.timestamp ? new Date(m.timestamp).getTime() : 0;
+    if (Number.isFinite(startMs) && ts < startMs) continue;
+    const role = turnRoleFromSenderName(m.sender_name);
+    if (role !== targetRole) continue;
+    const body = content.slice(TASK_STATUS_PREFIX.length);
+    const stripped = body.replace(/\n\n\d+[초smhMSH]?$/, '').trim();
+    if (!stripped) continue;
+    return { progressText: stripped, progressUpdatedAt: m.timestamp };
+  }
+  return { progressText: null, progressUpdatedAt: null };
+}
+
 function sanitizeRoomTurn(
   turn: PairedTurnRecord,
   attempt: PairedTurnAttemptRecord | null,
+  messages: NewMessage[] = [],
 ): WebDashboardRoomTurn {
+  const role = attempt?.role ?? turn.role;
+  const createdAt = attempt?.created_at ?? turn.created_at;
+  const completedAt = attempt?.completed_at ?? turn.completed_at;
+
+  // Read paired_turns.progress_text first (written by recordTurnProgress
+  // when the controller is in the loop). If that's empty AND the turn is
+  // active, fall back to scanning the messages table for the most recent
+  // TASK_STATUS-prefixed message — same content the Discord bridge ingests.
+  let progressText = turn.progress_text ?? null;
+  let progressUpdatedAt = turn.progress_updated_at ?? null;
+  if ((!progressText || !progressText.trim()) && completedAt === null) {
+    const live = deriveLiveProgress(role, createdAt, messages);
+    if (live.progressText) {
+      progressText = live.progressText;
+      progressUpdatedAt = live.progressUpdatedAt;
+    }
+  }
+
   return {
     turnId: turn.turn_id,
-    role: attempt?.role ?? turn.role,
+    role,
     intentKind: attempt?.intent_kind ?? turn.intent_kind,
     state: attempt?.state ?? turn.state,
     attemptNo: attempt?.attempt_no ?? turn.attempt_no,
     executorServiceId: attempt?.executor_service_id ?? turn.executor_service_id,
     executorAgentType: attempt?.executor_agent_type ?? turn.executor_agent_type,
     activeRunId: attempt?.active_run_id ?? null,
-    createdAt: attempt?.created_at ?? turn.created_at,
+    createdAt,
     updatedAt: attempt?.updated_at ?? turn.updated_at,
-    completedAt: attempt?.completed_at ?? turn.completed_at,
+    completedAt,
     lastError:
       (attempt?.last_error ?? turn.last_error)
         ? buildRoomPreview(
@@ -442,6 +504,8 @@ function sanitizeRoomTurn(
             ROOM_MESSAGE_PREVIEW_MAX_LENGTH,
           )
         : null,
+    progressText,
+    progressUpdatedAt,
   };
 }
 
@@ -506,7 +570,7 @@ export function buildWebDashboardRoomActivity(args: {
           roundTripCount: args.pairedTask.round_trip_count,
           updatedAt: args.pairedTask.updated_at,
           currentTurn: currentTurn
-            ? sanitizeRoomTurn(currentTurn, currentAttempt)
+            ? sanitizeRoomTurn(currentTurn, currentAttempt, args.messages)
             : null,
           outputs: args.outputs.slice(-outputLimit).map(sanitizeRoomTurnOutput),
         }

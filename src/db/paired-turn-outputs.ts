@@ -56,6 +56,32 @@ export function getPairedTurnOutputsFromDatabase(
     .all(taskId) as PairedTurnOutput[];
 }
 
+const recentOutputsForChatStmtCache = new WeakMap<
+  Database,
+  ReturnType<Database['prepare']>
+>();
+
+export function getRecentPairedTurnOutputsForChatFromDatabase(
+  database: Database,
+  chatJid: string,
+  limit: number = 8,
+): PairedTurnOutput[] {
+  let stmt = recentOutputsForChatStmtCache.get(database);
+  if (!stmt) {
+    stmt = database.prepare(`
+      SELECT o.*
+        FROM paired_turn_outputs o
+        INNER JOIN paired_tasks t ON o.task_id = t.id
+       WHERE t.chat_jid = ?
+       ORDER BY o.created_at DESC
+       LIMIT ?
+    `);
+    recentOutputsForChatStmtCache.set(database, stmt);
+  }
+  const rows = stmt.all(chatJid, limit) as PairedTurnOutput[];
+  return rows.reverse();
+}
+
 export function getLatestTurnNumberFromDatabase(
   database: Database,
   taskId: string,

@@ -39,6 +39,7 @@ function getExpectedSchemaMigrations(): Array<{
     { version: 12, name: 'paired_verdict_and_step_telemetry' },
     { version: 13, name: 'message_source_kind' },
     { version: 14, name: 'work_item_attachments' },
+    { version: 15, name: 'turn_progress_text' },
   ];
 }
 

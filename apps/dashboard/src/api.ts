@@ -131,6 +131,8 @@ export interface DashboardRoomActivity {
       updatedAt: string;
       completedAt: string | null;
       lastError: string | null;
+      progressText: string | null;
+      progressUpdatedAt: string | null;
     } | null;
     outputs: Array<{
       id: number;
@@ -239,6 +241,14 @@ export async function fetchRoomTimeline(
   );
 }
 
+export async function fetchRoomsTimelineBatch(): Promise<
+  Record<string, DashboardRoomActivity>
+> {
+  return fetchJson<Record<string, DashboardRoomActivity>>(
+    '/api/rooms-timeline',
+  );
+}
+
 export async function runScheduledTaskAction(
   taskId: string,
   action: DashboardTaskAction,
@@ -324,9 +334,108 @@ export async function sendRoomMessage(
   roomJid: string,
   text: string,
   requestId: string,
+  nickname?: string | null,
 ): Promise<{ ok: true; id: string; queued: boolean }> {
   return postJson(`/api/rooms/${encodeURIComponent(roomJid)}/messages`, {
     requestId,
     text,
+    nickname: nickname ?? undefined,
   });
+}
+
+export interface ClaudeAccountSummary {
+  index: number;
+  expiresAt: number | null;
+  scopes: string[];
+  subscriptionType?: string;
+  rateLimitTier?: string;
+  exists: boolean;
+}
+
+export interface CodexAccountSummary {
+  index: number;
+  accountId: string | null;
+  planType: string | null;
+  subscriptionUntil: string | null;
+  exists: boolean;
+}
+
+export interface ModelRoleConfig {
+  model: string;
+  effort: string;
+}
+
+export interface ModelConfigSnapshot {
+  owner: ModelRoleConfig;
+  reviewer: ModelRoleConfig;
+  arbiter: ModelRoleConfig;
+}
+
+export async function fetchAccounts(): Promise<{
+  claude: ClaudeAccountSummary[];
+  codex: CodexAccountSummary[];
+}> {
+  return fetchJson('/api/settings/accounts');
+}
+
+export async function fetchModelConfig(): Promise<ModelConfigSnapshot> {
+  return fetchJson('/api/settings/models');
+}
+
+export async function updateModels(
+  input: Partial<{
+    owner: Partial<ModelRoleConfig>;
+    reviewer: Partial<ModelRoleConfig>;
+    arbiter: Partial<ModelRoleConfig>;
+  }>,
+): Promise<ModelConfigSnapshot> {
+  const response = await fetch('/api/settings/models', {
+    method: 'PUT',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let msg = `update models failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as ModelConfigSnapshot;
+}
+
+export async function deleteAccount(
+  provider: 'claude' | 'codex',
+  index: number,
+): Promise<{ ok: true; provider: string; index: number }> {
+  const response = await fetch(`/api/settings/accounts/${provider}/${index}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    let msg = `delete account failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as {
+    ok: true;
+    provider: string;
+    index: number;
+  };
+}
+
+export async function addClaudeAccount(
+  token: string,
+): Promise<{ ok: true; index: number; accountId: string | null }> {
+  return postJson('/api/settings/accounts/claude', { token });
 }

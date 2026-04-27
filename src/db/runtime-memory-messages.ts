@@ -26,6 +26,7 @@ import {
   getNewMessagesBySeqFromDatabase,
   getNewMessagesFromDatabase,
   getRecentChatMessagesFromDatabase,
+  getRecentChatMessagesBatchFromDatabase,
   hasMessageInDatabase,
   hasRecentRestartAnnouncementInDatabase,
   storeChatMetadataInDatabase,
@@ -222,6 +223,17 @@ export function getRecentChatMessages(
   limit: number = 20,
 ): NewMessage[] {
   return getRecentChatMessagesFromDatabase(requireDatabase(), chatJid, limit);
+}
+
+export function getRecentChatMessagesBatch(
+  chatJids: string[],
+  limit: number = 8,
+): Map<string, NewMessage[]> {
+  return getRecentChatMessagesBatchFromDatabase(
+    requireDatabase(),
+    chatJids,
+    limit,
+  );
 }
 
 export function getLastHumanMessageTimestamp(chatJid: string): string | null {

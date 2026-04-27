@@ -14,8 +14,11 @@ import {
   getPairedTaskById,
   getPairedTurnAttempts,
   getPairedTurnOutputs,
+  getRecentPairedTurnOutputsForChat,
   getPairedTurnsForTask,
+  getLatestPairedTurnForTask,
   getRecentChatMessages,
+  getRecentChatMessagesBatch,
   getTaskById,
   hasMessage,
   storeChatMetadata,
@@ -43,6 +46,14 @@ import {
   buildWebDashboardOverview,
   sanitizeScheduledTask,
 } from './web-dashboard-data.js';
+import {
+  addClaudeAccountFromToken,
+  getModelConfig,
+  listClaudeAccounts,
+  listCodexAccounts,
+  removeAccountDirectory,
+  updateModelConfig,
+} from './settings-store.js';
 
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
 const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
@@ -80,6 +91,7 @@ export interface ServiceRestartRecord {
 export interface WebDashboardHandlerOptions {
   staticDir?: string;
   statusMaxAgeMs?: number;
+  startBackgroundCacheRefresh?: boolean;
   readStatusSnapshots?: (maxAgeMs: number) => StatusSnapshot[];
   getTasks?: () => ScheduledTask[];
   getTaskById?: (id: string) => ScheduledTask | undefined;
@@ -114,8 +126,10 @@ export interface WebDashboardHandlerOptions {
   getPairedTasks?: () => PairedTask[];
   getLatestPairedTaskForChat?: (chatJid: string) => PairedTask | undefined;
   getPairedTurnsForTask?: typeof getPairedTurnsForTask;
+  getLatestPairedTurnForTask?: typeof getLatestPairedTurnForTask;
   getPairedTurnAttempts?: typeof getPairedTurnAttempts;
   getPairedTurnOutputs?: typeof getPairedTurnOutputs;
+  getRecentPairedTurnOutputsForChat?: typeof getRecentPairedTurnOutputsForChat;
   getRecentChatMessages?: typeof getRecentChatMessages;
   getPairedTaskById?: (id: string) => PairedTask | undefined;
   updatePairedTaskIfUnchanged?: (
@@ -150,13 +164,40 @@ export interface StartedWebDashboardServer {
   stop: () => void;
 }
 
-function jsonResponse(value: unknown, init?: ResponseInit): Response {
-  return new Response(JSON.stringify(value, null, 2), {
+const ROOMS_TIMELINE_BG_INTERVAL_MS = 2000;
+let roomsTimelineCache: {
+  key: string;
+  builtAt: number;
+  rawJson: string;
+  gzipBuffer: Uint8Array;
+} | null = null;
+
+function jsonResponse(
+  value: unknown,
+  init?: ResponseInit,
+  request?: Request,
+): Response {
+  const body = JSON.stringify(value);
+  const acceptsGzip =
+    request?.headers.get('accept-encoding')?.includes('gzip') ?? false;
+  const baseHeaders: Record<string, string> = {
+    'content-type': 'application/json; charset=utf-8',
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (acceptsGzip && body.length > 1024) {
+    const compressed = Bun.gzipSync(new TextEncoder().encode(body));
+    return new Response(compressed, {
+      ...init,
+      headers: {
+        ...baseHeaders,
+        'content-encoding': 'gzip',
+        vary: 'accept-encoding',
+      },
+    });
+  }
+  return new Response(body, {
     ...init,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      ...(init?.headers ?? {}),
-    },
+    headers: baseHeaders,
   });
 }
 
@@ -509,20 +550,29 @@ function sanitizeRoomMessageRequestId(value: unknown): string | null {
   return safe || null;
 }
 
-async function readRoomMessageBody(
-  request: Request,
-): Promise<{ text: string; requestId: string | null } | null> {
+async function readRoomMessageBody(request: Request): Promise<{
+  text: string;
+  requestId: string | null;
+  nickname: string | null;
+} | null> {
   try {
     const body = (await request.json()) as {
       text?: unknown;
       requestId?: unknown;
+      nickname?: unknown;
     };
     if (typeof body.text !== 'string') return null;
     const text = body.text.trim();
     if (!text) return null;
+    let nickname: string | null = null;
+    if (typeof body.nickname === 'string') {
+      const trimmed = body.nickname.trim().slice(0, 32);
+      if (trimmed) nickname = trimmed;
+    }
     return {
       text: text.length > 8000 ? text.slice(0, 8000) : text,
       requestId: sanitizeRoomMessageRequestId(body.requestId),
+      nickname,
     };
   } catch {
     return null;
@@ -673,8 +723,12 @@ export function createWebDashboardHandler(
     opts.getLatestPairedTaskForChat ?? getLatestPairedTaskForChat;
   const loadPairedTurnsForTask =
     opts.getPairedTurnsForTask ?? getPairedTurnsForTask;
+  const loadLatestPairedTurnForTask =
+    opts.getLatestPairedTurnForTask ?? getLatestPairedTurnForTask;
   const loadPairedTurnOutputs =
     opts.getPairedTurnOutputs ?? getPairedTurnOutputs;
+  const loadRecentPairedTurnOutputsForChat =
+    opts.getRecentPairedTurnOutputsForChat ?? getRecentPairedTurnOutputsForChat;
   const loadPairedTurnAttempts =
     opts.getPairedTurnAttempts ?? getPairedTurnAttempts;
   const loadRecentChatMessages =
@@ -690,6 +744,99 @@ export function createWebDashboardHandler(
   const restartServiceStack =
     opts.restartServiceStack ?? restartEjclawStackServices;
   const statusMaxAgeMs = opts.statusMaxAgeMs ?? DEFAULT_STATUS_MAX_AGE_MS;
+
+  function buildRoomsTimelineResult(): Record<
+    string,
+    ReturnType<typeof buildWebDashboardRoomActivity>
+  > {
+    const snapshots = readSnapshots(statusMaxAgeMs);
+    const uniqueByJid = new Map<
+      string,
+      {
+        snapshot: (typeof snapshots)[number];
+        entry: (typeof snapshots)[number]['entries'][number];
+      }
+    >();
+    for (const snapshot of snapshots) {
+      for (const entry of snapshot.entries) {
+        const existing = uniqueByJid.get(entry.jid);
+        if (
+          !existing ||
+          existing.snapshot.updatedAt.localeCompare(snapshot.updatedAt) < 0
+        ) {
+          uniqueByJid.set(entry.jid, { snapshot, entry });
+        }
+      }
+    }
+    const result: Record<
+      string,
+      ReturnType<typeof buildWebDashboardRoomActivity>
+    > = {};
+    for (const [jid, { snapshot, entry }] of uniqueByJid) {
+      const pairedTask = loadLatestPairedTaskForChat(jid) ?? null;
+      const messages = loadRecentChatMessages(jid, 8);
+      const outputs = loadRecentPairedTurnOutputsForChat(jid, 8);
+      if (!pairedTask && messages.length === 0 && outputs.length === 0)
+        continue;
+      const latestTurn = pairedTask
+        ? loadLatestPairedTurnForTask(pairedTask.id)
+        : null;
+      const turns = latestTurn ? [latestTurn] : [];
+      result[jid] = buildWebDashboardRoomActivity({
+        serviceId: snapshot.serviceId,
+        entry,
+        pairedTask,
+        turns,
+        attempts: [],
+        outputs,
+        messages,
+        outputLimit: 8,
+      });
+    }
+    return result;
+  }
+
+  function computeRoomsCacheKey(): string {
+    return readSnapshots(statusMaxAgeMs)
+      .map((s) => s.updatedAt)
+      .sort()
+      .join('|');
+  }
+
+  function ensureRoomsTimelineCache(): NonNullable<typeof roomsTimelineCache> {
+    const key = computeRoomsCacheKey();
+    if (roomsTimelineCache && roomsTimelineCache.key === key) {
+      return roomsTimelineCache;
+    }
+    const result = buildRoomsTimelineResult();
+    const rawJson = JSON.stringify(result);
+    const gzipBuffer = Bun.gzipSync(new TextEncoder().encode(rawJson));
+    roomsTimelineCache = {
+      key,
+      builtAt: Date.now(),
+      rawJson,
+      gzipBuffer,
+    };
+    return roomsTimelineCache;
+  }
+
+  if (opts.startBackgroundCacheRefresh !== false) {
+    setTimeout(() => {
+      try {
+        ensureRoomsTimelineCache();
+      } catch {
+        /* warm-up failure is non-fatal */
+      }
+    }, 0);
+    setInterval(() => {
+      try {
+        ensureRoomsTimelineCache();
+      } catch {
+        /* refresh failure is non-fatal */
+      }
+    }, ROOMS_TIMELINE_BG_INTERVAL_MS).unref();
+  }
+
   const seenRoomMessageIds: string[] = [];
   const seenRoomMessageIdSet = new Set<string>();
   const dismissedInboxKeys = new Set<string>();
@@ -969,7 +1116,7 @@ export function createWebDashboardHandler(
         id,
         chat_jid: messageRoomJid,
         sender: 'web-dashboard',
-        sender_name: 'Web Dashboard',
+        sender_name: body.nickname ?? 'Web Dashboard',
         content: body.text,
         timestamp,
         is_from_me: false,
@@ -1096,6 +1243,73 @@ export function createWebDashboardHandler(
         );
       } finally {
         activeServiceRestartTargets.delete(actionServiceId);
+      }
+    }
+
+    if (
+      url.pathname === '/api/settings/models' &&
+      (request.method === 'PUT' || request.method === 'PATCH')
+    ) {
+      let body: unknown = null;
+      try {
+        body = await request.json();
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
+      }
+      if (!body || typeof body !== 'object') {
+        return jsonResponse(
+          { error: 'Body must be a JSON object' },
+          { status: 400 },
+        );
+      }
+      try {
+        const next = updateModelConfig(body as Record<string, unknown>);
+        return jsonResponse(next);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ error: message }, { status: 500 });
+      }
+    }
+
+    {
+      const accountAddMatch = url.pathname.match(
+        /^\/api\/settings\/accounts\/(claude)$/,
+      );
+      if (accountAddMatch && request.method === 'POST') {
+        let body: { token?: unknown } | null = null;
+        try {
+          body = (await request.json()) as { token?: unknown };
+        } catch {
+          return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 });
+        }
+        const token = typeof body?.token === 'string' ? body.token.trim() : '';
+        if (!token) {
+          return jsonResponse({ error: 'token is required' }, { status: 400 });
+        }
+        try {
+          const result = addClaudeAccountFromToken(token);
+          return jsonResponse({ ok: true, ...result });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResponse({ error: message }, { status: 400 });
+        }
+      }
+    }
+
+    {
+      const accountDelMatch = url.pathname.match(
+        /^\/api\/settings\/accounts\/(claude|codex)\/(\d+)$/,
+      );
+      if (accountDelMatch && request.method === 'DELETE') {
+        const provider = accountDelMatch[1] as 'claude' | 'codex';
+        const index = Number.parseInt(accountDelMatch[2], 10);
+        try {
+          removeAccountDirectory(provider, index);
+          return jsonResponse({ ok: true, provider, index });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return jsonResponse({ error: message }, { status: 400 });
+        }
       }
     }
 
@@ -1291,6 +1505,106 @@ export function createWebDashboardHandler(
 
     if (url.pathname === '/api/tasks') {
       return jsonResponse(loadTasks().map(sanitizeScheduledTask));
+    }
+
+    if (url.pathname === '/api/settings/accounts') {
+      return jsonResponse({
+        claude: listClaudeAccounts(),
+        codex: listCodexAccounts(),
+      });
+    }
+
+    if (url.pathname === '/api/settings/models') {
+      return jsonResponse(getModelConfig());
+    }
+
+    if (url.pathname === '/api/stream') {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          let lastBuiltAt = 0;
+          let closed = false;
+
+          const enqueue = (chunk: string) => {
+            if (closed) return;
+            try {
+              controller.enqueue(encoder.encode(chunk));
+            } catch {
+              closed = true;
+            }
+          };
+
+          // Initial: send retry hint and seed event
+          enqueue(`retry: 3000\n\n`);
+          try {
+            const cache = ensureRoomsTimelineCache();
+            lastBuiltAt = cache.builtAt;
+            enqueue(`event: rooms-timeline\ndata: ${cache.rawJson}\n\n`);
+          } catch {
+            /* warm-up failure is non-fatal */
+          }
+
+          const tick = () => {
+            if (closed) return;
+            try {
+              const cache = ensureRoomsTimelineCache();
+              if (cache.builtAt !== lastBuiltAt) {
+                lastBuiltAt = cache.builtAt;
+                enqueue(`event: rooms-timeline\ndata: ${cache.rawJson}\n\n`);
+              } else {
+                // heartbeat to keep connection alive through proxies
+                enqueue(`: ping ${Date.now()}\n\n`);
+              }
+            } catch {
+              /* skip this tick */
+            }
+          };
+
+          const interval = setInterval(tick, 1500);
+          const close = () => {
+            if (closed) return;
+            closed = true;
+            clearInterval(interval);
+            try {
+              controller.close();
+            } catch {
+              /* already closed */
+            }
+          };
+          request.signal.addEventListener('abort', close);
+        },
+      });
+
+      return new Response(stream, {
+        headers: {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-cache, no-transform',
+          connection: 'keep-alive',
+          'x-accel-buffering': 'no',
+        },
+      });
+    }
+
+    if (url.pathname === '/api/rooms-timeline') {
+      const cache = ensureRoomsTimelineCache();
+      const acceptsGzip =
+        request.headers.get('accept-encoding')?.includes('gzip') ?? false;
+      if (acceptsGzip) {
+        return new Response(cache.gzipBuffer, {
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'content-encoding': 'gzip',
+            vary: 'accept-encoding',
+            'x-cache-age': String(Date.now() - cache.builtAt),
+          },
+        });
+      }
+      return new Response(cache.rawJson, {
+        headers: {
+          'content-type': 'application/json; charset=utf-8',
+          'x-cache-age': String(Date.now() - cache.builtAt),
+        },
+      });
     }
 
     if (url.pathname.startsWith('/api/')) {
