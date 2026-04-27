@@ -277,6 +277,136 @@ export function updateModelConfig(
   return getModelConfig();
 }
 
+const CODEX_OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
+const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+
+interface CodexAuthFile {
+  auth_mode?: string;
+  OPENAI_API_KEY?: string | null;
+  tokens?: {
+    id_token?: string;
+    access_token?: string;
+    refresh_token?: string;
+    account_id?: string;
+  };
+  last_refresh?: string;
+}
+
+function readCodexAuthFile(file: string): CodexAuthFile | null {
+  return readJson<CodexAuthFile>(file);
+}
+
+function writeCodexAuthFile(file: string, data: CodexAuthFile): void {
+  const tempPath = `${file}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  fs.renameSync(tempPath, file);
+}
+
+export async function refreshCodexAccount(
+  index: number,
+): Promise<CodexAccountSummary> {
+  const file = codexAuthPath(index);
+  if (!fs.existsSync(file)) {
+    throw new Error(`codex auth.json not found for index ${index}`);
+  }
+  const data = readCodexAuthFile(file);
+  const refreshToken = data?.tokens?.refresh_token;
+  if (!refreshToken) {
+    throw new Error(`codex account #${index} has no refresh_token`);
+  }
+
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: CODEX_OAUTH_CLIENT_ID,
+  });
+
+  const res = await fetch(CODEX_OAUTH_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(
+      `codex refresh failed (#${index}): ${res.status} ${text.slice(0, 200)}`,
+    );
+  }
+
+  const payload = (await res.json()) as {
+    access_token?: string;
+    id_token?: string;
+    refresh_token?: string;
+  };
+
+  const updated: CodexAuthFile = {
+    ...(data ?? {}),
+    tokens: {
+      ...(data?.tokens ?? {}),
+      id_token: payload.id_token ?? data?.tokens?.id_token,
+      access_token: payload.access_token ?? data?.tokens?.access_token,
+      refresh_token: payload.refresh_token ?? refreshToken,
+    },
+    last_refresh: new Date().toISOString(),
+  };
+  writeCodexAuthFile(file, updated);
+
+  const summary = readCodexAccount(index);
+  if (!summary)
+    throw new Error('failed to re-read codex account after refresh');
+  return summary;
+}
+
+export async function refreshAllCodexAccounts(): Promise<{
+  refreshed: number[];
+  failed: Array<{ index: number; error: string }>;
+}> {
+  const refreshed: number[] = [];
+  const failed: Array<{ index: number; error: string }> = [];
+  const accounts = listCodexAccounts();
+  for (const acc of accounts) {
+    try {
+      await refreshCodexAccount(acc.index);
+      refreshed.push(acc.index);
+    } catch (err) {
+      failed.push({
+        index: acc.index,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return { refreshed, failed };
+}
+
+const CODEX_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+let codexRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startCodexAccountRefreshLoop(): void {
+  if (codexRefreshTimer) return;
+  // Stagger first refresh so server boot isn't slowed.
+  setTimeout(() => {
+    void refreshAllCodexAccounts().catch(() => {
+      /* swallow; per-account errors logged inside */
+    });
+  }, 60_000).unref?.();
+  codexRefreshTimer = setInterval(() => {
+    void refreshAllCodexAccounts().catch(() => {
+      /* swallow */
+    });
+  }, CODEX_REFRESH_INTERVAL_MS);
+  codexRefreshTimer.unref?.();
+}
+
+export function stopCodexAccountRefreshLoop(): void {
+  if (codexRefreshTimer) {
+    clearInterval(codexRefreshTimer);
+    codexRefreshTimer = null;
+  }
+}
+
 function codexConfigPath(): string {
   return path.join(os.homedir(), '.codex', 'config.toml');
 }

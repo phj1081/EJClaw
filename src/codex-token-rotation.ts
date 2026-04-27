@@ -256,6 +256,42 @@ export function getActiveCodexAuthPath(): string | null {
   return getCodexAuthPath();
 }
 
+/** Currently active codex account index (after rotation). */
+export function getCurrentCodexAccountIndex(): number {
+  return accounts.length === 0 ? 0 : currentIndex;
+}
+
+/** Manually switch the active codex account. Clears its rate-limit cooldown. */
+export function setCurrentCodexAccountIndex(targetIndex: number): void {
+  if (accounts.length === 0) {
+    throw new Error('codex token rotation: no accounts loaded');
+  }
+  if (
+    !Number.isInteger(targetIndex) ||
+    targetIndex < 0 ||
+    targetIndex >= accounts.length
+  ) {
+    throw new Error(
+      `codex switch: index ${targetIndex} out of range [0..${accounts.length - 1}]`,
+    );
+  }
+  if (targetIndex === currentIndex) return;
+  const previous = currentIndex;
+  currentIndex = targetIndex;
+  // Clear rate-limit on the chosen account so rotation logic doesn't bounce it.
+  accounts[targetIndex].rateLimitedUntil = null;
+  saveCodexState();
+  logger.info(
+    {
+      transition: 'rotation:manual-switch',
+      fromIndex: previous,
+      toIndex: currentIndex,
+      totalAccounts: accounts.length,
+    },
+    `Codex switched manually to account #${currentIndex + 1}/${accounts.length}`,
+  );
+}
+
 export function getCodexAuthPath(
   accountIndex: number = currentIndex,
 ): string | null {

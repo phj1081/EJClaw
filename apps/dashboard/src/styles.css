@@ -897,6 +897,13 @@ button:disabled {
   gap: 4px;
 }
 
+.settings-account-group-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .settings-account-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -906,6 +913,38 @@ button:disabled {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-account-row.is-active-account {
+  border-color: rgba(80, 180, 130, 0.45);
+  background: rgba(80, 180, 130, 0.06);
+}
+
+.settings-account-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.settings-secondary {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--panel-border-strong);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--bg-ink);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.settings-secondary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.settings-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .settings-account-main {
