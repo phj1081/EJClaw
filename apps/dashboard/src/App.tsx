@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -2307,11 +2313,28 @@ function RoomBoardV2({
     setDrafts((previous) => ({ ...previous, [jid]: value }));
   }
 
+  function scrollDetailToBottom() {
+    if (typeof window === 'undefined') return;
+    const detail = document.querySelector(
+      '.rooms-detail',
+    ) as HTMLElement | null;
+    if (!detail) return;
+    const tick = (n: number) => {
+      detail.scrollTop = detail.scrollHeight;
+      if (n > 0) requestAnimationFrame(() => tick(n - 1));
+    };
+    requestAnimationFrame(() => tick(3));
+  }
+
   async function submitRoomMessage(jid: string) {
     const text = drafts[jid]?.trim();
     if (!text) return;
+    scrollDetailToBottom();
     const success = await onSendRoomMessage(jid, text, makeClientRequestId());
-    if (success) setDraft(jid, '');
+    if (success) {
+      setDraft(jid, '');
+      scrollDetailToBottom();
+    }
   }
 
   return (
@@ -2466,6 +2489,36 @@ function RoomCardV2({
   }, [isProcessing, liveTurnStart]);
   const liveElapsedMs =
     liveTurnStart === null ? null : Math.max(0, tick - liveTurnStart);
+
+  const messagesLen = messages.length;
+  const outputsLen = outputs.length;
+  const pendingLen = pendingMessages.length;
+  const wasNearBottomRef = useRef(true);
+  useEffect(() => {
+    const detail = document.querySelector(
+      '.rooms-detail',
+    ) as HTMLElement | null;
+    if (!detail) return;
+    if (!wasNearBottomRef.current) return;
+    const run = () => {
+      detail.scrollTop = detail.scrollHeight;
+    };
+    requestAnimationFrame(() => requestAnimationFrame(run));
+  }, [entry.jid, messagesLen, outputsLen, pendingLen]);
+  useEffect(() => {
+    const detail = document.querySelector(
+      '.rooms-detail',
+    ) as HTMLElement | null;
+    if (!detail) return;
+    const onScroll = () => {
+      const distance =
+        detail.scrollHeight - detail.scrollTop - detail.clientHeight;
+      wasNearBottomRef.current = distance < 80;
+    };
+    detail.addEventListener('scroll', onScroll, { passive: true });
+    return () => detail.removeEventListener('scroll', onScroll);
+  }, [entry.jid]);
+
   const queueChips: string[] = [];
   if (entry.pendingTasks > 0)
     queueChips.push(`${entry.pendingTasks} ${t.rooms.tasks}`);
