@@ -24,6 +24,7 @@ export function applyBaseSchema(database: Database): void {
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp ON messages(chat_jid, timestamp DESC);
     CREATE TABLE IF NOT EXISTS message_sequence (
       id INTEGER PRIMARY KEY AUTOINCREMENT
     );

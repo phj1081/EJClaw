@@ -9,10 +9,10 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    host: '127.0.0.1',
+    host: process.env.VITE_DEV_HOST ?? '127.0.0.1',
     port: 5174,
     proxy: {
-      '/api': 'http://127.0.0.1:8734',
+      '/api': process.env.VITE_API_TARGET ?? 'http://127.0.0.1:8734',
     },
   },
 });

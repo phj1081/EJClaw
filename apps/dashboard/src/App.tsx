@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import {
   type CreateScheduledTaskInput,
@@ -13,7 +15,7 @@ import {
   type StatusSnapshot,
   createScheduledTask,
   fetchDashboardData,
-  fetchRoomTimeline,
+  fetchRoomsTimelineBatch,
   runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
@@ -45,7 +47,13 @@ type InboxItem = DashboardOverview['inbox'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
 type UsageGroup = 'primary' | 'codex';
 type UsageLimitWindow = 'h5' | 'd7';
-type DashboardView = 'usage' | 'inbox' | 'health' | 'rooms' | 'scheduled';
+type DashboardView =
+  | 'usage'
+  | 'inbox'
+  | 'health'
+  | 'rooms'
+  | 'scheduled'
+  | 'settings';
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
 type TaskResultTone = 'ok' | 'fail' | 'none';
 type TaskActionKey =
@@ -88,7 +96,8 @@ function isDashboardView(
     value === 'inbox' ||
     value === 'health' ||
     value === 'rooms' ||
-    value === 'scheduled'
+    value === 'scheduled' ||
+    value === 'settings'
   );
 }
 
@@ -117,16 +126,441 @@ function readInitialLocale(): Locale {
   return 'en';
 }
 
+function humanizeError(raw: string, t: Messages): string {
+  const lower = raw.toLowerCase();
+  if (/abort|timeout|timed out/.test(lower)) return t.error.timeout;
+  if (/network|fetch failed|failed to fetch|networkerror|offline/.test(lower))
+    return t.error.network;
+  const statusMatch = lower.match(/\b(\d{3})\b/);
+  if (statusMatch) {
+    const code = Number(statusMatch[1]);
+    if (code === 401 || code === 403) return t.error.auth;
+    if (code === 404) return t.error.notFound;
+    if (code >= 500) return t.error.server;
+    if (code >= 400) return t.error.unknown;
+  }
+  return raw || t.error.unknown;
+}
+
+type ParsedSegment =
+  | { kind: 'text'; value: string }
+  | { kind: 'code'; lang: string; value: string }
+  | { kind: 'inline-code'; value: string }
+  | { kind: 'bold'; value: string }
+  | { kind: 'italic'; value: string }
+  | { kind: 'strike'; value: string }
+  | { kind: 'url'; href: string; label: string }
+  | { kind: 'mention'; value: string }
+  | { kind: 'marker'; tone: 'done' | 'fail' | 'info'; value: string }
+  | { kind: 'path'; value: string };
+
+const URL_RE = /\bhttps?:\/\/[^\s)<>]+/g;
+const MENTION_RE = /(^|\s)(@[A-Za-z0-9_-]+)/g;
+const MARKER_RE =
+  /\b(TASK_DONE|TASK_FAILED|TASK_FAIL|TASK_OK|DONE|FAILED|FAIL|OK|ERROR|WARNING|RETRY|STATUS|PASS|PASSED)\b/g;
+const PATH_RE = /(?:^|\s)((?:\/|\.\/|\.\.\/)[^\s)<>]+)/g;
+
+function tokenizeInline(input: string): ParsedSegment[] {
+  if (!input) return [];
+  const segments: ParsedSegment[] = [];
+  const matches: Array<{
+    start: number;
+    end: number;
+    seg: ParsedSegment;
+    priority: number;
+  }> = [];
+  for (const m of input.matchAll(/`([^`\n]+)`/g)) {
+    matches.push({
+      start: m.index ?? 0,
+      end: (m.index ?? 0) + m[0].length,
+      seg: { kind: 'inline-code', value: m[1] },
+      priority: 0,
+    });
+  }
+  for (const m of input.matchAll(/\*\*([^*\n]+)\*\*/g)) {
+    matches.push({
+      start: m.index ?? 0,
+      end: (m.index ?? 0) + m[0].length,
+      seg: { kind: 'bold', value: m[1] },
+      priority: 0,
+    });
+  }
+  for (const m of input.matchAll(/(?<![*\w])\*([^*\n]+?)\*(?!\w)/g)) {
+    matches.push({
+      start: m.index ?? 0,
+      end: (m.index ?? 0) + m[0].length,
+      seg: { kind: 'italic', value: m[1] },
+      priority: 0,
+    });
+  }
+  for (const m of input.matchAll(/~~([^~\n]+)~~/g)) {
+    matches.push({
+      start: m.index ?? 0,
+      end: (m.index ?? 0) + m[0].length,
+      seg: { kind: 'strike', value: m[1] },
+      priority: 0,
+    });
+  }
+  for (const m of input.matchAll(URL_RE)) {
+    matches.push({
+      start: m.index ?? 0,
+      end: (m.index ?? 0) + m[0].length,
+      seg: { kind: 'url', href: m[0], label: m[0].replace(/^https?:\/\//, '') },
+      priority: 1,
+    });
+  }
+  for (const m of input.matchAll(MENTION_RE)) {
+    const idx = (m.index ?? 0) + m[1].length;
+    matches.push({
+      start: idx,
+      end: idx + m[2].length,
+      seg: { kind: 'mention', value: m[2] },
+      priority: 2,
+    });
+  }
+  for (const m of input.matchAll(PATH_RE)) {
+    const lead = m[0].startsWith(' ') ? 1 : 0;
+    const idx = (m.index ?? 0) + lead;
+    matches.push({
+      start: idx,
+      end: idx + m[1].length,
+      seg: { kind: 'path', value: m[1] },
+      priority: 3,
+    });
+  }
+  for (const m of input.matchAll(MARKER_RE)) {
+    const v = m[1];
+    const tone: 'done' | 'fail' | 'info' = /FAIL|ERROR/.test(v)
+      ? 'fail'
+      : /DONE|OK|PASS/.test(v)
+        ? 'done'
+        : 'info';
+    matches.push({
+      start: m.index ?? 0,
+      end: (m.index ?? 0) + v.length,
+      seg: { kind: 'marker', tone, value: v },
+      priority: 4,
+    });
+  }
+  matches.sort((a, b) =>
+    a.start === b.start ? a.priority - b.priority : a.start - b.start,
+  );
+  let cursor = 0;
+  const used: Array<[number, number]> = [];
+  for (const match of matches) {
+    if (match.start < cursor) continue;
+    const overlaps = used.some(
+      ([s, e]) => !(match.end <= s || match.start >= e),
+    );
+    if (overlaps) continue;
+    if (match.start > cursor) {
+      segments.push({ kind: 'text', value: input.slice(cursor, match.start) });
+    }
+    segments.push(match.seg);
+    used.push([match.start, match.end]);
+    cursor = match.end;
+  }
+  if (cursor < input.length) {
+    segments.push({ kind: 'text', value: input.slice(cursor) });
+  }
+  return segments;
+}
+
+type ParsedBlock =
+  | { kind: 'paragraph'; segments: ParsedSegment[] }
+  | { kind: 'code'; lang: string; value: string }
+  | { kind: 'heading'; level: 1 | 2 | 3 | 4; segments: ParsedSegment[] }
+  | { kind: 'list'; items: ParsedSegment[][] }
+  | { kind: 'olist'; items: ParsedSegment[][]; start: number }
+  | { kind: 'quote'; segments: ParsedSegment[] };
+
+function parseTextBlocks(raw: string): ParsedBlock[] {
+  const blocks: ParsedBlock[] = [];
+  const lines = raw.split(/\n/);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      i++;
+      continue;
+    }
+    const heading = trimmed.match(/^(#{1,4})\s+(.*)$/);
+    if (heading) {
+      const level = Math.min(heading[1].length, 4) as 1 | 2 | 3 | 4;
+      blocks.push({
+        kind: 'heading',
+        level,
+        segments: tokenizeInline(heading[2]),
+      });
+      i++;
+      continue;
+    }
+    if (/^>\s+/.test(trimmed)) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+        quoteLines.push(lines[i].replace(/^\s*>\s?/, ''));
+        i++;
+      }
+      blocks.push({
+        kind: 'quote',
+        segments: tokenizeInline(quoteLines.join('\n')),
+      });
+      continue;
+    }
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items: ParsedSegment[][] = [];
+      while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+        const itemText = lines[i].replace(/^\s*[-*]\s+/, '');
+        items.push(tokenizeInline(itemText));
+        i++;
+      }
+      blocks.push({ kind: 'list', items });
+      continue;
+    }
+    const olistMatch = trimmed.match(/^(\d+)\.\s+/);
+    if (olistMatch) {
+      const items: ParsedSegment[][] = [];
+      const start = Number(olistMatch[1]);
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) {
+        const itemText = lines[i].replace(/^\s*\d+\.\s+/, '');
+        items.push(tokenizeInline(itemText));
+        i++;
+      }
+      blocks.push({ kind: 'olist', items, start });
+      continue;
+    }
+    // Plain paragraph: gather consecutive non-empty lines
+    const paraLines: string[] = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !/^(#{1,4})\s+/.test(lines[i].trim()) &&
+      !/^[-*]\s+/.test(lines[i].trim()) &&
+      !/^\d+\.\s+/.test(lines[i].trim()) &&
+      !/^>\s+/.test(lines[i].trim())
+    ) {
+      paraLines.push(lines[i]);
+      i++;
+    }
+    if (paraLines.length > 0) {
+      blocks.push({
+        kind: 'paragraph',
+        segments: tokenizeInline(paraLines.join('\n')),
+      });
+    }
+  }
+  return blocks;
+}
+
+function parseMessageBody(raw: string | null | undefined): ParsedBlock[] {
+  if (!raw) return [];
+  const cleaned = raw
+    .replace(/<\/?internal[^>]*>/gi, '')
+    .replace(/<\/?intern\.{3}/gi, '')
+    .trim();
+  if (!cleaned) return [];
+  const blocks: ParsedBlock[] = [];
+  const fenceRe = /```([A-Za-z0-9_+-]*)\n?([\s\S]*?)```/g;
+  let cursor = 0;
+  let m: RegExpExecArray | null;
+  while ((m = fenceRe.exec(cleaned)) !== null) {
+    if (m.index > cursor) {
+      const pre = cleaned.slice(cursor, m.index).trim();
+      if (pre) blocks.push(...parseTextBlocks(pre));
+    }
+    blocks.push({ kind: 'code', lang: m[1] || '', value: m[2] });
+    cursor = m.index + m[0].length;
+  }
+  if (cursor < cleaned.length) {
+    const tail = cleaned.slice(cursor).trim();
+    if (tail) blocks.push(...parseTextBlocks(tail));
+  }
+  return blocks;
+}
+
+function renderInlineSegments(
+  segments: ParsedSegment[],
+  truncate: number | undefined,
+  usedRef: { used: number },
+): ReactNode[] {
+  const out: ReactNode[] = [];
+  segments.forEach((s, j) => {
+    if (truncate && usedRef.used >= truncate) return;
+    const remaining = truncate ? truncate - usedRef.used : Infinity;
+    if (s.kind === 'text') {
+      const v =
+        s.value.length > remaining
+          ? `${s.value.slice(0, remaining)}…`
+          : s.value;
+      usedRef.used += v.length;
+      out.push(<span key={j}>{v}</span>);
+      return;
+    }
+    if (s.kind === 'inline-code') {
+      usedRef.used += s.value.length;
+      out.push(
+        <code className="parsed-icode" key={j}>
+          {s.value}
+        </code>,
+      );
+      return;
+    }
+    if (s.kind === 'bold') {
+      usedRef.used += s.value.length;
+      out.push(<strong key={j}>{s.value}</strong>);
+      return;
+    }
+    if (s.kind === 'italic') {
+      usedRef.used += s.value.length;
+      out.push(<em key={j}>{s.value}</em>);
+      return;
+    }
+    if (s.kind === 'strike') {
+      usedRef.used += s.value.length;
+      out.push(<s key={j}>{s.value}</s>);
+      return;
+    }
+    if (s.kind === 'url') {
+      usedRef.used += s.label.length;
+      out.push(
+        <a
+          className="parsed-url"
+          href={s.href}
+          key={j}
+          rel="noreferrer noopener"
+          target="_blank"
+        >
+          {s.label}
+        </a>,
+      );
+      return;
+    }
+    if (s.kind === 'mention') {
+      usedRef.used += s.value.length;
+      out.push(
+        <span className="parsed-mention" key={j}>
+          {s.value}
+        </span>,
+      );
+      return;
+    }
+    if (s.kind === 'path') {
+      usedRef.used += s.value.length;
+      out.push(
+        <code className="parsed-path" key={j}>
+          {s.value}
+        </code>,
+      );
+      return;
+    }
+    if (s.kind === 'marker') {
+      usedRef.used += s.value.length;
+      out.push(
+        <span className={`parsed-marker parsed-marker-${s.tone}`} key={j}>
+          {s.value}
+        </span>,
+      );
+      return;
+    }
+  });
+  return out;
+}
+
+function ParsedBody({
+  text,
+  truncate,
+}: {
+  text: string | null | undefined;
+  truncate?: number;
+}): ReactNode {
+  const cleaned = useMemo(() => {
+    if (!text) return '';
+    let out = text
+      .replace(SECRET_ASSIGNMENT_RE, (_m, key) => `${key}=***`)
+      .replace(SECRET_VALUE_RE, '***');
+    if (truncate && out.length > truncate) {
+      out = out.slice(0, truncate) + '…';
+    }
+    return out;
+  }, [text, truncate]);
+
+  if (!cleaned.trim()) {
+    return <span className="parsed-empty">—</span>;
+  }
+
+  return (
+    <div className="parsed-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
+    </div>
+  );
+}
+
+function senderRoleClass(value: string | null | undefined): string {
+  const v = (value ?? '').toLowerCase();
+  if (v.includes('오너') || v.includes('owner')) return 'role-owner';
+  if (v.includes('리뷰어') || v.includes('reviewer')) return 'role-reviewer';
+  if (v.includes('중재자') || v.includes('arbiter')) return 'role-arbiter';
+  return 'role-human';
+}
+
+function sanitizeInboxText(value: string | null | undefined): string {
+  if (!value) return '';
+  return value
+    .replace(/<\/?internal[^>]*>/gi, '')
+    .replace(/<\/?intern\.{3}/gi, '')
+    .replace(/<\/?[a-z][a-z0-9-]*[^>]*>/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function formatDate(value: string | null | undefined, locale: Locale): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(localeTags[locale], {
-    month: '2-digit',
-    day: '2-digit',
+  const now = Date.now();
+  const ageMs = now - date.getTime();
+  if (ageMs >= 0 && ageMs < 60_000) {
+    return locale === 'ko'
+      ? '방금'
+      : locale === 'ja'
+        ? 'たった今'
+        : locale === 'zh'
+          ? '刚刚'
+          : 'just now';
+  }
+  if (ageMs >= 0 && ageMs < 3_600_000) {
+    const mins = Math.floor(ageMs / 60_000);
+    return locale === 'ko'
+      ? `${mins}분 전`
+      : locale === 'ja'
+        ? `${mins}分前`
+        : locale === 'zh'
+          ? `${mins} 分钟前`
+          : `${mins}m ago`;
+  }
+  const sameDay = new Date().toDateString() === date.toDateString();
+  if (sameDay) {
+    return new Intl.DateTimeFormat(localeTags[locale], {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(date);
+  }
+  const time = new Intl.DateTimeFormat(localeTags[locale], {
     hour: '2-digit',
     minute: '2-digit',
-    second: '2-digit',
+    hour12: false,
+  }).format(date);
+  if (locale === 'ko') return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
+  if (locale === 'ja') return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  if (locale === 'zh') return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  return new Intl.DateTimeFormat(localeTags[locale], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   }).format(date);
 }
 
@@ -178,11 +612,21 @@ function formatTaskDate(
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(localeTags[locale], {
-    month: '2-digit',
-    day: '2-digit',
+  const time = new Intl.DateTimeFormat(localeTags[locale], {
     hour: '2-digit',
     minute: '2-digit',
+    hour12: false,
+  }).format(date);
+  if (locale === 'ko')
+    return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
+  if (locale === 'ja' || locale === 'zh')
+    return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  return new Intl.DateTimeFormat(localeTags[locale], {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   }).format(date);
 }
 
@@ -324,6 +768,7 @@ function safePreview(
   const cleaned = (value ?? '')
     .replace(SECRET_ASSIGNMENT_RE, '$1=<redacted>')
     .replace(SECRET_VALUE_RE, '<redacted-token>')
+    .replace(/<\/?internal[^>]*>/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (!cleaned) return fallback;
@@ -512,6 +957,7 @@ function navItems(t: Messages) {
     { href: '#/health', label: t.nav.health, view: 'health' as const },
     { href: '#/rooms', label: t.nav.rooms, view: 'rooms' as const },
     { href: '#/scheduled', label: t.nav.scheduled, view: 'scheduled' as const },
+    { href: '#/settings', label: t.nav.settings, view: 'settings' as const },
   ];
 }
 
@@ -546,6 +992,50 @@ function LanguageSelector({
   );
 }
 
+function SettingsPanel({
+  locale,
+  nickname,
+  onLocaleChange,
+  onNicknameChange,
+  t,
+}: {
+  locale: Locale;
+  nickname: string;
+  onLocaleChange: (locale: Locale) => void;
+  onNicknameChange: (next: string) => void;
+  t: Messages;
+}) {
+  return (
+    <div className="settings-panel">
+      <label className="settings-row">
+        <span className="settings-label">{t.settings.nicknameLabel}</span>
+        <input
+          maxLength={32}
+          onChange={(event) => onNicknameChange(event.target.value)}
+          placeholder={t.settings.nicknamePlaceholder}
+          type="text"
+          value={nickname}
+        />
+        <small className="settings-hint">{t.settings.nicknameHelp}</small>
+      </label>
+      <label className="settings-row">
+        <span className="settings-label">{t.settings.languageLabel}</span>
+        <select
+          aria-label={t.settings.languageLabel}
+          onChange={(event) => onLocaleChange(event.target.value as Locale)}
+          value={locale}
+        >
+          {LOCALES.map((item) => (
+            <option key={item} value={item}>
+              {languageNames[item]}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 function LoadingSkeleton({ t }: { t: Messages }) {
   return (
     <main className="shell shell-loading" aria-busy="true">
@@ -570,11 +1060,10 @@ function LoadingSkeleton({ t }: { t: Messages }) {
 function SideRail({
   activeView,
   canInstall,
+  data,
   installed,
-  locale,
   onNavigate,
   onInstall,
-  onLocaleChange,
   onRefresh,
   online,
   offlineReady,
@@ -584,11 +1073,10 @@ function SideRail({
 }: {
   activeView: DashboardView;
   canInstall: boolean;
+  data: DashboardState | null;
   installed: boolean;
-  locale: Locale;
   onNavigate: (view: DashboardView) => void;
   onInstall: () => void;
-  onLocaleChange: (locale: Locale) => void;
   onRefresh: () => void;
   online: boolean;
   offlineReady: boolean;
@@ -604,6 +1092,29 @@ function SideRail({
         ? t.pwa.ready
         : t.pwa.app;
 
+  const stats = data
+    ? (() => {
+        const queue = data.snapshots.reduce(
+          (acc, snapshot) => {
+            for (const entry of snapshot.entries) {
+              acc.pendingTasks += entry.pendingTasks;
+              if (entry.pendingMessages) acc.pendingMessageRooms += 1;
+              if (entry.status === 'processing') acc.processing += 1;
+            }
+            return acc;
+          },
+          { pendingTasks: 0, pendingMessageRooms: 0, processing: 0 },
+        );
+        return {
+          rooms: data.overview.rooms,
+          inbox: data.overview.inbox.length,
+          processing: queue.processing,
+          pendingTasks: queue.pendingTasks,
+          pendingMessageRooms: queue.pendingMessageRooms,
+        };
+      })()
+    : null;
+
   return (
     <aside className="side-rail" aria-label={t.nav.drawerAria}>
       <div className="side-rail-brand">
@@ -611,20 +1122,48 @@ function SideRail({
         <strong>{t.nav.operations}</strong>
       </div>
       <nav aria-label={t.nav.drawerNavAria}>
-        {navItems(t).map((item) => (
-          <a
-            aria-current={activeView === item.view ? 'page' : undefined}
-            className={activeView === item.view ? 'is-active' : undefined}
-            href={item.href}
-            key={item.href}
-            onClick={() => onNavigate(item.view)}
-          >
-            {item.label}
-          </a>
-        ))}
+        {navItems(t).map((item) => {
+          const badge =
+            item.view === 'inbox' && stats && stats.inbox > 0
+              ? stats.inbox
+              : item.view === 'rooms' && stats && stats.processing > 0
+                ? stats.processing
+                : null;
+          return (
+            <a
+              aria-current={activeView === item.view ? 'page' : undefined}
+              className={activeView === item.view ? 'is-active' : undefined}
+              href={item.href}
+              key={item.href}
+              onClick={() => onNavigate(item.view)}
+            >
+              <span>{item.label}</span>
+              {badge !== null ? (
+                <span className="side-badge">{badge}</span>
+              ) : null}
+            </a>
+          );
+        })}
       </nav>
-      <LanguageSelector locale={locale} onLocaleChange={onLocaleChange} t={t} />
-      <div className={`pwa-card ${online ? 'is-online' : 'is-offline'}`}>
+      {stats ? (
+        <div className="side-stats" aria-label={t.control.aria}>
+          <div className="side-stat">
+            <span>{t.metrics.rooms}</span>
+            <strong>
+              {stats.rooms.active + stats.rooms.waiting}/{stats.rooms.total}
+            </strong>
+          </div>
+          <div className="side-stat">
+            <span>{t.control.queue}</span>
+            <strong>{stats.pendingTasks}</strong>
+          </div>
+          <div className="side-stat">
+            <span>{t.panels.inboxQueue}</span>
+            <strong>{stats.inbox}</strong>
+          </div>
+        </div>
+      ) : null}
+      <div className={`side-pwa ${online ? 'is-online' : 'is-offline'}`}>
         <span>{online ? t.pwa.online : t.pwa.offline}</span>
         <strong>{pwaState}</strong>
       </div>
@@ -759,11 +1298,6 @@ function SectionNav({
                 </a>
               ))}
             </nav>
-            <LanguageSelector
-              locale={locale}
-              onLocaleChange={onLocaleChange}
-              t={t}
-            />
             <div className="drawer-pwa-row">
               <span>
                 {!secureContext
@@ -994,7 +1528,7 @@ function InboxPanel({
               <div className="inbox-card-head">
                 <div>
                   <span className="eyebrow">{t.inbox.kinds[item.kind]}</span>
-                  <strong>{item.title}</strong>
+                  <strong>{sanitizeInboxText(item.title) || item.title}</strong>
                 </div>
                 <div className="inbox-card-badges">
                   <span className={`pill pill-${item.severity}`}>
@@ -1005,7 +1539,7 @@ function InboxPanel({
                   ) : null}
                 </div>
               </div>
-              <p>{item.summary || t.inbox.noSummary}</p>
+              <p>{sanitizeInboxText(item.summary) || t.inbox.noSummary}</p>
               <div className="inbox-meta">
                 <span>
                   <small>{t.inbox.occurred}</small>
@@ -1038,7 +1572,8 @@ function InboxPanel({
                     const busy = taskActionKey === actionKey;
                     return (
                       <button
-                        className={`task-action task-action-${action}`}
+                        aria-busy={busy || undefined}
+                        className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
                         disabled={busy}
                         key={action}
                         onClick={() => onTaskAction(linkedTask, action)}
@@ -1057,7 +1592,8 @@ function InboxPanel({
                     const busy = inboxActionKey === actionKey;
                     return (
                       <button
-                        className={`task-action task-action-${action}`}
+                        aria-busy={busy || undefined}
+                        className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
                         disabled={busy}
                         key={action}
                         onClick={() => onInboxAction(item, action)}
@@ -1606,6 +2142,640 @@ function RoomPanel({
   );
 }
 
+type RoomFilter = 'all' | 'processing' | 'waiting' | 'inactive';
+type RoomSort = 'recent' | 'name' | 'queue';
+
+const ROOM_FILTER_ORDER: RoomFilter[] = [
+  'all',
+  'processing',
+  'waiting',
+  'inactive',
+];
+
+function roomFilterLabel(f: RoomFilter, t: Messages): string {
+  if (f === 'all') return t.rooms.filterAll;
+  return statusLabel(f, t);
+}
+
+function roomSortLabel(s: RoomSort, t: Messages): string {
+  if (s === 'recent') return t.rooms.sortRecent;
+  if (s === 'queue') return t.rooms.sortQueue;
+  return t.rooms.sortName;
+}
+
+interface RoomEntryWithService {
+  jid: string;
+  name: string;
+  folder: string;
+  agentType: string;
+  status: 'processing' | 'waiting' | 'inactive';
+  elapsedMs: number | null;
+  pendingMessages: boolean;
+  pendingTasks: number;
+  serviceId: string;
+}
+
+function RoomBoardV2({
+  inbox,
+  onSendRoomMessage,
+  roomActivity,
+  roomActivityLoading,
+  roomMessageKey,
+  locale,
+  snapshots,
+  t,
+}: {
+  inbox: InboxItem[];
+  onSendRoomMessage: (
+    roomJid: string,
+    text: string,
+    requestId: string,
+  ) => Promise<boolean>;
+  roomActivity: RoomActivityMap;
+  roomActivityLoading: boolean;
+  roomMessageKey: string | null;
+  locale: Locale;
+  snapshots: StatusSnapshot[];
+  t: Messages;
+}) {
+  const [filter, setFilter] = useState<RoomFilter>('all');
+  const [sort, setSort] = useState<RoomSort>('recent');
+  const [selectedJid, setSelectedJid] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+
+  const allEntries: RoomEntryWithService[] = snapshots.flatMap((snapshot) =>
+    snapshot.entries.map((entry) => ({
+      ...entry,
+      serviceId: snapshot.serviceId,
+    })),
+  );
+
+  if (allEntries.length === 0) {
+    return <EmptyState>{t.rooms.empty}</EmptyState>;
+  }
+
+  const counts = {
+    all: allEntries.length,
+    processing: allEntries.filter((e) => e.status === 'processing').length,
+    waiting: allEntries.filter((e) => e.status === 'waiting').length,
+    inactive: allEntries.filter((e) => e.status === 'inactive').length,
+  };
+
+  const filtered = allEntries.filter(
+    (e) => filter === 'all' || e.status === filter,
+  );
+  const sorted = [...filtered].sort((a, b) => {
+    if (sort === 'name') return a.name.localeCompare(b.name);
+    if (sort === 'queue') {
+      const aQ = a.pendingTasks + (a.pendingMessages ? 1 : 0);
+      const bQ = b.pendingTasks + (b.pendingMessages ? 1 : 0);
+      return bQ - aQ;
+    }
+    const aA = roomActivity[a.jid]?.pairedTask?.updatedAt;
+    const bA = roomActivity[b.jid]?.pairedTask?.updatedAt;
+    const aT = aA ? new Date(aA).getTime() : a.elapsedMs ?? 0;
+    const bT = bA ? new Date(bA).getTime() : b.elapsedMs ?? 0;
+    return bT - aT;
+  });
+
+  const selectedEntry =
+    sorted.find((e) => e.jid === selectedJid) ?? sorted[0] ?? null;
+
+  function setDraft(jid: string, value: string) {
+    setDrafts((previous) => ({ ...previous, [jid]: value }));
+  }
+
+  async function submitRoomMessage(jid: string) {
+    const text = drafts[jid]?.trim();
+    if (!text) return;
+    const success = await onSendRoomMessage(jid, text, makeClientRequestId());
+    if (success) setDraft(jid, '');
+  }
+
+  return (
+    <div className="rooms-v2">
+      <div className="rooms-toolbar" role="toolbar" aria-label="Rooms filters">
+        <div className="rooms-filters">
+          {ROOM_FILTER_ORDER.map((f) => (
+            <button
+              aria-pressed={filter === f}
+              className={filter === f ? 'is-active' : undefined}
+              key={f}
+              onClick={() => setFilter(f)}
+              type="button"
+            >
+              {roomFilterLabel(f, t)}
+              <span>{counts[f]}</span>
+            </button>
+          ))}
+        </div>
+        <label className="rooms-sort">
+          <span>{t.rooms.sortLabel}</span>
+          <select
+            onChange={(e) => setSort(e.target.value as RoomSort)}
+            value={sort}
+          >
+            <option value="recent">{roomSortLabel('recent', t)}</option>
+            <option value="queue">{roomSortLabel('queue', t)}</option>
+            <option value="name">{roomSortLabel('name', t)}</option>
+          </select>
+        </label>
+      </div>
+
+      {sorted.length === 0 ? (
+        <EmptyState>{t.rooms.empty}</EmptyState>
+      ) : (
+        <div className="rooms-twopane">
+          <aside className="rooms-list" aria-label={t.rooms.cardsAria}>
+            {sorted.map((entry) => {
+              const items = inbox.filter((it) => it.roomJid === entry.jid);
+              const queue = entry.pendingTasks + (entry.pendingMessages ? 1 : 0);
+              const active = (selectedEntry?.jid ?? null) === entry.jid;
+              return (
+                <button
+                  aria-current={active ? 'page' : undefined}
+                  className={`rooms-list-item status-${entry.status}${active ? ' is-active' : ''}`}
+                  key={`${entry.serviceId}:${entry.jid}`}
+                  onClick={() => setSelectedJid(entry.jid)}
+                  type="button"
+                >
+                  <span className={`room-pulse pulse-${entry.status}`}>
+                    {entry.status === 'processing' ? (
+                      <span className="pulse-dot" />
+                    ) : null}
+                  </span>
+                  <span className="rooms-list-text">
+                    <strong>{entry.name}</strong>
+                    <small>{entry.agentType}</small>
+                  </span>
+                  {items.length > 0 ? (
+                    <span
+                      className={`rooms-list-bell sev-${items[0].severity}`}
+                      title={items.map((i) => t.inbox.kinds[i.kind]).join(', ')}
+                    >
+                      {items.length}
+                    </span>
+                  ) : null}
+                  {queue > 0 ? (
+                    <span className="rooms-list-queue">{queue}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </aside>
+          <main className="rooms-detail">
+            {selectedEntry ? (
+              <RoomCardV2
+                activity={roomActivity[selectedEntry.jid]}
+                activityLoading={roomActivityLoading}
+                busy={roomMessageKey === selectedEntry.jid}
+                draft={drafts[selectedEntry.jid] ?? ''}
+                entry={selectedEntry}
+                expanded={true}
+                inboxItems={inbox.filter(
+                  (item) => item.roomJid === selectedEntry.jid,
+                )}
+                key={`${selectedEntry.serviceId}:${selectedEntry.jid}`}
+                locale={locale}
+                onDraftChange={(v) => setDraft(selectedEntry.jid, v)}
+                onSendMessage={() =>
+                  void submitRoomMessage(selectedEntry.jid)
+                }
+                onToggle={() => {}}
+                pinned={true}
+                t={t}
+              />
+            ) : (
+              <EmptyState>{t.rooms.empty}</EmptyState>
+            )}
+          </main>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RoomCardV2({
+  activity,
+  activityLoading,
+  busy,
+  draft,
+  entry,
+  expanded,
+  inboxItems,
+  locale,
+  onDraftChange,
+  onSendMessage,
+  onToggle,
+  pinned = false,
+  t,
+}: {
+  activity: DashboardRoomActivity | undefined;
+  activityLoading: boolean;
+  busy: boolean;
+  draft: string;
+  entry: RoomEntryWithService;
+  expanded: boolean;
+  inboxItems: InboxItem[];
+  locale: Locale;
+  onDraftChange: (value: string) => void;
+  onSendMessage: () => void;
+  onToggle: () => void;
+  pinned?: boolean;
+  t: Messages;
+}) {
+  const task = activity?.pairedTask ?? null;
+  const turn = task?.currentTurn ?? null;
+  const outputs = task?.outputs ?? [];
+  const latestOutput = outputs.at(-1) ?? null;
+  const messages = activity?.messages ?? [];
+  const isProcessing = entry.status === 'processing';
+  const liveTurnStart =
+    turn && turn.completedAt === null
+      ? new Date(turn.createdAt).getTime()
+      : null;
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!isProcessing || liveTurnStart === null) return;
+    const id = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [isProcessing, liveTurnStart]);
+  const liveElapsedMs =
+    liveTurnStart === null ? null : Math.max(0, tick - liveTurnStart);
+  const queueChips: string[] = [];
+  if (entry.pendingTasks > 0)
+    queueChips.push(`${entry.pendingTasks} ${t.rooms.tasks}`);
+  if (entry.pendingMessages) queueChips.push(t.rooms.queueWaitingMessages);
+  const lastUpdated = turn?.updatedAt ?? task?.updatedAt ?? null;
+  const WATCHER_RE =
+    /^\s*(?:CI 완료|Build |Deploy |Lint |Release |Sentry |\[CI\]|\[Watcher\]|GitHub Actions)/i;
+  const isWatcherMsg = (m: (typeof messages)[number]) =>
+    m.sourceKind === 'trusted_external_bot' ||
+    (m.sourceKind === 'bot' && WATCHER_RE.test(m.content));
+  const lastWatcher = [...messages].reverse().find(isWatcherMsg) ?? null;
+  const watcherCount = messages.filter(isWatcherMsg).length;
+  const watcherMessages = messages.filter(isWatcherMsg);
+  type ThreadEntry = {
+    id: string;
+    senderName: string;
+    content: string;
+    timestamp: string;
+    isFromMe: boolean;
+    isBotMessage: boolean;
+    sourceKind: string;
+    verdict?: string | null;
+    turnNumber?: number;
+  };
+  const humanMessages: ThreadEntry[] = messages
+    .filter(
+      (m) =>
+        m.sourceKind === 'human' || m.sourceKind === 'ipc_injected_human',
+    )
+    .map((m) => ({
+      id: m.id,
+      senderName: m.senderName,
+      content: m.content,
+      timestamp: m.timestamp,
+      isFromMe: m.isFromMe,
+      isBotMessage: false,
+      sourceKind: m.sourceKind,
+    }));
+  const outputEntries: ThreadEntry[] = outputs.map((o) => ({
+    id: `out:${o.id}`,
+    senderName: o.role,
+    content: o.outputText,
+    timestamp: o.createdAt,
+    isFromMe: false,
+    isBotMessage: true,
+    sourceKind: 'agent_output',
+    verdict: o.verdict,
+    turnNumber: o.turnNumber,
+  }));
+  const agentMessages: ThreadEntry[] = [
+    ...humanMessages,
+    ...outputEntries,
+  ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+  return (
+    <article
+      aria-expanded={pinned ? undefined : expanded}
+      className={`room-card-v2 status-${entry.status}${expanded ? ' is-expanded' : ''}${pinned ? ' is-pinned' : ''}`}
+      onClick={pinned ? undefined : onToggle}
+      onKeyDown={
+        pinned
+          ? undefined
+          : (e) => {
+              if (e.target !== e.currentTarget) return;
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onToggle();
+              }
+            }
+      }
+      role={pinned ? undefined : 'button'}
+      tabIndex={pinned ? undefined : 0}
+    >
+      <div className="room-card-head">
+        <span className={`room-pulse pulse-${entry.status}`}>
+          {isProcessing ? <span className="pulse-dot" /> : null}
+        </span>
+        <span className="room-title-block">
+          <strong>{entry.name}</strong>
+          <span className="room-sub">
+            <em>{entry.agentType}</em>
+            {inboxItems.length > 0 ? (
+              <span className="room-inbox-badges" aria-label={t.panels.inbox}>
+                {inboxItems.slice(0, 3).map((item) => (
+                  <span
+                    className={`room-inbox-pip sev-${item.severity}`}
+                    key={item.id}
+                    title={t.inbox.kinds[item.kind]}
+                  >
+                    {t.inbox.kinds[item.kind]}
+                  </span>
+                ))}
+              </span>
+            ) : null}
+          </span>
+        </span>
+        {!isProcessing ? (
+          <span className={`room-status pill pill-${entry.status}`}>
+            {statusLabel(entry.status, t)}
+          </span>
+        ) : (
+          <span />
+        )}
+        {!pinned ? (
+          <span className="room-toggle" aria-hidden>
+            {expanded ? '▾' : '▸'}
+          </span>
+        ) : null}
+      </div>
+
+      {turn && !isProcessing ? (
+        <div className="room-current-turn">
+          <span>
+            <strong className={senderRoleClass(turn.role)}>{turn.role}</strong>
+            <em>{turn.intentKind}</em>
+            {turn.attemptNo > 1 ? (
+              <small>
+                {t.rooms.attempt} {turn.attemptNo}
+              </small>
+            ) : null}
+          </span>
+          {task && task.roundTripCount > 0 ? (
+            <small>· {t.rooms.round} {task.roundTripCount}</small>
+          ) : null}
+          {lastUpdated ? (
+            <small style={{ marginLeft: 'auto' }}>
+              {formatDate(lastUpdated, locale)}
+            </small>
+          ) : null}
+        </div>
+      ) : null}
+
+      {(queueChips.length > 0 || (entry.elapsedMs && entry.elapsedMs > 0 && isProcessing)) ? (
+        <div className="room-card-meta">
+          {queueChips.length > 0 ? (
+            <span className="meta-cell">
+              <strong>{queueChips.join(' · ')}</strong>
+            </span>
+          ) : null}
+          {isProcessing && entry.elapsedMs ? (
+            <span className="meta-cell">
+              <strong>{formatDuration(entry.elapsedMs, t)}</strong>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!expanded && isProcessing && turn ? (
+        <div className="room-live">
+          <header>
+            <span className="live-dot" aria-hidden />
+            <span className="live-label">LIVE</span>
+            <strong className={senderRoleClass(turn.role)}>{turn.role}</strong>
+            <em>{turn.intentKind}</em>
+            <span className="live-state pill pill-processing">{turn.state}</span>
+            {turn.executorServiceId ? (
+              <span className="live-exec">{turn.executorServiceId}</span>
+            ) : null}
+            {turn.attemptNo > 1 ? (
+              <span className="live-attempt">
+                {t.rooms.attempt} {turn.attemptNo}
+              </span>
+            ) : null}
+            <time>
+              {formatDate(turn.progressUpdatedAt ?? turn.updatedAt, locale)}
+            </time>
+          </header>
+          {turn.progressText && turn.progressText.trim() ? (
+            <pre className="live-progress">{turn.progressText}</pre>
+          ) : turn.activeRunId ? (
+            <code className="live-run">{turn.activeRunId}</code>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!expanded && latestOutput && !isProcessing ? (
+        <div className="room-preview">
+          <ParsedBody text={latestOutput.outputText} truncate={140} />
+        </div>
+      ) : null}
+
+      {!expanded && watcherCount > 0 && lastWatcher ? (
+        <div className="room-watcher-strip">
+          <span className="watcher-tag">워쳐 {watcherCount}</span>
+          <span className="watcher-line">
+            <strong className={senderRoleClass(lastWatcher.senderName)}>
+              {lastWatcher.senderName}
+            </strong>
+            <span>{lastWatcher.content.slice(0, 90)}</span>
+          </span>
+          <time>{formatDate(lastWatcher.timestamp, locale)}</time>
+        </div>
+      ) : null}
+
+      {!expanded && !latestOutput && !isProcessing && !activityLoading ? (
+        <p className="room-empty">{t.rooms.noActivity}</p>
+      ) : null}
+
+      {!expanded && activityLoading && !activity ? (
+        <p className="room-empty">{t.rooms.loadingActivity}</p>
+      ) : null}
+
+      {expanded ? (
+        <div
+          className="room-expanded"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {turn?.lastError ? (
+            <div className="room-alert">
+              <strong>{t.rooms.error}</strong>
+              <ParsedBody text={turn.lastError} />
+            </div>
+          ) : null}
+
+          <section className="room-section">
+            <header>
+              <h4>{t.rooms.activity}</h4>
+              <small>{agentMessages.length}</small>
+            </header>
+            {agentMessages.length === 0 && !(isProcessing && turn) ? (
+              <p className="room-empty">{t.rooms.noActivity}</p>
+            ) : (
+              <ol className="room-timeline">
+                {agentMessages.map((entry) => {
+                  const verdict = entry.verdict;
+                  const verdictTone = verdict
+                    ? /fail|error/i.test(verdict)
+                      ? 'fail'
+                      : /done|ok|pass/i.test(verdict)
+                        ? 'done'
+                        : 'info'
+                    : null;
+                  const sectionClass = senderRoleClass(entry.senderName).replace(
+                    'role-',
+                    'role-section-',
+                  );
+                  return (
+                    <li
+                      className={`room-timeline-item ${sectionClass}`}
+                      key={entry.id}
+                    >
+                      <header className="room-timeline-header">
+                        <span
+                          className={`role-chip ${senderRoleClass(entry.senderName)}`}
+                        >
+                          {entry.senderName}
+                        </span>
+                        <time>{formatDate(entry.timestamp, locale)}</time>
+                        {entry.turnNumber !== undefined ? (
+                          <span className="parsed-marker parsed-marker-info">
+                            #{entry.turnNumber}
+                          </span>
+                        ) : null}
+                        {verdict ? (
+                          <span
+                            className={`parsed-marker parsed-marker-${verdictTone}`}
+                          >
+                            {verdict}
+                          </span>
+                        ) : null}
+                      </header>
+                      <div className="room-timeline-body">
+                        <ParsedBody text={entry.content} />
+                      </div>
+                    </li>
+                  );
+                })}
+                {turn &&
+                turn.completedAt === null &&
+                (isProcessing ||
+                  (turn.progressText && turn.progressText.trim())) ? (
+                  <li
+                    className={`room-timeline-item ${senderRoleClass(turn.role).replace('role-', 'role-section-')} ${isProcessing ? 'room-timeline-live' : 'room-timeline-paused'}`}
+                  >
+                    <header className="room-timeline-header">
+                      {isProcessing ? (
+                        <span
+                          className="live-dot live-dot-inline"
+                          aria-hidden
+                        />
+                      ) : (
+                        <span className="paused-dot" aria-hidden />
+                      )}
+                      <span
+                        className={`role-chip ${senderRoleClass(turn.role)}`}
+                      >
+                        {turn.role}
+                      </span>
+                      <time>
+                        {formatDate(
+                          turn.progressUpdatedAt ?? turn.updatedAt,
+                          locale,
+                        )}
+                      </time>
+                      {liveElapsedMs !== null ? (
+                        <span className="live-elapsed">
+                          +{formatDuration(liveElapsedMs, t)}
+                        </span>
+                      ) : null}
+                      <span
+                        className={
+                          isProcessing ? 'live-label' : 'live-label paused'
+                        }
+                      >
+                        {isProcessing ? 'LIVE' : '중단됨'}
+                      </span>
+                      <em>{turn.intentKind}</em>
+                      <span
+                        className={`live-state pill pill-${isProcessing ? 'processing' : 'inactive'}`}
+                      >
+                        {turn.state}
+                      </span>
+                    </header>
+                    <div className="room-timeline-body">
+                      {turn.progressText && turn.progressText.trim() ? (
+                        <pre className="live-progress">{turn.progressText}</pre>
+                      ) : (
+                        <p className="room-empty">{t.rooms.loadingActivity}</p>
+                      )}
+                    </div>
+                  </li>
+                ) : null}
+              </ol>
+            )}
+          </section>
+
+          {watcherMessages.length > 0 ? (
+            <details className="room-watcher-fold">
+              <summary>
+                <span className="watcher-tag">워쳐</span>
+                <small>{watcherMessages.length}</small>
+              </summary>
+              <ul className="room-watcher-list">
+                {watcherMessages.map((message) => (
+                  <li className="room-watcher-item" key={message.id}>
+                    <header>
+                      <strong className={senderRoleClass(message.senderName)}>
+                        {message.senderName}
+                      </strong>
+                      <time>{formatDate(message.timestamp, locale)}</time>
+                    </header>
+                    <ParsedBody text={message.content} truncate={200} />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+
+          <section className="room-section room-compose">
+            <header>
+              <h4>{t.rooms.message}</h4>
+            </header>
+            <RoomMessageForm
+              busy={busy}
+              onChange={onDraftChange}
+              onSubmit={onSendMessage}
+              t={t}
+              value={draft}
+            />
+            <details className="room-detail-fold">
+              <summary>{t.rooms.details}</summary>
+              <p className="room-id">
+                {entry.folder} · {entry.jid} · {entry.serviceId} ·{' '}
+                {entry.agentType}
+              </p>
+            </details>
+          </section>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 function UsageQuotaMeter({
   row,
   rowName,
@@ -1939,7 +3109,8 @@ function TaskPanel({
                           const busy = taskActionKey === actionKey;
                           return (
                             <button
-                              className={`task-action task-action-${action}`}
+                              aria-busy={busy || undefined}
+                              className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
                               disabled={busy}
                               key={action}
                               onClick={() => onTaskAction(task, action)}
@@ -2131,6 +3302,18 @@ function App() {
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
   const [roomActivity, setRoomActivity] = useState<RoomActivityMap>({});
   const [roomActivityLoading, setRoomActivityLoading] = useState(false);
+  const [nickname, setNicknameState] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    return window.localStorage.getItem('ejclaw-nickname') ?? '';
+  });
+  function setNickname(next: string) {
+    const trimmed = next.trim().slice(0, 32);
+    setNicknameState(trimmed);
+    if (typeof window !== 'undefined') {
+      if (trimmed) window.localStorage.setItem('ejclaw-nickname', trimmed);
+      else window.localStorage.removeItem('ejclaw-nickname');
+    }
+  }
   const t = messages[locale];
   const secureContext =
     typeof window === 'undefined' ? true : window.isSecureContext;
@@ -2263,12 +3446,52 @@ function App() {
     requestId: string,
   ) {
     setRoomMessageKey(roomJid);
+    const optimisticId = `opt:${requestId}`;
+    const displayName = nickname || 'Web Dashboard';
+    const optimisticMsg = {
+      id: optimisticId,
+      sender: 'me',
+      senderName: displayName,
+      content: text,
+      timestamp: new Date().toISOString(),
+      isFromMe: true,
+      isBotMessage: false,
+      sourceKind: 'human' as const,
+    };
+    setRoomActivity((prev) => {
+      const existing = prev[roomJid];
+      if (!existing) return prev;
+      return {
+        ...prev,
+        [roomJid]: {
+          ...existing,
+          messages: [...existing.messages, optimisticMsg],
+        },
+      };
+    });
     try {
-      await sendRoomMessage(roomJid, text, requestId);
-      await refresh(false);
+      await sendRoomMessage(roomJid, text, requestId, nickname || null);
+      try {
+        const fresh = await fetchRoomsTimelineBatch();
+        setRoomActivity(fresh);
+      } catch {
+        /* refresh will retry on next poll */
+      }
+      void refresh(false);
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+      setRoomActivity((prev) => {
+        const existing = prev[roomJid];
+        if (!existing) return prev;
+        return {
+          ...prev,
+          [roomJid]: {
+            ...existing,
+            messages: existing.messages.filter((m) => m.id !== optimisticId),
+          },
+        };
+      });
       return false;
     } finally {
       setRoomMessageKey(null);
@@ -2377,39 +3600,43 @@ function App() {
     return () => window.clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    if (activeView !== 'rooms' || !data) return;
-
-    const jids = [
+  const roomsJidsKey = useMemo(() => {
+    if (!data) return '';
+    return [
       ...new Set(
         data.snapshots.flatMap((snapshot) =>
           snapshot.entries.map((entry) => entry.jid),
         ),
       ),
-    ];
-    if (jids.length === 0) {
+    ]
+      .sort()
+      .join('|');
+  }, [data]);
+
+  const roomsLastUpdatedKey = useMemo(() => {
+    if (!data) return '';
+    return data.snapshots
+      .map((s) => s.updatedAt)
+      .sort()
+      .join('|');
+  }, [data]);
+
+  useEffect(() => {
+    if (activeView !== 'rooms' || !data) return;
+    if (!roomsJidsKey) {
       setRoomActivity({});
       return;
     }
 
     let cancelled = false;
     setRoomActivityLoading(true);
-    void Promise.all(
-      jids.map(async (jid) => {
-        try {
-          return [jid, await fetchRoomTimeline(jid)] as const;
-        } catch {
-          return [jid, null] as const;
-        }
-      }),
-    )
-      .then((entries) => {
+    void fetchRoomsTimelineBatch()
+      .then((map) => {
         if (cancelled) return;
-        const next: RoomActivityMap = {};
-        for (const [jid, activity] of entries) {
-          if (activity) next[jid] = activity;
-        }
-        setRoomActivity(next);
+        setRoomActivity(map);
+      })
+      .catch(() => {
+        if (cancelled) return;
       })
       .finally(() => {
         if (!cancelled) setRoomActivityLoading(false);
@@ -2418,7 +3645,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeView, data]);
+  }, [activeView, roomsJidsKey, roomsLastUpdatedKey]);
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -2444,13 +3671,12 @@ function App() {
       <SideRail
         activeView={activeView}
         canInstall={canInstall}
+        data={data}
         installed={installed}
-        locale={locale}
         offlineReady={offlineReady}
         online={online}
         onInstall={() => void handleInstallApp()}
         onNavigate={navigateToView}
-        onLocaleChange={setDashboardLocale}
         onRefresh={() => void refresh(true)}
         refreshing={refreshing}
         secureContext={secureContext}
@@ -2477,9 +3703,10 @@ function App() {
         />
 
         {error ? (
-          <section className="error-card">
+          <section className="error-card" role="alert" aria-live="polite">
             <span>
-              {t.error.api}: {error}
+              <strong>{t.error.api}</strong>
+              <small>{humanizeError(error, t)}</small>
             </span>
             <button disabled={refreshing} onClick={() => void refresh(true)}>
               {t.actions.retry}
@@ -2557,7 +3784,8 @@ function App() {
                   <h2>{t.panels.rooms}</h2>
                   <span>{t.panels.queue}</span>
                 </div>
-                <RoomPanel
+                <RoomBoardV2
+                  inbox={data.overview.inbox}
                   onSendRoomMessage={handleRoomMessage}
                   roomActivity={roomActivity}
                   roomActivityLoading={roomActivityLoading}
@@ -2587,6 +3815,21 @@ function App() {
                   rooms={roomOptions}
                   taskActionKey={taskActionKey}
                   tasks={data.tasks}
+                  t={t}
+                />
+              </section>
+            ) : null}
+
+            {activeView === 'settings' ? (
+              <section className="panel view-panel" id="settings">
+                <div className="panel-title">
+                  <h2>{t.settings.title}</h2>
+                </div>
+                <SettingsPanel
+                  locale={locale}
+                  nickname={nickname}
+                  onLocaleChange={setDashboardLocale}
+                  onNicknameChange={setNickname}
                   t={t}
                 />
               </section>

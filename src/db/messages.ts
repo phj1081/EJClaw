@@ -319,28 +319,72 @@ export function getMessagesSinceSeqFromDatabase(
   return rows.map(normalizeMessageRow);
 }
 
+const recentChatMessagesStmtCache = new WeakMap<Database, ReturnType<Database['prepare']>>();
+
 export function getRecentChatMessagesFromDatabase(
   database: Database,
   chatJid: string,
   limit: number = 20,
 ): NewMessage[] {
-  const sql = `
-    SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, message_source_kind
-      FROM messages
-      WHERE chat_jid = ?
-        AND content != '' AND content IS NOT NULL
-      ORDER BY timestamp DESC
-      LIMIT ?
-    ) ORDER BY timestamp
-  `;
-  const rows = database.prepare(sql).all(chatJid, limit) as Array<
+  let stmt = recentChatMessagesStmtCache.get(database);
+  if (!stmt) {
+    stmt = database.prepare(`
+      SELECT * FROM (
+        SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, message_source_kind
+        FROM messages
+        WHERE chat_jid = ?
+          AND content != '' AND content IS NOT NULL
+        ORDER BY timestamp DESC
+        LIMIT ?
+      ) ORDER BY timestamp
+    `);
+    recentChatMessagesStmtCache.set(database, stmt);
+  }
+  const rows = stmt.all(chatJid, limit) as Array<
     NewMessage & {
       is_from_me?: boolean | number;
       is_bot_message?: boolean | number;
     }
   >;
   return rows.map(normalizeMessageRow);
+}
+
+export function getRecentChatMessagesBatchFromDatabase(
+  database: Database,
+  chatJids: string[],
+  limit: number = 8,
+): Map<string, NewMessage[]> {
+  const out = new Map<string, NewMessage[]>();
+  if (chatJids.length === 0) return out;
+  const placeholders = chatJids.map(() => '?').join(',');
+  const sql = `
+    WITH ranked AS (
+      SELECT id, chat_jid, sender, sender_name, content, timestamp,
+             is_from_me, is_bot_message, message_source_kind,
+             ROW_NUMBER() OVER (PARTITION BY chat_jid ORDER BY timestamp DESC) AS rn
+        FROM messages
+       WHERE chat_jid IN (${placeholders})
+         AND content != '' AND content IS NOT NULL
+    )
+    SELECT id, chat_jid, sender, sender_name, content, timestamp,
+           is_from_me, is_bot_message, message_source_kind
+      FROM ranked
+     WHERE rn <= ?
+     ORDER BY chat_jid, timestamp ASC
+  `;
+  const rows = database.prepare(sql).all(...chatJids, limit) as Array<
+    NewMessage & {
+      is_from_me?: boolean | number;
+      is_bot_message?: boolean | number;
+    }
+  >;
+  for (const row of rows) {
+    const normalized = normalizeMessageRow(row);
+    const existing = out.get(normalized.chat_jid);
+    if (existing) existing.push(normalized);
+    else out.set(normalized.chat_jid, [normalized]);
+  }
+  return out;
 }
 
 export function getLastHumanMessageTimestampFromDatabase(

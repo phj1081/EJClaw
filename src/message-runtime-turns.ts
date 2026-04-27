@@ -119,6 +119,7 @@ interface CreateExecuteTurnDeps {
     deliveryRole: PairedRoomRole | null;
     pairedRoom: boolean;
   }) => Promise<void>;
+  recordTurnProgress: (turnId: string, progressText: string) => void;
 }
 
 export function createRunAgent(deps: {
@@ -190,6 +191,8 @@ export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
       deliveryRole: resolvedDeliveryRole,
       deliveryServiceId: resolvedDeliveryServiceId,
       pairedTurnIdentity: args.pairedTurnIdentity ?? null,
+      recordTurnProgress: (turnId, progressText) =>
+        deps.recordTurnProgress(turnId, progressText),
       canDeliverFinalText: () => {
         if (!args.pairedTurnIdentity) {
           return true;

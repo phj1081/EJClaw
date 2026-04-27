@@ -131,6 +131,8 @@ export interface DashboardRoomActivity {
       updatedAt: string;
       completedAt: string | null;
       lastError: string | null;
+      progressText: string | null;
+      progressUpdatedAt: string | null;
     } | null;
     outputs: Array<{
       id: number;
@@ -239,6 +241,14 @@ export async function fetchRoomTimeline(
   );
 }
 
+export async function fetchRoomsTimelineBatch(): Promise<
+  Record<string, DashboardRoomActivity>
+> {
+  return fetchJson<Record<string, DashboardRoomActivity>>(
+    '/api/rooms-timeline',
+  );
+}
+
 export async function runScheduledTaskAction(
   taskId: string,
   action: DashboardTaskAction,
@@ -324,9 +334,11 @@ export async function sendRoomMessage(
   roomJid: string,
   text: string,
   requestId: string,
+  nickname?: string | null,
 ): Promise<{ ok: true; id: string; queued: boolean }> {
   return postJson(`/api/rooms/${encodeURIComponent(roomJid)}/messages`, {
     requestId,
     text,
+    nickname: nickname ?? undefined,
   });
 }

@@ -25,12 +25,26 @@ export interface Messages {
     usage: string;
     rooms: string;
     scheduled: string;
+    settings: string;
   };
   language: {
     label: string;
   };
+  settings: {
+    title: string;
+    nicknameLabel: string;
+    nicknamePlaceholder: string;
+    nicknameHelp: string;
+    languageLabel: string;
+  };
   error: {
     api: string;
+    network: string;
+    timeout: string;
+    server: string;
+    notFound: string;
+    auth: string;
+    unknown: string;
   };
   control: {
     aria: string;
@@ -146,6 +160,8 @@ export interface Messages {
     agent: string;
     status: string;
     queue: string;
+    queueWaitingMessages: string;
+    tasks: string;
     elapsed: string;
     activity: string;
     loadingActivity: string;
@@ -169,6 +185,12 @@ export interface Messages {
     messagePlaceholder: string;
     send: string;
     sending: string;
+    error: string;
+    filterAll: string;
+    sortRecent: string;
+    sortName: string;
+    sortQueue: string;
+    sortLabel: string;
   };
   usage: {
     empty: string;
@@ -316,12 +338,26 @@ export const messages = {
       usage: '사용량',
       rooms: '룸',
       scheduled: '예약',
+      settings: '설정',
     },
     language: {
       label: '언어',
     },
+    settings: {
+      title: '설정',
+      nicknameLabel: '닉네임',
+      nicknamePlaceholder: 'Web Dashboard',
+      nicknameHelp: '룸에서 메시지 보낼 때 표시될 이름',
+      languageLabel: '언어',
+    },
     error: {
-      api: 'API 오류',
+      api: '문제 발생',
+      network: '네트워크 연결 확인 후 다시 시도해주세요.',
+      timeout: '응답 시간이 초과됐어요. 잠시 후 다시 시도해주세요.',
+      server: '서버에 일시적인 문제가 있어요. 잠시 후 다시 시도해주세요.',
+      notFound: '요청한 정보를 찾을 수 없어요.',
+      auth: '권한이 없어요. 다시 로그인해주세요.',
+      unknown: '알 수 없는 오류가 발생했어요.',
     },
     control: {
       aria: '컨트롤 플레인 요약',
@@ -376,9 +412,9 @@ export const messages = {
       queue: '큐',
       ciFailures: 'CI 실패',
       affectedServices: '이상 서비스',
-      restart: 'Restart',
-      restartStack: 'Restart stack',
-      restarting: 'Restarting...',
+      restart: '재시작',
+      restartStack: '스택 재시작',
+      restarting: '재시작 중...',
       restartHint: '서비스 전체 재시작',
       confirmRestart: 'Restart stack now?',
       restartLog: 'Restart log',
@@ -437,6 +473,8 @@ export const messages = {
       agent: '에이전트',
       status: '상태',
       queue: '큐',
+      queueWaitingMessages: '대기 메시지',
+      tasks: '태스크',
       elapsed: '경과',
       activity: '진행',
       loadingActivity: '진행 로딩 중',
@@ -456,10 +494,16 @@ export const messages = {
       messageHistory: '메시지 기록',
       noMessages: '메시지 없음',
       details: '세부',
-      message: 'Message',
-      messagePlaceholder: 'Type request...',
-      send: 'Send',
-      sending: 'Sending',
+      message: '메시지',
+      messagePlaceholder: '요청 입력...',
+      send: '전송',
+      sending: '전송 중...',
+      error: '오류',
+      filterAll: '전체',
+      sortRecent: '최근 활동',
+      sortName: '이름순',
+      sortQueue: '큐 많은 순',
+      sortLabel: '정렬',
     },
     usage: {
       empty: '사용량 스냅샷 없음. 수집기 확인.',
@@ -591,12 +635,26 @@ export const messages = {
       usage: 'Usage',
       rooms: 'Rooms',
       scheduled: 'Scheduled',
+      settings: 'Settings',
     },
     language: {
       label: 'Language',
     },
+    settings: {
+      title: 'Settings',
+      nicknameLabel: 'Nickname',
+      nicknamePlaceholder: 'Web Dashboard',
+      nicknameHelp: 'Name shown when sending messages from this dashboard',
+      languageLabel: 'Language',
+    },
     error: {
-      api: 'API error',
+      api: 'Something went wrong',
+      network: 'Check your network connection and try again.',
+      timeout: 'The request timed out. Try again in a moment.',
+      server: 'Server hiccup. Try again in a bit.',
+      notFound: "We couldn't find what you asked for.",
+      auth: 'Sign in again to continue.',
+      unknown: 'An unexpected error occurred.',
     },
     control: {
       aria: 'Control plane summary',
@@ -712,6 +770,8 @@ export const messages = {
       agent: 'agent',
       status: 'status',
       queue: 'queue',
+      queueWaitingMessages: 'pending messages',
+      tasks: 'tasks',
       elapsed: 'elapsed',
       activity: 'activity',
       loadingActivity: 'Loading activity',
@@ -735,6 +795,12 @@ export const messages = {
       messagePlaceholder: 'Type request...',
       send: 'Send',
       sending: 'Sending',
+      error: 'Error',
+      filterAll: 'All',
+      sortRecent: 'Recent activity',
+      sortName: 'Name',
+      sortQueue: 'Queue size',
+      sortLabel: 'Sort',
     },
     usage: {
       empty: 'No usage snapshot. Check collector.',
@@ -866,12 +932,26 @@ export const messages = {
       usage: '用量',
       rooms: '房间',
       scheduled: '计划',
+      settings: '设置',
     },
     language: {
       label: '语言',
     },
+    settings: {
+      title: '设置',
+      nicknameLabel: '昵称',
+      nicknamePlaceholder: 'Web Dashboard',
+      nicknameHelp: '从此面板发送消息时显示的名称',
+      languageLabel: '语言',
+    },
     error: {
-      api: 'API 错误',
+      api: '发生问题',
+      network: '请检查网络连接后重试。',
+      timeout: '请求超时,请稍后重试。',
+      server: '服务器暂时出现问题,请稍后重试。',
+      notFound: '找不到所请求的信息。',
+      auth: '没有权限,请重新登录。',
+      unknown: '发生未知错误。',
     },
     control: {
       aria: '控制平面摘要',
@@ -987,6 +1067,8 @@ export const messages = {
       agent: '代理',
       status: '状态',
       queue: '队列',
+      queueWaitingMessages: '待处理消息',
+      tasks: '任务',
       elapsed: '耗时',
       activity: '进展',
       loadingActivity: '正在加载进展',
@@ -1007,9 +1089,15 @@ export const messages = {
       noMessages: '暂无消息',
       details: '详情',
       message: 'Message',
-      messagePlaceholder: 'Type request...',
-      send: 'Send',
-      sending: 'Sending',
+      messagePlaceholder: '输入请求...',
+      send: '发送',
+      sending: '发送中...',
+      error: '错误',
+      filterAll: '全部',
+      sortRecent: '最近活动',
+      sortName: '名称',
+      sortQueue: '队列大小',
+      sortLabel: '排序',
     },
     usage: {
       empty: '暂无用量快照。检查采集器。',
@@ -1141,12 +1229,26 @@ export const messages = {
       usage: '使用量',
       rooms: 'ルーム',
       scheduled: '予定',
+      settings: '設定',
     },
     language: {
       label: '言語',
     },
+    settings: {
+      title: '設定',
+      nicknameLabel: 'ニックネーム',
+      nicknamePlaceholder: 'Web Dashboard',
+      nicknameHelp: 'このダッシュボードからメッセージを送る時に表示される名前',
+      languageLabel: '言語',
+    },
     error: {
-      api: 'API エラー',
+      api: '問題が発生しました',
+      network: 'ネットワーク接続を確認してから再試行してください。',
+      timeout: 'リクエストがタイムアウトしました。少し経ってから再試行してください。',
+      server: 'サーバーに一時的な問題があります。少し経ってから再試行してください。',
+      notFound: 'お探しの情報が見つかりませんでした。',
+      auth: '権限がありません。再ログインしてください。',
+      unknown: '不明なエラーが発生しました。',
     },
     control: {
       aria: 'コントロールプレーン概要',
@@ -1262,6 +1364,8 @@ export const messages = {
       agent: 'エージェント',
       status: '状態',
       queue: 'キュー',
+      queueWaitingMessages: '待機メッセージ',
+      tasks: 'タスク',
       elapsed: '経過',
       activity: '進行',
       loadingActivity: '進行を読み込み中',
@@ -1281,10 +1385,16 @@ export const messages = {
       messageHistory: 'メッセージ履歴',
       noMessages: 'メッセージなし',
       details: '詳細',
-      message: 'Message',
-      messagePlaceholder: 'Type request...',
-      send: 'Send',
-      sending: 'Sending',
+      message: 'メッセージ',
+      messagePlaceholder: '依頼を入力...',
+      send: '送信',
+      sending: '送信中...',
+      error: 'エラー',
+      filterAll: '全て',
+      sortRecent: '最近の活動',
+      sortName: '名前順',
+      sortQueue: 'キュー順',
+      sortLabel: '並び替え',
     },
     usage: {
       empty: '使用量スナップショットなし。収集器を確認。',

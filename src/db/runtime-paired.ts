@@ -49,6 +49,7 @@ import {
 import {
   getLatestTurnNumberFromDatabase,
   getPairedTurnOutputsFromDatabase,
+  getRecentPairedTurnOutputsForChatFromDatabase,
   insertPairedTurnOutputInDatabase,
 } from './paired-turn-outputs.js';
 import {
@@ -58,6 +59,8 @@ import {
   failPairedTurnInDatabase,
   getPairedTurnByIdFromDatabase,
   getPairedTurnsForTaskFromDatabase,
+  getLatestPairedTurnForTaskFromDatabase,
+  updatePairedTurnProgressTextFromDatabase,
   markPairedTurnRunningInDatabase,
   type PairedTurnRecord,
 } from './paired-turns.js';
@@ -211,6 +214,23 @@ export function getPairedTurnsForTask(taskId: string): PairedTurnRecord[] {
   return getPairedTurnsForTaskFromDatabase(requireDatabase(), taskId);
 }
 
+export function getLatestPairedTurnForTask(
+  taskId: string,
+): PairedTurnRecord | null {
+  return getLatestPairedTurnForTaskFromDatabase(requireDatabase(), taskId);
+}
+
+export function updatePairedTurnProgressText(
+  turnId: string,
+  progressText: string | null,
+): void {
+  updatePairedTurnProgressTextFromDatabase(
+    requireDatabase(),
+    turnId,
+    progressText,
+  );
+}
+
 export function getPairedTurnAttempts(
   turnId: string,
 ): PairedTurnAttemptRecord[] {
@@ -331,6 +351,17 @@ export function insertPairedTurnOutput(
 
 export function getPairedTurnOutputs(taskId: string): PairedTurnOutput[] {
   return getPairedTurnOutputsFromDatabase(requireDatabase(), taskId);
+}
+
+export function getRecentPairedTurnOutputsForChat(
+  chatJid: string,
+  limit: number = 8,
+): PairedTurnOutput[] {
+  return getRecentPairedTurnOutputsForChatFromDatabase(
+    requireDatabase(),
+    chatJid,
+    limit,
+  );
 }
 
 export function getLatestTurnNumber(taskId: string): number {

@@ -87,6 +87,8 @@ export interface WebDashboardRoomTurn {
   updatedAt: string;
   completedAt: string | null;
   lastError: string | null;
+  progressText: string | null;
+  progressUpdatedAt: string | null;
 }
 
 export interface WebDashboardRoomTurnOutput {
@@ -442,6 +444,8 @@ function sanitizeRoomTurn(
             ROOM_MESSAGE_PREVIEW_MAX_LENGTH,
           )
         : null,
+    progressText: turn.progress_text ?? null,
+    progressUpdatedAt: turn.progress_updated_at ?? null,
   };
 }
 

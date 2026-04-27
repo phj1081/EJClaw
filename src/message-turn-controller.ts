@@ -49,6 +49,7 @@ interface MessageTurnControllerOptions {
   deliveryRole?: PairedRoomRole | null;
   deliveryServiceId?: string | null;
   pairedTurnIdentity?: PairedTurnIdentity | null;
+  recordTurnProgress?: (turnId: string, progressText: string) => void;
 }
 
 export class MessageTurnController {
@@ -398,6 +399,52 @@ export class MessageTurnController {
     return this.visiblePhase === 'final';
   }
 
+  private composeProgressBody(text: string): string {
+    if (this.subagents.size > 1) {
+      const lines: string[] = [];
+      for (const [, track] of this.subagents) {
+        const latest = track.activities[track.activities.length - 1];
+        lines.push(latest ? `${track.label} · ${latest}` : track.label);
+      }
+      return lines.join('\n');
+    }
+    if (this.subagents.size === 1) {
+      const [, track] = this.subagents.entries().next().value!;
+      const lines: string[] = [track.label];
+      for (let i = 0; i < track.activities.length; i++) {
+        const isLast = i === track.activities.length - 1;
+        lines.push(`${isLast ? '└' : '├'}  ${track.activities[i]}`);
+      }
+      return lines.join('\n');
+    }
+    const activityLines =
+      this.toolActivities.length > 0
+        ? '\n' +
+          this.toolActivities
+            .map((a, i) => {
+              const isLast = i === this.toolActivities.length - 1;
+              const connector = isLast ? '└' : '├';
+              const isSummary = a.startsWith('📋');
+              return isSummary ? `${connector} ${a}` : `${connector}  ${a}`;
+            })
+            .join('\n')
+        : '';
+    return text + activityLines;
+  }
+
+  private persistProgressBody(body: string): void {
+    const turnId = this.options.pairedTurnIdentity?.turnId;
+    if (!turnId || !this.options.recordTurnProgress) return;
+    try {
+      this.options.recordTurnProgress(turnId, body);
+    } catch (err) {
+      this.log.warn(
+        { err, turnId, bodyLength: body.length },
+        'Failed to persist progress body',
+      );
+    }
+  }
+
   private renderProgressMessage(text: string): string {
     const elapsedMs =
       this.progressStartedAt === null
@@ -405,41 +452,9 @@ export class MessageTurnController {
         : Math.floor((Date.now() - this.progressStartedAt) / 5_000) * 5000;
 
     const suffix = `\n\n${formatElapsedKorean(elapsedMs)}`;
-    let body: string;
+    const body = this.composeProgressBody(text);
 
-    if (this.subagents.size > 1) {
-      // Compact: one line per subagent with latest activity
-      const lines: string[] = [];
-      for (const [, track] of this.subagents) {
-        const latest = track.activities[track.activities.length - 1];
-        lines.push(latest ? `${track.label} · ${latest}` : track.label);
-      }
-      body = lines.join('\n');
-    } else if (this.subagents.size === 1) {
-      // Single subagent: detailed view with activity sub-lines
-      const [, track] = this.subagents.entries().next().value!;
-      const lines: string[] = [track.label];
-      for (let i = 0; i < track.activities.length; i++) {
-        const isLast = i === track.activities.length - 1;
-        lines.push(`${isLast ? '└' : '├'}  ${track.activities[i]}`);
-      }
-      body = lines.join('\n');
-    } else {
-      // Single agent rendering
-      const activityLines =
-        this.toolActivities.length > 0
-          ? '\n' +
-            this.toolActivities
-              .map((a, i) => {
-                const isLast = i === this.toolActivities.length - 1;
-                const connector = isLast ? '└' : '├';
-                const isSummary = a.startsWith('📋');
-                return isSummary ? `${connector} ${a}` : `${connector}  ${a}`;
-              })
-              .join('\n')
-          : '';
-      body = text + activityLines;
-    }
+    this.persistProgressBody(body);
 
     const maxBody = 2000 - TASK_STATUS_MESSAGE_PREFIX.length - suffix.length;
     const truncated =
@@ -465,6 +480,14 @@ export class MessageTurnController {
     this.progressMessageId = null;
     this.progressStartedAt = null;
     this.progressEditFailCount = 0;
+    const turnId = this.options.pairedTurnIdentity?.turnId;
+    if (turnId && this.options.recordTurnProgress) {
+      try {
+        this.options.recordTurnProgress(turnId, '');
+      } catch {
+        /* clearing progress is best-effort */
+      }
+    }
   }
 
   /**
