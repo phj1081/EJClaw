@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import {
+  Activity,
+  Clock,
+  Download,
+  Gauge,
+  Inbox as InboxIcon,
+  MessageSquare,
+  RefreshCw,
+  Settings,
+} from 'lucide-react';
 
 import {
   type CreateScheduledTaskInput,
@@ -749,6 +759,18 @@ function formatDuration(value: number | null, t: Messages): string {
   return `${hours}${t.units.hour} ${minutes % 60}${t.units.minute}`;
 }
 
+function formatLiveElapsed(value: number, t: Messages): string {
+  const seconds = Math.max(0, Math.floor(value / 1000));
+  if (seconds < 60) return `${seconds}${t.units.second}`;
+  const minutes = Math.floor(seconds / 60);
+  const remSec = seconds % 60;
+  if (minutes < 60)
+    return `${minutes}${t.units.minute} ${remSec}${t.units.second}`;
+  const hours = Math.floor(minutes / 60);
+  const remMin = minutes % 60;
+  return `${hours}${t.units.hour} ${remMin}${t.units.minute} ${remSec}${t.units.second}`;
+}
+
 function queueLabel(
   pendingTasks: number,
   pendingMessages: boolean,
@@ -953,6 +975,15 @@ function inboxTargetHref(item: InboxItem): string | null {
   return null;
 }
 
+const NAV_ICONS: Record<DashboardView, ReactNode> = {
+  usage: <Gauge size={20} strokeWidth={2} aria-hidden />,
+  inbox: <InboxIcon size={20} strokeWidth={2} aria-hidden />,
+  health: <Activity size={20} strokeWidth={2} aria-hidden />,
+  rooms: <MessageSquare size={20} strokeWidth={2} aria-hidden />,
+  scheduled: <Clock size={20} strokeWidth={2} aria-hidden />,
+  settings: <Settings size={20} strokeWidth={2} aria-hidden />,
+};
+
 function navItems(t: Messages) {
   return [
     { href: '#/usage', label: t.nav.usage, view: 'usage' as const },
@@ -1119,12 +1150,16 @@ function SideRail({
     : null;
 
   return (
-    <aside className="side-rail" aria-label={t.nav.drawerAria}>
-      <div className="side-rail-brand">
-        <span className="eyebrow">EJClaw</span>
-        <strong>{t.nav.operations}</strong>
-      </div>
-      <nav aria-label={t.nav.drawerNavAria}>
+    <aside className="side-rail icon-rail" aria-label={t.nav.drawerAria}>
+      <a
+        className="rail-brand"
+        href="#/usage"
+        onClick={() => onNavigate('usage')}
+        title="EJClaw"
+      >
+        EJ
+      </a>
+      <nav className="rail-nav" aria-label={t.nav.drawerNavAria}>
         {navItems(t).map((item) => {
           const badge =
             item.view === 'inbox' && stats && stats.inbox > 0
@@ -1135,55 +1170,50 @@ function SideRail({
           return (
             <a
               aria-current={activeView === item.view ? 'page' : undefined}
-              className={activeView === item.view ? 'is-active' : undefined}
+              aria-label={item.label}
+              className={`rail-item${activeView === item.view ? ' is-active' : ''}`}
               href={item.href}
               key={item.href}
               onClick={() => onNavigate(item.view)}
+              title={item.label}
             >
-              <span>{item.label}</span>
+              <span className="rail-icon">{NAV_ICONS[item.view]}</span>
               {badge !== null ? (
-                <span className="side-badge">{badge}</span>
+                <span className="rail-badge">{badge}</span>
               ) : null}
             </a>
           );
         })}
       </nav>
-      {stats ? (
-        <div className="side-stats" aria-label={t.control.aria}>
-          <div className="side-stat">
-            <span>{t.metrics.rooms}</span>
-            <strong>
-              {stats.rooms.active + stats.rooms.waiting}/{stats.rooms.total}
-            </strong>
-          </div>
-          <div className="side-stat">
-            <span>{t.control.queue}</span>
-            <strong>{stats.pendingTasks}</strong>
-          </div>
-          <div className="side-stat">
-            <span>{t.panels.inboxQueue}</span>
-            <strong>{stats.inbox}</strong>
-          </div>
-        </div>
-      ) : null}
-      <div className={`side-pwa ${online ? 'is-online' : 'is-offline'}`}>
-        <span>{online ? t.pwa.online : t.pwa.offline}</span>
-        <strong>{pwaState}</strong>
-      </div>
-      {canInstall ? (
-        <button className="side-install" onClick={onInstall} type="button">
-          {t.pwa.install}
+      <div className="rail-foot">
+        <span
+          className={`rail-status-dot ${online ? 'is-online' : 'is-offline'}`}
+          title={`${online ? t.pwa.online : t.pwa.offline} · ${pwaState}`}
+          aria-label={`${online ? t.pwa.online : t.pwa.offline}`}
+        />
+        {canInstall ? (
+          <button
+            className="rail-btn"
+            onClick={onInstall}
+            title={t.pwa.install}
+            aria-label={t.pwa.install}
+            type="button"
+          >
+            <Download size={16} strokeWidth={2} aria-hidden />
+          </button>
+        ) : null}
+        <button
+          aria-busy={refreshing}
+          aria-label={t.actions.refresh}
+          className={`rail-btn${refreshing ? ' is-spinning' : ''}`}
+          disabled={refreshing}
+          onClick={onRefresh}
+          title={refreshing ? t.actions.refreshing : t.actions.refresh}
+          type="button"
+        >
+          <RefreshCw size={16} strokeWidth={2} aria-hidden />
         </button>
-      ) : null}
-      <button
-        aria-busy={refreshing}
-        className="side-refresh"
-        disabled={refreshing}
-        onClick={onRefresh}
-        type="button"
-      >
-        {refreshing ? t.actions.refreshing : t.actions.refresh}
-      </button>
+      </div>
     </aside>
   );
 }
@@ -2181,6 +2211,7 @@ interface RoomEntryWithService {
 function RoomBoardV2({
   inbox,
   onSendRoomMessage,
+  pendingMessages,
   roomActivity,
   roomActivityLoading,
   roomMessageKey,
@@ -2194,6 +2225,10 @@ function RoomBoardV2({
     text: string,
     requestId: string,
   ) => Promise<boolean>;
+  pendingMessages: Record<
+    string,
+    Array<DashboardRoomActivity['messages'][number]>
+  >;
   roomActivity: RoomActivityMap;
   roomActivityLoading: boolean;
   roomMessageKey: string | null;
@@ -2344,6 +2379,7 @@ function RoomBoardV2({
                 onDraftChange={(v) => setDraft(selectedEntry.jid, v)}
                 onSendMessage={() => void submitRoomMessage(selectedEntry.jid)}
                 onToggle={() => {}}
+                pendingMessages={pendingMessages[selectedEntry.jid] ?? []}
                 pinned={true}
                 t={t}
               />
@@ -2369,6 +2405,7 @@ function RoomCardV2({
   onDraftChange,
   onSendMessage,
   onToggle,
+  pendingMessages = [],
   pinned = false,
   t,
 }: {
@@ -2383,6 +2420,7 @@ function RoomCardV2({
   onDraftChange: (value: string) => void;
   onSendMessage: () => void;
   onToggle: () => void;
+  pendingMessages?: Array<DashboardRoomActivity['messages'][number]>;
   pinned?: boolean;
   t: Messages;
 }) {
@@ -2441,6 +2479,20 @@ function RoomCardV2({
       isBotMessage: false,
       sourceKind: m.sourceKind,
     }));
+  const confirmedKey = (m: { content: string; senderName: string }) =>
+    `${m.senderName}${m.content}`;
+  const confirmedSet = new Set(messages.map(confirmedKey));
+  const optimisticPending: ThreadEntry[] = pendingMessages
+    .filter((m) => !confirmedSet.has(confirmedKey(m)))
+    .map((m) => ({
+      id: m.id,
+      senderName: m.senderName,
+      content: m.content,
+      timestamp: m.timestamp,
+      isFromMe: true,
+      isBotMessage: false,
+      sourceKind: m.sourceKind,
+    }));
   const outputEntries: ThreadEntry[] = outputs.map((o) => ({
     id: `out:${o.id}`,
     senderName: o.role,
@@ -2454,6 +2506,7 @@ function RoomCardV2({
   }));
   const agentMessages: ThreadEntry[] = [
     ...humanMessages,
+    ...optimisticPending,
     ...outputEntries,
   ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
@@ -2704,7 +2757,7 @@ function RoomCardV2({
                       </time>
                       {liveElapsedMs !== null ? (
                         <span className="live-elapsed">
-                          +{formatDuration(liveElapsedMs, t)}
+                          +{formatLiveElapsed(liveElapsedMs, t)}
                         </span>
                       ) : null}
                       {!isProcessing ? (
@@ -3297,6 +3350,9 @@ function App() {
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
   const [roomActivity, setRoomActivity] = useState<RoomActivityMap>({});
   const [roomActivityLoading, setRoomActivityLoading] = useState(false);
+  const [pendingMessages, setPendingMessages] = useState<
+    Record<string, Array<DashboardRoomActivity['messages'][number]>>
+  >({});
   const [nickname, setNicknameState] = useState<string>(() => {
     if (typeof window === 'undefined') return '';
     return window.localStorage.getItem('ejclaw-nickname') ?? '';
@@ -3453,17 +3509,10 @@ function App() {
       isBotMessage: false,
       sourceKind: 'human' as const,
     };
-    setRoomActivity((prev) => {
-      const existing = prev[roomJid];
-      if (!existing) return prev;
-      return {
-        ...prev,
-        [roomJid]: {
-          ...existing,
-          messages: [...existing.messages, optimisticMsg],
-        },
-      };
-    });
+    setPendingMessages((prev) => ({
+      ...prev,
+      [roomJid]: [...(prev[roomJid] ?? []), optimisticMsg],
+    }));
     try {
       await sendRoomMessage(roomJid, text, requestId, nickname || null);
       try {
@@ -3476,16 +3525,16 @@ function App() {
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-      setRoomActivity((prev) => {
-        const existing = prev[roomJid];
-        if (!existing) return prev;
-        return {
-          ...prev,
-          [roomJid]: {
-            ...existing,
-            messages: existing.messages.filter((m) => m.id !== optimisticId),
-          },
-        };
+      setPendingMessages((prev) => {
+        const list = prev[roomJid];
+        if (!list) return prev;
+        const next = list.filter((m) => m.id !== optimisticId);
+        if (next.length === 0) {
+          const { [roomJid]: _drop, ...rest } = prev;
+          void _drop;
+          return rest;
+        }
+        return { ...prev, [roomJid]: next };
       });
       return false;
     } finally {
@@ -3643,6 +3692,25 @@ function App() {
   }, [activeView, roomsJidsKey, roomsLastUpdatedKey]);
 
   useEffect(() => {
+    setPendingMessages((prev) => {
+      const next: typeof prev = {};
+      let changed = false;
+      for (const [jid, list] of Object.entries(prev)) {
+        const fetched = roomActivity[jid]?.messages ?? [];
+        const confirmedKeys = new Set(
+          fetched.map((m) => `${m.senderName}${m.content}`),
+        );
+        const remaining = list.filter(
+          (m) => !confirmedKeys.has(`${m.senderName}${m.content}`),
+        );
+        if (remaining.length !== list.length) changed = true;
+        if (remaining.length > 0) next[jid] = remaining;
+      }
+      return changed ? next : prev;
+    });
+  }, [roomActivity]);
+
+  useEffect(() => {
     if (!drawerOpen) return;
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -3782,6 +3850,7 @@ function App() {
                 <RoomBoardV2
                   inbox={data.overview.inbox}
                   onSendRoomMessage={handleRoomMessage}
+                  pendingMessages={pendingMessages}
                   roomActivity={roomActivity}
                   roomActivityLoading={roomActivityLoading}
                   roomMessageKey={roomMessageKey}

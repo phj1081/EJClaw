@@ -32,6 +32,7 @@
     "cron-parser": "^5.5.0",
     "discord.js": "^14.18.0",
     "ejclaw-runners-shared": "file:./runners/shared",
+    "lucide-react": "^1.11.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "react": "^19.2.5",
