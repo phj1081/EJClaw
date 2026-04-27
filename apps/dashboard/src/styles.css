@@ -188,6 +188,7 @@ body:has(.view-stack.view-rooms) .error-card {
   height: 100%;
   gap: 8px;
   grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .view-stack.view-rooms .rooms-list {
@@ -201,26 +202,22 @@ body:has(.view-stack.view-rooms) .error-card {
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   background: var(--panel);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .view-stack.view-rooms .rooms-detail .room-card-v2.is-pinned {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
+  display: block;
   padding: 0;
 }
 
-.view-stack.view-rooms .rooms-detail .room-card-v2.is-pinned > * {
-  flex: none;
-}
-
 .view-stack.view-rooms .rooms-detail .room-card-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   padding: 12px 14px;
   border-bottom: 1px solid var(--divider);
+  background: var(--panel);
 }
 
 .view-stack.view-rooms .rooms-detail .room-current-turn,
@@ -229,11 +226,14 @@ body:has(.view-stack.view-rooms) .error-card {
   padding: 8px 14px;
 }
 
-.view-stack.view-rooms .rooms-detail .room-card-v2.is-pinned > .room-thread-section {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
+.view-stack.view-rooms .rooms-detail .room-thread-section {
   padding: 8px 14px;
+}
+
+.view-stack.view-rooms .rooms-detail .room-compose-section {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
 }
 
 .shell::before {
