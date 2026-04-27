@@ -864,19 +864,72 @@ button:disabled {
 
 .settings-account-row {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid var(--panel-border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
 }
 
+.settings-account-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  min-width: 0;
+}
+
 .settings-account-tag {
+  flex: none;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11px;
   color: var(--muted);
+}
+
+.settings-account-email {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bg-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.settings-account-plan {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+
+.settings-account-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-account-badge.is-active {
+  background: rgba(80, 180, 130, 0.14);
+  color: #6dc89a;
+}
+
+.settings-account-badge.is-soon {
+  background: rgba(214, 170, 60, 0.16);
+  color: #e0bc5b;
+}
+
+.settings-account-badge.is-expired {
+  background: rgba(224, 100, 75, 0.16);
+  color: var(--status-critical, #e0644b);
 }
 
 .settings-account-meta {

@@ -1234,6 +1234,34 @@ function ModelSettings({ onRestartStack }: { onRestartStack: () => void }) {
   );
 }
 
+function formatExpiry(
+  iso: string | null,
+): { label: string; cls: string } | null {
+  if (!iso) return null;
+  const dt = new Date(iso);
+  if (Number.isNaN(dt.getTime())) return null;
+  const days = (dt.getTime() - Date.now()) / 86400000;
+  const dateStr = dt.toLocaleDateString('ko-KR', {
+    year: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  if (days < 0) {
+    const ago = Math.ceil(-days);
+    return { label: `${dateStr} 만료 (${ago}일 전)`, cls: 'is-expired' };
+  }
+  if (days < 7) {
+    return {
+      label: `${dateStr}까지 (${Math.floor(days)}일)`,
+      cls: 'is-soon',
+    };
+  }
+  return {
+    label: `${dateStr}까지 (${Math.floor(days)}일)`,
+    cls: 'is-active',
+  };
+}
+
 function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
   const [data, setData] = useState<{
     claude: ClaudeAccountSummary[];
@@ -1309,29 +1337,39 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
           <p className="settings-hint">계정 없음</p>
         ) : (
           <ul className="settings-account-list">
-            {data.claude.map((acc) => (
-              <li key={acc.index} className="settings-account-row">
-                <span className="settings-account-tag">#{acc.index}</span>
-                <span className="settings-account-meta">
-                  {acc.subscriptionType ?? 'unknown'}
-                  {acc.expiresAt
-                    ? ` · 만료 ${new Date(acc.expiresAt).toLocaleDateString()}`
-                    : ''}
-                </span>
-                {acc.index > 0 ? (
-                  <button
-                    className="settings-delete"
-                    disabled={busy}
-                    onClick={() => void handleDelete('claude', acc.index)}
-                    type="button"
-                  >
-                    삭제
-                  </button>
-                ) : (
-                  <span className="settings-account-default">기본</span>
-                )}
-              </li>
-            ))}
+            {data.claude.map((acc) => {
+              const expiry = formatExpiry(
+                acc.expiresAt ? new Date(acc.expiresAt).toISOString() : null,
+              );
+              return (
+                <li key={acc.index} className="settings-account-row">
+                  <div className="settings-account-main">
+                    <span className="settings-account-tag">#{acc.index}</span>
+                    <span className="settings-account-email">
+                      {acc.subscriptionType ?? 'unknown'}
+                      {acc.rateLimitTier ? ` · ${acc.rateLimitTier}` : ''}
+                    </span>
+                    {expiry ? (
+                      <span className={`settings-account-badge ${expiry.cls}`}>
+                        {expiry.label}
+                      </span>
+                    ) : null}
+                  </div>
+                  {acc.index > 0 ? (
+                    <button
+                      className="settings-delete"
+                      disabled={busy}
+                      onClick={() => void handleDelete('claude', acc.index)}
+                      type="button"
+                    >
+                      삭제
+                    </button>
+                  ) : (
+                    <span className="settings-account-default">기본</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         <div className="settings-add-token">
@@ -1359,29 +1397,51 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
           <p className="settings-hint">계정 없음</p>
         ) : (
           <ul className="settings-account-list">
-            {data.codex.map((acc) => (
-              <li key={acc.index} className="settings-account-row">
-                <span className="settings-account-tag">#{acc.index}</span>
-                <span className="settings-account-meta">
-                  {acc.planType ?? 'unknown'}
-                  {acc.subscriptionUntil
-                    ? ` · ${acc.subscriptionUntil}까지`
-                    : ''}
-                </span>
-                {acc.index > 0 ? (
-                  <button
-                    className="settings-delete"
-                    disabled={busy}
-                    onClick={() => void handleDelete('codex', acc.index)}
-                    type="button"
-                  >
-                    삭제
-                  </button>
-                ) : (
-                  <span className="settings-account-default">기본</span>
-                )}
-              </li>
-            ))}
+            {data.codex.map((acc) => {
+              const expiry = formatExpiry(acc.subscriptionUntil);
+              return (
+                <li key={acc.index} className="settings-account-row">
+                  <div className="settings-account-main">
+                    <span className="settings-account-tag">#{acc.index}</span>
+                    {acc.email ? (
+                      <span
+                        className="settings-account-email"
+                        title={acc.email}
+                      >
+                        {acc.email}
+                      </span>
+                    ) : null}
+                    <span className="settings-account-plan">
+                      {acc.planType ?? 'unknown'}
+                    </span>
+                    {expiry ? (
+                      <span
+                        className={`settings-account-badge ${expiry.cls}`}
+                        title={
+                          acc.subscriptionLastChecked
+                            ? `last checked: ${acc.subscriptionLastChecked.slice(0, 10)}`
+                            : undefined
+                        }
+                      >
+                        {expiry.label}
+                      </span>
+                    ) : null}
+                  </div>
+                  {acc.index > 0 ? (
+                    <button
+                      className="settings-delete"
+                      disabled={busy}
+                      onClick={() => void handleDelete('codex', acc.index)}
+                      type="button"
+                    >
+                      삭제
+                    </button>
+                  ) : (
+                    <span className="settings-account-default">기본</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         <p className="settings-hint">

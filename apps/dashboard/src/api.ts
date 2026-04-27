@@ -355,8 +355,10 @@ export interface ClaudeAccountSummary {
 export interface CodexAccountSummary {
   index: number;
   accountId: string | null;
+  email: string | null;
   planType: string | null;
   subscriptionUntil: string | null;
+  subscriptionLastChecked: string | null;
   exists: boolean;
 }
 
