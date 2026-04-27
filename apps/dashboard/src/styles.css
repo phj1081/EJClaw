@@ -1328,16 +1328,16 @@ progress::-moz-progress-bar {
 }
 
 .room-activity-cell {
-  min-width: 360px;
+  min-width: 300px;
 }
 
 .room-activity {
   display: grid;
-  min-width: min(360px, 100%);
-  gap: 9px;
-  padding: 10px;
+  min-width: min(300px, 100%);
+  gap: 7px;
+  padding: 8px;
   border: 1px solid rgba(43, 55, 38, 0.1);
-  border-radius: 18px;
+  border-radius: 15px;
   background: rgba(255, 250, 240, 0.58);
 }
 
@@ -1348,38 +1348,28 @@ progress::-moz-progress-bar {
   font-weight: 800;
 }
 
-.room-activity-grid {
+.room-progress-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 7px;
-}
-
-.room-activity-grid > span {
+  grid-template-columns: auto minmax(96px, 1fr) auto auto auto;
+  gap: 6px;
+  align-items: center;
   min-width: 0;
-  padding: 8px;
-  border-radius: 13px;
-  background: rgba(43, 55, 38, 0.045);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
 }
 
-.room-activity-grid small,
-.room-activity-grid strong {
-  display: block;
+.room-progress-strip strong,
+.room-progress-strip span,
+.room-progress-strip time {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.room-activity-grid small {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 850;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.room-activity-grid strong {
-  margin-top: 3px;
+.room-progress-strip strong {
+  color: var(--ink);
   font-size: 12px;
 }
 
@@ -1398,31 +1388,83 @@ progress::-moz-progress-bar {
 }
 
 .room-activity-error {
-  margin: 0;
   color: #7c2518;
   font-size: 12px;
   font-weight: 850;
   overflow-wrap: anywhere;
 }
 
-.room-activity-columns {
+.room-latest-output {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 9px;
-}
-
-.room-activity-columns > section {
-  display: grid;
+  gap: 4px;
   min-width: 0;
-  align-content: start;
-  gap: 7px;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(43, 55, 38, 0.045);
 }
 
-.room-activity-columns > section > strong {
+.room-latest-output header {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.room-latest-output strong,
+.room-detail-grid > section > strong {
   color: var(--bg-ink);
   font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.room-latest-output header span,
+.room-latest-output p {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-latest-output p {
+  display: -webkit-box;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.32;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.room-activity-details,
+.room-compose-details {
+  min-width: 0;
+}
+
+.room-activity-details > summary,
+.room-compose-details > summary {
+  min-height: 32px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.room-detail-grid {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-top: 6px;
+}
+
+.room-detail-grid > section {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 7px;
 }
 
 .room-output-list,
@@ -1484,6 +1526,14 @@ progress::-moz-progress-bar {
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
+}
+
+.room-message-cell {
+  width: 150px;
+}
+
+.room-compose-details .room-compose {
+  margin-top: 6px;
 }
 
 .task-board {
@@ -2165,9 +2215,13 @@ progress::-moz-progress-bar {
     min-width: 0;
   }
 
-  .room-activity-grid,
-  .room-activity-columns {
-    grid-template-columns: 1fr;
+  .room-progress-strip {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .room-progress-strip span:nth-of-type(n + 3),
+  .room-progress-strip time {
+    display: none;
   }
 
   .inbox-summary,
