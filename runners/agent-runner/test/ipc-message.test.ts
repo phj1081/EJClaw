@@ -37,4 +37,52 @@ describe('agent runner IPC message payload', () => {
       }).senderRole,
     ).toBeUndefined();
   });
+
+  it('normalizes structured EJClaw envelopes instead of leaking raw JSON', () => {
+    expect(
+      buildSendMessageIpcPayload({
+        chatJid: 'dc:123',
+        text: JSON.stringify({
+          ejclaw: {
+            visibility: 'public',
+            text: '스크린샷입니다.',
+            verdict: 'done',
+            attachments: [
+              {
+                path: '/tmp/ejclaw-room-mobile-list-390.png',
+                name: 'room.png',
+                mime: 'image/png',
+              },
+            ],
+          },
+        }),
+        groupFolder: 'discord-review',
+        timestamp: '2026-04-04T13:45:00.000Z',
+      }),
+    ).toEqual({
+      type: 'message',
+      chatJid: 'dc:123',
+      text: '스크린샷입니다.',
+      groupFolder: 'discord-review',
+      timestamp: '2026-04-04T13:45:00.000Z',
+      attachments: [
+        {
+          path: '/tmp/ejclaw-room-mobile-list-390.png',
+          name: 'room.png',
+          mime: 'image/png',
+        },
+      ],
+    });
+  });
+
+  it('turns silent EJClaw envelopes into empty no-op messages', () => {
+    expect(
+      buildSendMessageIpcPayload({
+        chatJid: 'dc:123',
+        text: '{"ejclaw":{"visibility":"silent","verdict":"silent"}}',
+        groupFolder: 'discord-review',
+        timestamp: '2026-04-04T13:45:00.000Z',
+      }).text,
+    ).toBe('');
+  });
 });
