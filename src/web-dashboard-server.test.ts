@@ -5,9 +5,11 @@ import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { StatusSnapshot } from './status-dashboard.js';
+import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
 import type {
   NewMessage,
   PairedTask,
+  PairedTurnOutput,
   RegisteredGroup,
   ScheduledTask,
 } from './types.js';
@@ -1430,6 +1432,164 @@ describe('web dashboard server handler', () => {
     );
 
     expect(response.status).toBe(503);
+  });
+
+  it('serves room timeline with paired turn progress and recent messages', async () => {
+    const pairedTask = makePairedTask({
+      id: 'paired-room-1',
+      chat_jid: 'dc:ops',
+      group_folder: 'ops-room',
+      status: 'in_review',
+      round_trip_count: 2,
+      updated_at: '2026-04-26T05:20:00.000Z',
+    });
+    const turns: PairedTurnRecord[] = [
+      {
+        turn_id: 'paired-room-1:reviewer-turn',
+        task_id: pairedTask.id,
+        task_updated_at: pairedTask.updated_at,
+        role: 'reviewer',
+        intent_kind: 'reviewer-turn',
+        state: 'queued',
+        executor_service_id: null,
+        executor_agent_type: null,
+        attempt_no: 0,
+        created_at: '2026-04-26T05:18:30.000Z',
+        updated_at: '2026-04-26T05:21:00.000Z',
+        completed_at: null,
+        last_error: null,
+      },
+    ];
+    const attempts: PairedTurnAttemptRecord[] = [
+      {
+        attempt_id: 'paired-room-1:reviewer-turn:attempt:2',
+        parent_attempt_id: null,
+        parent_handoff_id: null,
+        continuation_handoff_id: null,
+        turn_id: 'paired-room-1:reviewer-turn',
+        task_id: pairedTask.id,
+        task_updated_at: pairedTask.updated_at,
+        role: 'reviewer',
+        intent_kind: 'reviewer-turn',
+        state: 'running',
+        executor_service_id: 'claude-reviewer',
+        executor_agent_type: 'claude-code',
+        active_run_id: 'run-reviewer-1',
+        attempt_no: 2,
+        created_at: '2026-04-26T05:19:00.000Z',
+        updated_at: '2026-04-26T05:21:00.000Z',
+        completed_at: null,
+        last_error: 'OPENAI_API_KEY=plain-secret-value',
+      },
+    ];
+    const outputs: PairedTurnOutput[] = [
+      {
+        id: 1,
+        task_id: pairedTask.id,
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'owner final output',
+        verdict: 'step_done',
+        created_at: '2026-04-26T05:18:00.000Z',
+      },
+    ];
+    const messages: NewMessage[] = [
+      {
+        id: 'msg-1',
+        chat_jid: 'dc:ops',
+        sender: 'u1',
+        sender_name: '눈쟁이',
+        content: '진행 어디까지야? BOT_TOKEN=plain-secret-value',
+        timestamp: '2026-04-26T05:17:00.000Z',
+        is_from_me: false,
+        is_bot_message: false,
+        message_source_kind: 'human',
+      },
+    ];
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [
+        {
+          serviceId: 'codex-main',
+          agentType: 'codex',
+          assistantName: 'Codex',
+          updatedAt: '2026-04-26T05:22:00.000Z',
+          entries: [
+            {
+              jid: 'dc:ops',
+              name: '#ops',
+              folder: 'ops-room',
+              agentType: 'codex',
+              status: 'processing',
+              elapsedMs: 120_000,
+              pendingMessages: true,
+              pendingTasks: 1,
+            },
+          ],
+        },
+      ],
+      getTasks: () => [],
+      getPairedTasks: () => [pairedTask],
+      getLatestPairedTaskForChat: () => pairedTask,
+      getPairedTurnsForTask: (taskId) =>
+        taskId === pairedTask.id ? turns : [],
+      getPairedTurnAttempts: (turnId) =>
+        turnId === turns[0]!.turn_id ? attempts : [],
+      getPairedTurnOutputs: () => outputs,
+      getRecentChatMessages: () => messages,
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:ops')}/timeline`,
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      jid: string;
+      pairedTask: {
+        id: string;
+        roundTripCount: number;
+        currentTurn: {
+          role: string;
+          state: string;
+          attemptNo: number;
+          lastError: string;
+        };
+        outputs: Array<{ outputText: string; turnNumber: number }>;
+      };
+      messages: Array<{ content: string; senderName: string }>;
+    };
+    expect(body.jid).toBe('dc:ops');
+    expect(body.pairedTask.id).toBe('paired-room-1');
+    expect(body.pairedTask.roundTripCount).toBe(2);
+    expect(body.pairedTask.currentTurn).toMatchObject({
+      role: 'reviewer',
+      state: 'running',
+      attemptNo: 2,
+      lastError: 'OPENAI_API_KEY=<redacted>',
+    });
+    expect(body.pairedTask.outputs).toMatchObject([
+      { turnNumber: 1, outputText: 'owner final output' },
+    ]);
+    expect(body.messages[0]?.content).toContain('BOT_TOKEN=<redacted>');
+    expect(body.messages[0]?.senderName).toBe('눈쟁이');
+  });
+
+  it('returns 404 for missing room timelines', async () => {
+    const handler = createWebDashboardHandler({
+      readStatusSnapshots: () => [],
+      getTasks: () => [],
+      getPairedTasks: () => [],
+    });
+
+    const response = await handler(
+      new Request(
+        `http://localhost/api/rooms/${encodeURIComponent('dc:missing')}/timeline`,
+      ),
+    );
+
+    expect(response.status).toBe(404);
   });
 
   it('serves Vite static assets and falls back to index for SPA routes', async () => {

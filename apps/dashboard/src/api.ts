@@ -92,6 +92,57 @@ export interface StatusSnapshot {
   }>;
 }
 
+export interface DashboardRoomActivity {
+  serviceId: string;
+  jid: string;
+  name: string;
+  folder: string;
+  agentType: string;
+  status: 'processing' | 'waiting' | 'inactive';
+  elapsedMs: number | null;
+  pendingMessages: boolean;
+  pendingTasks: number;
+  messages: Array<{
+    id: string;
+    sender: string;
+    senderName: string;
+    content: string;
+    timestamp: string;
+    isFromMe: boolean;
+    isBotMessage: boolean;
+    sourceKind: string;
+  }>;
+  pairedTask: {
+    id: string;
+    title: string | null;
+    status: string;
+    roundTripCount: number;
+    updatedAt: string;
+    currentTurn: {
+      turnId: string;
+      role: string;
+      intentKind: string;
+      state: string;
+      attemptNo: number;
+      executorServiceId: string | null;
+      executorAgentType: string | null;
+      activeRunId: string | null;
+      createdAt: string;
+      updatedAt: string;
+      completedAt: string | null;
+      lastError: string | null;
+    } | null;
+    outputs: Array<{
+      id: number;
+      turnNumber: number;
+      role: string;
+      verdict: string | null;
+      createdAt: string;
+      outputText: string;
+    }>;
+  } | null;
+}
+
 export interface DashboardTask {
   id: string;
   groupFolder: string;
@@ -178,6 +229,14 @@ export async function fetchDashboardData(): Promise<{
   ]);
 
   return { overview, snapshots, tasks };
+}
+
+export async function fetchRoomTimeline(
+  roomJid: string,
+): Promise<DashboardRoomActivity> {
+  return fetchJson<DashboardRoomActivity>(
+    `/api/rooms/${encodeURIComponent(roomJid)}/timeline`,
+  );
 }
 
 export async function runScheduledTaskAction(

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   type CreateScheduledTaskInput,
   type DashboardInboxAction,
+  type DashboardRoomActivity,
   type DashboardTaskContextMode,
   type DashboardTaskScheduleType,
   type DashboardTaskAction,
@@ -12,6 +13,7 @@ import {
   type StatusSnapshot,
   createScheduledTask,
   fetchDashboardData,
+  fetchRoomTimeline,
   runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
@@ -35,6 +37,8 @@ interface DashboardState {
   snapshots: StatusSnapshot[];
   tasks: DashboardTask[];
 }
+
+type RoomActivityMap = Record<string, DashboardRoomActivity>;
 
 type UsageRow = DashboardOverview['usage']['rows'][number];
 type InboxItem = DashboardOverview['inbox'][number];
@@ -1289,9 +1293,131 @@ function RoomMessageForm({
   );
 }
 
+function RoomActivityPanel({
+  activity,
+  loading,
+  locale,
+  t,
+}: {
+  activity: DashboardRoomActivity | undefined;
+  loading: boolean;
+  locale: Locale;
+  t: Messages;
+}) {
+  if (!activity) {
+    return (
+      <div className="room-activity room-activity-empty">
+        {loading ? t.rooms.loadingActivity : t.rooms.noActivity}
+      </div>
+    );
+  }
+
+  const task = activity.pairedTask;
+  const turn = task?.currentTurn ?? null;
+  const outputs = task?.outputs ?? [];
+
+  return (
+    <div className="room-activity">
+      <div className="room-activity-grid">
+        <span>
+          <small>{t.rooms.task}</small>
+          <strong>{task?.title || task?.id || t.rooms.noTask}</strong>
+        </span>
+        <span>
+          <small>{t.rooms.currentTurn}</small>
+          <strong>
+            {turn
+              ? `${turn.role} · ${t.rooms.attempt} ${turn.attemptNo}`
+              : t.rooms.noTurn}
+          </strong>
+        </span>
+        <span>
+          <small>{t.rooms.round}</small>
+          <strong>{task ? task.roundTripCount : '-'}</strong>
+        </span>
+        <span>
+          <small>{t.rooms.updated}</small>
+          <strong>
+            {formatDate(turn?.updatedAt ?? task?.updatedAt, locale)}
+          </strong>
+        </span>
+      </div>
+
+      {turn ? (
+        <div className="room-turn-line">
+          <span className={`pill pill-${turn.state}`}>
+            {statusLabel(turn.state, t)}
+          </span>
+          <span>{turn.intentKind}</span>
+          {turn.executorServiceId ? (
+            <span>{turn.executorServiceId}</span>
+          ) : null}
+          {turn.activeRunId ? (
+            <span className="mono-chip">{turn.activeRunId}</span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {turn?.lastError ? (
+        <p className="room-activity-error">{turn.lastError}</p>
+      ) : null}
+
+      <div className="room-activity-columns">
+        <section>
+          <strong>{t.rooms.output}</strong>
+          {outputs.length === 0 ? (
+            <p className="room-muted">{t.rooms.noOutput}</p>
+          ) : (
+            <div className="room-output-list">
+              {[...outputs].reverse().map((output) => (
+                <article key={output.id} className="room-output-item">
+                  <header>
+                    <span>
+                      #{output.turnNumber} · {output.role}
+                      {output.verdict ? ` · ${output.verdict}` : ''}
+                    </span>
+                    <time>{formatDate(output.createdAt, locale)}</time>
+                  </header>
+                  <p>{output.outputText}</p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+        <section>
+          <strong>{t.rooms.recentMessages}</strong>
+          {activity.messages.length === 0 ? (
+            <p className="room-muted">{t.rooms.noMessages}</p>
+          ) : (
+            <div className="room-message-list">
+              {activity.messages.map((message) => (
+                <article
+                  className={`room-message-item ${
+                    message.isBotMessage ? 'room-message-bot' : ''
+                  }`}
+                  key={message.id}
+                >
+                  <header>
+                    <span>{message.senderName}</span>
+                    <time>{formatDate(message.timestamp, locale)}</time>
+                  </header>
+                  <p>{message.content}</p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 function RoomPanel({
   onSendRoomMessage,
+  roomActivity,
+  roomActivityLoading,
   roomMessageKey,
+  locale,
   snapshots,
   t,
 }: {
@@ -1300,7 +1426,10 @@ function RoomPanel({
     text: string,
     requestId: string,
   ) => Promise<boolean>;
+  roomActivity: RoomActivityMap;
+  roomActivityLoading: boolean;
   roomMessageKey: string | null;
+  locale: Locale;
   snapshots: StatusSnapshot[];
   t: Messages;
 }) {
@@ -1339,6 +1468,7 @@ function RoomPanel({
               <th>{t.rooms.status}</th>
               <th>{t.rooms.queue}</th>
               <th>{t.rooms.elapsed}</th>
+              <th>{t.rooms.activity}</th>
               <th>{t.rooms.message}</th>
             </tr>
           </thead>
@@ -1364,6 +1494,14 @@ function RoomPanel({
                   {queueLabel(entry.pendingTasks, entry.pendingMessages, t)}
                 </td>
                 <td>{formatDuration(entry.elapsedMs, t)}</td>
+                <td className="room-activity-cell">
+                  <RoomActivityPanel
+                    activity={roomActivity[entry.jid]}
+                    loading={roomActivityLoading}
+                    locale={locale}
+                    t={t}
+                  />
+                </td>
                 <td>
                   <RoomMessageForm
                     busy={roomMessageKey === entry.jid}
@@ -1406,6 +1544,12 @@ function RoomPanel({
                 <strong>{formatDuration(entry.elapsedMs, t)}</strong>
               </span>
             </div>
+            <RoomActivityPanel
+              activity={roomActivity[entry.jid]}
+              loading={roomActivityLoading}
+              locale={locale}
+              t={t}
+            />
             <RoomMessageForm
               busy={roomMessageKey === entry.jid}
               onChange={(value) => setDraft(entry.jid, value)}
@@ -1950,6 +2094,8 @@ function App() {
   const [serviceActionKey, setServiceActionKey] =
     useState<ServiceActionKey | null>(null);
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
+  const [roomActivity, setRoomActivity] = useState<RoomActivityMap>({});
+  const [roomActivityLoading, setRoomActivityLoading] = useState(false);
   const t = messages[locale];
   const secureContext =
     typeof window === 'undefined' ? true : window.isSecureContext;
@@ -2197,6 +2343,49 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (activeView !== 'rooms' || !data) return;
+
+    const jids = [
+      ...new Set(
+        data.snapshots.flatMap((snapshot) =>
+          snapshot.entries.map((entry) => entry.jid),
+        ),
+      ),
+    ];
+    if (jids.length === 0) {
+      setRoomActivity({});
+      return;
+    }
+
+    let cancelled = false;
+    setRoomActivityLoading(true);
+    void Promise.all(
+      jids.map(async (jid) => {
+        try {
+          return [jid, await fetchRoomTimeline(jid)] as const;
+        } catch {
+          return [jid, null] as const;
+        }
+      }),
+    )
+      .then((entries) => {
+        if (cancelled) return;
+        const next: RoomActivityMap = {};
+        for (const [jid, activity] of entries) {
+          if (activity) next[jid] = activity;
+        }
+        setRoomActivity(next);
+      })
+      .finally(() => {
+        if (!cancelled) setRoomActivityLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeView, data]);
+
+  useEffect(() => {
     if (!drawerOpen) return;
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -2335,7 +2524,10 @@ function App() {
                 </div>
                 <RoomPanel
                   onSendRoomMessage={handleRoomMessage}
+                  roomActivity={roomActivity}
+                  roomActivityLoading={roomActivityLoading}
                   roomMessageKey={roomMessageKey}
+                  locale={locale}
                   snapshots={data.snapshots}
                   t={t}
                 />
