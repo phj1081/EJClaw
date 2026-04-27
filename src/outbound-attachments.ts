@@ -21,6 +21,7 @@ const DEFAULT_TEMP_ATTACHMENT_DIR_PREFIXES = [
   'ejclaw-attachment-',
   'ejclaw-discord-image-',
 ] as const;
+const DEFAULT_TEMP_ATTACHMENT_FILE_PREFIXES = ['ejclaw-'] as const;
 
 function unique(values: Array<string | null | undefined>): string[] {
   return [
@@ -80,6 +81,21 @@ function isWithinDefaultTempAttachmentDir(
     DEFAULT_TEMP_ATTACHMENT_DIR_PREFIXES.some((prefix) =>
       firstSegment.startsWith(prefix),
     )
+  );
+}
+
+function isDefaultTempAttachmentFile(
+  realPath: string,
+  tempDir: string | null,
+): boolean {
+  if (!tempDir) return false;
+  const relative = path.relative(tempDir, realPath);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    return false;
+  }
+  if (relative.includes(path.sep)) return false;
+  return DEFAULT_TEMP_ATTACHMENT_FILE_PREFIXES.some((prefix) =>
+    relative.startsWith(prefix),
   );
 }
 
@@ -171,7 +187,8 @@ export function validateOutboundAttachments(
       }
       if (
         !matchesAllowedBaseDir(realPath, baseDirs) &&
-        !isWithinDefaultTempAttachmentDir(realPath, defaultTempDir)
+        !isWithinDefaultTempAttachmentDir(realPath, defaultTempDir) &&
+        !isDefaultTempAttachmentFile(realPath, defaultTempDir)
       ) {
         rejected.push({ path: requestedPath, reason: 'outside-allowed-dirs' });
         continue;

@@ -3,6 +3,7 @@ import type { AssignRoomInput } from './db.js';
 import type {
   AgentType,
   MessageSourceKind,
+  OutboundAttachment,
   PairedTask,
   RegisteredGroup,
   RoomMode,
@@ -67,6 +68,7 @@ export interface IpcDeps {
     text: string,
     senderRole?: string,
     runId?: string,
+    attachments?: OutboundAttachment[],
   ) => Promise<void>;
   nudgeScheduler?: () => void;
   roomBindings: () => Record<string, RegisteredGroup>;
@@ -100,6 +102,7 @@ export interface IpcMessagePayload {
   timestamp?: string;
   treatAsHuman?: boolean;
   sourceKind?: MessageSourceKind;
+  attachments?: OutboundAttachment[];
 }
 
 export interface IpcMessageForwardResult {

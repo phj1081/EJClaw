@@ -73,9 +73,10 @@ export function getTaskByIdFromDatabase(
   database: Database,
   id: string,
 ): ScheduledTask | undefined {
-  return database
+  const row = database
     .prepare('SELECT * FROM scheduled_tasks WHERE id = ?')
-    .get(id) as ScheduledTask | undefined;
+    .get(id) as ScheduledTask | null | undefined;
+  return row ?? undefined;
 }
 
 export function findDuplicateCiWatcherInDatabase(

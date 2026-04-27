@@ -14,6 +14,7 @@ export async function forwardAuthorizedIpcMessage(
     text: string,
     senderRole?: string,
     runId?: string,
+    attachments?: import('./types.js').OutboundAttachment[],
   ) => Promise<void>,
   injectInboundMessage?: (payload: {
     chatJid: string;
@@ -79,7 +80,13 @@ export async function forwardAuthorizedIpcMessage(
     };
   }
 
-  await sendMessage(msg.chatJid, msg.text, msg.senderRole, msg.runId);
+  await sendMessage(
+    msg.chatJid,
+    msg.text,
+    msg.senderRole,
+    msg.runId,
+    msg.attachments,
+  );
   return {
     outcome: 'sent',
     chatJid: msg.chatJid,
