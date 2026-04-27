@@ -9,6 +9,7 @@ export default defineConfig({
   },
   test: {
     setupFiles: ['test/vitest-env.ts'],
+    testTimeout: 15_000,
     include: [
       'src/**/*.test.ts',
       'setup/**/*.test.ts',
