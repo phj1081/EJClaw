@@ -89,7 +89,7 @@ interface RoomOption {
 
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale.v2';
-const DEFAULT_VIEW: DashboardView = 'inbox';
+const DEFAULT_VIEW: DashboardView = 'rooms';
 const HEALTH_STALE_MS = 5 * 60_000;
 const HEALTH_DOWN_MS = 15 * 60_000;
 const DASHBOARD_STALE_MS = 75_000;
@@ -986,11 +986,11 @@ const NAV_ICONS: Record<DashboardView, ReactNode> = {
 
 function navItems(t: Messages) {
   return [
-    { href: '#/usage', label: t.nav.usage, view: 'usage' as const },
-    { href: '#/inbox', label: t.nav.inbox, view: 'inbox' as const },
-    { href: '#/health', label: t.nav.health, view: 'health' as const },
     { href: '#/rooms', label: t.nav.rooms, view: 'rooms' as const },
+    { href: '#/inbox', label: t.nav.inbox, view: 'inbox' as const },
     { href: '#/scheduled', label: t.nav.scheduled, view: 'scheduled' as const },
+    { href: '#/health', label: t.nav.health, view: 'health' as const },
+    { href: '#/usage', label: t.nav.usage, view: 'usage' as const },
     { href: '#/settings', label: t.nav.settings, view: 'settings' as const },
   ];
 }
@@ -1254,7 +1254,7 @@ function SectionNav({
   t: Messages;
 }) {
   const activeLabel =
-    navItems(t).find((item) => item.view === activeView)?.label ?? t.nav.usage;
+    navItems(t).find((item) => item.view === activeView)?.label ?? t.nav.rooms;
 
   return (
     <>
