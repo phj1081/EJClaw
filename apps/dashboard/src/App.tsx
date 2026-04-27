@@ -2813,6 +2813,40 @@ function RoomCardV2({
   const liveElapsedMs =
     liveTurnStart === null ? null : Math.max(0, tick - liveTurnStart);
 
+  // Discord live-edit messages are stored with this 3-character invisible
+  // prefix (TASK_STATUS_MESSAGE_PREFIX). When paired_turns.progress_text
+  // hasn't been written yet (codex runner timing), fall back to scanning
+  // the messages table for the most recent prefixed message — but only
+  // ones from the current turn (timestamp >= turn.createdAt) and matching
+  // the current turn's role to avoid showing a stale reviewer status while
+  // owner is now speaking.
+  const TASK_STATUS_PREFIX = '⁣⁣⁣';
+  const liveStatusFallback = (() => {
+    if (!isProcessing) return null;
+    if (!turn) return null;
+    if (turn.progressText && turn.progressText.trim()) return null;
+    const turnStartMs = turn.createdAt
+      ? new Date(turn.createdAt).getTime()
+      : 0;
+    const turnRole = senderRoleClass(turn.role); // role-owner / -reviewer / -arbiter / -human
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (!m.content.startsWith(TASK_STATUS_PREFIX)) continue;
+      const ts = m.timestamp ? new Date(m.timestamp).getTime() : 0;
+      if (ts < turnStartMs) continue;
+      const senderRole = senderRoleClass(m.senderName);
+      if (senderRole !== turnRole) continue;
+      const body = m.content.slice(TASK_STATUS_PREFIX.length);
+      const stripped = body.replace(/\n\n\d+[초smhMSH]?$/, '').trim();
+      return stripped || null;
+    }
+    return null;
+  })();
+  const liveProgressDisplay =
+    turn?.progressText && turn.progressText.trim()
+      ? turn.progressText
+      : liveStatusFallback;
+
   const messagesLen = messages.length;
   const outputsLen = outputs.length;
   const pendingLen = pendingMessages.length;
@@ -3147,8 +3181,7 @@ function RoomCardV2({
                 })}
                 {turn &&
                 turn.completedAt === null &&
-                (isProcessing ||
-                  (turn.progressText && turn.progressText.trim())) ? (
+                (isProcessing || liveProgressDisplay) ? (
                   <li
                     className={`room-timeline-item ${senderRoleClass(turn.role).replace('role-', 'role-section-')} ${isProcessing ? 'room-timeline-live' : 'room-timeline-paused'}`}
                   >
@@ -3182,8 +3215,10 @@ function RoomCardV2({
                       ) : null}
                     </header>
                     <div className="room-timeline-body">
-                      {turn.progressText && turn.progressText.trim() ? (
-                        <pre className="live-progress">{turn.progressText}</pre>
+                      {liveProgressDisplay ? (
+                        <pre className="live-progress">
+                          {liveProgressDisplay}
+                        </pre>
                       ) : (
                         <p className="room-empty">{t.rooms.loadingActivity}</p>
                       )}
