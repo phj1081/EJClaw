@@ -77,6 +77,123 @@ function inboxTargetHref(item: InboxItem): string | null {
   return null;
 }
 
+interface InboxCardProps {
+  inboxActionKey: InboxActionKey | null;
+  item: InboxItem;
+  locale: Locale;
+  onInboxAction: (item: InboxItem, action: DashboardInboxAction) => void;
+  onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
+  taskActionKey: string | null;
+  tasks: DashboardTask[];
+  t: Messages;
+}
+
+function InboxCard({
+  inboxActionKey,
+  item,
+  locale,
+  onInboxAction,
+  onTaskAction,
+  taskActionKey,
+  tasks,
+  t,
+}: InboxCardProps) {
+  const href = inboxTargetHref(item);
+  const linkedTask =
+    item.source === 'scheduled-task' && item.taskId
+      ? tasks.find((task) => task.id === item.taskId)
+      : undefined;
+  const linkedTaskActions = linkedTask ? taskActionsFor(linkedTask) : [];
+  const inboxActions = inboxActionsFor(item);
+
+  return (
+    <article className={`inbox-card inbox-${item.severity}`}>
+      <div className="inbox-card-head">
+        <div>
+          <span className="eyebrow">{t.inbox.kinds[item.kind]}</span>
+          <strong>{sanitizeInboxText(item.title) || item.title}</strong>
+        </div>
+        <div className="inbox-card-badges">
+          <span className={`pill pill-${item.severity}`}>
+            {t.inbox.severity[item.severity]}
+          </span>
+          {item.occurrences > 1 ? (
+            <span className="pill pill-info">x{item.occurrences}</span>
+          ) : null}
+        </div>
+      </div>
+      <p>{sanitizeInboxText(item.summary) || t.inbox.noSummary}</p>
+      <div className="inbox-meta">
+        <span>
+          <small>{t.inbox.occurred}</small>
+          <strong>{formatDate(item.occurredAt, locale)}</strong>
+        </span>
+        <span>
+          <small>{t.inbox.source}</small>
+          <strong>{item.source}</strong>
+        </span>
+        <span>
+          <small>{t.inbox.target}</small>
+          <strong>
+            {item.taskId ??
+              item.roomName ??
+              item.groupFolder ??
+              item.roomJid ??
+              '-'}
+          </strong>
+        </span>
+      </div>
+      {href ? (
+        <a className="inbox-target" href={href}>
+          {item.taskId ? t.inbox.openTask : t.inbox.openRoom}
+        </a>
+      ) : null}
+      {linkedTask && linkedTaskActions.length > 0 ? (
+        <div className="task-actions inbox-actions">
+          {linkedTaskActions.map((action) => {
+            const actionKey = `${linkedTask.id}:${action}`;
+            const busy = taskActionKey === actionKey;
+            return (
+              <button
+                aria-busy={busy || undefined}
+                className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
+                disabled={busy}
+                key={action}
+                onClick={() => onTaskAction(linkedTask, action)}
+                type="button"
+              >
+                {busy ? t.tasks.actions.busy : t.tasks.actions[action]}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {inboxActions.length > 0 ? (
+        <div className="task-actions inbox-actions">
+          {inboxActions.map((action) => {
+            const actionKey: InboxActionKey = `${item.id}:${action}`;
+            const busy = inboxActionKey === actionKey;
+            return (
+              <button
+                aria-busy={busy || undefined}
+                className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
+                disabled={busy}
+                key={action}
+                onClick={() => onInboxAction(item, action)}
+                type="button"
+              >
+                {busy
+                  ? t.inbox.actions.busy
+                  : inboxActionLabel(item, action, t)}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 export function InboxPanel({
   overview,
   tasks,
@@ -157,106 +274,19 @@ export function InboxPanel({
       </div>
 
       <div className="inbox-list" aria-label={t.inbox.cardsAria}>
-        {filteredItems.map((item) => {
-          const href = inboxTargetHref(item);
-          const linkedTask =
-            item.source === 'scheduled-task' && item.taskId
-              ? tasks.find((task) => task.id === item.taskId)
-              : undefined;
-          const linkedTaskActions = linkedTask
-            ? taskActionsFor(linkedTask)
-            : [];
-          const inboxActions = inboxActionsFor(item);
-          return (
-            <article
-              className={`inbox-card inbox-${item.severity}`}
-              key={item.id}
-            >
-              <div className="inbox-card-head">
-                <div>
-                  <span className="eyebrow">{t.inbox.kinds[item.kind]}</span>
-                  <strong>{sanitizeInboxText(item.title) || item.title}</strong>
-                </div>
-                <div className="inbox-card-badges">
-                  <span className={`pill pill-${item.severity}`}>
-                    {t.inbox.severity[item.severity]}
-                  </span>
-                  {item.occurrences > 1 ? (
-                    <span className="pill pill-info">x{item.occurrences}</span>
-                  ) : null}
-                </div>
-              </div>
-              <p>{sanitizeInboxText(item.summary) || t.inbox.noSummary}</p>
-              <div className="inbox-meta">
-                <span>
-                  <small>{t.inbox.occurred}</small>
-                  <strong>{formatDate(item.occurredAt, locale)}</strong>
-                </span>
-                <span>
-                  <small>{t.inbox.source}</small>
-                  <strong>{item.source}</strong>
-                </span>
-                <span>
-                  <small>{t.inbox.target}</small>
-                  <strong>
-                    {item.taskId ??
-                      item.roomName ??
-                      item.groupFolder ??
-                      item.roomJid ??
-                      '-'}
-                  </strong>
-                </span>
-              </div>
-              {href ? (
-                <a className="inbox-target" href={href}>
-                  {item.taskId ? t.inbox.openTask : t.inbox.openRoom}
-                </a>
-              ) : null}
-              {linkedTask && linkedTaskActions.length > 0 ? (
-                <div className="task-actions inbox-actions">
-                  {linkedTaskActions.map((action) => {
-                    const actionKey = `${linkedTask.id}:${action}`;
-                    const busy = taskActionKey === actionKey;
-                    return (
-                      <button
-                        aria-busy={busy || undefined}
-                        className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
-                        disabled={busy}
-                        key={action}
-                        onClick={() => onTaskAction(linkedTask, action)}
-                        type="button"
-                      >
-                        {busy ? t.tasks.actions.busy : t.tasks.actions[action]}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-              {inboxActions.length > 0 ? (
-                <div className="task-actions inbox-actions">
-                  {inboxActions.map((action) => {
-                    const actionKey: InboxActionKey = `${item.id}:${action}`;
-                    const busy = inboxActionKey === actionKey;
-                    return (
-                      <button
-                        aria-busy={busy || undefined}
-                        className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
-                        disabled={busy}
-                        key={action}
-                        onClick={() => onInboxAction(item, action)}
-                        type="button"
-                      >
-                        {busy
-                          ? t.inbox.actions.busy
-                          : inboxActionLabel(item, action, t)}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </article>
-          );
-        })}
+        {filteredItems.map((item) => (
+          <InboxCard
+            inboxActionKey={inboxActionKey}
+            item={item}
+            key={item.id}
+            locale={locale}
+            onInboxAction={onInboxAction}
+            onTaskAction={onTaskAction}
+            taskActionKey={taskActionKey}
+            tasks={tasks}
+            t={t}
+          />
+        ))}
       </div>
     </div>
   );
