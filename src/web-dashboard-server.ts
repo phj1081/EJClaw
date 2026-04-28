@@ -40,6 +40,10 @@ import type {
 } from './types.js';
 import { handleOverviewRoute } from './web-dashboard-overview-routes.js';
 import {
+  createRoomMessageIdCache,
+  handleRoomMessageRoute,
+} from './web-dashboard-room-message-routes.js';
+import {
   handleRoomTimelineRoute,
   startRoomsTimelineCacheRefresh,
   type RoomsTimelineRouteDependencies,
@@ -53,7 +57,6 @@ import { handleSettingsRoute } from './web-dashboard-settings-routes.js';
 import { handleScheduledTaskRoute } from './web-dashboard-task-routes.js';
 
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
-const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
 const STACK_RESTART_UNIT_NAME = 'ejclaw-stack-restart.service';
 const MANAGED_SERVICE_CALLER_FALLBACK_MESSAGE =
   'Stack restart unit is not installed yet. Run setup service from an external shell before retrying from a managed EJClaw service.';
@@ -259,16 +262,6 @@ function parseInboxActionPath(pathname: string): string | null {
   }
 }
 
-function parseRoomMessagePath(pathname: string): string | null {
-  const match = pathname.match(/^\/api\/rooms\/([^/]+)\/messages$/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
-}
-
 function parsePairedInboxTarget(
   inboxId: string,
 ): { taskId: string; status: PairedTask['status'] } | null {
@@ -321,51 +314,6 @@ async function readInboxAction(
   } catch {
     return null;
   }
-}
-
-function sanitizeRoomMessageRequestId(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const safe = trimmed.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 120);
-  return safe || null;
-}
-
-async function readRoomMessageBody(request: Request): Promise<{
-  text: string;
-  requestId: string | null;
-  nickname: string | null;
-} | null> {
-  try {
-    const body = (await request.json()) as {
-      text?: unknown;
-      requestId?: unknown;
-      nickname?: unknown;
-    };
-    if (typeof body.text !== 'string') return null;
-    const text = body.text.trim();
-    if (!text) return null;
-    let nickname: string | null = null;
-    if (typeof body.nickname === 'string') {
-      const trimmed = body.nickname.trim().slice(0, 32);
-      if (trimmed) nickname = trimmed;
-    }
-    return {
-      text: text.length > 8000 ? text.slice(0, 8000) : text,
-      requestId: sanitizeRoomMessageRequestId(body.requestId),
-      nickname,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function makeWebMessageId(): string {
-  return `web-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function makeWebMessageIdFromRequest(requestId: string | null): string {
-  return requestId ? `web-${requestId}` : makeWebMessageId();
 }
 
 function makeWebRunId(prefix: string): string {
@@ -528,22 +476,10 @@ export function createWebDashboardHandler(
     startRoomsTimelineCacheRefresh(roomsTimelineDeps);
   }
 
-  const seenRoomMessageIds: string[] = [];
-  const seenRoomMessageIdSet = new Set<string>();
+  const rememberRoomMessageId = createRoomMessageIdCache();
   const dismissedInboxKeys = new Set<string>();
   const recentServiceRestarts: ServiceRestartRecord[] = [];
   const activeServiceRestartTargets = new Set<string>();
-
-  function rememberRoomMessageId(id: string): boolean {
-    if (seenRoomMessageIdSet.has(id)) return false;
-    seenRoomMessageIdSet.add(id);
-    seenRoomMessageIds.push(id);
-    if (seenRoomMessageIds.length > ROOM_MESSAGE_ID_CACHE_LIMIT) {
-      const oldest = seenRoomMessageIds.shift();
-      if (oldest) seenRoomMessageIdSet.delete(oldest);
-    }
-    return true;
-  }
 
   function isInboxItemDismissed(item: {
     id: string;
@@ -558,7 +494,6 @@ export function createWebDashboardHandler(
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const actionInboxId = parseInboxActionPath(url.pathname);
-    const messageRoomJid = parseRoomMessagePath(url.pathname);
 
     const scheduledTaskRoute = await handleScheduledTaskRoute({
       url,
@@ -725,63 +660,19 @@ export function createWebDashboardHandler(
       });
     }
 
-    if (messageRoomJid) {
-      if (request.method !== 'POST') {
-        return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
-      }
-
-      if (!loadRoomBindings || !enqueueMessageCheck) {
-        return jsonResponse(
-          { error: 'Room message injection is not configured' },
-          { status: 503 },
-        );
-      }
-
-      const body = await readRoomMessageBody(request);
-      if (!body) {
-        return jsonResponse(
-          { error: 'Message text is required' },
-          { status: 400 },
-        );
-      }
-
-      const binding = loadRoomBindings()[messageRoomJid];
-      if (!binding) {
-        return jsonResponse({ error: 'Room not found' }, { status: 404 });
-      }
-
-      const timestamp = opts.now?.() ?? new Date().toISOString();
-      const id = makeWebMessageIdFromRequest(body.requestId);
-      if (body.requestId && messageExists(messageRoomJid, id)) {
-        return jsonResponse({ ok: true, id, queued: false, duplicate: true });
-      }
-
-      if (!rememberRoomMessageId(`${messageRoomJid}:${id}`)) {
-        return jsonResponse({ ok: true, id, queued: false, duplicate: true });
-      }
-
-      writeChatMetadata(
-        messageRoomJid,
-        timestamp,
-        binding.name,
-        'web-dashboard',
-        true,
-      );
-      writeMessage({
-        id,
-        chat_jid: messageRoomJid,
-        sender: 'web-dashboard',
-        sender_name: body.nickname ?? 'Web Dashboard',
-        content: body.text,
-        timestamp,
-        is_from_me: false,
-        is_bot_message: false,
-        message_source_kind: 'ipc_injected_human',
-      });
-      enqueueMessageCheck(messageRoomJid, binding.folder);
-
-      return jsonResponse({ ok: true, id, queued: true });
-    }
+    const roomMessageRoute = await handleRoomMessageRoute({
+      url,
+      request,
+      jsonResponse,
+      enqueueMessageCheck,
+      loadRoomBindings,
+      messageExists,
+      rememberRoomMessageId,
+      writeChatMetadata,
+      writeMessage,
+      now: opts.now,
+    });
+    if (roomMessageRoute) return roomMessageRoute;
 
     const roomTimelineRoute = handleRoomTimelineRoute({
       url,
