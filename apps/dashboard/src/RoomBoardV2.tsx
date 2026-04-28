@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 
 import type {
   DashboardOverview,
@@ -7,6 +7,7 @@ import type {
 } from './api';
 import type { Locale, Messages } from './i18n';
 import { RoomCardV2, type RoomEntryWithService } from './RoomCardV2';
+import { EmptyState } from './EmptyState';
 import type { RoomActivityMap } from './useRoomActivity';
 
 type InboxItem = DashboardOverview['inbox'][number];
@@ -45,10 +46,6 @@ export interface RoomBoardV2Props {
   snapshots: StatusSnapshot[];
   statusLabel: (status: string, t: Messages) => string;
   t: Messages;
-}
-
-function EmptyState({ children }: { children: ReactNode }) {
-  return <div className="empty-state">{children}</div>;
 }
 
 function roomFilterLabel(
