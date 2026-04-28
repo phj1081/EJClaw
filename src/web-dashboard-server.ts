@@ -42,10 +42,14 @@ import type {
 } from './types.js';
 import { isWatchCiTask } from './task-watch-status.js';
 import {
-  buildWebDashboardRoomActivity,
   buildWebDashboardOverview,
   sanitizeScheduledTask,
 } from './web-dashboard-data.js';
+import {
+  handleRoomTimelineRoute,
+  startRoomsTimelineCacheRefresh,
+  type RoomsTimelineRouteDependencies,
+} from './web-dashboard-room-routes.js';
 import { handleSimpleGetRoute } from './web-dashboard-routes.js';
 import {
   handleServiceRoute,
@@ -152,14 +156,6 @@ export interface StartedWebDashboardServer {
   url: string;
   stop: () => void;
 }
-
-const ROOMS_TIMELINE_BG_INTERVAL_MS = 2000;
-let roomsTimelineCache: {
-  key: string;
-  builtAt: number;
-  rawJson: string;
-  gzipBuffer: Uint8Array;
-} | null = null;
 
 function jsonResponse(
   value: unknown,
@@ -292,16 +288,6 @@ function parseInboxActionPath(pathname: string): string | null {
 
 function parseRoomMessagePath(pathname: string): string | null {
   const match = pathname.match(/^\/api\/rooms\/([^/]+)\/messages$/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
-}
-
-function parseRoomTimelinePath(pathname: string): string | null {
-  const match = pathname.match(/^\/api\/rooms\/([^/]+)\/timeline$/);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
@@ -682,100 +668,20 @@ export function createWebDashboardHandler(
     opts.restartServiceStack ?? restartEjclawStackServices;
   const statusMaxAgeMs = opts.statusMaxAgeMs ?? DEFAULT_STATUS_MAX_AGE_MS;
 
-  function buildRoomsTimelineResult(): Record<
-    string,
-    ReturnType<typeof buildWebDashboardRoomActivity>
-  > {
-    const snapshots = readSnapshots(statusMaxAgeMs);
-    const uniqueByJid = new Map<
-      string,
-      {
-        snapshot: (typeof snapshots)[number];
-        entry: (typeof snapshots)[number]['entries'][number];
-      }
-    >();
-    for (const snapshot of snapshots) {
-      for (const entry of snapshot.entries) {
-        const existing = uniqueByJid.get(entry.jid);
-        if (
-          !existing ||
-          existing.snapshot.updatedAt.localeCompare(snapshot.updatedAt) < 0
-        ) {
-          uniqueByJid.set(entry.jid, { snapshot, entry });
-        }
-      }
-    }
-    const result: Record<
-      string,
-      ReturnType<typeof buildWebDashboardRoomActivity>
-    > = {};
-    for (const [jid, { snapshot, entry }] of uniqueByJid) {
-      const pairedTask = loadLatestPairedTaskForChat(jid) ?? null;
-      const messages = loadRecentChatMessages(jid, 8);
-      const progressMessages = pairedTask
-        ? loadRecentChatMessages(jid, 40)
-        : messages;
-      const outputs = loadRecentPairedTurnOutputsForChat(jid, 8);
-      if (!pairedTask && messages.length === 0 && outputs.length === 0)
-        continue;
-      const latestTurn = pairedTask
-        ? loadLatestPairedTurnForTask(pairedTask.id)
-        : null;
-      const turns = latestTurn ? [latestTurn] : [];
-      result[jid] = buildWebDashboardRoomActivity({
-        serviceId: snapshot.serviceId,
-        entry,
-        pairedTask,
-        turns,
-        attempts: [],
-        outputs,
-        messages,
-        progressMessages,
-        outputLimit: 8,
-      });
-    }
-    return result;
-  }
-
-  function computeRoomsCacheKey(): string {
-    return readSnapshots(statusMaxAgeMs)
-      .map((s) => s.updatedAt)
-      .sort()
-      .join('|');
-  }
-
-  function ensureRoomsTimelineCache(): NonNullable<typeof roomsTimelineCache> {
-    const key = computeRoomsCacheKey();
-    if (roomsTimelineCache && roomsTimelineCache.key === key) {
-      return roomsTimelineCache;
-    }
-    const result = buildRoomsTimelineResult();
-    const rawJson = JSON.stringify(result);
-    const gzipBuffer = Bun.gzipSync(new TextEncoder().encode(rawJson));
-    roomsTimelineCache = {
-      key,
-      builtAt: Date.now(),
-      rawJson,
-      gzipBuffer,
-    };
-    return roomsTimelineCache;
-  }
+  const roomsTimelineDeps: RoomsTimelineRouteDependencies = {
+    statusMaxAgeMs,
+    readSnapshots,
+    loadLatestPairedTaskForChat,
+    loadPairedTurnsForTask,
+    loadLatestPairedTurnForTask,
+    loadPairedTurnAttempts,
+    loadPairedTurnOutputs,
+    loadRecentPairedTurnOutputsForChat,
+    loadRecentChatMessages,
+  };
 
   if (opts.startBackgroundCacheRefresh !== false) {
-    setTimeout(() => {
-      try {
-        ensureRoomsTimelineCache();
-      } catch {
-        /* warm-up failure is non-fatal */
-      }
-    }, 0);
-    setInterval(() => {
-      try {
-        ensureRoomsTimelineCache();
-      } catch {
-        /* refresh failure is non-fatal */
-      }
-    }, ROOMS_TIMELINE_BG_INTERVAL_MS).unref();
+    startRoomsTimelineCacheRefresh(roomsTimelineDeps);
   }
 
   const seenRoomMessageIds: string[] = [];
@@ -811,7 +717,6 @@ export function createWebDashboardHandler(
     const taskId = parseTaskPath(url.pathname);
     const actionInboxId = parseInboxActionPath(url.pathname);
     const messageRoomJid = parseRoomMessagePath(url.pathname);
-    const timelineRoomJid = parseRoomTimelinePath(url.pathname);
 
     if (actionTaskId) {
       if (request.method !== 'POST') {
@@ -1061,47 +966,13 @@ export function createWebDashboardHandler(
       return jsonResponse({ ok: true, id, queued: true });
     }
 
-    if (timelineRoomJid) {
-      if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
-      }
-
-      const snapshots = readSnapshots(statusMaxAgeMs);
-      const matched = snapshots
-        .flatMap((snapshot) =>
-          snapshot.entries
-            .filter((entry) => entry.jid === timelineRoomJid)
-            .map((entry) => ({ snapshot, entry })),
-        )
-        .sort((a, b) =>
-          b.snapshot.updatedAt.localeCompare(a.snapshot.updatedAt),
-        )
-        .at(0);
-      if (!matched) {
-        return jsonResponse(
-          { error: 'Room timeline not found' },
-          { status: 404 },
-        );
-      }
-
-      const pairedTask = loadLatestPairedTaskForChat(timelineRoomJid) ?? null;
-      const turns = pairedTask ? loadPairedTurnsForTask(pairedTask.id) : [];
-      const attempts = turns.flatMap((turn) =>
-        loadPairedTurnAttempts(turn.turn_id),
-      );
-      return jsonResponse(
-        buildWebDashboardRoomActivity({
-          serviceId: matched.snapshot.serviceId,
-          entry: matched.entry,
-          pairedTask,
-          turns,
-          attempts,
-          outputs: pairedTask ? loadPairedTurnOutputs(pairedTask.id) : [],
-          messages: loadRecentChatMessages(timelineRoomJid, 8),
-          progressMessages: loadRecentChatMessages(timelineRoomJid, 40),
-        }),
-      );
-    }
+    const roomTimelineRoute = handleRoomTimelineRoute({
+      url,
+      request,
+      jsonResponse,
+      ...roomsTimelineDeps,
+    });
+    if (roomTimelineRoute) return roomTimelineRoute;
 
     const serviceRoute = await handleServiceRoute({
       url,
@@ -1309,95 +1180,6 @@ export function createWebDashboardHandler(
           serviceRestarts: recentServiceRestarts,
         },
         inbox: overview.inbox.filter((item) => !isInboxItemDismissed(item)),
-      });
-    }
-
-    if (url.pathname === '/api/stream') {
-      const encoder = new TextEncoder();
-      const stream = new ReadableStream({
-        start(controller) {
-          let lastBuiltAt = 0;
-          let closed = false;
-
-          const enqueue = (chunk: string) => {
-            if (closed) return;
-            try {
-              controller.enqueue(encoder.encode(chunk));
-            } catch {
-              closed = true;
-            }
-          };
-
-          // Initial: send retry hint and seed event
-          enqueue(`retry: 3000\n\n`);
-          try {
-            const cache = ensureRoomsTimelineCache();
-            lastBuiltAt = cache.builtAt;
-            enqueue(`event: rooms-timeline\ndata: ${cache.rawJson}\n\n`);
-          } catch {
-            /* warm-up failure is non-fatal */
-          }
-
-          const tick = () => {
-            if (closed) return;
-            try {
-              const cache = ensureRoomsTimelineCache();
-              if (cache.builtAt !== lastBuiltAt) {
-                lastBuiltAt = cache.builtAt;
-                enqueue(`event: rooms-timeline\ndata: ${cache.rawJson}\n\n`);
-              } else {
-                // heartbeat to keep connection alive through proxies
-                enqueue(`: ping ${Date.now()}\n\n`);
-              }
-            } catch {
-              /* skip this tick */
-            }
-          };
-
-          const interval = setInterval(tick, 1500);
-          const close = () => {
-            if (closed) return;
-            closed = true;
-            clearInterval(interval);
-            try {
-              controller.close();
-            } catch {
-              /* already closed */
-            }
-          };
-          request.signal.addEventListener('abort', close);
-        },
-      });
-
-      return new Response(stream, {
-        headers: {
-          'content-type': 'text/event-stream; charset=utf-8',
-          'cache-control': 'no-cache, no-transform',
-          connection: 'keep-alive',
-          'x-accel-buffering': 'no',
-        },
-      });
-    }
-
-    if (url.pathname === '/api/rooms-timeline') {
-      const cache = ensureRoomsTimelineCache();
-      const acceptsGzip =
-        request.headers.get('accept-encoding')?.includes('gzip') ?? false;
-      if (acceptsGzip) {
-        return new Response(cache.gzipBuffer, {
-          headers: {
-            'content-type': 'application/json; charset=utf-8',
-            'content-encoding': 'gzip',
-            vary: 'accept-encoding',
-            'x-cache-age': String(Date.now() - cache.builtAt),
-          },
-        });
-      }
-      return new Response(cache.rawJson, {
-        headers: {
-          'content-type': 'application/json; charset=utf-8',
-          'x-cache-age': String(Date.now() - cache.builtAt),
-        },
       });
     }
 
