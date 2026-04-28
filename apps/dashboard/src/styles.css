@@ -4234,6 +4234,9 @@ progress::-moz-progress-bar {
   background: rgba(255, 255, 255, 0.06);
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 12px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .parsed-body pre {
