@@ -61,6 +61,7 @@ import {
   isWatcherRoomMessage,
 } from './roomThread';
 import { ParsedBody } from './ParsedBody';
+import { redactSecretsForPreview } from './redaction';
 import './styles.css';
 
 interface DashboardState {
@@ -439,18 +440,11 @@ function queueLabel(
   return parts.join(' · ');
 }
 
-const SECRET_ASSIGNMENT_RE =
-  /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH|PRIVATE_KEY)[A-Z0-9_]*)\s*=\s*([^\s"'`]+)/gi;
-const SECRET_VALUE_RE =
-  /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})\b/g;
-
 function safePreview(
   value: string | null | undefined,
   fallback: string,
 ): string {
-  const cleaned = (value ?? '')
-    .replace(SECRET_ASSIGNMENT_RE, '$1=<redacted>')
-    .replace(SECRET_VALUE_RE, '<redacted-token>')
+  const cleaned = redactSecretsForPreview(value ?? '')
     .replace(/<\/?internal[^>]*>/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
