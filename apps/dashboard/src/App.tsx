@@ -57,6 +57,11 @@ import {
   type DashboardFreshness,
   type DashboardView,
 } from './DashboardNav';
+import {
+  buildRoomThreadEntries,
+  isInternalProtocolPayload,
+  isWatcherRoomMessage,
+} from './roomThread';
 import './styles.css';
 
 interface DashboardState {
@@ -510,17 +515,6 @@ function ParsedBody({
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{cleaned}</ReactMarkdown>
     </div>
   );
-}
-
-function isInternalProtocolPayload(
-  content: string | null | undefined,
-): boolean {
-  if (!content) return false;
-  if (/<\/?(sub-agent[-\w]*|tool-call|internal)\b/i.test(content)) return true;
-  if (/"author"\s*:\s*"[^"]+"\s*,\s*"recipient"\s*:\s*"[^"]+"/.test(content)) {
-    return true;
-  }
-  return false;
 }
 
 function senderRoleClass(value: string | null | undefined): string {
@@ -2845,85 +2839,15 @@ function RoomCardV2({
     queueChips.push(`${entry.pendingTasks} ${t.rooms.tasks}`);
   if (entry.pendingMessages) queueChips.push(t.rooms.queueWaitingMessages);
   const lastUpdated = turn?.updatedAt ?? task?.updatedAt ?? null;
-  const WATCHER_RE =
-    /^\s*(?:CI 완료|Build |Deploy |Lint |Release |\[CI\]|\[Watcher\]|GitHub Actions)/i;
-  const isWatcherMsg = (m: (typeof messages)[number]) =>
-    m.sourceKind === 'bot' && WATCHER_RE.test(m.content);
-  const isCronTriggerMsg = (m: (typeof messages)[number]) =>
-    m.sourceKind === 'trusted_external_bot';
-  const lastWatcher = [...messages].reverse().find(isWatcherMsg) ?? null;
-  const watcherCount = messages.filter(isWatcherMsg).length;
-  const watcherMessages = messages.filter(isWatcherMsg);
-  type ThreadEntry = {
-    id: string;
-    senderName: string;
-    content: string;
-    timestamp: string;
-    isFromMe: boolean;
-    isBotMessage: boolean;
-    sourceKind: string;
-    verdict?: string | null;
-    turnNumber?: number;
-  };
-  const humanMessages: ThreadEntry[] = messages
-    .filter(
-      (m) =>
-        (m.sourceKind === 'human' || m.sourceKind === 'ipc_injected_human') &&
-        !isInternalProtocolPayload(m.content),
-    )
-    .map((m) => ({
-      id: m.id,
-      senderName: m.senderName,
-      content: m.content,
-      timestamp: m.timestamp,
-      isFromMe: m.isFromMe,
-      isBotMessage: false,
-      sourceKind: m.sourceKind,
-    }));
-  const cronMessages: ThreadEntry[] = messages
-    .filter((m) => isCronTriggerMsg(m) && !isInternalProtocolPayload(m.content))
-    .map((m) => ({
-      id: m.id,
-      senderName: m.senderName,
-      content: m.content,
-      timestamp: m.timestamp,
-      isFromMe: false,
-      isBotMessage: true,
-      sourceKind: m.sourceKind,
-    }));
-  const confirmedKey = (m: { content: string; senderName: string }) =>
-    `${m.senderName}${m.content}`;
-  const confirmedSet = new Set(messages.map(confirmedKey));
-  const optimisticPending: ThreadEntry[] = pendingMessages
-    .filter((m) => !confirmedSet.has(confirmedKey(m)))
-    .map((m) => ({
-      id: m.id,
-      senderName: m.senderName,
-      content: m.content,
-      timestamp: m.timestamp,
-      isFromMe: true,
-      isBotMessage: false,
-      sourceKind: m.sourceKind,
-    }));
-  const outputEntries: ThreadEntry[] = outputs
-    .filter((o) => !isInternalProtocolPayload(o.outputText))
-    .map((o) => ({
-      id: `out:${o.id}`,
-      senderName: o.role,
-      content: o.outputText,
-      timestamp: o.createdAt,
-      isFromMe: false,
-      isBotMessage: true,
-      sourceKind: 'agent_output',
-      verdict: o.verdict,
-      turnNumber: o.turnNumber,
-    }));
-  const agentMessages: ThreadEntry[] = [
-    ...humanMessages,
-    ...optimisticPending,
-    ...cronMessages,
-    ...outputEntries,
-  ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const lastWatcher =
+    [...messages].reverse().find(isWatcherRoomMessage) ?? null;
+  const watcherCount = messages.filter(isWatcherRoomMessage).length;
+  const watcherMessages = messages.filter(isWatcherRoomMessage);
+  const agentMessages = buildRoomThreadEntries({
+    messages,
+    outputs,
+    pendingMessages,
+  });
 
   return (
     <article
