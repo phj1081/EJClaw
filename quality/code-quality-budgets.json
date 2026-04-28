@@ -68,11 +68,6 @@
       "maxFunctionLines": 816,
       "owner": "discord test hotspot"
     },
-    "src/channels/discord.ts": {
-      "maxLines": 903,
-      "maxFunctionLines": 191,
-      "owner": "discord channel hotspot"
-    },
     "src/codex-warmup.test.ts": {
       "maxFunctionLines": 277,
       "owner": "codex warmup test hotspot"

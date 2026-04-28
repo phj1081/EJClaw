@@ -225,163 +225,7 @@ export class DiscordChannel implements Channel {
     });
 
     this.client.on(Events.MessageCreate, async (message: Message) => {
-      const channelId = message.channelId;
-      const chatJid = `dc:${channelId}`;
-      if (!this.receivesInbound) return;
-      const isOwnBotMessage = message.author.id === this.client?.user?.id;
-      if (isOwnBotMessage) return;
-      if (message.author.bot && !hasReviewerLease(chatJid)) return;
-
-      let content = message.content;
-      const timestamp = message.createdAt.toISOString();
-      const senderName =
-        message.member?.displayName ||
-        message.author.displayName ||
-        message.author.username;
-      const sender = message.author.id;
-      const msgId = message.id;
-
-      // Determine chat name
-      let chatName: string;
-      if (message.guild) {
-        const textChannel = message.channel as TextChannel;
-        chatName = `${message.guild.name} #${textChannel.name}`;
-      } else {
-        chatName = senderName;
-      }
-
-      // Handle attachments — transcribe voice messages, download files
-      const isVoiceMessage = message.flags.has(MessageFlags.IsVoiceMessage);
-      if (message.attachments.size > 0) {
-        const attachmentDescriptions = await Promise.all(
-          [...message.attachments.values()].map(async (att) => {
-            const contentType = att.contentType || '';
-            // Voice messages → transcribe; regular audio files → download
-            if (
-              contentType.startsWith('audio/') &&
-              (isVoiceMessage || att.duration != null)
-            ) {
-              return transcribeAudio(att);
-            } else if (
-              contentType.startsWith('audio/') ||
-              contentType.startsWith('image/')
-            ) {
-              try {
-                const filePath = await downloadAttachment(
-                  att,
-                  contentType.startsWith('image/') ? '.png' : '.wav',
-                );
-                const label = contentType.startsWith('image/')
-                  ? 'Image'
-                  : 'Audio';
-                const origName = att.name || 'file';
-                return `[${label}: ${origName} → ${filePath}]`;
-              } catch (err) {
-                logger.error(
-                  { err, file: att.name },
-                  'Attachment download failed',
-                );
-                return `[File: ${att.name || 'file'} (download failed)]`;
-              }
-            } else if (contentType.startsWith('video/')) {
-              return `[Video: ${att.name || 'video'}]`;
-            } else if (
-              contentType.startsWith('text/') ||
-              /\.(txt|md|json|csv|log|xml|yaml|yml|toml|ini|cfg|conf|sh|bash|zsh|py|js|ts|jsx|tsx|html|css|sql|rs|go|java|c|cpp|h|hpp|rb|php|swift|kt|scala|r|lua|pl|ex|exs|hs|ml|clj|dart|v|zig|nim|ps1|bat|cmd|mjs|cjs)$/i.test(
-                att.name || '',
-              )
-            ) {
-              // Download and inline text-based files
-              try {
-                const res = await fetch(att.url);
-                if (!res.ok) throw new Error(`Download failed: ${res.status}`);
-                let text = await res.text();
-                // Truncate very large files
-                const MAX_TEXT_LENGTH = 32_000;
-                if (text.length > MAX_TEXT_LENGTH) {
-                  text =
-                    text.slice(0, MAX_TEXT_LENGTH) +
-                    `\n...(truncated, ${text.length} chars total)`;
-                }
-                return `[File: ${att.name}]\n${text}`;
-              } catch (err) {
-                logger.error(
-                  { err, file: att.name },
-                  'Text file download failed',
-                );
-                return `[File: ${att.name || 'file'} (download failed)]`;
-              }
-            } else {
-              return `[File: ${att.name || 'file'}]`;
-            }
-          }),
-        );
-        if (content) {
-          content = `${content}\n${attachmentDescriptions.join('\n')}`;
-        } else {
-          content = attachmentDescriptions.join('\n');
-        }
-      }
-
-      // Handle reply context — include who the user is replying to
-      if (message.reference?.messageId) {
-        try {
-          const repliedTo = await message.channel.messages.fetch(
-            message.reference.messageId,
-          );
-          const replyAuthor =
-            repliedTo.member?.displayName ||
-            repliedTo.author.displayName ||
-            repliedTo.author.username;
-          content = `[Reply to ${replyAuthor}] ${content}`;
-        } catch {
-          // Referenced message may have been deleted
-        }
-      }
-
-      // Store chat metadata for discovery
-      const isGroup = message.guild !== null;
-      this.opts.onChatMetadata(
-        chatJid,
-        timestamp,
-        chatName,
-        'discord',
-        isGroup,
-      );
-
-      // Only deliver full message for registered groups. Secondary role bots
-      // are configured as outbound-only, while the owner bot receives inbound.
-      const group = this.opts.roomBindings()[chatJid];
-      if (!group) {
-        logger.debug(
-          { chatJid, chatName },
-          'Message from unregistered Discord channel',
-        );
-        return;
-      }
-      if (
-        this.agentTypeFilter &&
-        (group.agentType || 'claude-code') !== this.agentTypeFilter
-      ) {
-        return; // This JID belongs to a different agent type's bot
-      }
-
-      // Deliver message — startMessageLoop() will pick it up
-      this.opts.onMessage(chatJid, {
-        id: msgId,
-        chat_jid: chatJid,
-        sender,
-        sender_name: senderName,
-        content,
-        timestamp,
-        is_from_me: false,
-        is_bot_message: message.author.bot ?? false,
-      });
-
-      logger.info(
-        { chatJid, chatName, sender: senderName },
-        'Discord message stored',
-      );
+      await this.handleMessageCreate(message);
     });
 
     // Handle errors gracefully
@@ -404,6 +248,160 @@ export class DiscordChannel implements Channel {
 
       this.client!.login(this.botToken);
     });
+  }
+
+  private async handleMessageCreate(message: Message): Promise<void> {
+    const channelId = message.channelId;
+    const chatJid = `dc:${channelId}`;
+    if (!this.receivesInbound) return;
+    const isOwnBotMessage = message.author.id === this.client?.user?.id;
+    if (isOwnBotMessage) return;
+    if (message.author.bot && !hasReviewerLease(chatJid)) return;
+
+    let content = message.content;
+    const timestamp = message.createdAt.toISOString();
+    const senderName =
+      message.member?.displayName ||
+      message.author.displayName ||
+      message.author.username;
+    const sender = message.author.id;
+    const msgId = message.id;
+
+    // Determine chat name
+    let chatName: string;
+    if (message.guild) {
+      const textChannel = message.channel as TextChannel;
+      chatName = `${message.guild.name} #${textChannel.name}`;
+    } else {
+      chatName = senderName;
+    }
+
+    // Handle attachments — transcribe voice messages, download files
+    const isVoiceMessage = message.flags.has(MessageFlags.IsVoiceMessage);
+    if (message.attachments.size > 0) {
+      const attachmentDescriptions = await Promise.all(
+        [...message.attachments.values()].map(async (att) => {
+          const contentType = att.contentType || '';
+          // Voice messages → transcribe; regular audio files → download
+          if (
+            contentType.startsWith('audio/') &&
+            (isVoiceMessage || att.duration != null)
+          ) {
+            return transcribeAudio(att);
+          } else if (
+            contentType.startsWith('audio/') ||
+            contentType.startsWith('image/')
+          ) {
+            try {
+              const filePath = await downloadAttachment(
+                att,
+                contentType.startsWith('image/') ? '.png' : '.wav',
+              );
+              const label = contentType.startsWith('image/')
+                ? 'Image'
+                : 'Audio';
+              const origName = att.name || 'file';
+              return `[${label}: ${origName} → ${filePath}]`;
+            } catch (err) {
+              logger.error(
+                { err, file: att.name },
+                'Attachment download failed',
+              );
+              return `[File: ${att.name || 'file'} (download failed)]`;
+            }
+          } else if (contentType.startsWith('video/')) {
+            return `[Video: ${att.name || 'video'}]`;
+          } else if (
+            contentType.startsWith('text/') ||
+            /\.(txt|md|json|csv|log|xml|yaml|yml|toml|ini|cfg|conf|sh|bash|zsh|py|js|ts|jsx|tsx|html|css|sql|rs|go|java|c|cpp|h|hpp|rb|php|swift|kt|scala|r|lua|pl|ex|exs|hs|ml|clj|dart|v|zig|nim|ps1|bat|cmd|mjs|cjs)$/i.test(
+              att.name || '',
+            )
+          ) {
+            // Download and inline text-based files
+            try {
+              const res = await fetch(att.url);
+              if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+              let text = await res.text();
+              // Truncate very large files
+              const MAX_TEXT_LENGTH = 32_000;
+              if (text.length > MAX_TEXT_LENGTH) {
+                text =
+                  text.slice(0, MAX_TEXT_LENGTH) +
+                  `\n...(truncated, ${text.length} chars total)`;
+              }
+              return `[File: ${att.name}]\n${text}`;
+            } catch (err) {
+              logger.error(
+                { err, file: att.name },
+                'Text file download failed',
+              );
+              return `[File: ${att.name || 'file'} (download failed)]`;
+            }
+          } else {
+            return `[File: ${att.name || 'file'}]`;
+          }
+        }),
+      );
+      if (content) {
+        content = `${content}\n${attachmentDescriptions.join('\n')}`;
+      } else {
+        content = attachmentDescriptions.join('\n');
+      }
+    }
+
+    // Handle reply context — include who the user is replying to
+    if (message.reference?.messageId) {
+      try {
+        const repliedTo = await message.channel.messages.fetch(
+          message.reference.messageId,
+        );
+        const replyAuthor =
+          repliedTo.member?.displayName ||
+          repliedTo.author.displayName ||
+          repliedTo.author.username;
+        content = `[Reply to ${replyAuthor}] ${content}`;
+      } catch {
+        // Referenced message may have been deleted
+      }
+    }
+
+    // Store chat metadata for discovery
+    const isGroup = message.guild !== null;
+    this.opts.onChatMetadata(chatJid, timestamp, chatName, 'discord', isGroup);
+
+    // Only deliver full message for registered groups. Secondary role bots
+    // are configured as outbound-only, while the owner bot receives inbound.
+    const group = this.opts.roomBindings()[chatJid];
+    if (!group) {
+      logger.debug(
+        { chatJid, chatName },
+        'Message from unregistered Discord channel',
+      );
+      return;
+    }
+    if (
+      this.agentTypeFilter &&
+      (group.agentType || 'claude-code') !== this.agentTypeFilter
+    ) {
+      return; // This JID belongs to a different agent type's bot
+    }
+
+    // Deliver message — startMessageLoop() will pick it up
+    this.opts.onMessage(chatJid, {
+      id: msgId,
+      chat_jid: chatJid,
+      sender,
+      sender_name: senderName,
+      content,
+      timestamp,
+      is_from_me: false,
+      is_bot_message: message.author.bot ?? false,
+    });
+
+    logger.info(
+      { chatJid, chatName, sender: senderName },
+      'Discord message stored',
+    );
   }
 
   async sendMessage(
