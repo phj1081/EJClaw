@@ -38,6 +38,7 @@ import {
   createProducedWorkItemInDatabase,
   getOpenWorkItemForChatFromDatabase,
   getOpenWorkItemFromDatabase,
+  getRecentDeliveredWorkItemsForChatFromDatabase,
   markWorkItemDeliveredInDatabase,
   markWorkItemDeliveryRetryInDatabase,
 } from './work-items.js';
@@ -280,6 +281,17 @@ export function getOpenWorkItemForChat(
     requireDatabase(),
     chatJid,
     serviceId,
+  );
+}
+
+export function getRecentDeliveredWorkItemsForChat(
+  chatJid: string,
+  limit: number = 8,
+): WorkItem[] {
+  return getRecentDeliveredWorkItemsForChatFromDatabase(
+    requireDatabase(),
+    chatJid,
+    limit,
   );
 }
 

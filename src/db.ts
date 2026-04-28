@@ -21,6 +21,7 @@ export {
   getNewMessagesBySeq,
   getOpenWorkItem,
   getOpenWorkItemForChat,
+  getRecentDeliveredWorkItemsForChat,
   getRecentChatMessages,
   getRecentChatMessagesBatch,
   hasMessage,

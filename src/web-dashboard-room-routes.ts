@@ -1,6 +1,10 @@
 import { gzipSync } from 'node:zlib';
 
-import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
+import type {
+  PairedTurnAttemptRecord,
+  PairedTurnRecord,
+  WorkItem,
+} from './db.js';
 import type { StatusSnapshot } from './status-dashboard.js';
 import type { NewMessage, PairedTask, PairedTurnOutput } from './types.js';
 import {
@@ -30,6 +34,10 @@ export interface RoomsTimelineRouteDependencies {
     chatJid: string,
     limit: number,
   ) => PairedTurnOutput[];
+  loadRecentDeliveredWorkItemsForChat: (
+    chatJid: string,
+    limit: number,
+  ) => WorkItem[];
   loadRecentChatMessages: (chatJid: string, limit?: number) => NewMessage[];
 }
 
@@ -97,6 +105,7 @@ function buildRoomActivity(
     turns,
     attempts,
     outputs: pairedTask ? deps.loadPairedTurnOutputs(pairedTask.id) : [],
+    outboundItems: deps.loadRecentDeliveredWorkItemsForChat(entry.jid, 12),
     messages: deps.loadRecentChatMessages(entry.jid, 8),
   });
 }
@@ -129,7 +138,15 @@ export function buildRoomsTimelineResult(
     const pairedTask = deps.loadLatestPairedTaskForChat(jid) ?? null;
     const messages = deps.loadRecentChatMessages(jid, 8);
     const outputs = deps.loadRecentPairedTurnOutputsForChat(jid, 8);
-    if (!pairedTask && messages.length === 0 && outputs.length === 0) continue;
+    const outboundItems = deps.loadRecentDeliveredWorkItemsForChat(jid, 8);
+    if (
+      !pairedTask &&
+      messages.length === 0 &&
+      outputs.length === 0 &&
+      outboundItems.length === 0
+    ) {
+      continue;
+    }
 
     const latestTurn = pairedTask
       ? deps.loadLatestPairedTurnForTask(pairedTask.id)
@@ -142,6 +159,7 @@ export function buildRoomsTimelineResult(
       turns,
       attempts: [],
       outputs,
+      outboundItems,
       messages,
       outputLimit: 8,
     });
@@ -161,9 +179,6 @@ export function ensureRoomsTimelineCache(
   deps: RoomsTimelineRouteDependencies,
 ): RoomsTimelineCache {
   const key = computeRoomsCacheKey(deps);
-  if (roomsTimelineCache && roomsTimelineCache.key === key) {
-    return roomsTimelineCache;
-  }
   const result = buildRoomsTimelineResult(deps);
   const rawJson = JSON.stringify(result);
   const gzipBuffer = gzipSync(new TextEncoder().encode(rawJson));

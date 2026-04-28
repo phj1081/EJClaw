@@ -15,6 +15,7 @@ import {
   getRecentPairedTurnOutputsForChat,
   getPairedTurnsForTask,
   getLatestPairedTurnForTask,
+  getRecentDeliveredWorkItemsForChat,
   getRecentChatMessages,
   getRecentChatMessagesBatch,
   getTaskById,
@@ -111,6 +112,7 @@ export interface WebDashboardHandlerOptions {
   getPairedTurnAttempts?: typeof getPairedTurnAttempts;
   getPairedTurnOutputs?: typeof getPairedTurnOutputs;
   getRecentPairedTurnOutputsForChat?: typeof getRecentPairedTurnOutputsForChat;
+  getRecentDeliveredWorkItemsForChat?: typeof getRecentDeliveredWorkItemsForChat;
   getRecentChatMessages?: typeof getRecentChatMessages;
   getPairedTaskById?: (id: string) => PairedTask | undefined;
   updatePairedTaskIfUnchanged?: (
@@ -310,6 +312,9 @@ export function createWebDashboardHandler(
     opts.getPairedTurnOutputs ?? getPairedTurnOutputs;
   const loadRecentPairedTurnOutputsForChat =
     opts.getRecentPairedTurnOutputsForChat ?? getRecentPairedTurnOutputsForChat;
+  const loadRecentDeliveredWorkItemsForChat =
+    opts.getRecentDeliveredWorkItemsForChat ??
+    getRecentDeliveredWorkItemsForChat;
   const loadPairedTurnAttempts =
     opts.getPairedTurnAttempts ?? getPairedTurnAttempts;
   const loadRecentChatMessages =
@@ -335,6 +340,7 @@ export function createWebDashboardHandler(
     loadPairedTurnAttempts,
     loadPairedTurnOutputs,
     loadRecentPairedTurnOutputsForChat,
+    loadRecentDeliveredWorkItemsForChat,
     loadRecentChatMessages,
   };
 

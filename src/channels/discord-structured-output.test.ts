@@ -136,7 +136,7 @@ describe('DiscordChannel structured output', () => {
     };
     clientRef.current.channels.fetch.mockResolvedValue(mockChannel);
 
-    await channel.sendMessage(
+    const result = await channel.sendMessage(
       'dc:1234567890123456',
       JSON.stringify({
         ejclaw: {
@@ -154,6 +154,11 @@ describe('DiscordChannel structured output', () => {
       }),
     );
 
+    expect(result).toMatchObject({
+      primaryMessageId: 'discord-message-1',
+      messageIds: ['discord-message-1'],
+      visible: true,
+    });
     expect(mockChannel.send).toHaveBeenCalledWith({
       content: '라벨 좌측 클리핑 회귀 수정했습니다.',
       files: [

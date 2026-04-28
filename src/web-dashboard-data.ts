@@ -3,7 +3,11 @@ import {
   normalizeEjclawStructuredOutput,
 } from './agent-protocol.js';
 import { isWatchCiTask } from './task-watch-status.js';
-import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
+import type {
+  PairedTurnAttemptRecord,
+  PairedTurnRecord,
+  WorkItem,
+} from './db.js';
 import type { StatusSnapshot, UsageRowSnapshot } from './status-dashboard.js';
 import type {
   NewMessage,
@@ -492,6 +496,95 @@ function sanitizeRoomMessage(
   };
 }
 
+function roleSenderName(role: WorkItem['delivery_role']): string {
+  return role ?? 'system';
+}
+
+function sanitizeCanonicalOutboundMessage(
+  item: WorkItem,
+): WebDashboardRoomMessage | null {
+  if (item.status !== 'delivered') return null;
+  const normalized = normalizeStructuredVisibleContent(item.result_payload);
+  if (normalized.text === null) return null;
+
+  return {
+    id: `work:${item.id}`,
+    sender: `work-item:${item.delivery_role ?? 'system'}`,
+    senderName: roleSenderName(item.delivery_role ?? null),
+    content: buildRoomBody(normalized.text),
+    attachments:
+      normalized.attachments.length > 0
+        ? normalized.attachments
+        : (item.attachments ?? []),
+    timestamp: item.delivered_at ?? item.updated_at,
+    isFromMe: false,
+    isBotMessage: true,
+    sourceKind: 'bot',
+  };
+}
+
+function normalizeForOutboundDedupe(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function senderMatchesCanonicalOutbound(
+  messageSender: string,
+  outboundSender: string,
+): boolean {
+  const message = messageSender.trim().toLowerCase();
+  const outbound = outboundSender.trim().toLowerCase();
+  if (message === outbound) return true;
+  const aliases: Record<string, string[]> = {
+    owner: ['owner', '오너'],
+    reviewer: ['reviewer', '리뷰어'],
+    arbiter: ['arbiter', '중재자'],
+    system: ['system', '시스템'],
+  };
+  return (aliases[outbound] ?? [outbound]).includes(message);
+}
+
+function isDuplicateOfCanonicalOutbound(
+  message: WebDashboardRoomMessage,
+  canonical: WebDashboardRoomMessage[],
+): boolean {
+  if (!message.isBotMessage) return false;
+  const messageText = normalizeForOutboundDedupe(message.content);
+  if (!messageText) return false;
+  const messageTime = new Date(message.timestamp).getTime();
+
+  return canonical.some((outbound) => {
+    if (
+      !senderMatchesCanonicalOutbound(message.senderName, outbound.senderName)
+    ) {
+      return false;
+    }
+    const outboundText = normalizeForOutboundDedupe(outbound.content);
+    if (!outboundText) return false;
+    const contentMatches =
+      outboundText === messageText ||
+      outboundText.startsWith(messageText) ||
+      messageText.startsWith(outboundText) ||
+      outboundText.includes(messageText) ||
+      messageText.includes(outboundText);
+    if (!contentMatches) return false;
+    const outboundTime = new Date(outbound.timestamp).getTime();
+    if (!Number.isFinite(messageTime) || !Number.isFinite(outboundTime)) {
+      return true;
+    }
+    return Math.abs(outboundTime - messageTime) <= 120_000;
+  });
+}
+
+function compareRoomMessagesByTimestamp(
+  a: WebDashboardRoomMessage,
+  b: WebDashboardRoomMessage,
+): number {
+  const aTime = new Date(a.timestamp).getTime();
+  const bTime = new Date(b.timestamp).getTime();
+  if (!Number.isFinite(aTime) || !Number.isFinite(bTime)) return 0;
+  return aTime - bTime;
+}
+
 const TASK_STATUS_PREFIX = '⁣⁣⁣';
 
 function isTaskStatusMessage(message: NewMessage): boolean {
@@ -558,6 +651,7 @@ export function buildWebDashboardRoomActivity(args: {
   turns: PairedTurnRecord[];
   attempts: PairedTurnAttemptRecord[];
   outputs: PairedTurnOutput[];
+  outboundItems?: WorkItem[];
   messages: NewMessage[];
   outputLimit?: number;
 }): WebDashboardRoomActivity {
@@ -576,6 +670,24 @@ export function buildWebDashboardRoomActivity(args: {
     ? (latestAttemptByTurnId.get(currentTurn.turn_id) ?? null)
     : null;
   const outputLimit = args.outputLimit ?? 4;
+  const canonicalOutboundMessages = (args.outboundItems ?? [])
+    .map(sanitizeCanonicalOutboundMessage)
+    .filter((message): message is WebDashboardRoomMessage => Boolean(message));
+  const canonicalDeliveryMessageIds = new Set(
+    (args.outboundItems ?? [])
+      .map((item) => item.delivery_message_id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const recentMessages = args.messages
+    .filter((message) => !canonicalDeliveryMessageIds.has(message.id))
+    .filter((message) => !isTaskStatusMessage(message))
+    .map(sanitizeRoomMessage)
+    .filter((message): message is WebDashboardRoomMessage => Boolean(message))
+    .filter(
+      (message) =>
+        !isDuplicateOfCanonicalOutbound(message, canonicalOutboundMessages),
+    );
+  const shouldExposeExecutionOutputs = args.outboundItems === undefined;
 
   return {
     serviceId: args.serviceId,
@@ -587,12 +699,9 @@ export function buildWebDashboardRoomActivity(args: {
     elapsedMs: args.entry.elapsedMs,
     pendingMessages: args.entry.pendingMessages,
     pendingTasks: args.entry.pendingTasks,
-    messages: args.messages
-      .filter((message) => !isTaskStatusMessage(message))
-      .map(sanitizeRoomMessage)
-      .filter((message): message is WebDashboardRoomMessage =>
-        Boolean(message),
-      ),
+    messages: [...recentMessages, ...canonicalOutboundMessages].sort(
+      compareRoomMessagesByTimestamp,
+    ),
     pairedTask: args.pairedTask
       ? {
           id: args.pairedTask.id,
@@ -603,12 +712,14 @@ export function buildWebDashboardRoomActivity(args: {
           currentTurn: currentTurn
             ? sanitizeRoomTurn(currentTurn, currentAttempt)
             : null,
-          outputs: args.outputs
-            .slice(-outputLimit)
-            .map(sanitizeRoomTurnOutput)
-            .filter((output): output is WebDashboardRoomTurnOutput =>
-              Boolean(output),
-            ),
+          outputs: shouldExposeExecutionOutputs
+            ? args.outputs
+                .slice(-outputLimit)
+                .map(sanitizeRoomTurnOutput)
+                .filter((output): output is WebDashboardRoomTurnOutput =>
+                  Boolean(output),
+                )
+            : [],
         }
       : null,
   };

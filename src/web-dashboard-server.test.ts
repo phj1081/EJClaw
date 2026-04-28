@@ -313,13 +313,13 @@ describe('web dashboard server handler', () => {
       getPairedTurnAttempts: () => [],
       getPairedTurnOutputs: () => [],
       getRecentPairedTurnOutputsForChat: () => [],
+      getRecentDeliveredWorkItemsForChat: () => [],
       getRecentChatMessages: (_jid, limit) => {
         requestedMessageLimits.push(limit ?? 20);
         return messages;
       },
       startBackgroundCacheRefresh: false,
     });
-
     const response = await handler(
       new Request(
         `http://localhost/api/rooms/${encodeURIComponent('dc:ops')}/timeline`,

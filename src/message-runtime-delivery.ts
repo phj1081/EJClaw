@@ -102,22 +102,20 @@ export async function deliverOpenWorkItem(args: {
       }),
       'Attempting to deliver produced work item as a new message',
     );
-    if (hasAttachments) {
-      await args.channel.sendMessage(
-        args.item.chat_jid,
-        args.item.result_payload,
-        {
-          attachmentBaseDirs: args.attachmentBaseDirs,
-          attachments,
-        },
-      );
-    } else {
-      await args.channel.sendMessage(
-        args.item.chat_jid,
-        args.item.result_payload,
-      );
-    }
-    markWorkItemDelivered(args.item.id);
+    const sendResult = hasAttachments
+      ? await args.channel.sendMessage(
+          args.item.chat_jid,
+          args.item.result_payload,
+          {
+            attachmentBaseDirs: args.attachmentBaseDirs,
+            attachments,
+          },
+        )
+      : await args.channel.sendMessage(
+          args.item.chat_jid,
+          args.item.result_payload,
+        );
+    markWorkItemDelivered(args.item.id, sendResult?.primaryMessageId ?? null);
     args.openContinuation(args.item.chat_jid);
     args.log.info(
       buildDeliveryLogContext(args.channel, args.item, {
