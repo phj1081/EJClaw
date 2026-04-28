@@ -547,8 +547,16 @@ button:disabled {
   border-top: 1px solid var(--divider);
 }
 
+.rail-status-line {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
 .rail-status-dot {
   display: inline-block;
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -563,6 +571,12 @@ button:disabled {
 
 .rail-status-dot.is-offline {
   background: var(--accent);
+}
+
+.rail-actions {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
 }
 
 .rail-btn {
@@ -605,118 +619,10 @@ button:disabled {
   animation: rail-spin 0.9s linear infinite;
 }
 
-.nav-drawer nav a.is-active,
-.nav-drawer nav a[aria-current='page'] {
-  color: var(--bg);
-  background: var(--bg-ink);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-}
-
-.side-stats {
-  display: grid;
-  gap: 1px;
-  border: 1px solid var(--panel-border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.side-stat {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 10px;
-  background: rgba(0, 0, 0, 0.15);
-}
-
-.side-stat span {
-  color: var(--muted-soft);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.side-stat strong {
-  color: var(--bg-ink);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-.side-refresh {
-  width: 100%;
-  min-height: 32px;
-  padding: 0 10px;
-  border-radius: 8px;
-  color: var(--bg-ink);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: none;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.side-refresh:hover {
-  background: rgba(191, 95, 44, 0.12);
-}
-
-.side-install {
-  width: 100%;
-  min-height: 32px;
-  padding: 0 10px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #2b3726, #1c211c);
-  box-shadow: 0 6px 16px rgba(28, 33, 28, 0.18);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.side-pwa,
-.pwa-card {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  padding: 7px 10px;
-  border: 1px solid var(--panel-border);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.025);
-}
-
-.side-pwa span,
-.pwa-card span {
-  color: var(--muted-soft);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.side-pwa strong,
-.pwa-card strong {
-  font-size: 12px;
-  color: var(--bg-ink);
-}
-
-.side-pwa.is-online strong,
-.pwa-card.is-online strong {
-  color: var(--green);
-}
-
-.side-pwa.is-offline strong,
-.pwa-card.is-offline strong {
-  color: var(--accent);
-}
-
-.drawer-pwa-row span {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.side-pwa.is-offline,
-.pwa-card.is-offline {
-  border-color: rgba(183, 71, 52, 0.24);
-  background: rgba(183, 71, 52, 0.08);
+.rail-label,
+.rail-btn-label,
+.rail-foot-label {
+  display: none;
 }
 
 .settings-panel {
@@ -1149,79 +1055,125 @@ button:disabled {
 .nav-drawer {
   position: fixed;
   z-index: 40;
-  top: max(14px, env(safe-area-inset-top));
-  bottom: max(14px, env(safe-area-inset-bottom));
-  left: 14px;
+  top: max(10px, env(safe-area-inset-top));
+  bottom: max(10px, env(safe-area-inset-bottom));
+  left: 10px;
   display: grid;
-  width: min(360px, calc(100vw - 28px));
+  width: min(324px, calc(100vw - 20px));
   grid-template-rows: auto 1fr auto;
-  gap: 18px;
-  padding: 18px;
-  border: 1px solid rgba(255, 250, 240, 0.3);
-  border-radius: 28px;
-  background: rgba(255, 250, 240, 0.94);
-  box-shadow: 0 28px 90px rgba(20, 18, 10, 0.36);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 24px 72px rgba(20, 18, 10, 0.34);
   backdrop-filter: blur(20px);
 }
 
 .drawer-head {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  justify-content: space-between;
+}
+
+.drawer-title {
+  min-width: 0;
+  flex: 1;
 }
 
 .drawer-head strong {
   display: block;
-  margin-top: 4px;
-  font-size: 24px;
-  letter-spacing: -0.04em;
-}
-
-.drawer-head button {
-  min-height: 44px;
-  padding: 0 14px;
+  margin-top: 2px;
+  overflow: hidden;
   color: var(--bg-ink);
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: none;
+  font-size: 15px;
+  letter-spacing: -0.03em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.drawer-pwa-row {
-  display: grid;
-  gap: 8px;
-  padding-top: 2px;
+.nav-drawer .rail-brand {
+  flex: 0 0 auto;
+  margin: 0;
 }
 
-.drawer-pwa-row button {
-  min-height: 44px;
-  padding: 0 14px;
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.nav-drawer nav {
-  display: grid;
-  align-content: start;
-  gap: 8px;
-}
-
-.nav-drawer nav a {
-  display: flex;
-  min-height: 48px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  color: var(--bg-ink);
-  background: rgba(255, 255, 255, 0.025);
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.nav-drawer nav a::after {
+.nav-drawer .drawer-close {
+  width: auto;
+  min-width: 48px;
+  padding: 0 12px;
   color: var(--muted);
-  content: '↘';
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.nav-drawer .rail-nav {
+  gap: 6px;
+  justify-items: stretch;
+}
+
+.nav-drawer .rail-item {
+  width: 100%;
+  height: 48px;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 0 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+}
+
+.nav-drawer .rail-item.is-active {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.nav-drawer .rail-label,
+.nav-drawer .rail-btn-label,
+.nav-drawer .rail-foot-label {
+  display: inline;
+}
+
+.nav-drawer .rail-label {
+  overflow: hidden;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-drawer .rail-badge {
+  position: static;
+  margin-left: auto;
+}
+
+.nav-drawer .rail-foot {
+  justify-items: stretch;
+  padding-top: 10px;
+}
+
+.nav-drawer .rail-status-line {
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.nav-drawer .rail-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-items: stretch;
+}
+
+.nav-drawer .rail-btn {
+  width: 100%;
+  min-height: 40px;
+  gap: 8px;
+  justify-content: center;
+  border: 1px solid var(--panel-border);
+}
+
+.nav-drawer .rail-btn-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .error-card,
