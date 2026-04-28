@@ -30,10 +30,12 @@ import { composeDashboardContent } from './dashboard-render.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { deliverIpcOutboundMessage } from './ipc-outbound-delivery.js';
+import {
+  deliverCanonicalOutboundMessage,
+  deliverIpcOutboundMessage,
+} from './ipc-outbound-delivery.js';
 import {
   findChannel,
-  findChannelByName,
   formatOutbound,
   normalizeMessageForDedupe,
 } from './router.js';
@@ -90,20 +92,6 @@ import { FAILOVER_MIN_DURATION_MS } from './config.js';
 
 // Token rotation is initialized lazily on first use or at startup below
 
-export async function sendFormattedChannelMessage(
-  channels: Channel[],
-  jid: string,
-  rawText: string,
-): Promise<void> {
-  const channel = findChannel(channels, jid);
-  if (!channel) {
-    logger.warn({ jid }, 'No channel owns JID, cannot send message');
-    return;
-  }
-  const text = formatOutbound(rawText);
-  if (text) await channel.sendMessage(jid, text);
-}
-
 export async function sendFormattedTrackedChannelMessage(
   channels: Channel[],
   jid: string,
@@ -156,6 +144,23 @@ const runtime = createMessageRuntime({
   clearSession: runtimeState.clearSession,
 });
 
+async function deliverFormattedCanonicalMessage(
+  jid: string,
+  rawText: string,
+  deliveryRole?: 'owner' | 'reviewer' | 'arbiter',
+): Promise<void> {
+  const text = formatOutbound(rawText);
+  if (!text) return;
+  await deliverCanonicalOutboundMessage(
+    { jid, text, deliveryRole },
+    {
+      channels,
+      roomBindings: runtimeState.getRoomBindings,
+      log: logger,
+    },
+  );
+}
+
 /**
  * Get available groups list for the agent.
  * Returns groups ordered by most recent activity.
@@ -192,8 +197,7 @@ async function announceRestartRecovery(
       return explicitContext;
     }
 
-    await sendFormattedChannelMessage(
-      channels,
+    await deliverFormattedCanonicalMessage(
       explicitContext.chatJid,
       buildRestartAnnouncement(explicitContext),
     );
@@ -207,8 +211,7 @@ async function announceRestartRecovery(
       if (hasRecentRestartAnnouncement(interrupted.chatJid, dedupeSince)) {
         continue;
       }
-      await sendFormattedChannelMessage(
-        channels,
+      await deliverFormattedCanonicalMessage(
         interrupted.chatJid,
         buildInterruptedRestartAnnouncement(interrupted),
       );
@@ -230,8 +233,7 @@ async function announceRestartRecovery(
     return null;
   }
 
-  await sendFormattedChannelMessage(
-    channels,
+  await deliverFormattedCanonicalMessage(
     inferred.chatJid,
     inferred.lines.join('\n'),
   );
@@ -360,13 +362,6 @@ async function main(): Promise<void> {
   }
 
   // Start subsystems (independently of connection handler)
-  // Paired-room scheduler output goes through the reviewer bot slot.
-  const reviewerChannelName = 'discord-review';
-  const reviewerChannelForCron = findChannelByName(
-    channels,
-    reviewerChannelName,
-  );
-
   startSchedulerLoop({
     roomBindings: runtimeState.getRoomBindings,
     getSessions: runtimeState.getSessions,
@@ -374,13 +369,9 @@ async function main(): Promise<void> {
     onProcess: (groupJid, proc, processName, ipcDir) =>
       queue.registerProcess(groupJid, proc, processName, ipcDir),
     sendMessage: (jid, rawText) =>
-      sendFormattedChannelMessage(channels, jid, rawText),
-    sendMessageViaReviewerBot: reviewerChannelForCron
-      ? async (jid, rawText) => {
-          const text = formatOutbound(rawText);
-          if (text) await reviewerChannelForCron.sendMessage(jid, text);
-        }
-      : undefined,
+      deliverFormattedCanonicalMessage(jid, rawText),
+    sendMessageViaReviewerBot: (jid, rawText) =>
+      deliverFormattedCanonicalMessage(jid, rawText, 'reviewer'),
     sendTrackedMessage: (jid, rawText) =>
       sendFormattedTrackedChannelMessage(channels, jid, rawText),
     editTrackedMessage: (jid, messageId, rawText) =>

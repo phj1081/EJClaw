@@ -20,6 +20,7 @@ import {
   deliverOpenWorkItem,
   processOpenWorkItemDelivery,
 } from './message-runtime-delivery.js';
+import { deliverCanonicalOutboundMessage } from './ipc-outbound-delivery.js';
 import { handleQueuedRunGates } from './message-runtime-gating.js';
 import {
   enqueuePendingHandoffs as enqueueClaimedServiceHandoffs,
@@ -93,6 +94,21 @@ export interface MessageRuntimeDeps {
   clearSession: (groupFolder: string, opts?: { allRoles?: boolean }) => void;
 }
 
+async function deliverSessionCommandMessage(
+  deps: Pick<MessageRuntimeDeps, 'channels' | 'getRoomBindings'>,
+  chatJid: string,
+  text: string,
+): Promise<void> {
+  await deliverCanonicalOutboundMessage(
+    { jid: chatJid, text },
+    {
+      channels: deps.channels,
+      roomBindings: deps.getRoomBindings,
+      log: logger,
+    },
+  );
+}
+
 export function createMessageRuntime(deps: MessageRuntimeDeps): {
   processGroupMessages: (
     chatJid: string,
@@ -110,7 +126,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     chatJid: string,
     messages: NewMessage[],
   ): NewMessage[] => labelPairedSenders(deps.channels, chatJid, messages);
-
   const enqueueScopedGroupMessageCheck = buildScopedMessageCheckEnqueuer(
     deps.queue,
   );
@@ -587,7 +602,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         timezone: deps.timezone,
         hasImplicitContinuationWindow: continuationTracker.has,
         sessionCommandDeps: {
-          sendMessage: (text) => channel.sendMessage(chatJid, text),
+          sendMessage: (text) =>
+            deliverSessionCommandMessage(deps, chatJid, text),
           setTyping: (typing) =>
             channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
           runAgent: (prompt, onOutput) =>

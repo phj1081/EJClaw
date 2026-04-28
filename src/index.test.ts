@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   editFormattedTrackedChannelMessage,
   isTerminalStatusMessage,
-  sendFormattedChannelMessage,
   sendFormattedTrackedChannelMessage,
 } from './index.js';
 import { composeDashboardContent } from './dashboard-render.js';
@@ -81,12 +80,6 @@ describe('index scheduler messaging helpers', () => {
       'msg-123',
       '<internal>only hidden</internal>',
     );
-    await sendFormattedChannelMessage(
-      [channel],
-      'dc:test',
-      '<internal>only hidden</internal>',
-    );
-
     expect(trackedResult).toBeNull();
     expect(sendAndTrack).not.toHaveBeenCalled();
     expect(editMessage).not.toHaveBeenCalled();

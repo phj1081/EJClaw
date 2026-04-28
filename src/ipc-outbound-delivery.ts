@@ -43,6 +43,23 @@ export interface IpcOutboundDeliveryDeps {
   deliverWorkItem?: typeof deliverOpenWorkItem;
 }
 
+export interface CanonicalOutboundDeliveryArgs {
+  jid: string;
+  text: string;
+  deliveryRole?: PairedRoomRole;
+  attachments?: OutboundAttachment[];
+}
+
+export interface CanonicalOutboundDeliveryDeps {
+  channels: Channel[];
+  roomBindings: () => Record<string, RegisteredGroup>;
+  log?: IpcDeliveryLog;
+  createWorkItem?: typeof createProducedWorkItem;
+  deliverWorkItem?: typeof deliverOpenWorkItem;
+}
+
+export type CanonicalOutboundDeliveryResult = 'delivered' | 'queued_retry';
+
 export type IpcOutboundDeliveryResult =
   | 'delivered'
   | 'queued_retry'
@@ -63,6 +80,61 @@ function normalizeDeliveryRole(
 
 function isTerminalStatusMessage(text: string): boolean {
   return parseVisibleVerdict(text) !== 'continue';
+}
+
+export async function deliverCanonicalOutboundMessage(
+  args: CanonicalOutboundDeliveryArgs,
+  deps: CanonicalOutboundDeliveryDeps,
+): Promise<CanonicalOutboundDeliveryResult> {
+  const log = deps.log ?? logger;
+  const group = deps.roomBindings()[args.jid];
+  if (!group) {
+    throw new Error(`No registered room binding for outbound JID: ${args.jid}`);
+  }
+
+  const route = resolveChannelForDeliveryRole(
+    deps.channels,
+    args.jid,
+    args.deliveryRole,
+  );
+  if (!route.channel) throw new Error(`No channel for JID: ${args.jid}`);
+
+  log.info(
+    {
+      transition: 'outbound:route',
+      chatJid: args.jid,
+      deliveryRole: args.deliveryRole ?? null,
+      requestedRoleChannel: route.requestedRoleChannelName,
+      selectedChannel: route.selectedChannelName,
+      usedRoleChannel: route.usedRoleChannel,
+      fallbackUsed: route.fallbackUsed,
+    },
+    'Routed outbound message to canonical work item delivery',
+  );
+
+  const createWorkItem = deps.createWorkItem ?? createProducedWorkItem;
+  const workItem = createWorkItem({
+    group_folder: group.folder,
+    chat_jid: args.jid,
+    agent_type: group.agentType ?? 'claude-code',
+    delivery_role: args.deliveryRole ?? null,
+    start_seq: null,
+    end_seq: null,
+    result_payload: args.text,
+    attachments: args.attachments,
+  });
+
+  const deliverWorkItem = deps.deliverWorkItem ?? deliverOpenWorkItem;
+  const delivered = await deliverWorkItem({
+    channel: route.channel,
+    item: workItem as WorkItem,
+    log,
+    attachmentBaseDirs: group.workDir ? [group.workDir] : undefined,
+    isDuplicateOfLastBotFinal: () => false,
+    openContinuation: () => {},
+  });
+
+  return delivered ? 'delivered' : 'queued_retry';
 }
 
 export async function deliverIpcOutboundMessage(
@@ -92,58 +164,34 @@ export async function deliverIpcOutboundMessage(
     return 'skipped_recorded_terminal';
   }
 
-  const group = deps.roomBindings()[args.jid];
-  if (!group) {
-    throw new Error(
-      `No registered room binding for IPC outbound JID: ${args.jid}`,
-    );
-  }
-
-  const route = resolveChannelForDeliveryRole(
-    deps.channels,
-    args.jid,
-    deliveryRole,
-  );
-  if (!route.channel) throw new Error(`No channel for JID: ${args.jid}`);
-
   log.info(
     {
       transition: 'ipc:route',
       chatJid: args.jid,
       runId: args.runId ?? null,
       senderRole: deliveryRole ?? null,
-      requestedRoleChannel: route.requestedRoleChannelName,
-      selectedChannel: route.selectedChannelName,
-      usedRoleChannel: route.usedRoleChannel,
-      fallbackUsed: route.fallbackUsed,
     },
     'IPC relay routed message to canonical work item delivery',
   );
 
-  const createWorkItem = deps.createWorkItem ?? createProducedWorkItem;
-  const workItem = createWorkItem({
-    group_folder: group.folder,
-    chat_jid: args.jid,
-    agent_type: group.agentType ?? 'claude-code',
-    delivery_role: deliveryRole ?? null,
-    start_seq: null,
-    end_seq: null,
-    result_payload: args.text,
-    attachments: args.attachments,
-  });
+  const result = await deliverCanonicalOutboundMessage(
+    {
+      jid: args.jid,
+      text: args.text,
+      deliveryRole,
+      attachments: args.attachments,
+    },
+    {
+      channels: deps.channels,
+      roomBindings: deps.roomBindings,
+      log,
+      createWorkItem: deps.createWorkItem,
+      deliverWorkItem: deps.deliverWorkItem,
+    },
+  );
 
-  const deliverWorkItem = deps.deliverWorkItem ?? deliverOpenWorkItem;
-  const delivered = await deliverWorkItem({
-    channel: route.channel,
-    item: workItem as WorkItem,
-    log,
-    attachmentBaseDirs: group.workDir ? [group.workDir] : undefined,
-    isDuplicateOfLastBotFinal: () => false,
-    openContinuation: () => {},
-  });
-
-  if (!delivered) {
-    return 'queued_retry';
+  if (result !== 'delivered') {
+    return result;
   }
 
   if (

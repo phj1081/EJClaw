@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { deliverIpcOutboundMessage } from './ipc-outbound-delivery.js';
+import {
+  deliverCanonicalOutboundMessage,
+  deliverIpcOutboundMessage,
+} from './ipc-outbound-delivery.js';
 import type { WorkItem } from './db/work-items.js';
 import type { Channel, RegisteredGroup } from './types.js';
 
@@ -56,6 +59,47 @@ function makeWorkItem(input: {
 }
 
 describe('deliverIpcOutboundMessage', () => {
+  it('funnels ordinary outbound through canonical work item delivery', async () => {
+    const channel = makeChannel();
+    const createdItem = makeWorkItem({
+      chat_jid: 'dc:room',
+      group_folder: 'room-folder',
+      result_payload: '일반 안내',
+    });
+    const createWorkItem = vi.fn(() => createdItem);
+    const deliverWorkItem = vi.fn(async () => true);
+
+    const result = await deliverCanonicalOutboundMessage(
+      { jid: 'dc:room', text: '일반 안내' },
+      {
+        channels: [channel],
+        roomBindings: () => ({ 'dc:room': makeGroup() }),
+        createWorkItem,
+        deliverWorkItem,
+      },
+    );
+
+    expect(result).toBe('delivered');
+    expect(createWorkItem).toHaveBeenCalledWith({
+      group_folder: 'room-folder',
+      chat_jid: 'dc:room',
+      agent_type: 'codex',
+      delivery_role: null,
+      start_seq: null,
+      end_seq: null,
+      result_payload: '일반 안내',
+      attachments: undefined,
+    });
+    expect(deliverWorkItem).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel,
+        item: createdItem,
+        attachmentBaseDirs: ['/repo'],
+      }),
+    );
+    expect(channel.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('funnels IPC outbound through canonical work item delivery', async () => {
     const ownerChannel = makeChannel();
     const reviewerChannel = makeChannel('discord-review', false);
@@ -155,7 +199,7 @@ describe('deliverIpcOutboundMessage', () => {
           deliverWorkItem,
         },
       ),
-    ).rejects.toThrow('No registered room binding for IPC outbound JID');
+    ).rejects.toThrow('No registered room binding for outbound JID');
 
     expect(createWorkItem).not.toHaveBeenCalled();
     expect(deliverWorkItem).not.toHaveBeenCalled();
