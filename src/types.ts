@@ -42,6 +42,12 @@ export interface SendMessageOptions {
   attachmentBaseDirs?: string[];
 }
 
+export interface SendMessageResult {
+  primaryMessageId: string | null;
+  messageIds: string[];
+  visible: boolean;
+}
+
 export type PairedRoomRole = 'owner' | 'reviewer' | 'arbiter';
 
 export type PairedTaskStatus =
@@ -255,7 +261,7 @@ export interface Channel {
     jid: string,
     text: string,
     options?: SendMessageOptions,
-  ): Promise<void>;
+  ): Promise<SendMessageResult | void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   // Optional: whether a stored inbound message was authored by this channel's own bot/user.

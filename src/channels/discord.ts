@@ -22,7 +22,7 @@ import { logger } from '../logger.js';
 import { validateOutboundAttachments } from '../outbound-attachments.js';
 import { formatOutbound } from '../router.js';
 import { hasReviewerLease } from '../service-routing.js';
-import type { SendMessageOptions } from '../types.js';
+import type { SendMessageOptions, SendMessageResult } from '../types.js';
 import { prepareDiscordOutbound } from './discord-outbound.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
@@ -408,7 +408,7 @@ export class DiscordChannel implements Channel {
     jid: string,
     text: string,
     options: SendMessageOptions = {},
-  ): Promise<void> {
+  ): Promise<SendMessageResult> {
     if (!this.client) {
       throw new Error('Discord client not initialized');
     }
@@ -429,7 +429,7 @@ export class DiscordChannel implements Channel {
           { jid, channelName: this.name },
           'Skipping silent structured Discord outbound message',
         );
-        return;
+        return { primaryMessageId: null, messageIds: [], visible: false };
       }
       const validation = validateOutboundAttachments(outbound.attachments, {
         baseDirs: options.attachmentBaseDirs,
@@ -478,7 +478,7 @@ export class DiscordChannel implements Channel {
           { jid, channelName: this.name },
           'Skipping empty Discord outbound message',
         );
-        return;
+        return { primaryMessageId: null, messageIds: [], visible: false };
       }
 
       // Split files into batches of MAX_ATTACHMENTS
@@ -546,6 +546,11 @@ export class DiscordChannel implements Channel {
         },
         'Discord message sent',
       );
+      return {
+        primaryMessageId: sentMessageIds[0] ?? null,
+        messageIds: sentMessageIds,
+        visible: chunkCount > 0,
+      };
     } catch (err) {
       logger.error(
         { jid, channelName: this.name, err },

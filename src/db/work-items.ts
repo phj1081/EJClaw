@@ -8,6 +8,8 @@ import {
 } from '../role-service-shadow.js';
 import { AgentType, OutboundAttachment, PairedRoomRole } from '../types.js';
 
+const SUPERSEDED_WORK_ITEM_ERROR = 'superseded_by_newer_canonical_output';
+
 export interface WorkItem {
   id: number;
   group_folder: string;
@@ -239,6 +241,57 @@ export function getOpenWorkItemForChatFromDatabase(
   return row ? hydrateWorkItemRow(row) : undefined;
 }
 
+export function getRecentDeliveredWorkItemsForChatFromDatabase(
+  database: Database,
+  chatJid: string,
+  limit: number = 8,
+): WorkItem[] {
+  const rows = database
+    .prepare(
+      `SELECT *
+       FROM work_items
+       WHERE chat_jid = ?
+         AND status = 'delivered'
+         AND (last_error IS NULL OR last_error <> ?)
+       ORDER BY COALESCE(delivered_at, updated_at, created_at) DESC, id DESC
+       LIMIT ?`,
+    )
+    .all(chatJid, SUPERSEDED_WORK_ITEM_ERROR, limit) as StoredWorkItemRow[];
+  return rows.reverse().map(hydrateWorkItemRow);
+}
+
+function supersedeOpenWorkItemsForCanonicalKey(
+  database: Database,
+  input: CreateProducedWorkItemInput,
+  agentType: AgentType,
+  serviceId: string,
+  now: string,
+): void {
+  database
+    .prepare(
+      `UPDATE work_items
+       SET status = 'delivered',
+           delivered_at = ?,
+           delivery_message_id = NULL,
+           last_error = ?,
+           updated_at = ?
+       WHERE chat_jid = ?
+         AND agent_type = ?
+         AND IFNULL(service_id, '') = IFNULL(?, '')
+         AND IFNULL(delivery_role, '') = IFNULL(?, '')
+         AND status IN ('produced', 'delivery_retry')`,
+    )
+    .run(
+      now,
+      SUPERSEDED_WORK_ITEM_ERROR,
+      now,
+      input.chat_jid,
+      agentType,
+      serviceId,
+      input.delivery_role ?? null,
+    );
+}
+
 export function createProducedWorkItemInDatabase(
   database: Database,
   input: CreateProducedWorkItemInput,
@@ -250,46 +303,57 @@ export function createProducedWorkItemInDatabase(
     deliveryRole: input.delivery_role,
     serviceId: input.service_id,
   });
-  database
-    .prepare(
-      `INSERT INTO work_items (
-         group_folder,
-         chat_jid,
-         agent_type,
-         service_id,
-         delivery_role,
-         status,
-         start_seq,
-         end_seq,
-       result_payload,
-       attachment_payload,
-       delivery_attempts,
-       created_at,
-       updated_at
-       ) VALUES (?, ?, ?, ?, ?, 'produced', ?, ?, ?, ?, 0, ?, ?)`,
-    )
-    .run(
-      input.group_folder,
-      input.chat_jid,
+  return database.transaction(() => {
+    supersedeOpenWorkItemsForCanonicalKey(
+      database,
+      input,
       agentType,
       serviceId,
-      input.delivery_role ?? null,
-      input.start_seq,
-      input.end_seq,
-      input.result_payload,
-      serializeAttachmentPayload(input.attachments),
-      now,
       now,
     );
-
-  const lastId = (
-    database.prepare('SELECT last_insert_rowid() as id').get() as { id: number }
-  ).id;
-  return hydrateWorkItemRow(
     database
-      .prepare('SELECT * FROM work_items WHERE id = ?')
-      .get(lastId) as StoredWorkItemRow,
-  );
+      .prepare(
+        `INSERT INTO work_items (
+           group_folder,
+           chat_jid,
+           agent_type,
+           service_id,
+           delivery_role,
+           status,
+           start_seq,
+           end_seq,
+           result_payload,
+           attachment_payload,
+           delivery_attempts,
+           created_at,
+           updated_at
+         ) VALUES (?, ?, ?, ?, ?, 'produced', ?, ?, ?, ?, 0, ?, ?)`,
+      )
+      .run(
+        input.group_folder,
+        input.chat_jid,
+        agentType,
+        serviceId,
+        input.delivery_role ?? null,
+        input.start_seq,
+        input.end_seq,
+        input.result_payload,
+        serializeAttachmentPayload(input.attachments),
+        now,
+        now,
+      );
+
+    const lastId = (
+      database.prepare('SELECT last_insert_rowid() as id').get() as {
+        id: number;
+      }
+    ).id;
+    return hydrateWorkItemRow(
+      database
+        .prepare('SELECT * FROM work_items WHERE id = ?')
+        .get(lastId) as StoredWorkItemRow,
+    );
+  })();
 }
 
 export function markWorkItemDeliveredInDatabase(

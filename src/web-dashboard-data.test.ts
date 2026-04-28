@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { StatusSnapshot } from './status-dashboard.js';
-import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
+import type {
+  PairedTurnAttemptRecord,
+  PairedTurnRecord,
+  WorkItem,
+} from './db.js';
 import type {
   NewMessage,
   PairedTask,
@@ -61,6 +65,29 @@ function makePairedTask(overrides: Partial<PairedTask>): PairedTask {
     completion_reason: null,
     created_at: '2026-04-26T04:00:00.000Z',
     updated_at: '2026-04-26T04:30:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeDeliveredWorkItem(overrides: Partial<WorkItem> = {}): WorkItem {
+  return {
+    id: 100,
+    group_folder: 'ops',
+    chat_jid: 'dc:ops',
+    agent_type: 'codex',
+    service_id: 'codex-main',
+    delivery_role: 'owner',
+    status: 'delivered',
+    start_seq: null,
+    end_seq: null,
+    result_payload: 'TASK_DONE\n\ncanonical delivered output',
+    attachments: [],
+    delivery_attempts: 1,
+    delivery_message_id: 'discord-msg-100',
+    last_error: null,
+    created_at: '2026-04-26T05:30:00.000Z',
+    updated_at: '2026-04-26T05:30:10.000Z',
+    delivered_at: '2026-04-26T05:30:10.000Z',
     ...overrides,
   };
 }
@@ -353,6 +380,110 @@ describe('web dashboard room activity data', () => {
         senderName: '눈쟁이',
         content: expect.stringContaining(longMessageTail),
       },
+    ]);
+  });
+
+  it('uses delivered work items as the visible outbound source when supplied', () => {
+    const task = makePairedTask({
+      id: 'paired-canonical-outbound',
+      chat_jid: 'dc:ops',
+      status: 'in_review',
+      updated_at: '2026-04-26T05:30:00.000Z',
+    });
+    const output: PairedTurnOutput = {
+      id: 22,
+      task_id: task.id,
+      turn_number: 2,
+      role: 'owner',
+      output_text: 'TASK_DONE\n\nexecution artifact only',
+      verdict: 'task_done',
+      created_at: '2026-04-26T05:30:00.000Z',
+    };
+
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'inactive',
+        elapsedMs: null,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+      pairedTask: task,
+      turns: [],
+      attempts: [],
+      outputs: [output],
+      outboundItems: [makeDeliveredWorkItem()],
+      messages: [
+        {
+          id: 'discord-msg-100',
+          chat_jid: 'dc:ops',
+          sender: 'bot-owner',
+          sender_name: '오너',
+          content: 'TASK_DONE\n\ncanonical delivered output',
+          timestamp: '2026-04-26T05:30:10.000Z',
+          is_from_me: true,
+          is_bot_message: true,
+          message_source_kind: 'bot',
+        },
+      ],
+    });
+
+    expect(activity.pairedTask?.outputs).toEqual([]);
+    expect(activity.messages).toEqual([
+      expect.objectContaining({
+        id: 'work:100',
+        senderName: 'owner',
+        content: 'TASK_DONE\n\ncanonical delivered output',
+      }),
+    ]);
+  });
+
+  it('merges canonical outbound and recent messages in chronological order', () => {
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'inactive',
+        elapsedMs: null,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+      pairedTask: null,
+      turns: [],
+      attempts: [],
+      outputs: [],
+      outboundItems: [
+        makeDeliveredWorkItem({
+          id: 101,
+          delivered_at: '2026-04-26T05:30:00.000Z',
+          result_payload: 'owner canonical',
+        }),
+      ],
+      messages: [
+        {
+          id: 'human-after',
+          chat_jid: 'dc:ops',
+          sender: 'user-1',
+          sender_name: '눈쟁이',
+          content: 'human after',
+          timestamp: '2026-04-26T05:31:00.000Z',
+          is_from_me: false,
+          is_bot_message: false,
+          message_source_kind: 'human',
+        },
+      ],
+    });
+
+    expect(activity.messages.map((message) => message.id)).toEqual([
+      'work:101',
+      'human-after',
     ]);
   });
 

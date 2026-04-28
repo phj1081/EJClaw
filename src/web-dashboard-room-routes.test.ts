@@ -2,7 +2,11 @@ import { gunzipSync } from 'node:zlib';
 
 import { describe, expect, it } from 'vitest';
 
-import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
+import type {
+  PairedTurnAttemptRecord,
+  PairedTurnRecord,
+  WorkItem,
+} from './db.js';
 import type { StatusSnapshot } from './status-dashboard.js';
 import type { NewMessage, PairedTask, PairedTurnOutput } from './types.js';
 import {
@@ -83,7 +87,31 @@ function roomDeps(
     loadPairedTurnAttempts: () => [],
     loadPairedTurnOutputs: () => [],
     loadRecentPairedTurnOutputsForChat: () => [],
+    loadRecentDeliveredWorkItemsForChat: () => [],
     loadRecentChatMessages: () => [],
+    ...overrides,
+  };
+}
+
+function workItem(overrides: Partial<WorkItem> = {}): WorkItem {
+  return {
+    id: 9001,
+    group_folder: 'ops-room',
+    chat_jid: 'dc:ops',
+    agent_type: 'codex',
+    service_id: 'codex-main',
+    delivery_role: 'owner',
+    status: 'delivered',
+    start_seq: null,
+    end_seq: null,
+    result_payload: 'owner final output',
+    attachments: [],
+    delivery_attempts: 1,
+    delivery_message_id: 'discord-owner-final',
+    last_error: null,
+    created_at: '2026-04-26T05:18:00.000Z',
+    updated_at: '2026-04-26T05:18:30.000Z',
+    delivered_at: '2026-04-26T05:18:30.000Z',
     ...overrides,
   };
 }
@@ -168,6 +196,7 @@ describe('web dashboard room routes', () => {
         loadPairedTurnsForTask: () => turns,
         loadPairedTurnAttempts: () => attempts,
         loadPairedTurnOutputs: () => outputs,
+        loadRecentDeliveredWorkItemsForChat: () => [workItem()],
         loadRecentChatMessages: (_jid, limit) => {
           requestedMessageLimits.push(limit ?? 20);
           return messages;
@@ -187,10 +216,18 @@ describe('web dashboard room routes', () => {
       lastError: 'OPENAI_API_KEY=<redacted>',
       progressText: 'checking current output',
     });
-    expect(body.pairedTask.outputs).toMatchObject([
-      { outputText: 'owner final output' },
-    ]);
+    expect(body.pairedTask.outputs).toEqual([]);
     expect(requestedMessageLimits).toEqual([8]);
+    expect(body.messages).toEqual([
+      expect.objectContaining({
+        content: expect.stringContaining('BOT_TOKEN=<redacted>'),
+        senderName: '눈쟁이',
+      }),
+      expect.objectContaining({
+        content: 'owner final output',
+        senderName: 'owner',
+      }),
+    ]);
     expect(body.messages[0]).toMatchObject({
       content: expect.stringContaining('BOT_TOKEN=<redacted>'),
       senderName: '눈쟁이',
