@@ -47,11 +47,14 @@ import {
   sanitizeScheduledTask,
 } from './web-dashboard-data.js';
 import { handleSimpleGetRoute } from './web-dashboard-routes.js';
+import {
+  handleServiceRoute,
+  type ServiceRestartRecord,
+} from './web-dashboard-service-routes.js';
 import { handleSettingsRoute } from './web-dashboard-settings-routes.js';
 
 const DEFAULT_STATUS_MAX_AGE_MS = 10 * 60 * 1000;
 const ROOM_MESSAGE_ID_CACHE_LIMIT = 500;
-const SERVICE_RESTART_LOG_LIMIT = 20;
 const STACK_RESTART_UNIT_NAME = 'ejclaw-stack-restart.service';
 const WEB_TASK_PROMPT_MAX_LENGTH = 8000;
 const MANAGED_SERVICE_CALLER_FALLBACK_MESSAGE =
@@ -72,15 +75,7 @@ type WebPairedFollowUpScheduler = (args: {
   enqueue: () => void;
 }) => boolean;
 
-export interface ServiceRestartRecord {
-  id: string;
-  target: 'stack';
-  requestedAt: string;
-  completedAt: string | null;
-  status: 'running' | 'success' | 'failed';
-  services: string[];
-  error?: string;
-}
+export type { ServiceRestartRecord } from './web-dashboard-service-routes.js';
 
 export interface WebDashboardHandlerOptions {
   staticDir?: string;
@@ -258,17 +253,11 @@ function serveStaticFile(staticDir: string, pathname: string): Response {
 
 type TaskAction = 'pause' | 'resume' | 'cancel';
 type InboxAction = 'run' | 'decline' | 'dismiss';
-type ServiceAction = 'restart';
 
 interface InboxActionRequest {
   action: InboxAction;
   requestId: string | null;
   lastOccurredAt: string | null;
-}
-
-interface ServiceActionRequest {
-  action: ServiceAction;
-  requestId: string | null;
 }
 
 function parseTaskPath(pathname: string): string | null {
@@ -321,16 +310,6 @@ function parseRoomTimelinePath(pathname: string): string | null {
   }
 }
 
-function parseServiceActionPath(pathname: string): string | null {
-  const match = pathname.match(/^\/api\/services\/([^/]+)\/actions$/);
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
-}
-
 function parsePairedInboxTarget(
   inboxId: string,
 ): { taskId: string; status: PairedTask['status'] } | null {
@@ -366,10 +345,6 @@ function isAgentType(value: unknown): value is AgentType {
 
 function isInboxAction(value: unknown): value is InboxAction {
   return value === 'run' || value === 'decline' || value === 'dismiss';
-}
-
-function isServiceAction(value: unknown): value is ServiceAction {
-  return value === 'restart';
 }
 
 function isPairedTaskStatus(value: unknown): value is PairedTask['status'] {
@@ -410,24 +385,6 @@ async function readInboxAction(
         typeof body.lastOccurredAt === 'string' && body.lastOccurredAt.trim()
           ? body.lastOccurredAt.trim()
           : null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function readServiceAction(
-  request: Request,
-): Promise<ServiceActionRequest | null> {
-  try {
-    const body = (await request.json()) as {
-      action?: unknown;
-      requestId?: unknown;
-    };
-    if (!isServiceAction(body.action)) return null;
-    return {
-      action: body.action,
-      requestId: sanitizeServiceActionRequestId(body.requestId),
     };
   } catch {
     return null;
@@ -583,20 +540,6 @@ function makeWebMessageIdFromRequest(requestId: string | null): string {
 
 function makeWebRunId(prefix: string): string {
   return `web-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function sanitizeServiceActionRequestId(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const safe = trimmed.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 120);
-  return safe || null;
-}
-
-function makeServiceRestartId(requestId: string | null): string {
-  return requestId
-    ? `web-restart-${requestId}`
-    : `web-restart-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function sanitizeInboxActionRequestId(value: unknown): string | null {
@@ -862,13 +805,6 @@ export function createWebDashboardHandler(
     );
   }
 
-  function rememberServiceRestart(record: ServiceRestartRecord): void {
-    recentServiceRestarts.unshift(record);
-    if (recentServiceRestarts.length > SERVICE_RESTART_LOG_LIMIT) {
-      recentServiceRestarts.length = SERVICE_RESTART_LOG_LIMIT;
-    }
-  }
-
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const actionTaskId = parseTaskActionPath(url.pathname);
@@ -876,7 +812,6 @@ export function createWebDashboardHandler(
     const actionInboxId = parseInboxActionPath(url.pathname);
     const messageRoomJid = parseRoomMessagePath(url.pathname);
     const timelineRoomJid = parseRoomTimelinePath(url.pathname);
-    const actionServiceId = parseServiceActionPath(url.pathname);
 
     if (actionTaskId) {
       if (request.method !== 'POST') {
@@ -1168,82 +1103,16 @@ export function createWebDashboardHandler(
       );
     }
 
-    if (actionServiceId) {
-      if (request.method !== 'POST') {
-        return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
-      }
-      if (actionServiceId !== 'stack') {
-        return jsonResponse(
-          { error: 'Unsupported service restart target' },
-          { status: 400 },
-        );
-      }
-
-      const serviceRequest = await readServiceAction(request);
-      if (!serviceRequest) {
-        return jsonResponse(
-          { error: 'Invalid service action' },
-          { status: 400 },
-        );
-      }
-
-      const id = makeServiceRestartId(serviceRequest.requestId);
-      const previous = recentServiceRestarts.find((record) => record.id === id);
-      if (serviceRequest.requestId && previous) {
-        if (previous.status === 'failed') {
-          return jsonResponse(
-            {
-              error: previous.error ?? 'Service restart failed',
-              duplicate: true,
-              restart: previous,
-            },
-            { status: 500 },
-          );
-        }
-        return jsonResponse({
-          ok: true,
-          duplicate: true,
-          restart: previous,
-        });
-      }
-
-      if (activeServiceRestartTargets.has(actionServiceId)) {
-        return jsonResponse(
-          { error: 'Service restart is already running' },
-          { status: 409 },
-        );
-      }
-
-      const requestedAt = opts.now?.() ?? new Date().toISOString();
-      const record: ServiceRestartRecord = {
-        id,
-        target: 'stack',
-        requestedAt,
-        completedAt: null,
-        status: 'running',
-        services: [],
-      };
-      rememberServiceRestart(record);
-      activeServiceRestartTargets.add(actionServiceId);
-
-      try {
-        const services = restartServiceStack();
-        record.completedAt = opts.now?.() ?? new Date().toISOString();
-        record.status = 'success';
-        record.services = services;
-        return jsonResponse({ ok: true, restart: record });
-      } catch (error) {
-        record.completedAt = opts.now?.() ?? new Date().toISOString();
-        record.status = 'failed';
-        record.error = error instanceof Error ? error.message : String(error);
-        return jsonResponse(
-          { error: record.error, restart: record },
-          { status: 500 },
-        );
-      } finally {
-        activeServiceRestartTargets.delete(actionServiceId);
-      }
-    }
+    const serviceRoute = await handleServiceRoute({
+      url,
+      request,
+      jsonResponse,
+      recentServiceRestarts,
+      activeServiceRestartTargets,
+      restartServiceStack,
+      now: opts.now,
+    });
+    if (serviceRoute) return serviceRoute;
 
     const settingsRoute = await handleSettingsRoute({
       url,
