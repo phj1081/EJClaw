@@ -19,11 +19,11 @@ import {
 } from '../config.js';
 import { getEnv } from '../env.js';
 import { logger } from '../logger.js';
-import { extractImageTagPaths } from '../agent-protocol.js';
 import { validateOutboundAttachments } from '../outbound-attachments.js';
 import { formatOutbound } from '../router.js';
 import { hasReviewerLease } from '../service-routing.js';
-import type { OutboundAttachment, SendMessageOptions } from '../types.js';
+import type { SendMessageOptions } from '../types.js';
+import { prepareDiscordOutbound } from './discord-outbound.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
 const TRANSCRIPTION_CACHE_DIR = path.join(CACHE_DIR, 'transcriptions');
@@ -33,45 +33,6 @@ const DISCORD_ARBITER_CHANNEL = 'discord-arbiter';
 const DISCORD_OWNER_TOKEN_KEY = 'DISCORD_OWNER_BOT_TOKEN';
 const DISCORD_REVIEWER_TOKEN_KEY = 'DISCORD_REVIEWER_BOT_TOKEN';
 const DISCORD_ARBITER_TOKEN_KEY = 'DISCORD_ARBITER_BOT_TOKEN';
-const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|bmp)$/i;
-const MD_LINK_RE = /\[[^\]]*\]\((\/[^)]+)\)/g;
-
-function extractMarkdownImageAttachments(text: string): {
-  cleanText: string;
-  attachments: OutboundAttachment[];
-} {
-  const attachments: OutboundAttachment[] = [];
-  const seen = new Set<string>();
-
-  const cleanText = text.replace(MD_LINK_RE, (_full, rawPath: string) => {
-    const trimmed = rawPath.trim();
-    if (IMAGE_EXTS.test(trimmed)) {
-      if (!seen.has(trimmed)) {
-        attachments.push({
-          path: trimmed,
-          name: path.basename(trimmed),
-        });
-        seen.add(trimmed);
-      }
-      return '';
-    }
-
-    const basename = path.basename(trimmed.replace(/#.*$/, ''));
-    const lineMatch = trimmed.match(/#L(\d+)/);
-    return lineMatch ? `\`${basename}:${lineMatch[1]}\`` : `\`${basename}\``;
-  });
-
-  return { cleanText, attachments };
-}
-
-function imageTagPathsToAttachments(paths: string[]): OutboundAttachment[] {
-  return paths
-    .filter((filePath) => IMAGE_EXTS.test(filePath))
-    .map((filePath) => ({
-      path: filePath,
-      name: path.basename(filePath),
-    }));
-}
 
 /**
  * Download a Discord attachment to local disk.
@@ -466,26 +427,15 @@ export class DiscordChannel implements Channel {
 
       const textChannel = channel as TextChannel;
 
-      const structuredAttachments = options.attachments ?? [];
-      const hasStructuredAttachments = structuredAttachments.length > 0;
-      const markdownExtracted = extractMarkdownImageAttachments(text);
-      const imageTagExtracted = extractImageTagPaths(
-        markdownExtracted.cleanText,
-      );
-      const legacyImageTagAttachments = imageTagPathsToAttachments(
-        imageTagExtracted.imagePaths,
-      );
-      const outboundAttachments = hasStructuredAttachments
-        ? structuredAttachments
-        : [...markdownExtracted.attachments, ...legacyImageTagAttachments];
-      const attachmentSource = hasStructuredAttachments
-        ? 'structured'
-        : markdownExtracted.attachments.length > 0
-          ? 'md-link'
-          : legacyImageTagAttachments.length > 0
-            ? 'image-tag'
-            : 'none';
-      const validation = validateOutboundAttachments(outboundAttachments, {
+      const outbound = prepareDiscordOutbound(text, options.attachments);
+      if (outbound.silent) {
+        logger.debug(
+          { jid, channelName: this.name },
+          'Skipping silent structured Discord outbound message',
+        );
+        return;
+      }
+      const validation = validateOutboundAttachments(outbound.attachments, {
         baseDirs: options.attachmentBaseDirs,
       });
       const files = validation.files;
@@ -495,14 +445,14 @@ export class DiscordChannel implements Channel {
           {
             jid,
             channelName: this.name,
-            attachmentSource,
+            attachmentSource: outbound.attachmentSource,
             rejected: validation.rejected,
           },
           'Rejected outbound Discord attachments',
         );
       }
 
-      let cleaned = imageTagExtracted.cleanText
+      let cleaned = outbound.cleanText
         .replace(/^[ \t]*[•\-\*][ \t]*$/gm, '') // remove empty bullet lines
         .replace(/\n{3,}/g, '\n\n') // collapse excessive blank lines
         .trim();
@@ -588,11 +538,11 @@ export class DiscordChannel implements Channel {
         {
           jid,
           channelName: this.name,
-          length: text.length,
+          length: outbound.text.length,
           deliveryMode: 'send',
           chunkCount,
           attachmentCount: files.length,
-          attachmentSource,
+          attachmentSource: outbound.attachmentSource,
           messageId: sentMessageIds[0] ?? null,
           messageIds: sentMessageIds,
           botUserId: this.client.user?.id ?? null,

@@ -4,6 +4,7 @@ import { Send } from 'lucide-react';
 import type { DashboardOverview, DashboardRoomActivity } from './api';
 import type { Locale, Messages } from './i18n';
 import { ParsedBody } from './ParsedBody';
+import { RoomAttachmentGallery } from './RoomAttachmentGallery';
 import {
   buildRoomThreadEntries,
   isWatcherRoomMessage,
@@ -779,6 +780,7 @@ function RoomTimelineEntry({
       </header>
       <div className="room-timeline-body">
         <ParsedBody text={entry.content} />
+        <RoomAttachmentGallery attachments={entry.attachments} />
       </div>
     </li>
   );

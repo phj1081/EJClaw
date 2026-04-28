@@ -1,9 +1,13 @@
-import { normalizeEjclawStructuredOutput } from './agent-protocol.js';
+import {
+  extractImageTagPaths,
+  normalizeEjclawStructuredOutput,
+} from './agent-protocol.js';
 import { isWatchCiTask } from './task-watch-status.js';
 import type { PairedTurnAttemptRecord, PairedTurnRecord } from './db.js';
 import type { StatusSnapshot, UsageRowSnapshot } from './status-dashboard.js';
 import type {
   NewMessage,
+  OutboundAttachment,
   PairedTask,
   PairedTurnOutput,
   ScheduledTask,
@@ -69,6 +73,7 @@ export interface WebDashboardRoomMessage {
   sender: string;
   senderName: string;
   content: string;
+  attachments: OutboundAttachment[];
   timestamp: string;
   isFromMe: boolean;
   isBotMessage: boolean;
@@ -99,6 +104,7 @@ export interface WebDashboardRoomTurnOutput {
   verdict: PairedTurnOutput['verdict'] | null;
   createdAt: string;
   outputText: string;
+  attachments: OutboundAttachment[];
 }
 
 export interface WebDashboardRoomActivity {
@@ -196,22 +202,54 @@ function hasStructuredOutputHint(value: string): boolean {
   return value.includes('"ejclaw"') || /&quot;ejclaw&quot;/i.test(value);
 }
 
-function normalizeRoomMessageContent(value: string): string | null {
-  if (!hasStructuredOutputHint(value)) return value;
+function imagePathsToAttachments(paths: string[]): OutboundAttachment[] {
+  return paths.map((filePath) => ({
+    path: filePath,
+    name: filePath.split(/[\\/]/).at(-1) || undefined,
+  }));
+}
+
+function splitLegacyImageTags(
+  text: string,
+  attachments: OutboundAttachment[] = [],
+): { text: string; attachments: OutboundAttachment[] } {
+  const extracted = extractImageTagPaths(text);
+  if (extracted.imagePaths.length === 0) {
+    return { text, attachments };
+  }
+  return {
+    text: extracted.cleanText,
+    attachments: [
+      ...attachments,
+      ...imagePathsToAttachments(extracted.imagePaths),
+    ],
+  };
+}
+
+function normalizeStructuredVisibleContent(value: string): {
+  text: string | null;
+  attachments: OutboundAttachment[];
+} {
+  if (!hasStructuredOutputHint(value)) return splitLegacyImageTags(value);
 
   const candidates = [value, decodeCommonHtmlEntities(value)];
   for (const candidate of candidates) {
     const normalized = normalizeEjclawStructuredOutput(candidate);
-    if (normalized.output?.visibility === 'silent') return null;
+    if (normalized.output?.visibility === 'silent') {
+      return { text: null, attachments: [] };
+    }
     if (
       normalized.output?.visibility === 'public' &&
       normalized.output.text !== candidate
     ) {
-      return normalized.output.text;
+      return splitLegacyImageTags(
+        normalized.output.text,
+        normalized.output.attachments ?? [],
+      );
     }
   }
 
-  return value;
+  return splitLegacyImageTags(value);
 }
 
 function stableHash(value: string): string {
@@ -440,14 +478,15 @@ export function sanitizeScheduledTask(
 function sanitizeRoomMessage(
   message: NewMessage,
 ): WebDashboardRoomMessage | null {
-  const content = normalizeRoomMessageContent(message.content ?? '');
-  if (content === null) return null;
+  const normalized = normalizeStructuredVisibleContent(message.content ?? '');
+  if (normalized.text === null) return null;
 
   return {
     id: message.id,
     sender: message.sender,
     senderName: message.sender_name || message.sender,
-    content: buildRoomPreview(content, ROOM_MESSAGE_PREVIEW_MAX_LENGTH),
+    content: buildRoomPreview(normalized.text, ROOM_MESSAGE_PREVIEW_MAX_LENGTH),
+    attachments: normalized.attachments,
     timestamp: message.timestamp,
     isFromMe: !!message.is_from_me,
     isBotMessage: !!message.is_bot_message,
@@ -549,7 +588,10 @@ function sanitizeRoomTurn(
 
 function sanitizeRoomTurnOutput(
   output: PairedTurnOutput,
-): WebDashboardRoomTurnOutput {
+): WebDashboardRoomTurnOutput | null {
+  const normalized = normalizeStructuredVisibleContent(output.output_text);
+  if (normalized.text === null) return null;
+
   return {
     id: output.id,
     turnNumber: output.turn_number,
@@ -557,9 +599,10 @@ function sanitizeRoomTurnOutput(
     verdict: output.verdict ?? null,
     createdAt: output.created_at,
     outputText: buildRoomPreview(
-      output.output_text,
+      normalized.text,
       ROOM_OUTPUT_PREVIEW_MAX_LENGTH,
     ),
+    attachments: normalized.attachments,
   };
 }
 
@@ -620,7 +663,12 @@ export function buildWebDashboardRoomActivity(args: {
                 args.progressMessages ?? args.messages,
               )
             : null,
-          outputs: args.outputs.slice(-outputLimit).map(sanitizeRoomTurnOutput),
+          outputs: args.outputs
+            .slice(-outputLimit)
+            .map(sanitizeRoomTurnOutput)
+            .filter((output): output is WebDashboardRoomTurnOutput =>
+              Boolean(output),
+            ),
         }
       : null,
   };

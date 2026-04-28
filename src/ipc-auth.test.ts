@@ -599,6 +599,50 @@ describe('IPC message authorization', () => {
     expect(result.outcome).toBe('sent');
   });
 
+  it('normalizes raw EJClaw envelopes in authorized IPC messages', async () => {
+    const sendMessage = vi.fn(async () => {});
+
+    const result = await forwardAuthorizedIpcMessage(
+      {
+        type: 'message',
+        chatJid: 'other@g.us',
+        text: JSON.stringify({
+          ejclaw: {
+            visibility: 'public',
+            text: '첨부를 렌더링했습니다.',
+            verdict: 'done',
+            attachments: [
+              {
+                path: '/tmp/bar-chart-label-fit-playwright.png',
+                name: 'bar-chart-label-fit-playwright.png',
+                mime: 'image/png',
+              },
+            ],
+          },
+        }),
+      },
+      'other-group',
+      false,
+      groups,
+      sendMessage,
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      'other@g.us',
+      '첨부를 렌더링했습니다.',
+      undefined,
+      undefined,
+      [
+        {
+          path: '/tmp/bar-chart-label-fit-playwright.png',
+          name: 'bar-chart-label-fit-playwright.png',
+          mime: 'image/png',
+        },
+      ],
+    );
+    expect(result.outcome).toBe('sent');
+  });
+
   it('injects authorized inbound messages for the source group without routing them as outbound sends', async () => {
     const sendMessage = vi.fn(async () => {});
     const injectInboundMessage = vi.fn(async () => {});

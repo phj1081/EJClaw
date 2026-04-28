@@ -21,7 +21,6 @@ const DEFAULT_TEMP_ATTACHMENT_DIR_PREFIXES = [
   'ejclaw-attachment-',
   'ejclaw-discord-image-',
 ] as const;
-const DEFAULT_TEMP_ATTACHMENT_FILE_PREFIXES = ['ejclaw-'] as const;
 
 function unique(values: Array<string | null | undefined>): string[] {
   return [
@@ -44,8 +43,8 @@ export function getDefaultAttachmentBaseDirs(): string[] {
     process.env.CODEX_HOME || (home ? path.join(home, '.codex') : null);
   // Keep defaults narrow. Runtime-specific workspaces must be passed via
   // attachmentBaseDirs so one room cannot attach another room's files by path.
-  // Ad-hoc generated files under os.tmpdir()/ejclaw-attachment-* are handled
-  // separately after resolving symlinks, without allowlisting all of /tmp.
+  // Ad-hoc generated files under os.tmpdir() are handled separately after
+  // resolving symlinks, without allowlisting all of /tmp recursively.
   return unique([
     path.join(DATA_DIR, 'attachments'),
     codexHome ? path.join(codexHome, 'generated_images') : null,
@@ -84,7 +83,7 @@ function isWithinDefaultTempAttachmentDir(
   );
 }
 
-function isDefaultTempAttachmentFile(
+function isDirectTempAttachmentFile(
   realPath: string,
   tempDir: string | null,
 ): boolean {
@@ -93,10 +92,10 @@ function isDefaultTempAttachmentFile(
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
     return false;
   }
-  if (relative.includes(path.sep)) return false;
-  return DEFAULT_TEMP_ATTACHMENT_FILE_PREFIXES.some((prefix) =>
-    relative.startsWith(prefix),
-  );
+  // Agents commonly write Playwright screenshots and generated images directly
+  // under /tmp with task-specific names. Keep this limited to direct children;
+  // nested temp directories still need an EJClaw prefix or explicit baseDir.
+  return !relative.includes(path.sep);
 }
 
 function detectImageMime(filePath: string): string | null {
@@ -188,7 +187,7 @@ export function validateOutboundAttachments(
       if (
         !matchesAllowedBaseDir(realPath, baseDirs) &&
         !isWithinDefaultTempAttachmentDir(realPath, defaultTempDir) &&
-        !isDefaultTempAttachmentFile(realPath, defaultTempDir)
+        !isDirectTempAttachmentFile(realPath, defaultTempDir)
       ) {
         rejected.push({ path: requestedPath, reason: 'outside-allowed-dirs' });
         continue;

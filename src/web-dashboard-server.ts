@@ -46,6 +46,7 @@ import {
   buildWebDashboardOverview,
   sanitizeScheduledTask,
 } from './web-dashboard-data.js';
+import { serveValidatedAttachment } from './web-dashboard-attachments.js';
 import {
   addClaudeAccountFromToken,
   getActiveCodexSettingsIndex,
@@ -1570,9 +1571,15 @@ export function createWebDashboardHandler(
       return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
     }
 
-    if (url.pathname === '/api/health') {
-      return jsonResponse({ ok: true });
-    }
+    const simpleGetRoutes: Record<string, () => Response> = {
+      '/api/health': () => jsonResponse({ ok: true }),
+      '/api/status-snapshots': () =>
+        jsonResponse(readSnapshots(statusMaxAgeMs)),
+      '/api/tasks': () => jsonResponse(loadTasks().map(sanitizeScheduledTask)),
+      '/api/attachments': () => serveValidatedAttachment(url),
+    };
+    const simpleGetRoute = simpleGetRoutes[url.pathname];
+    if (simpleGetRoute) return simpleGetRoute();
 
     if (url.pathname === '/api/overview') {
       const snapshots = readSnapshots(statusMaxAgeMs);
@@ -1591,14 +1598,6 @@ export function createWebDashboardHandler(
         },
         inbox: overview.inbox.filter((item) => !isInboxItemDismissed(item)),
       });
-    }
-
-    if (url.pathname === '/api/status-snapshots') {
-      return jsonResponse(readSnapshots(statusMaxAgeMs));
-    }
-
-    if (url.pathname === '/api/tasks') {
-      return jsonResponse(loadTasks().map(sanitizeScheduledTask));
     }
 
     if (url.pathname === '/api/settings/accounts') {

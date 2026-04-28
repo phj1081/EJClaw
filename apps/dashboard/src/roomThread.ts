@@ -9,6 +9,7 @@ export type RoomThreadEntry = {
   id: string;
   senderName: string;
   content: string;
+  attachments?: RoomMessage['attachments'];
   timestamp: string;
   isFromMe: boolean;
   isBotMessage: boolean;
@@ -51,6 +52,7 @@ function toMessageEntry(message: RoomMessage): RoomThreadEntry {
     id: message.id,
     senderName: message.senderName,
     content: message.content,
+    attachments: message.attachments,
     timestamp: message.timestamp,
     isFromMe: message.isFromMe,
     isBotMessage: message.isBotMessage,
@@ -64,6 +66,7 @@ function toOutputEntry(output: RoomOutput): RoomThreadEntry | null {
     id: `out:${output.id}`,
     senderName: output.role,
     content: output.outputText,
+    attachments: output.attachments,
     timestamp: output.createdAt,
     isFromMe: false,
     isBotMessage: true,

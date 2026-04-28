@@ -161,4 +161,51 @@ describe('RoomCardV2', () => {
     expect(html).toContain('<code>pnpm openapi:sync</code>');
     expect(html).not.toContain('`origin/dev`');
   });
+
+  it('renders message attachments as dashboard images', () => {
+    const html = renderToStaticMarkup(
+      createElement(RoomCardV2, {
+        activity: activity({
+          messages: [
+            {
+              id: 'bot-attachment',
+              sender: 'bot-1',
+              senderName: 'owner',
+              content: '라벨 좌측 클리핑 회귀 수정했습니다.',
+              timestamp: '2026-04-28T02:00:00.000Z',
+              isFromMe: false,
+              isBotMessage: true,
+              sourceKind: 'bot',
+              attachments: [
+                {
+                  path: '/tmp/bar-chart-label-fit-playwright.png',
+                  name: 'bar-chart-label-fit-playwright.png',
+                  mime: 'image/png',
+                },
+              ],
+            },
+          ],
+        }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry,
+        expanded: true,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: true,
+        t,
+        ...formatters,
+      }),
+    );
+
+    expect(html).toContain('class="room-attachments"');
+    expect(html).toContain(
+      '/api/attachments?path=%2Ftmp%2Fbar-chart-label-fit-playwright.png',
+    );
+    expect(html).toContain('bar-chart-label-fit-playwright.png');
+  });
 });
