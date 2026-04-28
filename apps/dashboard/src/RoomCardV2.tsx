@@ -519,10 +519,18 @@ function CollapsedLiveTurn({
         </time>
       </header>
       {turn.progressText && turn.progressText.trim() ? (
-        <pre className="live-progress">{turn.progressText}</pre>
+        <LiveProgressBody text={turn.progressText} />
       ) : turn.activeRunId ? (
         <code className="live-run">{turn.activeRunId}</code>
       ) : null}
+    </div>
+  );
+}
+
+function LiveProgressBody({ text }: { text: string }) {
+  return (
+    <div className="live-progress">
+      <ParsedBody text={text} />
     </div>
   );
 }
@@ -824,7 +832,7 @@ function RoomLiveTimelineEntry({
       </header>
       <div className="room-timeline-body">
         {liveProgressDisplay ? (
-          <pre className="live-progress">{liveProgressDisplay}</pre>
+          <LiveProgressBody text={liveProgressDisplay} />
         ) : (
           <p className="room-empty">{t.rooms.loadingActivity}</p>
         )}

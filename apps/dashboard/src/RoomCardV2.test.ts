@@ -109,4 +109,56 @@ describe('RoomCardV2', () => {
     expect(html).toContain('TASK_DONE');
     expect(html).toContain('prod 배포 완료');
   });
+
+  it('renders live progress as markdown', () => {
+    const html = renderToStaticMarkup(
+      createElement(RoomCardV2, {
+        activity: activity({
+          pairedTask: {
+            id: 'task-1',
+            title: 'OpenAPI sync',
+            status: 'running',
+            roundTripCount: 1,
+            updatedAt: '2026-04-28T02:01:00.000Z',
+            currentTurn: {
+              turnId: 'turn-1',
+              role: 'owner',
+              intentKind: 'implementation',
+              state: 'running',
+              attemptNo: 1,
+              executorServiceId: 'svc-1',
+              executorAgentType: 'codex',
+              activeRunId: null,
+              createdAt: '2026-04-28T02:00:00.000Z',
+              updatedAt: '2026-04-28T02:01:00.000Z',
+              completedAt: null,
+              lastError: null,
+              progressText:
+                '최신 `origin/dev`로 fast-forward한 뒤 `pnpm openapi:sync`를 실행합니다.',
+              progressUpdatedAt: '2026-04-28T02:01:00.000Z',
+            },
+            outputs: [],
+          },
+        }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry: { ...entry, status: 'processing' },
+        expanded: false,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: false,
+        t,
+        ...formatters,
+      }),
+    );
+
+    expect(html).toContain('class="live-progress"');
+    expect(html).toContain('<code>origin/dev</code>');
+    expect(html).toContain('<code>pnpm openapi:sync</code>');
+    expect(html).not.toContain('`origin/dev`');
+  });
 });
