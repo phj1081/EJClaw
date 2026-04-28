@@ -24,8 +24,13 @@ const formatters = {
   formatDate: (value: string | null | undefined) => value ?? '-',
   formatDuration: (value: number | null) => (value === null ? '-' : `${value}`),
   formatLiveElapsed: (value: number) => `${value}`,
-  senderRoleClass: (value: string | null | undefined) =>
-    (value ?? '').toLowerCase().includes('owner') ? 'role-owner' : 'role-human',
+  senderRoleClass: (value: string | null | undefined) => {
+    const role = (value ?? '').toLowerCase();
+    if (role.includes('owner')) return 'role-owner';
+    if (role.includes('reviewer')) return 'role-reviewer';
+    if (role.includes('arbiter')) return 'role-arbiter';
+    return 'role-human';
+  },
   statusLabel: (status: string) => status,
 };
 
@@ -108,6 +113,51 @@ describe('RoomCardV2', () => {
 
     expect(html).toContain('TASK_DONE');
     expect(html).toContain('prod 배포 완료');
+  });
+
+  it('localizes protocol role and verdict labels in Korean rooms', () => {
+    const html = renderToStaticMarkup(
+      createElement(RoomCardV2, {
+        activity: activity({
+          pairedTask: {
+            id: 'task-1',
+            title: 'Review pending',
+            status: 'in_review',
+            roundTripCount: 2,
+            updatedAt: '2026-04-28T02:03:00.000Z',
+            currentTurn: null,
+            outputs: [
+              {
+                id: 1,
+                turnNumber: 2,
+                role: 'reviewer',
+                verdict: 'continue',
+                createdAt: '2026-04-28T02:02:00.000Z',
+                outputText: '검증 완료. 다음 단계로 진행 가능합니다.',
+              },
+            ],
+          },
+        }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry,
+        expanded: true,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: true,
+        t,
+        ...formatters,
+      }),
+    );
+
+    expect(html).toContain('>리뷰어</span>');
+    expect(html).toContain('>계속</span>');
+    expect(html).not.toContain('>reviewer</span>');
+    expect(html).not.toContain('>continue</span>');
   });
 
   it('renders live progress as markdown', () => {
@@ -244,6 +294,7 @@ describe('RoomCardV2', () => {
     );
 
     expect(html).toContain('class="room-watcher-fold"');
+    expect(html).toContain('>리뷰어</strong>');
     expect(html).toContain(watcherTail);
   });
 });

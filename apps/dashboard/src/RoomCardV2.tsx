@@ -5,6 +5,7 @@ import type { DashboardOverview, DashboardRoomActivity } from './api';
 import type { Locale, Messages } from './i18n';
 import { ParsedBody } from './ParsedBody';
 import { RoomAttachmentGallery } from './RoomAttachmentGallery';
+import { displayRole, displayVerdict } from './roomDisplayLabels';
 import {
   buildRoomThreadEntries,
   isWatcherRoomMessage,
@@ -421,7 +422,9 @@ function RoomCurrentTurnSummary({
   return (
     <div className="room-current-turn">
       <span>
-        <strong className={senderRoleClass(turn.role)}>{turn.role}</strong>
+        <strong className={senderRoleClass(turn.role)}>
+          {displayRole(turn.role, locale)}
+        </strong>
         <em>{turn.intentKind}</em>
         {turn.attemptNo > 1 ? (
           <small>
@@ -504,7 +507,9 @@ function CollapsedLiveTurn({
       <header>
         <span className="live-dot" aria-hidden />
         <span className="live-label">LIVE</span>
-        <strong className={senderRoleClass(turn.role)}>{turn.role}</strong>
+        <strong className={senderRoleClass(turn.role)}>
+          {displayRole(turn.role, locale)}
+        </strong>
         <em>{turn.intentKind}</em>
         <span className="live-state pill pill-processing">{turn.state}</span>
         {turn.executorServiceId ? (
@@ -574,7 +579,7 @@ function CollapsedWatcherStrip({
       <span className="watcher-tag">워쳐 {watcherCount}</span>
       <span className="watcher-line">
         <strong className={senderRoleClass(lastWatcher.senderName)}>
-          {lastWatcher.senderName}
+          {displayRole(lastWatcher.senderName, locale)}
         </strong>
         <span>{lastWatcher.content.slice(0, 90)}</span>
       </span>
@@ -764,7 +769,7 @@ function RoomTimelineEntry({
     <li className={`room-timeline-item ${sectionClass}`}>
       <header className="room-timeline-header">
         <span className={`role-chip ${senderRoleClass(entry.senderName)}`}>
-          {entry.senderName}
+          {displayRole(entry.senderName, locale)}
         </span>
         <time>{formatDate(entry.timestamp, locale)}</time>
         {entry.turnNumber !== undefined ? (
@@ -774,7 +779,7 @@ function RoomTimelineEntry({
         ) : null}
         {verdict ? (
           <span className={`parsed-marker parsed-marker-${verdictTone}`}>
-            {verdict}
+            {displayVerdict(verdict, locale)}
           </span>
         ) : null}
       </header>
@@ -818,7 +823,7 @@ function RoomLiveTimelineEntry({
           <span className="paused-dot" aria-hidden />
         )}
         <span className={`role-chip ${senderRoleClass(turn.role)}`}>
-          {turn.role}
+          {displayRole(turn.role, locale)}
         </span>
         <time>
           {formatDate(turn.progressUpdatedAt ?? turn.updatedAt, locale)}
@@ -866,7 +871,7 @@ function RoomWatcherFold({
           <li className="room-watcher-item" key={message.id}>
             <header>
               <strong className={senderRoleClass(message.senderName)}>
-                {message.senderName}
+                {displayRole(message.senderName, locale)}
               </strong>
               <time>{formatDate(message.timestamp, locale)}</time>
             </header>
