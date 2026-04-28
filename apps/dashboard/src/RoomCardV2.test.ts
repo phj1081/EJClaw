@@ -1,3 +1,4 @@
+import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
@@ -50,22 +51,22 @@ function activity(
 describe('RoomCardV2', () => {
   it('renders an inactive room without activity', () => {
     const html = renderToStaticMarkup(
-      <RoomCardV2
-        activity={undefined}
-        activityLoading={false}
-        busy={false}
-        draft=""
-        entry={entry}
-        expanded={false}
-        inboxItems={[]}
-        locale="ko"
-        onDraftChange={() => {}}
-        onSendMessage={() => {}}
-        onToggle={() => {}}
-        pinned={false}
-        t={t}
-        {...formatters}
-      />,
+      createElement(RoomCardV2, {
+        activity: undefined,
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry,
+        expanded: false,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: false,
+        t,
+        ...formatters,
+      }),
     );
 
     expect(html).toContain('eyejokerdb-main');
@@ -74,8 +75,8 @@ describe('RoomCardV2', () => {
 
   it('renders regular bot messages in the expanded thread', () => {
     const html = renderToStaticMarkup(
-      <RoomCardV2
-        activity={activity({
+      createElement(RoomCardV2, {
+        activity: activity({
           messages: [
             {
               id: 'bot-1',
@@ -88,21 +89,21 @@ describe('RoomCardV2', () => {
               sourceKind: 'bot',
             },
           ],
-        })}
-        activityLoading={false}
-        busy={false}
-        draft=""
-        entry={entry}
-        expanded={true}
-        inboxItems={[]}
-        locale="ko"
-        onDraftChange={() => {}}
-        onSendMessage={() => {}}
-        onToggle={() => {}}
-        pinned={true}
-        t={t}
-        {...formatters}
-      />,
+        }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry,
+        expanded: true,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: true,
+        t,
+        ...formatters,
+      }),
     );
 
     expect(html).toContain('TASK_DONE');
