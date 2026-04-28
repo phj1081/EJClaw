@@ -11,15 +11,13 @@ import type {
 import { EmptyState } from './EmptyState';
 import { localeTags, type Locale, type Messages } from './i18n';
 import { redactSecretsForPreview } from './redaction';
-import { statusLabel, taskActionsFor } from './dashboardHelpers';
+import { statusLabel } from './dashboardHelpers';
+import { TaskActionButtons, type TaskActionKey } from './TaskActionButtons';
+
+export type { TaskActionKey } from './TaskActionButtons';
 
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
 type TaskResultTone = 'ok' | 'fail' | 'none';
-
-export type TaskActionKey =
-  | 'create'
-  | `${string}:edit`
-  | `${string}:${DashboardTaskAction}`;
 
 export interface RoomOption {
   jid: string;
@@ -64,13 +62,6 @@ interface TaskCardProps {
   locale: Locale;
   onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
   onTaskUpdate: (task: DashboardTask, input: UpdateScheduledTaskInput) => void;
-  task: DashboardTask;
-  taskActionKey: TaskActionKey | null;
-  t: Messages;
-}
-
-interface TaskActionButtonsProps {
-  onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
   task: DashboardTask;
   taskActionKey: TaskActionKey | null;
   t: Messages;
@@ -338,37 +329,6 @@ function TaskCreateForm({
           : t.tasks.actions.create}
       </button>
     </form>
-  );
-}
-
-function TaskActionButtons({
-  onTaskAction,
-  task,
-  taskActionKey,
-  t,
-}: TaskActionButtonsProps) {
-  const taskActions = taskActionsFor(task);
-  if (taskActions.length === 0) return null;
-
-  return (
-    <div className="task-actions">
-      {taskActions.map((action) => {
-        const actionKey: TaskActionKey = `${task.id}:${action}`;
-        const busy = taskActionKey === actionKey;
-        return (
-          <button
-            aria-busy={busy || undefined}
-            className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
-            disabled={busy}
-            key={action}
-            onClick={() => onTaskAction(task, action)}
-            type="button"
-          >
-            {busy ? t.tasks.actions.busy : t.tasks.actions[action]}
-          </button>
-        );
-      })}
-    </div>
   );
 }
 

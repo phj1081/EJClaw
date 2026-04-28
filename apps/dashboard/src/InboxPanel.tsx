@@ -6,9 +6,10 @@ import type {
   DashboardTask,
   DashboardTaskAction,
 } from './api';
-import { formatDate, taskActionsFor } from './dashboardHelpers';
+import { formatDate } from './dashboardHelpers';
 import { EmptyState } from './EmptyState';
 import type { Locale, Messages } from './i18n';
+import { TaskActionButtons } from './TaskActionButtons';
 
 export type InboxItem = DashboardOverview['inbox'][number];
 export type InboxActionKey = `${string}:${DashboardInboxAction}`;
@@ -103,7 +104,6 @@ function InboxCard({
     item.source === 'scheduled-task' && item.taskId
       ? tasks.find((task) => task.id === item.taskId)
       : undefined;
-  const linkedTaskActions = linkedTask ? taskActionsFor(linkedTask) : [];
   const inboxActions = inboxActionsFor(item);
 
   return (
@@ -148,25 +148,14 @@ function InboxCard({
           {item.taskId ? t.inbox.openTask : t.inbox.openRoom}
         </a>
       ) : null}
-      {linkedTask && linkedTaskActions.length > 0 ? (
-        <div className="task-actions inbox-actions">
-          {linkedTaskActions.map((action) => {
-            const actionKey = `${linkedTask.id}:${action}`;
-            const busy = taskActionKey === actionKey;
-            return (
-              <button
-                aria-busy={busy || undefined}
-                className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
-                disabled={busy}
-                key={action}
-                onClick={() => onTaskAction(linkedTask, action)}
-                type="button"
-              >
-                {busy ? t.tasks.actions.busy : t.tasks.actions[action]}
-              </button>
-            );
-          })}
-        </div>
+      {linkedTask ? (
+        <TaskActionButtons
+          className="inbox-actions"
+          onTaskAction={onTaskAction}
+          task={linkedTask}
+          taskActionKey={taskActionKey}
+          t={t}
+        />
       ) : null}
       {inboxActions.length > 0 ? (
         <div className="task-actions inbox-actions">
