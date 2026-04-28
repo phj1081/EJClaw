@@ -1338,59 +1338,6 @@ dd,
   letter-spacing: 0.06em;
 }
 
-.table-wrap {
-  overflow: auto;
-  border: 1px solid var(--panel-border);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.mobile-record-list {
-  display: none;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 860px;
-}
-
-th,
-td {
-  padding: 16px;
-  border-bottom: 1px solid rgba(43, 55, 38, 0.1);
-  text-align: left;
-  vertical-align: top;
-}
-
-th {
-  color: var(--muted);
-  font-size: 12px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  background: rgba(255, 255, 255, 0.04);
-}
-
-tr:last-child td {
-  border-bottom: 0;
-}
-
-td strong,
-td span,
-td small {
-  display: block;
-}
-
-td strong {
-  margin-bottom: 4px;
-}
-
-td small {
-  margin-top: 4px;
-  max-width: 480px;
-  overflow-wrap: anywhere;
-}
-
 .pill {
   display: inline-flex;
   width: fit-content;
@@ -2080,23 +2027,6 @@ progress::-moz-progress-bar {
   font-style: normal;
 }
 
-.record-details {
-  margin-top: 4px;
-}
-
-.record-details summary {
-  display: inline-flex;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  list-style: none;
-}
-
-.record-details summary::-webkit-details-marker {
-  display: none;
-}
-
 .room-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2190,215 +2120,6 @@ progress::-moz-progress-bar {
   padding: 8px 12px 14px;
   border-top: 1px solid var(--divider);
   background: var(--panel);
-}
-
-.room-activity-cell {
-  min-width: 300px;
-}
-
-.room-activity {
-  display: grid;
-  min-width: min(300px, 100%);
-  gap: 7px;
-  padding: 8px;
-  border: 1px solid var(--panel-border);
-  border-radius: 15px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.room-activity-empty,
-.room-muted {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.room-progress-strip {
-  display: grid;
-  grid-template-columns: auto minmax(96px, 1fr) auto auto auto;
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.room-progress-strip strong,
-.room-progress-strip span,
-.room-progress-strip time {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.room-progress-strip strong {
-  color: var(--ink);
-  font-size: 12px;
-}
-
-.room-turn-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.room-turn-line .mono-chip {
-  margin-top: 0;
-}
-
-.room-activity-error {
-  color: #7c2518;
-  font-size: 12px;
-  font-weight: 700;
-  overflow-wrap: anywhere;
-}
-
-.room-latest-output {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  padding: 8px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.025);
-}
-
-.room-latest-output header {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.room-latest-output strong,
-.room-detail-grid > section > strong {
-  color: var(--bg-ink);
-  font-size: 12px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.room-latest-output header span,
-.room-latest-output p {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.room-latest-output p {
-  display: -webkit-box;
-  margin: 0;
-  color: var(--ink);
-  font-size: 12px;
-  line-height: 1.32;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.room-activity-details,
-.room-compose-details {
-  min-width: 0;
-}
-
-.room-activity-details > summary,
-.room-compose-details > summary {
-  min-height: 32px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.room-detail-grid {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-  padding-top: 6px;
-}
-
-.room-detail-grid > section {
-  display: grid;
-  min-width: 0;
-  align-content: start;
-  gap: 7px;
-}
-
-.room-output-list,
-.room-message-list {
-  display: grid;
-  gap: 7px;
-}
-
-.room-output-item,
-.room-message-item {
-  min-width: 0;
-  padding: 8px;
-  border-radius: 13px;
-  background: rgba(255, 255, 255, 0.025);
-}
-
-.room-message-bot {
-  background: rgba(191, 95, 44, 0.08);
-}
-
-.room-output-item header,
-.room-message-item header {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.room-output-item header span,
-.room-message-item header span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.room-output-item time,
-.room-message-item time {
-  flex: none;
-}
-
-.room-output-item p,
-.room-message-item p,
-.room-muted {
-  margin: 0;
-}
-
-.room-output-item p,
-.room-message-item p {
-  display: -webkit-box;
-  overflow: hidden;
-  margin-top: 5px;
-  color: var(--ink);
-  font-size: 12px;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 4;
-}
-
-.room-message-cell {
-  width: 150px;
-}
-
-.room-compose-details .room-compose {
-  margin-top: 6px;
 }
 
 .task-board {
@@ -2795,61 +2516,11 @@ progress::-moz-progress-bar {
   background: rgba(109, 115, 95, 0.16);
 }
 
-.record-card {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid var(--panel-border-strong);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.record-card-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-}
-
-.record-card-head strong,
 .task-card > p {
   overflow-wrap: anywhere;
 }
 
-.record-card-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.record-card-grid > span {
-  min-width: 0;
-  padding: 11px;
-  border: 1px solid var(--panel-border);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.025);
-}
-
-.record-card-grid small,
-.record-id {
-  color: var(--muted);
-}
-
-.record-card-grid small,
-.record-card-grid strong {
-  display: block;
-}
-
-.record-card-grid strong {
-  min-width: 0;
-  overflow: hidden;
-  margin-top: 3px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mono-chip,
-.record-id {
+.mono-chip {
   font-family:
     'SF Mono', 'Cascadia Code', 'Roboto Mono', ui-monospace, monospace;
   font-size: 12px;
@@ -2866,14 +2537,6 @@ progress::-moz-progress-bar {
   border-radius: 999px;
   color: var(--muted);
   background: rgba(255, 255, 255, 0.05);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.record-id {
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2951,17 +2614,6 @@ progress::-moz-progress-bar {
 
   .ops-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 760px) {
-  .desktop-table {
-    display: none;
-  }
-
-  .mobile-record-list {
-    display: grid;
-    gap: 12px;
   }
 }
 
@@ -3145,24 +2797,6 @@ progress::-moz-progress-bar {
     display: none;
   }
 
-  .record-card-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .room-activity,
-  .room-activity-cell {
-    min-width: 0;
-  }
-
-  .room-progress-strip {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .room-progress-strip span:nth-of-type(n + 3),
-  .room-progress-strip time {
-    display: none;
-  }
-
   .inbox-summary,
   .health-signals {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3305,10 +2939,6 @@ progress::-moz-progress-bar {
   .skeleton-grid,
   .ops-strip {
     gap: 8px;
-  }
-
-  .record-card-grid {
-    grid-template-columns: 1fr;
   }
 
   .inbox-meta,
