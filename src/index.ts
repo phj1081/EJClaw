@@ -30,12 +30,12 @@ import { composeDashboardContent } from './dashboard-render.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
+import { deliverIpcOutboundMessage } from './ipc-outbound-delivery.js';
 import {
   findChannel,
   findChannelByName,
   formatOutbound,
   normalizeMessageForDedupe,
-  resolveChannelForDeliveryRole,
 } from './router.js';
 import {
   buildRestartAnnouncement,
@@ -388,44 +388,15 @@ async function main(): Promise<void> {
   });
   startIpcWatcher({
     sendMessage: async (jid, text, senderRole, runId, attachments) => {
-      if (
-        runId &&
-        (senderRole === 'reviewer' || senderRole === 'arbiter') &&
-        queue.hasRecordedDirectTerminalDeliveryForRun(jid, runId, senderRole)
-      ) {
-        logger.info(
-          {
-            transition: 'ipc:skip-post-terminal',
-            chatJid: jid,
-            senderRole,
-            runId,
-          },
-          'Skipped IPC relay message because the run already emitted a direct terminal verdict',
-        );
-        return;
-      }
-      const route = resolveChannelForDeliveryRole(channels, jid, senderRole);
-      if (!route.channel) throw new Error(`No channel for JID: ${jid}`);
-      logger.info(
+      await deliverIpcOutboundMessage(
+        { jid, text, senderRole, runId, attachments },
         {
-          transition: 'ipc:route',
-          chatJid: jid,
-          runId: runId ?? null,
-          senderRole: senderRole ?? null,
-          requestedRoleChannel: route.requestedRoleChannelName,
-          selectedChannel: route.selectedChannelName,
-          usedRoleChannel: route.usedRoleChannel,
-          fallbackUsed: route.fallbackUsed,
+          channels,
+          roomBindings: runtimeState.getRoomBindings,
+          queue,
+          log: logger,
         },
-        'IPC relay routed message to channel',
       );
-      await route.channel.sendMessage(jid, text, { attachments });
-      if (
-        (senderRole === 'reviewer' || senderRole === 'arbiter') &&
-        isTerminalStatusMessage(text)
-      ) {
-        queue.noteDirectTerminalDelivery(jid, senderRole, text);
-      }
     },
     injectInboundMessage: async (payload) => {
       const jid = payload.chatJid;

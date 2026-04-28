@@ -818,14 +818,14 @@ describe('DiscordChannel', () => {
       ).rejects.toThrow('Channel not found');
     });
 
-    it('does nothing when client is not initialized', async () => {
+    it('rejects when client is not initialized', async () => {
       const opts = createTestOpts();
       const channel = new DiscordChannel('test-token', opts);
 
       // Don't connect — client is null
-      await channel.sendMessage('dc:1234567890123456', 'No client');
-
-      // No error, no API call
+      await expect(
+        channel.sendMessage('dc:1234567890123456', 'No client'),
+      ).rejects.toThrow('Discord client not initialized');
     });
 
     it('splits messages exceeding 2000 characters', async () => {

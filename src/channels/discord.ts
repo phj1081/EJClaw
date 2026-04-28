@@ -410,8 +410,7 @@ export class DiscordChannel implements Channel {
     options: SendMessageOptions = {},
   ): Promise<void> {
     if (!this.client) {
-      logger.warn('Discord client not initialized');
-      return;
+      throw new Error('Discord client not initialized');
     }
 
     try {
@@ -419,8 +418,7 @@ export class DiscordChannel implements Channel {
       const channel = await this.client.channels.fetch(channelId);
 
       if (!channel || !('send' in channel)) {
-        logger.warn({ jid }, 'Discord channel not found or not text-based');
-        return;
+        throw new Error(`Discord channel not found or not text-based: ${jid}`);
       }
 
       const textChannel = channel as TextChannel;
@@ -627,11 +625,15 @@ export class DiscordChannel implements Channel {
   }
 
   async sendAndTrack(jid: string, text: string): Promise<string | null> {
-    if (!this.client) return null;
+    if (!this.client) {
+      throw new Error('Discord client not initialized');
+    }
     try {
       const channelId = jid.replace(/^dc:/, '');
       const channel = await this.client.channels.fetch(channelId);
-      if (!channel || !('send' in channel)) return null;
+      if (!channel || !('send' in channel)) {
+        throw new Error(`Discord channel not found or not text-based: ${jid}`);
+      }
       const msg = await (channel as TextChannel).send(text);
       logger.info(
         {
@@ -763,11 +765,15 @@ export class DiscordChannel implements Channel {
     messageId: string,
     text: string,
   ): Promise<void> {
-    if (!this.client) return;
+    if (!this.client) {
+      throw new Error('Discord client not initialized');
+    }
     try {
       const channelId = jid.replace(/^dc:/, '');
       const channel = await this.client.channels.fetch(channelId);
-      if (!channel || !('messages' in channel)) return;
+      if (!channel || !('messages' in channel)) {
+        throw new Error(`Discord channel not found or not editable: ${jid}`);
+      }
       const msg = await (channel as TextChannel).messages.fetch(messageId);
       await msg.edit(text);
       logger.info(
