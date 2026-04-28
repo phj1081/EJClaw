@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   type ClaudeAccountSummary,
@@ -53,6 +53,7 @@ import {
 } from './DashboardNav';
 import { isInternalProtocolPayload } from './roomThread';
 import { RoomBoardV2 } from './RoomBoardV2';
+import { EmptyState } from './EmptyState';
 import { ParsedBody } from './ParsedBody';
 import { redactSecretsForPreview } from './redaction';
 import './styles.css';
@@ -626,10 +627,6 @@ function inboxTargetHref(item: InboxItem): string | null {
   if (item.taskId) return '#/scheduled';
   if (item.roomJid || item.groupFolder) return '#/rooms';
   return null;
-}
-
-function EmptyState({ children }: { children: ReactNode }) {
-  return <div className="empty-state">{children}</div>;
 }
 
 function LanguageSelector({
