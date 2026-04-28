@@ -233,16 +233,8 @@
       "owner": "web dashboard data test hotspot"
     },
     "src/web-dashboard-server.test.ts": {
-      "maxLines": 1654,
-      "maxFunctionLines": 1577,
+      "maxFunctionLines": 332,
       "owner": "web dashboard server test hotspot"
-    },
-    "src/web-dashboard-server.ts": {
-      "maxLines": 1759,
-      "maxFunctionLines": 1007,
-      "maxComplexity": 158,
-      "maxNesting": 3,
-      "owner": "web dashboard server hotspot"
     }
   }
 }
