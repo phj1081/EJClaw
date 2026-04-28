@@ -12,6 +12,7 @@ export default defineConfig({
     testTimeout: 15_000,
     include: [
       'src/**/*.test.ts',
+      'apps/dashboard/src/**/*.test.ts',
       'setup/**/*.test.ts',
       'runners/**/test/**/*.test.ts',
     ],
