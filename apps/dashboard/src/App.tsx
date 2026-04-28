@@ -51,7 +51,8 @@ import {
   type DashboardFreshness,
   type DashboardView,
 } from './DashboardNav';
-import { isInternalProtocolPayload } from './roomThread';
+import { formatDate, taskActionsFor } from './dashboardHelpers';
+import { InboxPanel, type InboxActionKey, type InboxItem } from './InboxPanel';
 import { RoomBoardV2 } from './RoomBoardV2';
 import { EmptyState } from './EmptyState';
 import { ParsedBody } from './ParsedBody';
@@ -65,7 +66,6 @@ interface DashboardState {
 }
 
 type UsageRow = DashboardOverview['usage']['rows'][number];
-type InboxItem = DashboardOverview['inbox'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
 type UsageGroup = 'primary' | 'codex';
 type UsageLimitWindow = 'h5' | 'd7';
@@ -75,9 +75,7 @@ type TaskActionKey =
   | 'create'
   | `${string}:edit`
   | `${string}:${DashboardTaskAction}`;
-type InboxActionKey = `${string}:${DashboardInboxAction}`;
 type ServiceActionKey = 'stack:restart';
-type InboxFilter = 'all' | InboxItem['kind'];
 type HealthLevel = 'ok' | 'stale' | 'down';
 type FreshnessLevel = DashboardFreshness;
 
@@ -165,69 +163,6 @@ function senderRoleClass(value: string | null | undefined): string {
   if (v.includes('cron') || v.includes('sentry') || v.includes('webhook'))
     return 'role-cron';
   return 'role-human';
-}
-
-function sanitizeInboxText(value: string | null | undefined): string {
-  if (!value) return '';
-  return value
-    .replace(/<\/?internal[^>]*>/gi, '')
-    .replace(/<\/?intern\.{3}/gi, '')
-    .replace(/<\/?[a-z][a-z0-9-]*[^>]*>/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-function formatDate(value: string | null | undefined, locale: Locale): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const now = Date.now();
-  const ageMs = now - date.getTime();
-  if (ageMs >= 0 && ageMs < 60_000) {
-    return locale === 'ko'
-      ? '방금'
-      : locale === 'ja'
-        ? 'たった今'
-        : locale === 'zh'
-          ? '刚刚'
-          : 'just now';
-  }
-  if (ageMs >= 0 && ageMs < 3_600_000) {
-    const mins = Math.floor(ageMs / 60_000);
-    return locale === 'ko'
-      ? `${mins}분 전`
-      : locale === 'ja'
-        ? `${mins}分前`
-        : locale === 'zh'
-          ? `${mins} 分钟前`
-          : `${mins}m ago`;
-  }
-  const sameDay = new Date().toDateString() === date.toDateString();
-  if (sameDay) {
-    return new Intl.DateTimeFormat(localeTags[locale], {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    }).format(date);
-  }
-  const time = new Intl.DateTimeFormat(localeTags[locale], {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
-  if (locale === 'ko')
-    return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
-  if (locale === 'ja')
-    return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
-  if (locale === 'zh')
-    return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
-  return new Intl.DateTimeFormat(localeTags[locale], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
 }
 
 function dashboardAgeMs(value: string | null | undefined): number | null {
@@ -482,12 +417,6 @@ function taskDisplayName(task: DashboardTask, t: Messages): string {
   return task.id;
 }
 
-function taskActionsFor(task: DashboardTask): DashboardTaskAction[] {
-  if (task.status === 'active') return ['pause', 'cancel'];
-  if (task.status === 'paused') return ['resume', 'cancel'];
-  return [];
-}
-
 function buildRoomOptions(snapshots: StatusSnapshot[]): RoomOption[] {
   const rooms = new Map<string, RoomOption>();
   for (const snapshot of snapshots) {
@@ -567,41 +496,6 @@ function readTaskForm(
   };
 }
 
-function inboxActionsFor(item: InboxItem): DashboardInboxAction[] {
-  if (
-    item.source === 'paired-task' &&
-    (item.kind === 'reviewer-request' ||
-      item.kind === 'approval' ||
-      item.kind === 'arbiter-request')
-  ) {
-    return ['run', 'decline', 'dismiss'];
-  }
-  return ['dismiss'];
-}
-
-function inboxActionLabel(
-  item: InboxItem,
-  action: DashboardInboxAction,
-  t: Messages,
-): string {
-  if (action === 'dismiss') return t.inbox.actions.dismiss;
-  if (action === 'decline') return t.inbox.actions.decline;
-  if (item.kind === 'reviewer-request') return t.inbox.actions.runReview;
-  if (item.kind === 'approval') return t.inbox.actions.finalize;
-  if (item.kind === 'arbiter-request') return t.inbox.actions.runArbiter;
-  return t.inbox.actions.run;
-}
-
-const INBOX_FILTERS: InboxFilter[] = [
-  'all',
-  'ci-failure',
-  'approval',
-  'reviewer-request',
-  'arbiter-request',
-  'pending-room',
-  'mention',
-];
-
 function serviceAgeMs(
   service: DashboardOverview['services'][number],
   generatedAt: string,
@@ -621,12 +515,6 @@ function serviceHealthLevel(
   if (age >= HEALTH_DOWN_MS) return 'down';
   if (age >= HEALTH_STALE_MS) return 'stale';
   return 'ok';
-}
-
-function inboxTargetHref(item: InboxItem): string | null {
-  if (item.taskId) return '#/scheduled';
-  if (item.roomJid || item.groupFolder) return '#/rooms';
-  return null;
 }
 
 function LanguageSelector({
@@ -1365,200 +1253,6 @@ function ControlRail({
         </small>
       </div>
     </section>
-  );
-}
-
-function InboxPanel({
-  overview,
-  tasks,
-  locale,
-  onInboxAction,
-  onTaskAction,
-  inboxActionKey,
-  taskActionKey,
-  t,
-}: {
-  overview: DashboardOverview;
-  tasks: DashboardTask[];
-  locale: Locale;
-  onInboxAction: (item: InboxItem, action: DashboardInboxAction) => void;
-  onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
-  inboxActionKey: InboxActionKey | null;
-  taskActionKey: TaskActionKey | null;
-  t: Messages;
-}) {
-  const [filter, setFilter] = useState<InboxFilter>('all');
-  const items = overview.inbox ?? [];
-  const counts = useMemo(() => {
-    const next: Record<InboxFilter, number> = {
-      all: items.length,
-      'pending-room': 0,
-      'reviewer-request': 0,
-      approval: 0,
-      'arbiter-request': 0,
-      'ci-failure': 0,
-      mention: 0,
-    };
-    for (const item of items) next[item.kind] += 1;
-    return next;
-  }, [items]);
-  const filteredItems =
-    filter === 'all' ? items : items.filter((item) => item.kind === filter);
-  const severityCounts = items.reduce(
-    (acc, item) => {
-      acc[item.severity] += 1;
-      return acc;
-    },
-    { error: 0, warn: 0, info: 0 },
-  );
-
-  if (items.length === 0) {
-    return <EmptyState>{t.inbox.empty}</EmptyState>;
-  }
-
-  return (
-    <div className="inbox-board">
-      <section className="inbox-summary" aria-label={t.inbox.summary}>
-        <div>
-          <span>{t.inbox.total}</span>
-          <strong>{items.length}</strong>
-        </div>
-        <div>
-          <span>{t.inbox.severity.error}</span>
-          <strong>{severityCounts.error}</strong>
-        </div>
-        <div>
-          <span>{t.inbox.severity.warn}</span>
-          <strong>{severityCounts.warn}</strong>
-        </div>
-        <div>
-          <span>{t.inbox.severity.info}</span>
-          <strong>{severityCounts.info}</strong>
-        </div>
-      </section>
-
-      <div className="inbox-filters" aria-label={t.inbox.filters}>
-        {INBOX_FILTERS.map((item) => {
-          if (item !== 'all' && counts[item] === 0) return null;
-          const label = item === 'all' ? t.inbox.all : t.inbox.kinds[item];
-          return (
-            <button
-              aria-pressed={filter === item}
-              className={filter === item ? 'is-active' : undefined}
-              key={item}
-              onClick={() => setFilter(item)}
-              type="button"
-            >
-              {label}
-              <span>{counts[item]}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="inbox-list" aria-label={t.inbox.cardsAria}>
-        {filteredItems.map((item) => {
-          const href = inboxTargetHref(item);
-          const linkedTask =
-            item.source === 'scheduled-task' && item.taskId
-              ? tasks.find((task) => task.id === item.taskId)
-              : undefined;
-          const linkedTaskActions = linkedTask
-            ? taskActionsFor(linkedTask)
-            : [];
-          const inboxActions = inboxActionsFor(item);
-          return (
-            <article
-              className={`inbox-card inbox-${item.severity}`}
-              key={item.id}
-            >
-              <div className="inbox-card-head">
-                <div>
-                  <span className="eyebrow">{t.inbox.kinds[item.kind]}</span>
-                  <strong>{sanitizeInboxText(item.title) || item.title}</strong>
-                </div>
-                <div className="inbox-card-badges">
-                  <span className={`pill pill-${item.severity}`}>
-                    {t.inbox.severity[item.severity]}
-                  </span>
-                  {item.occurrences > 1 ? (
-                    <span className="pill pill-info">x{item.occurrences}</span>
-                  ) : null}
-                </div>
-              </div>
-              <p>{sanitizeInboxText(item.summary) || t.inbox.noSummary}</p>
-              <div className="inbox-meta">
-                <span>
-                  <small>{t.inbox.occurred}</small>
-                  <strong>{formatDate(item.occurredAt, locale)}</strong>
-                </span>
-                <span>
-                  <small>{t.inbox.source}</small>
-                  <strong>{item.source}</strong>
-                </span>
-                <span>
-                  <small>{t.inbox.target}</small>
-                  <strong>
-                    {item.taskId ??
-                      item.roomName ??
-                      item.groupFolder ??
-                      item.roomJid ??
-                      '-'}
-                  </strong>
-                </span>
-              </div>
-              {href ? (
-                <a className="inbox-target" href={href}>
-                  {item.taskId ? t.inbox.openTask : t.inbox.openRoom}
-                </a>
-              ) : null}
-              {linkedTask && linkedTaskActions.length > 0 ? (
-                <div className="task-actions inbox-actions">
-                  {linkedTaskActions.map((action) => {
-                    const actionKey: TaskActionKey = `${linkedTask.id}:${action}`;
-                    const busy = taskActionKey === actionKey;
-                    return (
-                      <button
-                        aria-busy={busy || undefined}
-                        className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
-                        disabled={busy}
-                        key={action}
-                        onClick={() => onTaskAction(linkedTask, action)}
-                        type="button"
-                      >
-                        {busy ? t.tasks.actions.busy : t.tasks.actions[action]}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-              {inboxActions.length > 0 ? (
-                <div className="task-actions inbox-actions">
-                  {inboxActions.map((action) => {
-                    const actionKey: InboxActionKey = `${item.id}:${action}`;
-                    const busy = inboxActionKey === actionKey;
-                    return (
-                      <button
-                        aria-busy={busy || undefined}
-                        className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
-                        disabled={busy}
-                        key={action}
-                        onClick={() => onInboxAction(item, action)}
-                        type="button"
-                      >
-                        {busy
-                          ? t.inbox.actions.busy
-                          : inboxActionLabel(item, action, t)}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </article>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
