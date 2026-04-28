@@ -238,6 +238,8 @@ describe('web dashboard data', () => {
   });
 
   it('builds redacted room activity from messages and paired turn output', () => {
+    const longMessageTail = 'TAIL_MESSAGE_VISIBLE';
+    const longOutputTail = 'TAIL_OUTPUT_VISIBLE';
     const task = makePairedTask({
       id: 'paired-room-1',
       chat_jid: 'dc:ops',
@@ -282,20 +284,11 @@ describe('web dashboard data', () => {
     };
     const outputs: PairedTurnOutput[] = [
       {
-        id: 1,
-        task_id: task.id,
-        turn_number: 1,
-        role: 'owner',
-        output_text: 'owner output',
-        verdict: 'step_done',
-        created_at: '2026-04-26T05:25:00.000Z',
-      },
-      {
         id: 2,
         task_id: task.id,
         turn_number: 2,
         role: 'reviewer',
-        output_text: 'reviewer output with BOT_TOKEN=plain-secret-value',
+        output_text: `reviewer output with BOT_TOKEN=plain-secret-value ${'x'.repeat(1900)} ${longOutputTail}`,
         verdict: null,
         created_at: '2026-04-26T05:30:00.000Z',
       },
@@ -306,7 +299,7 @@ describe('web dashboard data', () => {
         chat_jid: 'dc:ops',
         sender: 'user-1',
         sender_name: '눈쟁이',
-        content: 'latest message',
+        content: `latest message ${'y'.repeat(950)} ${longMessageTail}`,
         timestamp: '2026-04-26T05:29:00.000Z',
         is_from_me: false,
         is_bot_message: false,
@@ -347,12 +340,17 @@ describe('web dashboard data', () => {
         {
           turnNumber: 2,
           role: 'reviewer',
-          outputText: 'reviewer output with BOT_TOKEN=<redacted>',
+          outputText: expect.stringMatching(
+            new RegExp(`BOT_TOKEN=<redacted>[\\s\\S]*${longOutputTail}`),
+          ),
         },
       ],
     });
     expect(activity.messages).toMatchObject([
-      { senderName: '눈쟁이', content: 'latest message' },
+      {
+        senderName: '눈쟁이',
+        content: expect.stringContaining(longMessageTail),
+      },
     ]);
   });
 

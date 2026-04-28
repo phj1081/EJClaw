@@ -870,7 +870,7 @@ function RoomWatcherFold({
               </strong>
               <time>{formatDate(message.timestamp, locale)}</time>
             </header>
-            <ParsedBody text={message.content} truncate={200} />
+            <ParsedBody text={message.content} />
           </li>
         ))}
       </ul>
