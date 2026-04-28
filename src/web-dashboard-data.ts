@@ -575,6 +575,15 @@ function isDuplicateOfCanonicalOutbound(
   });
 }
 
+function hasDiscordEchoForCanonicalOutbound(
+  canonical: WebDashboardRoomMessage,
+  messages: WebDashboardRoomMessage[],
+): boolean {
+  return messages.some((message) =>
+    isDuplicateOfCanonicalOutbound(message, [canonical]),
+  );
+}
+
 function compareRoomMessagesByTimestamp(
   a: WebDashboardRoomMessage,
   b: WebDashboardRoomMessage,
@@ -670,19 +679,36 @@ export function buildWebDashboardRoomActivity(args: {
     ? (latestAttemptByTurnId.get(currentTurn.turn_id) ?? null)
     : null;
   const outputLimit = args.outputLimit ?? 4;
-  const canonicalOutboundMessages = (args.outboundItems ?? [])
-    .map(sanitizeCanonicalOutboundMessage)
+  const sanitizedRecentMessages = args.messages
+    .filter((message) => !isTaskStatusMessage(message))
+    .map(sanitizeRoomMessage)
     .filter((message): message is WebDashboardRoomMessage => Boolean(message));
+  const canonicalOutboundMessages = (args.outboundItems ?? [])
+    .map((item) => ({
+      item,
+      message: sanitizeCanonicalOutboundMessage(item),
+    }))
+    .filter(
+      (
+        candidate,
+      ): candidate is {
+        item: WorkItem;
+        message: WebDashboardRoomMessage;
+      } => Boolean(candidate.message),
+    )
+    .filter(
+      ({ item, message }) =>
+        Boolean(item.delivery_message_id) ||
+        hasDiscordEchoForCanonicalOutbound(message, sanitizedRecentMessages),
+    )
+    .map(({ message }) => message);
   const canonicalDeliveryMessageIds = new Set(
     (args.outboundItems ?? [])
       .map((item) => item.delivery_message_id)
       .filter((id): id is string => Boolean(id)),
   );
-  const recentMessages = args.messages
+  const recentMessages = sanitizedRecentMessages
     .filter((message) => !canonicalDeliveryMessageIds.has(message.id))
-    .filter((message) => !isTaskStatusMessage(message))
-    .map(sanitizeRoomMessage)
-    .filter((message): message is WebDashboardRoomMessage => Boolean(message))
     .filter(
       (message) =>
         !isDuplicateOfCanonicalOutbound(message, canonicalOutboundMessages),

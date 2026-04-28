@@ -442,6 +442,84 @@ describe('web dashboard room activity data', () => {
     ]);
   });
 
+  it('hides legacy delivered work items without discord delivery evidence', () => {
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'inactive',
+        elapsedMs: null,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+      pairedTask: null,
+      turns: [],
+      attempts: [],
+      outputs: [],
+      outboundItems: [
+        makeDeliveredWorkItem({
+          id: 103,
+          delivery_role: null,
+          delivery_message_id: null,
+          result_payload: '서비스 재시작으로 이전 작업이 중단됐습니다.',
+        }),
+      ],
+      messages: [],
+    });
+
+    expect(activity.messages).toEqual([]);
+  });
+
+  it('keeps legacy delivered work items when a discord echo exists', () => {
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'inactive',
+        elapsedMs: null,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+      pairedTask: null,
+      turns: [],
+      attempts: [],
+      outputs: [],
+      outboundItems: [
+        makeDeliveredWorkItem({
+          id: 104,
+          delivery_message_id: null,
+          result_payload: 'TASK_DONE\n\nlegacy delivered output',
+        }),
+      ],
+      messages: [
+        {
+          id: 'discord-legacy-echo',
+          chat_jid: 'dc:ops',
+          sender: 'bot-owner',
+          sender_name: '오너',
+          content: 'TASK_DONE\n\nlegacy delivered output',
+          timestamp: '2026-04-26T05:30:11.000Z',
+          is_from_me: true,
+          is_bot_message: true,
+          message_source_kind: 'bot',
+        },
+      ],
+    });
+
+    expect(activity.messages).toEqual([
+      expect.objectContaining({
+        id: 'work:104',
+        content: 'TASK_DONE\n\nlegacy delivered output',
+      }),
+    ]);
+  });
+
   it('merges canonical outbound and recent messages in chronological order', () => {
     const activity = buildWebDashboardRoomActivity({
       serviceId: 'codex-main',
