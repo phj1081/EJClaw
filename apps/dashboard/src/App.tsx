@@ -44,10 +44,7 @@ import {
   type Locale,
   type Messages,
 } from './i18n';
-import {
-  useSelectedRoomActivity,
-  type RoomActivityMap,
-} from './useRoomActivity';
+import { useSelectedRoomActivity } from './useRoomActivity';
 import {
   SectionNav,
   SideRail,
@@ -55,7 +52,7 @@ import {
   type DashboardView,
 } from './DashboardNav';
 import { isInternalProtocolPayload } from './roomThread';
-import { RoomCardV2, type RoomEntryWithService } from './RoomCardV2';
+import { RoomBoardV2 } from './RoomBoardV2';
 import { ParsedBody } from './ParsedBody';
 import { redactSecretsForPreview } from './redaction';
 import './styles.css';
@@ -425,6 +422,14 @@ function formatLiveElapsed(value: number, t: Messages): string {
   const remMin = minutes % 60;
   return `${hours}${t.units.hour} ${remMin}${t.units.minute} ${remSec}${t.units.second}`;
 }
+
+const ROOM_BOARD_FORMATTERS = {
+  formatDate,
+  formatDuration,
+  formatLiveElapsed,
+  senderRoleClass,
+  statusLabel,
+};
 
 function queueLabel(
   pendingTasks: number,
@@ -1738,258 +1743,6 @@ function HealthPanel({
   );
 }
 
-type RoomFilter = 'all' | 'processing' | 'waiting' | 'inactive';
-type RoomSort = 'recent' | 'name' | 'queue';
-
-const ROOM_FILTER_ORDER: RoomFilter[] = [
-  'all',
-  'processing',
-  'waiting',
-  'inactive',
-];
-
-function roomFilterLabel(f: RoomFilter, t: Messages): string {
-  if (f === 'all') return t.rooms.filterAll;
-  return statusLabel(f, t);
-}
-
-function roomSortLabel(s: RoomSort, t: Messages): string {
-  if (s === 'recent') return t.rooms.sortRecent;
-  if (s === 'queue') return t.rooms.sortQueue;
-  return t.rooms.sortName;
-}
-
-function RoomBoardV2({
-  inbox,
-  onSendRoomMessage,
-  pendingMessages,
-  roomActivity,
-  roomActivityLoading,
-  roomMessageKey,
-  selectedJid,
-  locale,
-  onSelectedJidChange,
-  snapshots,
-  t,
-}: {
-  inbox: InboxItem[];
-  onSendRoomMessage: (
-    roomJid: string,
-    text: string,
-    requestId: string,
-  ) => Promise<boolean>;
-  pendingMessages: Record<
-    string,
-    Array<DashboardRoomActivity['messages'][number]>
-  >;
-  roomActivity: RoomActivityMap;
-  roomActivityLoading: boolean;
-  roomMessageKey: string | null;
-  selectedJid: string | null;
-  locale: Locale;
-  onSelectedJidChange: (jid: string | null) => void;
-  snapshots: StatusSnapshot[];
-  t: Messages;
-}) {
-  const [filter, setFilter] = useState<RoomFilter>('all');
-  const [sort, setSort] = useState<RoomSort>('recent');
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
-
-  const allEntries: RoomEntryWithService[] = snapshots.flatMap((snapshot) =>
-    snapshot.entries.map((entry) => ({
-      ...entry,
-      serviceId: snapshot.serviceId,
-    })),
-  );
-
-  const counts = {
-    all: allEntries.length,
-    processing: allEntries.filter((e) => e.status === 'processing').length,
-    waiting: allEntries.filter((e) => e.status === 'waiting').length,
-    inactive: allEntries.filter((e) => e.status === 'inactive').length,
-  };
-
-  const filtered = allEntries.filter(
-    (e) => filter === 'all' || e.status === filter,
-  );
-  const sorted = [...filtered].sort((a, b) => {
-    if (sort === 'name') return a.name.localeCompare(b.name);
-    if (sort === 'queue') {
-      const aQ = a.pendingTasks + (a.pendingMessages ? 1 : 0);
-      const bQ = b.pendingTasks + (b.pendingMessages ? 1 : 0);
-      return bQ - aQ;
-    }
-    const aA = roomActivity[a.jid]?.pairedTask?.updatedAt;
-    const bA = roomActivity[b.jid]?.pairedTask?.updatedAt;
-    const aT = aA ? new Date(aA).getTime() : (a.elapsedMs ?? 0);
-    const bT = bA ? new Date(bA).getTime() : (b.elapsedMs ?? 0);
-    return bT - aT;
-  });
-
-  const selectedEntry =
-    sorted.find((e) => e.jid === selectedJid) ?? sorted[0] ?? null;
-
-  useEffect(() => {
-    const nextJid = selectedEntry?.jid ?? null;
-    if (nextJid !== selectedJid) {
-      onSelectedJidChange(nextJid);
-      setMobileDetailOpen(false);
-    }
-  }, [onSelectedJidChange, selectedEntry?.jid, selectedJid]);
-
-  if (allEntries.length === 0) {
-    return <EmptyState>{t.rooms.empty}</EmptyState>;
-  }
-
-  function setDraft(jid: string, value: string) {
-    setDrafts((previous) => ({ ...previous, [jid]: value }));
-  }
-
-  function scrollDetailToBottom() {
-    if (typeof window === 'undefined') return;
-    const detail = document.querySelector(
-      '.rooms-detail',
-    ) as HTMLElement | null;
-    if (!detail) return;
-    const tick = (n: number) => {
-      detail.scrollTop = detail.scrollHeight;
-      if (n > 0) requestAnimationFrame(() => tick(n - 1));
-    };
-    requestAnimationFrame(() => tick(3));
-  }
-
-  async function submitRoomMessage(jid: string) {
-    const text = drafts[jid]?.trim();
-    if (!text) return;
-    scrollDetailToBottom();
-    const success = await onSendRoomMessage(jid, text, makeClientRequestId());
-    if (success) {
-      setDraft(jid, '');
-      scrollDetailToBottom();
-    }
-  }
-
-  return (
-    <div className="rooms-v2">
-      <div className="rooms-toolbar" role="toolbar" aria-label="Rooms filters">
-        <div className="rooms-filters">
-          {ROOM_FILTER_ORDER.map((f) => (
-            <button
-              aria-pressed={filter === f}
-              className={filter === f ? 'is-active' : undefined}
-              key={f}
-              onClick={() => setFilter(f)}
-              type="button"
-            >
-              {roomFilterLabel(f, t)}
-              <span>{counts[f]}</span>
-            </button>
-          ))}
-        </div>
-        <label className="rooms-sort">
-          <span>{t.rooms.sortLabel}</span>
-          <select
-            onChange={(e) => setSort(e.target.value as RoomSort)}
-            value={sort}
-          >
-            <option value="recent">{roomSortLabel('recent', t)}</option>
-            <option value="queue">{roomSortLabel('queue', t)}</option>
-            <option value="name">{roomSortLabel('name', t)}</option>
-          </select>
-        </label>
-      </div>
-
-      {sorted.length === 0 ? (
-        <EmptyState>{t.rooms.empty}</EmptyState>
-      ) : (
-        <div
-          className={`rooms-twopane${mobileDetailOpen ? ' is-detail-open' : ''}`}
-        >
-          <aside className="rooms-list" aria-label={t.rooms.cardsAria}>
-            {sorted.map((entry) => {
-              const items = inbox.filter((it) => it.roomJid === entry.jid);
-              const queue =
-                entry.pendingTasks + (entry.pendingMessages ? 1 : 0);
-              const active = (selectedEntry?.jid ?? null) === entry.jid;
-              return (
-                <button
-                  aria-current={active ? 'page' : undefined}
-                  className={`rooms-list-item status-${entry.status}${active ? ' is-active' : ''}`}
-                  key={`${entry.serviceId}:${entry.jid}`}
-                  onClick={() => {
-                    onSelectedJidChange(entry.jid);
-                    setMobileDetailOpen(true);
-                  }}
-                  type="button"
-                >
-                  <span className={`room-pulse pulse-${entry.status}`}>
-                    {entry.status === 'processing' ? (
-                      <span className="pulse-dot" />
-                    ) : null}
-                  </span>
-                  <span className="rooms-list-text">
-                    <strong>{entry.name}</strong>
-                    <small>{entry.agentType}</small>
-                  </span>
-                  {items.length > 0 ? (
-                    <span
-                      className={`rooms-list-bell sev-${items[0].severity}`}
-                      title={items.map((i) => t.inbox.kinds[i.kind]).join(', ')}
-                    >
-                      {items.length}
-                    </span>
-                  ) : null}
-                  {queue > 0 ? (
-                    <span className="rooms-list-queue">{queue}</span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </aside>
-          <main className="rooms-detail">
-            <button
-              className="rooms-mobile-back"
-              onClick={() => setMobileDetailOpen(false)}
-              type="button"
-            >
-              ← {t.panels.rooms}
-            </button>
-            {selectedEntry ? (
-              <RoomCardV2
-                activity={roomActivity[selectedEntry.jid]}
-                activityLoading={roomActivityLoading}
-                busy={roomMessageKey === selectedEntry.jid}
-                draft={drafts[selectedEntry.jid] ?? ''}
-                entry={selectedEntry}
-                expanded={true}
-                formatDate={formatDate}
-                formatDuration={formatDuration}
-                formatLiveElapsed={formatLiveElapsed}
-                inboxItems={inbox.filter(
-                  (item) => item.roomJid === selectedEntry.jid,
-                )}
-                key={`${selectedEntry.serviceId}:${selectedEntry.jid}`}
-                locale={locale}
-                onDraftChange={(v) => setDraft(selectedEntry.jid, v)}
-                onSendMessage={() => void submitRoomMessage(selectedEntry.jid)}
-                onToggle={() => {}}
-                pendingMessages={pendingMessages[selectedEntry.jid] ?? []}
-                pinned={true}
-                senderRoleClass={senderRoleClass}
-                statusLabel={statusLabel}
-                t={t}
-              />
-            ) : (
-              <EmptyState>{t.rooms.empty}</EmptyState>
-            )}
-          </main>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function UsageQuotaMeter({
   row,
   rowName,
@@ -3036,14 +2789,16 @@ function App() {
                   <span>{t.panels.queue}</span>
                 </div>
                 <RoomBoardV2
+                  {...ROOM_BOARD_FORMATTERS}
+                  createRequestId={makeClientRequestId}
                   inbox={data.overview.inbox}
+                  locale={locale}
+                  onSelectedJidChange={setSelectedRoomJid}
                   onSendRoomMessage={handleRoomMessage}
                   pendingMessages={pendingMessages}
                   roomActivity={roomActivity}
                   roomActivityLoading={roomActivityLoading}
                   roomMessageKey={roomMessageKey}
-                  locale={locale}
-                  onSelectedJidChange={setSelectedRoomJid}
                   selectedJid={selectedRoomJid}
                   snapshots={data.snapshots}
                   t={t}
