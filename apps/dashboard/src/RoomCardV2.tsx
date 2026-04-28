@@ -227,6 +227,7 @@ export function RoomCardV2({
         expanded={expanded}
         formatDate={formatDate}
         isProcessing={isProcessing}
+        liveProgressDisplay={liveProgressDisplay}
         locale={locale}
         senderRoleClass={senderRoleClass}
         t={t}
@@ -488,6 +489,7 @@ function CollapsedLiveTurn({
   expanded,
   formatDate,
   isProcessing,
+  liveProgressDisplay,
   locale,
   senderRoleClass,
   t,
@@ -496,12 +498,13 @@ function CollapsedLiveTurn({
   expanded: boolean;
   formatDate: RoomCardFormatters['formatDate'];
   isProcessing: boolean;
+  liveProgressDisplay: string | null;
   locale: Locale;
   senderRoleClass: RoomCardFormatters['senderRoleClass'];
   t: Messages;
   turn: RoomTurn | null;
 }) {
-  if (expanded || !isProcessing || !turn) return null;
+  if (expanded || !isProcessing || !turn || !liveProgressDisplay) return null;
   return (
     <div className="room-live">
       <header>
@@ -524,11 +527,7 @@ function CollapsedLiveTurn({
           {formatDate(turn.progressUpdatedAt ?? turn.updatedAt, locale)}
         </time>
       </header>
-      {turn.progressText && turn.progressText.trim() ? (
-        <LiveProgressBody text={turn.progressText} />
-      ) : turn.activeRunId ? (
-        <code className="live-run">{turn.activeRunId}</code>
-      ) : null}
+      <LiveProgressBody text={liveProgressDisplay} />
     </div>
   );
 }
@@ -702,15 +701,18 @@ function RoomThreadSection({
   t: Messages;
   turn: RoomTurn | null;
 }) {
-  const showLiveItem =
-    turn && turn.completedAt === null && (isProcessing || liveProgressDisplay);
+  const showLiveItem = !!(
+    turn &&
+    turn.completedAt === null &&
+    liveProgressDisplay
+  );
   return (
     <section className="room-section room-thread-section">
       <header>
         <h4>{t.rooms.activity}</h4>
         <small>{agentMessages.length}</small>
       </header>
-      {agentMessages.length === 0 && !(isProcessing && turn) ? (
+      {agentMessages.length === 0 && !showLiveItem ? (
         <p className="room-empty">{t.rooms.noActivity}</p>
       ) : (
         <ol className="room-timeline">

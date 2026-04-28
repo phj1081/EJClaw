@@ -211,6 +211,77 @@ describe('RoomCardV2', () => {
     expect(html).toContain('<code>pnpm openapi:sync</code>');
     expect(html).not.toContain('`origin/dev`');
   });
+});
+
+describe('RoomCardV2 room thread details', () => {
+  it('does not render site-only active turn placeholders without visible progress', () => {
+    const pairedTask: NonNullable<DashboardRoomActivity['pairedTask']> = {
+      id: 'task-1',
+      title: 'OpenAPI sync',
+      status: 'running',
+      roundTripCount: 1,
+      updatedAt: '2026-04-28T02:01:00.000Z',
+      currentTurn: {
+        turnId: 'turn-1',
+        role: 'owner',
+        intentKind: 'implementation',
+        state: 'running',
+        attemptNo: 1,
+        executorServiceId: 'svc-1',
+        executorAgentType: 'codex',
+        activeRunId: 'run-site-only',
+        createdAt: '2026-04-28T02:00:00.000Z',
+        updatedAt: '2026-04-28T02:01:00.000Z',
+        completedAt: null,
+        lastError: null,
+        progressText: null,
+        progressUpdatedAt: null,
+      },
+      outputs: [],
+    };
+
+    const collapsed = renderToStaticMarkup(
+      createElement(RoomCardV2, {
+        activity: activity({ pairedTask }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry: { ...entry, status: 'processing' },
+        expanded: false,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: false,
+        t,
+        ...formatters,
+      }),
+    );
+    const expanded = renderToStaticMarkup(
+      createElement(RoomCardV2, {
+        activity: activity({ pairedTask }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry: { ...entry, status: 'processing' },
+        expanded: true,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: false,
+        t,
+        ...formatters,
+      }),
+    );
+
+    expect(collapsed).not.toContain('class="room-live"');
+    expect(expanded).not.toContain('room-timeline-live');
+    expect(expanded).not.toContain(t.rooms.loadingActivity);
+    expect(expanded).toContain(t.rooms.noActivity);
+  });
 
   it('renders message attachments as dashboard images', () => {
     const html = renderToStaticMarkup(

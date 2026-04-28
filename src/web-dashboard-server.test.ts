@@ -337,7 +337,7 @@ describe('web dashboard server handler', () => {
       id: 'paired-room-1',
       roundTripCount: 2,
     });
-    expect(requestedMessageLimits).toEqual([8, 40]);
+    expect(requestedMessageLimits).toEqual([8]);
     expect(body.messages).toMatchObject([
       { content: '진행 어디까지야?', senderName: '눈쟁이' },
     ]);

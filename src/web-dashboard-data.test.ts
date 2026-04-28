@@ -236,7 +236,9 @@ describe('web dashboard data', () => {
     );
     expect(sanitized.promptPreview).not.toContain('plain-secret-value');
   });
+});
 
+describe('web dashboard room activity data', () => {
   it('builds redacted room activity from messages and paired turn output', () => {
     const longMessageTail = 'TAIL_MESSAGE_VISIBLE';
     const longOutputTail = 'TAIL_OUTPUT_VISIBLE';
@@ -354,7 +356,7 @@ describe('web dashboard data', () => {
     ]);
   });
 
-  it('uses Discord live progress messages without exposing them as recent chat', () => {
+  it('uses canonical turn progress without exposing status messages as recent chat', () => {
     const task = makePairedTask({
       id: 'paired-room-progress',
       chat_jid: 'dc:ops',
@@ -375,6 +377,8 @@ describe('web dashboard data', () => {
       updated_at: '2026-04-26T06:10:00.000Z',
       completed_at: null,
       last_error: null,
+      progress_text: 'building mobile parity',
+      progress_updated_at: '2026-04-26T06:07:00.000Z',
     };
     const statusPrefix = '⁣⁣⁣';
     const messages: NewMessage[] = [
@@ -389,25 +393,12 @@ describe('web dashboard data', () => {
         is_bot_message: false,
         message_source_kind: 'human',
       },
-    ];
-    const progressMessages: NewMessage[] = [
       {
-        id: 'msg-stale-progress',
+        id: 'msg-status-progress',
         chat_jid: 'dc:ops',
         sender: 'bot-1',
         sender_name: '오너',
-        content: `${statusPrefix}stale progress`,
-        timestamp: '2026-04-26T05:59:00.000Z',
-        is_from_me: true,
-        is_bot_message: true,
-        message_source_kind: 'bot',
-      },
-      {
-        id: 'msg-live-progress',
-        chat_jid: 'dc:ops',
-        sender: 'bot-1',
-        sender_name: '오너',
-        content: `${statusPrefix}building mobile parity\n\n12s`,
+        content: `${statusPrefix}status noise that belongs to display only\n\n12s`,
         timestamp: '2026-04-26T06:08:00.000Z',
         is_from_me: true,
         is_bot_message: true,
@@ -432,12 +423,11 @@ describe('web dashboard data', () => {
       attempts: [],
       outputs: [],
       messages,
-      progressMessages,
     });
 
     expect(activity.pairedTask?.currentTurn).toMatchObject({
       progressText: 'building mobile parity',
-      progressUpdatedAt: '2026-04-26T06:08:00.000Z',
+      progressUpdatedAt: '2026-04-26T06:07:00.000Z',
     });
     expect(activity.messages).toEqual([
       expect.objectContaining({
@@ -447,6 +437,58 @@ describe('web dashboard data', () => {
     ]);
   });
 
+  it('does not show active turn placeholders when canonical progress is absent', () => {
+    const task = makePairedTask({
+      id: 'paired-progress-internal',
+      chat_jid: 'dc:ops',
+      status: 'active',
+      updated_at: '2026-04-26T06:10:00.000Z',
+    });
+    const turn: PairedTurnRecord = {
+      turn_id: 'turn-progress-internal',
+      task_id: task.id,
+      task_updated_at: task.updated_at,
+      role: 'owner',
+      intent_kind: 'owner-turn',
+      state: 'running',
+      executor_service_id: 'codex-main',
+      executor_agent_type: 'codex',
+      attempt_no: 1,
+      created_at: '2026-04-26T06:00:00.000Z',
+      updated_at: '2026-04-26T06:10:00.000Z',
+      completed_at: null,
+      last_error: null,
+      progress_text: null,
+      progress_updated_at: null,
+    };
+
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'processing',
+        elapsedMs: 20_000,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+      pairedTask: task,
+      turns: [turn],
+      attempts: [],
+      outputs: [],
+      messages: [],
+    });
+
+    expect(activity.pairedTask?.currentTurn).toMatchObject({
+      progressText: null,
+      progressUpdatedAt: null,
+    });
+  });
+});
+
+describe('web dashboard inbox data', () => {
   it('builds typed inbox items from pending rooms, paired tasks, and CI failures', () => {
     const snapshots: StatusSnapshot[] = [
       {

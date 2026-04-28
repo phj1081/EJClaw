@@ -106,6 +106,8 @@ describe('web dashboard room routes', () => {
         updated_at: '2026-04-26T05:21:00.000Z',
         completed_at: null,
         last_error: null,
+        progress_text: 'checking current output',
+        progress_updated_at: '2026-04-26T05:20:00.000Z',
       },
     ];
     const attempts: PairedTurnAttemptRecord[] = [
@@ -154,20 +156,6 @@ describe('web dashboard room routes', () => {
         message_source_kind: 'human',
       },
     ];
-    const progressMessages: NewMessage[] = [
-      ...messages,
-      {
-        id: 'msg-progress',
-        chat_jid: 'dc:ops',
-        sender: 'reviewer-bot',
-        sender_name: '리뷰어',
-        content: '⁣⁣⁣checking current output\n\n9s',
-        timestamp: '2026-04-26T05:20:00.000Z',
-        is_from_me: true,
-        is_bot_message: true,
-        message_source_kind: 'bot',
-      },
-    ];
     const requestedMessageLimits: number[] = [];
     const response = handleRoomTimelineRoute({
       url: new URL(
@@ -182,7 +170,7 @@ describe('web dashboard room routes', () => {
         loadPairedTurnOutputs: () => outputs,
         loadRecentChatMessages: (_jid, limit) => {
           requestedMessageLimits.push(limit ?? 20);
-          return limit && limit > 8 ? progressMessages : messages;
+          return messages;
         },
       }),
     });
@@ -202,7 +190,7 @@ describe('web dashboard room routes', () => {
     expect(body.pairedTask.outputs).toMatchObject([
       { outputText: 'owner final output' },
     ]);
-    expect(requestedMessageLimits).toEqual([8, 40]);
+    expect(requestedMessageLimits).toEqual([8]);
     expect(body.messages[0]).toMatchObject({
       content: expect.stringContaining('BOT_TOKEN=<redacted>'),
       senderName: '눈쟁이',
