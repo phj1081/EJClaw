@@ -135,6 +135,34 @@ function assertNoLegacyEnvAliasesConfigured(): void {
   );
 }
 
+function buildPathsConfig(
+  projectRoot: string,
+  homeDir: string,
+): AppConfig['paths'] {
+  return {
+    projectRoot,
+    homeDir,
+    senderAllowlistPath: path.join(
+      homeDir,
+      '.config',
+      'ejclaw',
+      'sender-allowlist.json',
+    ),
+    storeDir: path.resolve(
+      readNonEmptyText('EJCLAW_STORE_DIR') ?? path.join(projectRoot, 'store'),
+    ),
+    groupsDir: path.resolve(
+      readNonEmptyText('EJCLAW_GROUPS_DIR') ?? path.join(projectRoot, 'groups'),
+    ),
+    dataDir: path.resolve(
+      readNonEmptyText('EJCLAW_DATA_DIR') ?? path.join(projectRoot, 'data'),
+    ),
+    cacheDir: path.resolve(
+      readNonEmptyText('EJCLAW_CACHE_DIR') ?? path.join(projectRoot, 'cache'),
+    ),
+  };
+}
+
 export function loadConfig(): AppConfig {
   assertNoLegacyEnvAliasesConfigured();
 
@@ -176,29 +204,7 @@ export function loadConfig(): AppConfig {
       codexMainId: codexMainServiceId,
       codexReviewId: codexReviewServiceId,
     },
-    paths: {
-      projectRoot,
-      homeDir,
-      senderAllowlistPath: path.join(
-        homeDir,
-        '.config',
-        'ejclaw',
-        'sender-allowlist.json',
-      ),
-      storeDir: path.resolve(
-        readNonEmptyText('EJCLAW_STORE_DIR') ?? path.join(projectRoot, 'store'),
-      ),
-      groupsDir: path.resolve(
-        readNonEmptyText('EJCLAW_GROUPS_DIR') ??
-          path.join(projectRoot, 'groups'),
-      ),
-      dataDir: path.resolve(
-        readNonEmptyText('EJCLAW_DATA_DIR') ?? path.join(projectRoot, 'data'),
-      ),
-      cacheDir: path.resolve(
-        readNonEmptyText('EJCLAW_CACHE_DIR') ?? path.join(projectRoot, 'cache'),
-      ),
-    },
+    paths: buildPathsConfig(projectRoot, homeDir),
     runtime: {
       pollInterval: 2000,
       schedulerPollInterval: 60000,

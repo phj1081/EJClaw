@@ -72,10 +72,6 @@
       "maxFunctionLines": 277,
       "owner": "codex warmup test hotspot"
     },
-    "src/config/load-config.ts": {
-      "maxFunctionLines": 187,
-      "owner": "config loading hotspot"
-    },
     "src/db/base-schema.ts": {
       "maxFunctionLines": 436,
       "owner": "db schema hotspot"
