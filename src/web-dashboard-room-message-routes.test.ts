@@ -68,6 +68,17 @@ function makeDeps(
 }
 
 describe('web dashboard room message routes', () => {
+  it('expires the oldest remembered room message ids after the cache limit', () => {
+    const remember = createRoomMessageIdCache(2);
+
+    expect(remember('room:message-1')).toBe(true);
+    expect(remember('room:message-1')).toBe(false);
+    expect(remember('room:message-2')).toBe(true);
+    expect(remember('room:message-3')).toBe(true);
+    expect(remember('room:message-1')).toBe(true);
+    expect(remember('room:message-2')).toBe(true);
+  });
+
   it('injects messages and deduplicates repeated request ids', async () => {
     const messages: NewMessage[] = [];
     const queued: Array<{ chatJid: string; groupFolder: string }> = [];

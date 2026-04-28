@@ -77,6 +77,38 @@ function makeDeps(
 }
 
 describe('web dashboard inbox action routes', () => {
+  it('tracks timestamped and global inbox dismissals separately', () => {
+    const tracker = createInboxDismissTracker();
+
+    tracker.dismiss('ci:task-1', '2026-04-26T05:00:00.000Z');
+    expect(
+      tracker.isDismissed({
+        id: 'ci:task-1',
+        lastOccurredAt: '2026-04-26T05:00:00.000Z',
+      }),
+    ).toBe(true);
+    expect(
+      tracker.isDismissed({
+        id: 'ci:task-1',
+        lastOccurredAt: '2026-04-26T05:05:00.000Z',
+      }),
+    ).toBe(false);
+
+    tracker.dismiss('ci:task-2', null);
+    expect(
+      tracker.isDismissed({
+        id: 'ci:task-2',
+        lastOccurredAt: '2026-04-26T05:00:00.000Z',
+      }),
+    ).toBe(true);
+    expect(
+      tracker.isDismissed({
+        id: 'ci:task-2',
+        lastOccurredAt: '2026-04-26T05:05:00.000Z',
+      }),
+    ).toBe(true);
+  });
+
   it('dismisses inbox items and queues paired follow-up intents', async () => {
     const dismissTracker = createInboxDismissTracker();
     const task = makePairedTask({ id: 'merge-1', status: 'merge_ready' });
