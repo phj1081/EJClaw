@@ -19,7 +19,12 @@ import {
 import { buildPairedTurnIdentity } from './paired-turn-identity.js';
 import type { ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
-import type { Channel, PairedTask, RegisteredGroup } from './types.js';
+import type {
+  Channel,
+  PairedRoomRole,
+  PairedTask,
+  RegisteredGroup,
+} from './types.js';
 
 export function enqueuePendingHandoffs(args: {
   enqueueTask: (
@@ -158,6 +163,61 @@ function failClaimedHandoff(args: {
   requeueFailedClaimedPairedTurn(args);
 }
 
+function resolveHandoffDeliveryChannel(args: {
+  handoff: ServiceHandoff;
+  handoffRole: PairedRoomRole;
+  fallbackChannel: Channel;
+  channels: Channel[];
+  getPairedTaskById?:
+    | ((
+        id: string,
+      ) =>
+        | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
+        | undefined)
+    | undefined;
+  enqueueMessageCheck?: ((chatJid: string) => void) | undefined;
+}): Channel | undefined {
+  const { handoff, handoffRole } = args;
+  if (handoffRole === 'owner') {
+    return args.fallbackChannel;
+  }
+
+  const roleChannel = findChannelByName(
+    args.channels,
+    getFixedRoleChannelName(handoffRole),
+  );
+  if (!roleChannel) {
+    failClaimedHandoff({
+      handoff,
+      error: getMissingRoleChannelMessage(handoffRole),
+      getPairedTaskById: args.getPairedTaskById,
+      enqueueMessageCheck: args.enqueueMessageCheck,
+    });
+    return undefined;
+  }
+  return roleChannel;
+}
+
+function buildHandoffPairedTurnIdentity(
+  handoff: ServiceHandoff,
+  handoffRole: PairedRoomRole,
+) {
+  if (
+    !handoff.paired_task_id ||
+    !handoff.paired_task_updated_at ||
+    !handoff.turn_intent_kind
+  ) {
+    return undefined;
+  }
+  return buildPairedTurnIdentity({
+    taskId: handoff.paired_task_id,
+    taskUpdatedAt: handoff.paired_task_updated_at,
+    intentKind: handoff.turn_intent_kind,
+    role: handoff.turn_role ?? handoffRole,
+    turnId: handoff.turn_id,
+  });
+}
+
 export async function processClaimedHandoff(args: {
   handoff: ServiceHandoff;
   getRoomBindings: () => Record<string, RegisteredGroup>;
@@ -239,52 +299,23 @@ export async function processClaimedHandoff(args: {
     return;
   }
 
-  let handoffChannel = channel;
-  if (handoffRole === 'reviewer') {
-    const reviewerChannel = findChannelByName(
-      args.channels,
-      getFixedRoleChannelName('reviewer'),
-    );
-    if (!reviewerChannel) {
-      failClaimedHandoff({
-        handoff,
-        error: getMissingRoleChannelMessage('reviewer'),
-        getPairedTaskById: args.getPairedTaskById,
-        enqueueMessageCheck: args.enqueueMessageCheck,
-      });
-      return;
-    }
-    handoffChannel = reviewerChannel;
-  } else if (handoffRole === 'arbiter') {
-    const arbiterChannel = findChannelByName(
-      args.channels,
-      getFixedRoleChannelName('arbiter'),
-    );
-    if (!arbiterChannel) {
-      failClaimedHandoff({
-        handoff,
-        error: getMissingRoleChannelMessage('arbiter'),
-        getPairedTaskById: args.getPairedTaskById,
-        enqueueMessageCheck: args.enqueueMessageCheck,
-      });
-      return;
-    }
-    handoffChannel = arbiterChannel;
+  const handoffChannel = resolveHandoffDeliveryChannel({
+    handoff,
+    handoffRole,
+    fallbackChannel: channel,
+    channels: args.channels,
+    getPairedTaskById: args.getPairedTaskById,
+    enqueueMessageCheck: args.enqueueMessageCheck,
+  });
+  if (!handoffChannel) {
+    return;
   }
 
   const runId = `handoff-${handoff.id}`;
-  const pairedTurnIdentity =
-    handoff.paired_task_id &&
-    handoff.paired_task_updated_at &&
-    handoff.turn_intent_kind
-      ? buildPairedTurnIdentity({
-          taskId: handoff.paired_task_id,
-          taskUpdatedAt: handoff.paired_task_updated_at,
-          intentKind: handoff.turn_intent_kind,
-          role: handoff.turn_role ?? handoffRole,
-          turnId: handoff.turn_id,
-        })
-      : undefined;
+  const pairedTurnIdentity = buildHandoffPairedTurnIdentity(
+    handoff,
+    handoffRole,
+  );
   try {
     logger.info(
       {

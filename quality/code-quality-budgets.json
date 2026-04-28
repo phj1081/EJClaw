@@ -141,10 +141,6 @@
       "maxFunctionLines": 239,
       "owner": "message executor hotspot"
     },
-    "src/message-runtime-handoffs.ts": {
-      "maxFunctionLines": 207,
-      "owner": "message runtime handoffs hotspot"
-    },
     "src/message-runtime-queue.test.ts": {
       "maxFunctionLines": 366,
       "owner": "message runtime queue test hotspot"
