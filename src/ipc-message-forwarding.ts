@@ -2,6 +2,7 @@ import type {
   IpcMessageForwardResult,
   IpcMessagePayload,
 } from './ipc-types.js';
+import { normalizeEjclawStructuredOutput } from './agent-protocol.js';
 import type { RegisteredGroup } from './types.js';
 
 export async function forwardAuthorizedIpcMessage(
@@ -80,13 +81,25 @@ export async function forwardAuthorizedIpcMessage(
     };
   }
 
-  await sendMessage(
-    msg.chatJid,
-    msg.text,
-    msg.senderRole,
-    msg.runId,
-    msg.attachments,
-  );
+  const normalized = normalizeEjclawStructuredOutput(msg.text);
+  if (normalized.output?.visibility === 'silent') {
+    return {
+      outcome: 'sent',
+      chatJid: msg.chatJid,
+      targetGroup: targetGroup?.folder ?? null,
+      isMainOverride,
+      senderRole: msg.senderRole ?? null,
+    };
+  }
+  const structured =
+    normalized.output?.visibility === 'public' ? normalized.output : null;
+  const text = structured?.text ?? normalized.result ?? msg.text;
+  const attachments =
+    msg.attachments && msg.attachments.length > 0
+      ? msg.attachments
+      : (structured?.attachments ?? undefined);
+
+  await sendMessage(msg.chatJid, text, msg.senderRole, msg.runId, attachments);
   return {
     outcome: 'sent',
     chatJid: msg.chatJid,

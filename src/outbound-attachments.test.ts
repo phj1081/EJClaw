@@ -86,6 +86,31 @@ describe('validateOutboundAttachments', () => {
     ]);
   });
 
+  it('accepts direct generated screenshot files under the temp directory', () => {
+    const imagePath = path.join(
+      os.tmpdir(),
+      `bar-chart-label-fit-playwright-${Date.now()}.png`,
+    );
+    fs.writeFileSync(imagePath, ONE_PIXEL_PNG);
+    cleanupFiles.push(imagePath);
+
+    const result = validateOutboundAttachments([
+      {
+        path: imagePath,
+        name: 'bar-chart-label-fit-playwright.png',
+        mime: 'image/png',
+      },
+    ]);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.files).toEqual([
+      {
+        attachment: fs.realpathSync(imagePath),
+        name: 'bar-chart-label-fit-playwright.png',
+      },
+    ]);
+  });
+
   it('requires workspace paths to be explicitly allowlisted', () => {
     const dir = makeTempDir(process.cwd(), '.ejclaw-attachment-');
     const imagePath = writeFile(dir, 'workspace-shot.png', ONE_PIXEL_PNG);

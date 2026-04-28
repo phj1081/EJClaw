@@ -107,6 +107,11 @@ export interface DashboardRoomActivity {
     sender: string;
     senderName: string;
     content: string;
+    attachments?: Array<{
+      path: string;
+      name?: string;
+      mime?: string;
+    }>;
     timestamp: string;
     isFromMe: boolean;
     isBotMessage: boolean;
@@ -141,6 +146,11 @@ export interface DashboardRoomActivity {
       verdict: string | null;
       createdAt: string;
       outputText: string;
+      attachments?: Array<{
+        path: string;
+        name?: string;
+        mime?: string;
+      }>;
     }>;
   } | null;
 }
