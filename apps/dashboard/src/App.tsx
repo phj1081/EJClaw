@@ -1,17 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import {
-  Activity,
-  Clock,
-  Download,
-  Gauge,
-  Inbox as InboxIcon,
-  MessageSquare,
-  RefreshCw,
-  Send,
-  Settings,
-} from 'lucide-react';
+import { Send } from 'lucide-react';
 
 import {
   type ClaudeAccountSummary,
@@ -61,6 +51,12 @@ import {
   useSelectedRoomActivity,
   type RoomActivityMap,
 } from './useRoomActivity';
+import {
+  SectionNav,
+  SideRail,
+  type DashboardFreshness,
+  type DashboardView,
+} from './DashboardNav';
 import './styles.css';
 
 interface DashboardState {
@@ -74,13 +70,6 @@ type InboxItem = DashboardOverview['inbox'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
 type UsageGroup = 'primary' | 'codex';
 type UsageLimitWindow = 'h5' | 'd7';
-type DashboardView =
-  | 'usage'
-  | 'inbox'
-  | 'health'
-  | 'rooms'
-  | 'scheduled'
-  | 'settings';
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
 type TaskResultTone = 'ok' | 'fail' | 'none';
 type TaskActionKey =
@@ -91,7 +80,7 @@ type InboxActionKey = `${string}:${DashboardInboxAction}`;
 type ServiceActionKey = 'stack:restart';
 type InboxFilter = 'all' | InboxItem['kind'];
 type HealthLevel = 'ok' | 'stale' | 'down';
-type FreshnessLevel = 'fresh' | 'stale' | 'offline';
+type FreshnessLevel = DashboardFreshness;
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -1005,26 +994,6 @@ function inboxTargetHref(item: InboxItem): string | null {
   return null;
 }
 
-const NAV_ICONS: Record<DashboardView, ReactNode> = {
-  usage: <Gauge size={20} strokeWidth={2} aria-hidden />,
-  inbox: <InboxIcon size={20} strokeWidth={2} aria-hidden />,
-  health: <Activity size={20} strokeWidth={2} aria-hidden />,
-  rooms: <MessageSquare size={20} strokeWidth={2} aria-hidden />,
-  scheduled: <Clock size={20} strokeWidth={2} aria-hidden />,
-  settings: <Settings size={20} strokeWidth={2} aria-hidden />,
-};
-
-function navItems(t: Messages) {
-  return [
-    { href: '#/rooms', label: t.nav.rooms, view: 'rooms' as const },
-    { href: '#/inbox', label: t.nav.inbox, view: 'inbox' as const },
-    { href: '#/scheduled', label: t.nav.scheduled, view: 'scheduled' as const },
-    { href: '#/health', label: t.nav.health, view: 'health' as const },
-    { href: '#/usage', label: t.nav.usage, view: 'usage' as const },
-    { href: '#/settings', label: t.nav.settings, view: 'settings' as const },
-  ];
-}
-
 function EmptyState({ children }: { children: ReactNode }) {
   return <div className="empty-state">{children}</div>;
 }
@@ -1665,269 +1634,6 @@ function LoadingSkeleton({ t }: { t: Messages }) {
         ))}
       </section>
     </main>
-  );
-}
-
-function SideRail({
-  activeView,
-  canInstall,
-  data,
-  installed,
-  onNavigate,
-  onInstall,
-  onRefresh,
-  online,
-  offlineReady,
-  refreshing,
-  secureContext,
-  t,
-}: {
-  activeView: DashboardView;
-  canInstall: boolean;
-  data: DashboardState | null;
-  installed: boolean;
-  onNavigate: (view: DashboardView) => void;
-  onInstall: () => void;
-  onRefresh: () => void;
-  online: boolean;
-  offlineReady: boolean;
-  refreshing: boolean;
-  secureContext: boolean;
-  t: Messages;
-}) {
-  const pwaState = !secureContext
-    ? t.pwa.secureRequired
-    : installed
-      ? t.pwa.installed
-      : offlineReady
-        ? t.pwa.ready
-        : t.pwa.app;
-
-  const stats = data
-    ? (() => {
-        const queue = data.snapshots.reduce(
-          (acc, snapshot) => {
-            for (const entry of snapshot.entries) {
-              acc.pendingTasks += entry.pendingTasks;
-              if (entry.pendingMessages) acc.pendingMessageRooms += 1;
-              if (entry.status === 'processing') acc.processing += 1;
-            }
-            return acc;
-          },
-          { pendingTasks: 0, pendingMessageRooms: 0, processing: 0 },
-        );
-        return {
-          rooms: data.overview.rooms,
-          inbox: data.overview.inbox.length,
-          processing: queue.processing,
-          pendingTasks: queue.pendingTasks,
-          pendingMessageRooms: queue.pendingMessageRooms,
-        };
-      })()
-    : null;
-
-  return (
-    <aside className="side-rail icon-rail" aria-label={t.nav.drawerAria}>
-      <a
-        className="rail-brand"
-        href="#/usage"
-        onClick={() => onNavigate('usage')}
-        title="EJClaw"
-      >
-        EJ
-      </a>
-      <nav className="rail-nav" aria-label={t.nav.drawerNavAria}>
-        {navItems(t).map((item) => {
-          const badge =
-            item.view === 'inbox' && stats && stats.inbox > 0
-              ? stats.inbox
-              : item.view === 'rooms' && stats && stats.processing > 0
-                ? stats.processing
-                : null;
-          return (
-            <a
-              aria-current={activeView === item.view ? 'page' : undefined}
-              aria-label={item.label}
-              className={`rail-item${activeView === item.view ? ' is-active' : ''}`}
-              href={item.href}
-              key={item.href}
-              onClick={() => onNavigate(item.view)}
-              title={item.label}
-            >
-              <span className="rail-icon">{NAV_ICONS[item.view]}</span>
-              {badge !== null ? (
-                <span className="rail-badge">{badge}</span>
-              ) : null}
-            </a>
-          );
-        })}
-      </nav>
-      <div className="rail-foot">
-        <span
-          className={`rail-status-dot ${online ? 'is-online' : 'is-offline'}`}
-          title={`${online ? t.pwa.online : t.pwa.offline} · ${pwaState}`}
-          aria-label={`${online ? t.pwa.online : t.pwa.offline}`}
-        />
-        {canInstall ? (
-          <button
-            className="rail-btn"
-            onClick={onInstall}
-            title={t.pwa.install}
-            aria-label={t.pwa.install}
-            type="button"
-          >
-            <Download size={16} strokeWidth={2} aria-hidden />
-          </button>
-        ) : null}
-        <button
-          aria-busy={refreshing}
-          aria-label={t.actions.refresh}
-          className={`rail-btn${refreshing ? ' is-spinning' : ''}`}
-          disabled={refreshing}
-          onClick={onRefresh}
-          title={refreshing ? t.actions.refreshing : t.actions.refresh}
-          type="button"
-        >
-          <RefreshCw size={16} strokeWidth={2} aria-hidden />
-        </button>
-      </div>
-    </aside>
-  );
-}
-
-function SectionNav({
-  activeView,
-  drawerOpen,
-  freshness,
-  installed,
-  locale,
-  canInstall,
-  onCloseDrawer,
-  onInstall,
-  onLocaleChange,
-  onNavigate,
-  onOpenDrawer,
-  offlineReady,
-  refreshing,
-  onRefresh,
-  secureContext,
-  t,
-}: {
-  activeView: DashboardView;
-  drawerOpen: boolean;
-  freshness: FreshnessLevel;
-  installed: boolean;
-  locale: Locale;
-  canInstall: boolean;
-  onCloseDrawer: () => void;
-  onInstall: () => void;
-  onLocaleChange: (locale: Locale) => void;
-  onNavigate: (view: DashboardView) => void;
-  onOpenDrawer: () => void;
-  offlineReady: boolean;
-  refreshing: boolean;
-  onRefresh: () => void;
-  secureContext: boolean;
-  t: Messages;
-}) {
-  const activeLabel =
-    navItems(t).find((item) => item.view === activeView)?.label ?? t.nav.rooms;
-
-  return (
-    <>
-      <nav className="section-nav" aria-label={t.nav.aria}>
-        <button
-          aria-controls="dashboard-menu"
-          aria-expanded={drawerOpen}
-          aria-label={drawerOpen ? t.nav.menuClose : t.nav.menuOpen}
-          className="menu-button"
-          onClick={drawerOpen ? onCloseDrawer : onOpenDrawer}
-          type="button"
-        >
-          <span />
-          <span />
-          <span />
-        </button>
-        <strong className="topbar-label">{activeLabel}</strong>
-        <span className={`topbar-status topbar-status-${freshness}`}>
-          {freshnessLabel(freshness, t)}
-        </span>
-        <button
-          aria-busy={refreshing}
-          aria-label={refreshing ? t.actions.refreshing : t.actions.refresh}
-          className="refresh-button"
-          disabled={refreshing}
-          onClick={onRefresh}
-          type="button"
-        >
-          {refreshing ? '...' : t.actions.refresh}
-        </button>
-      </nav>
-
-      {drawerOpen ? (
-        <>
-          <button
-            aria-label={t.nav.menuClose}
-            className="drawer-backdrop"
-            onClick={onCloseDrawer}
-            type="button"
-          />
-          <aside
-            aria-label={t.nav.drawerAria}
-            aria-modal="true"
-            className="nav-drawer"
-            id="dashboard-menu"
-            role="dialog"
-          >
-            <div className="drawer-head">
-              <div>
-                <span className="eyebrow">EJClaw</span>
-                <strong>{t.nav.operations}</strong>
-              </div>
-              <button
-                aria-label={t.nav.menuClose}
-                onClick={onCloseDrawer}
-                type="button"
-              >
-                {t.actions.close}
-              </button>
-            </div>
-            <nav aria-label={t.nav.drawerNavAria}>
-              {navItems(t).map((item) => (
-                <a
-                  aria-current={activeView === item.view ? 'page' : undefined}
-                  className={activeView === item.view ? 'is-active' : undefined}
-                  href={item.href}
-                  key={item.href}
-                  onClick={() => {
-                    onNavigate(item.view);
-                    onCloseDrawer();
-                  }}
-                >
-                  {item.label}
-                </a>
-              ))}
-            </nav>
-            <div className="drawer-pwa-row">
-              <span>
-                {!secureContext
-                  ? t.pwa.secureRequired
-                  : installed
-                    ? t.pwa.installed
-                    : offlineReady
-                      ? t.pwa.ready
-                      : t.pwa.app}
-              </span>
-              {canInstall ? (
-                <button onClick={onInstall} type="button">
-                  {t.pwa.install}
-                </button>
-              ) : null}
-            </div>
-          </aside>
-        </>
-      ) : null}
-    </>
   );
 }
 
@@ -4024,6 +3730,30 @@ function TaskPanel({
   );
 }
 
+function DashboardErrorCard({
+  error,
+  onRetry,
+  refreshing,
+  t,
+}: {
+  error: string;
+  onRetry: () => void;
+  refreshing: boolean;
+  t: Messages;
+}) {
+  return (
+    <section className="error-card" role="alert" aria-live="polite">
+      <span>
+        <strong>{t.error.api}</strong>
+        <small>{humanizeError(error, t)}</small>
+      </span>
+      <button disabled={refreshing} onClick={onRetry}>
+        {t.actions.retry}
+      </button>
+    </section>
+  );
+}
+
 function App() {
   const [data, setData] = useState<DashboardState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -4449,32 +4179,30 @@ function App() {
         <SectionNav
           activeView={activeView}
           canInstall={canInstall}
+          data={data}
           drawerOpen={drawerOpen}
           freshness={freshness}
+          freshnessText={freshnessLabel(freshness, t)}
           installed={installed}
-          locale={locale}
           onCloseDrawer={() => setDrawerOpen(false)}
           onInstall={() => void handleInstallApp()}
-          onLocaleChange={setDashboardLocale}
           onNavigate={navigateToView}
           onOpenDrawer={() => setDrawerOpen(true)}
           offlineReady={offlineReady}
           onRefresh={() => void refresh(true)}
+          online={online}
           refreshing={refreshing}
           secureContext={secureContext}
           t={t}
         />
 
         {error ? (
-          <section className="error-card" role="alert" aria-live="polite">
-            <span>
-              <strong>{t.error.api}</strong>
-              <small>{humanizeError(error, t)}</small>
-            </span>
-            <button disabled={refreshing} onClick={() => void refresh(true)}>
-              {t.actions.retry}
-            </button>
-          </section>
+          <DashboardErrorCard
+            error={error}
+            onRetry={() => void refresh(true)}
+            refreshing={refreshing}
+            t={t}
+          />
         ) : null}
 
         {data ? (
