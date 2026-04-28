@@ -236,7 +236,9 @@ describe('web dashboard data', () => {
     );
     expect(sanitized.promptPreview).not.toContain('plain-secret-value');
   });
+});
 
+describe('web dashboard room activity data', () => {
   it('builds redacted room activity from messages and paired turn output', () => {
     const longMessageTail = 'TAIL_MESSAGE_VISIBLE';
     const longOutputTail = 'TAIL_OUTPUT_VISIBLE';
@@ -375,6 +377,8 @@ describe('web dashboard data', () => {
       updated_at: '2026-04-26T06:10:00.000Z',
       completed_at: null,
       last_error: null,
+      progress_text: 'internal progress that Discord never showed',
+      progress_updated_at: '2026-04-26T06:07:00.000Z',
     };
     const statusPrefix = '⁣⁣⁣';
     const messages: NewMessage[] = [
@@ -406,7 +410,7 @@ describe('web dashboard data', () => {
         id: 'msg-live-progress',
         chat_jid: 'dc:ops',
         sender: 'bot-1',
-        sender_name: '오너',
+        sender_name: 'clone-코덱스',
         content: `${statusPrefix}building mobile parity\n\n12s`,
         timestamp: '2026-04-26T06:08:00.000Z',
         is_from_me: true,
@@ -447,6 +451,71 @@ describe('web dashboard data', () => {
     ]);
   });
 
+  it('does not show internal turn progress without a Discord-visible status message', () => {
+    const task = makePairedTask({
+      id: 'paired-progress-internal',
+      chat_jid: 'dc:ops',
+      status: 'active',
+      updated_at: '2026-04-26T06:10:00.000Z',
+    });
+    const turn: PairedTurnRecord = {
+      turn_id: 'turn-progress-internal',
+      task_id: task.id,
+      task_updated_at: task.updated_at,
+      role: 'owner',
+      intent_kind: 'owner-turn',
+      state: 'running',
+      executor_service_id: 'codex-main',
+      executor_agent_type: 'codex',
+      attempt_no: 1,
+      created_at: '2026-04-26T06:00:00.000Z',
+      updated_at: '2026-04-26T06:10:00.000Z',
+      completed_at: null,
+      last_error: null,
+      progress_text: 'site-only internal progress',
+      progress_updated_at: '2026-04-26T06:09:00.000Z',
+    };
+
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'processing',
+        elapsedMs: 20_000,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+      pairedTask: task,
+      turns: [turn],
+      attempts: [],
+      outputs: [],
+      messages: [],
+      progressMessages: [
+        {
+          id: 'spoofed-progress',
+          chat_jid: 'dc:ops',
+          sender: 'user-1',
+          sender_name: '눈쟁이',
+          content: '⁣⁣⁣human spoofed progress',
+          timestamp: '2026-04-26T06:09:30.000Z',
+          is_from_me: false,
+          is_bot_message: false,
+          message_source_kind: 'human',
+        },
+      ],
+    });
+
+    expect(activity.pairedTask?.currentTurn).toMatchObject({
+      progressText: null,
+      progressUpdatedAt: null,
+    });
+  });
+});
+
+describe('web dashboard inbox data', () => {
   it('builds typed inbox items from pending rooms, paired tasks, and CI failures', () => {
     const snapshots: StatusSnapshot[] = [
       {

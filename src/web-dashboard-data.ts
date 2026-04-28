@@ -514,6 +514,16 @@ function turnRoleFromSenderName(name: string | null | undefined): string {
   return 'human';
 }
 
+function isBotProgressSource(message: NewMessage): boolean {
+  return (
+    !!message.is_bot_message ||
+    !!message.is_from_me ||
+    message.message_source_kind === 'bot' ||
+    message.message_source_kind === 'ipc_injected_bot' ||
+    message.message_source_kind === 'trusted_external_bot'
+  );
+}
+
 function deriveLiveProgress(
   turnRole: string,
   turnCreatedAt: string,
@@ -528,7 +538,9 @@ function deriveLiveProgress(
     const ts = m.timestamp ? new Date(m.timestamp).getTime() : 0;
     if (Number.isFinite(startMs) && ts < startMs) continue;
     const role = turnRoleFromSenderName(m.sender_name);
-    if (role !== targetRole) continue;
+    if (role !== targetRole && (role !== 'human' || !isBotProgressSource(m))) {
+      continue;
+    }
     const body = content.slice(TASK_STATUS_PREFIX.length);
     const stripped = body.replace(/\n\n\d+[초smhMSH]?$/, '').trim();
     if (!stripped) continue;
@@ -546,19 +558,13 @@ function sanitizeRoomTurn(
   const createdAt = attempt?.created_at ?? turn.created_at;
   const completedAt = attempt?.completed_at ?? turn.completed_at;
 
-  // Read paired_turns.progress_text first (written by recordTurnProgress
-  // when the controller is in the loop). If that's empty AND the turn is
-  // active, fall back to scanning the messages table for the most recent
-  // TASK_STATUS-prefixed message — same content the Discord bridge ingests.
-  let progressText = turn.progress_text ?? null;
-  let progressUpdatedAt = turn.progress_updated_at ?? null;
-  if ((!progressText || !progressText.trim()) && completedAt === null) {
-    const live = deriveLiveProgress(role, createdAt, messages);
-    if (live.progressText) {
-      progressText = live.progressText;
-      progressUpdatedAt = live.progressUpdatedAt;
-    }
-  }
+  // Dashboard progress must match Discord-visible progress. The legacy
+  // paired_turns.progress_text column is written before Discord delivery, so
+  // using it here can create site-only progress that never appeared in Discord.
+  const live =
+    completedAt === null
+      ? deriveLiveProgress(role, createdAt, messages)
+      : { progressText: null, progressUpdatedAt: null };
 
   return {
     turnId: turn.turn_id,
@@ -576,8 +582,8 @@ function sanitizeRoomTurn(
       (attempt?.last_error ?? turn.last_error)
         ? buildRoomBody(attempt?.last_error ?? turn.last_error ?? '')
         : null,
-    progressText,
-    progressUpdatedAt,
+    progressText: live.progressText,
+    progressUpdatedAt: live.progressUpdatedAt,
   };
 }
 
