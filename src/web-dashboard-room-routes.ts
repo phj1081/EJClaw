@@ -98,7 +98,6 @@ function buildRoomActivity(
     attempts,
     outputs: pairedTask ? deps.loadPairedTurnOutputs(pairedTask.id) : [],
     messages: deps.loadRecentChatMessages(entry.jid, 8),
-    progressMessages: deps.loadRecentChatMessages(entry.jid, 40),
   });
 }
 
@@ -129,9 +128,6 @@ export function buildRoomsTimelineResult(
   for (const [jid, { snapshot, entry }] of uniqueByJid) {
     const pairedTask = deps.loadLatestPairedTaskForChat(jid) ?? null;
     const messages = deps.loadRecentChatMessages(jid, 8);
-    const progressMessages = pairedTask
-      ? deps.loadRecentChatMessages(jid, 40)
-      : messages;
     const outputs = deps.loadRecentPairedTurnOutputsForChat(jid, 8);
     if (!pairedTask && messages.length === 0 && outputs.length === 0) continue;
 
@@ -147,7 +143,6 @@ export function buildRoomsTimelineResult(
       attempts: [],
       outputs,
       messages,
-      progressMessages,
       outputLimit: 8,
     });
   }

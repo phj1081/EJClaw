@@ -356,7 +356,7 @@ describe('web dashboard room activity data', () => {
     ]);
   });
 
-  it('uses Discord live progress messages without exposing them as recent chat', () => {
+  it('uses canonical turn progress without exposing status messages as recent chat', () => {
     const task = makePairedTask({
       id: 'paired-room-progress',
       chat_jid: 'dc:ops',
@@ -377,7 +377,7 @@ describe('web dashboard room activity data', () => {
       updated_at: '2026-04-26T06:10:00.000Z',
       completed_at: null,
       last_error: null,
-      progress_text: 'internal progress that Discord never showed',
+      progress_text: 'building mobile parity',
       progress_updated_at: '2026-04-26T06:07:00.000Z',
     };
     const statusPrefix = '⁣⁣⁣';
@@ -393,25 +393,12 @@ describe('web dashboard room activity data', () => {
         is_bot_message: false,
         message_source_kind: 'human',
       },
-    ];
-    const progressMessages: NewMessage[] = [
       {
-        id: 'msg-stale-progress',
+        id: 'msg-status-progress',
         chat_jid: 'dc:ops',
         sender: 'bot-1',
         sender_name: '오너',
-        content: `${statusPrefix}stale progress`,
-        timestamp: '2026-04-26T05:59:00.000Z',
-        is_from_me: true,
-        is_bot_message: true,
-        message_source_kind: 'bot',
-      },
-      {
-        id: 'msg-live-progress',
-        chat_jid: 'dc:ops',
-        sender: 'bot-1',
-        sender_name: 'clone-코덱스',
-        content: `${statusPrefix}building mobile parity\n\n12s`,
+        content: `${statusPrefix}status noise that belongs to display only\n\n12s`,
         timestamp: '2026-04-26T06:08:00.000Z',
         is_from_me: true,
         is_bot_message: true,
@@ -436,12 +423,11 @@ describe('web dashboard room activity data', () => {
       attempts: [],
       outputs: [],
       messages,
-      progressMessages,
     });
 
     expect(activity.pairedTask?.currentTurn).toMatchObject({
       progressText: 'building mobile parity',
-      progressUpdatedAt: '2026-04-26T06:08:00.000Z',
+      progressUpdatedAt: '2026-04-26T06:07:00.000Z',
     });
     expect(activity.messages).toEqual([
       expect.objectContaining({
@@ -451,7 +437,7 @@ describe('web dashboard room activity data', () => {
     ]);
   });
 
-  it('does not show internal turn progress without a Discord-visible status message', () => {
+  it('does not show active turn placeholders when canonical progress is absent', () => {
     const task = makePairedTask({
       id: 'paired-progress-internal',
       chat_jid: 'dc:ops',
@@ -472,8 +458,8 @@ describe('web dashboard room activity data', () => {
       updated_at: '2026-04-26T06:10:00.000Z',
       completed_at: null,
       last_error: null,
-      progress_text: 'site-only internal progress',
-      progress_updated_at: '2026-04-26T06:09:00.000Z',
+      progress_text: null,
+      progress_updated_at: null,
     };
 
     const activity = buildWebDashboardRoomActivity({
@@ -493,19 +479,6 @@ describe('web dashboard room activity data', () => {
       attempts: [],
       outputs: [],
       messages: [],
-      progressMessages: [
-        {
-          id: 'spoofed-progress',
-          chat_jid: 'dc:ops',
-          sender: 'user-1',
-          sender_name: '눈쟁이',
-          content: '⁣⁣⁣human spoofed progress',
-          timestamp: '2026-04-26T06:09:30.000Z',
-          is_from_me: false,
-          is_bot_message: false,
-          message_source_kind: 'human',
-        },
-      ],
     });
 
     expect(activity.pairedTask?.currentTurn).toMatchObject({

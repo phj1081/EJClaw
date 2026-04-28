@@ -492,78 +492,25 @@ function sanitizeRoomMessage(
   };
 }
 
-/**
- * SSOT for live progress: scan the `messages` table for the most recent
- * TASK_STATUS_MESSAGE_PREFIX-prefixed message that belongs to the current
- * turn (sender role match + timestamp >= turn.created_at). The Discord
- * bridge ingests every edit of the bot's live message back into messages,
- * so this single source replaces the legacy paired_turns.progress_text
- * column for derivation.
- */
 const TASK_STATUS_PREFIX = '⁣⁣⁣';
 
 function isTaskStatusMessage(message: NewMessage): boolean {
   return (message.content ?? '').startsWith(TASK_STATUS_PREFIX);
 }
 
-function turnRoleFromSenderName(name: string | null | undefined): string {
-  const v = (name ?? '').toLowerCase();
-  if (v.includes('오너') || v.includes('owner')) return 'owner';
-  if (v.includes('리뷰어') || v.includes('reviewer')) return 'reviewer';
-  if (v.includes('중재자') || v.includes('arbiter')) return 'arbiter';
-  return 'human';
-}
-
-function isBotProgressSource(message: NewMessage): boolean {
-  return (
-    !!message.is_bot_message ||
-    !!message.is_from_me ||
-    message.message_source_kind === 'bot' ||
-    message.message_source_kind === 'ipc_injected_bot' ||
-    message.message_source_kind === 'trusted_external_bot'
-  );
-}
-
-function deriveLiveProgress(
-  turnRole: string,
-  turnCreatedAt: string,
-  messages: NewMessage[],
-): { progressText: string | null; progressUpdatedAt: string | null } {
-  const startMs = new Date(turnCreatedAt).getTime();
-  const targetRole = turnRoleFromSenderName(turnRole);
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i];
-    const content = m.content ?? '';
-    if (!content.startsWith(TASK_STATUS_PREFIX)) continue;
-    const ts = m.timestamp ? new Date(m.timestamp).getTime() : 0;
-    if (Number.isFinite(startMs) && ts < startMs) continue;
-    const role = turnRoleFromSenderName(m.sender_name);
-    if (role !== targetRole && (role !== 'human' || !isBotProgressSource(m))) {
-      continue;
-    }
-    const body = content.slice(TASK_STATUS_PREFIX.length);
-    const stripped = body.replace(/\n\n\d+[초smhMSH]?$/, '').trim();
-    if (!stripped) continue;
-    return { progressText: stripped, progressUpdatedAt: m.timestamp };
-  }
-  return { progressText: null, progressUpdatedAt: null };
-}
-
 function sanitizeRoomTurn(
   turn: PairedTurnRecord,
   attempt: PairedTurnAttemptRecord | null,
-  messages: NewMessage[] = [],
 ): WebDashboardRoomTurn {
   const role = attempt?.role ?? turn.role;
   const createdAt = attempt?.created_at ?? turn.created_at;
   const completedAt = attempt?.completed_at ?? turn.completed_at;
-
-  // Dashboard progress must match Discord-visible progress. The legacy
-  // paired_turns.progress_text column is written before Discord delivery, so
-  // using it here can create site-only progress that never appeared in Discord.
-  const live =
-    completedAt === null
-      ? deriveLiveProgress(role, createdAt, messages)
+  const canonicalProgress =
+    completedAt === null && turn.progress_text?.trim()
+      ? {
+          progressText: buildRoomBody(turn.progress_text),
+          progressUpdatedAt: turn.progress_updated_at ?? turn.updated_at,
+        }
       : { progressText: null, progressUpdatedAt: null };
 
   return {
@@ -582,8 +529,8 @@ function sanitizeRoomTurn(
       (attempt?.last_error ?? turn.last_error)
         ? buildRoomBody(attempt?.last_error ?? turn.last_error ?? '')
         : null,
-    progressText: live.progressText,
-    progressUpdatedAt: live.progressUpdatedAt,
+    progressText: canonicalProgress.progressText,
+    progressUpdatedAt: canonicalProgress.progressUpdatedAt,
   };
 }
 
@@ -612,7 +559,6 @@ export function buildWebDashboardRoomActivity(args: {
   attempts: PairedTurnAttemptRecord[];
   outputs: PairedTurnOutput[];
   messages: NewMessage[];
-  progressMessages?: NewMessage[];
   outputLimit?: number;
 }): WebDashboardRoomActivity {
   const latestAttemptByTurnId = new Map<string, PairedTurnAttemptRecord>();
@@ -655,11 +601,7 @@ export function buildWebDashboardRoomActivity(args: {
           roundTripCount: args.pairedTask.round_trip_count,
           updatedAt: args.pairedTask.updated_at,
           currentTurn: currentTurn
-            ? sanitizeRoomTurn(
-                currentTurn,
-                currentAttempt,
-                args.progressMessages ?? args.messages,
-              )
+            ? sanitizeRoomTurn(currentTurn, currentAttempt)
             : null,
           outputs: args.outputs
             .slice(-outputLimit)
