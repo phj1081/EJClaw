@@ -38,7 +38,7 @@ import type {
   RegisteredGroup,
   ScheduledTask,
 } from './types.js';
-import { buildWebDashboardOverview } from './web-dashboard-data.js';
+import { handleOverviewRoute } from './web-dashboard-overview-routes.js';
 import {
   handleRoomTimelineRoute,
   startRoomsTimelineCacheRefresh,
@@ -822,24 +822,18 @@ export function createWebDashboardHandler(
     });
     if (simpleGetRoute) return simpleGetRoute;
 
-    if (url.pathname === '/api/overview') {
-      const snapshots = readSnapshots(statusMaxAgeMs);
-      const tasks = loadTasks();
-      const pairedTasks = loadPairedTasks();
-      const overview = buildWebDashboardOverview({
-        now: opts.now?.(),
-        snapshots,
-        tasks,
-        pairedTasks,
-      });
-      return jsonResponse({
-        ...overview,
-        operations: {
-          serviceRestarts: recentServiceRestarts,
-        },
-        inbox: overview.inbox.filter((item) => !isInboxItemDismissed(item)),
-      });
-    }
+    const overviewRoute = handleOverviewRoute({
+      url,
+      jsonResponse,
+      isInboxItemDismissed,
+      loadPairedTasks,
+      loadTasks,
+      readSnapshots,
+      recentServiceRestarts,
+      statusMaxAgeMs,
+      now: opts.now,
+    });
+    if (overviewRoute) return overviewRoute;
 
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({ error: 'Not found' }, { status: 404 });
