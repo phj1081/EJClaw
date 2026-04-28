@@ -6,8 +6,6 @@ import {
   type CreateScheduledTaskInput,
   type DashboardInboxAction,
   type DashboardRoomActivity,
-  type DashboardTaskContextMode,
-  type DashboardTaskScheduleType,
   type DashboardTaskAction,
   type DashboardOverview,
   type DashboardTask,
@@ -51,12 +49,12 @@ import {
   type DashboardFreshness,
   type DashboardView,
 } from './DashboardNav';
-import { formatDate, taskActionsFor } from './dashboardHelpers';
+import { formatDate, statusLabel } from './dashboardHelpers';
 import { InboxPanel, type InboxActionKey, type InboxItem } from './InboxPanel';
 import { RoomBoardV2 } from './RoomBoardV2';
+import { TaskPanel, type RoomOption, type TaskActionKey } from './TaskPanel';
 import { EmptyState } from './EmptyState';
 import { ParsedBody } from './ParsedBody';
-import { redactSecretsForPreview } from './redaction';
 import './styles.css';
 
 interface DashboardState {
@@ -69,12 +67,6 @@ type UsageRow = DashboardOverview['usage']['rows'][number];
 type RiskLevel = 'ok' | 'warn' | 'critical';
 type UsageGroup = 'primary' | 'codex';
 type UsageLimitWindow = 'h5' | 'd7';
-type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
-type TaskResultTone = 'ok' | 'fail' | 'none';
-type TaskActionKey =
-  | 'create'
-  | `${string}:edit`
-  | `${string}:${DashboardTaskAction}`;
 type ServiceActionKey = 'stack:restart';
 type HealthLevel = 'ok' | 'stale' | 'down';
 type FreshnessLevel = DashboardFreshness;
@@ -83,12 +75,6 @@ type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 };
-
-interface RoomOption {
-  jid: string;
-  name: string;
-  folder: string;
-}
 
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale.v2';
@@ -206,56 +192,6 @@ function canUsePwaCore(): boolean {
   );
 }
 
-function formatTaskDate(
-  value: string | null | undefined,
-  locale: Locale,
-): string {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const time = new Intl.DateTimeFormat(localeTags[locale], {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
-  if (locale === 'ko')
-    return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
-  if (locale === 'ja' || locale === 'zh')
-    return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
-  return new Intl.DateTimeFormat(localeTags[locale], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
-}
-
-function formatRelativeDate(
-  value: string | null | undefined,
-  locale: Locale,
-  t: Messages,
-): string {
-  if (!value) return t.tasks.noTime;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const diffMs = date.getTime() - Date.now();
-  const absMs = Math.abs(diffMs);
-  if (absMs < 45_000) return t.tasks.now;
-
-  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
-    ['day', 86_400_000],
-    ['hour', 3_600_000],
-    ['minute', 60_000],
-  ];
-  const [unit, unitMs] =
-    units.find(([, threshold]) => absMs >= threshold) ?? units.at(-1)!;
-  return new Intl.RelativeTimeFormat(localeTags[locale], {
-    numeric: 'auto',
-    style: 'short',
-  }).format(Math.round(diffMs / unitMs), unit);
-}
-
 function formatPct(value: number): string {
   if (value < 0) return '-';
   return `${Math.round(value)}%`;
@@ -332,11 +268,6 @@ function usageGroup(row: UsageRow): UsageGroup {
   return row.name.toLowerCase().startsWith('codex') ? 'codex' : 'primary';
 }
 
-function statusLabel(status: string, t: Messages): string {
-  if (status in t.status) return t.status[status as keyof Messages['status']];
-  return status;
-}
-
 function formatDuration(value: number | null, t: Messages): string {
   if (value === null) return '-';
   const seconds = Math.floor(value / 1000);
@@ -377,46 +308,6 @@ function queueLabel(
   return parts.join(' · ');
 }
 
-function safePreview(
-  value: string | null | undefined,
-  fallback: string,
-): string {
-  const cleaned = redactSecretsForPreview(value ?? '')
-    .replace(/<\/?internal[^>]*>/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!cleaned) return fallback;
-  return cleaned.length > 120 ? `${cleaned.slice(0, 120)}...` : cleaned;
-}
-
-function taskGroupKey(task: DashboardTask): TaskGroupKey {
-  if (task.status === 'completed') return 'completed';
-  if (task.status === 'paused') return 'paused';
-  if (task.isWatcher) return 'watchers';
-  return 'scheduled';
-}
-
-function taskResultTone(task: DashboardTask): TaskResultTone {
-  if (!task.lastResult) return 'none';
-  const normalized = task.lastResult.toLowerCase();
-  if (
-    normalized.includes('fail') ||
-    normalized.includes('error') ||
-    normalized.includes('timeout') ||
-    normalized.includes('cancel') ||
-    normalized.includes('reject')
-  ) {
-    return 'fail';
-  }
-  return 'ok';
-}
-
-function taskDisplayName(task: DashboardTask, t: Messages): string {
-  if (task.isWatcher) return t.tasks.ciWatch;
-  if (task.scheduleType) return task.scheduleType;
-  return task.id;
-}
-
 function buildRoomOptions(snapshots: StatusSnapshot[]): RoomOption[] {
   const rooms = new Map<string, RoomOption>();
   for (const snapshot of snapshots) {
@@ -433,67 +324,6 @@ function buildRoomOptions(snapshots: StatusSnapshot[]): RoomOption[] {
   return [...rooms.values()].sort((a, b) =>
     `${a.name} ${a.folder}`.localeCompare(`${b.name} ${b.folder}`),
   );
-}
-
-function isTaskScheduleType(
-  value: FormDataEntryValue | null,
-): value is DashboardTaskScheduleType {
-  return value === 'cron' || value === 'interval' || value === 'once';
-}
-
-function isTaskContextMode(
-  value: FormDataEntryValue | null,
-): value is DashboardTaskContextMode {
-  return value === 'group' || value === 'isolated';
-}
-
-function readRequiredText(form: FormData, name: string): string | null {
-  const value = form.get(name);
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
-function readTaskForm(
-  form: FormData,
-  includeRoom: true,
-): CreateScheduledTaskInput | null;
-function readTaskForm(
-  form: FormData,
-  includeRoom: false,
-): UpdateScheduledTaskInput | null;
-function readTaskForm(
-  form: FormData,
-  includeRoom: boolean,
-): CreateScheduledTaskInput | UpdateScheduledTaskInput | null {
-  const prompt = readRequiredText(form, 'prompt');
-  const scheduleValue = readRequiredText(form, 'scheduleValue');
-  const scheduleTypeValue = form.get('scheduleType');
-  if (!scheduleValue || !isTaskScheduleType(scheduleTypeValue)) {
-    return null;
-  }
-  const scheduleType = scheduleTypeValue;
-
-  if (!includeRoom) {
-    return prompt
-      ? { prompt, scheduleType, scheduleValue }
-      : { scheduleType, scheduleValue };
-  }
-
-  if (!prompt) {
-    return null;
-  }
-
-  const roomJid = readRequiredText(form, 'roomJid');
-  const contextMode = form.get('contextMode');
-  if (!roomJid || !isTaskContextMode(contextMode)) return null;
-  return {
-    contextMode,
-    prompt,
-    roomJid,
-    scheduleType,
-    scheduleValue,
-  };
 }
 
 function serviceAgeMs(
@@ -1596,344 +1426,6 @@ function UsagePanel({
     </div>
   );
 }
-
-function TaskPanel({
-  tasks,
-  rooms,
-  locale,
-  onTaskAction,
-  onTaskCreate,
-  onTaskUpdate,
-  taskActionKey,
-  t,
-}: {
-  tasks: DashboardTask[];
-  rooms: RoomOption[];
-  locale: Locale;
-  onTaskAction: (task: DashboardTask, action: DashboardTaskAction) => void;
-  onTaskCreate: (input: CreateScheduledTaskInput) => void;
-  onTaskUpdate: (task: DashboardTask, input: UpdateScheduledTaskInput) => void;
-  taskActionKey: TaskActionKey | null;
-  t: Messages;
-}) {
-  const taskGroups = useMemo(() => {
-    const groups: Record<TaskGroupKey, DashboardTask[]> = {
-      watchers: [],
-      scheduled: [],
-      paused: [],
-      completed: [],
-    };
-
-    for (const task of tasks) {
-      groups[taskGroupKey(task)].push(task);
-    }
-
-    for (const groupTasks of Object.values(groups)) {
-      groupTasks.sort((a, b) =>
-        (a.nextRun ?? a.lastRun ?? a.createdAt).localeCompare(
-          b.nextRun ?? b.lastRun ?? b.createdAt,
-        ),
-      );
-    }
-
-    return [
-      { key: 'watchers' as const, tasks: groups.watchers },
-      { key: 'scheduled' as const, tasks: groups.scheduled },
-      { key: 'paused' as const, tasks: groups.paused },
-      { key: 'completed' as const, tasks: groups.completed },
-    ];
-  }, [tasks]);
-
-  return (
-    <div className="task-board" aria-label={t.tasks.cardsAria}>
-      <form
-        className="task-create-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          const form = new FormData(event.currentTarget);
-          const input = readTaskForm(form, true);
-          if (!input) return;
-          onTaskCreate(input);
-          event.currentTarget.reset();
-        }}
-      >
-        <div className="task-create-head">
-          <span className="eyebrow">{t.tasks.createTitle}</span>
-          <strong>{t.tasks.createSubtitle}</strong>
-        </div>
-        <label>
-          <span>{t.tasks.room}</span>
-          <select name="roomJid" required>
-            <option value="">{t.tasks.selectRoom}</option>
-            {rooms.map((room) => (
-              <option key={room.jid} value={room.jid}>
-                {room.name} · {room.folder}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="task-form-wide">
-          <span>{t.tasks.prompt}</span>
-          <textarea
-            name="prompt"
-            placeholder={t.tasks.promptPlaceholder}
-            required
-          />
-        </label>
-        <label>
-          <span>{t.tasks.scheduleType}</span>
-          <select name="scheduleType" required>
-            <option value="once">{t.tasks.scheduleTypes.once}</option>
-            <option value="interval">{t.tasks.scheduleTypes.interval}</option>
-            <option value="cron">{t.tasks.scheduleTypes.cron}</option>
-          </select>
-        </label>
-        <label>
-          <span>{t.tasks.scheduleValue}</span>
-          <input
-            name="scheduleValue"
-            placeholder={t.tasks.scheduleValueHint}
-            required
-          />
-        </label>
-        <label>
-          <span>{t.tasks.context}</span>
-          <select name="contextMode" required>
-            <option value="isolated">{t.tasks.contextModes.isolated}</option>
-            <option value="group">{t.tasks.contextModes.group}</option>
-          </select>
-        </label>
-        <button disabled={taskActionKey === 'create'} type="submit">
-          {taskActionKey === 'create'
-            ? t.tasks.actions.busy
-            : t.tasks.actions.create}
-        </button>
-      </form>
-
-      {tasks.length === 0 ? <EmptyState>{t.tasks.empty}</EmptyState> : null}
-      {taskGroups.map((group) => {
-        const label = t.tasks.groups[group.key];
-        const groupHead = (
-          <div className="task-group-head">
-            <div>
-              <span className="eyebrow">{label}</span>
-              <strong>
-                {group.tasks.length} {t.tasks.count}
-              </strong>
-            </div>
-            <span className={`pill pill-${group.key}`}>
-              {group.tasks.length}
-            </span>
-          </div>
-        );
-        const groupBody =
-          group.tasks.length === 0 ? (
-            <div className="task-group-empty">{t.tasks.groupEmpty}</div>
-          ) : (
-            <div className="task-list">
-              {group.tasks.map((task) => {
-                const resultTone = taskResultTone(task);
-                const lastResult = safePreview(
-                  task.lastResult,
-                  t.tasks.noResult,
-                );
-                const taskActions = taskActionsFor(task);
-                return (
-                  <article
-                    className={`task-card task-card-${group.key}`}
-                    key={task.id}
-                  >
-                    <div className="task-card-main">
-                      <div className="task-title">
-                        <strong>{taskDisplayName(task, t)}</strong>
-                        <span className="mono-chip">{task.groupFolder}</span>
-                      </div>
-                      <div className="task-status-line">
-                        <span className={`pill pill-${task.status}`}>
-                          {statusLabel(task.status, t)}
-                        </span>
-                        {task.ciProvider ? (
-                          <span className="task-provider">
-                            {task.ciProvider}
-                          </span>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    {taskActions.length > 0 ? (
-                      <div className="task-actions">
-                        {taskActions.map((action) => {
-                          const actionKey: TaskActionKey = `${task.id}:${action}`;
-                          const busy = taskActionKey === actionKey;
-                          return (
-                            <button
-                              aria-busy={busy || undefined}
-                              className={`task-action task-action-${action}${busy ? ' is-busy' : ''}`}
-                              disabled={busy}
-                              key={action}
-                              onClick={() => onTaskAction(task, action)}
-                              type="button"
-                            >
-                              {busy
-                                ? t.tasks.actions.busy
-                                : t.tasks.actions[action]}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : null}
-
-                    <div className="task-time-grid">
-                      <span>
-                        <small>{t.tasks.next}</small>
-                        <strong>{formatTaskDate(task.nextRun, locale)}</strong>
-                        <em>{formatRelativeDate(task.nextRun, locale, t)}</em>
-                      </span>
-                      <span>
-                        <small>{t.tasks.last}</small>
-                        <strong>{formatTaskDate(task.lastRun, locale)}</strong>
-                        <em>{formatRelativeDate(task.lastRun, locale, t)}</em>
-                      </span>
-                      <span>
-                        <small>{t.tasks.schedule}</small>
-                        <strong>{task.scheduleType}</strong>
-                        <em>{task.scheduleValue}</em>
-                      </span>
-                    </div>
-
-                    {task.suspendedUntil ? (
-                      <div className="task-suspended">
-                        <span>{t.tasks.suspendedUntil}</span>
-                        <strong>
-                          {formatTaskDate(task.suspendedUntil, locale)}
-                        </strong>
-                        <em>
-                          {formatRelativeDate(task.suspendedUntil, locale, t)}
-                        </em>
-                      </div>
-                    ) : null}
-
-                    <div className={`task-result result-${resultTone}`}>
-                      <span>
-                        {resultTone === 'fail'
-                          ? t.tasks.resultFail
-                          : resultTone === 'ok'
-                            ? t.tasks.resultOk
-                            : t.tasks.result}
-                      </span>
-                      <strong>{lastResult}</strong>
-                    </div>
-
-                    <details className="task-prompt">
-                      <summary>{t.tasks.prompt}</summary>
-                      <p>
-                        {safePreview(task.promptPreview, t.tasks.emptyPrompt)}
-                      </p>
-                      <small>
-                        {task.id} · {task.contextMode} · {task.promptLength}{' '}
-                        {t.units.chars}
-                      </small>
-                    </details>
-
-                    {!task.isWatcher && task.status !== 'completed' ? (
-                      <details className="task-edit">
-                        <summary>{t.tasks.actions.edit}</summary>
-                        <form
-                          className="task-edit-form"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            const form = new FormData(event.currentTarget);
-                            const input = readTaskForm(form, false);
-                            if (!input) return;
-                            onTaskUpdate(task, input);
-                          }}
-                        >
-                          <label className="task-form-wide">
-                            <span>{t.tasks.prompt}</span>
-                            <textarea
-                              name="prompt"
-                              placeholder={t.tasks.editPromptPlaceholder}
-                            />
-                          </label>
-                          <label>
-                            <span>{t.tasks.scheduleType}</span>
-                            <select
-                              name="scheduleType"
-                              defaultValue={task.scheduleType}
-                              required
-                            >
-                              <option value="once">
-                                {t.tasks.scheduleTypes.once}
-                              </option>
-                              <option value="interval">
-                                {t.tasks.scheduleTypes.interval}
-                              </option>
-                              <option value="cron">
-                                {t.tasks.scheduleTypes.cron}
-                              </option>
-                            </select>
-                          </label>
-                          <label>
-                            <span>{t.tasks.scheduleValue}</span>
-                            <input
-                              name="scheduleValue"
-                              defaultValue={task.scheduleValue}
-                              required
-                            />
-                          </label>
-                          <button
-                            disabled={taskActionKey === `${task.id}:edit`}
-                            type="submit"
-                          >
-                            {taskActionKey === `${task.id}:edit`
-                              ? t.tasks.actions.busy
-                              : t.tasks.actions.save}
-                          </button>
-                        </form>
-                      </details>
-                    ) : null}
-                  </article>
-                );
-              })}
-            </div>
-          );
-
-        if (group.key === 'completed') {
-          return (
-            <details
-              className="task-group task-group-completed"
-              key={group.key}
-            >
-              <summary className="task-group-head">
-                <div>
-                  <span className="eyebrow">{label}</span>
-                  <strong>
-                    {group.tasks.length} {t.tasks.count}
-                  </strong>
-                </div>
-                <span className={`pill pill-${group.key}`}>
-                  {group.tasks.length}
-                </span>
-              </summary>
-              {groupBody}
-            </details>
-          );
-        }
-
-        return (
-          <section
-            className={`task-group task-group-${group.key}`}
-            key={group.key}
-          >
-            {groupHead}
-            {groupBody}
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
 function DashboardErrorCard({
   error,
   onRetry,
