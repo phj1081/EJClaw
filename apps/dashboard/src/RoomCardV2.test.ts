@@ -208,4 +208,42 @@ describe('RoomCardV2', () => {
     );
     expect(html).toContain('bar-chart-label-fit-playwright.png');
   });
+
+  it('renders expanded watcher messages without truncating content', () => {
+    const watcherTail = 'WATCHER_TAIL_VISIBLE';
+    const html = renderToStaticMarkup(
+      createElement(RoomCardV2, {
+        activity: activity({
+          messages: [
+            {
+              id: 'watcher-1',
+              sender: 'bot-1',
+              senderName: 'reviewer',
+              content: `[Watcher] ${'검증 로그 '.repeat(40)} ${watcherTail}`,
+              timestamp: '2026-04-28T02:00:00.000Z',
+              isFromMe: false,
+              isBotMessage: true,
+              sourceKind: 'bot',
+            },
+          ],
+        }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry,
+        expanded: true,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: true,
+        t,
+        ...formatters,
+      }),
+    );
+
+    expect(html).toContain('class="room-watcher-fold"');
+    expect(html).toContain(watcherTail);
+  });
 });

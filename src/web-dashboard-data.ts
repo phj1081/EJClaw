@@ -163,8 +163,6 @@ const SECRET_ASSIGNMENT_RE =
   /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|AUTH|PRIVATE_KEY)[A-Z0-9_]*)\s*=\s*([^\s"'`]+)/gi;
 const SECRET_VALUE_RE =
   /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,})\b/g;
-const ROOM_MESSAGE_PREVIEW_MAX_LENGTH = 900;
-const ROOM_OUTPUT_PREVIEW_MAX_LENGTH = 1800;
 
 function redactSensitiveText(value: string): string {
   return value
@@ -185,8 +183,8 @@ function buildInboxPreview(value: string): string {
   return truncateText(redactSensitiveText(value).replace(/\s+/g, ' ').trim());
 }
 
-function buildRoomPreview(value: string, maxLength: number): string {
-  return truncateText(redactSensitiveText(value).trim(), maxLength);
+function buildRoomBody(value: string): string {
+  return redactSensitiveText(value).trim();
 }
 
 function decodeCommonHtmlEntities(value: string): string {
@@ -485,7 +483,7 @@ function sanitizeRoomMessage(
     id: message.id,
     sender: message.sender,
     senderName: message.sender_name || message.sender,
-    content: buildRoomPreview(normalized.text, ROOM_MESSAGE_PREVIEW_MAX_LENGTH),
+    content: buildRoomBody(normalized.text),
     attachments: normalized.attachments,
     timestamp: message.timestamp,
     isFromMe: !!message.is_from_me,
@@ -576,10 +574,7 @@ function sanitizeRoomTurn(
     completedAt,
     lastError:
       (attempt?.last_error ?? turn.last_error)
-        ? buildRoomPreview(
-            attempt?.last_error ?? turn.last_error ?? '',
-            ROOM_MESSAGE_PREVIEW_MAX_LENGTH,
-          )
+        ? buildRoomBody(attempt?.last_error ?? turn.last_error ?? '')
         : null,
     progressText,
     progressUpdatedAt,
@@ -598,10 +593,7 @@ function sanitizeRoomTurnOutput(
     role: output.role,
     verdict: output.verdict ?? null,
     createdAt: output.created_at,
-    outputText: buildRoomPreview(
-      normalized.text,
-      ROOM_OUTPUT_PREVIEW_MAX_LENGTH,
-    ),
+    outputText: buildRoomBody(normalized.text),
     attachments: normalized.attachments,
   };
 }
