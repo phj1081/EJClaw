@@ -291,7 +291,7 @@ body:has(.view-stack.view-rooms) .error-card {
 }
 
 .view-stack.view-rooms .rooms-detail .room-thread-section {
-  padding: 4px 12px 96px 0;
+  padding: 4px 12px 0 0;
 }
 
 .view-stack.view-rooms .rooms-detail .room-card-head {
