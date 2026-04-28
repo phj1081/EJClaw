@@ -1,5 +1,5 @@
 import type { DashboardTask, DashboardTaskAction } from './api';
-import { localeTags, type Locale } from './i18n';
+import { localeTags, type Locale, type Messages } from './i18n';
 
 export function formatDate(
   value: string | null | undefined,
@@ -61,4 +61,9 @@ export function taskActionsFor(task: DashboardTask): DashboardTaskAction[] {
   if (task.status === 'active') return ['pause', 'cancel'];
   if (task.status === 'paused') return ['resume', 'cancel'];
   return [];
+}
+
+export function statusLabel(status: string, t: Messages): string {
+  if (status in t.status) return t.status[status as keyof Messages['status']];
+  return status;
 }
