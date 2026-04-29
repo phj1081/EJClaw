@@ -234,6 +234,7 @@ export function RoomCardV2({
         turn={turn}
       />
       <CollapsedOutputPreview
+        agentMessages={agentMessages}
         expanded={expanded}
         isProcessing={isProcessing}
         latestOutput={latestOutput}
@@ -251,8 +252,8 @@ export function RoomCardV2({
         activityLoading={activityLoading}
         expanded={expanded}
         isProcessing={isProcessing}
-        latestOutput={latestOutput}
         t={t}
+        visibleActivityCount={agentMessages.length + watcherMessages.length}
       />
       {expanded ? (
         <RoomExpandedContent
@@ -541,18 +542,23 @@ function LiveProgressBody({ text }: { text: string }) {
 }
 
 function CollapsedOutputPreview({
+  agentMessages,
   expanded,
   isProcessing,
   latestOutput,
 }: {
+  agentMessages: RoomThreadEntry[];
   expanded: boolean;
   isProcessing: boolean;
   latestOutput: RoomOutput | null;
 }) {
-  if (expanded || !latestOutput || isProcessing) return null;
+  const latestThreadEntry = agentMessages.at(-1) ?? null;
+  const previewText =
+    latestOutput?.outputText ?? latestThreadEntry?.content ?? null;
+  if (expanded || !previewText || isProcessing) return null;
   return (
     <div className="room-preview">
-      <ParsedBody text={latestOutput.outputText} truncate={140} />
+      <ParsedBody text={previewText} truncate={140} />
     </div>
   );
 }
@@ -592,18 +598,18 @@ function CollapsedEmptyState({
   activityLoading,
   expanded,
   isProcessing,
-  latestOutput,
   t,
+  visibleActivityCount,
 }: {
   activity: DashboardRoomActivity | undefined;
   activityLoading: boolean;
   expanded: boolean;
   isProcessing: boolean;
-  latestOutput: RoomOutput | null;
   t: Messages;
+  visibleActivityCount: number;
 }) {
   if (expanded) return null;
-  if (!latestOutput && !isProcessing && !activityLoading) {
+  if (visibleActivityCount === 0 && !isProcessing && !activityLoading) {
     return <p className="room-empty">{t.rooms.noActivity}</p>;
   }
   if (activityLoading && !activity) {

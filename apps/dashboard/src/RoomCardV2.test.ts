@@ -115,6 +115,53 @@ describe('RoomCardV2', () => {
     expect(html).toContain('prod 배포 완료');
   });
 
+  it('uses canonical room messages for collapsed previews when outputs are empty', () => {
+    const html = renderToStaticMarkup(
+      createElement(RoomCardV2, {
+        activity: activity({
+          messages: [
+            {
+              id: 'bot-1',
+              sender: 'bot-1',
+              senderName: 'owner',
+              content: 'TASK_DONE\n\nprod 배포 완료',
+              timestamp: '2026-04-28T02:00:00.000Z',
+              isFromMe: false,
+              isBotMessage: true,
+              sourceKind: 'bot',
+            },
+          ],
+          pairedTask: {
+            id: 'task-1',
+            title: 'Deploy production',
+            status: 'completed',
+            roundTripCount: 1,
+            updatedAt: '2026-04-28T02:01:00.000Z',
+            currentTurn: null,
+            outputs: [],
+          },
+        }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry,
+        expanded: false,
+        inboxItems: [],
+        locale: 'ko',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: false,
+        t,
+        ...formatters,
+      }),
+    );
+
+    expect(html).toContain('TASK_DONE');
+    expect(html).toContain('prod 배포 완료');
+    expect(html).not.toContain(t.rooms.noActivity);
+  });
+
   it('localizes protocol role and verdict labels in Korean rooms', () => {
     const html = renderToStaticMarkup(
       createElement(RoomCardV2, {
