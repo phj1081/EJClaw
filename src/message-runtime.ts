@@ -1,6 +1,5 @@
 import {
   createProducedWorkItem,
-  hasActiveCiWatcherForChat,
   getOpenWorkItemForChat,
   getMessagesSinceSeq,
   getLatestOpenPairedTaskForChat,
@@ -43,10 +42,7 @@ import {
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
 import { resolveOwnerTaskForHumanMessage } from './paired-execution-context.js';
-import {
-  enqueuePairedFollowUpAfterEvent,
-  schedulePairedFollowUpWithMessageCheck,
-} from './message-runtime-follow-up.js';
+import { schedulePairedFollowUpWithMessageCheck } from './message-runtime-follow-up.js';
 import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { transitionPairedTaskStatus } from './paired-task-status.js';
 import {
@@ -77,6 +73,7 @@ import {
   getFreshHumanPreflightMessages,
   hasHumanMessageAfterWorkItem,
 } from './message-runtime-preflight-messages.js';
+import { handleMessageRuntimeAfterDeliverySuccess } from './message-runtime-after-delivery.js';
 
 export { isDuplicateOfLastBotFinal };
 
@@ -243,56 +240,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       deliveryRole,
       pairedRoom,
     }) => {
-      if (!deliveryRole || !pairedRoom) {
-        return;
-      }
-      const pendingTaskAfterDelivery = getLatestOpenPairedTaskForChat(chatJid);
-      if (
-        deliveryRole === 'owner' &&
-        pendingTaskAfterDelivery?.status === 'review_ready' &&
-        hasActiveCiWatcherForChat(chatJid)
-      ) {
-        logger.info(
-          {
-            chatJid,
-            runId,
-            completedRole: deliveryRole,
-            taskId: pendingTaskAfterDelivery.id,
-            taskStatus: pendingTaskAfterDelivery.status,
-          },
-          'Deferred paired follow-up after successful owner delivery because CI watcher is still active',
-        );
-        return;
-      }
-      const followUpResult = enqueuePairedFollowUpAfterEvent({
+      await handleMessageRuntimeAfterDeliverySuccess({
         chatJid,
         runId,
-        task: pendingTaskAfterDelivery,
-        source: 'delivery-success',
-        completedRole: deliveryRole,
-        fallbackLastTurnOutputRole: deliveryRole,
-        enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
+        deliveryRole,
+        pairedRoom,
+        enqueueMessageCheck: (targetChatJid) =>
+          deps.queue.enqueueMessageCheck(targetChatJid),
       });
-      if (followUpResult.kind === 'paired-follow-up') {
-        logger.info(
-          {
-            chatJid,
-            runId,
-            completedRole: deliveryRole,
-            taskId: followUpResult.taskId,
-            taskStatus: followUpResult.taskStatus,
-            intentKind: followUpResult.intentKind,
-            scheduled: followUpResult.scheduled,
-          },
-          followUpResult.scheduled
-            ? deliveryRole === 'owner'
-              ? 'Queued paired follow-up after successful owner delivery'
-              : 'Queued paired follow-up after successful reviewer/arbiter delivery'
-            : deliveryRole === 'owner'
-              ? 'Skipped duplicate paired follow-up after successful owner delivery while task state was unchanged'
-              : 'Skipped duplicate paired follow-up after successful reviewer/arbiter delivery while task state was unchanged',
-        );
-      }
     },
   });
 
