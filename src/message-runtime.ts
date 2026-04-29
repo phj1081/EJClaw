@@ -35,15 +35,8 @@ import {
 } from './message-runtime-rules.js';
 import { resolveOwnerTaskForHumanMessage } from './paired-execution-context.js';
 import { schedulePairedFollowUpWithMessageCheck } from './message-runtime-follow-up.js';
-import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { transitionPairedTaskStatus } from './paired-task-status.js';
-import {
-  Channel,
-  NewMessage,
-  type PairedRoomRole,
-  RegisteredGroup,
-  type PairedTask,
-} from './types.js';
+import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { createScopedLogger, logger } from './logger.js';
 import { hasReviewerLease } from './service-routing.js';
 export {
@@ -123,23 +116,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const enqueueScopedGroupMessageCheck = buildScopedMessageCheckEnqueuer(
     deps.queue,
   );
-
-  const scheduleQueuedPairedFollowUp = (args: {
-    chatJid: string;
-    runId: string;
-    task: PairedTask | null | undefined;
-    intentKind: ScheduledPairedFollowUpIntentKind;
-    enqueue: () => void;
-    fallbackLastTurnOutputRole?: PairedRoomRole | null;
-  }): boolean =>
-    schedulePairedFollowUpWithMessageCheck({
-      chatJid: args.chatJid,
-      runId: args.runId,
-      task: args.task,
-      intentKind: args.intentKind,
-      enqueueMessageCheck: args.enqueue,
-      fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
-    });
 
   /**
    * Check if a message is a duplicate of the last bot final message in a paired room.
@@ -559,7 +535,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           hasImplicitContinuationWindow: continuationTracker.has,
           executeTurn,
           enqueuePendingHandoffs,
-          scheduleQueuedPairedFollowUp,
+          schedulePairedFollowUpWithMessageCheck,
           enqueueScopedGroupMessageCheck,
           sendQueuedMessage: deps.queue.sendMessage.bind(deps.queue),
           closeStdin: (chatJid, reason) =>
