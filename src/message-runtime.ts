@@ -13,7 +13,7 @@ import {
   SERVICE_SESSION_SCOPE,
 } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
-import { findChannel, findChannelByName, formatMessages } from './router.js';
+import { findChannel, formatMessages } from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { enqueueGenericFollowUpAfterDeliveryRetry as enqueueDeliveryRetryFollowUp } from './message-runtime-dispatch.js';
 import {
@@ -73,6 +73,7 @@ import {
   isDuplicateOfLastBotFinal,
   labelPairedSenders,
 } from './message-runtime-turns.js';
+import { resolvePairedRoleChannels } from './message-runtime-role-channels.js';
 
 export { isDuplicateOfLastBotFinal };
 
@@ -381,28 +382,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return true;
     }
 
-    // For paired rooms, reviewer/arbiter outputs use their fixed role bots.
-    const reviewerChannelName = 'discord-review';
-    const foundReviewerChannel = findChannelByName(
-      deps.channels,
+    const {
+      roleToChannel,
       reviewerChannelName,
-    );
-
-    const arbiterChannelName = 'discord-arbiter';
-    const foundArbiterChannel = findChannelByName(
-      deps.channels,
+      foundReviewerChannel,
       arbiterChannelName,
-    );
-
-    // Resolve the correct Discord channel for a given task status.
-    const roleToChannel: Record<
-      'owner' | 'reviewer' | 'arbiter',
-      Channel | null
-    > = {
-      owner: channel,
-      reviewer: foundReviewerChannel || null,
-      arbiter: foundArbiterChannel || null,
-    };
+      foundArbiterChannel,
+    } = resolvePairedRoleChannels(deps.channels, channel);
     if (hasReviewerLease(chatJid)) {
       log.info(
         {
