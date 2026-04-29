@@ -166,11 +166,11 @@ export async function runQueuedGroupTurn(args: {
       )
     : !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
   let fallbackMessages = missedMessages;
-  if (currentTask && hasHumanMsg) {
+  if (currentTask !== undefined && hasHumanMsg) {
     const resolvedTask = resolveOwnerTaskForHumanMessage({
       group,
       chatJid,
-      existingTask: currentTask,
+      existingTask: currentTask ?? null,
     });
     currentTask = resolvedTask.task;
     if (resolvedTask.supersededTask) {

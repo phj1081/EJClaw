@@ -490,8 +490,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         timezone: deps.timezone,
         missedMessages,
         task: hasReviewerLease(chatJid)
-          ? getLatestOpenPairedTaskForChat(chatJid)
-          : null,
+          ? (getLatestOpenPairedTaskForChat(chatJid) ?? null)
+          : undefined,
         roleToChannel,
         ownerChannel: channel,
         lastAgentTimestamps: deps.getLastAgentTimestamps(),
