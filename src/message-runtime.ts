@@ -48,7 +48,7 @@ import {
   schedulePairedFollowUpWithMessageCheck,
 } from './message-runtime-follow-up.js';
 import { type ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
-import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
+import { transitionPairedTaskStatus } from './paired-task-status.js';
 import {
   Channel,
   NewMessage,

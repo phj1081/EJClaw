@@ -49,7 +49,7 @@ import {
 import {
   applyPairedTaskPatch,
   transitionPairedTaskStatus,
-} from './paired-execution-context-shared.js';
+} from './paired-task-status.js';
 import { requestArbiterOrEscalate } from './paired-arbiter-request.js';
 import { resolveCanonicalSourceRef } from './paired-source-ref.js';
 import {
