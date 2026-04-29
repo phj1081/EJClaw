@@ -33,7 +33,7 @@ agent-browser goto <url>      # Navigate to URL
 agent-browser back            # Go back
 agent-browser forward         # Go forward
 agent-browser reload          # Reload page
-agent-browser url             # Get current URL
+agent-browser get url         # Get current URL
 ```
 
 ### Snapshot (page analysis)
@@ -66,12 +66,12 @@ agent-browser viewport 1280x720  # Set viewport size
 ### Content extraction
 
 ```bash
-agent-browser text                # Get all page text
-agent-browser text @e1            # Get element text
-agent-browser html @e1            # Get innerHTML
-agent-browser links               # Get all links
-agent-browser forms               # Get all forms
-agent-browser accessibility       # Full accessibility tree
+agent-browser get text body       # Get all page text
+agent-browser get text @e1        # Get element text
+agent-browser get html @e1        # Get innerHTML
+agent-browser eval "Array.from(document.links).map(a => a.href)"
+agent-browser eval "Array.from(document.forms).map(f => f.action)"
+agent-browser snapshot            # Full accessibility tree
 ```
 
 ### Screenshots & PDF
@@ -159,7 +159,7 @@ agent-browser snapshot -i  # Check result
 ```bash
 agent-browser goto https://example.com/products
 agent-browser snapshot -i
-agent-browser text @e1            # Get product title
+agent-browser get text @e1        # Get product title
 agent-browser screenshot items.png
 ```
 
