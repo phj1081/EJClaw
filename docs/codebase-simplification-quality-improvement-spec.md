@@ -45,7 +45,7 @@ There are also several signs that the code is already moving in the right direct
 
 - `src/message-runtime-*` is already split by responsibility.
 - `src/provider-retry.ts` is a good example of extracting real duplication.
-- `src/paired-execution-context-shared.ts` is already acting as a central status-transition guard.
+- `src/paired-task-status.ts` is already acting as a central status-transition guard.
 - `setup/register.ts` is already much simpler than older compatibility assumptions would suggest.
 
 So the right move is **targeted simplification**, not broad reorganization.
@@ -533,7 +533,7 @@ This is not a request to rewrite all domain types. It is a request to stop overl
 
 ### Status transition rule
 
-All paired-task status writes should continue converging on `src/paired-execution-context-shared.ts`. Do not allow status mutation rules to scatter again.
+All paired-task status writes should continue converging on `src/paired-task-status.ts`. Do not allow status mutation rules to scatter again.
 
 ### Acceptance criteria
 
