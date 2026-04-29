@@ -58,7 +58,6 @@ import {
 } from './types.js';
 import { createScopedLogger, logger } from './logger.js';
 import { hasReviewerLease } from './service-routing.js';
-import type { WorkItem } from './db/work-items.js';
 export {
   resolveHandoffCursorKey,
   resolveHandoffRoleOverride,
@@ -74,6 +73,10 @@ import {
   labelPairedSenders,
 } from './message-runtime-turns.js';
 import { resolvePairedRoleChannels } from './message-runtime-role-channels.js';
+import {
+  getFreshHumanPreflightMessages,
+  hasHumanMessageAfterWorkItem,
+} from './message-runtime-preflight-messages.js';
 
 export { isDuplicateOfLastBotFinal };
 
@@ -130,54 +133,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const enqueueScopedGroupMessageCheck = buildScopedMessageCheckEnqueuer(
     deps.queue,
   );
-
-  const getFreshHumanPreflightMessages = (
-    chatJid: string,
-    channel: Channel,
-  ): NewMessage[] => {
-    const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
-    const preflightRawMessages = getMessagesSinceSeq(
-      chatJid,
-      sinceSeqCursor,
-      deps.assistantName,
-    );
-    const preflightMessages = filterLoopingPairedBotMessages(
-      chatJid,
-      getProcessableMessages(chatJid, preflightRawMessages, channel),
-      FAILURE_FINAL_TEXT,
-    );
-    return preflightMessages.filter(
-      (message) => message.is_from_me !== true && !message.is_bot_message,
-    );
-  };
-
-  const hasHumanMessageAfterWorkItem = (
-    openWorkItem: WorkItem,
-    freshHumanMessages: NewMessage[],
-  ): boolean => {
-    if (freshHumanMessages.length === 0) {
-      return false;
-    }
-
-    const workItemSeq = openWorkItem.end_seq ?? openWorkItem.start_seq ?? null;
-    const workItemUpdatedAt = Date.parse(openWorkItem.updated_at);
-
-    return freshHumanMessages.some((message) => {
-      if (message.seq != null && workItemSeq != null) {
-        return message.seq > workItemSeq;
-      }
-
-      const messageTimestamp = Date.parse(message.timestamp);
-      if (
-        Number.isFinite(messageTimestamp) &&
-        Number.isFinite(workItemUpdatedAt)
-      ) {
-        return messageTimestamp > workItemUpdatedAt;
-      }
-
-      return true;
-    });
-  };
 
   const scheduleQueuedPairedFollowUp = (args: {
     chatJid: string;
@@ -409,10 +364,13 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       : null;
     let openWorkItem = getOpenWorkItemForChat(chatJid, SERVICE_SESSION_SCOPE);
     if (openWorkItem?.delivery_role === 'owner' && pendingTask) {
-      const freshHumanMessages = getFreshHumanPreflightMessages(
+      const freshHumanMessages = getFreshHumanPreflightMessages({
         chatJid,
         channel,
-      );
+        lastAgentTimestamps: deps.getLastAgentTimestamps(),
+        assistantName: deps.assistantName,
+        failureFinalText: FAILURE_FINAL_TEXT,
+      });
       if (
         pendingTask.status === 'merge_ready' &&
         freshHumanMessages.length > 0
