@@ -93,19 +93,21 @@ GROQ_API_KEY=
 MOA_ENABLED=true
 MOA_REF_MODELS=kimi,glm
 
-MOA_KIMI_MODEL=kimi-k2.5
+MOA_KIMI_MODEL=kimi-k2.6
 MOA_KIMI_BASE_URL=https://api.kimi.com/coding
 MOA_KIMI_API_KEY=sk-kimi-xxx
 MOA_KIMI_API_FORMAT=anthropic
 
-MOA_GLM_MODEL=glm-4-plus
-MOA_GLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+MOA_GLM_MODEL=glm-5.1
+MOA_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
 MOA_GLM_API_KEY=xxx
 MOA_GLM_API_FORMAT=anthropic
 ```
 
 MoA는 arbiter 판정 전에 외부 모델 의견을 수집해 prompt에 주입합니다.
-`API_FORMAT` 같은 항목은 `.env.example`의 최소 예시에 없는 운영 확장 키입니다.
+대시보드 설정 화면에서 `MOA_ENABLED`, `MOA_REF_MODELS`, 모델명, base URL,
+API format, API key 교체와 연결 테스트를 관리할 수 있습니다. 저장 후에는
+스택 재시작이 필요합니다.
 
 ## 운영 / 배포 관련 설정
 
@@ -122,18 +124,18 @@ MAX_CONCURRENT_AGENTS=5
 
 ## 디버깅 경로
 
-| 항목 | 경로 / 명령 |
-| --- | --- |
-| DB | `store/messages.db` |
-| 서비스 로그 | `journalctl --user -u ejclaw -f` |
-| room 로그 | `groups/{folder}/logs/` |
-| owner/reviewer 세션 | `data/sessions/{folder}*` |
-| owner worktree | `data/workspaces/{folder}/owner` |
-| Claude 플랫폼 프롬프트 | `prompts/claude-platform.md` |
-| reviewer 프롬프트 | `prompts/claude-paired-room.md` |
-| arbiter 프롬프트 | `prompts/arbiter-paired-room.md` |
-| Codex 플랫폼 프롬프트 | `prompts/codex-platform.md` |
-| 글로벌 메모리 | `groups/global/CLAUDE.md` |
+| 항목                   | 경로 / 명령                      |
+| ---------------------- | -------------------------------- |
+| DB                     | `store/messages.db`              |
+| 서비스 로그            | `journalctl --user -u ejclaw -f` |
+| room 로그              | `groups/{folder}/logs/`          |
+| owner/reviewer 세션    | `data/sessions/{folder}*`        |
+| owner worktree         | `data/workspaces/{folder}/owner` |
+| Claude 플랫폼 프롬프트 | `prompts/claude-platform.md`     |
+| reviewer 프롬프트      | `prompts/claude-paired-room.md`  |
+| arbiter 프롬프트       | `prompts/arbiter-paired-room.md` |
+| Codex 플랫폼 프롬프트  | `prompts/codex-platform.md`      |
+| 글로벌 메모리          | `groups/global/CLAUDE.md`        |
 
 ## 문서와 실제 코드의 우선순위
 

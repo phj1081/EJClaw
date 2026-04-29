@@ -862,6 +862,46 @@ button:disabled {
   min-width: 0;
 }
 
+.settings-moa-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.settings-moa-grid {
+  display: grid;
+  grid-template-columns:
+    82px minmax(110px, 1fr) minmax(170px, 1.3fr) 104px
+    minmax(120px, 1fr) minmax(120px, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.settings-moa-grid input,
+.settings-moa-grid select {
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--bg-ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-moa-name {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.settings-moa-grid .settings-account-badge {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-account-tag {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 11px;

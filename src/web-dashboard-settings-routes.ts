@@ -16,6 +16,12 @@ import {
   type FastModeSnapshot,
   type ModelConfigSnapshot,
 } from './settings-store.js';
+import {
+  checkMoaModel,
+  getMoaSettings,
+  updateMoaSettings,
+  type MoaSettingsSnapshot,
+} from './settings-store-moa.js';
 
 type JsonResponse = (
   value: unknown,
@@ -25,9 +31,11 @@ type JsonResponse = (
 
 export interface SettingsRouteDependencies {
   addClaudeAccountFromToken: typeof addClaudeAccountFromToken;
+  checkMoaModel: typeof checkMoaModel;
   getActiveCodexSettingsIndex: typeof getActiveCodexSettingsIndex;
   getFastMode: typeof getFastMode;
   getModelConfig: typeof getModelConfig;
+  getMoaSettings: typeof getMoaSettings;
   listClaudeAccounts: typeof listClaudeAccounts;
   listCodexAccounts: typeof listCodexAccounts;
   refreshAllCodexAccounts: typeof refreshAllCodexAccounts;
@@ -36,6 +44,7 @@ export interface SettingsRouteDependencies {
   setActiveCodexSettingsIndex: typeof setActiveCodexSettingsIndex;
   updateFastMode: typeof updateFastMode;
   updateModelConfig: typeof updateModelConfig;
+  updateMoaSettings: typeof updateMoaSettings;
 }
 
 interface SettingsRouteContext {
@@ -47,9 +56,11 @@ interface SettingsRouteContext {
 
 const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   addClaudeAccountFromToken,
+  checkMoaModel,
   getActiveCodexSettingsIndex,
   getFastMode,
   getModelConfig,
+  getMoaSettings,
   listClaudeAccounts,
   listCodexAccounts,
   refreshAllCodexAccounts,
@@ -58,6 +69,7 @@ const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   setActiveCodexSettingsIndex,
   updateFastMode,
   updateModelConfig,
+  updateMoaSettings,
 };
 
 function readMethod(method: string): boolean {
@@ -118,6 +130,43 @@ async function handleFastModeRoute(
     return jsonResponse(deps.updateFastMode(body));
   } catch (err) {
     return jsonResponse({ error: errorMessage(err) }, { status: 500 });
+  }
+}
+
+async function handleMoaSettingsRoute(
+  request: Request,
+  jsonResponse: JsonResponse,
+  deps: SettingsRouteDependencies,
+): Promise<Response | null> {
+  if (readMethod(request.method)) return jsonResponse(deps.getMoaSettings());
+  if (request.method !== 'PUT' && request.method !== 'PATCH') return null;
+
+  const body = await readJsonObject(request, jsonResponse);
+  if (body instanceof Response) return body;
+  try {
+    return jsonResponse(deps.updateMoaSettings(body));
+  } catch (err) {
+    return jsonResponse({ error: errorMessage(err) }, { status: 500 });
+  }
+}
+
+async function handleMoaCheckRoute(
+  request: Request,
+  jsonResponse: JsonResponse,
+  deps: SettingsRouteDependencies,
+): Promise<Response | null> {
+  if (request.method !== 'POST') return null;
+
+  const body = await readJsonObject(request, jsonResponse);
+  if (body instanceof Response) return body;
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name)
+    return jsonResponse({ error: 'name is required' }, { status: 400 });
+
+  try {
+    return jsonResponse({ ok: true, status: await deps.checkMoaModel(name) });
+  } catch (err) {
+    return jsonResponse({ error: errorMessage(err) }, { status: 400 });
   }
 }
 
@@ -250,6 +299,12 @@ export async function handleSettingsRoute({
   if (url.pathname === '/api/settings/fast-mode') {
     return handleFastModeRoute(request, jsonResponse, deps);
   }
+  if (url.pathname === '/api/settings/moa') {
+    return handleMoaSettingsRoute(request, jsonResponse, deps);
+  }
+  if (url.pathname === '/api/settings/moa/check') {
+    return handleMoaCheckRoute(request, jsonResponse, deps);
+  }
   if (url.pathname === '/api/settings/accounts/claude') {
     return handleClaudeAccountAddRoute(request, jsonResponse, deps);
   }
@@ -282,4 +337,5 @@ export type {
   CodexAccountSummary,
   FastModeSnapshot,
   ModelConfigSnapshot,
+  MoaSettingsSnapshot,
 };

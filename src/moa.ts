@@ -30,6 +30,35 @@ export interface MoaReferenceResult {
   error?: string;
 }
 
+export interface MoaReferenceStatus {
+  model: string;
+  checkedAt: string;
+  ok: boolean;
+  error: string | null;
+  responseLength?: number;
+}
+
+const referenceStatuses = new Map<string, MoaReferenceStatus>();
+
+function normalizeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function recordReferenceStatus(
+  status: Omit<MoaReferenceStatus, 'checkedAt'>,
+): MoaReferenceStatus {
+  const next: MoaReferenceStatus = {
+    ...status,
+    checkedAt: new Date().toISOString(),
+  };
+  referenceStatuses.set(status.model, next);
+  return next;
+}
+
+export function getMoaReferenceStatuses(): MoaReferenceStatus[] {
+  return [...referenceStatuses.values()];
+}
+
 async function queryModel(
   model: MoaModelConfig,
   systemPrompt: string,
@@ -138,19 +167,48 @@ export async function collectMoaReferences(args: {
   return results.map((result, i) => {
     const model = config.referenceModels[i].name;
     if (result.status === 'fulfilled') {
+      recordReferenceStatus({
+        model,
+        ok: true,
+        error: null,
+        responseLength: result.value.length,
+      });
       logger.info(
         { model, responseLen: result.value.length },
         'MoA: reference model responded',
       );
       return { model, response: result.value };
     }
-    const error =
-      result.reason instanceof Error
-        ? result.reason.message
-        : String(result.reason);
+    const error = normalizeError(result.reason);
+    recordReferenceStatus({ model, ok: false, error });
     logger.warn({ model, error }, 'MoA: reference model failed');
     return { model, response: '', error };
   });
+}
+
+export async function probeMoaReferenceModel(
+  model: MoaModelConfig,
+): Promise<MoaReferenceStatus> {
+  try {
+    const response = await queryModel(
+      model,
+      'You are a configuration health check. Reply with a short plain-text OK.',
+      'Reply exactly: OK',
+      20_000,
+    );
+    return recordReferenceStatus({
+      model: model.name,
+      ok: true,
+      error: null,
+      responseLength: response.length,
+    });
+  } catch (err) {
+    return recordReferenceStatus({
+      model: model.name,
+      ok: false,
+      error: normalizeError(err),
+    });
+  }
 }
 
 /**
