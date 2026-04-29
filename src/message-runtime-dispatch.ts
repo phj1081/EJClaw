@@ -30,6 +30,12 @@ import type {
 
 type RuntimeLog = Pick<typeof logger, 'info' | 'debug'>;
 
+function hasExternalHumanMessage(messages: NewMessage[]): boolean {
+  return messages.some(
+    (message) => message.is_from_me !== true && !message.is_bot_message,
+  );
+}
+
 export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
   chatJid: string;
   runId: string;
@@ -235,6 +241,7 @@ export async function processLoopGroupMessages(args: {
   enqueueMessageCheck: () => void;
   sendQueuedMessage: (chatJid: string, text: string) => boolean;
   closeStdin: (reason: string) => void;
+  isRunningMessageTurn: (chatJid: string) => boolean;
   labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
   formatMessages: (messages: NewMessage[], timezone: string) => string;
 }): Promise<void> {
@@ -292,6 +299,25 @@ export async function processLoopGroupMessages(args: {
       args.closeStdin('session-command-detected');
     }
     args.enqueueMessageCheck();
+    return;
+  }
+
+  if (hasExternalHumanMessage(processableGroupMessages)) {
+    const interruptedActiveRun = args.isRunningMessageTurn(chatJid);
+    if (interruptedActiveRun) {
+      args.closeStdin('human-message-detected');
+    }
+    args.enqueueMessageCheck();
+    logger.info(
+      {
+        chatJid,
+        group: group.name,
+        groupFolder: group.folder,
+        messageCount: processableGroupMessages.length,
+        interruptedActiveRun,
+      },
+      'Queued human message for a fresh turn instead of piping into active agent',
+    );
     return;
   }
 

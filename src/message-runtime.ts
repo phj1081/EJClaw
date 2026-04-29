@@ -536,6 +536,9 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
             deps.queue.closeStdin(chatJid, {
               reason,
             }),
+          isRunningMessageTurn: (chatJid) =>
+            deps.queue.getStatuses([chatJid])[0]?.runPhase ===
+            'running_messages',
           labelPairedSenders: labelPairedRuntimeSenders,
         });
       } catch (err) {

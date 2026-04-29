@@ -40,6 +40,7 @@ export async function processMessageLoopTick(args: {
   ) => void;
   sendQueuedMessage: (chatJid: string, text: string) => boolean;
   closeStdin: (chatJid: string, reason: string) => void;
+  isRunningMessageTurn: (chatJid: string) => boolean;
   labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
 }): Promise<void> {
   args.enqueuePendingHandoffs();
@@ -105,6 +106,7 @@ export async function processMessageLoopTick(args: {
         args.enqueueScopedGroupMessageCheck(chatJid, group.folder),
       sendQueuedMessage: args.sendQueuedMessage,
       closeStdin: (reason) => args.closeStdin(chatJid, reason),
+      isRunningMessageTurn: args.isRunningMessageTurn,
       labelPairedSenders: args.labelPairedSenders,
       formatMessages,
     });
