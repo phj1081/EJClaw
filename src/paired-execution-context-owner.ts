@@ -9,9 +9,9 @@ import {
 } from './db.js';
 import { logger } from './logger.js';
 import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
+import { requestArbiterOrEscalate } from './paired-arbiter-request.js';
 import {
   applyPairedTaskPatch,
-  requestArbiterOrEscalate,
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import { resolveOwnerCompletionSignal } from './paired-completion-signals.js';
