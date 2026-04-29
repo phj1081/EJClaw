@@ -46,7 +46,6 @@ import {
   extractAssistantText,
   normalizeStructuredOutput,
   readStdin,
-  type RunnerOutput,
   writeOutput,
 } from './output-protocol.js';
 import {
@@ -409,7 +408,6 @@ async function runQuery(
       (message as { subtype?: string }).subtype === 'task_progress'
     ) {
       const tp = message as Record<string, unknown>;
-      const summary = typeof tp.summary === 'string' ? tp.summary : '';
       const description =
         typeof tp.description === 'string' ? tp.description : '';
       const mapped = buildTaskProgressOutput(

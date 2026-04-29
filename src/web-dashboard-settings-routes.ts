@@ -68,7 +68,7 @@ async function readJsonObject(
   request: Request,
   jsonResponse: JsonResponse,
 ): Promise<Record<string, unknown> | Response> {
-  let body: unknown = null;
+  let body: unknown;
   try {
     body = await request.json();
   } catch {
@@ -141,7 +141,7 @@ async function handleClaudeAccountAddRoute(
 ): Promise<Response | null> {
   if (request.method !== 'POST') return null;
 
-  let body: { token?: unknown } | null = null;
+  let body: { token?: unknown };
   try {
     body = (await request.json()) as { token?: unknown };
   } catch {
@@ -213,7 +213,7 @@ async function handleCodexCurrentRoute(
 ): Promise<Response | null> {
   if (request.method !== 'PUT') return null;
 
-  let body: { index?: unknown } | null = null;
+  let body: { index?: unknown };
   try {
     body = (await request.json()) as { index?: unknown };
   } catch {

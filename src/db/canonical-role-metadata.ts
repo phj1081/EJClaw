@@ -20,7 +20,7 @@ interface RequiredRoleMetadataInput {
   fallbackAgentType?: AgentType | null;
 }
 
-interface OptionalRoleMetadataInput extends RequiredRoleMetadataInput {}
+type OptionalRoleMetadataInput = RequiredRoleMetadataInput;
 
 function resolveFilledRequiredAgentType(
   input: RequiredRoleMetadataInput,

@@ -190,7 +190,7 @@ export async function checkGitHubActionsRun(
     };
   }
 
-  let failedJobs: string[] = [];
+  let failedJobs: string[];
   try {
     failedJobs = await fetchFailedJobs(metadata);
   } catch {

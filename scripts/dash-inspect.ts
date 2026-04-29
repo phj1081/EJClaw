@@ -81,7 +81,6 @@ async function measure(page: Page, sel: string) {
 
 async function evalExpr(page: Page, expr: string) {
   const result = await page.evaluate((e) => {
-    // eslint-disable-next-line no-eval
     return eval(e);
   }, expr);
   console.log(JSON.stringify(result, null, 2));

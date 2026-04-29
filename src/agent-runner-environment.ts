@@ -487,9 +487,6 @@ export function prepareGroupEnvironment(
   const ownerCommonPairedRoomPrompt = isPairedRoom
     ? readOptionalPromptFile(projectRoot, 'owner-common-paired-room.md')
     : undefined;
-  const claudePairedRoomPrompt = isPairedRoom
-    ? readPairedRoomPrompt('claude-code', projectRoot)
-    : undefined;
   const globalClaudeMemory =
     !isMain && fs.existsSync(globalClaudeMdPath)
       ? fs.readFileSync(globalClaudeMdPath, 'utf-8').trim()

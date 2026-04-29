@@ -81,12 +81,6 @@ export interface SessionCommandDeps {
   killProcess: () => boolean;
 }
 
-function resultToText(result: string | object | null | undefined): string {
-  if (!result) return '';
-  const raw = typeof result === 'string' ? result : JSON.stringify(result);
-  return formatOutbound(raw);
-}
-
 function agentResultToText(result: AgentResult): string {
   const raw = getAgentOutputText({
     result: result.result ?? null,
@@ -126,10 +120,6 @@ export async function handleSessionCommand(opts: {
   const command = cmdMsg
     ? extractSessionCommand(cmdMsg.content, triggerPattern)
     : null;
-  const normalizedCommandText = cmdMsg
-    ? normalizeSessionCommandText(cmdMsg.content, triggerPattern)
-    : '';
-
   if (!command || !cmdMsg) return { handled: false };
 
   if (

@@ -155,7 +155,7 @@ function getStoredRoomRoleOverrideRows(
     agent_config_json: string | null;
     created_at: string;
     updated_at: string;
-  }> = [];
+  }>;
   try {
     rows = database
       .prepare(

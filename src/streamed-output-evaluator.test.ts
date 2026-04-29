@@ -533,11 +533,7 @@ describe('evaluateStreamedOutput', () => {
         reason: '429',
       });
 
-      const result = evaluateStreamedOutput(
-        errorOutput('429'),
-        freshState(),
-        claudeOpts,
-      );
+      evaluateStreamedOutput(errorOutput('429'), freshState(), claudeOpts);
       // Claude uses classifyRotationTrigger, not detectCodexRotationTrigger
       expect(detectCodexRotationTrigger).not.toHaveBeenCalled();
     });

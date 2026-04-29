@@ -18,9 +18,7 @@ import {
   updateScheduledTask,
 } from './api';
 import {
-  LOCALES,
   isLocale,
-  languageNames,
   localeTags,
   matchLocale,
   messages,
@@ -206,16 +204,6 @@ const ROOM_BOARD_FORMATTERS = {
   statusLabel,
 };
 
-function queueLabel(
-  pendingTasks: number,
-  pendingMessages: boolean,
-  t: Messages,
-) {
-  const parts = [`${pendingTasks} ${t.units.task}`];
-  if (pendingMessages) parts.push(t.units.messageShort);
-  return parts.join(' · ');
-}
-
 function buildRoomOptions(snapshots: StatusSnapshot[]): RoomOption[] {
   const rooms = new Map<string, RoomOption>();
   for (const snapshot of snapshots) {
@@ -231,33 +219,6 @@ function buildRoomOptions(snapshots: StatusSnapshot[]): RoomOption[] {
   }
   return [...rooms.values()].sort((a, b) =>
     `${a.name} ${a.folder}`.localeCompare(`${b.name} ${b.folder}`),
-  );
-}
-
-function LanguageSelector({
-  locale,
-  onLocaleChange,
-  t,
-}: {
-  locale: Locale;
-  onLocaleChange: (locale: Locale) => void;
-  t: Messages;
-}) {
-  return (
-    <label className="language-select">
-      <span>{t.language.label}</span>
-      <select
-        aria-label={t.language.label}
-        onChange={(event) => onLocaleChange(event.target.value as Locale)}
-        value={locale}
-      >
-        {LOCALES.map((item) => (
-          <option key={item} value={item}>
-            {languageNames[item]}
-          </option>
-        ))}
-      </select>
-    </label>
   );
 }
 

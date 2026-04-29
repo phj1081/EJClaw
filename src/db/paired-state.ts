@@ -20,7 +20,6 @@ import {
 import {
   AgentType,
   PairedProject,
-  PairedRoomRole,
   PairedTask,
   PairedTaskStatus,
   PairedTurnReservationIntentKind,

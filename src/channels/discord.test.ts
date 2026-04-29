@@ -125,8 +125,6 @@ vi.mock('discord.js', () => {
 });
 
 import { DiscordChannel, DiscordChannelOpts } from './discord.js';
-import { registerChannel } from './registry.js';
-import { getEnv } from '../env.js';
 import { logger } from '../logger.js';
 
 // --- Test helpers ---
@@ -787,8 +785,7 @@ describe('DiscordChannel', () => {
 
       await channel.sendMessage('dc:1234567890123456', 'Hello');
 
-      const fetchedChannel =
-        await currentClient().channels.fetch('1234567890123456');
+      await currentClient().channels.fetch('1234567890123456');
       expect(currentClient().channels.fetch).toHaveBeenCalledWith(
         '1234567890123456',
       );

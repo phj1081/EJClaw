@@ -17,7 +17,6 @@ import {
   getLatestPairedTurnForTask,
   getRecentDeliveredWorkItemsForChat,
   getRecentChatMessages,
-  getRecentChatMessagesBatch,
   getTaskById,
   hasMessage,
   storeChatMetadata,

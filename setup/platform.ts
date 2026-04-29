@@ -191,7 +191,7 @@ export function ensureLinuxReadonlySandboxAppArmorSupport(options?: {
   const sysctlContents =
     '# Managed by EJClaw setup to allow bubblewrap readonly sandboxing.\n' +
     'kernel.apparmor_restrict_unprivileged_userns=0\n';
-  let existingContents: string | null = null;
+  let existingContents: string | null;
 
   try {
     existingContents = readFileSyncFn(sysctlPath, 'utf-8');

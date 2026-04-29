@@ -11,7 +11,6 @@ import {
 } from './config.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
 import { findChannel, formatMessages } from './router.js';
-import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { enqueueGenericFollowUpAfterDeliveryRetry as enqueueDeliveryRetryFollowUp } from './message-runtime-dispatch.js';
 import { processOpenWorkItemDelivery } from './message-runtime-delivery.js';
 import { deliverCanonicalOutboundMessage } from './ipc-outbound-delivery.js';
@@ -340,7 +339,6 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       return true;
     }
 
-    const isMainGroup = group.isMain === true;
     while (true) {
       const sinceSeqCursor = deps.getLastAgentTimestamps()[chatJid] || '0';
       const rawMissedMessages = getMessagesSinceSeq(
