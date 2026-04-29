@@ -3,7 +3,6 @@ import {
   getMessagesSinceSeq,
   getLatestOpenPairedTaskForChat,
   markWorkItemDelivered,
-  getPairedTaskById,
   updatePairedTurnProgressText,
 } from './db.js';
 import {
@@ -17,10 +16,7 @@ import { enqueueGenericFollowUpAfterDeliveryRetry as enqueueDeliveryRetryFollowU
 import { processOpenWorkItemDelivery } from './message-runtime-delivery.js';
 import { deliverCanonicalOutboundMessage } from './ipc-outbound-delivery.js';
 import { handleQueuedRunGates } from './message-runtime-gating.js';
-import {
-  enqueuePendingHandoffs as enqueueClaimedServiceHandoffs,
-  processClaimedHandoff as processClaimedServiceHandoff,
-} from './message-runtime-handoffs.js';
+import { enqueueMessageRuntimePendingHandoffs } from './message-runtime-handoffs.js';
 import {
   buildScopedMessageCheckEnqueuer,
   processMessageLoopTick,
@@ -229,23 +225,14 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   });
 
   const enqueuePendingHandoffs = (): void => {
-    enqueueClaimedServiceHandoffs({
-      enqueueTask: (chatJid, taskId, task) => {
-        deps.queue.enqueueTask?.(chatJid, taskId, task);
-      },
-      processClaimedHandoff: async (handoff) => {
-        await processClaimedServiceHandoff({
-          handoff,
-          getRoomBindings: deps.getRoomBindings,
-          channels: deps.channels,
-          executeTurn,
-          lastAgentTimestamps: deps.getLastAgentTimestamps(),
-          saveState: deps.saveState,
-          getPairedTaskById,
-          enqueueMessageCheck: (chatJid) =>
-            deps.queue.enqueueMessageCheck(chatJid),
-        });
-      },
+    enqueueMessageRuntimePendingHandoffs({
+      enqueueTask: deps.queue.enqueueTask?.bind(deps.queue),
+      getRoomBindings: deps.getRoomBindings,
+      channels: deps.channels,
+      executeTurn,
+      getLastAgentTimestamps: deps.getLastAgentTimestamps,
+      saveState: deps.saveState,
+      enqueueMessageCheck: (chatJid) => deps.queue.enqueueMessageCheck(chatJid),
     });
   };
 
