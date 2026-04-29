@@ -10,6 +10,7 @@ import type {
   FastModeSnapshot,
   ModelConfigSnapshot,
 } from './settings-store.js';
+import type { MoaSettingsSnapshot } from './settings-store-moa.js';
 
 function jsonResponse(value: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(value), {
@@ -42,6 +43,36 @@ const modelConfig: ModelConfigSnapshot = {
 
 const fastMode: FastModeSnapshot = { codex: true, claude: false };
 
+const moaSettings: MoaSettingsSnapshot = {
+  enabled: true,
+  referenceModels: ['kimi', 'glm'],
+  models: [
+    {
+      name: 'kimi',
+      enabled: true,
+      model: 'kimi-k2.6',
+      baseUrl: 'https://api.kimi.com/coding',
+      apiFormat: 'anthropic',
+      apiKeyConfigured: true,
+      lastStatus: {
+        model: 'kimi',
+        checkedAt: '2026-04-30T00:00:00.000Z',
+        ok: false,
+        error: '402 Payment Required',
+      },
+    },
+    {
+      name: 'glm',
+      enabled: true,
+      model: 'glm-5.1',
+      baseUrl: 'https://open.bigmodel.cn/api/anthropic',
+      apiFormat: 'anthropic',
+      apiKeyConfigured: true,
+      lastStatus: null,
+    },
+  ],
+};
+
 function makeClaudeAccount(): ClaudeAccountSummary {
   return {
     index: 0,
@@ -68,9 +99,17 @@ function makeDeps(
 ): SettingsRouteDependencies {
   return {
     addClaudeAccountFromToken: () => ({ index: 2, accountId: null }),
+    checkMoaModel: async (name) => ({
+      model: name,
+      checkedAt: '2026-04-30T00:01:00.000Z',
+      ok: true,
+      error: null,
+      responseLength: 2,
+    }),
     getActiveCodexSettingsIndex: () => 1,
     getFastMode: () => fastMode,
     getModelConfig: () => modelConfig,
+    getMoaSettings: () => moaSettings,
     listClaudeAccounts: () => [makeClaudeAccount()],
     listCodexAccounts: () => [makeCodexAccount()],
     refreshAllCodexAccounts: async () => ({ refreshed: [1], failed: [] }),
@@ -79,6 +118,7 @@ function makeDeps(
     setActiveCodexSettingsIndex: () => undefined,
     updateFastMode: () => fastMode,
     updateModelConfig: () => modelConfig,
+    updateMoaSettings: () => moaSettings,
     ...overrides,
   };
 }
@@ -115,6 +155,17 @@ describe('web dashboard settings routes', () => {
     expect(mode?.status).toBe(200);
     await expect(mode?.json()).resolves.toEqual(fastMode);
 
+    const moa = await route('/api/settings/moa');
+    expect(moa?.status).toBe(200);
+    const moaJson = (await moa?.json()) as MoaSettingsSnapshot;
+    expect(moaJson.enabled).toBe(true);
+    expect(moaJson.models.find((model) => model.name === 'kimi')).toMatchObject(
+      {
+        enabled: true,
+        lastStatus: { ok: false, error: '402 Payment Required' },
+      },
+    );
+
     const unmatched = await route('/api/overview');
     expect(unmatched).toBeNull();
   });
@@ -135,6 +186,10 @@ describe('web dashboard settings routes', () => {
       updateModelConfig: (input) => {
         calls.push(`models:${JSON.stringify(input)}`);
         return modelConfig;
+      },
+      updateMoaSettings: (input) => {
+        calls.push(`moa:${JSON.stringify(input)}`);
+        return moaSettings;
       },
     });
 
@@ -174,11 +229,33 @@ describe('web dashboard settings routes', () => {
       ok: true,
       codexCurrentIndex: 1,
     });
+
+    const moa = await route(
+      '/api/settings/moa',
+      'PATCH',
+      { enabled: false, models: [{ name: 'kimi', enabled: false }] },
+      deps,
+    );
+    expect(moa?.status).toBe(200);
+
+    const check = await route(
+      '/api/settings/moa/check',
+      'POST',
+      { name: 'glm' },
+      deps,
+    );
+    expect(check?.status).toBe(200);
+    await expect(check?.json()).resolves.toMatchObject({
+      ok: true,
+      status: { model: 'glm', ok: true },
+    });
+
     expect(calls).toEqual([
       'models:{"owner":{"model":"gpt-5.5"}}',
       'add:claude-token',
       'delete:codex:4',
       'current:4',
+      'moa:{"enabled":false,"models":[{"name":"kimi","enabled":false}]}',
     ]);
   });
 });

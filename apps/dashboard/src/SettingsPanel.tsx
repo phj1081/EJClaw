@@ -18,6 +18,7 @@ import {
   updateModels,
 } from './api';
 import { LOCALES, languageNames, type Locale, type Messages } from './i18n';
+import { MoaSettingsPanel } from './MoaSettingsPanel';
 
 type AccountProvider = 'claude' | 'codex';
 
@@ -76,6 +77,8 @@ export function SettingsPanel({
       </section>
 
       <ModelSettings onRestartStack={onRestartStack} />
+
+      <MoaSettingsPanel onRestartStack={onRestartStack} />
 
       <FastModeSettings />
 

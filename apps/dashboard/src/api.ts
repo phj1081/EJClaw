@@ -388,6 +388,30 @@ export interface FastModeSnapshot {
   claude: boolean;
 }
 
+export interface MoaReferenceStatus {
+  model: string;
+  checkedAt: string;
+  ok: boolean;
+  error: string | null;
+  responseLength?: number;
+}
+
+export interface MoaModelSettingsSnapshot {
+  name: string;
+  enabled: boolean;
+  model: string;
+  baseUrl: string;
+  apiFormat: 'openai' | 'anthropic';
+  apiKeyConfigured: boolean;
+  lastStatus: MoaReferenceStatus | null;
+}
+
+export interface MoaSettingsSnapshot {
+  enabled: boolean;
+  referenceModels: string[];
+  models: MoaModelSettingsSnapshot[];
+}
+
 export async function fetchAccounts(): Promise<{
   claude: ClaudeAccountSummary[];
   codex: CodexAccountSummary[];
@@ -512,6 +536,67 @@ export async function updateFastMode(
     throw new Error(msg);
   }
   return (await response.json()) as FastModeSnapshot;
+}
+
+export async function fetchMoaSettings(): Promise<MoaSettingsSnapshot> {
+  return fetchJson('/api/settings/moa');
+}
+
+export async function updateMoaSettings(input: {
+  enabled?: boolean;
+  models?: Array<{
+    name: string;
+    enabled?: boolean;
+    model?: string;
+    baseUrl?: string;
+    apiFormat?: 'openai' | 'anthropic';
+    apiKey?: string;
+  }>;
+}): Promise<MoaSettingsSnapshot> {
+  const response = await fetch('/api/settings/moa', {
+    method: 'PUT',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let msg = `update MoA settings failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as MoaSettingsSnapshot;
+}
+
+export async function checkMoaModel(name: string): Promise<MoaReferenceStatus> {
+  const response = await fetch('/api/settings/moa/check', {
+    method: 'POST',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    let msg = `check MoA model failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  const payload = (await response.json()) as {
+    status: MoaReferenceStatus;
+  };
+  return payload.status;
 }
 
 export async function deleteAccount(
