@@ -96,6 +96,13 @@ describe('paired completion signals', () => {
     ).toEqual({ kind: 'request_owner_changes' });
     expect(
       resolveReviewerCompletionSignal({
+        visibleVerdict: 'step_done',
+        roundTripCount: 3,
+        deadlockThreshold: 3,
+      }),
+    ).toEqual({ kind: 'request_arbiter' });
+    expect(
+      resolveReviewerCompletionSignal({
         visibleVerdict: 'done',
         roundTripCount: 0,
         deadlockThreshold: 3,

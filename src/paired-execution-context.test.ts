@@ -866,7 +866,7 @@ describe('paired execution context', () => {
       'task-1',
       expect.objectContaining({
         round_trip_count: 2,
-        owner_step_done_streak: 0,
+        owner_step_done_streak: 1,
         empty_step_done_streak: 0,
       }),
     );
@@ -875,7 +875,7 @@ describe('paired execution context', () => {
     ).toHaveBeenCalledWith('task-1');
   });
 
-  it('requests review instead of arbiter when active STEP_DONE repeats without code changes', () => {
+  it('requests arbiter when active STEP_DONE repeats without code changes', () => {
     vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
 
     const repoDir = createCanonicalRepoWithCommit('active step done loop');
@@ -911,20 +911,15 @@ describe('paired execution context', () => {
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({
-        round_trip_count: 1,
-        owner_step_done_streak: 0,
-        empty_step_done_streak: 0,
+        status: 'arbiter_requested',
+        arbiter_requested_at: expect.any(String),
+        owner_step_done_streak: 3,
+        empty_step_done_streak: 3,
       }),
     );
     expect(
       pairedWorkspaceManager.markPairedTaskReviewReady,
-    ).toHaveBeenCalledWith('task-1');
-    expect(db.updatePairedTask).not.toHaveBeenCalledWith(
-      'task-1',
-      expect.objectContaining({
-        status: 'arbiter_requested',
-      }),
-    );
+    ).not.toHaveBeenCalled();
   });
 
   it('re-triggers review when the owner reports STEP_DONE during finalize', () => {
