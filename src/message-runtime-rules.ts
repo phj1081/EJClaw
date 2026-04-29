@@ -4,7 +4,7 @@ import { normalizeStoredSeqCursor } from './message-cursor.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { isTaskStatusControlMessage } from './task-watch-status.js';
 import { ARBITER_AGENT_TYPE, REVIEWER_AGENT_TYPE } from './config.js';
-import type { VisibleVerdict } from './paired-execution-context-shared.js';
+import type { VisibleVerdict } from './paired-verdict.js';
 import {
   hasReviewerLease,
   resolveLeaseServiceId,

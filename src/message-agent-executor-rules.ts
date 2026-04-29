@@ -2,7 +2,7 @@ import {
   resolveFollowUpDispatch,
   resolveNextTurnAction,
 } from './message-runtime-rules.js';
-import { parseVisibleVerdict } from './paired-execution-context-shared.js';
+import { parseVisibleVerdict } from './paired-verdict.js';
 import type { PairedRoomRole, PairedTaskStatus } from './types.js';
 export {
   isRetryableClaudeSessionFailureAttempt,

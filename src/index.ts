@@ -73,7 +73,7 @@ import {
   isBotMessageSourceKind,
   resolveInjectedMessageSourceKind,
 } from './message-source.js';
-import { parseVisibleVerdict } from './paired-execution-context-shared.js';
+import { parseVisibleVerdict } from './paired-verdict.js';
 
 export function isTerminalStatusMessage(text: string): boolean {
   return parseVisibleVerdict(text) !== 'continue';

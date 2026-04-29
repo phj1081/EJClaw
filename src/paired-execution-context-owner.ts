@@ -12,12 +12,12 @@ import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
 import {
   applyPairedTaskPatch,
   hasCodeChangesSinceRef,
-  parseVisibleVerdict,
   requestArbiterOrEscalate,
-  resolveOwnerCompletionSignal,
   resolveCanonicalSourceRef,
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
+import { resolveOwnerCompletionSignal } from './paired-completion-signals.js';
+import { parseVisibleVerdict } from './paired-verdict.js';
 import type { PairedTask } from './types.js';
 
 type OwnerFinalizeOutcome = 'stop' | 're_review';

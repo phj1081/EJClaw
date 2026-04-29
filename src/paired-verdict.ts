@@ -7,6 +7,13 @@ export type VisibleVerdict =
   | 'needs_context'
   | 'continue';
 
+export type ArbiterVerdictResult =
+  | 'proceed'
+  | 'revise'
+  | 'reset'
+  | 'escalate'
+  | 'unknown';
+
 export function parseVisibleVerdict(
   summary: string | null | undefined,
 ): VisibleVerdict {
@@ -24,6 +31,22 @@ export function parseVisibleVerdict(
   if (/^\*{0,2}Approved\.?\*{0,2}/i.test(firstLine)) return 'done';
   if (/^\*{0,2}LGTM\*{0,2}/i.test(firstLine)) return 'done';
   return 'continue';
+}
+
+export function classifyArbiterVerdict(
+  summary: string | null | undefined,
+): ArbiterVerdictResult {
+  if (!summary) return 'unknown';
+  const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  if (!cleaned) return 'unknown';
+  const firstLine = cleaned.split('\n')[0].trim();
+  const verdictMatch = firstLine.match(
+    /\*{0,2}(?:VERDICT\s*[:—-]\s*)?(PROCEED|REVISE|RESET|ESCALATE)\*{0,2}/i,
+  );
+  if (verdictMatch) {
+    return verdictMatch[1].toLowerCase() as ArbiterVerdictResult;
+  }
+  return 'unknown';
 }
 
 export function resolveStoredVisibleVerdict(args: {

@@ -1,9 +1,7 @@
 import { ARBITER_DEADLOCK_THRESHOLD } from './config.js';
 import { logger } from './logger.js';
-import {
-  classifyArbiterVerdict,
-  transitionPairedTaskStatus,
-} from './paired-execution-context-shared.js';
+import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
+import { classifyArbiterVerdict } from './paired-verdict.js';
 import type { PairedTask } from './types.js';
 
 export function handleFailedArbiterExecution(args: {
