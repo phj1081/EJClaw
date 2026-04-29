@@ -1,6 +1,6 @@
 import { isArbiterEnabled } from './config.js';
 import { logger } from './logger.js';
-import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
+import { transitionPairedTaskStatus } from './paired-task-status.js';
 import type { PairedTaskStatus } from './types.js';
 
 export function requestArbiterOrEscalate(args: {

@@ -12,7 +12,7 @@ import {
 } from './db.js';
 import { resolvePairedTaskWorkspacePath } from './group-folder.js';
 import { logger } from './logger.js';
-import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
+import { transitionPairedTaskStatus } from './paired-task-status.js';
 import type { PairedTask, PairedWorkspace } from './types.js';
 import { ensureWorkspaceDependenciesInstalled } from './workspace-package-manager.js';
 

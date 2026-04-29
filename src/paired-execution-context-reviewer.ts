@@ -2,7 +2,7 @@ import { ARBITER_DEADLOCK_THRESHOLD } from './config.js';
 import { getPairedWorkspace } from './db.js';
 import { logger } from './logger.js';
 import { requestArbiterOrEscalate } from './paired-arbiter-request.js';
-import { transitionPairedTaskStatus } from './paired-execution-context-shared.js';
+import { transitionPairedTaskStatus } from './paired-task-status.js';
 import {
   resolveReviewerCompletionSignal,
   resolveReviewerFailureSignal,

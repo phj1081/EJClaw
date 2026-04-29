@@ -13,7 +13,7 @@ import { requestArbiterOrEscalate } from './paired-arbiter-request.js';
 import {
   applyPairedTaskPatch,
   transitionPairedTaskStatus,
-} from './paired-execution-context-shared.js';
+} from './paired-task-status.js';
 import { resolveOwnerCompletionSignal } from './paired-completion-signals.js';
 import {
   hasCodeChangesSinceRef,
