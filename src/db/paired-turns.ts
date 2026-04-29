@@ -507,16 +507,19 @@ export function updatePairedTurnProgressTextFromDatabase(
   turnId: string,
   progressText: string | null,
 ): void {
+  const now = new Date().toISOString();
   let stmt = updateProgressTextStmtCache.get(database);
   if (!stmt) {
     stmt = database.prepare(`
       UPDATE paired_turns
-         SET progress_text = ?, progress_updated_at = ?
+         SET progress_text = ?,
+             progress_updated_at = ?,
+             updated_at = ?
        WHERE turn_id = ?
     `);
     updateProgressTextStmtCache.set(database, stmt);
   }
-  stmt.run(progressText, new Date().toISOString(), turnId);
+  stmt.run(progressText, now, now, turnId);
 }
 
 const latestPairedTurnStmtCache = new WeakMap<
@@ -534,7 +537,15 @@ export function getLatestPairedTurnForTaskFromDatabase(
       SELECT *
         FROM paired_turns
        WHERE task_id = ?
-       ORDER BY updated_at DESC, turn_id DESC
+       ORDER BY CASE
+                  WHEN progress_text IS NOT NULL
+                   AND trim(progress_text) <> ''
+                   AND progress_updated_at IS NOT NULL
+                   AND progress_updated_at > updated_at
+                  THEN progress_updated_at
+                  ELSE updated_at
+                END DESC,
+                turn_id DESC
        LIMIT 1
     `);
     latestPairedTurnStmtCache.set(database, stmt);

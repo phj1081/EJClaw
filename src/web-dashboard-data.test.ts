@@ -646,6 +646,69 @@ describe('web dashboard room activity data', () => {
     ]);
   });
 
+  it('keeps a progress-updated turn current when a newer empty reservation exists', () => {
+    const task = makePairedTask({
+      id: 'paired-room-progress-race',
+      chat_jid: 'dc:ops',
+      status: 'active',
+      updated_at: '2026-04-26T06:10:00.000Z',
+    });
+    const activeProgressTurn: PairedTurnRecord = {
+      turn_id: 'turn-progress-active',
+      task_id: task.id,
+      task_updated_at: task.updated_at,
+      role: 'owner',
+      intent_kind: 'owner-follow-up',
+      state: 'running',
+      executor_service_id: 'codex-main',
+      executor_agent_type: 'codex',
+      attempt_no: 1,
+      created_at: '2026-04-26T06:00:00.000Z',
+      updated_at: '2026-04-26T06:10:00.000Z',
+      completed_at: null,
+      last_error: null,
+      progress_text: 'checking dashboard parity',
+      progress_updated_at: '2026-04-26T06:12:00.000Z',
+    };
+    const queuedEmptyTurn: PairedTurnRecord = {
+      ...activeProgressTurn,
+      turn_id: 'turn-queued-empty',
+      state: 'queued',
+      executor_service_id: null,
+      executor_agent_type: null,
+      attempt_no: 0,
+      created_at: '2026-04-26T06:11:00.000Z',
+      updated_at: '2026-04-26T06:11:00.000Z',
+      progress_text: null,
+      progress_updated_at: null,
+    };
+
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'processing',
+        elapsedMs: 20_000,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+      pairedTask: task,
+      turns: [activeProgressTurn, queuedEmptyTurn],
+      attempts: [],
+      outputs: [],
+      messages: [],
+    });
+
+    expect(activity.pairedTask?.currentTurn).toMatchObject({
+      turnId: 'turn-progress-active',
+      progressText: 'checking dashboard parity',
+      progressUpdatedAt: '2026-04-26T06:12:00.000Z',
+    });
+  });
+
   it('does not show active turn placeholders when canonical progress is absent', () => {
     const task = makePairedTask({
       id: 'paired-progress-internal',
