@@ -72,6 +72,9 @@ export function resolveReviewerCompletionSignal(args: {
     case 'done':
       return { kind: 'request_owner_finalize' };
     case 'step_done':
+      if (roundTripCount >= deadlockThreshold) {
+        return { kind: 'request_arbiter' };
+      }
       return { kind: 'request_owner_changes' };
     case 'blocked':
     case 'needs_context':

@@ -341,8 +341,16 @@ export function handleOwnerCompletion(args: {
   }
 
   const ownerVerdict = parseVisibleVerdict(summary);
+  const workspace = getPairedWorkspace(task.id, 'owner');
+  const hasNewChanges = workspace?.workspace_dir
+    ? hasCodeChangesSinceRef(workspace.workspace_dir, task.source_ref)
+    : null;
   const nextOwnerStepDoneStreak =
     ownerVerdict === 'step_done' ? (task.owner_step_done_streak ?? 0) + 1 : 0;
+  const nextEmptyStepDoneStreak =
+    ownerVerdict === 'step_done' && hasNewChanges === false
+      ? (task.empty_step_done_streak ?? 0) + 1
+      : 0;
   const signal = resolveOwnerCompletionSignal({
     phase: 'normal',
     visibleVerdict: ownerVerdict,
@@ -370,6 +378,37 @@ export function handleOwnerCompletion(args: {
     return;
   }
 
+  if (
+    ownerVerdict === 'step_done' &&
+    hasNewChanges === false &&
+    nextEmptyStepDoneStreak >= EMPTY_STEP_DONE_THRESHOLD
+  ) {
+    requestArbiterOrEscalate({
+      taskId,
+      currentStatus: task.status,
+      expectedUpdatedAt: task.updated_at,
+      now,
+      arbiterLogMessage:
+        'Owner repeated STEP_DONE without code changes — requesting arbiter',
+      escalateLogMessage:
+        'Owner repeated STEP_DONE without code changes — escalating to user',
+      logContext: {
+        taskId,
+        ownerVerdict,
+        hasNewChanges,
+        ownerStepDoneStreak: nextOwnerStepDoneStreak,
+        emptyStepDoneStreak: nextEmptyStepDoneStreak,
+        summary: summary?.slice(0, 100),
+      },
+      patch: {
+        owner_failure_count: 0,
+        owner_step_done_streak: nextOwnerStepDoneStreak,
+        empty_step_done_streak: nextEmptyStepDoneStreak,
+      },
+    });
+    return;
+  }
+
   if (nextOwnerStepDoneStreak !== (task.owner_step_done_streak ?? 0)) {
     applyPairedTaskPatch({
       taskId,
@@ -377,6 +416,7 @@ export function handleOwnerCompletion(args: {
       updatedAt: now,
       patch: {
         owner_step_done_streak: nextOwnerStepDoneStreak,
+        empty_step_done_streak: nextEmptyStepDoneStreak,
       },
     });
   }
@@ -385,5 +425,9 @@ export function handleOwnerCompletion(args: {
     taskId,
     now,
     logMessage: 'Auto-triggered reviewer after owner completion',
+    patch: {
+      owner_step_done_streak: nextOwnerStepDoneStreak,
+      empty_step_done_streak: nextEmptyStepDoneStreak,
+    },
   });
 }
