@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 
 import { buildPairedTurnAttemptId } from './paired-turn-attempts.js';
-import { tableHasColumn, tryExecMigration } from './migrations/helpers.js';
+import { tableHasColumn } from './migrations/helpers.js';
 
 // Paired-turn provenance rebuild helpers extracted from the legacy schema
 // bundle. These remain runtime helpers because v10 replays them during

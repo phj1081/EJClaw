@@ -8,14 +8,12 @@ import {
 } from 'ejclaw-runners-shared';
 
 import {
-  ARBITER_DEADLOCK_THRESHOLD,
   ARBITER_AGENT_TYPE,
   CLAUDE_SERVICE_ID,
   CODEX_MAIN_SERVICE_ID,
   CODEX_REVIEW_SERVICE_ID,
   DATA_DIR,
   PAIRED_CARRY_FORWARD_LATEST_OWNER_FINAL,
-  PAIRED_MAX_ROUND_TRIPS,
   REVIEWER_AGENT_TYPE,
 } from './config.js';
 import {
@@ -26,8 +24,6 @@ import {
   getPairedTaskById,
   getPairedTurnById,
   getPairedTurnOutputs,
-  getPairedWorkspace,
-  hasActiveCiWatcherForChat,
   insertPairedTurnOutput,
   releasePairedTaskExecutionLease,
   updatePairedTask,
@@ -50,11 +46,9 @@ import {
   applyPairedTaskPatch,
   transitionPairedTaskStatus,
 } from './paired-task-status.js';
-import { requestArbiterOrEscalate } from './paired-arbiter-request.js';
 import { resolveCanonicalSourceRef } from './paired-source-ref.js';
 import {
   isOwnerWorkspaceRepairNeededError,
-  markPairedTaskReviewReady,
   prepareReviewerWorkspaceForExecution,
   provisionOwnerWorkspaceForPairedTask,
 } from './paired-workspace-manager.js';

@@ -1,10 +1,8 @@
 import {
   ASSISTANT_NAME,
-  DATA_DIR,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   SERVICE_ID,
-  isSessionCommandSenderAllowed,
   STATUS_CHANNEL_ID,
   STATUS_UPDATE_INTERVAL,
   TIMEZONE,
@@ -19,14 +17,11 @@ import {
 } from './channels/registry.js';
 import { writeGroupsSnapshot } from './agent-runner.js';
 import {
-  type AssignRoomInput,
-  getAllTasks,
   hasRecentRestartAnnouncement,
   initDatabase,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
-import { composeDashboardContent } from './dashboard-render.js';
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
@@ -34,11 +29,7 @@ import {
   deliverCanonicalOutboundMessage,
   deliverIpcOutboundMessage,
 } from './ipc-outbound-delivery.js';
-import {
-  findChannel,
-  formatOutbound,
-  normalizeMessageForDedupe,
-} from './router.js';
+import { findChannel, formatOutbound } from './router.js';
 import {
   buildRestartAnnouncement,
   buildInterruptedRestartAnnouncement,
@@ -50,7 +41,6 @@ import {
 } from './restart-context.js';
 import {
   isSenderAllowed,
-  isTriggerAllowed,
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';

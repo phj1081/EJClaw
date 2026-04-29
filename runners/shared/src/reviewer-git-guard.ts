@@ -231,7 +231,7 @@ export function assertReadonlyWorkspaceRepoConnectivity(
     return;
   }
 
-  let originUrl = '';
+  let originUrl: string;
   try {
     originUrl = readGitOutput(
       ['config', '--get', 'remote.origin.url'],

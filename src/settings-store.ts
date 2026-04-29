@@ -57,7 +57,6 @@ export interface FastModeSnapshot {
 }
 
 const ROLE_KEYS = ['OWNER', 'REVIEWER', 'ARBITER'] as const;
-type RoleKey = (typeof ROLE_KEYS)[number];
 
 function envFilePath(): string {
   return path.join(process.cwd(), '.env');
@@ -555,7 +554,7 @@ function readCodexFastMode(): boolean {
   if (!fs.existsSync(file)) return false;
   const content = fs.readFileSync(file, 'utf-8');
   // [features] section, look for fast_mode = true|false
-  const featuresMatch = content.match(/\[features\][\s\S]*?(?=^\[|\Z)/m);
+  const featuresMatch = content.match(/\[features\][\s\S]*?(?=^\[|$)/m);
   const block = featuresMatch ? featuresMatch[0] : content;
   const m = block.match(/^\s*fast_mode\s*=\s*(true|false)\s*$/m);
   return m ? m[1] === 'true' : false;
@@ -663,7 +662,7 @@ export function addClaudeAccountFromToken(token: string): {
   if (parts.length < 2) {
     throw new Error('invalid OAuth token: expected JWT format');
   }
-  let payload: Record<string, unknown> = {};
+  let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(
       Buffer.from(parts[1], 'base64').toString('utf-8'),

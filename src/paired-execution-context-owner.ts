@@ -15,10 +15,7 @@ import {
   transitionPairedTaskStatus,
 } from './paired-task-status.js';
 import { resolveOwnerCompletionSignal } from './paired-completion-signals.js';
-import {
-  hasCodeChangesSinceRef,
-  resolveCanonicalSourceRef,
-} from './paired-source-ref.js';
+import { hasCodeChangesSinceRef } from './paired-source-ref.js';
 import { parseVisibleVerdict } from './paired-verdict.js';
 import type { PairedTask } from './types.js';
 

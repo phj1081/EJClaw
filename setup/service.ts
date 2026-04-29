@@ -15,7 +15,6 @@ import {
   ensureLinuxReadonlySandboxAppArmorSupport,
   getPlatform,
   getNodePath,
-  getServiceManager,
 } from './platform.js';
 import { getServiceDefs } from './service-defs.js';
 import { setupLaunchd, setupLinux } from './service-installers.js';
@@ -30,7 +29,6 @@ export async function run(_args: string[]): Promise<void> {
   const platform = getPlatform();
   const nodePath = getNodePath();
   const homeDir = os.homedir();
-  const serviceManager = getServiceManager();
 
   logger.info({ platform, nodePath, projectRoot }, 'Setting up service');
 

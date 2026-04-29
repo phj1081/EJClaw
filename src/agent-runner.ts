@@ -13,14 +13,13 @@ import {
   prepareGroupEnvironment,
 } from './agent-runner-environment.js';
 import { runSpawnedAgentProcess } from './agent-runner-process.js';
-import { getEnv } from './env.js';
 export {
   type AvailableGroup,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './agent-runner-snapshot.js';
 import { logger } from './logger.js';
-import { AgentType, RegisteredGroup, RoomRoleContext } from './types.js';
+import { RegisteredGroup, RoomRoleContext } from './types.js';
 
 export interface AgentInput {
   prompt: string;

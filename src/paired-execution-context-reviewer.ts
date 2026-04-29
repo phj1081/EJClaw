@@ -133,7 +133,7 @@ export function handleReviewerCompletion(args: {
       return;
     }
 
-    case 'request_arbiter':
+    case 'request_arbiter': {
       const arbiterLogMessage =
         verdict === 'blocked' || verdict === 'needs_context'
           ? 'Reviewer blocked/needs_context — requesting arbiter before escalating'
@@ -152,6 +152,7 @@ export function handleReviewerCompletion(args: {
         logContext: { taskId, verdict, summary: summary?.slice(0, 100) },
       });
       return;
+    }
 
     case 'request_owner_changes':
       transitionPairedTaskStatus({

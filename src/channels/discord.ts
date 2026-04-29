@@ -11,12 +11,7 @@ import {
   TextChannel,
 } from 'discord.js';
 
-import {
-  ASSISTANT_NAME,
-  CACHE_DIR,
-  DATA_DIR,
-  TRIGGER_PATTERN,
-} from '../config.js';
+import { CACHE_DIR, DATA_DIR } from '../config.js';
 import { getEnv } from '../env.js';
 import { logger } from '../logger.js';
 import { validateOutboundAttachments } from '../outbound-attachments.js';
@@ -449,7 +444,7 @@ export class DiscordChannel implements Channel {
       }
 
       let cleaned = outbound.cleanText
-        .replace(/^[ \t]*[•\-\*][ \t]*$/gm, '') // remove empty bullet lines
+        .replace(/^[ \t]*[•*-][ \t]*$/gm, '') // remove empty bullet lines
         .replace(/\n{3,}/g, '\n\n') // collapse excessive blank lines
         .trim();
 

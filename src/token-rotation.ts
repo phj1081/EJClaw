@@ -10,7 +10,6 @@
  * All exhausted:  surface error to caller
  */
 
-import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';

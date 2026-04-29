@@ -16,11 +16,8 @@ import { transitionPairedTaskStatus } from './paired-task-status.js';
 import type { PairedTask, PairedWorkspace } from './types.js';
 import { ensureWorkspaceDependenciesInstalled } from './workspace-package-manager.js';
 
-const REVIEWER_SNAPSHOT_STALE_BLOCK_MESSAGE =
-  'Review workspace is out of date after owner changes. Retry the review once to resync against the latest owner workspace.';
 const REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE =
   'Review workspace is not ready yet. Wait for the owner to complete a turn so the reviewer workspace can be prepared.';
-const OWNER_WORKSPACE_REPAIR_PREFIX = 'BLOCKED\nOwner workspace needs repair.';
 const REVIEWER_SNAPSHOT_DENY_SEGMENTS = new Set([
   '.git',
   '.claude',
@@ -137,19 +134,6 @@ function ensureGitRepository(repoDir: string): void {
 
 function isGitWorktreeClean(repoDir: string): boolean {
   return runGit(['status', '--short'], repoDir).length === 0;
-}
-
-function buildOwnerWorkspaceRepairBlockMessage(args: {
-  workspaceDir: string;
-  currentBranch: string;
-  targetBranch: string;
-  reason: string;
-}): string {
-  return `${OWNER_WORKSPACE_REPAIR_PREFIX}
-Owner workspace branch mismatch: \`${args.currentBranch}\` -> expected \`${args.targetBranch}\`.
-${args.reason}
-Workspace: \`${args.workspaceDir}\`
-Repair the owner workspace branch, then retry the task.`;
 }
 
 function buildOwnerReanchorBackupPrefix(targetBranch: string): string {
@@ -284,10 +268,6 @@ function maybeRepairNamedOwnerWorkspaceBranch(args: {
   );
   runGit(['switch', targetBranch], workspaceDir);
   return true;
-}
-
-function ensureCleanDirectory(targetDir: string): void {
-  fs.mkdirSync(targetDir, { recursive: true });
 }
 
 type GitWorktreeEntry = {

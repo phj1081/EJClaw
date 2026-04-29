@@ -42,11 +42,7 @@ import {
   formatSuspensionNotice,
   suspendTask,
 } from './task-suspension.js';
-import {
-  extractWatchCiTarget,
-  getTaskQueueJid,
-  isGitHubCiTask,
-} from './task-watch-status.js';
+import { getTaskQueueJid, isGitHubCiTask } from './task-watch-status.js';
 import { ScheduledTask } from './types.js';
 import {
   hasTaskExceededMaxDuration,
@@ -163,13 +159,12 @@ async function runTask(
   );
 
   let result: string | null = null;
-  let error: string | null = null;
+  let error: string | null;
   const statusTracker = createTaskStatusTracker(task, {
     sendTrackedMessage: deps.sendTrackedMessage,
     editTrackedMessage: deps.editTrackedMessage,
   });
   const isClaudeAgent = context.taskAgentType === 'claude-code';
-  const canRotateToken = isClaudeAgent && getTokenCount() > 1;
 
   try {
     await statusTracker.update('checking');

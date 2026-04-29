@@ -488,7 +488,7 @@ server.tool(
       ),
   },
   async (args) => {
-    let snapshotId = '';
+    let snapshotId: string;
     try {
       snapshotId = computeVerificationSnapshotId(REPO_ROOT);
     } catch (error) {

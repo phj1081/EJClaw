@@ -179,13 +179,9 @@ export function applyCodexUsageToAccount(
 
   // Select the effective bucket
   const primaryBucket = usage.find((l) => l.limitId === 'codex');
-  let effective: CodexRateLimit | null = null;
+  const effective = primaryBucket ?? (usage.length === 1 ? usage[0] : null);
 
-  if (primaryBucket) {
-    effective = primaryBucket;
-  } else if (usage.length === 1) {
-    effective = usage[0];
-  } else {
+  if (!effective) {
     // Multiple unknown buckets — cannot determine which is authoritative
     logger.warn(
       { account: accountIndex + 1 },
