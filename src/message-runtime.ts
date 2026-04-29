@@ -491,7 +491,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
         missedMessages,
         task: hasReviewerLease(chatJid)
           ? getLatestOpenPairedTaskForChat(chatJid)
-          : null,
+          : undefined,
         roleToChannel,
         ownerChannel: channel,
         lastAgentTimestamps: deps.getLastAgentTimestamps(),
