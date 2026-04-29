@@ -39,10 +39,6 @@ import { transitionPairedTaskStatus } from './paired-task-status.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { createScopedLogger, logger } from './logger.js';
 import { hasReviewerLease } from './service-routing.js';
-export {
-  resolveHandoffCursorKey,
-  resolveHandoffRoleOverride,
-} from './message-runtime-shared.js';
 import {
   getFixedRoleChannelName,
   getMissingRoleChannelMessage,
