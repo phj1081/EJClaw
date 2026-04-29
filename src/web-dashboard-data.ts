@@ -594,6 +594,17 @@ function compareRoomMessagesByTimestamp(
   return aTime - bTime;
 }
 
+function getRoomTurnActivityTimestamp(turn: PairedTurnRecord): string {
+  const progressUpdatedAt =
+    turn.completed_at === null && turn.progress_text?.trim()
+      ? turn.progress_updated_at
+      : null;
+  if (progressUpdatedAt && progressUpdatedAt > turn.updated_at) {
+    return progressUpdatedAt;
+  }
+  return turn.updated_at;
+}
+
 const TASK_STATUS_PREFIX = '⁣⁣⁣';
 
 function isTaskStatusMessage(message: NewMessage): boolean {
@@ -673,7 +684,9 @@ export function buildWebDashboardRoomActivity(args: {
   }
   const currentTurn =
     [...args.turns].sort((a, b) =>
-      b.updated_at.localeCompare(a.updated_at),
+      getRoomTurnActivityTimestamp(b).localeCompare(
+        getRoomTurnActivityTimestamp(a),
+      ),
     )[0] ?? null;
   const currentAttempt = currentTurn
     ? (latestAttemptByTurnId.get(currentTurn.turn_id) ?? null)
