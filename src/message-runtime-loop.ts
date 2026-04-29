@@ -11,15 +11,10 @@ import {
   getProcessableMessages,
 } from './message-runtime-rules.js';
 import { SERVICE_SESSION_SCOPE } from './config.js';
+import type { schedulePairedFollowUpWithMessageCheck } from './message-runtime-follow-up.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
-import type { ScheduledPairedFollowUpIntentKind } from './paired-follow-up-scheduler.js';
 import { findChannel, formatMessages } from './router.js';
-import type {
-  Channel,
-  NewMessage,
-  PairedTask,
-  RegisteredGroup,
-} from './types.js';
+import type { Channel, NewMessage, RegisteredGroup } from './types.js';
 
 export async function processMessageLoopTick(args: {
   assistantName: string;
@@ -38,13 +33,7 @@ export async function processMessageLoopTick(args: {
   ) => boolean;
   executeTurn: ExecuteTurnFn;
   enqueuePendingHandoffs: () => void;
-  scheduleQueuedPairedFollowUp: (args: {
-    chatJid: string;
-    runId: string;
-    task: PairedTask | null | undefined;
-    intentKind: ScheduledPairedFollowUpIntentKind;
-    enqueue: () => void;
-  }) => boolean;
+  schedulePairedFollowUpWithMessageCheck: typeof schedulePairedFollowUpWithMessageCheck;
   enqueueScopedGroupMessageCheck: (
     chatJid: string,
     groupFolder: string,
@@ -104,12 +93,12 @@ export async function processMessageLoopTick(args: {
       timezone: args.timezone,
       executeTurn: args.executeTurn,
       schedulePairedFollowUp: (task, intentKind, followUpRunId) =>
-        args.scheduleQueuedPairedFollowUp({
+        args.schedulePairedFollowUpWithMessageCheck({
           chatJid,
           runId: followUpRunId,
           task,
           intentKind,
-          enqueue: () =>
+          enqueueMessageCheck: () =>
             args.enqueueScopedGroupMessageCheck(chatJid, group.folder),
         }),
       enqueueMessageCheck: () =>
