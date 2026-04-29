@@ -43,7 +43,9 @@ import {
 } from './paired-state.js';
 import {
   clearPairedTurnAttemptsInDatabase,
+  getOwnerCodexBadRequestFailureSummaryForTaskFromDatabase,
   getPairedTurnAttemptsForTurnFromDatabase,
+  type OwnerCodexBadRequestFailureSummary,
   type PairedTurnAttemptRecord,
 } from './paired-turn-attempts.js';
 import {
@@ -235,6 +237,16 @@ export function getPairedTurnAttempts(
   turnId: string,
 ): PairedTurnAttemptRecord[] {
   return getPairedTurnAttemptsForTurnFromDatabase(requireDatabase(), turnId);
+}
+
+export function getOwnerCodexBadRequestFailureSummaryForTask(args: {
+  taskId: string;
+  threshold: number;
+}): OwnerCodexBadRequestFailureSummary | null {
+  return getOwnerCodexBadRequestFailureSummaryForTaskFromDatabase(
+    requireDatabase(),
+    args,
+  );
 }
 
 export function upsertPairedWorkspace(workspace: PairedWorkspace): void {

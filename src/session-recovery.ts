@@ -1,5 +1,6 @@
 import { getAgentOutputText } from './agent-output.js';
 import type { AgentOutput } from './agent-runner.js';
+import { isCodexBadRequestText } from './codex-bad-request-signal.js';
 
 const SESSION_RESET_PATTERNS = [
   /An image in the conversation exceeds the dimension limit for many-image requests \(2000px\)\./i,
@@ -73,4 +74,14 @@ export function shouldRetryFreshCodexSessionOnAgentFailure(
   output: Pick<AgentOutput, 'result' | 'output' | 'error'>,
 ): boolean {
   return shouldResetCodexSessionOnAgentFailure(output);
+}
+
+export function isCodexBadRequestSignal(
+  output: Pick<AgentOutput, 'result' | 'output' | 'error'>,
+): boolean {
+  const texts = [
+    ...toText(getAgentOutputText(output)),
+    ...toText(output.error),
+  ];
+  return texts.some((text) => isCodexBadRequestText(text));
 }

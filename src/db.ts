@@ -98,6 +98,7 @@ export {
   getLatestPairedTaskForChat,
   getLatestPreviousPairedTaskForChat,
   getLatestTurnNumber,
+  getOwnerCodexBadRequestFailureSummaryForTask,
   getPairedProject,
   getPairedTaskById,
   getPairedTurnAttempts,
