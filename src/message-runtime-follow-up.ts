@@ -1,6 +1,8 @@
 import { getPairedTurnOutputs } from './db.js';
-import { type VisibleVerdict } from './paired-execution-context-shared.js';
-import { resolveStoredVisibleVerdict } from './paired-verdict.js';
+import {
+  resolveStoredVisibleVerdict,
+  type VisibleVerdict,
+} from './paired-verdict.js';
 import {
   matchesExpectedPairedFollowUpIntent,
   resolveFollowUpDispatch,

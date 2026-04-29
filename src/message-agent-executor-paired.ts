@@ -14,7 +14,7 @@ import {
   completePairedExecutionContext,
   type PreparedPairedExecutionContext,
 } from './paired-execution-context.js';
-import { parseVisibleVerdict } from './paired-execution-context-shared.js';
+import { parseVisibleVerdict } from './paired-verdict.js';
 import { resolvePairedFollowUpQueueAction } from './message-agent-executor-rules.js';
 import { enqueuePairedFollowUpAfterEvent } from './message-runtime-follow-up.js';
 import type { PairedTurnIdentity } from './paired-turn-identity.js';

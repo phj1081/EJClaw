@@ -1,25 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  parseVisibleVerdict,
   resolveOwnerCompletionSignal,
   resolveReviewerCompletionSignal,
   resolveReviewerFailureSignal,
-} from './paired-execution-context-shared.js';
+} from './paired-completion-signals.js';
 
 describe('paired execution context shared verdict helpers', () => {
-  it('parses visible verdicts from the first summary line only', () => {
-    expect(parseVisibleVerdict('STEP_DONE\nmore to do')).toBe('step_done');
-    expect(parseVisibleVerdict('TASK_DONE\nall done')).toBe('task_done');
-    expect(
-      parseVisibleVerdict(
-        'DONE_WITH_CONCERNS\n\nfollow-up detail that should not affect parsing',
-      ),
-    ).toBe('done_with_concerns');
-    expect(parseVisibleVerdict('BLOCKED\nextra detail')).toBe('blocked');
-    expect(parseVisibleVerdict('random prose')).toBe('continue');
-  });
-
   it('maps normal owner completion verdicts to reviewer or arbiter signals', () => {
     expect(
       resolveOwnerCompletionSignal({

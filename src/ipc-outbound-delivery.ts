@@ -1,7 +1,7 @@
 import { createProducedWorkItem } from './db.js';
 import type { WorkItem } from './db/work-items.js';
 import { deliverOpenWorkItem } from './message-runtime-delivery.js';
-import { parseVisibleVerdict } from './paired-execution-context-shared.js';
+import { parseVisibleVerdict } from './paired-verdict.js';
 import { resolveChannelForDeliveryRole } from './router.js';
 import type {
   Channel,
