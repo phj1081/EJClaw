@@ -1,5 +1,4 @@
 import {
-  createProducedWorkItem,
   getOpenWorkItemForChat,
   getMessagesSinceSeq,
   getLatestOpenPairedTaskForChat,
@@ -15,10 +14,7 @@ import { GroupQueue, GroupRunContext } from './group-queue.js';
 import { findChannel, formatMessages } from './router.js';
 import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { enqueueGenericFollowUpAfterDeliveryRetry as enqueueDeliveryRetryFollowUp } from './message-runtime-dispatch.js';
-import {
-  deliverOpenWorkItem,
-  processOpenWorkItemDelivery,
-} from './message-runtime-delivery.js';
+import { processOpenWorkItemDelivery } from './message-runtime-delivery.js';
 import { deliverCanonicalOutboundMessage } from './ipc-outbound-delivery.js';
 import { handleQueuedRunGates } from './message-runtime-gating.js';
 import {
@@ -74,6 +70,7 @@ import {
   hasHumanMessageAfterWorkItem,
 } from './message-runtime-preflight-messages.js';
 import { handleMessageRuntimeAfterDeliverySuccess } from './message-runtime-after-delivery.js';
+import { deliverMessageRuntimeFinalText } from './message-runtime-final-delivery.js';
 
 export { isDuplicateOfLastBotFinal };
 
@@ -191,41 +188,21 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       deliveryServiceId,
       replaceMessageId,
     }) => {
-      if (
-        (deliveryRole === 'reviewer' || deliveryRole === 'arbiter') &&
-        deps.queue.hasDirectTerminalDeliveryForRun?.(
-          chatJid,
-          runId,
-          deliveryRole,
-        )
-      ) {
-        logger.info(
-          {
-            chatJid,
-            runId,
-            deliveryRole,
-          },
-          'Skipping final work item delivery because this run already sent a direct terminal IPC message',
-        );
-        return true;
-      }
-      const workItem = createProducedWorkItem({
-        group_folder: group.folder,
-        chat_jid: chatJid,
-        agent_type: forcedAgentType ?? group.agentType ?? 'claude-code',
-        service_id: deliveryServiceId ?? undefined,
-        delivery_role: deliveryRole,
-        start_seq: startSeq,
-        end_seq: endSeq,
-        result_payload: text,
+      return deliverMessageRuntimeFinalText({
+        text,
         attachments,
-      });
-      return deliverOpenWorkItem({
+        chatJid,
+        runId,
         channel,
-        item: workItem,
-        log: logger,
-        attachmentBaseDirs: group.workDir ? [group.workDir] : undefined,
+        group,
+        startSeq,
+        endSeq,
+        forcedAgentType,
+        deliveryRole,
+        deliveryServiceId,
         replaceMessageId,
+        hasDirectTerminalDeliveryForRun:
+          deps.queue.hasDirectTerminalDeliveryForRun?.bind(deps.queue),
         isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,
         openContinuation: (targetChatJid) =>
           continuationTracker.open(targetChatJid),
