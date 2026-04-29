@@ -165,6 +165,7 @@ vi.mock('./db.js', () => {
     getLatestPreviousPairedTaskForChat: vi.fn(() => undefined),
     getPairedTaskById: vi.fn(() => undefined),
     getPairedTurnOutputs: vi.fn(() => []),
+    getOwnerCodexBadRequestFailureSummaryForTask: vi.fn(() => null),
     getRecentChatMessages: vi.fn(() => []),
     createProducedWorkItem: vi.fn((input) => ({
       id: 1,

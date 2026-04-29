@@ -9,6 +9,7 @@ import {
 } from './service-routing.js';
 import { resolvePairedTurnRunOwnership } from './paired-turn-run-ownership.js';
 import { normalizeMessageForDedupe } from './router.js';
+import { notifyOwnerCodexBadRequestObservation } from './session-auto-healer.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
 import type {
   AgentType,
@@ -254,6 +255,18 @@ export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
 
       const { deliverySucceeded, visiblePhase } =
         await turnController.finish(outputStatus);
+
+      await notifyOwnerCodexBadRequestObservation({
+        chatJid,
+        runId,
+        groupFolder: group.folder,
+        channel,
+        outputStatus,
+        visiblePhase,
+        deliveryRole: resolvedDeliveryRole,
+        agentType: args.forcedAgentType ?? group.agentType ?? 'claude-code',
+        pairedTurnIdentity: args.pairedTurnIdentity ?? null,
+      });
 
       if (deliverySucceeded) {
         await deps.afterDeliverySuccess?.({

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isCodexBadRequestSignal,
   shouldResetCodexSessionOnAgentFailure,
   shouldResetSessionOnAgentFailure,
   shouldRetryFreshCodexSessionOnAgentFailure,
@@ -132,5 +133,25 @@ describe('shouldRetryFreshCodexSessionOnAgentFailure', () => {
           "Error running remote compact task: Unknown parameter: 'prompt_cache_retention'",
       }),
     ).toBe(true);
+  });
+
+  it('does not retry generic Codex Bad Request signals during observation-only rollout', () => {
+    const output = {
+      result: null,
+      error: '{"detail":"Bad Request"}',
+    };
+
+    expect(isCodexBadRequestSignal(output)).toBe(true);
+    expect(shouldResetCodexSessionOnAgentFailure(output)).toBe(false);
+    expect(shouldRetryFreshCodexSessionOnAgentFailure(output)).toBe(false);
+  });
+
+  it('does not flag unrelated Bad Request text as the narrow Codex signal', () => {
+    expect(
+      isCodexBadRequestSignal({
+        result: null,
+        error: 'HTTP 400 Bad Request',
+      }),
+    ).toBe(false);
   });
 });

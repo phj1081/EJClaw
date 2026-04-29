@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 
 import { normalizeServiceId } from '../config.js';
+import { CODEX_BAD_REQUEST_DETAIL_JSON } from '../codex-bad-request-signal.js';
 import type { PairedTurnIdentity } from '../paired-turn-identity.js';
 import { inferAgentTypeFromServiceShadow } from '../role-service-shadow.js';
 import type { AgentType, PairedRoomRole } from '../types.js';
@@ -31,6 +32,13 @@ export interface PairedTurnAttemptRecord {
   updated_at: string;
   completed_at: string | null;
   last_error: string | null;
+}
+
+export interface OwnerCodexBadRequestFailureSummary {
+  taskId: string;
+  failures: number;
+  firstFailureAt: string;
+  latestFailureAt: string;
 }
 
 function resolveExecutorMetadata(args: {
@@ -421,6 +429,59 @@ export function getPairedTurnAttemptIdFromDatabase(
     | { attempt_id: string }
     | undefined;
   return row?.attempt_id ?? null;
+}
+
+export function getOwnerCodexBadRequestFailureSummaryForTaskFromDatabase(
+  database: Database,
+  args: {
+    taskId: string;
+    threshold: number;
+  },
+): OwnerCodexBadRequestFailureSummary | null {
+  const threshold = Math.max(1, Math.floor(args.threshold));
+  const attempts = database
+    .prepare(
+      `
+        SELECT state, last_error, created_at
+          FROM paired_turn_attempts
+         WHERE task_id = ?
+           AND role = 'owner'
+           AND executor_agent_type = 'codex'
+         ORDER BY created_at DESC, attempt_no DESC
+      `,
+    )
+    .all(args.taskId) as Array<{
+    state: PairedTurnAttemptState;
+    last_error: string | null;
+    created_at: string;
+  }>;
+
+  const consecutiveFailures = [];
+  for (const attempt of attempts) {
+    if (
+      attempt.state === 'failed' &&
+      attempt.last_error?.trim() === CODEX_BAD_REQUEST_DETAIL_JSON
+    ) {
+      consecutiveFailures.push(attempt);
+      continue;
+    }
+    break;
+  }
+
+  if (consecutiveFailures.length < threshold) {
+    return null;
+  }
+
+  const firstFailureAt =
+    consecutiveFailures[consecutiveFailures.length - 1].created_at;
+  const latestFailureAt = consecutiveFailures[0].created_at;
+
+  return {
+    taskId: args.taskId,
+    failures: consecutiveFailures.length,
+    firstFailureAt,
+    latestFailureAt,
+  };
 }
 
 export function setPairedTurnAttemptContinuationHandoffIdInDatabase(
