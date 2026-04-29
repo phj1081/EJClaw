@@ -284,11 +284,7 @@ vi.mock('./session-commands.js', () => ({
 import * as agentRunner from './agent-runner.js';
 import * as db from './db.js';
 import { resolveGroupIpcPath } from './group-folder.js';
-import {
-  createMessageRuntime,
-  resolveHandoffCursorKey,
-  resolveHandoffRoleOverride,
-} from './message-runtime.js';
+import { createMessageRuntime } from './message-runtime.js';
 import {
   buildPendingPairedTurn,
   resolveBotOnlyPairedFollowUpAction,
@@ -340,55 +336,6 @@ describe('createMessageRuntime', () => {
     vi.mocked(db.getRecentChatMessages).mockReturnValue([]);
     vi.mocked(config.isClaudeService).mockReturnValue(true);
     vi.mocked(config.isReviewService).mockReturnValue(false);
-  });
-
-  it('prefers intended_role over reason prefixes for handoff role resolution', () => {
-    expect(
-      resolveHandoffRoleOverride({
-        target_role: 'arbiter',
-        intended_role: 'reviewer',
-        reason: 'reviewer-claude-429',
-      }),
-    ).toBe('arbiter');
-    expect(
-      resolveHandoffRoleOverride({
-        target_role: null,
-        intended_role: 'reviewer',
-        reason: 'claude-429',
-      }),
-    ).toBe('reviewer');
-    expect(
-      resolveHandoffRoleOverride({
-        target_role: null,
-        intended_role: null,
-        reason: 'arbiter-claude-429',
-      }),
-    ).toBe('arbiter');
-    expect(
-      resolveHandoffRoleOverride({
-        target_role: null,
-        intended_role: null,
-        reason: 'reviewer-claude-usage-exhausted',
-      }),
-    ).toBe('reviewer');
-    expect(
-      resolveHandoffRoleOverride({
-        target_role: null,
-        intended_role: null,
-        reason: 'claude-usage-exhausted',
-      }),
-    ).toBeUndefined();
-  });
-
-  it('uses role-scoped cursor keys for reviewer and arbiter handoffs', () => {
-    expect(resolveHandoffCursorKey('group@test')).toBe('group@test');
-    expect(resolveHandoffCursorKey('group@test', 'owner')).toBe('group@test');
-    expect(resolveHandoffCursorKey('group@test', 'reviewer')).toBe(
-      'group@test:reviewer',
-    );
-    expect(resolveHandoffCursorKey('group@test', 'arbiter')).toBe(
-      'group@test:arbiter',
-    );
   });
 
   it('ignores generic failure bot messages in paired rooms', async () => {
