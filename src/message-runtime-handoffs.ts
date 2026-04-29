@@ -4,6 +4,7 @@ import {
   claimServiceHandoff,
   completeServiceHandoffAndAdvanceTargetCursor,
   failServiceHandoff,
+  getPairedTaskById,
   getPendingServiceHandoffs,
   type ServiceHandoff,
 } from './db.js';
@@ -43,6 +44,36 @@ export function enqueuePendingHandoffs(args: {
       await args.processClaimedHandoff(handoff);
     });
   }
+}
+
+export function enqueueMessageRuntimePendingHandoffs(args: {
+  enqueueTask?:
+    | ((chatJid: string, taskId: string, task: () => Promise<void>) => void)
+    | undefined;
+  getRoomBindings: () => Record<string, RegisteredGroup>;
+  channels: Channel[];
+  executeTurn: ExecuteTurnFn;
+  getLastAgentTimestamps: () => Record<string, string>;
+  saveState: () => void;
+  enqueueMessageCheck: (chatJid: string) => void;
+}): void {
+  enqueuePendingHandoffs({
+    enqueueTask: (chatJid, taskId, task) => {
+      args.enqueueTask?.(chatJid, taskId, task);
+    },
+    processClaimedHandoff: async (handoff) => {
+      await processClaimedHandoff({
+        handoff,
+        getRoomBindings: args.getRoomBindings,
+        channels: args.channels,
+        executeTurn: args.executeTurn,
+        lastAgentTimestamps: args.getLastAgentTimestamps(),
+        saveState: args.saveState,
+        getPairedTaskById,
+        enqueueMessageCheck: args.enqueueMessageCheck,
+      });
+    },
+  });
 }
 
 function requeueFailedClaimedPairedTurn(args: {

@@ -9,6 +9,7 @@ vi.mock('./db.js', () => ({
   claimPairedTurnReservation: vi.fn(() => true),
   completeServiceHandoffAndAdvanceTargetCursor: vi.fn(() => null),
   failServiceHandoff: vi.fn(),
+  getPairedTaskById: vi.fn(),
   getPairedTurnOutputs: vi.fn(() => []),
   getPendingServiceHandoffs: vi.fn(() => []),
   reservePairedTurnReservation: vi.fn(() => true),
@@ -25,6 +26,7 @@ vi.mock('./logger.js', () => ({
 
 import * as db from './db.js';
 import {
+  enqueueMessageRuntimePendingHandoffs,
   enqueuePendingHandoffs,
   processClaimedHandoff,
 } from './message-runtime-handoffs.js';
@@ -51,6 +53,93 @@ function makeChannel(name: string, ownsChatJid = false): Channel {
     sendMessage: vi.fn(),
   } as unknown as Channel;
 }
+
+function makeClaimedHandoff(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 13,
+    chat_jid: 'group@test',
+    group_folder: 'test-group',
+    source_service_id: 'claude',
+    target_service_id: 'codex-main',
+    source_role: 'reviewer',
+    source_agent_type: 'claude-code',
+    target_role: 'owner',
+    target_agent_type: 'codex',
+    prompt: 'owner handoff',
+    status: 'claimed',
+    start_seq: 13,
+    end_seq: 14,
+    reason: 'owner-follow-up',
+    intended_role: 'owner',
+    created_at: '2026-04-10T00:00:00.000Z',
+    claimed_at: '2026-04-10T00:00:01.000Z',
+    completed_at: null,
+    last_error: null,
+    ...overrides,
+  } as any;
+}
+
+describe('enqueueMessageRuntimePendingHandoffs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('enqueues pending handoffs with runtime-bound processing dependencies', async () => {
+    const handoff = makeClaimedHandoff();
+    vi.mocked(db.getPendingServiceHandoffs).mockReturnValue([handoff]);
+    vi.mocked(db.claimServiceHandoff).mockReturnValue(true);
+    vi.mocked(db.completeServiceHandoffAndAdvanceTargetCursor).mockReturnValue(
+      '14',
+    );
+    const enqueueTask = vi.fn();
+    const executeTurn = vi.fn(async () => ({
+      outputStatus: 'success' as const,
+      deliverySucceeded: true,
+      visiblePhase: 'final',
+    }));
+    const lastAgentTimestamps: Record<string, string> = {};
+    const getLastAgentTimestamps = vi.fn(() => lastAgentTimestamps);
+    const saveState = vi.fn();
+    const enqueueMessageCheck = vi.fn();
+
+    enqueueMessageRuntimePendingHandoffs({
+      enqueueTask,
+      getRoomBindings: () => ({
+        'group@test': makeGroup(),
+      }),
+      channels: [makeChannel('discord-main', true)],
+      executeTurn,
+      getLastAgentTimestamps,
+      saveState,
+      enqueueMessageCheck,
+    });
+
+    expect(db.getPendingServiceHandoffs).toHaveBeenCalledWith('codex-main');
+    expect(db.claimServiceHandoff).toHaveBeenCalledWith(13);
+    expect(getLastAgentTimestamps).not.toHaveBeenCalled();
+    expect(enqueueTask).toHaveBeenCalledWith(
+      'group@test',
+      'handoff:13',
+      expect.any(Function),
+    );
+
+    const queuedTask = vi.mocked(enqueueTask).mock.calls[0]?.[2];
+    await queuedTask?.();
+
+    expect(getLastAgentTimestamps).toHaveBeenCalledTimes(1);
+    expect(executeTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatJid: 'group@test',
+        runId: 'handoff-13',
+        forcedRole: 'owner',
+        forcedAgentType: 'codex',
+      }),
+    );
+    expect(lastAgentTimestamps['group@test']).toBe('14');
+    expect(saveState).toHaveBeenCalledTimes(1);
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+  });
+});
 
 describe('message-runtime-handoffs', () => {
   beforeEach(() => {
