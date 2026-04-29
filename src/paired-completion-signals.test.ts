@@ -6,7 +6,7 @@ import {
   resolveReviewerFailureSignal,
 } from './paired-completion-signals.js';
 
-describe('paired execution context shared verdict helpers', () => {
+describe('paired completion signals', () => {
   it('maps normal owner completion verdicts to reviewer or arbiter signals', () => {
     expect(
       resolveOwnerCompletionSignal({
