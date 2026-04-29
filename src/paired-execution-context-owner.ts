@@ -11,12 +11,14 @@ import { logger } from './logger.js';
 import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
 import {
   applyPairedTaskPatch,
-  hasCodeChangesSinceRef,
   requestArbiterOrEscalate,
-  resolveCanonicalSourceRef,
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import { resolveOwnerCompletionSignal } from './paired-completion-signals.js';
+import {
+  hasCodeChangesSinceRef,
+  resolveCanonicalSourceRef,
+} from './paired-source-ref.js';
 import { parseVisibleVerdict } from './paired-verdict.js';
 import type { PairedTask } from './types.js';
 

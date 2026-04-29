@@ -48,10 +48,10 @@ import {
 } from './paired-execution-context-reviewer.js';
 import {
   applyPairedTaskPatch,
-  resolveCanonicalSourceRef,
   requestArbiterOrEscalate,
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
+import { resolveCanonicalSourceRef } from './paired-source-ref.js';
 import {
   isOwnerWorkspaceRepairNeededError,
   markPairedTaskReviewReady,
