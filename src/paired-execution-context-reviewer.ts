@@ -3,13 +3,13 @@ import { getPairedWorkspace } from './db.js';
 import { logger } from './logger.js';
 import {
   requestArbiterOrEscalate,
-  resolveCanonicalSourceRef,
   transitionPairedTaskStatus,
 } from './paired-execution-context-shared.js';
 import {
   resolveReviewerCompletionSignal,
   resolveReviewerFailureSignal,
 } from './paired-completion-signals.js';
+import { resolveCanonicalSourceRef } from './paired-source-ref.js';
 import { parseVisibleVerdict } from './paired-verdict.js';
 import type { PairedTask } from './types.js';
 
