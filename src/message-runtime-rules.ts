@@ -46,6 +46,47 @@ export function advanceLastAgentCursor(
   saveState();
 }
 
+export function finalizeQueuedRunCursor(args: {
+  outputStatus: 'success' | 'error';
+  visiblePhase: unknown;
+  startSeq: number | null;
+  endSeq: number | null;
+  rollbackOnSilentError: boolean;
+  cursorAdvanced: boolean;
+  previousCursor: string | undefined;
+  lastAgentTimestamps: Record<string, string>;
+  saveState: () => void;
+  cursorKey: string;
+  log: {
+    warn: (bindings: Record<string, unknown>, message: string) => void;
+  };
+}): boolean {
+  if (
+    args.rollbackOnSilentError &&
+    args.outputStatus === 'error' &&
+    args.visiblePhase === 'silent'
+  ) {
+    if (args.cursorAdvanced) {
+      if (args.previousCursor === undefined) {
+        delete args.lastAgentTimestamps[args.cursorKey];
+      } else {
+        args.lastAgentTimestamps[args.cursorKey] = args.previousCursor;
+      }
+      args.saveState();
+    }
+    args.log.warn(
+      {
+        messageSeqStart: args.startSeq,
+        messageSeqEnd: args.endSeq,
+      },
+      'Queued run failed before producing visible output; keeping cursor for retry',
+    );
+    return false;
+  }
+
+  return true;
+}
+
 /** Map task status to the active role. */
 export function resolveActiveRole(
   taskStatus?: string | null,
