@@ -14,6 +14,7 @@ import { buildPairedTurnIdentity } from './paired-turn-identity.js';
 import { resolveStoredVisibleVerdict } from './paired-verdict.js';
 import {
   advanceLastAgentCursor,
+  finalizeQueuedRunCursor,
   resolveActiveRole,
   resolveCursorKeyForRole,
   resolveQueuedPairedTurnRole,
@@ -28,6 +29,7 @@ import type {
   Channel,
   NewMessage,
   PairedTask,
+  PairedTaskStatus,
   PairedTurnReservationIntentKind,
   RegisteredGroup,
 } from './types.js';
@@ -50,6 +52,86 @@ function resolveQueuedTurnReservationIntent(args: {
     return 'finalize-owner-turn';
   }
   return 'owner-follow-up';
+}
+
+function buildQueuedGroupTurnPrompt(args: {
+  turnRole: 'owner' | 'reviewer' | 'arbiter';
+  currentTask: PairedTask | null | undefined;
+  chatJid: string;
+  timezone: string;
+  missedMessages: NewMessage[];
+  fallbackMessages: NewMessage[];
+  turnOutputs: ReturnType<typeof getPairedTurnOutputs>;
+  labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
+  formatMessages: (messages: NewMessage[], timezone: string) => string;
+}): string {
+  if (args.turnRole === 'arbiter' && args.currentTask) {
+    const recentMessages = getRecentChatMessages(args.chatJid, 20);
+    return buildArbiterPromptForTask({
+      task: args.currentTask,
+      chatJid: args.chatJid,
+      timezone: args.timezone,
+      turnOutputs: args.turnOutputs,
+      recentMessages,
+      labeledRecentMessages: args.labelPairedSenders(
+        args.chatJid,
+        recentMessages,
+      ),
+    });
+  }
+
+  if (args.currentTask) {
+    return buildPairedTurnPrompt({
+      taskId: args.currentTask.id,
+      chatJid: args.chatJid,
+      timezone: args.timezone,
+      missedMessages: args.missedMessages,
+      labeledFallbackMessages: args.labelPairedSenders(
+        args.chatJid,
+        args.fallbackMessages,
+      ),
+      turnOutputs: args.turnOutputs,
+    });
+  }
+
+  return args.formatMessages(
+    args.labelPairedSenders(args.chatJid, args.missedMessages),
+    args.timezone,
+  );
+}
+
+function claimQueuedPairedTurn(args: {
+  chatJid: string;
+  runId: string;
+  task: PairedTask | null | undefined;
+  taskStatus: PairedTaskStatus | null | undefined;
+  intentKind: PairedTurnReservationIntentKind | null;
+  turnRole: 'owner' | 'reviewer' | 'arbiter';
+  log: typeof logger;
+}): boolean {
+  if (!args.task) {
+    return true;
+  }
+  const claimed = claimPairedTurnExecution({
+    chatJid: args.chatJid,
+    runId: args.runId,
+    task: args.task,
+    intentKind: args.intentKind!,
+  });
+  if (claimed) {
+    return true;
+  }
+  args.log.info(
+    {
+      taskId: args.task.id,
+      taskStatus: args.taskStatus,
+      taskUpdatedAt: args.task.updated_at,
+      intentKind: args.intentKind,
+      turnRole: args.turnRole,
+    },
+    'Skipped queued paired turn because the task revision was already claimed elsewhere',
+  );
+  return false;
 }
 
 export async function runPendingPairedTurnIfNeeded(args: {
@@ -246,35 +328,17 @@ export async function runQueuedGroupTurn(args: {
         })
       : undefined;
 
-  let prompt: string;
-  if (turnRole === 'arbiter' && currentTask) {
-    const recentMessages = getRecentChatMessages(chatJid, 20);
-    prompt = buildArbiterPromptForTask({
-      task: currentTask,
-      chatJid,
-      timezone: args.timezone,
-      turnOutputs,
-      recentMessages,
-      labeledRecentMessages: args.labelPairedSenders(chatJid, recentMessages),
-    });
-  } else if (currentTask) {
-    prompt = buildPairedTurnPrompt({
-      taskId: currentTask.id,
-      chatJid,
-      timezone: args.timezone,
-      missedMessages,
-      labeledFallbackMessages: args.labelPairedSenders(
-        chatJid,
-        fallbackMessages,
-      ),
-      turnOutputs,
-    });
-  } else {
-    prompt = args.formatMessages(
-      args.labelPairedSenders(chatJid, missedMessages),
-      args.timezone,
-    );
-  }
+  const prompt = buildQueuedGroupTurnPrompt({
+    turnRole,
+    currentTask,
+    chatJid,
+    timezone: args.timezone,
+    missedMessages,
+    fallbackMessages,
+    turnOutputs,
+    labelPairedSenders: args.labelPairedSenders,
+    formatMessages: args.formatMessages,
+  });
 
   const startSeq = missedMessages[0].seq ?? null;
   const endSeq = missedMessages[missedMessages.length - 1].seq ?? null;
@@ -300,29 +364,23 @@ export async function runQueuedGroupTurn(args: {
     return false;
   }
 
-  if (currentTask) {
-    const claimed = claimPairedTurnExecution({
+  if (
+    !claimQueuedPairedTurn({
       chatJid,
       runId,
       task: currentTask,
+      taskStatus,
       intentKind: queuedIntentKind!,
-    });
-    if (!claimed) {
-      log.info(
-        {
-          taskId: currentTask.id,
-          taskStatus,
-          taskUpdatedAt: currentTask.updated_at,
-          intentKind: queuedIntentKind,
-          turnRole,
-        },
-        'Skipped queued paired turn because the task revision was already claimed elsewhere',
-      );
-      return true;
-    }
+      turnRole,
+      log,
+    })
+  ) {
+    return true;
   }
 
-  if (endSeq !== null) {
+  const previousCursor = args.lastAgentTimestamps[cursorKey];
+  const cursorAdvanced = endSeq !== null;
+  if (cursorAdvanced) {
     advanceLastAgentCursor(
       args.lastAgentTimestamps,
       args.saveState,
@@ -332,19 +390,41 @@ export async function runQueuedGroupTurn(args: {
     );
   }
 
-  const { deliverySucceeded, visiblePhase } = await args.executeTurn({
-    group,
-    prompt,
-    chatJid,
-    runId,
-    channel: turnChannel,
-    deliveryRole: currentTask ? turnRole : undefined,
-    startSeq,
-    endSeq,
-    hasHumanMessage: hasHumanMsg,
-    forcedRole,
-    pairedTurnIdentity,
-  });
+  const { outputStatus, deliverySucceeded, visiblePhase } =
+    await args.executeTurn({
+      group,
+      prompt,
+      chatJid,
+      runId,
+      channel: turnChannel,
+      deliveryRole: currentTask ? turnRole : undefined,
+      startSeq,
+      endSeq,
+      hasHumanMessage: hasHumanMsg,
+      forcedRole,
+      pairedTurnIdentity,
+    });
+
+  if (
+    !finalizeQueuedRunCursor({
+      outputStatus,
+      visiblePhase,
+      startSeq,
+      endSeq,
+      rollbackOnSilentError:
+        hasHumanMsg &&
+        turnRole === 'owner' &&
+        currentTask?.owner_agent_type === 'codex',
+      cursorAdvanced,
+      previousCursor,
+      lastAgentTimestamps: args.lastAgentTimestamps,
+      saveState: args.saveState,
+      cursorKey,
+      log,
+    })
+  ) {
+    return false;
+  }
 
   if (!deliverySucceeded) {
     log.warn(
