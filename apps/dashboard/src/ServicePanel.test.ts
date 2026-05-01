@@ -85,22 +85,6 @@ const baseProps: ServicePanelProps = {
       },
     ],
     {
-      inbox: [
-        {
-          createdAt: '2026-04-28T04:10:00.000Z',
-          groupFolder: 'eyejokerdb',
-          groupKey: 'ci',
-          id: 'ci-1',
-          kind: 'ci-failure',
-          lastOccurredAt: '2026-04-28T04:12:00.000Z',
-          occurrences: 2,
-          occurredAt: '2026-04-28T04:10:00.000Z',
-          severity: 'error',
-          source: 'status-snapshot',
-          summary: 'CI failed',
-          title: 'CI failed',
-        },
-      ],
       operations: {
         serviceRestarts: [
           {
@@ -112,6 +96,13 @@ const baseProps: ServicePanelProps = {
             target: 'stack',
           },
         ],
+      },
+      tasks: {
+        active: 0,
+        completed: 0,
+        paused: 2,
+        total: 2,
+        watchers: { active: 0, completed: 0, paused: 2 },
       },
     },
   ),

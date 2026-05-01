@@ -183,10 +183,6 @@ function buildPromptPreview(prompt: string): string {
   return truncateText(redactSensitiveText(prompt).replace(/\s+/g, ' ').trim());
 }
 
-function buildInboxPreview(value: string): string {
-  return truncateText(redactSensitiveText(value).replace(/\s+/g, ' ').trim());
-}
-
 function buildRoomBody(value: string): string {
   return redactSensitiveText(value).trim();
 }
@@ -254,14 +250,6 @@ function normalizeStructuredVisibleContent(value: string): {
   return splitLegacyImageTags(value);
 }
 
-function stableHash(value: string): string {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash).toString(36);
-}
-
 function collectUsageRows(snapshots: StatusSnapshot[]): UsageRowSnapshot[] {
   const rows: UsageRowSnapshot[] = [];
   const seen = new Set<string>();
@@ -280,21 +268,6 @@ function collectUsageRows(snapshots: StatusSnapshot[]): UsageRowSnapshot[] {
   }
 
   return rows;
-}
-
-function failedTaskResult(task: ScheduledTask): string | null {
-  if (!task.last_result) return null;
-  const normalized = task.last_result.toLowerCase();
-  if (
-    normalized.includes('fail') ||
-    normalized.includes('error') ||
-    normalized.includes('timeout') ||
-    normalized.includes('cancel') ||
-    normalized.includes('reject')
-  ) {
-    return buildInboxPreview(task.last_result);
-  }
-  return null;
 }
 
 function pairedTaskInboxKind(
@@ -378,31 +351,6 @@ function collectInboxItems(args: {
         kind === 'reviewer-request'
           ? task.reviewer_service_id
           : task.owner_service_id,
-      taskId: task.id,
-      taskStatus: task.status,
-    });
-  }
-
-  for (const task of args.tasks) {
-    if (!isWatchCiTask(task)) continue;
-    const result = failedTaskResult(task);
-    if (!result) continue;
-
-    items.push({
-      id: `ci:${task.id}`,
-      groupKey: `ci:${stableHash(result.toLowerCase())}`,
-      kind: 'ci-failure',
-      severity: task.status === 'paused' ? 'error' : 'warn',
-      title: 'CI watcher failed',
-      summary: result,
-      occurredAt: task.last_run ?? task.created_at,
-      lastOccurredAt: task.last_run ?? task.created_at,
-      createdAt: args.createdAt,
-      occurrences: 1,
-      source: 'scheduled-task',
-      roomJid: task.chat_jid,
-      groupFolder: task.group_folder,
-      serviceId: task.agent_type ?? undefined,
       taskId: task.id,
       taskStatus: task.status,
     });

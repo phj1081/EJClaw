@@ -21,7 +21,8 @@ describe('SettingsPanel', () => {
     const html = renderToStaticMarkup(createElement(SettingsPanel, baseProps));
 
     expect(html).toContain('settings-panel');
-    expect(html).toContain('settings-hero');
+    expect(html).not.toContain('settings-hero');
+    expect(html).toContain('settings-sidebar');
     expect(html).toContain('settings-nav');
     expect(html).toContain(t.settings.nicknameLabel);
     expect(html).toContain('value="Night Owl"');
@@ -41,7 +42,9 @@ describe('SettingsPanel', () => {
     expect(html).toContain('aria-controls="settings-codex"');
     expect(html).not.toContain('href="#settings-codex"');
     expect(html).toContain('/goal');
-    expect(html).toContain('변경 적용');
+    expect(html).toContain('settings-apply-card');
+    expect(html).not.toContain('settings-apply-bar');
+    expect(html).toContain('저장 후 재시작');
     expect(html).toContain('불러오는 중');
     expect(html).toContain('Claude');
     expect(html).toContain('계정');
