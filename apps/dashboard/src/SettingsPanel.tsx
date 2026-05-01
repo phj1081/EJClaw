@@ -31,6 +31,34 @@ interface AccountData {
   codexCurrentIndex?: number;
 }
 
+const SETTINGS_NAV_ITEMS = [
+  {
+    href: '#settings-general',
+    title: '일반',
+    detail: '표시 · 언어',
+  },
+  {
+    href: '#settings-models',
+    title: '모델',
+    detail: 'owner · reviewer · arbiter',
+  },
+  {
+    href: '#settings-moa',
+    title: 'MoA',
+    detail: '참조 모델 · 연결 테스트',
+  },
+  {
+    href: '#settings-codex',
+    title: 'Codex',
+    detail: 'fast mode · /goal',
+  },
+  {
+    href: '#settings-accounts',
+    title: '계정',
+    detail: 'Claude · Codex',
+  },
+] as const;
+
 export interface SettingsPanelProps {
   locale: Locale;
   nickname: string;
@@ -50,47 +78,126 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   return (
     <div className="settings-panel">
-      <section className="settings-section">
-        <h3>일반</h3>
-        <label className="settings-row">
-          <span className="settings-label">{t.settings.nicknameLabel}</span>
-          <input
-            maxLength={32}
-            onChange={(event) => onNicknameChange(event.target.value)}
-            placeholder={t.settings.nicknamePlaceholder}
-            type="text"
-            value={nickname}
-          />
-          <small className="settings-hint">{t.settings.nicknameHelp}</small>
-        </label>
-        <label className="settings-row">
-          <span className="settings-label">{t.settings.languageLabel}</span>
-          <select
-            aria-label={t.settings.languageLabel}
-            onChange={(event) => onLocaleChange(event.target.value as Locale)}
-            value={locale}
-          >
-            {LOCALES.map((item) => (
-              <option key={item} value={item}>
-                {languageNames[item]}
-              </option>
-            ))}
-          </select>
-        </label>
-      </section>
+      <SettingsHero />
+      <div className="settings-layout">
+        <SettingsNav />
+        <main className="settings-content" aria-label="설정 항목">
+          <section className="settings-section" id="settings-general">
+            <SettingsSectionHeading
+              detail="Dashboard identity"
+              title="일반"
+              description="브라우저에서 보이는 이름과 언어만 즉시 바뀝니다."
+            />
+            <div className="settings-form-grid">
+              <label className="settings-row">
+                <span className="settings-label">
+                  {t.settings.nicknameLabel}
+                </span>
+                <input
+                  maxLength={32}
+                  onChange={(event) => onNicknameChange(event.target.value)}
+                  placeholder={t.settings.nicknamePlaceholder}
+                  type="text"
+                  value={nickname}
+                />
+                <small className="settings-hint">
+                  {t.settings.nicknameHelp}
+                </small>
+              </label>
+              <label className="settings-row">
+                <span className="settings-label">
+                  {t.settings.languageLabel}
+                </span>
+                <select
+                  aria-label={t.settings.languageLabel}
+                  onChange={(event) =>
+                    onLocaleChange(event.target.value as Locale)
+                  }
+                  value={locale}
+                >
+                  {LOCALES.map((item) => (
+                    <option key={item} value={item}>
+                      {languageNames[item]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </section>
 
-      <SettingsApplyBar onRestartStack={onRestartStack} />
+          <SettingsApplyBar onRestartStack={onRestartStack} />
 
-      <ModelSettings />
+          <ModelSettings />
 
-      <MoaSettingsPanel />
+          <MoaSettingsPanel />
 
-      <FastModeSettings />
+          <section className="settings-section" id="settings-codex">
+            <SettingsSectionHeading
+              detail="Codex runtime"
+              title="Codex 옵션"
+              description="빠른 응답과 실험 기능을 관리합니다. /goal은 여기에서 찾을 수 있습니다."
+            />
+            <div className="settings-section-stack">
+              <FastModeSettings />
+              <CodexFeatureSettings />
+            </div>
+          </section>
 
-      <CodexFeatureSettings />
-
-      <AccountSettings />
+          <AccountSettings />
+        </main>
+      </div>
     </div>
+  );
+}
+
+function SettingsHero() {
+  return (
+    <header className="settings-hero">
+      <div>
+        <span className="settings-kicker">Operations console</span>
+        <h2>설정</h2>
+        <p>
+          모델, MoA, Codex 실험 기능, 계정을 한 화면에서 조정합니다. 런타임에
+          반영되는 항목은 저장 후 한 번만 재시작하면 됩니다.
+        </p>
+      </div>
+      <div className="settings-hero-badges" aria-label="주요 설정">
+        <span>Codex /goal</span>
+        <span>MoA</span>
+        <span>Accounts</span>
+      </div>
+    </header>
+  );
+}
+
+function SettingsNav() {
+  return (
+    <aside className="settings-nav" aria-label="설정 섹션">
+      {SETTINGS_NAV_ITEMS.map((item) => (
+        <a href={item.href} key={item.href}>
+          <strong>{item.title}</strong>
+          <small>{item.detail}</small>
+        </a>
+      ))}
+    </aside>
+  );
+}
+
+function SettingsSectionHeading({
+  detail,
+  title,
+  description,
+}: {
+  detail: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <header className="settings-section-head">
+      <span>{detail}</span>
+      <h3>{title}</h3>
+      <p>{description}</p>
+    </header>
   );
 }
 
@@ -98,6 +205,7 @@ function SettingsApplyBar({ onRestartStack }: { onRestartStack: () => void }) {
   return (
     <section className="settings-apply-bar" aria-label="변경 적용">
       <div>
+        <span className="settings-kicker">Apply changes</span>
         <strong>변경 적용</strong>
         <small>
           모델, MoA, Codex 실험 기능, 계정 변경은 저장 후 스택 재시작으로
@@ -188,8 +296,12 @@ function ModelSettings() {
     JSON.stringify(draft) !== JSON.stringify(config);
 
   return (
-    <section className="settings-section">
-      <h3>모델</h3>
+    <section className="settings-section" id="settings-models">
+      <SettingsSectionHeading
+        detail="Agent routing"
+        title="모델"
+        description="역할별 모델과 reasoning effort를 지정합니다."
+      />
       {error ? <p className="settings-error">{error}</p> : null}
       {!draft ? (
         <p className="settings-hint">
@@ -228,7 +340,7 @@ function ModelSettings() {
             </button>
             {savedAt && !dirty ? (
               <small className="settings-hint">
-                저장됨. 적용하려면 스택 재시작 필요.
+                저장됨. 적용하려면 상단의 스택 재시작을 눌러 주세요.
               </small>
             ) : null}
           </div>
@@ -279,8 +391,8 @@ function FastModeSettings() {
   }
 
   return (
-    <section className="settings-section">
-      <h3>패스트 모드</h3>
+    <section className="settings-subsection">
+      <h4>패스트 모드</h4>
       {error ? <p className="settings-error">{error}</p> : null}
       {!state ? (
         <p className="settings-hint">불러오는 중…</p>
@@ -365,8 +477,8 @@ function CodexFeatureSettings() {
   }
 
   return (
-    <section className="settings-section">
-      <h3>Codex 실험 기능</h3>
+    <section className="settings-subsection">
+      <h4>Codex 실험 기능</h4>
       {error ? <p className="settings-error">{error}</p> : null}
       {!state ? (
         <p className="settings-hint">불러오는 중…</p>
@@ -534,8 +646,12 @@ function AccountSettings() {
   }
 
   return (
-    <section className="settings-section">
-      <h3>계정</h3>
+    <section className="settings-section" id="settings-accounts">
+      <SettingsSectionHeading
+        detail="Credentials"
+        title="계정"
+        description="Claude OAuth와 Codex 계정 상태를 확인하고 전환합니다."
+      />
       {error ? <p className="settings-error">{error}</p> : null}
       <ClaudeAccounts
         busy={busy}

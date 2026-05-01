@@ -21,6 +21,8 @@ describe('SettingsPanel', () => {
     const html = renderToStaticMarkup(createElement(SettingsPanel, baseProps));
 
     expect(html).toContain('settings-panel');
+    expect(html).toContain('settings-hero');
+    expect(html).toContain('settings-nav');
     expect(html).toContain(t.settings.nicknameLabel);
     expect(html).toContain('value="Night Owl"');
     expect(html).toContain(t.settings.languageLabel);
@@ -35,6 +37,8 @@ describe('SettingsPanel', () => {
     expect(html).toContain('MoA 참조 모델');
     expect(html).toContain('패스트 모드');
     expect(html).toContain('Codex 실험 기능');
+    expect(html).toContain('href="#settings-codex"');
+    expect(html).toContain('/goal');
     expect(html).toContain('변경 적용');
     expect(html).toContain('불러오는 중');
     expect(html).toContain('Claude');

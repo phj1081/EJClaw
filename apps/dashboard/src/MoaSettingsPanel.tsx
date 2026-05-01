@@ -113,8 +113,12 @@ export function MoaSettingsPanel() {
       Object.values(apiKeys).some((value) => value.trim()));
 
   return (
-    <section className="settings-section">
-      <h3>MoA 참조 모델</h3>
+    <section className="settings-section" id="settings-moa">
+      <header className="settings-section-head">
+        <span>Arbiter references</span>
+        <h3>MoA 참조 모델</h3>
+        <p>Kimi, GLM 같은 외부 참조 모델을 켜고 연결 상태를 바로 확인합니다.</p>
+      </header>
       {error ? <p className="settings-error">{error}</p> : null}
       {!draft ? (
         <p className="settings-hint">
@@ -269,7 +273,7 @@ function MoaSettingsActions({
       </button>
       {savedAt && !dirty ? (
         <small className="settings-hint">
-          저장됨. 적용하려면 스택 재시작 필요.
+          저장됨. 적용하려면 상단의 스택 재시작을 눌러 주세요.
         </small>
       ) : null}
     </div>
