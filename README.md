@@ -1,8 +1,8 @@
 # EJClaw
 
 ![Version](https://img.shields.io/badge/version-0.2.3-blue)
-![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.101-blueviolet)
-![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.120.0-green)
+![Claude Agent SDK](https://img.shields.io/badge/Claude_Agent_SDK-0.2.114-blueviolet)
+![Codex SDK](https://img.shields.io/badge/Codex_SDK-0.128.0-green)
 ![Bun](https://img.shields.io/badge/Bun-1.3+-f9f1e1?logo=bun&logoColor=black)
 ![Discord](https://img.shields.io/badge/Discord-Tribunal-5865F2?logo=discord&logoColor=white)
 
@@ -114,6 +114,11 @@ Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (ho
 - Claude Code CLI
 - Codex CLI
 - Discord 봇 토큰 3개(owner / reviewer / arbiter)
+
+현재 runner 번들 기준 버전:
+
+- Claude Agent SDK: `@anthropic-ai/claude-agent-sdk@0.2.114`
+- Codex SDK/CLI: `@openai/codex@0.128.0`
 
 ### 설치
 
