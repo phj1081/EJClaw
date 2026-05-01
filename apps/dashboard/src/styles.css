@@ -771,7 +771,7 @@ button:disabled {
 }
 
 .settings-nav small {
-  color: var(--muted-soft);
+  color: var(--muted);
   font-size: 11px;
 }
 
