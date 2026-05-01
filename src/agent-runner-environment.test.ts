@@ -370,6 +370,79 @@ describe('prepareGroupEnvironment codex auth handling', () => {
   });
 });
 
+describe('prepareGroupEnvironment Codex goals handling', () => {
+  let tempRoot: string;
+  let previousCwd: string;
+  let previousCodexGoals: string | undefined;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-agent-env-goals-'));
+    previousCwd = process.cwd();
+    previousCodexGoals = process.env.CODEX_GOALS;
+    process.chdir(tempRoot);
+    process.env.EJ_TEST_ROOT = tempRoot;
+    process.env.EJ_TEST_HOME = path.join(tempRoot, 'home');
+    delete process.env.CODEX_GOALS;
+
+    fs.mkdirSync(path.join(process.env.EJ_TEST_HOME, '.codex'), {
+      recursive: true,
+    });
+
+    mockReadEnvFile.mockReset();
+    mockGetActiveCodexAuthPath.mockReset();
+    vi.mocked(config.isReviewService).mockReturnValue(false);
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(false);
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'dc:test',
+      owner_service_id: 'claude',
+      reviewer_service_id: 'codex-main',
+      arbiter_service_id: null,
+      owner_failover_active: false,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+  });
+
+  afterEach(() => {
+    process.chdir(previousCwd);
+    delete process.env.EJ_TEST_ROOT;
+    delete process.env.EJ_TEST_HOME;
+    if (previousCodexGoals) process.env.CODEX_GOALS = previousCodexGoals;
+    else delete process.env.CODEX_GOALS;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('keeps Codex goals disabled by default and enables them only via opt-in config', () => {
+    mockReadEnvFile.mockReturnValue({});
+
+    const defaultPrepared = prepareGroupEnvironment(group, false, 'dc:test');
+    expect(defaultPrepared.env.CODEX_GOALS).toBeUndefined();
+
+    const enabledPrepared = prepareGroupEnvironment(
+      {
+        ...group,
+        agentConfig: {
+          codexGoals: true,
+        },
+      },
+      false,
+      'dc:test',
+    );
+    expect(enabledPrepared.env.CODEX_GOALS).toBe('true');
+  });
+
+  it('allows CODEX_GOALS env opt-in for Codex runner sessions', () => {
+    mockReadEnvFile.mockReturnValue({
+      CODEX_GOALS: 'true',
+    });
+
+    const prepared = prepareGroupEnvironment(group, false, 'dc:test');
+
+    expect(prepared.env.CODEX_GOALS).toBe('true');
+  });
+});
+
 describe('prepareReadonlySessionEnvironment codex compatibility', () => {
   let tempRoot: string;
   let previousCwd: string;

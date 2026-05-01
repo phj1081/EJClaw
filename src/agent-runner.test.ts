@@ -680,3 +680,59 @@ OUROBOROS_LLM_BACKEND = "codex"
     );
   });
 });
+
+describe('agent-runner Codex goals', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    fakeProc = createFakeProcess();
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const str = String(p);
+      return (
+        str.includes('dist/index.js') ||
+        str.includes('dist/ipc-mcp-stdio.js') ||
+        str.endsWith('/.codex/config.toml')
+      );
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('passes Codex goal opt-in config through env and runner stdin payload', async () => {
+    let stdinPayload = '';
+    fakeProc.stdin.on('data', (chunk) => {
+      stdinPayload += chunk.toString();
+    });
+
+    const codexGroup: RegisteredGroup = {
+      ...testGroup,
+      agentType: 'codex',
+      agentConfig: {
+        codexGoals: true,
+      },
+    };
+
+    const resultPromise = runAgentProcess(
+      codexGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+
+    expect(JSON.parse(stdinPayload)).toMatchObject({
+      prompt: 'Hello',
+      codexGoals: true,
+    });
+
+    const spawnEnv = vi.mocked(spawn).mock.calls.at(-1)?.[2]?.env as
+      | Record<string, string>
+      | undefined;
+    expect(spawnEnv?.CODEX_GOALS).toBe('true');
+  });
+});

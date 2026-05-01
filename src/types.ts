@@ -5,6 +5,7 @@ export interface AgentConfig {
   // Per-group model/effort overrides (take precedence over global env vars)
   codexModel?: string;
   codexEffort?: string;
+  codexGoals?: boolean;
   claudeModel?: string;
   claudeEffort?: string;
   claudeThinking?: 'adaptive' | 'enabled' | 'disabled';

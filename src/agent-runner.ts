@@ -34,6 +34,7 @@ export interface AgentInput {
   useTaskScopedSession?: boolean;
   assistantName?: string;
   agentType?: 'claude-code' | 'codex';
+  codexGoals?: boolean;
   roomRoleContext?: RoomRoleContext;
 }
 
@@ -150,13 +151,17 @@ export async function runAgentProcess(
 
     onProcess(proc, processName, env.EJCLAW_IPC_DIR);
 
-    proc.stdin.write(JSON.stringify(input));
+    const runnerInput: AgentInput = {
+      ...input,
+      ...(group.agentConfig?.codexGoals === true ? { codexGoals: true } : {}),
+    };
+    proc.stdin.write(JSON.stringify(runnerInput));
     proc.stdin.end();
 
     runSpawnedAgentProcess({
       proc,
       group,
-      input,
+      input: runnerInput,
       processName,
       logsDir,
       startTime,

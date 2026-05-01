@@ -319,6 +319,15 @@ function prepareCodexSessionEnvironment(args: {
     process.env.CODEX_EFFORT;
   if (codexEffort) args.env.CODEX_EFFORT = codexEffort;
 
+  const codexGoals =
+    args.group.agentConfig?.codexGoals ??
+    (args.envVars.CODEX_GOALS === 'true' || process.env.CODEX_GOALS === 'true');
+  if (codexGoals) {
+    args.env.CODEX_GOALS = 'true';
+  } else {
+    delete args.env.CODEX_GOALS;
+  }
+
   const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
   syncHostCodexSessionFiles(sessionCodexDir);
 
@@ -527,6 +536,7 @@ export function prepareGroupEnvironment(
     'CLAUDE_EFFORT',
     'CODEX_MODEL',
     'CODEX_EFFORT',
+    'CODEX_GOALS',
   ]);
 
   const env = buildBaseRunnerEnv({
