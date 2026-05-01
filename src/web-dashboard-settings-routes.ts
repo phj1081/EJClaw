@@ -1,6 +1,7 @@
 import {
   addClaudeAccountFromToken,
   getActiveCodexSettingsIndex,
+  getCodexFeatures,
   getFastMode,
   getModelConfig,
   listClaudeAccounts,
@@ -9,9 +10,11 @@ import {
   refreshCodexAccount,
   removeAccountDirectory,
   setActiveCodexSettingsIndex,
+  updateCodexFeatures,
   updateFastMode,
   updateModelConfig,
   type ClaudeAccountSummary,
+  type CodexFeatureSnapshot,
   type CodexAccountSummary,
   type FastModeSnapshot,
   type ModelConfigSnapshot,
@@ -33,6 +36,7 @@ export interface SettingsRouteDependencies {
   addClaudeAccountFromToken: typeof addClaudeAccountFromToken;
   checkMoaModel: typeof checkMoaModel;
   getActiveCodexSettingsIndex: typeof getActiveCodexSettingsIndex;
+  getCodexFeatures: typeof getCodexFeatures;
   getFastMode: typeof getFastMode;
   getModelConfig: typeof getModelConfig;
   getMoaSettings: typeof getMoaSettings;
@@ -42,6 +46,7 @@ export interface SettingsRouteDependencies {
   refreshCodexAccount: typeof refreshCodexAccount;
   removeAccountDirectory: typeof removeAccountDirectory;
   setActiveCodexSettingsIndex: typeof setActiveCodexSettingsIndex;
+  updateCodexFeatures: typeof updateCodexFeatures;
   updateFastMode: typeof updateFastMode;
   updateModelConfig: typeof updateModelConfig;
   updateMoaSettings: typeof updateMoaSettings;
@@ -58,6 +63,7 @@ const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   addClaudeAccountFromToken,
   checkMoaModel,
   getActiveCodexSettingsIndex,
+  getCodexFeatures,
   getFastMode,
   getModelConfig,
   getMoaSettings,
@@ -67,6 +73,7 @@ const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   refreshCodexAccount,
   removeAccountDirectory,
   setActiveCodexSettingsIndex,
+  updateCodexFeatures,
   updateFastMode,
   updateModelConfig,
   updateMoaSettings,
@@ -128,6 +135,23 @@ async function handleFastModeRoute(
   if (body instanceof Response) return body;
   try {
     return jsonResponse(deps.updateFastMode(body));
+  } catch (err) {
+    return jsonResponse({ error: errorMessage(err) }, { status: 500 });
+  }
+}
+
+async function handleCodexFeaturesRoute(
+  request: Request,
+  jsonResponse: JsonResponse,
+  deps: SettingsRouteDependencies,
+): Promise<Response | null> {
+  if (readMethod(request.method)) return jsonResponse(deps.getCodexFeatures());
+  if (request.method !== 'PUT' && request.method !== 'PATCH') return null;
+
+  const body = await readJsonObject(request, jsonResponse);
+  if (body instanceof Response) return body;
+  try {
+    return jsonResponse(deps.updateCodexFeatures(body));
   } catch (err) {
     return jsonResponse({ error: errorMessage(err) }, { status: 500 });
   }
@@ -299,6 +323,9 @@ export async function handleSettingsRoute({
   if (url.pathname === '/api/settings/fast-mode') {
     return handleFastModeRoute(request, jsonResponse, deps);
   }
+  if (url.pathname === '/api/settings/codex-features') {
+    return handleCodexFeaturesRoute(request, jsonResponse, deps);
+  }
   if (url.pathname === '/api/settings/moa') {
     return handleMoaSettingsRoute(request, jsonResponse, deps);
   }
@@ -335,6 +362,7 @@ export async function handleSettingsRoute({
 export type {
   ClaudeAccountSummary,
   CodexAccountSummary,
+  CodexFeatureSnapshot,
   FastModeSnapshot,
   ModelConfigSnapshot,
   MoaSettingsSnapshot,

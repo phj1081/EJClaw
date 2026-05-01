@@ -3,17 +3,20 @@ import { useEffect, useState } from 'react';
 import {
   type ClaudeAccountSummary,
   type CodexAccountSummary,
+  type CodexFeatureSnapshot,
   type FastModeSnapshot,
   type ModelConfigSnapshot,
   type ModelRoleConfig,
   addClaudeAccount,
   deleteAccount,
   fetchAccounts,
+  fetchCodexFeatures,
   fetchFastMode,
   fetchModelConfig,
   refreshAllCodexAccounts as refreshAllCodexAccountsApi,
   refreshCodexAccount as refreshCodexAccountApi,
   setCurrentCodexAccount as setCurrentCodexAccountApi,
+  updateCodexFeatures,
   updateFastMode,
   updateModels,
 } from './api';
@@ -81,6 +84,8 @@ export function SettingsPanel({
       <MoaSettingsPanel onRestartStack={onRestartStack} />
 
       <FastModeSettings />
+
+      <CodexFeatureSettings onRestartStack={onRestartStack} />
 
       <AccountSettings onRestartStack={onRestartStack} />
     </div>
@@ -296,6 +301,104 @@ function FastModeSettings() {
               type="checkbox"
             />
           </label>
+        </>
+      )}
+    </section>
+  );
+}
+
+function CodexFeatureSettings({
+  onRestartStack,
+}: {
+  onRestartStack: () => void;
+}) {
+  const [state, setState] = useState<CodexFeatureSnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCodexFeatures()
+      .then((snapshot) => {
+        if (cancelled) return;
+        setState(snapshot);
+        setError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggleGoals() {
+    if (!state) return;
+    const previous = state;
+    const optimistic = { ...state, goals: !state.goals };
+    setState(optimistic);
+    setBusy(true);
+    setError(null);
+    try {
+      const fresh = await updateCodexFeatures({ goals: optimistic.goals });
+      setState(fresh);
+      setSavedAt(Date.now());
+    } catch (err) {
+      setState(previous);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <h3>Codex 실험 기능</h3>
+      {error ? <p className="settings-error">{error}</p> : null}
+      {!state ? (
+        <p className="settings-hint">불러오는 중…</p>
+      ) : (
+        <>
+          <label className="settings-toggle-row">
+            <span className="settings-toggle-label">
+              <span className="settings-toggle-title">/goal</span>
+              <small className="settings-hint">
+                CODEX_GOALS=true — Codex 0.128의 under-development goals
+                기능입니다. 기본 OFF이며, 저장 후 스택 재시작이 필요합니다.
+              </small>
+            </span>
+            <input
+              checked={state.goals}
+              disabled={busy}
+              onChange={() => void toggleGoals()}
+              type="checkbox"
+            />
+          </label>
+          <div className="settings-actions">
+            {savedAt ? (
+              <small className="settings-hint">
+                저장됨. 적용하려면 스택 재시작 필요.
+              </small>
+            ) : null}
+            <button
+              className="settings-restart"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
+                  )
+                ) {
+                  onRestartStack();
+                }
+              }}
+              type="button"
+            >
+              스택 재시작
+            </button>
+          </div>
         </>
       )}
     </section>

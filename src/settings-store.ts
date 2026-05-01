@@ -56,6 +56,10 @@ export interface FastModeSnapshot {
   claude: boolean;
 }
 
+export interface CodexFeatureSnapshot {
+  goals: boolean;
+}
+
 const ROLE_KEYS = ['OWNER', 'REVIEWER', 'ARBITER'] as const;
 
 function envFilePath(): string {
@@ -632,6 +636,36 @@ export function updateFastMode(
   if (typeof input.codex === 'boolean') writeCodexFastMode(input.codex);
   if (typeof input.claude === 'boolean') writeClaudeFastMode(input.claude);
   return getFastMode();
+}
+
+function readCodexGoals(): boolean {
+  return readEnvOrProcess('CODEX_GOALS') === 'true';
+}
+
+function writeCodexGoals(value: boolean): void {
+  const file = envFilePath();
+  const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
+  const updated = setOrInsertEnvLine(
+    content,
+    'CODEX_GOALS',
+    value ? 'true' : 'false',
+  );
+  const tempPath = `${file}.tmp`;
+  fs.writeFileSync(tempPath, updated, { mode: 0o600 });
+  fs.renameSync(tempPath, file);
+}
+
+export function getCodexFeatures(): CodexFeatureSnapshot {
+  return {
+    goals: readCodexGoals(),
+  };
+}
+
+export function updateCodexFeatures(
+  input: Partial<CodexFeatureSnapshot>,
+): CodexFeatureSnapshot {
+  if (typeof input.goals === 'boolean') writeCodexGoals(input.goals);
+  return getCodexFeatures();
 }
 
 export function removeAccountDirectory(

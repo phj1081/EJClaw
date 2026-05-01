@@ -52,6 +52,7 @@ interface RunnerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   agentType?: string;
+  codexGoals?: boolean;
   roomRoleContext?: RoomRoleContext;
 }
 
@@ -93,6 +94,10 @@ function normalizeStructuredOutput(result: string | null): {
 
 function log(message: string): void {
   console.error(`[codex-runner] ${message}`);
+}
+
+function isCodexGoalsEnabled(runnerInput: RunnerInput): boolean {
+  return runnerInput.codexGoals === true || process.env.CODEX_GOALS === 'true';
 }
 
 async function readStdin(): Promise<string> {
@@ -343,6 +348,7 @@ async function runAppServerSession(
     cwd: EFFECTIVE_CWD,
     env: clientEnv,
     log,
+    enableGoals: isCodexGoalsEnabled(runnerInput),
   });
 
   await client.start();

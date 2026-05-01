@@ -42,6 +42,53 @@ export interface CodexAppServerTurnResult {
   result: string | null;
 }
 
+export interface CodexThreadGoal {
+  threadId: string;
+  objective: string;
+  status: string;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export function buildCodexAppServerArgs(args: {
+  codexBin: string;
+  enableGoals?: boolean;
+}): string[] {
+  return args.enableGoals === true
+    ? [args.codexBin, '--enable', 'goals', 'app-server']
+    : [args.codexBin, 'app-server'];
+}
+
+function isCodexThreadGoal(value: unknown): value is CodexThreadGoal {
+  if (!value || typeof value !== 'object') return false;
+  const goal = value as Partial<CodexThreadGoal>;
+  return (
+    typeof goal.threadId === 'string' &&
+    typeof goal.objective === 'string' &&
+    typeof goal.status === 'string'
+  );
+}
+
+function extractOptionalGoalResult(result: unknown): CodexThreadGoal | null {
+  const goal = (result as { goal?: unknown } | null)?.goal ?? null;
+  if (goal === null) return null;
+  if (!isCodexThreadGoal(goal)) {
+    throw new Error('Codex app-server returned an invalid goal payload.');
+  }
+  return goal;
+}
+
+function extractGoalResult(result: unknown, method: string): CodexThreadGoal {
+  const goal = extractOptionalGoalResult(result);
+  if (!goal) {
+    throw new Error(`Codex app-server ${method} did not return a goal.`);
+  }
+  return goal;
+}
+
 interface JsonRpcResponse {
   id: number;
   result?: unknown;
@@ -79,12 +126,14 @@ export interface CodexAppServerClientOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   log: (message: string) => void;
+  enableGoals?: boolean;
 }
 
 export class CodexAppServerClient {
   private readonly cwd: string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly log: (message: string) => void;
+  private readonly enableGoals: boolean;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly require = createRequire(import.meta.url);
   private nextId = 1;
@@ -96,6 +145,7 @@ export class CodexAppServerClient {
     this.cwd = options.cwd;
     this.env = options.env || process.env;
     this.log = options.log;
+    this.enableGoals = options.enableGoals === true;
   }
 
   async start(): Promise<void> {
@@ -108,11 +158,18 @@ export class CodexAppServerClient {
       'codex.js',
     );
 
-    this.proc = spawn(process.execPath, [codexBin, 'app-server'], {
-      cwd: this.cwd,
-      env: this.env,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    this.proc = spawn(
+      process.execPath,
+      buildCodexAppServerArgs({
+        codexBin,
+        enableGoals: this.enableGoals,
+      }),
+      {
+        cwd: this.cwd,
+        env: this.env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    );
 
     this.proc.stdout.setEncoding('utf8');
     this.proc.stdout.on('data', (chunk: string) => {
@@ -310,6 +367,27 @@ export class CodexAppServerClient {
     }
 
     return turnPromise;
+  }
+
+  async threadGoalSet(
+    threadId: string,
+    objective: string,
+  ): Promise<CodexThreadGoal> {
+    const result = await this.request('thread/goal/set', {
+      threadId,
+      objective,
+    });
+    return extractGoalResult(result, 'thread/goal/set');
+  }
+
+  async threadGoalGet(threadId: string): Promise<CodexThreadGoal | null> {
+    const result = await this.request('thread/goal/get', { threadId });
+    return extractOptionalGoalResult(result);
+  }
+
+  async threadGoalClear(threadId: string): Promise<boolean> {
+    const result = await this.request('thread/goal/clear', { threadId });
+    return (result as { cleared?: boolean } | null)?.cleared === true;
   }
 
   private handleStdoutLine(line: string): void {

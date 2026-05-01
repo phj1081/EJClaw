@@ -7,6 +7,7 @@ import {
 import type {
   ClaudeAccountSummary,
   CodexAccountSummary,
+  CodexFeatureSnapshot,
   FastModeSnapshot,
   ModelConfigSnapshot,
 } from './settings-store.js';
@@ -42,6 +43,7 @@ const modelConfig: ModelConfigSnapshot = {
 };
 
 const fastMode: FastModeSnapshot = { codex: true, claude: false };
+const codexFeatures: CodexFeatureSnapshot = { goals: false };
 
 const moaSettings: MoaSettingsSnapshot = {
   enabled: true,
@@ -107,6 +109,7 @@ function makeDeps(
       responseLength: 2,
     }),
     getActiveCodexSettingsIndex: () => 1,
+    getCodexFeatures: () => codexFeatures,
     getFastMode: () => fastMode,
     getModelConfig: () => modelConfig,
     getMoaSettings: () => moaSettings,
@@ -116,6 +119,7 @@ function makeDeps(
     refreshCodexAccount: async () => makeCodexAccount(),
     removeAccountDirectory: () => undefined,
     setActiveCodexSettingsIndex: () => undefined,
+    updateCodexFeatures: () => codexFeatures,
     updateFastMode: () => fastMode,
     updateModelConfig: () => modelConfig,
     updateMoaSettings: () => moaSettings,
@@ -155,6 +159,10 @@ describe('web dashboard settings routes', () => {
     expect(mode?.status).toBe(200);
     await expect(mode?.json()).resolves.toEqual(fastMode);
 
+    const features = await route('/api/settings/codex-features');
+    expect(features?.status).toBe(200);
+    await expect(features?.json()).resolves.toEqual(codexFeatures);
+
     const moa = await route('/api/settings/moa');
     expect(moa?.status).toBe(200);
     const moaJson = (await moa?.json()) as MoaSettingsSnapshot;
@@ -186,6 +194,10 @@ describe('web dashboard settings routes', () => {
       updateModelConfig: (input) => {
         calls.push(`models:${JSON.stringify(input)}`);
         return modelConfig;
+      },
+      updateCodexFeatures: (input) => {
+        calls.push(`codex-features:${JSON.stringify(input)}`);
+        return { goals: input.goals === true };
       },
       updateMoaSettings: (input) => {
         calls.push(`moa:${JSON.stringify(input)}`);
@@ -230,6 +242,15 @@ describe('web dashboard settings routes', () => {
       codexCurrentIndex: 1,
     });
 
+    const goals = await route(
+      '/api/settings/codex-features',
+      'PATCH',
+      { goals: true },
+      deps,
+    );
+    expect(goals?.status).toBe(200);
+    await expect(goals?.json()).resolves.toEqual({ goals: true });
+
     const moa = await route(
       '/api/settings/moa',
       'PATCH',
@@ -255,6 +276,7 @@ describe('web dashboard settings routes', () => {
       'add:claude-token',
       'delete:codex:4',
       'current:4',
+      'codex-features:{"goals":true}',
       'moa:{"enabled":false,"models":[{"name":"kimi","enabled":false}]}',
     ]);
   });
