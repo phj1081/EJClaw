@@ -210,15 +210,7 @@ function SettingsApplyBar({ onRestartStack }: { onRestartStack: () => void }) {
       </div>
       <button
         className="settings-restart"
-        onClick={() => {
-          if (
-            window.confirm(
-              '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
-            )
-          ) {
-            onRestartStack();
-          }
-        }}
+        onClick={onRestartStack}
         type="button"
       >
         스택 재시작
