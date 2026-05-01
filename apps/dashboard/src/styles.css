@@ -734,14 +734,17 @@ button:disabled {
   box-shadow: var(--card-shadow);
 }
 
-.settings-nav a {
+.settings-nav button {
   display: grid;
   gap: 2px;
   padding: 10px 12px;
   border: 1px solid transparent;
   border-radius: 12px;
+  background: transparent;
   color: var(--muted);
-  text-decoration: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
   transition:
     background 140ms ease,
     border-color 140ms ease,
@@ -749,11 +752,17 @@ button:disabled {
     transform 140ms ease;
 }
 
-.settings-nav a:hover {
+.settings-nav button:hover,
+.settings-nav button:focus-visible {
   transform: translateX(2px);
   border-color: rgba(214, 130, 88, 0.24);
   background: rgba(214, 130, 88, 0.08);
   color: var(--bg-ink);
+}
+
+.settings-nav button:focus-visible {
+  outline: 2px solid rgba(214, 130, 88, 0.34);
+  outline-offset: 2px;
 }
 
 .settings-nav strong {

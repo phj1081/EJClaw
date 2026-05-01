@@ -37,7 +37,9 @@ describe('SettingsPanel', () => {
     expect(html).toContain('MoA 참조 모델');
     expect(html).toContain('패스트 모드');
     expect(html).toContain('Codex 실험 기능');
-    expect(html).toContain('href="#settings-codex"');
+    expect(html).toContain('data-settings-target="settings-codex"');
+    expect(html).toContain('aria-controls="settings-codex"');
+    expect(html).not.toContain('href="#settings-codex"');
     expect(html).toContain('/goal');
     expect(html).toContain('변경 적용');
     expect(html).toContain('불러오는 중');
