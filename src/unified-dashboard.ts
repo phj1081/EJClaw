@@ -52,7 +52,9 @@ import type { GroupQueue } from './group-queue.js';
 import { logger } from './logger.js';
 import { isWatchCiTask } from './task-watch-status.js';
 import {
+  readDashboardStatusMessageId,
   readStatusSnapshots,
+  writeDashboardStatusMessageId,
   writeStatusSnapshot,
 } from './status-dashboard.js';
 import type {
@@ -167,6 +169,13 @@ export async function purgeDashboardChannel(
   if (channel?.purgeChannel) {
     await channel.purgeChannel(statusJid);
   }
+}
+
+export function shouldPurgeDashboardChannelOnStart(args: {
+  purgeOnStart?: boolean;
+  storedMessageId: string | null;
+}): boolean {
+  return args.purgeOnStart === true && !args.storedMessageId;
 }
 
 async function refreshChannelMeta(
@@ -708,8 +717,17 @@ export async function startUnifiedDashboard(
 
   const isRenderer = opts.serviceAgentType === 'claude-code';
   const statusJid = `dc:${opts.statusChannelId}`;
+  if (isRenderer) {
+    statusMessageId = readDashboardStatusMessageId(opts.statusChannelId);
+  }
 
-  if (isRenderer && opts.purgeOnStart) {
+  if (
+    isRenderer &&
+    shouldPurgeDashboardChannelOnStart({
+      purgeOnStart: opts.purgeOnStart,
+      storedMessageId: statusMessageId,
+    })
+  ) {
     await purgeDashboardChannel(opts);
   }
 
@@ -746,15 +764,28 @@ export async function startUnifiedDashboard(
           },
           'Dashboard content empty, skipping render',
         );
-        statusMessageId = null;
         return;
       }
 
       if (statusMessageId && channel.editMessage) {
-        await channel.editMessage(statusJid, statusMessageId, content);
-      } else if (channel.sendAndTrack) {
+        try {
+          await channel.editMessage(statusJid, statusMessageId, content);
+          writeDashboardStatusMessageId(opts.statusChannelId, statusMessageId);
+        } catch (err) {
+          logger.warn(
+            { err, messageId: statusMessageId },
+            'Dashboard status message edit failed; sending a fresh tracked message',
+          );
+          statusMessageId = null;
+        }
+      }
+
+      if (!statusMessageId && channel.sendAndTrack) {
         const id = await channel.sendAndTrack(statusJid, content);
-        if (id) statusMessageId = id;
+        if (id) {
+          statusMessageId = id;
+          writeDashboardStatusMessageId(opts.statusChannelId, id);
+        }
       }
       if (!dashboardUpdateLogged) {
         logger.info(

@@ -9,11 +9,7 @@ import {
   updateMoaSettings,
 } from './api';
 
-export function MoaSettingsPanel({
-  onRestartStack,
-}: {
-  onRestartStack: () => void;
-}) {
+export function MoaSettingsPanel() {
   const [config, setConfig] = useState<MoaSettingsSnapshot | null>(null);
   const [draft, setDraft] = useState<MoaSettingsSnapshot | null>(null);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
@@ -135,7 +131,6 @@ export function MoaSettingsPanel({
             setApiKeys((prev) => ({ ...prev, [name]: value }))
           }
           onModelChange={setModel}
-          onRestartStack={onRestartStack}
           onSave={save}
           onTest={testModel}
           onToggle={() =>
@@ -158,7 +153,6 @@ function MoaSettingsContent({
   draft,
   onApiKeyChange,
   onModelChange,
-  onRestartStack,
   onSave,
   onTest,
   onToggle,
@@ -174,7 +168,6 @@ function MoaSettingsContent({
     name: string,
     patch: Partial<MoaModelSettingsSnapshot>,
   ) => void;
-  onRestartStack: () => void;
   onSave: () => Promise<void>;
   onTest: (name: string) => Promise<void>;
   onToggle: () => void;
@@ -206,7 +199,6 @@ function MoaSettingsContent({
         busy={busy}
         checking={checking}
         dirty={dirty}
-        onRestartStack={onRestartStack}
         onSave={onSave}
         savedAt={savedAt}
       />
@@ -256,14 +248,12 @@ function MoaSettingsActions({
   busy,
   checking,
   dirty,
-  onRestartStack,
   onSave,
   savedAt,
 }: {
   busy: boolean;
   checking: string | null;
   dirty: boolean;
-  onRestartStack: () => void;
   onSave: () => Promise<void>;
   savedAt: number | null;
 }) {
@@ -275,29 +265,13 @@ function MoaSettingsActions({
         onClick={() => void onSave()}
         type="button"
       >
-        {busy ? '저장 중…' : '저장'}
+        {busy ? '저장 중…' : 'MoA 저장'}
       </button>
       {savedAt && !dirty ? (
         <small className="settings-hint">
           저장됨. 적용하려면 스택 재시작 필요.
         </small>
       ) : null}
-      <button
-        className="settings-restart"
-        disabled={busy || checking !== null}
-        onClick={() => {
-          if (
-            window.confirm(
-              '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
-            )
-          ) {
-            onRestartStack();
-          }
-        }}
-        type="button"
-      >
-        스택 재시작
-      </button>
     </div>
   );
 }

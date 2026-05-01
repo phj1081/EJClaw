@@ -35,10 +35,12 @@ describe('SettingsPanel', () => {
     expect(html).toContain('MoA 참조 모델');
     expect(html).toContain('패스트 모드');
     expect(html).toContain('Codex 실험 기능');
+    expect(html).toContain('변경 적용');
     expect(html).toContain('불러오는 중');
     expect(html).toContain('Claude');
     expect(html).toContain('계정');
     expect(html).toContain('전체 갱신');
     expect(html).toContain('스택 재시작');
+    expect(html.match(/class="settings-restart"/g)).toHaveLength(1);
   });
 });
