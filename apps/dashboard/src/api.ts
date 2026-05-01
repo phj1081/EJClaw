@@ -388,6 +388,10 @@ export interface FastModeSnapshot {
   claude: boolean;
 }
 
+export interface CodexFeatureSnapshot {
+  goals: boolean;
+}
+
 export interface MoaReferenceStatus {
   model: string;
   checkedAt: string;
@@ -536,6 +540,34 @@ export async function updateFastMode(
     throw new Error(msg);
   }
   return (await response.json()) as FastModeSnapshot;
+}
+
+export async function fetchCodexFeatures(): Promise<CodexFeatureSnapshot> {
+  return fetchJson('/api/settings/codex-features');
+}
+
+export async function updateCodexFeatures(
+  input: Partial<CodexFeatureSnapshot>,
+): Promise<CodexFeatureSnapshot> {
+  const response = await fetch('/api/settings/codex-features', {
+    method: 'PUT',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let msg = `update codex features failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as CodexFeatureSnapshot;
 }
 
 export async function fetchMoaSettings(): Promise<MoaSettingsSnapshot> {
