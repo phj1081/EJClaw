@@ -5,6 +5,7 @@ import {
   buildWebUsageRowsForSnapshot,
   formatStatusHeader,
   renderUsageTable,
+  shouldPurgeDashboardChannelOnStart,
   summarizeWatcherTasks,
 } from './unified-dashboard.js';
 
@@ -58,6 +59,32 @@ describe('formatStatusHeader', () => {
         watchers: { active: 2, paused: 1 },
       }),
     ).toBe('**📊 에이전트 상태** — 활성 3 / 8 | 감시 2 | 일시정지 1');
+  });
+});
+
+describe('shouldPurgeDashboardChannelOnStart', () => {
+  it('keeps the existing status message when a stored message id exists', () => {
+    expect(
+      shouldPurgeDashboardChannelOnStart({
+        purgeOnStart: true,
+        storedMessageId: 'status-message-1',
+      }),
+    ).toBe(false);
+  });
+
+  it('purges only when explicitly requested and no stored message id exists', () => {
+    expect(
+      shouldPurgeDashboardChannelOnStart({
+        purgeOnStart: true,
+        storedMessageId: null,
+      }),
+    ).toBe(true);
+    expect(
+      shouldPurgeDashboardChannelOnStart({
+        purgeOnStart: false,
+        storedMessageId: null,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -696,6 +696,39 @@ button:disabled {
   letter-spacing: 0.05em;
 }
 
+.settings-apply-bar {
+  position: sticky;
+  top: 72px;
+  z-index: 5;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border: 1px solid rgba(214, 130, 88, 0.32);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(214, 130, 88, 0.14), transparent 55%),
+    rgba(19, 24, 22, 0.94);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+}
+
+.settings-apply-bar > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-apply-bar strong {
+  color: var(--bg-ink);
+  font-size: 13px;
+}
+
+.settings-apply-bar small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .settings-row-inline {
   grid-template-columns: 80px minmax(0, 1fr) 100px;
   display: grid;

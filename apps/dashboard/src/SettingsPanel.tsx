@@ -79,20 +79,51 @@ export function SettingsPanel({
         </label>
       </section>
 
-      <ModelSettings onRestartStack={onRestartStack} />
+      <SettingsApplyBar onRestartStack={onRestartStack} />
 
-      <MoaSettingsPanel onRestartStack={onRestartStack} />
+      <ModelSettings />
+
+      <MoaSettingsPanel />
 
       <FastModeSettings />
 
-      <CodexFeatureSettings onRestartStack={onRestartStack} />
+      <CodexFeatureSettings />
 
-      <AccountSettings onRestartStack={onRestartStack} />
+      <AccountSettings />
     </div>
   );
 }
 
-function ModelSettings({ onRestartStack }: { onRestartStack: () => void }) {
+function SettingsApplyBar({ onRestartStack }: { onRestartStack: () => void }) {
+  return (
+    <section className="settings-apply-bar" aria-label="변경 적용">
+      <div>
+        <strong>변경 적용</strong>
+        <small>
+          모델, MoA, Codex 실험 기능, 계정 변경은 저장 후 스택 재시작으로
+          적용됩니다.
+        </small>
+      </div>
+      <button
+        className="settings-restart"
+        onClick={() => {
+          if (
+            window.confirm(
+              '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
+            )
+          ) {
+            onRestartStack();
+          }
+        }}
+        type="button"
+      >
+        스택 재시작
+      </button>
+    </section>
+  );
+}
+
+function ModelSettings() {
   const [config, setConfig] = useState<ModelConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<ModelConfigSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -193,29 +224,13 @@ function ModelSettings({ onRestartStack }: { onRestartStack: () => void }) {
               onClick={() => void save()}
               type="button"
             >
-              {busy ? '저장 중…' : '저장'}
+              {busy ? '저장 중…' : '모델 저장'}
             </button>
             {savedAt && !dirty ? (
               <small className="settings-hint">
                 저장됨. 적용하려면 스택 재시작 필요.
               </small>
             ) : null}
-            <button
-              className="settings-restart"
-              disabled={busy}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
-                  )
-                ) {
-                  onRestartStack();
-                }
-              }}
-              type="button"
-            >
-              스택 재시작
-            </button>
           </div>
         </>
       )}
@@ -307,11 +322,7 @@ function FastModeSettings() {
   );
 }
 
-function CodexFeatureSettings({
-  onRestartStack,
-}: {
-  onRestartStack: () => void;
-}) {
+function CodexFeatureSettings() {
   const [state, setState] = useState<CodexFeatureSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -376,29 +387,11 @@ function CodexFeatureSettings({
               type="checkbox"
             />
           </label>
-          <div className="settings-actions">
-            {savedAt ? (
-              <small className="settings-hint">
-                저장됨. 적용하려면 스택 재시작 필요.
-              </small>
-            ) : null}
-            <button
-              className="settings-restart"
-              disabled={busy}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
-                  )
-                ) {
-                  onRestartStack();
-                }
-              }}
-              type="button"
-            >
-              스택 재시작
-            </button>
-          </div>
+          {savedAt ? (
+            <small className="settings-hint">
+              저장됨. 적용하려면 상단의 스택 재시작을 눌러 주세요.
+            </small>
+          ) : null}
         </>
       )}
     </section>
@@ -436,7 +429,7 @@ function formatExpiry(
   };
 }
 
-function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
+function AccountSettings() {
   const [data, setData] = useState<AccountData | null>(null);
   const [busy, setBusy] = useState(false);
   const [perRowBusy, setPerRowBusy] = useState<string | null>(null);
@@ -561,24 +554,6 @@ function AccountSettings({ onRestartStack }: { onRestartStack: () => void }) {
         onSwitch={(index) => void handleSwitchCodex(index)}
         perRowBusy={perRowBusy}
       />
-      <div className="settings-actions">
-        <button
-          className="settings-restart"
-          disabled={busy}
-          onClick={() => {
-            if (
-              window.confirm(
-                '스택을 재시작하면 진행 중인 모든 에이전트 작업이 중단됩니다. 진행할까요?',
-              )
-            ) {
-              onRestartStack();
-            }
-          }}
-          type="button"
-        >
-          스택 재시작 (변경 적용)
-        </button>
-      </div>
     </section>
   );
 }
