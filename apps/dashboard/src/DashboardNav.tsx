@@ -4,7 +4,6 @@ import {
   Clock,
   Download,
   Gauge,
-  Inbox as InboxIcon,
   MessageSquare,
   RefreshCw,
   Settings,
@@ -15,7 +14,6 @@ import { type Messages } from './i18n';
 
 export type DashboardView =
   | 'usage'
-  | 'inbox'
   | 'health'
   | 'rooms'
   | 'scheduled'
@@ -29,7 +27,6 @@ interface DashboardNavData {
 
 const NAV_ICONS: Record<DashboardView, ReactNode> = {
   usage: <Gauge size={20} strokeWidth={2} aria-hidden />,
-  inbox: <InboxIcon size={20} strokeWidth={2} aria-hidden />,
   health: <Activity size={20} strokeWidth={2} aria-hidden />,
   rooms: <MessageSquare size={20} strokeWidth={2} aria-hidden />,
   scheduled: <Clock size={20} strokeWidth={2} aria-hidden />,
@@ -39,7 +36,6 @@ const NAV_ICONS: Record<DashboardView, ReactNode> = {
 function navItems(t: Messages) {
   return [
     { href: '#/rooms', label: t.nav.rooms, view: 'rooms' as const },
-    { href: '#/inbox', label: t.nav.inbox, view: 'inbox' as const },
     { href: '#/scheduled', label: t.nav.scheduled, view: 'scheduled' as const },
     { href: '#/health', label: t.nav.health, view: 'health' as const },
     { href: '#/usage', label: t.nav.usage, view: 'usage' as const },
@@ -59,7 +55,6 @@ function navStats(data: DashboardNavData | null) {
     { processing: 0 },
   );
   return {
-    inbox: data.overview.inbox.length,
     processing: queue.processing,
   };
 }
@@ -68,7 +63,6 @@ function navBadge(
   view: DashboardView,
   stats: ReturnType<typeof navStats>,
 ): number | null {
-  if (view === 'inbox' && stats && stats.inbox > 0) return stats.inbox;
   if (view === 'rooms' && stats && stats.processing > 0) {
     return stats.processing;
   }
@@ -100,8 +94,8 @@ function DashboardBrandLink({
   return (
     <a
       className="rail-brand"
-      href="#/usage"
-      onClick={() => onNavigate('usage')}
+      href="#/rooms"
+      onClick={() => onNavigate('rooms')}
       title="EJClaw"
     >
       EJ
