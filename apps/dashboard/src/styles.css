@@ -1576,6 +1576,54 @@ dd,
   padding: 12px;
 }
 
+.system-status-strip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid rgba(181, 138, 34, 0.32);
+  border-radius: 16px;
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 241, 213, 0.86),
+      rgba(255, 250, 240, 0.94)
+    ),
+    var(--bg-card);
+}
+
+.system-status-strip.system-status-down {
+  border-color: rgba(183, 71, 52, 0.36);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 230, 220, 0.88),
+      rgba(255, 250, 240, 0.96)
+    ),
+    var(--bg-card);
+}
+
+.system-status-strip > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.system-status-strip strong {
+  color: var(--bg-ink);
+  font-size: var(--text-lg);
+  line-height: 1;
+}
+
+.system-status-strip p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .panel-title {
   display: flex;
   gap: 10px;
@@ -2874,6 +2922,10 @@ progress::-moz-progress-bar {
 
   .ops-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .system-status-strip {
+    grid-template-columns: 1fr;
   }
 }
 

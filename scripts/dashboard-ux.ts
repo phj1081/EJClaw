@@ -128,8 +128,9 @@ async function main() {
         await page.waitForURL(/#\/rooms$/);
         await assertVisible(page.locator('#rooms .rooms-v2'));
         assert.equal(await page.locator('a[href="#/inbox"]').count(), 0);
+        assert.equal(await page.locator('a[href="#/health"]').count(), 0);
         await assertVisible(page.getByText(/승인|Approval/).first());
-        assert.equal(await page.getByText(/CI 실패|CI failure/).count(), 0);
+        await assertVisible(page.locator('.system-status-strip'));
         assert.equal(
           await page.getByRole('button', { name: 'Dismiss' }).count(),
           0,
@@ -138,6 +139,33 @@ async function main() {
         // This scenario protects the Inbox information architecture. The
         // accessibility scan stays scoped to Settings, where this UX suite
         // currently has stable interactive coverage.
+      },
+    );
+
+    await runScenario(
+      'health route redirects to rooms and degraded state is conditional',
+      browser,
+      baseUrl,
+      async (page, state) => {
+        state.approvalAction = true;
+
+        await page.goto(new URL('/#/rooms', baseUrl).toString(), {
+          waitUntil: 'networkidle',
+        });
+        await assertVisible(page.locator('#rooms .rooms-v2'));
+        assert.equal(await page.locator('.system-status-strip').count(), 0);
+
+        state.ciWatcherFailures = 2;
+        await page.goto(new URL('/?degraded=1#/health', baseUrl).toString(), {
+          waitUntil: 'networkidle',
+        });
+
+        await page.waitForURL(/#\/rooms$/);
+        await assertVisible(page.locator('#rooms .rooms-v2'));
+        await assertVisible(page.locator('.system-status-strip'));
+        assert.equal(await page.locator('#health').count(), 0);
+        assert.equal(await page.locator('a[href="#/health"]').count(), 0);
+        await assertVisible(page.getByText(/CI 실패|CI failure/).first());
       },
     );
 
