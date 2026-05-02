@@ -20,7 +20,7 @@ import {
   IPC_CLOSE_SENTINEL,
   IPC_INPUT_SUBDIR,
   IPC_POLL_MS,
-  normalizeEjclawStructuredOutput,
+  normalizeAgentOutput,
   writeProtocolOutput,
   type RunnerStructuredOutput,
 } from 'ejclaw-runners-shared';
@@ -89,7 +89,7 @@ function normalizeStructuredOutput(result: string | null): {
   result: string | null;
   output?: RunnerOutput['output'];
 } {
-  return normalizeEjclawStructuredOutput(result);
+  return normalizeAgentOutput(result);
 }
 
 function log(message: string): void {
