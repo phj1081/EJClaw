@@ -118,6 +118,17 @@ SESSION_COMMAND_ALLOWED_SENDERS=
 MAX_CONCURRENT_AGENTS=5
 ```
 
+## Discord 이미지 첨부 allowlist
+
+```bash
+EJCLAW_ATTACHMENT_ALLOWED_DIRS=~/Pictures/Screenshots,~/Downloads/ejclaw-images
+```
+
+- 콤마 또는 플랫폼 path delimiter(Linux는 `:`)로 여러 폴더를 지정합니다.
+- 지정한 폴더 하위의 PNG/JPEG/GIF/WebP/BMP만 Discord 첨부 후보가 됩니다.
+- `realpath`, 이미지 signature, size cap 검증은 그대로 적용됩니다.
+- `/home/**` 전체보다 자주 쓰는 스크린샷/이미지 출력 폴더만 추가하는 것을 권장합니다.
+
 - `ASSISTANT_NAME`은 owner trigger 기본 이름을 만듭니다
 - paired room에서도 사용자 진입점은 owner가 기준입니다
 - status dashboard와 session command는 선택 설정입니다
