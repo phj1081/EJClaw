@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 
 import { DATA_DIR } from './config.js';
+import { getEnv } from './env.js';
 import type { OutboundAttachment } from './types.js';
 
 export interface ValidatedOutboundAttachment {
@@ -32,10 +33,29 @@ function resolveExistingDir(dir: string): string | null {
   }
 }
 
+function expandHomeDir(dir: string): string {
+  const home = getEnv('HOME') || os.homedir();
+  if (dir === '~') return home;
+  if (dir.startsWith(`~${path.sep}`)) return path.join(home, dir.slice(2));
+  return dir;
+}
+
+export function getConfiguredAttachmentBaseDirs(): string[] {
+  const raw = getEnv('EJCLAW_ATTACHMENT_ALLOWED_DIRS') ?? '';
+  return unique(
+    raw
+      .split(/[,\n]/)
+      .flatMap((part) => part.split(path.delimiter))
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map(expandHomeDir),
+  );
+}
+
 export function getDefaultAttachmentBaseDirs(): string[] {
-  const home = process.env.HOME;
+  const home = getEnv('HOME');
   const codexHome =
-    process.env.CODEX_HOME || (home ? path.join(home, '.codex') : null);
+    getEnv('CODEX_HOME') || (home ? path.join(home, '.codex') : null);
   // Keep defaults narrow. Runtime-specific workspaces must be passed via
   // attachmentBaseDirs so one room cannot attach another room's files by path.
   // Ad-hoc generated files under os.tmpdir() are handled separately after
@@ -43,6 +63,7 @@ export function getDefaultAttachmentBaseDirs(): string[] {
   return unique([
     path.join(DATA_DIR, 'attachments'),
     codexHome ? path.join(codexHome, 'generated_images') : null,
+    ...getConfiguredAttachmentBaseDirs(),
   ])
     .map(resolveExistingDir)
     .filter((dir): dir is string => Boolean(dir));

@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { validateOutboundAttachments } from './outbound-attachments.js';
 
@@ -31,6 +31,7 @@ function writeFile(
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of cleanupDirs.splice(0)) {
     fs.rmSync(dir, { force: true, recursive: true });
   }
@@ -154,6 +155,30 @@ describe('validateOutboundAttachments', () => {
     ]);
   });
 
+  it('accepts user-configured attachment directories from env', () => {
+    const unusedCommaDir = makeTempDir(process.cwd(), '.ejclaw-unused-images-');
+    const unusedDelimiterDir = makeTempDir(
+      process.cwd(),
+      '.ejclaw-more-unused-images-',
+    );
+    const dir = makeTempDir(process.cwd(), '.ejclaw-user-images-');
+    const imagePath = writeFile(dir, 'manual-shot.png', ONE_PIXEL_PNG);
+    vi.stubEnv(
+      'EJCLAW_ATTACHMENT_ALLOWED_DIRS',
+      `${unusedCommaDir},${unusedDelimiterDir}${path.delimiter}${dir}`,
+    );
+
+    const result = validateOutboundAttachments([{ path: imagePath }]);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.files).toEqual([
+      {
+        attachment: fs.realpathSync(imagePath),
+        name: 'manual-shot.png',
+      },
+    ]);
+  });
+
   it('rejects symlink attempts that escape the allowed directory', () => {
     const workspaceDir = makeTempDir(process.cwd(), '.ejclaw-attachment-');
     const targetPath = writeFile(
@@ -164,6 +189,22 @@ describe('validateOutboundAttachments', () => {
     const tmpDir = makeTempDir(os.tmpdir(), 'ejclaw-attachment-');
     const linkPath = path.join(tmpDir, 'linked-shot.png');
     fs.symlinkSync(targetPath, linkPath);
+
+    const result = validateOutboundAttachments([{ path: linkPath }]);
+
+    expect(result.files).toEqual([]);
+    expect(result.rejected).toEqual([
+      { path: linkPath, reason: 'outside-allowed-dirs' },
+    ]);
+  });
+
+  it('rejects symlink attempts that escape a user-configured directory', () => {
+    const allowedDir = makeTempDir(process.cwd(), '.ejclaw-user-images-');
+    const secretDir = makeTempDir(process.cwd(), '.ejclaw-secret-images-');
+    const targetPath = writeFile(secretDir, 'secret-shot.png', ONE_PIXEL_PNG);
+    const linkPath = path.join(allowedDir, 'linked-shot.png');
+    fs.symlinkSync(targetPath, linkPath);
+    vi.stubEnv('EJCLAW_ATTACHMENT_ALLOWED_DIRS', allowedDir);
 
     const result = validateOutboundAttachments([{ path: linkPath }]);
 
