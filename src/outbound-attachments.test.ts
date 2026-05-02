@@ -111,6 +111,27 @@ describe('validateOutboundAttachments', () => {
     ]);
   });
 
+  it('accepts generated image files in nested temp directories', () => {
+    const dir = makeTempDir(os.tmpdir(), 'paladin-character-');
+    const imagePath = writeFile(dir, 'sheet_12x.png', ONE_PIXEL_PNG);
+
+    const result = validateOutboundAttachments([
+      {
+        path: imagePath,
+        name: 'sheet_12x.png',
+        mime: 'image/png',
+      },
+    ]);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.files).toEqual([
+      {
+        attachment: fs.realpathSync(imagePath),
+        name: 'sheet_12x.png',
+      },
+    ]);
+  });
+
   it('requires workspace paths to be explicitly allowlisted', () => {
     const dir = makeTempDir(process.cwd(), '.ejclaw-attachment-');
     const imagePath = writeFile(dir, 'workspace-shot.png', ONE_PIXEL_PNG);

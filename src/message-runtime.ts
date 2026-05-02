@@ -9,6 +9,7 @@ import {
   isSessionCommandSenderAllowed,
   SERVICE_SESSION_SCOPE,
 } from './config.js';
+import { resolveRuntimeAttachmentBaseDirs } from './attachment-base-dirs.js';
 import { GroupQueue, GroupRunContext } from './group-queue.js';
 import { findChannel, formatMessages } from './router.js';
 import { enqueueGenericFollowUpAfterDeliveryRetry as enqueueDeliveryRetryFollowUp } from './message-runtime-dispatch.js';
@@ -311,7 +312,7 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
       channel,
       roleToChannel,
       log,
-      attachmentBaseDirs: group.workDir ? [group.workDir] : undefined,
+      attachmentBaseDirs: resolveRuntimeAttachmentBaseDirs(group),
       isPairedRoom: hasReviewerLease(chatJid),
       getMissingRoleChannelMessage,
       isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,
