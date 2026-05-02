@@ -173,4 +173,109 @@ describe('DiscordChannel structured output', () => {
       '"ejclaw"',
     );
   });
+
+  it('normalizes status-prefixed EJClaw JSON and keeps the status line visible', async () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    await channel.connect();
+    const filePath = path.join(
+      os.tmpdir(),
+      `ejclaw-discord-image-status-${Date.now()}.png`,
+    );
+    fs.writeFileSync(filePath, ONE_PIXEL_PNG);
+    tempFiles.push(filePath);
+    const mockChannel = {
+      send: vi.fn().mockResolvedValue({ id: 'discord-message-2' }),
+      sendTyping: vi.fn(),
+    };
+    clientRef.current.channels.fetch.mockResolvedValue(mockChannel);
+
+    await channel.sendMessage(
+      'dc:1234567890123456',
+      `TASK_DONE
+
+\`\`\`json
+${JSON.stringify({
+  ejclaw: {
+    visibility: 'public',
+    text: '첨부 테스트입니다.',
+    verdict: 'done',
+    attachments: [
+      {
+        path: filePath,
+        name: 'status.png',
+        mime: 'image/png',
+      },
+    ],
+  },
+})}
+\`\`\``,
+    );
+
+    expect(mockChannel.send).toHaveBeenCalledWith({
+      content: 'TASK_DONE\n\n첨부 테스트입니다.',
+      files: [
+        {
+          attachment: fs.realpathSync(filePath),
+          name: 'status.png',
+        },
+      ],
+      flags: 1 << 2,
+    });
+    expect(JSON.stringify(mockChannel.send.mock.calls)).not.toContain(
+      '"ejclaw"',
+    );
+  });
+
+  it('normalizes markdown images and sends them as files', async () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    await channel.connect();
+    const filePath = path.join(
+      os.tmpdir(),
+      `ejclaw-discord-markdown-image-${Date.now()}.png`,
+    );
+    fs.writeFileSync(filePath, ONE_PIXEL_PNG);
+    tempFiles.push(filePath);
+    const mockChannel = {
+      send: vi.fn().mockResolvedValue({ id: 'discord-message-3' }),
+      sendTyping: vi.fn(),
+    };
+    clientRef.current.channels.fetch.mockResolvedValue(mockChannel);
+
+    await channel.sendMessage(
+      'dc:1234567890123456',
+      `스크린샷입니다.\n![screenshot](${filePath})`,
+    );
+
+    expect(mockChannel.send).toHaveBeenCalledWith({
+      content: '스크린샷입니다.',
+      files: [
+        {
+          attachment: fs.realpathSync(filePath),
+          name: path.basename(filePath),
+        },
+      ],
+      flags: 1 << 2,
+    });
+  });
+
+  it('keeps non-image local markdown links readable without uploading files', async () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    await channel.connect();
+    const mockChannel = {
+      send: vi.fn().mockResolvedValue({ id: 'discord-message-4' }),
+      sendTyping: vi.fn(),
+    };
+    clientRef.current.channels.fetch.mockResolvedValue(mockChannel);
+
+    await channel.sendMessage(
+      'dc:1234567890123456',
+      '수정 위치: [source](/tmp/project/src/index.ts#L42)',
+    );
+
+    expect(mockChannel.send).toHaveBeenCalledWith({
+      content: '수정 위치: `index.ts:42`',
+      files: undefined,
+      flags: 1 << 2,
+    });
+  });
 });

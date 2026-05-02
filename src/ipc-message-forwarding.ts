@@ -2,7 +2,7 @@ import type {
   IpcMessageForwardResult,
   IpcMessagePayload,
 } from './ipc-types.js';
-import { normalizeEjclawStructuredOutput } from './agent-protocol.js';
+import { normalizeAgentOutput } from './agent-protocol.js';
 import type { RegisteredGroup } from './types.js';
 
 export async function forwardAuthorizedIpcMessage(
@@ -81,7 +81,7 @@ export async function forwardAuthorizedIpcMessage(
     };
   }
 
-  const normalized = normalizeEjclawStructuredOutput(msg.text);
+  const normalized = normalizeAgentOutput(msg.text);
   if (normalized.output?.visibility === 'silent') {
     return {
       outcome: 'sent',

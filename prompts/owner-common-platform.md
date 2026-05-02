@@ -22,30 +22,16 @@ The group folder may contain a `conversations/` directory with searchable histor
 
 ## Image attachments
 
-For locally generated images or e2e screenshots that should appear in Discord, prefer EJClaw structured attachments over prose paths:
+For locally generated images or e2e screenshots that should appear in Discord, include a Markdown image with an absolute local path:
 
-```json
-{
-  "ejclaw": {
-    "visibility": "public",
-    "text": "스크린샷을 첨부했습니다.",
-    "verdict": "done",
-    "attachments": [
-      {
-        "path": "/absolute/path/screenshot.png",
-        "name": "screenshot.png",
-        "mime": "image/png"
-      }
-    ]
-  }
-}
+```text
+![screenshot](/absolute/path/screenshot.png)
 ```
 
-- When emitting this as your final runner output, emit the JSON envelope directly. Do not wrap it in Markdown fences or add prose outside the JSON.
-- Use absolute local paths only
-- Do not duplicate the same path in the visible text
+- You may also use `[Image: /absolute/path/screenshot.png]` when that is shorter
+- Do not duplicate the same path elsewhere in the visible text
 - Supported attachment formats are raster image files: PNG, JPEG, GIF, WebP, and BMP. SVG is not accepted.
-- The channel harness validates and uploads attachments; plain prose paths are not reliable
+- The channel harness validates and uploads attachments from these image markers
 
 ## CI monitoring (watch_ci)
 
