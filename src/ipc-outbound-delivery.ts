@@ -1,5 +1,6 @@
 import { createProducedWorkItem } from './db.js';
 import type { WorkItem } from './db/work-items.js';
+import { resolveRuntimeAttachmentBaseDirs } from './attachment-base-dirs.js';
 import { deliverOpenWorkItem } from './message-runtime-delivery.js';
 import { parseVisibleVerdict } from './paired-verdict.js';
 import { resolveChannelForDeliveryRole } from './router.js';
@@ -129,7 +130,7 @@ export async function deliverCanonicalOutboundMessage(
     channel: route.channel,
     item: workItem as WorkItem,
     log,
-    attachmentBaseDirs: group.workDir ? [group.workDir] : undefined,
+    attachmentBaseDirs: resolveRuntimeAttachmentBaseDirs(group),
     isDuplicateOfLastBotFinal: () => false,
     openContinuation: () => {},
   });

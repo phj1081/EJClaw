@@ -17,11 +17,6 @@ export interface ValidateOutboundAttachmentsResult {
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|bmp)$/i;
-const DEFAULT_TEMP_ATTACHMENT_DIR_PREFIXES = [
-  'ejclaw-attachment-',
-  'ejclaw-discord-image-',
-] as const;
-
 function unique(values: Array<string | null | undefined>): string[] {
   return [
     ...new Set(values.filter((value): value is string => Boolean(value))),
@@ -65,37 +60,13 @@ function matchesAllowedBaseDir(realPath: string, baseDirs: string[]): boolean {
   return baseDirs.some((baseDir) => isWithinBaseDir(realPath, baseDir));
 }
 
-function isWithinDefaultTempAttachmentDir(
-  realPath: string,
-  tempDir: string | null,
-): boolean {
+function isWithinTempDir(realPath: string, tempDir: string | null): boolean {
   if (!tempDir) return false;
   const relative = path.relative(tempDir, realPath);
   if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
     return false;
   }
-  const [firstSegment, ...rest] = relative.split(path.sep);
-  return (
-    rest.length > 0 &&
-    DEFAULT_TEMP_ATTACHMENT_DIR_PREFIXES.some((prefix) =>
-      firstSegment.startsWith(prefix),
-    )
-  );
-}
-
-function isDirectTempAttachmentFile(
-  realPath: string,
-  tempDir: string | null,
-): boolean {
-  if (!tempDir) return false;
-  const relative = path.relative(tempDir, realPath);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-    return false;
-  }
-  // Agents commonly write Playwright screenshots and generated images directly
-  // under /tmp with task-specific names. Keep this limited to direct children;
-  // nested temp directories still need an EJClaw prefix or explicit baseDir.
-  return !relative.includes(path.sep);
+  return true;
 }
 
 function detectImageMime(filePath: string): string | null {
@@ -186,8 +157,7 @@ export function validateOutboundAttachments(
       }
       if (
         !matchesAllowedBaseDir(realPath, baseDirs) &&
-        !isWithinDefaultTempAttachmentDir(realPath, defaultTempDir) &&
-        !isDirectTempAttachmentFile(realPath, defaultTempDir)
+        !isWithinTempDir(realPath, defaultTempDir)
       ) {
         rejected.push({ path: requestedPath, reason: 'outside-allowed-dirs' });
         continue;

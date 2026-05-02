@@ -149,7 +149,10 @@ describe('message-runtime-final-delivery', () => {
       expect.objectContaining({
         channel,
         log: logger,
-        attachmentBaseDirs: ['/work/room'],
+        attachmentBaseDirs: expect.arrayContaining([
+          '/work/room',
+          expect.stringMatching(/data\/workspaces\/room-folder$/),
+        ]),
         replaceMessageId: undefined,
         isDuplicateOfLastBotFinal,
         openContinuation,
@@ -189,7 +192,9 @@ describe('message-runtime-final-delivery', () => {
     expect(deliverOpenWorkItem).toHaveBeenCalledWith(
       expect.objectContaining({
         replaceMessageId: 'discord-message-1',
-        attachmentBaseDirs: undefined,
+        attachmentBaseDirs: expect.arrayContaining([
+          expect.stringMatching(/data\/workspaces\/room-folder$/),
+        ]),
       }),
     );
   });

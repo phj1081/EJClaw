@@ -1,4 +1,5 @@
 import { createProducedWorkItem } from './db.js';
+import { resolveRuntimeAttachmentBaseDirs } from './attachment-base-dirs.js';
 import { logger } from './logger.js';
 import { deliverOpenWorkItem } from './message-runtime-delivery.js';
 import type {
@@ -65,7 +66,7 @@ export async function deliverMessageRuntimeFinalText(args: {
     channel: args.channel,
     item: workItem,
     log: logger,
-    attachmentBaseDirs: args.group.workDir ? [args.group.workDir] : undefined,
+    attachmentBaseDirs: resolveRuntimeAttachmentBaseDirs(args.group),
     replaceMessageId: args.replaceMessageId,
     isDuplicateOfLastBotFinal: args.isDuplicateOfLastBotFinal,
     openContinuation: args.openContinuation,

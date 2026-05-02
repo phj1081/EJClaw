@@ -94,7 +94,10 @@ describe('deliverIpcOutboundMessage', () => {
       expect.objectContaining({
         channel,
         item: createdItem,
-        attachmentBaseDirs: ['/repo'],
+        attachmentBaseDirs: expect.arrayContaining([
+          '/repo',
+          expect.stringMatching(/data\/workspaces\/room-folder$/),
+        ]),
       }),
     );
     expect(channel.sendMessage).not.toHaveBeenCalled();
@@ -144,7 +147,10 @@ describe('deliverIpcOutboundMessage', () => {
       expect.objectContaining({
         channel: reviewerChannel,
         item: createdItem,
-        attachmentBaseDirs: ['/repo'],
+        attachmentBaseDirs: expect.arrayContaining([
+          '/repo',
+          expect.stringMatching(/data\/workspaces\/room-folder$/),
+        ]),
       }),
     );
     expect(noteDirectTerminalDelivery).toHaveBeenCalledWith(
