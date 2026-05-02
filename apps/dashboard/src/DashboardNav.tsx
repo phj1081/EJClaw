@@ -1,6 +1,5 @@
 import { type ReactNode } from 'react';
 import {
-  Activity,
   Clock,
   Download,
   Gauge,
@@ -12,12 +11,7 @@ import {
 import { type DashboardOverview, type StatusSnapshot } from './api';
 import { type Messages } from './i18n';
 
-export type DashboardView =
-  | 'usage'
-  | 'health'
-  | 'rooms'
-  | 'scheduled'
-  | 'settings';
+export type DashboardView = 'usage' | 'rooms' | 'scheduled' | 'settings';
 export type DashboardFreshness = 'fresh' | 'stale' | 'offline';
 
 interface DashboardNavData {
@@ -27,7 +21,6 @@ interface DashboardNavData {
 
 const NAV_ICONS: Record<DashboardView, ReactNode> = {
   usage: <Gauge size={20} strokeWidth={2} aria-hidden />,
-  health: <Activity size={20} strokeWidth={2} aria-hidden />,
   rooms: <MessageSquare size={20} strokeWidth={2} aria-hidden />,
   scheduled: <Clock size={20} strokeWidth={2} aria-hidden />,
   settings: <Settings size={20} strokeWidth={2} aria-hidden />,
@@ -37,7 +30,6 @@ function navItems(t: Messages) {
   return [
     { href: '#/rooms', label: t.nav.rooms, view: 'rooms' as const },
     { href: '#/scheduled', label: t.nav.scheduled, view: 'scheduled' as const },
-    { href: '#/health', label: t.nav.health, view: 'health' as const },
     { href: '#/usage', label: t.nav.usage, view: 'usage' as const },
     { href: '#/settings', label: t.nav.settings, view: 'settings' as const },
   ];

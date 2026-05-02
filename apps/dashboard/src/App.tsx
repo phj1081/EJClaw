@@ -32,8 +32,8 @@ import {
 } from './DashboardNav';
 import { formatDate, statusLabel } from './dashboardHelpers';
 import { RoomBoardV2 } from './RoomBoardV2';
-import { ServicePanel, type ServiceActionKey } from './ServicePanel';
 import { SettingsPanel } from './SettingsPanel';
+import { SystemStatusStrip } from './SystemStatusStrip';
 import { TaskPanel, type RoomOption, type TaskActionKey } from './TaskPanel';
 import { UsagePanel } from './UsagePanel';
 import './styles.css';
@@ -65,7 +65,6 @@ function isDashboardView(
 ): value is DashboardView {
   return (
     value === 'usage' ||
-    value === 'health' ||
     value === 'rooms' ||
     value === 'scheduled' ||
     value === 'settings'
@@ -246,106 +245,6 @@ function LoadingSkeleton({ t }: { t: Messages }) {
   );
 }
 
-function ControlRail({
-  canInstall,
-  data,
-  installed,
-  locale,
-  offlineReady,
-  onInstall,
-  online,
-  secureContext,
-  t,
-}: {
-  canInstall: boolean;
-  data: DashboardState;
-  installed: boolean;
-  locale: Locale;
-  offlineReady: boolean;
-  onInstall: () => void;
-  online: boolean;
-  secureContext: boolean;
-  t: Messages;
-}) {
-  const queue = data.snapshots.reduce(
-    (acc, snapshot) => {
-      for (const entry of snapshot.entries) {
-        acc.pendingTasks += entry.pendingTasks;
-        if (entry.pendingMessages) acc.pendingMessageRooms += 1;
-      }
-      return acc;
-    },
-    { pendingTasks: 0, pendingMessageRooms: 0 },
-  );
-  const freshness = dashboardFreshness(online, data.overview.generatedAt);
-  const age = dashboardAgeMs(data.overview.generatedAt);
-
-  return (
-    <section className="ops-strip" id="overview" aria-label={t.control.aria}>
-      <div className={`ops-tile-freshness ops-${freshness}`}>
-        <span>{t.pwa.updated}</span>
-        <strong>{freshnessLabel(freshness, t)}</strong>
-        <small>
-          {formatDate(data.overview.generatedAt, locale)}
-          {age === null ? '' : ` · ${formatDuration(age, t)}`}
-        </small>
-      </div>
-      <div className="ops-tile-pwa">
-        <span>{t.pwa.app}</span>
-        <strong>
-          {!secureContext
-            ? t.pwa.secureRequired
-            : installed
-              ? t.pwa.installed
-              : offlineReady
-                ? t.pwa.ready
-                : t.pwa.app}
-        </strong>
-        {canInstall ? (
-          <button onClick={onInstall} type="button">
-            {t.pwa.install}
-          </button>
-        ) : (
-          <small>
-            {!secureContext
-              ? t.pwa.secureRequired
-              : offlineReady
-                ? t.pwa.cached
-                : t.pwa.online}
-          </small>
-        )}
-      </div>
-      <div>
-        <span>{t.metrics.rooms}</span>
-        <strong>
-          {data.overview.rooms.active + data.overview.rooms.waiting}/
-          {data.overview.rooms.total}
-        </strong>
-        <small>{t.control.activeRooms}</small>
-      </div>
-      <div>
-        <span>{t.control.queue}</span>
-        <strong>{queue.pendingTasks}</strong>
-        <small>
-          {queue.pendingMessageRooms} {t.control.pendingRooms}
-        </small>
-      </div>
-      <div>
-        <span>{t.metrics.agents}</span>
-        <strong>{data.overview.services.length}</strong>
-        <small>{t.panels.heartbeat}</small>
-      </div>
-      <div>
-        <span>{t.metrics.ciWatchers}</span>
-        <strong>{data.overview.tasks.watchers.active}</strong>
-        <small>
-          {data.overview.tasks.watchers.paused} {t.status.paused}
-        </small>
-      </div>
-    </section>
-  );
-}
-
 function DashboardErrorCard({
   error,
   onRetry,
@@ -388,8 +287,7 @@ function App() {
   const [taskActionKey, setTaskActionKey] = useState<TaskActionKey | null>(
     null,
   );
-  const [serviceActionKey, setServiceActionKey] =
-    useState<ServiceActionKey | null>(null);
+  const [serviceRestarting, setServiceRestarting] = useState(false);
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
   const [selectedRoomJid, setSelectedRoomJid] = useState<string | null>(null);
   const {
@@ -498,7 +396,7 @@ function App() {
       return;
     }
 
-    setServiceActionKey('stack:restart');
+    setServiceRestarting(true);
     try {
       await runServiceAction('stack', 'restart', {
         requestId: makeClientRequestId(),
@@ -507,7 +405,7 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setServiceActionKey(null);
+      setServiceRestarting(false);
     }
   }
 
@@ -793,43 +691,12 @@ function App() {
         {data ? (
           <div className={`view-stack view-${activeView}`}>
             {activeView === 'usage' ? (
-              <>
-                <section className="panel usage-first" id="usage">
-                  <div className="panel-title">
-                    <h2>{t.panels.usage}</h2>
-                    <span>{t.panels.usageWindow}</span>
-                  </div>
-                  <UsagePanel overview={data.overview} t={t} />
-                </section>
-                <ControlRail
-                  canInstall={canInstall}
-                  data={data}
-                  installed={installed}
-                  locale={locale}
-                  offlineReady={offlineReady}
-                  online={online}
-                  onInstall={() => void handleInstallApp()}
-                  secureContext={secureContext}
-                  t={t}
-                />
-              </>
-            ) : null}
-
-            {activeView === 'health' ? (
-              <section className="panel view-panel" id="health">
+              <section className="panel usage-first" id="usage">
                 <div className="panel-title">
-                  <h2>{t.panels.health}</h2>
-                  <span>{t.panels.healthSignals}</span>
+                  <h2>{t.panels.usage}</h2>
+                  <span>{t.panels.usageWindow}</span>
                 </div>
-                <ServicePanel
-                  formatDuration={formatDuration}
-                  locale={locale}
-                  onRestartStack={() => void handleServiceRestart()}
-                  overview={data.overview}
-                  serviceActionKey={serviceActionKey}
-                  snapshots={data.snapshots}
-                  t={t}
-                />
+                <UsagePanel overview={data.overview} t={t} />
               </section>
             ) : null}
 
@@ -839,6 +706,7 @@ function App() {
                   <h2>{t.panels.rooms}</h2>
                   <span>{t.panels.queue}</span>
                 </div>
+                <SystemStatusStrip overview={data.overview} t={t} />
                 <RoomBoardV2
                   {...ROOM_BOARD_FORMATTERS}
                   createRequestId={makeClientRequestId}
@@ -890,7 +758,9 @@ function App() {
                   nickname={nickname}
                   onLocaleChange={setDashboardLocale}
                   onNicknameChange={setNickname}
-                  onRestartStack={() => void handleServiceRestart()}
+                  onRestartStack={() => {
+                    if (!serviceRestarting) void handleServiceRestart();
+                  }}
                   t={t}
                 />
               </section>
