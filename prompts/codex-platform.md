@@ -30,27 +30,15 @@ Your output is sent directly to the Discord group.
 
 ## Image attachments
 
-When you need to show a locally generated image, screenshot, or other raster output in Discord, do not rely on a raw file path in prose. Emit an EJClaw structured output with `attachments`.
+When you need to show a locally generated image, screenshot, or other raster output in Discord, include a Markdown image with an absolute local path:
 
-```json
-{
-  "ejclaw": {
-    "visibility": "public",
-    "text": "이미지를 생성했습니다.",
-    "verdict": "done",
-    "attachments": [
-      {
-        "path": "/absolute/path/image.png",
-        "name": "image.png",
-        "mime": "image/png"
-      }
-    ]
-  }
-}
+```text
+![image](/absolute/path/image.png)
 ```
 
-- `attachments.path` must be an absolute local path; URLs and relative paths are ignored
-- Do not repeat the same file path in the visible text
+- You may also use `[Image: /absolute/path/image.png]` when that is shorter
+- URLs and relative paths are ignored
+- Do not repeat the same file path elsewhere in the visible text
 - Supported attachment formats are raster image files: PNG, JPEG, GIF, WebP, and BMP. SVG is not accepted.
 - Use this for generated images and e2e screenshots; the Discord channel validates and uploads the file
 

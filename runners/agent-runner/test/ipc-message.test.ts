@@ -103,6 +103,32 @@ describe('agent runner IPC message payload', () => {
     });
   });
 
+  it('normalizes markdown image output and preserves attachments', () => {
+    expect(
+      buildSendMessageIpcPayload({
+        chatJid: 'dc:123',
+        text: `TASK_DONE
+
+스크린샷입니다.
+![screenshot](/tmp/ejclaw-markdown.png)`,
+        groupFolder: 'discord-review',
+        timestamp: '2026-04-04T13:45:00.000Z',
+      }),
+    ).toEqual({
+      type: 'message',
+      chatJid: 'dc:123',
+      text: 'TASK_DONE\n\n스크린샷입니다.',
+      groupFolder: 'discord-review',
+      timestamp: '2026-04-04T13:45:00.000Z',
+      attachments: [
+        {
+          path: '/tmp/ejclaw-markdown.png',
+          name: 'ejclaw-markdown.png',
+        },
+      ],
+    });
+  });
+
   it('turns silent EJClaw envelopes into empty no-op messages', () => {
     expect(
       buildSendMessageIpcPayload({

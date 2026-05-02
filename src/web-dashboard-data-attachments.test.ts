@@ -152,4 +152,39 @@ describe('web dashboard attachment data', () => {
       ],
     });
   });
+
+  it('turns markdown image output into dashboard attachments', () => {
+    const message: NewMessage = {
+      id: 'msg-markdown-image',
+      chat_jid: 'dc:ops',
+      sender: 'bot-1',
+      sender_name: 'owner',
+      content:
+        '라벨 좌측 클리핑 회귀 수정했습니다.\n![screenshot](/tmp/bar-chart-label-fit-playwright.png)',
+      timestamp: '2026-04-26T05:31:00.000Z',
+      is_from_me: true,
+      is_bot_message: true,
+      message_source_kind: 'bot',
+    };
+
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: roomEntry,
+      pairedTask: null,
+      turns: [],
+      attempts: [],
+      outputs: [],
+      messages: [message],
+    });
+
+    expect(activity.messages[0]).toMatchObject({
+      content: '라벨 좌측 클리핑 회귀 수정했습니다.',
+      attachments: [
+        {
+          path: '/tmp/bar-chart-label-fit-playwright.png',
+          name: 'bar-chart-label-fit-playwright.png',
+        },
+      ],
+    });
+  });
 });

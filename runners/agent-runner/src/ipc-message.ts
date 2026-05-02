@@ -1,5 +1,5 @@
 import {
-  normalizeEjclawStructuredOutput,
+  normalizeAgentOutput,
   type RunnerOutputAttachment,
 } from 'ejclaw-runners-shared';
 
@@ -28,7 +28,7 @@ export interface SendMessageIpcPayload {
 export function buildSendMessageIpcPayload(
   input: SendMessageIpcPayloadInput,
 ): SendMessageIpcPayload {
-  const normalized = normalizeEjclawStructuredOutput(input.text);
+  const normalized = normalizeAgentOutput(input.text);
   const output =
     normalized.output?.visibility === 'public' ? normalized.output : null;
   const text = output?.text ?? normalized.result ?? '';

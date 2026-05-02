@@ -1,6 +1,6 @@
 import {
   extractImageTagPaths,
-  normalizeEjclawStructuredOutput,
+  normalizeAgentOutput,
 } from './agent-protocol.js';
 import { isWatchCiTask } from './task-watch-status.js';
 import type {
@@ -228,17 +228,18 @@ function normalizeStructuredVisibleContent(value: string): {
   text: string | null;
   attachments: OutboundAttachment[];
 } {
-  if (!hasStructuredOutputHint(value)) return splitLegacyImageTags(value);
-
-  const candidates = [value, decodeCommonHtmlEntities(value)];
+  const candidates = hasStructuredOutputHint(value)
+    ? [value, decodeCommonHtmlEntities(value)]
+    : [value];
   for (const candidate of candidates) {
-    const normalized = normalizeEjclawStructuredOutput(candidate);
+    const normalized = normalizeAgentOutput(candidate);
     if (normalized.output?.visibility === 'silent') {
       return { text: null, attachments: [] };
     }
     if (
       normalized.output?.visibility === 'public' &&
-      normalized.output.text !== candidate
+      (normalized.output.text !== candidate ||
+        (normalized.output.attachments?.length ?? 0) > 0)
     ) {
       return splitLegacyImageTags(
         normalized.output.text,

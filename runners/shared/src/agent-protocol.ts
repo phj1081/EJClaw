@@ -3,6 +3,8 @@ export const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 
 export const IMAGE_TAG_RE =
   /\[Image:\s*(?:(?:[^\]\n]*?)\s*→\s*)?(\/[^\]\n]+)\]/g;
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
+const MARKDOWN_ABSOLUTE_LINK_RE = /!?\[[^\]\n]*\]\((\/[^)\n]+)\)/g;
 
 export const IPC_POLL_MS = 500;
 export const IPC_INPUT_SUBDIR = 'input';
@@ -44,7 +46,15 @@ export type RunnerStructuredOutput =
 export interface NormalizedRunnerOutput {
   result: string | null;
   output?: RunnerStructuredOutput;
+  attachmentSource?:
+    | 'legacy-ejclaw-json'
+    | 'markdown-image'
+    | 'image-tag'
+    | 'mixed'
+    | 'none';
 }
+
+export type NormalizedAgentOutput = NormalizedRunnerOutput;
 
 function cloneImageTagPattern(): RegExp {
   return new RegExp(IMAGE_TAG_RE.source, IMAGE_TAG_RE.flags);
@@ -72,6 +82,59 @@ export function extractImageTagPaths(text: string): {
     cleanText: text.replace(cloneImageTagPattern(), '').trim(),
     imagePaths,
   };
+}
+
+function attachmentName(filePath: string): string | undefined {
+  return filePath.split(/[\\/]/).at(-1) || undefined;
+}
+
+function uniqueAttachments(
+  attachments: RunnerOutputAttachment[],
+): RunnerOutputAttachment[] {
+  const seen = new Set<string>();
+  return attachments.filter((attachment) => {
+    if (seen.has(attachment.path)) return false;
+    seen.add(attachment.path);
+    return true;
+  });
+}
+
+export function extractMarkdownImageAttachments(text: string): {
+  cleanText: string;
+  attachments: RunnerOutputAttachment[];
+} {
+  const attachments: RunnerOutputAttachment[] = [];
+  const cleanText = text.replace(
+    MARKDOWN_ABSOLUTE_LINK_RE,
+    (full: string, rawPath: string) => {
+      const trimmed = rawPath.trim();
+      if (!IMAGE_EXT_RE.test(trimmed)) return full;
+
+      attachments.push({
+        path: trimmed,
+        name: attachmentName(trimmed),
+      });
+      return '';
+    },
+  );
+
+  return {
+    cleanText: cleanText.trim(),
+    attachments: uniqueAttachments(attachments),
+  };
+}
+
+function imageTagPathsToAttachments(
+  imagePaths: string[],
+): RunnerOutputAttachment[] {
+  return uniqueAttachments(
+    imagePaths
+      .filter((filePath) => IMAGE_EXT_RE.test(filePath))
+      .map((filePath) => ({
+        path: filePath,
+        name: attachmentName(filePath),
+      })),
+  );
 }
 
 export function normalizePublicTextOutput(
@@ -235,4 +298,63 @@ export function normalizeEjclawStructuredOutput(
   }
 
   return normalizePublicTextOutput(result);
+}
+
+export function normalizeAgentOutput(
+  result: string | null,
+): NormalizedRunnerOutput {
+  const normalized = normalizeEjclawStructuredOutput(result);
+  if (
+    normalized.output?.visibility !== 'public' ||
+    typeof normalized.output.text !== 'string'
+  ) {
+    return normalized;
+  }
+
+  const explicitAttachments = normalized.output.attachments ?? [];
+  if (explicitAttachments.length > 0) {
+    return {
+      ...normalized,
+      attachmentSource: 'legacy-ejclaw-json',
+    };
+  }
+
+  const markdownExtracted = extractMarkdownImageAttachments(
+    normalized.output.text,
+  );
+  const imageTagExtracted = extractImageTagPaths(markdownExtracted.cleanText);
+  const imageTagAttachments = imageTagPathsToAttachments(
+    imageTagExtracted.imagePaths,
+  );
+  const attachments = uniqueAttachments([
+    ...markdownExtracted.attachments,
+    ...imageTagAttachments,
+  ]);
+
+  if (attachments.length === 0) {
+    return {
+      ...normalized,
+      attachmentSource: normalized.attachmentSource ?? 'none',
+    };
+  }
+
+  const attachmentSource =
+    markdownExtracted.attachments.length > 0 && imageTagAttachments.length > 0
+      ? 'mixed'
+      : markdownExtracted.attachments.length > 0
+        ? 'markdown-image'
+        : 'image-tag';
+
+  return {
+    result: imageTagExtracted.cleanText,
+    output: {
+      visibility: 'public',
+      text: imageTagExtracted.cleanText,
+      ...(normalized.output.verdict
+        ? { verdict: normalized.output.verdict }
+        : {}),
+      attachments,
+    },
+    attachmentSource,
+  };
 }
