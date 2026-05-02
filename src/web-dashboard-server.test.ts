@@ -4,7 +4,6 @@ import path from 'path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { StatusSnapshot } from './status-dashboard.js';
 import type { NewMessage, PairedTask, RegisteredGroup } from './types.js';
 import { createWebDashboardHandler } from './web-dashboard-server.js';
 
@@ -74,30 +73,17 @@ describe('web dashboard server handler', () => {
   });
 
   it('shares inbox dismiss state with overview JSON', async () => {
-    const snapshots: StatusSnapshot[] = [
-      {
-        serviceId: 'codex-main',
-        agentType: 'codex',
-        assistantName: 'Codex',
-        updatedAt: '2026-04-26T05:00:00.000Z',
-        entries: [
-          {
-            jid: 'dc:ops',
-            name: '#ops',
-            folder: 'ops',
-            agentType: 'codex',
-            status: 'waiting',
-            elapsedMs: 2500,
-            pendingMessages: true,
-            pendingTasks: 1,
-          },
-        ],
-      },
-    ];
+    const pairedTask = makePairedTask({
+      chat_jid: 'dc:ops',
+      group_folder: 'ops',
+      id: 'merge-1',
+      status: 'merge_ready',
+      updated_at: '2026-04-26T05:00:00.000Z',
+    });
     const handler = createWebDashboardHandler({
-      readStatusSnapshots: () => snapshots,
+      readStatusSnapshots: () => [],
       getTasks: () => [],
-      getPairedTasks: () => [],
+      getPairedTasks: () => [pairedTask],
       now: () => '2026-04-26T05:10:00.000Z',
       startBackgroundCacheRefresh: false,
     });
@@ -133,10 +119,7 @@ describe('web dashboard server handler', () => {
       inbox: [],
     });
 
-    snapshots[0] = {
-      ...snapshots[0]!,
-      updatedAt: '2026-04-26T05:01:00.000Z',
-    };
+    pairedTask.updated_at = '2026-04-26T05:01:00.000Z';
     const changedOverview = await handler(
       new Request('http://localhost/api/overview'),
     );

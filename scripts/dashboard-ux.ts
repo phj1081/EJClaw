@@ -6,6 +6,7 @@ import process from 'node:process';
 import { createServer, type ViteDevServer } from 'vite';
 
 interface MockApiState {
+  approvalAction: boolean;
   codexFeatures: { goals: boolean };
   codexFeatureUpdates: number;
   ciWatcherFailures: number;
@@ -13,6 +14,7 @@ interface MockApiState {
 }
 
 const seriousImpacts = new Set(['serious', 'critical']);
+const MOCK_TIME = new Date(0).toISOString();
 
 async function main() {
   const server = await startDashboardServer();
@@ -112,17 +114,21 @@ async function main() {
     );
 
     await runScenario(
-      'inbox stays focused on actionable work',
+      'rooms surface user action badges without inbox navigation',
       browser,
       baseUrl,
       async (page, state) => {
+        state.approvalAction = true;
         state.ciWatcherFailures = 2;
 
         await page.goto(new URL('/#/inbox', baseUrl).toString(), {
           waitUntil: 'networkidle',
         });
 
-        await assertVisible(page.locator('#inbox .empty-state'));
+        await page.waitForURL(/#\/rooms$/);
+        await assertVisible(page.locator('#rooms .rooms-v2'));
+        assert.equal(await page.locator('a[href="#/inbox"]').count(), 0);
+        await assertVisible(page.getByText(/승인|Approval/).first());
         assert.equal(await page.getByText(/CI 실패|CI failure/).count(), 0);
         assert.equal(
           await page.getByRole('button', { name: 'Dismiss' }).count(),
@@ -179,6 +185,7 @@ async function runScenario(
 
 function createMockApiState(): MockApiState {
   return {
+    approvalAction: false,
     codexFeatures: { goals: false },
     codexFeatureUpdates: 0,
     ciWatcherFailures: 0,
@@ -229,26 +236,15 @@ async function handleMockApi(route: Route, state: MockApiState) {
   const method = request.method();
 
   if (method === 'GET' && url.pathname === '/api/overview') {
-    await fulfillJson(route, {
-      generatedAt: new Date(0).toISOString(),
-      services: [],
-      rooms: { total: 0, active: 0, waiting: 0, inactive: 0 },
-      tasks: {
-        total: 0,
-        active: 0,
-        paused: state.ciWatcherFailures,
-        completed: 0,
-        watchers: { active: 0, paused: state.ciWatcherFailures, completed: 0 },
-      },
-      usage: { rows: [], fetchedAt: null },
-      operations: { serviceRestarts: [] },
-      inbox: [],
-    });
+    await fulfillJson(route, mockOverview(state));
     return;
   }
 
   if (method === 'GET' && url.pathname === '/api/status-snapshots') {
-    await fulfillJson(route, []);
+    await fulfillJson(
+      route,
+      state.approvalAction ? [mockStatusSnapshot()] : [],
+    );
     return;
   }
 
@@ -369,6 +365,78 @@ async function handleMockApi(route: Route, state: MockApiState) {
     { error: `Unhandled mock route ${method} ${url.pathname}` },
     404,
   );
+}
+
+function mockOverview(state: MockApiState) {
+  return {
+    generatedAt: MOCK_TIME,
+    services: [
+      {
+        serviceId: 'codex-main',
+        assistantName: 'Codex',
+        agentType: 'codex',
+        updatedAt: MOCK_TIME,
+        totalRooms: state.approvalAction ? 1 : 0,
+        activeRooms: 0,
+      },
+    ],
+    rooms: state.approvalAction
+      ? { total: 1, active: 0, waiting: 0, inactive: 1 }
+      : { total: 0, active: 0, waiting: 0, inactive: 0 },
+    tasks: {
+      total: 0,
+      active: 0,
+      paused: state.ciWatcherFailures,
+      completed: 0,
+      watchers: { active: 0, paused: state.ciWatcherFailures, completed: 0 },
+    },
+    usage: { rows: [], fetchedAt: null },
+    operations: { serviceRestarts: [] },
+    inbox: state.approvalAction ? [mockApprovalInboxItem()] : [],
+  };
+}
+
+function mockApprovalInboxItem() {
+  return {
+    id: 'paired:merge-1:merge_ready',
+    groupKey: 'paired:merge-1:merge_ready',
+    kind: 'approval',
+    severity: 'warn',
+    title: 'Ready to merge',
+    summary: 'merge_ready',
+    occurredAt: MOCK_TIME,
+    lastOccurredAt: MOCK_TIME,
+    createdAt: MOCK_TIME,
+    occurrences: 1,
+    source: 'paired-task',
+    roomJid: 'dc:ops',
+    roomName: '#ops',
+    groupFolder: 'ops',
+    serviceId: 'codex-main',
+    taskId: 'merge-1',
+    taskStatus: 'merge_ready',
+  };
+}
+
+function mockStatusSnapshot() {
+  return {
+    serviceId: 'codex-main',
+    assistantName: 'Codex',
+    agentType: 'codex',
+    updatedAt: MOCK_TIME,
+    entries: [
+      {
+        jid: 'dc:ops',
+        name: '#ops',
+        folder: 'ops',
+        agentType: 'codex',
+        status: 'inactive',
+        elapsedMs: null,
+        pendingMessages: false,
+        pendingTasks: 0,
+      },
+    ],
+  };
 }
 
 function parseJsonBody(body: string | null): Record<string, unknown> {

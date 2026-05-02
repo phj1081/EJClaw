@@ -761,7 +761,7 @@ describe('web dashboard room activity data', () => {
 });
 
 describe('web dashboard inbox data', () => {
-  it('builds typed inbox items from pending rooms and paired tasks only', () => {
+  it('builds user-action inbox items from merge-ready paired tasks only', () => {
     const snapshots: StatusSnapshot[] = [
       {
         serviceId: 'codex-main',
@@ -803,6 +803,8 @@ describe('web dashboard inbox data', () => {
           review_requested_at: '2026-04-26T05:03:00.000Z',
         }),
         makePairedTask({
+          chat_jid: 'dc:ops',
+          group_folder: 'ops',
           id: 'merge-1',
           status: 'merge_ready',
           title: 'Ready to merge',
@@ -839,31 +841,27 @@ describe('web dashboard inbox data', () => {
       ],
     });
 
-    expect(overview.inbox.map((item) => item.kind)).toEqual([
-      'approval',
-      'reviewer-request',
-      'pending-room',
-    ]);
+    expect(overview.inbox.map((item) => item.kind)).toEqual(['approval']);
     expect(overview.inbox).toContainEqual(
       expect.objectContaining({
-        id: 'room:codex-main:dc:ops',
-        kind: 'pending-room',
-        severity: 'info',
+        id: 'paired:merge-1:merge_ready',
+        kind: 'approval',
+        severity: 'warn',
         roomJid: 'dc:ops',
+        taskId: 'merge-1',
         serviceId: 'codex-main',
-        occurredAt: '2026-04-26T05:00:00.000Z',
+        occurredAt: '2026-04-26T05:04:00.000Z',
         createdAt: '2026-04-26T05:10:00.000Z',
       }),
     );
-    expect(overview.inbox).toContainEqual(
-      expect.objectContaining({
-        id: 'paired:review-1:review_ready',
-        kind: 'reviewer-request',
-        severity: 'warn',
-        serviceId: 'claude-reviewer',
-        taskStatus: 'review_ready',
-        occurredAt: '2026-04-26T05:03:00.000Z',
-      }),
+    expect(overview.inbox.some((item) => item.kind === 'pending-room')).toBe(
+      false,
+    );
+    expect(
+      overview.inbox.some((item) => item.kind === 'reviewer-request'),
+    ).toBe(false);
+    expect(overview.inbox.some((item) => item.kind === 'arbiter-request')).toBe(
+      false,
     );
     expect(overview.inbox.some((item) => item.kind === 'ci-failure')).toBe(
       false,

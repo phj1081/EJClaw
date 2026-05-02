@@ -142,7 +142,9 @@ describe('web dashboard overview route', () => {
       },
     ];
     const overview = route('/api/overview', {
-      loadPairedTasks: () => [makePairedTask({ id: 'review-1' })],
+      loadPairedTasks: () => [
+        makePairedTask({ id: 'merge-1', status: 'merge_ready' }),
+      ],
       readSnapshots: () => snapshots,
       isInboxItemDismissed: () => true,
     });

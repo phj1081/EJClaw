@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 
 import {
   type CreateScheduledTaskInput,
-  type DashboardInboxAction,
   type DashboardRoomActivity,
   type DashboardTaskAction,
   type DashboardOverview,
@@ -11,7 +10,6 @@ import {
   type StatusSnapshot,
   createScheduledTask,
   fetchDashboardData,
-  runInboxAction,
   runServiceAction,
   runScheduledTaskAction,
   sendRoomMessage,
@@ -33,7 +31,6 @@ import {
   type DashboardView,
 } from './DashboardNav';
 import { formatDate, statusLabel } from './dashboardHelpers';
-import { InboxPanel, type InboxActionKey, type InboxItem } from './InboxPanel';
 import { RoomBoardV2 } from './RoomBoardV2';
 import { ServicePanel, type ServiceActionKey } from './ServicePanel';
 import { SettingsPanel } from './SettingsPanel';
@@ -68,7 +65,6 @@ function isDashboardView(
 ): value is DashboardView {
   return (
     value === 'usage' ||
-    value === 'inbox' ||
     value === 'health' ||
     value === 'rooms' ||
     value === 'scheduled' ||
@@ -80,6 +76,13 @@ function readViewFromHash(): DashboardView {
   if (typeof window === 'undefined') return DEFAULT_VIEW;
   const raw = window.location.hash.replace(/^#\/?/, '');
   return isDashboardView(raw) ? raw : DEFAULT_VIEW;
+}
+
+function normalizeDashboardHash(view: DashboardView): void {
+  if (typeof window === 'undefined') return;
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  if (!raw || isDashboardView(raw)) return;
+  window.history.replaceState(null, '', `#/${view}`);
 }
 
 function readInitialLocale(): Locale {
@@ -385,9 +388,6 @@ function App() {
   const [taskActionKey, setTaskActionKey] = useState<TaskActionKey | null>(
     null,
   );
-  const [inboxActionKey, setInboxActionKey] = useState<InboxActionKey | null>(
-    null,
-  );
   const [serviceActionKey, setServiceActionKey] =
     useState<ServiceActionKey | null>(null);
   const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
@@ -487,33 +487,6 @@ function App() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setTaskActionKey(null);
-    }
-  }
-
-  async function handleInboxAction(
-    item: InboxItem,
-    action: DashboardInboxAction,
-  ) {
-    if (
-      action === 'decline' &&
-      typeof window !== 'undefined' &&
-      !window.confirm(t.inbox.actions.confirmDecline)
-    ) {
-      return;
-    }
-
-    const actionKey: InboxActionKey = `${item.id}:${action}`;
-    setInboxActionKey(actionKey);
-    try {
-      await runInboxAction(item.id, action, {
-        lastOccurredAt: item.lastOccurredAt,
-        requestId: makeClientRequestId(),
-      });
-      await refresh(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setInboxActionKey(null);
     }
   }
 
@@ -715,7 +688,9 @@ function App() {
 
   useEffect(() => {
     function handleHashChange() {
-      setActiveView(readViewFromHash());
+      const nextView = readViewFromHash();
+      setActiveView(nextView);
+      normalizeDashboardHash(nextView);
     }
 
     handleHashChange();
@@ -838,29 +813,6 @@ function App() {
                   t={t}
                 />
               </>
-            ) : null}
-
-            {activeView === 'inbox' ? (
-              <section className="panel view-panel" id="inbox">
-                <div className="panel-title">
-                  <h2>{t.panels.inbox}</h2>
-                  <span>{t.panels.inboxQueue}</span>
-                </div>
-                <InboxPanel
-                  inboxActionKey={inboxActionKey}
-                  locale={locale}
-                  onInboxAction={(item, action) =>
-                    void handleInboxAction(item, action)
-                  }
-                  onTaskAction={(task, action) =>
-                    void handleTaskAction(task, action)
-                  }
-                  overview={data.overview}
-                  taskActionKey={taskActionKey}
-                  tasks={data.tasks}
-                  t={t}
-                />
-              </section>
             ) : null}
 
             {activeView === 'health' ? (

@@ -275,50 +275,14 @@ function pairedTaskInboxKind(
   status: PairedTask['status'],
 ): InboxItemKind | null {
   if (status === 'merge_ready') return 'approval';
-  if (status === 'review_ready' || status === 'in_review') {
-    return 'reviewer-request';
-  }
-  if (status === 'arbiter_requested' || status === 'in_arbitration') {
-    return 'arbiter-request';
-  }
   return null;
 }
 
 function collectInboxItems(args: {
-  snapshots: StatusSnapshot[];
-  tasks: ScheduledTask[];
   pairedTasks: PairedTask[];
   createdAt: string;
 }): InboxItem[] {
   const items: InboxItem[] = [];
-
-  for (const snapshot of args.snapshots) {
-    for (const entry of snapshot.entries) {
-      if (!entry.pendingMessages && entry.pendingTasks === 0) continue;
-
-      const parts: string[] = [];
-      if (entry.pendingMessages) parts.push('pending messages');
-      if (entry.pendingTasks > 0) parts.push(`${entry.pendingTasks} tasks`);
-
-      items.push({
-        id: `room:${snapshot.serviceId}:${entry.jid}`,
-        groupKey: `room:${snapshot.serviceId}:${entry.jid}`,
-        kind: 'pending-room',
-        severity: entry.pendingTasks > 0 ? 'warn' : 'info',
-        title: entry.name || entry.folder || entry.jid,
-        summary: parts.join(' · '),
-        occurredAt: snapshot.updatedAt,
-        lastOccurredAt: snapshot.updatedAt,
-        createdAt: args.createdAt,
-        occurrences: 1,
-        source: 'status-snapshot',
-        roomJid: entry.jid,
-        roomName: entry.name,
-        groupFolder: entry.folder,
-        serviceId: snapshot.serviceId,
-      });
-    }
-  }
 
   for (const task of args.pairedTasks) {
     const kind = pairedTaskInboxKind(task.status);
@@ -328,30 +292,17 @@ function collectInboxItems(args: {
       id: `paired:${task.id}:${task.status}`,
       groupKey: `paired:${task.id}:${task.status}`,
       kind,
-      severity: kind === 'arbiter-request' ? 'error' : 'warn',
+      severity: 'warn',
       title: task.title || task.group_folder,
       summary: task.status,
-      occurredAt:
-        kind === 'arbiter-request'
-          ? (task.arbiter_requested_at ?? task.updated_at)
-          : kind === 'reviewer-request'
-            ? (task.review_requested_at ?? task.updated_at)
-            : task.updated_at,
-      lastOccurredAt:
-        kind === 'arbiter-request'
-          ? (task.arbiter_requested_at ?? task.updated_at)
-          : kind === 'reviewer-request'
-            ? (task.review_requested_at ?? task.updated_at)
-            : task.updated_at,
+      occurredAt: task.updated_at,
+      lastOccurredAt: task.updated_at,
       createdAt: args.createdAt,
       occurrences: 1,
       source: 'paired-task',
       roomJid: task.chat_jid,
       groupFolder: task.group_folder,
-      serviceId:
-        kind === 'reviewer-request'
-          ? task.reviewer_service_id
-          : task.owner_service_id,
+      serviceId: task.owner_service_id,
       taskId: task.id,
       taskStatus: task.status,
     });
@@ -794,8 +745,6 @@ export function buildWebDashboardOverview(args: {
       fetchedAt: usageFetchedAt,
     },
     inbox: collectInboxItems({
-      snapshots: args.snapshots,
-      tasks: args.tasks,
       pairedTasks: args.pairedTasks ?? [],
       createdAt: generatedAt,
     }),
