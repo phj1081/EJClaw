@@ -103,6 +103,8 @@ function isVisibleVerdict(
 
 const LEADING_STRUCTURED_OUTPUT_CONTROL_RE =
   /^[\u0000-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]+/u;
+const STRUCTURED_STATUS_PREFIX_RE =
+  /^(STEP_DONE|TASK_DONE|DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)[ \t]*(?:\r?\n)+([\s\S]+)$/;
 
 function stripLeadingStructuredOutputControls(value: string): string {
   return value.replace(LEADING_STRUCTURED_OUTPUT_CONTROL_RE, '').trimStart();
@@ -142,6 +144,31 @@ function extractStructuredJsonCandidate(trimmed: string): string {
   return fencedJson?.[1]?.trim() ?? trimmed;
 }
 
+function extractStructuredCandidateWithOptionalStatus(trimmed: string): {
+  jsonCandidate: string;
+  statusPrefix: string | null;
+} {
+  const statusMatch = trimmed.match(STRUCTURED_STATUS_PREFIX_RE);
+  if (!statusMatch) {
+    return {
+      jsonCandidate: extractStructuredJsonCandidate(trimmed),
+      statusPrefix: null,
+    };
+  }
+
+  return {
+    jsonCandidate: extractStructuredJsonCandidate(statusMatch[2].trim()),
+    statusPrefix: statusMatch[1],
+  };
+}
+
+function prefixStructuredText(
+  text: string,
+  statusPrefix: string | null,
+): string {
+  return statusPrefix ? `${statusPrefix}\n\n${text}` : text;
+}
+
 export function normalizeEjclawStructuredOutput(
   result: string | null,
 ): NormalizedRunnerOutput {
@@ -150,7 +177,8 @@ export function normalizeEjclawStructuredOutput(
   }
 
   const trimmed = stripLeadingStructuredOutputControls(result.trim());
-  const jsonCandidate = extractStructuredJsonCandidate(trimmed);
+  const { jsonCandidate, statusPrefix } =
+    extractStructuredCandidateWithOptionalStatus(trimmed);
   try {
     const parsed = JSON.parse(jsonCandidate) as {
       ejclaw?: {
@@ -188,11 +216,12 @@ export function normalizeEjclawStructuredOutput(
           return normalizePublicTextOutput(result);
         }
         const attachments = normalizeAttachments(envelope.attachments);
+        const text = prefixStructuredText(envelope.text, statusPrefix);
         return {
-          result: envelope.text,
+          result: text,
           output: {
             visibility: 'public',
-            text: envelope.text,
+            text,
             verdict: isVisibleVerdict(envelope.verdict)
               ? envelope.verdict
               : undefined,

@@ -156,6 +156,45 @@ describe('shared agent protocol helpers', () => {
     });
   });
 
+  it('parses status-prefixed fenced public ejclaw attachments', () => {
+    expect(
+      normalizeEjclawStructuredOutput(`TASK_DONE
+
+\`\`\`json
+{
+  "ejclaw": {
+    "visibility": "public",
+    "text": "이미지를 첨부했습니다.",
+    "verdict": "done",
+    "attachments": [
+      {
+        "path": "/tmp/ejclaw-discord-image-status.png",
+        "name": "status.png",
+        "mime": "image/png"
+      }
+    ]
+  }
+}
+\`\`\``),
+    ).toEqual({
+      result: 'TASK_DONE\n\n이미지를 첨부했습니다.',
+      output: {
+        visibility: 'public',
+        text: 'TASK_DONE\n\n이미지를 첨부했습니다.',
+        verdict: 'done',
+        attachments: [
+          {
+            path: '/tmp/ejclaw-discord-image-status.png',
+            name: 'status.png',
+            mime: 'image/png',
+          },
+        ],
+      },
+    });
+  });
+});
+
+describe('shared agent protocol fallback behavior', () => {
   it('parses in_progress public envelopes instead of leaking raw structured JSON', () => {
     const raw = JSON.stringify({
       ejclaw: {
