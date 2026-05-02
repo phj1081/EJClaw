@@ -628,63 +628,8 @@ button:disabled {
 
 .settings-panel {
   display: grid;
-  gap: 18px;
   max-width: 1160px;
   width: 100%;
-}
-
-.settings-hero {
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  gap: 18px;
-  align-items: flex-end;
-  justify-content: space-between;
-  padding: 20px;
-  border: 1px solid rgba(214, 130, 88, 0.18);
-  border-radius: 18px;
-  background:
-    radial-gradient(
-      circle at 12% 0%,
-      rgba(214, 130, 88, 0.2),
-      transparent 28rem
-    ),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent 52%),
-    var(--panel);
-  box-shadow: var(--card-shadow-strong);
-}
-
-.settings-hero::after {
-  content: '';
-  position: absolute;
-  right: -70px;
-  top: -90px;
-  width: 260px;
-  height: 260px;
-  border: 1px solid rgba(214, 130, 88, 0.2);
-  border-radius: 999px;
-  background: rgba(214, 130, 88, 0.04);
-  pointer-events: none;
-}
-
-.settings-hero > div {
-  position: relative;
-  z-index: 1;
-}
-
-.settings-hero h2 {
-  margin: 4px 0 6px;
-  font-size: clamp(26px, 4vw, 42px);
-  line-height: 0.95;
-  letter-spacing: -0.05em;
-}
-
-.settings-hero p {
-  max-width: 62ch;
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.7;
 }
 
 .settings-kicker {
@@ -695,24 +640,6 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.settings-hero-badges {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  min-width: 220px;
-}
-
-.settings-hero-badges span {
-  padding: 6px 9px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.045);
-  color: var(--bg-ink);
-  font-size: 11px;
-  font-weight: 700;
-}
-
 .settings-layout {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -720,9 +647,14 @@ button:disabled {
   align-items: start;
 }
 
-.settings-nav {
+.settings-sidebar {
   position: sticky;
   top: 72px;
+  display: grid;
+  gap: 10px;
+}
+
+.settings-nav {
   display: grid;
   gap: 8px;
   padding: 10px;
@@ -891,39 +823,34 @@ button:disabled {
   background: rgba(255, 255, 255, 0.018);
 }
 
-.settings-apply-bar {
-  position: sticky;
-  top: 72px;
-  z-index: 5;
-  display: flex;
+.settings-apply-card {
+  display: grid;
   gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
+  padding: 13px;
   border: 1px solid rgba(214, 130, 88, 0.32);
   border-radius: 16px;
   background:
-    linear-gradient(135deg, rgba(214, 130, 88, 0.2), transparent 56%),
-    rgba(16, 20, 18, 0.96);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(16px);
+    linear-gradient(145deg, rgba(214, 130, 88, 0.16), transparent 62%),
+    rgba(19, 24, 22, 0.88);
+  box-shadow: var(--card-shadow);
 }
 
-.settings-apply-bar > div {
+.settings-apply-card > div {
   display: grid;
   gap: 3px;
   min-width: 0;
 }
 
-.settings-apply-bar strong {
+.settings-apply-card strong {
   color: var(--bg-ink);
   font-size: 15px;
   letter-spacing: -0.02em;
 }
 
-.settings-apply-bar small {
+.settings-apply-card small {
   color: var(--muted);
   font-size: 11px;
+  line-height: 1.45;
 }
 
 .settings-row-inline {
@@ -1272,23 +1199,25 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .settings-nav {
+  .settings-sidebar {
     position: static;
+  }
+
+  .settings-nav {
     grid-template-columns: repeat(5, minmax(120px, 1fr));
     overflow-x: auto;
+  }
+
+  .settings-apply-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 }
 
 @media (max-width: 720px) {
-  .settings-hero,
-  .settings-apply-bar {
+  .settings-apply-card {
     align-items: stretch;
-    flex-direction: column;
-  }
-
-  .settings-hero-badges {
-    justify-content: flex-start;
-    min-width: 0;
+    grid-template-columns: 1fr;
   }
 
   .settings-form-grid,

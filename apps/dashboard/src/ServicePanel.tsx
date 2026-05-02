@@ -67,11 +67,7 @@ export function ServicePanel({
     },
     { pendingTasks: 0, pendingMessageRooms: 0 },
   );
-  const ciFailures = overview.inbox.reduce(
-    (count, item) =>
-      item.kind === 'ci-failure' ? count + item.occurrences : count,
-    0,
-  );
+  const ciFailures = overview.tasks.watchers.paused;
   const healthLevel: HealthLevel =
     down > 0 ? 'down' : stale > 0 || ciFailures > 0 ? 'stale' : 'ok';
   const affectedServices = serviceLevels.filter((item) => item.level !== 'ok');

@@ -62,9 +62,11 @@ export function SettingsPanel({
 }: SettingsPanelProps) {
   return (
     <div className="settings-panel">
-      <SettingsHero />
       <div className="settings-layout">
-        <SettingsNav />
+        <aside className="settings-sidebar" aria-label="설정 탐색과 적용">
+          <SettingsNav />
+          <SettingsApplyCard onRestartStack={onRestartStack} />
+        </aside>
         <main className="settings-content" aria-label="설정 항목">
           <section className="settings-section" id="settings-general">
             <SettingsSectionHeading
@@ -109,8 +111,6 @@ export function SettingsPanel({
             </div>
           </section>
 
-          <SettingsApplyBar onRestartStack={onRestartStack} />
-
           <ModelSettings />
 
           <MoaSettingsPanel />
@@ -131,26 +131,6 @@ export function SettingsPanel({
         </main>
       </div>
     </div>
-  );
-}
-
-function SettingsHero() {
-  return (
-    <header className="settings-hero">
-      <div>
-        <span className="settings-kicker">Operations console</span>
-        <h2>설정</h2>
-        <p>
-          모델, MoA, Codex 실험 기능, 계정을 한 화면에서 조정합니다. 런타임에
-          반영되는 항목은 저장 후 한 번만 재시작하면 됩니다.
-        </p>
-      </div>
-      <div className="settings-hero-badges" aria-label="주요 설정">
-        <span>Codex /goal</span>
-        <span>MoA</span>
-        <span>Accounts</span>
-      </div>
-    </header>
   );
 }
 
@@ -197,16 +177,13 @@ function SettingsSectionHeading({
   );
 }
 
-function SettingsApplyBar({ onRestartStack }: { onRestartStack: () => void }) {
+function SettingsApplyCard({ onRestartStack }: { onRestartStack: () => void }) {
   return (
-    <section className="settings-apply-bar" aria-label="변경 적용">
+    <section className="settings-apply-card" aria-label="변경 적용">
       <div>
-        <span className="settings-kicker">Apply changes</span>
-        <strong>변경 적용</strong>
-        <small>
-          모델, MoA, Codex 실험 기능, 계정 변경은 저장 후 스택 재시작으로
-          적용됩니다.
-        </small>
+        <span className="settings-kicker">Apply</span>
+        <strong>저장 후 재시작</strong>
+        <small>모델, MoA, Codex, 계정 변경은 스택 재시작 후 반영됩니다.</small>
       </div>
       <button
         className="settings-restart"

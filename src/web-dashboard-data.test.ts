@@ -761,7 +761,7 @@ describe('web dashboard room activity data', () => {
 });
 
 describe('web dashboard inbox data', () => {
-  it('builds typed inbox items from pending rooms, paired tasks, and CI failures', () => {
+  it('builds typed inbox items from pending rooms and paired tasks only', () => {
     const snapshots: StatusSnapshot[] = [
       {
         serviceId: 'codex-main',
@@ -840,7 +840,6 @@ describe('web dashboard inbox data', () => {
     });
 
     expect(overview.inbox.map((item) => item.kind)).toEqual([
-      'ci-failure',
       'approval',
       'reviewer-request',
       'pending-room',
@@ -866,18 +865,17 @@ describe('web dashboard inbox data', () => {
         occurredAt: '2026-04-26T05:03:00.000Z',
       }),
     );
-    const ciFailure = overview.inbox.find((item) => item.kind === 'ci-failure');
-    expect(ciFailure).toMatchObject({
-      id: 'ci:ci-2',
-      severity: 'error',
-      occurrences: 2,
-      source: 'scheduled-task',
-      taskId: 'ci-2',
-      lastOccurredAt: '2026-04-26T05:07:00.000Z',
-    });
-    expect(ciFailure?.summary).toContain('BOT_TOKEN=<redacted>');
-    expect(ciFailure?.summary).not.toContain('plain-secret-value');
+    expect(overview.inbox.some((item) => item.kind === 'ci-failure')).toBe(
+      false,
+    );
+    expect(overview.inbox.some((item) => item.taskId === 'ci-1')).toBe(false);
+    expect(overview.inbox.some((item) => item.taskId === 'ci-2')).toBe(false);
     expect(overview.inbox.some((item) => item.taskId === 'cron-1')).toBe(false);
     expect(overview.inbox.some((item) => item.taskId === 'done-1')).toBe(false);
+    expect(overview.tasks.watchers).toEqual({
+      active: 1,
+      paused: 1,
+      completed: 0,
+    });
   });
 });

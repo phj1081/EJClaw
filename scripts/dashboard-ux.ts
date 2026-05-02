@@ -8,6 +8,7 @@ import { createServer, type ViteDevServer } from 'vite';
 interface MockApiState {
   codexFeatures: { goals: boolean };
   codexFeatureUpdates: number;
+  ciWatcherFailures: number;
   restartRequests: number;
 }
 
@@ -110,6 +111,30 @@ async function main() {
       },
     );
 
+    await runScenario(
+      'inbox stays focused on actionable work',
+      browser,
+      baseUrl,
+      async (page, state) => {
+        state.ciWatcherFailures = 2;
+
+        await page.goto(new URL('/#/inbox', baseUrl).toString(), {
+          waitUntil: 'networkidle',
+        });
+
+        await assertVisible(page.locator('#inbox .empty-state'));
+        assert.equal(await page.getByText(/CI 실패|CI failure/).count(), 0);
+        assert.equal(
+          await page.getByRole('button', { name: 'Dismiss' }).count(),
+          0,
+        );
+
+        // This scenario protects the Inbox information architecture. The
+        // accessibility scan stays scoped to Settings, where this UX suite
+        // currently has stable interactive coverage.
+      },
+    );
+
     console.log('dashboard:ux passed');
   } finally {
     await browser.close();
@@ -156,6 +181,7 @@ function createMockApiState(): MockApiState {
   return {
     codexFeatures: { goals: false },
     codexFeatureUpdates: 0,
+    ciWatcherFailures: 0,
     restartRequests: 0,
   };
 }
@@ -165,9 +191,10 @@ async function openSettings(page: Page, baseUrl: string) {
     waitUntil: 'networkidle',
   });
   await assertVisible(page.locator('.settings-panel'));
-  await assertVisible(page.locator('.settings-hero'));
+  assert.equal(await page.locator('.settings-hero').count(), 0);
+  await assertVisible(page.locator('.settings-sidebar'));
   await assertVisible(page.locator('.settings-nav'));
-  await assertVisible(page.locator('.settings-apply-bar'));
+  await assertVisible(page.locator('.settings-apply-card'));
   assert.equal(
     await page.getByRole('button', { name: '스택 재시작' }).count(),
     1,
@@ -209,9 +236,9 @@ async function handleMockApi(route: Route, state: MockApiState) {
       tasks: {
         total: 0,
         active: 0,
-        paused: 0,
+        paused: state.ciWatcherFailures,
         completed: 0,
-        watchers: { active: 0, paused: 0, completed: 0 },
+        watchers: { active: 0, paused: state.ciWatcherFailures, completed: 0 },
       },
       usage: { rows: [], fetchedAt: null },
       operations: { serviceRestarts: [] },
