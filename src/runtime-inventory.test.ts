@@ -34,7 +34,19 @@ describe('runtime inventory', () => {
     );
     fs.writeFileSync(
       path.join(claudeDir, 'settings.json'),
-      '{"fastMode":true,"secret":"should-not-leak"}\n',
+      JSON.stringify({
+        fastMode: true,
+        secret: 'should-not-leak',
+        mcpServers: {
+          ejclaw: {
+            command: 'node',
+            args: ['secret-arg-should-not-leak'],
+          },
+          filesystem: {
+            command: 'node',
+          },
+        },
+      }),
     );
     fs.writeFileSync(
       path.join(codexDir, 'auth.json'),
@@ -75,6 +87,10 @@ describe('runtime inventory', () => {
       ejclawConfigured: true,
       serverCount: 2,
     });
+    expect(snapshot.claude.mcp).toMatchObject({
+      ejclawConfigured: true,
+      serverCount: 2,
+    });
     expect(snapshot.codex.skillDirs[0]).toMatchObject({
       count: 1,
       skills: [{ name: 'browser', description: 'Browser automation' }],
@@ -87,5 +103,6 @@ describe('runtime inventory', () => {
     const serialized = JSON.stringify(snapshot);
     expect(serialized).not.toContain('sk-secret');
     expect(serialized).not.toContain('should-not-leak');
+    expect(serialized).not.toContain('secret-arg-should-not-leak');
   });
 });

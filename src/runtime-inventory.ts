@@ -61,6 +61,11 @@ interface RuntimeInventoryOptions {
   generatedAt?: string;
 }
 
+interface McpConfigSummary {
+  ejclawConfigured: boolean;
+  serverCount: number;
+}
+
 function pathSnapshot(label: string, filePath: string): RuntimePathSnapshot {
   return {
     label,
@@ -119,6 +124,42 @@ function readSkillDir(label: string, dirPath: string): RuntimeSkillDirSnapshot {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function summarizeTomlMcpConfig(content: string): McpConfigSummary {
+  const serverMatches = content.match(/^\s*\[mcp_servers\.[^\]]+\]/gm) ?? [];
+  return {
+    ejclawConfigured: /^\s*\[mcp_servers\.ejclaw(?:\.[^\]]+)?\]/m.test(content),
+    serverCount: serverMatches.length,
+  };
+}
+
+function summarizeJsonMcpConfig(content: string): McpConfigSummary | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed)) return null;
+
+  const servers = parsed.mcpServers ?? parsed.mcp_servers;
+  if (!isRecord(servers)) {
+    return {
+      ejclawConfigured: false,
+      serverCount: 0,
+    };
+  }
+
+  const names = Object.keys(servers);
+  return {
+    ejclawConfigured: names.includes('ejclaw'),
+    serverCount: names.length,
+  };
+}
+
 function readMcpSnapshot(
   label: string,
   configPath: string,
@@ -132,11 +173,14 @@ function readMcpSnapshot(
     }
   }
 
-  const serverMatches = content.match(/^\s*\[mcp_servers\.[^\]]+\]/gm) ?? [];
+  const summary =
+    path.extname(configPath) === '.json'
+      ? (summarizeJsonMcpConfig(content) ?? summarizeTomlMcpConfig(content))
+      : summarizeTomlMcpConfig(content);
+
   return {
     configPath: pathSnapshot(label, configPath),
-    ejclawConfigured: /^\s*\[mcp_servers\.ejclaw(?:\.[^\]]+)?\]/m.test(content),
-    serverCount: serverMatches.length,
+    ...summary,
   };
 }
 
