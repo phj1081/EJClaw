@@ -319,6 +319,11 @@ async function handleMockApi(route: Route, state: MockApiState) {
     return;
   }
 
+  if (method === 'GET' && url.pathname === '/api/settings/room-skills') {
+    await fulfillJson(route, roomSkillSettingsFixture());
+    return;
+  }
+
   if (url.pathname === '/api/settings/codex-features') {
     if (method === 'GET') {
       await fulfillJson(route, state.codexFeatures);
@@ -580,6 +585,76 @@ function runtimeInventoryFixture() {
         exists: true,
       },
     },
+  };
+}
+
+function roomSkillSettingsFixture() {
+  return {
+    generatedAt: '2026-05-04T00:00:00.000Z',
+    catalog: [
+      {
+        id: 'codex-user:agent-browser',
+        scope: 'codex-user',
+        name: 'agent-browser',
+        displayName: 'agent-browser',
+        description: 'Browser automation',
+        path: '/home/.agents/skills/agent-browser',
+        agentTypes: ['codex'],
+      },
+      {
+        id: 'claude-user:review-helper',
+        scope: 'claude-user',
+        name: 'review-helper',
+        displayName: 'review-helper',
+        description: 'Review workflow',
+        path: '/home/.claude/skills/review-helper',
+        agentTypes: ['claude-code'],
+      },
+      {
+        id: 'runner:agent-browser',
+        scope: 'runner',
+        name: 'agent-browser',
+        displayName: 'agent-browser',
+        description: 'Browser automation',
+        path: '/repo/runners/skills/agent-browser',
+        agentTypes: ['claude-code', 'codex'],
+      },
+    ],
+    rooms: [
+      {
+        jid: 'room@example',
+        name: 'EJClaw',
+        folder: 'ejclaw',
+        roomMode: 'tribunal',
+        agents: [
+          {
+            agentType: 'codex',
+            mode: 'all-enabled',
+            availableSkillIds: [
+              'codex-user:agent-browser',
+              'runner:agent-browser',
+            ],
+            disabledSkillIds: [],
+            explicitEnabledSkillIds: [],
+            effectiveEnabledSkillIds: [
+              'codex-user:agent-browser',
+              'runner:agent-browser',
+            ],
+          },
+          {
+            agentType: 'claude-code',
+            mode: 'custom',
+            availableSkillIds: [
+              'claude-user:review-helper',
+              'runner:agent-browser',
+            ],
+            disabledSkillIds: ['claude-user:review-helper'],
+            explicitEnabledSkillIds: [],
+            effectiveEnabledSkillIds: ['runner:agent-browser'],
+          },
+        ],
+      },
+    ],
   };
 }
 

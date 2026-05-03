@@ -114,9 +114,67 @@
   line-height: 1.4;
 }
 
+.runtime-room-skill-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.runtime-room-skill-card {
+  display: grid;
+  gap: 12px;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.38);
+  padding: 14px;
+}
+
+.runtime-room-skill-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.runtime-room-skill-card > header > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.runtime-room-skill-card span,
+.runtime-room-agent-policy small {
+  color: var(--muted);
+}
+
+.runtime-room-skill-card code {
+  color: var(--muted);
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.runtime-room-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.runtime-room-agent-policy {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.runtime-room-agent-policy > span {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
 @media (max-width: 980px) {
   .runtime-summary-card,
-  .runtime-skill-grid {
+  .runtime-skill-grid,
+  .runtime-room-agent-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -124,7 +182,8 @@
 @media (max-width: 720px) {
   .runtime-card-head,
   .runtime-skill-card header,
-  .runtime-path-row {
+  .runtime-path-row,
+  .runtime-room-skill-card > header {
     flex-direction: column;
   }
 }

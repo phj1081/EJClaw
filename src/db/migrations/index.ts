@@ -15,6 +15,7 @@ import { PAIRED_VERDICT_AND_STEP_TELEMETRY_MIGRATION } from './012_paired-verdic
 import { MESSAGE_SOURCE_KIND_MIGRATION } from './013_message-source-kind.js';
 import { WORK_ITEM_ATTACHMENTS_MIGRATION } from './014_work-item-attachments.js';
 import { TURN_PROGRESS_TEXT_MIGRATION } from './015_turn-progress-text.js';
+import { ROOM_SKILL_OVERRIDES_MIGRATION } from './016_room-skill-overrides.js';
 import type {
   SchemaMigrationArgs,
   SchemaMigrationDefinition,
@@ -38,6 +39,7 @@ const ORDERED_SCHEMA_MIGRATIONS: readonly SchemaMigrationDefinition[] = [
   MESSAGE_SOURCE_KIND_MIGRATION,
   WORK_ITEM_ATTACHMENTS_MIGRATION,
   TURN_PROGRESS_TEXT_MIGRATION,
+  ROOM_SKILL_OVERRIDES_MIGRATION,
 ];
 
 function ensureSchemaMigrationsTable(database: Database): void {

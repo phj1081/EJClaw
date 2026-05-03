@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 
 import {
+  fetchRoomSkillSettings,
   fetchRuntimeInventory,
   type RuntimeAgentInventory,
   type RuntimeInventorySnapshot,
   type RuntimePathSnapshot,
   type RuntimeSkillDirSnapshot,
+  type RoomSkillCatalogItem,
+  type RoomSkillSettingsSnapshot,
 } from './api';
 import { SettingsSectionHeading } from './SettingsPanelChrome';
 import './RuntimeInventorySettings.css';
@@ -98,18 +101,114 @@ function AgentInventoryCard({
   );
 }
 
+function agentLabel(agentType: 'claude-code' | 'codex') {
+  return agentType === 'codex' ? 'Codex' : 'Claude Code';
+}
+
+function RoomSkillPolicyCard({
+  snapshot,
+}: {
+  snapshot: RoomSkillSettingsSnapshot | null;
+}) {
+  if (!snapshot) {
+    return (
+      <article className="runtime-agent-card">
+        <header className="runtime-card-head">
+          <h4>방별 스킬 정책</h4>
+        </header>
+        <p className="settings-hint">방별 스킬 정책을 불러오는 중…</p>
+      </article>
+    );
+  }
+
+  const catalogById = new Map<string, RoomSkillCatalogItem>(
+    snapshot.catalog.map((skill) => [skill.id, skill]),
+  );
+  const roomPreview = snapshot.rooms.slice(0, 8);
+
+  return (
+    <article className="runtime-agent-card">
+      <header className="runtime-card-head">
+        <div>
+          <h4>방별 스킬 정책</h4>
+          <p className="settings-hint">
+            전역 설정은 읽기 전용입니다. 이 목록은 다음 토글 PR에서 방 단위
+            enable/disable 대상으로 쓰입니다.
+          </p>
+        </div>
+        <span className="settings-account-badge is-active">
+          {snapshot.catalog.length} skills · {snapshot.rooms.length} rooms
+        </span>
+      </header>
+
+      {roomPreview.length === 0 ? (
+        <p className="settings-hint">등록된 방이 없습니다.</p>
+      ) : (
+        <div className="runtime-room-skill-list">
+          {roomPreview.map((room) => (
+            <section className="runtime-room-skill-card" key={room.jid}>
+              <header>
+                <div>
+                  <strong>{room.name}</strong>
+                  <span>{room.folder}</span>
+                </div>
+                <code>{room.jid}</code>
+              </header>
+              <div className="runtime-room-agent-grid">
+                {room.agents.map((agent) => {
+                  const disabledNames = agent.disabledSkillIds
+                    .map((id) => catalogById.get(id)?.displayName ?? id)
+                    .slice(0, 3);
+                  return (
+                    <div
+                      className="runtime-room-agent-policy"
+                      key={`${room.jid}:${agent.agentType}`}
+                    >
+                      <strong>{agentLabel(agent.agentType)}</strong>
+                      <span>
+                        {agent.mode === 'all-enabled'
+                          ? '기본 전체 ON'
+                          : `${agent.disabledSkillIds.length}개 OFF`}
+                      </span>
+                      <small>
+                        사용 {agent.effectiveEnabledSkillIds.length} / 가능{' '}
+                        {agent.availableSkillIds.length}
+                      </small>
+                      {disabledNames.length > 0 ? (
+                        <small>OFF: {disabledNames.join(', ')}</small>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+      {snapshot.rooms.length > roomPreview.length ? (
+        <small className="settings-hint">
+          외 {snapshot.rooms.length - roomPreview.length}개 방 더 있음
+        </small>
+      ) : null}
+    </article>
+  );
+}
+
 export function RuntimeInventorySettings() {
   const [snapshot, setSnapshot] = useState<RuntimeInventorySnapshot | null>(
     null,
   );
+  const [roomSkillSnapshot, setRoomSkillSnapshot] =
+    useState<RoomSkillSettingsSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetchRuntimeInventory()
-      .then((value) => {
+    Promise.all([fetchRuntimeInventory(), fetchRoomSkillSettings()])
+      .then(([value, roomSkills]) => {
         if (cancelled) return;
         setSnapshot(value);
+        setRoomSkillSnapshot(roomSkills);
         setError(null);
       })
       .catch((err) => {
@@ -156,6 +255,7 @@ export function RuntimeInventorySettings() {
 
           <AgentInventoryCard title="Codex" inventory={snapshot.codex} />
           <AgentInventoryCard title="Claude Code" inventory={snapshot.claude} />
+          <RoomSkillPolicyCard snapshot={roomSkillSnapshot} />
 
           <article className="runtime-agent-card">
             <header className="runtime-card-head">

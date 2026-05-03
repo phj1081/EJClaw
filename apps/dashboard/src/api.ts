@@ -438,6 +438,41 @@ export interface RuntimeInventorySnapshot {
   };
 }
 
+export type RoomSkillScope = 'codex-user' | 'claude-user' | 'runner';
+
+export interface RoomSkillCatalogItem {
+  id: string;
+  scope: RoomSkillScope;
+  name: string;
+  displayName: string;
+  description: string | null;
+  path: string;
+  agentTypes: Array<'claude-code' | 'codex'>;
+}
+
+export interface RoomSkillAgentPolicy {
+  agentType: 'claude-code' | 'codex';
+  mode: 'all-enabled' | 'custom';
+  availableSkillIds: string[];
+  disabledSkillIds: string[];
+  explicitEnabledSkillIds: string[];
+  effectiveEnabledSkillIds: string[];
+}
+
+export interface RoomSkillPolicyRoom {
+  jid: string;
+  name: string;
+  folder: string;
+  roomMode?: 'single' | 'tribunal';
+  agents: RoomSkillAgentPolicy[];
+}
+
+export interface RoomSkillSettingsSnapshot {
+  generatedAt: string;
+  catalog: RoomSkillCatalogItem[];
+  rooms: RoomSkillPolicyRoom[];
+}
+
 export interface MoaReferenceStatus {
   model: string;
   checkedAt: string;
@@ -594,6 +629,10 @@ export async function fetchCodexFeatures(): Promise<CodexFeatureSnapshot> {
 
 export async function fetchRuntimeInventory(): Promise<RuntimeInventorySnapshot> {
   return fetchJson('/api/settings/runtime-inventory');
+}
+
+export async function fetchRoomSkillSettings(): Promise<RoomSkillSettingsSnapshot> {
+  return fetchJson('/api/settings/room-skills');
 }
 
 export async function updateCodexFeatures(
