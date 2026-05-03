@@ -49,6 +49,12 @@ export interface SendMessageResult {
   visible: boolean;
 }
 
+export interface DeleteRecentMessagesByContentOptions {
+  contentIncludes: string;
+  exceptMessageId?: string | null;
+  limit?: number;
+}
+
 export type PairedRoomRole = 'owner' | 'reviewer' | 'arbiter';
 
 export type PairedTaskStatus =
@@ -273,6 +279,10 @@ export interface Channel {
   // Optional: edit/delete messages (used by status dashboard and tracked progress cleanup).
   editMessage?(jid: string, messageId: string, text: string): Promise<void>;
   deleteMessage?(jid: string, messageId: string): Promise<void>;
+  deleteRecentMessagesByContent?(
+    jid: string,
+    options: DeleteRecentMessagesByContentOptions,
+  ): Promise<number>;
   sendAndTrack?(jid: string, text: string): Promise<string | null>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;

@@ -42,6 +42,10 @@ import {
   renderCategorizedRoomSections,
 } from './dashboard-render.js';
 import {
+  cleanupDashboardDuplicateMessages,
+  purgeDashboardMessages,
+} from './dashboard-message-cleanup.js';
+import {
   buildClaudeUsageRows,
   extractCodexUsageRows,
   mergeClaudeDashboardAccounts,
@@ -157,25 +161,14 @@ function findDiscordChannel(channels: Channel[]): Channel | undefined {
 export async function purgeDashboardChannel(
   opts: Pick<UnifiedDashboardOptions, 'channels' | 'statusChannelId'>,
 ): Promise<void> {
-  if (!opts.statusChannelId) return;
-
-  const statusJid = `dc:${opts.statusChannelId}`;
-  const channel = opts.channels.find(
-    (item) =>
-      item.name.startsWith('discord') &&
-      item.isConnected() &&
-      item.purgeChannel,
-  );
-  if (channel?.purgeChannel) {
-    await channel.purgeChannel(statusJid);
-  }
+  await purgeDashboardMessages(opts);
 }
 
 export function shouldPurgeDashboardChannelOnStart(args: {
   purgeOnStart?: boolean;
   storedMessageId: string | null;
 }): boolean {
-  return args.purgeOnStart === true && !args.storedMessageId;
+  return args.purgeOnStart === true;
 }
 
 async function refreshChannelMeta(
@@ -729,6 +722,7 @@ export async function startUnifiedDashboard(
     })
   ) {
     await purgeDashboardChannel(opts);
+    statusMessageId = null;
   }
 
   if (isRenderer) {
@@ -786,6 +780,9 @@ export async function startUnifiedDashboard(
           statusMessageId = id;
           writeDashboardStatusMessageId(opts.statusChannelId, id);
         }
+      }
+      if (statusMessageId) {
+        await cleanupDashboardDuplicateMessages(opts, statusMessageId);
       }
       if (!dashboardUpdateLogged) {
         logger.info(
