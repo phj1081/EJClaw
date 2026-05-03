@@ -4,6 +4,7 @@ import type { UsageRow } from './dashboard-usage-rows.js';
 import {
   buildWebUsageRowsForSnapshot,
   formatStatusHeader,
+  getDashboardDuplicateCleanupIntervalMs,
   renderUsageTable,
   shouldPurgeDashboardChannelOnStart,
   summarizeWatcherTasks,
@@ -79,6 +80,13 @@ describe('shouldPurgeDashboardChannelOnStart', () => {
         storedMessageId: null,
       }),
     ).toBe(false);
+  });
+});
+
+describe('getDashboardDuplicateCleanupIntervalMs', () => {
+  it('polls duplicate cleanup faster than the status update interval', () => {
+    expect(getDashboardDuplicateCleanupIntervalMs(10_000)).toBe(2_000);
+    expect(getDashboardDuplicateCleanupIntervalMs(1_000)).toBe(1_000);
   });
 });
 
