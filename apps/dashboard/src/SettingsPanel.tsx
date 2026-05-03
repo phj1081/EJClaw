@@ -20,8 +20,15 @@ import {
   updateFastMode,
   updateModels,
 } from './api';
-import { LOCALES, languageNames, type Locale, type Messages } from './i18n';
+import { type Locale, type Messages } from './i18n';
 import { MoaSettingsPanel } from './MoaSettingsPanel';
+import {
+  GeneralSettings,
+  SettingsApplyCard,
+  SettingsNav,
+  SettingsSectionHeading,
+  type SettingsSectionId,
+} from './SettingsPanelChrome';
 
 type AccountProvider = 'claude' | 'codex';
 
@@ -30,18 +37,6 @@ interface AccountData {
   codex: CodexAccountSummary[];
   codexCurrentIndex?: number;
 }
-
-const SETTINGS_NAV_ITEMS = [
-  { targetId: 'settings-general', title: '일반', detail: '표시 · 언어' },
-  {
-    targetId: 'settings-models',
-    title: '모델',
-    detail: 'owner · reviewer · arbiter',
-  },
-  { targetId: 'settings-moa', title: 'MoA', detail: '참조 모델 · 연결 테스트' },
-  { targetId: 'settings-codex', title: 'Codex', detail: 'fast mode · /goal' },
-  { targetId: 'settings-accounts', title: '계정', detail: 'Claude · Codex' },
-] as const;
 
 export interface SettingsPanelProps {
   locale: Locale;
@@ -60,139 +55,48 @@ export function SettingsPanel({
   onRestartStack,
   t,
 }: SettingsPanelProps) {
+  const [activeSection, setActiveSection] =
+    useState<SettingsSectionId>('settings-general');
+
   return (
     <div className="settings-panel">
       <div className="settings-layout">
         <aside className="settings-sidebar" aria-label="설정 탐색과 적용">
-          <SettingsNav />
+          <SettingsNav
+            activeSection={activeSection}
+            onSelect={setActiveSection}
+          />
           <SettingsApplyCard onRestartStack={onRestartStack} />
         </aside>
         <main className="settings-content" aria-label="설정 항목">
-          <section className="settings-section" id="settings-general">
-            <SettingsSectionHeading
-              detail="Dashboard identity"
-              title="일반"
-              description="브라우저에서 보이는 이름과 언어만 즉시 바뀝니다."
+          <div hidden={activeSection !== 'settings-general'}>
+            <GeneralSettings
+              locale={locale}
+              nickname={nickname}
+              onLocaleChange={onLocaleChange}
+              onNicknameChange={onNicknameChange}
+              t={t}
             />
-            <div className="settings-form-grid">
-              <label className="settings-row">
-                <span className="settings-label">
-                  {t.settings.nicknameLabel}
-                </span>
-                <input
-                  maxLength={32}
-                  onChange={(event) => onNicknameChange(event.target.value)}
-                  placeholder={t.settings.nicknamePlaceholder}
-                  type="text"
-                  value={nickname}
-                />
-                <small className="settings-hint">
-                  {t.settings.nicknameHelp}
-                </small>
-              </label>
-              <label className="settings-row">
-                <span className="settings-label">
-                  {t.settings.languageLabel}
-                </span>
-                <select
-                  aria-label={t.settings.languageLabel}
-                  onChange={(event) =>
-                    onLocaleChange(event.target.value as Locale)
-                  }
-                  value={locale}
-                >
-                  {LOCALES.map((item) => (
-                    <option key={item} value={item}>
-                      {languageNames[item]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-          </section>
+          </div>
 
-          <ModelSettings />
+          <div hidden={activeSection !== 'settings-models'}>
+            <ModelSettings />
+          </div>
 
-          <MoaSettingsPanel />
+          <div hidden={activeSection !== 'settings-moa'}>
+            <MoaSettingsPanel />
+          </div>
 
-          <section className="settings-section" id="settings-codex">
-            <SettingsSectionHeading
-              detail="Codex runtime"
-              title="Codex 옵션"
-              description="빠른 응답과 실험 기능을 관리합니다. /goal은 여기에서 찾을 수 있습니다."
-            />
-            <div className="settings-section-stack">
-              <FastModeSettings />
-              <CodexFeatureSettings />
-            </div>
-          </section>
+          <div hidden={activeSection !== 'settings-codex'}>
+            <CodexRuntimeSettings />
+          </div>
 
-          <AccountSettings />
+          <div hidden={activeSection !== 'settings-accounts'}>
+            <AccountSettings />
+          </div>
         </main>
       </div>
     </div>
-  );
-}
-
-function SettingsNav() {
-  const scrollToSection = (targetId: string) => {
-    document
-      .getElementById(targetId)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
-  return (
-    <aside className="settings-nav" aria-label="설정 섹션">
-      {SETTINGS_NAV_ITEMS.map((item) => (
-        <button
-          aria-controls={item.targetId}
-          data-settings-target={item.targetId}
-          key={item.targetId}
-          onClick={() => scrollToSection(item.targetId)}
-          type="button"
-        >
-          <strong>{item.title}</strong>
-          <small>{item.detail}</small>
-        </button>
-      ))}
-    </aside>
-  );
-}
-
-function SettingsSectionHeading({
-  detail,
-  title,
-  description,
-}: {
-  detail: string;
-  title: string;
-  description: string;
-}) {
-  return (
-    <header className="settings-section-head">
-      <span>{detail}</span>
-      <h3>{title}</h3>
-      <p>{description}</p>
-    </header>
-  );
-}
-
-function SettingsApplyCard({ onRestartStack }: { onRestartStack: () => void }) {
-  return (
-    <section className="settings-apply-card" aria-label="변경 적용">
-      <div>
-        <span className="settings-kicker">Apply</span>
-        <strong>저장 후 재시작</strong>
-        <small>모델, MoA, Codex, 계정 변경은 스택 재시작 후 반영됩니다.</small>
-      </div>
-      <button
-        className="settings-restart"
-        onClick={onRestartStack}
-        type="button"
-      >
-        스택 재시작
-      </button>
-    </section>
   );
 }
 
@@ -261,7 +165,12 @@ function ModelSettings() {
     JSON.stringify(draft) !== JSON.stringify(config);
 
   return (
-    <section className="settings-section" id="settings-models">
+    <section
+      aria-labelledby="settings-models-tab"
+      className="settings-section"
+      id="settings-models"
+      role="tabpanel"
+    >
       <SettingsSectionHeading
         detail="Agent routing"
         title="모델"
@@ -311,6 +220,27 @@ function ModelSettings() {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+function CodexRuntimeSettings() {
+  return (
+    <section
+      aria-labelledby="settings-codex-tab"
+      className="settings-section"
+      id="settings-codex"
+      role="tabpanel"
+    >
+      <SettingsSectionHeading
+        detail="Codex runtime"
+        title="Codex 옵션"
+        description="빠른 응답과 실험 기능을 관리합니다. /goal은 여기에서 찾을 수 있습니다."
+      />
+      <div className="settings-section-stack">
+        <FastModeSettings />
+        <CodexFeatureSettings />
+      </div>
     </section>
   );
 }
@@ -611,7 +541,12 @@ function AccountSettings() {
   }
 
   return (
-    <section className="settings-section" id="settings-accounts">
+    <section
+      aria-labelledby="settings-accounts-tab"
+      className="settings-section"
+      id="settings-accounts"
+      role="tabpanel"
+    >
       <SettingsSectionHeading
         detail="Credentials"
         title="계정"

@@ -113,7 +113,12 @@ export function MoaSettingsPanel() {
       Object.values(apiKeys).some((value) => value.trim()));
 
   return (
-    <section className="settings-section" id="settings-moa">
+    <section
+      aria-labelledby="settings-moa-tab"
+      className="settings-section"
+      id="settings-moa"
+      role="tabpanel"
+    >
       <header className="settings-section-head">
         <span>Arbiter references</span>
         <h3>MoA 참조 모델</h3>

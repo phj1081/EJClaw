@@ -34,21 +34,20 @@ describe('SettingsPanel', () => {
   it('renders model, MoA, fast mode, and account controls', () => {
     const html = renderToStaticMarkup(createElement(SettingsPanel, baseProps));
 
-    expect(html).toContain('모델');
-    expect(html).toContain('MoA 참조 모델');
-    expect(html).toContain('패스트 모드');
-    expect(html).toContain('Codex 실험 기능');
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('role="tabpanel"');
+    expect(html).toContain('aria-selected="true"');
+    expect(html).toContain('data-settings-target="settings-models"');
+    expect(html).toContain('data-settings-target="settings-moa"');
     expect(html).toContain('data-settings-target="settings-codex"');
+    expect(html).toContain('data-settings-target="settings-accounts"');
     expect(html).toContain('aria-controls="settings-codex"');
     expect(html).not.toContain('href="#settings-codex"');
-    expect(html).toContain('/goal');
     expect(html).toContain('settings-apply-card');
     expect(html).not.toContain('settings-apply-bar');
     expect(html).toContain('저장 후 재시작');
-    expect(html).toContain('불러오는 중');
     expect(html).toContain('Claude');
     expect(html).toContain('계정');
-    expect(html).toContain('전체 갱신');
     expect(html).toContain('스택 재시작');
     expect(html.match(/class="settings-restart"/g)).toHaveLength(1);
   });
