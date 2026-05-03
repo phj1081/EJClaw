@@ -22,6 +22,11 @@ import type {
   SendMessageOptions,
   SendMessageResult,
 } from '../types.js';
+import {
+  DASHBOARD_TRACKED_SEND_GRACE_MS,
+  deleteOwnDashboardDuplicateOnCreate,
+  isDashboardTrackedSend,
+} from './discord-dashboard-create-cleanup.js';
 import { deleteRecentDiscordMessagesByContent } from './discord-message-cleanup.js';
 import { prepareDiscordOutbound } from './discord-outbound.js';
 
@@ -193,6 +198,7 @@ export class DiscordChannel implements Channel {
   private agentTypeFilter?: AgentType;
   private receivesInbound: boolean;
   private ownsDiscordJids: boolean;
+  private dashboardTrackedSendGraceUntil = 0;
 
   constructor(
     botToken: string,
@@ -253,9 +259,16 @@ export class DiscordChannel implements Channel {
   private async handleMessageCreate(message: Message): Promise<void> {
     const channelId = message.channelId;
     const chatJid = `dc:${channelId}`;
-    if (!this.receivesInbound) return;
     const isOwnBotMessage = message.author.id === this.client?.user?.id;
-    if (isOwnBotMessage) return;
+    if (isOwnBotMessage) {
+      await deleteOwnDashboardDuplicateOnCreate({
+        message,
+        channelName: this.name,
+        graceUntil: this.dashboardTrackedSendGraceUntil,
+      });
+      return;
+    }
+    if (!this.receivesInbound) return;
     if (message.author.bot && !hasReviewerLease(chatJid)) return;
 
     let content = message.content;
@@ -635,6 +648,10 @@ export class DiscordChannel implements Channel {
     }
     try {
       const channelId = jid.replace(/^dc:/, '');
+      if (isDashboardTrackedSend(jid, text)) {
+        this.dashboardTrackedSendGraceUntil =
+          Date.now() + DASHBOARD_TRACKED_SEND_GRACE_MS;
+      }
       const channel = await this.client.channels.fetch(channelId);
       if (!channel || !('send' in channel)) {
         throw new Error(`Discord channel not found or not text-based: ${jid}`);
