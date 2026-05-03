@@ -17,7 +17,12 @@ import { logger } from '../logger.js';
 import { validateOutboundAttachments } from '../outbound-attachments.js';
 import { formatOutbound } from '../router.js';
 import { hasReviewerLease } from '../service-routing.js';
-import type { SendMessageOptions, SendMessageResult } from '../types.js';
+import type {
+  DeleteRecentMessagesByContentOptions,
+  SendMessageOptions,
+  SendMessageResult,
+} from '../types.js';
+import { deleteRecentDiscordMessagesByContent } from './discord-message-cleanup.js';
 import { prepareDiscordOutbound } from './discord-outbound.js';
 
 const ATTACHMENTS_DIR = path.join(DATA_DIR, 'attachments');
@@ -758,6 +763,18 @@ export class DiscordChannel implements Channel {
       logger.error({ jid, err, deleted }, 'Failed to purge channel messages');
     }
     return deleted;
+  }
+
+  async deleteRecentMessagesByContent(
+    jid: string,
+    options: DeleteRecentMessagesByContentOptions,
+  ): Promise<number> {
+    return deleteRecentDiscordMessagesByContent({
+      client: this.client,
+      channelName: this.name,
+      jid,
+      options,
+    });
   }
 
   async editMessage(

@@ -63,22 +63,16 @@ describe('formatStatusHeader', () => {
 });
 
 describe('shouldPurgeDashboardChannelOnStart', () => {
-  it('keeps the existing status message when a stored message id exists', () => {
+  it('purges on startup when explicitly requested, even with a stored message id', () => {
     expect(
       shouldPurgeDashboardChannelOnStart({
         purgeOnStart: true,
         storedMessageId: 'status-message-1',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it('purges only when explicitly requested and no stored message id exists', () => {
-    expect(
-      shouldPurgeDashboardChannelOnStart({
-        purgeOnStart: true,
-        storedMessageId: null,
-      }),
-    ).toBe(true);
+  it('does not purge when startup purge is disabled', () => {
     expect(
       shouldPurgeDashboardChannelOnStart({
         purgeOnStart: false,
