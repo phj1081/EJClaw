@@ -1,7 +1,7 @@
 import { logger } from './logger.js';
 import type { Channel } from './types.js';
 
-const DASHBOARD_STATUS_MESSAGE_MARKER = '🤖 *모델 구성*';
+export const DASHBOARD_STATUS_MESSAGE_MARKER = '🤖 *모델 구성*';
 const DASHBOARD_DUPLICATE_CLEANUP_LIMIT = 100;
 
 function findDashboardCleanupChannel(opts: {

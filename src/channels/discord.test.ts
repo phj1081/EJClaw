@@ -29,6 +29,7 @@ vi.mock('../config.js', () => ({
   TRIGGER_PATTERN: /^@Andy\b/i,
   DATA_DIR: '/tmp/ejclaw-test-data',
   CACHE_DIR: '/tmp/ejclaw-test-cache',
+  STATUS_CHANNEL_ID: 'status-channel',
 }));
 
 // Mock logger
