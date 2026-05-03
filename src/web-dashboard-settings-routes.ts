@@ -25,7 +25,10 @@ import {
 } from './runtime-inventory.js';
 import {
   getRoomSkillSettings,
+  RoomSkillSettingsError,
+  updateRoomSkillSetting,
   type RoomSkillSettingsSnapshot,
+  type RoomSkillSettingUpdateInput,
 } from './room-skill-settings.js';
 import {
   checkMoaModel,
@@ -60,6 +63,7 @@ export interface SettingsRouteDependencies {
   updateFastMode: typeof updateFastMode;
   updateModelConfig: typeof updateModelConfig;
   updateMoaSettings: typeof updateMoaSettings;
+  updateRoomSkillSetting: typeof updateRoomSkillSetting;
 }
 
 interface SettingsRouteContext {
@@ -89,6 +93,7 @@ const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   updateFastMode,
   updateModelConfig,
   updateMoaSettings,
+  updateRoomSkillSetting,
 };
 
 function readMethod(method: string): boolean {
@@ -116,6 +121,19 @@ async function readJsonObject(
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function methodNotAllowed(
+  jsonResponse: JsonResponse,
+  allowed: string[],
+): Response {
+  return jsonResponse(
+    { error: 'Method not allowed' },
+    {
+      status: 405,
+      headers: { Allow: allowed.join(', ') },
+    },
+  );
 }
 
 async function handleModelSettingsRoute(
@@ -228,13 +246,42 @@ function handleRuntimeInventoryRoute(
   return jsonResponse(deps.getRuntimeInventory());
 }
 
-function handleRoomSkillsRoute(
+async function handleRoomSkillsRoute(
   request: Request,
   jsonResponse: JsonResponse,
   deps: SettingsRouteDependencies,
-): Response | null {
-  if (!readMethod(request.method)) return null;
-  return jsonResponse(deps.getRoomSkillSettings());
+): Promise<Response> {
+  if (readMethod(request.method)) {
+    return jsonResponse(deps.getRoomSkillSettings());
+  }
+  if (request.method !== 'PATCH' && request.method !== 'PUT') {
+    return methodNotAllowed(jsonResponse, ['GET', 'HEAD', 'PATCH', 'PUT']);
+  }
+
+  const body = await readJsonObject(request, jsonResponse);
+  if (body instanceof Response) return body;
+
+  const input: RoomSkillSettingUpdateInput = {
+    roomJid: typeof body.roomJid === 'string' ? body.roomJid : '',
+    agentType: typeof body.agentType === 'string' ? body.agentType : '',
+    skillId: typeof body.skillId === 'string' ? body.skillId : '',
+    enabled: body.enabled === true,
+  };
+  if (typeof body.enabled !== 'boolean') {
+    return jsonResponse(
+      { error: 'enabled must be a boolean' },
+      { status: 400 },
+    );
+  }
+
+  try {
+    return jsonResponse(deps.updateRoomSkillSetting(input));
+  } catch (err) {
+    if (err instanceof RoomSkillSettingsError) {
+      return jsonResponse({ error: err.message }, { status: err.status });
+    }
+    return jsonResponse({ error: errorMessage(err) }, { status: 500 });
+  }
 }
 
 async function handleClaudeAccountAddRoute(

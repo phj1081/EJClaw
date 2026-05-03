@@ -28,6 +28,7 @@ import {
   assignRoomInDatabase,
   clearExplicitRoomModeInDatabase,
   deleteStoredRoomSettingsForTestsInDatabase,
+  deleteStoredRoomSkillOverrideFromDatabase,
   getAllRoomBindingsFromDatabase,
   getEffectiveRoomModeFromDatabase,
   getEffectiveRuntimeRoomModeFromDatabase,
@@ -41,7 +42,9 @@ import {
   setRegisteredGroupForTestsInDatabase,
   setStoredRoomOwnerAgentTypeForTestsInDatabase,
   type StoredRoomSkillOverride,
+  type StoredRoomSkillOverrideInput,
   updateRegisteredGroupNameInDatabase,
+  upsertStoredRoomSkillOverrideInDatabase,
 } from './rooms.js';
 import { type StoredRoomSettings } from './room-registration.js';
 import {
@@ -371,6 +374,18 @@ export function getStoredRoomSkillOverrides(
   const db = getDatabaseIfInitialized();
   if (!db) return [];
   return getStoredRoomSkillOverridesFromDatabase(db, chatJid);
+}
+
+export function upsertStoredRoomSkillOverride(
+  input: StoredRoomSkillOverrideInput,
+): void {
+  upsertStoredRoomSkillOverrideInDatabase(requireDatabase(), input);
+}
+
+export function deleteStoredRoomSkillOverride(
+  input: Omit<StoredRoomSkillOverrideInput, 'enabled'>,
+): void {
+  deleteStoredRoomSkillOverrideFromDatabase(requireDatabase(), input);
 }
 
 export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {
