@@ -99,6 +99,7 @@ const USAGE_SNAPSHOT_MAX_AGE_MS = 600_000;
  * so this only affects how quickly Codex snapshot data is picked up.
  */
 const RENDERER_USAGE_REFRESH_MS = 30_000;
+const DASHBOARD_DUPLICATE_CLEANUP_POLL_MS = 2_000;
 
 let statusMessageId: string | null = null;
 let cachedUsageContent = '';
@@ -169,6 +170,12 @@ export function shouldPurgeDashboardChannelOnStart(args: {
   storedMessageId: string | null;
 }): boolean {
   return args.purgeOnStart === true;
+}
+
+export function getDashboardDuplicateCleanupIntervalMs(
+  statusUpdateInterval: number,
+): number {
+  return Math.min(statusUpdateInterval, DASHBOARD_DUPLICATE_CLEANUP_POLL_MS);
 }
 
 async function refreshChannelMeta(
@@ -798,6 +805,10 @@ export async function startUnifiedDashboard(
   };
 
   setInterval(updateStatus, opts.statusUpdateInterval);
+  setInterval(() => {
+    if (!isRenderer || !statusMessageId) return;
+    void cleanupDashboardDuplicateMessages(opts, statusMessageId);
+  }, getDashboardDuplicateCleanupIntervalMs(opts.statusUpdateInterval));
   await updateStatus();
 
   if (isRenderer) {
