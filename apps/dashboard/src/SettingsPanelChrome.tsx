@@ -7,6 +7,11 @@ export const SETTINGS_NAV_ITEMS = [
     title: '모델',
     detail: 'owner · reviewer · arbiter',
   },
+  {
+    targetId: 'settings-runtime',
+    title: '런타임',
+    detail: 'skills · MCP · config',
+  },
   { targetId: 'settings-moa', title: 'MoA', detail: '참조 모델 · 연결 테스트' },
   { targetId: 'settings-codex', title: 'Codex', detail: 'fast mode · /goal' },
   { targetId: 'settings-accounts', title: '계정', detail: 'Claude · Codex' },

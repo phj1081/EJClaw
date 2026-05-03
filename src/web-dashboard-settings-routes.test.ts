@@ -11,6 +11,7 @@ import type {
   FastModeSnapshot,
   ModelConfigSnapshot,
 } from './settings-store.js';
+import type { RuntimeInventorySnapshot } from './runtime-inventory.js';
 import type { MoaSettingsSnapshot } from './settings-store-moa.js';
 
 function jsonResponse(value: unknown, init?: ResponseInit): Response {
@@ -44,6 +45,88 @@ const modelConfig: ModelConfigSnapshot = {
 
 const fastMode: FastModeSnapshot = { codex: true, claude: false };
 const codexFeatures: CodexFeatureSnapshot = { goals: false };
+const runtimeInventory: RuntimeInventorySnapshot = {
+  generatedAt: '2026-05-04T00:00:00.000Z',
+  projectRoot: '/repo',
+  dataDir: '/repo/data',
+  service: {
+    id: 'codex-main',
+    sessionScope: 'codex-main',
+    agentType: 'codex',
+  },
+  codex: {
+    configFiles: [
+      {
+        label: 'Codex config.toml',
+        path: '/home/.codex/config.toml',
+        exists: true,
+      },
+    ],
+    skillDirs: [
+      {
+        label: 'Codex user skills',
+        path: '/home/.agents/skills',
+        exists: true,
+        count: 1,
+        skills: [
+          {
+            name: 'agent-browser',
+            description: 'Browser automation',
+            path: '/home/.agents/skills/agent-browser',
+          },
+        ],
+      },
+    ],
+    mcp: {
+      configPath: {
+        label: 'Codex config.toml',
+        path: '/home/.codex/config.toml',
+        exists: true,
+      },
+      ejclawConfigured: true,
+      serverCount: 1,
+    },
+  },
+  claude: {
+    configFiles: [
+      {
+        label: 'Claude settings.json',
+        path: '/home/.claude/settings.json',
+        exists: true,
+      },
+    ],
+    skillDirs: [],
+    mcp: {
+      configPath: {
+        label: 'Claude settings.json',
+        path: '/home/.claude/settings.json',
+        exists: true,
+      },
+      ejclawConfigured: false,
+      serverCount: 0,
+    },
+  },
+  ejclaw: {
+    runnerSkillDir: {
+      label: 'EJClaw runner skills',
+      path: '/repo/runners/skills',
+      exists: true,
+      count: 1,
+      skills: [
+        {
+          name: 'agent-browser',
+          description: 'Browser automation',
+          path: '/repo/runners/skills/agent-browser',
+        },
+      ],
+    },
+    mcpServer: {
+      label: 'EJClaw IPC MCP server',
+      path: '/repo/runners/agent-runner/dist/ipc-mcp-stdio.js',
+      exists: true,
+    },
+  },
+};
 
 const moaSettings: MoaSettingsSnapshot = {
   enabled: true,
@@ -113,6 +196,7 @@ function makeDeps(
     getFastMode: () => fastMode,
     getModelConfig: () => modelConfig,
     getMoaSettings: () => moaSettings,
+    getRuntimeInventory: () => runtimeInventory,
     listClaudeAccounts: () => [makeClaudeAccount()],
     listCodexAccounts: () => [makeCodexAccount()],
     refreshAllCodexAccounts: async () => ({ refreshed: [1], failed: [] }),
@@ -158,6 +242,14 @@ describe('web dashboard settings routes', () => {
     const mode = await route('/api/settings/fast-mode');
     expect(mode?.status).toBe(200);
     await expect(mode?.json()).resolves.toEqual(fastMode);
+
+    const inventory = await route('/api/settings/runtime-inventory');
+    expect(inventory?.status).toBe(200);
+    await expect(inventory?.json()).resolves.toMatchObject({
+      service: { id: 'codex-main', agentType: 'codex' },
+      codex: { mcp: { ejclawConfigured: true } },
+      ejclaw: { runnerSkillDir: { count: 1 } },
+    });
 
     const features = await route('/api/settings/codex-features');
     expect(features?.status).toBe(200);

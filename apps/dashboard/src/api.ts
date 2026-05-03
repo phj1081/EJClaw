@@ -392,6 +392,52 @@ export interface CodexFeatureSnapshot {
   goals: boolean;
 }
 
+export interface RuntimePathSnapshot {
+  label: string;
+  path: string;
+  exists: boolean;
+}
+
+export interface RuntimeSkillSummary {
+  name: string;
+  description: string | null;
+  path: string;
+}
+
+export interface RuntimeSkillDirSnapshot extends RuntimePathSnapshot {
+  count: number;
+  skills: RuntimeSkillSummary[];
+}
+
+export interface RuntimeMcpSnapshot {
+  configPath: RuntimePathSnapshot;
+  ejclawConfigured: boolean;
+  serverCount: number;
+}
+
+export interface RuntimeAgentInventory {
+  configFiles: RuntimePathSnapshot[];
+  skillDirs: RuntimeSkillDirSnapshot[];
+  mcp: RuntimeMcpSnapshot;
+}
+
+export interface RuntimeInventorySnapshot {
+  generatedAt: string;
+  projectRoot: string;
+  dataDir: string;
+  service: {
+    id: string;
+    sessionScope: string;
+    agentType: string;
+  };
+  codex: RuntimeAgentInventory;
+  claude: RuntimeAgentInventory;
+  ejclaw: {
+    runnerSkillDir: RuntimeSkillDirSnapshot;
+    mcpServer: RuntimePathSnapshot;
+  };
+}
+
 export interface MoaReferenceStatus {
   model: string;
   checkedAt: string;
@@ -544,6 +590,10 @@ export async function updateFastMode(
 
 export async function fetchCodexFeatures(): Promise<CodexFeatureSnapshot> {
   return fetchJson('/api/settings/codex-features');
+}
+
+export async function fetchRuntimeInventory(): Promise<RuntimeInventorySnapshot> {
+  return fetchJson('/api/settings/runtime-inventory');
 }
 
 export async function updateCodexFeatures(
