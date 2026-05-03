@@ -67,6 +67,7 @@ async function main() {
       baseUrl,
       async (page, state) => {
         await openSettings(page, baseUrl);
+        await openSettingsSection(page, 'settings-codex');
 
         const goalToggle = page.getByRole('checkbox', { name: /\/goal/ });
         await assertVisible(goalToggle);
@@ -234,6 +235,13 @@ async function openSettings(page: Page, baseUrl: string) {
     await page.getByRole('button', { name: '스택 재시작' }).count(),
     1,
   );
+}
+
+async function openSettingsSection(page: Page, targetId: string) {
+  await page
+    .locator(`.settings-nav button[data-settings-target="${targetId}"]`)
+    .click();
+  await assertVisible(page.locator(`#${targetId}`));
 }
 
 async function assertVisible(locator: ReturnType<Page['locator']>) {
