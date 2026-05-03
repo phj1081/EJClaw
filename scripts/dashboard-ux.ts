@@ -11,6 +11,8 @@ interface MockApiState {
   codexFeatureUpdates: number;
   ciWatcherFailures: number;
   restartRequests: number;
+  roomSkillUpdates: number;
+  roomSkillsDisableCodexBrowser: boolean;
 }
 
 const seriousImpacts = new Set(['serious', 'critical']);
@@ -27,7 +29,7 @@ async function main() {
       'settings nav keeps hash route stable',
       browser,
       baseUrl,
-      async (page) => {
+      async (page, state) => {
         await openSettings(page, baseUrl);
 
         const originalUrl = page.url();
@@ -52,6 +54,17 @@ async function main() {
         await assertVisible(page.locator('#settings-runtime'));
         await page.getByText('Runtime inventory').waitFor();
         await page.getByText('EJClaw bridge').waitFor();
+        const codexPolicy = page
+          .locator('.runtime-room-agent-policy')
+          .filter({ hasText: 'Codex' })
+          .first();
+        const codexBrowserToggle = codexPolicy
+          .locator('input[type="checkbox"]')
+          .first();
+        assert.equal(await codexBrowserToggle.isChecked(), true);
+        await codexBrowserToggle.click();
+        await codexPolicy.getByText('1개 OFF').waitFor();
+        assert.equal(state.roomSkillUpdates, 1);
 
         await page
           .locator(
@@ -225,6 +238,8 @@ function createMockApiState(): MockApiState {
     codexFeatureUpdates: 0,
     ciWatcherFailures: 0,
     restartRequests: 0,
+    roomSkillUpdates: 0,
+    roomSkillsDisableCodexBrowser: false,
   };
 }
 
@@ -319,8 +334,7 @@ async function handleMockApi(route: Route, state: MockApiState) {
     return;
   }
 
-  if (method === 'GET' && url.pathname === '/api/settings/room-skills') {
-    await fulfillJson(route, roomSkillSettingsFixture());
+  if (await handleMockRoomSkillRoute(route, state, url, method)) {
     return;
   }
 
@@ -417,6 +431,33 @@ async function handleMockApi(route: Route, state: MockApiState) {
     { error: `Unhandled mock route ${method} ${url.pathname}` },
     404,
   );
+}
+
+async function handleMockRoomSkillRoute(
+  route: Route,
+  state: MockApiState,
+  url: URL,
+  method: string,
+): Promise<boolean> {
+  if (url.pathname !== '/api/settings/room-skills') return false;
+  if (method === 'GET') {
+    await fulfillJson(route, roomSkillSettingsFixture(state));
+    return true;
+  }
+  if (method !== 'PATCH' && method !== 'PUT') return false;
+
+  const body = parseJsonBody(route.request().postData());
+  if (
+    body.roomJid === 'room@example' &&
+    body.agentType === 'codex' &&
+    body.skillId === 'codex-user:agent-browser' &&
+    body.enabled === false
+  ) {
+    state.roomSkillUpdates += 1;
+    state.roomSkillsDisableCodexBrowser = true;
+  }
+  await fulfillJson(route, roomSkillSettingsFixture(state));
+  return true;
 }
 
 function mockOverview(state: MockApiState) {
@@ -588,7 +629,8 @@ function runtimeInventoryFixture() {
   };
 }
 
-function roomSkillSettingsFixture() {
+function roomSkillSettingsFixture(state?: MockApiState) {
+  const codexDisabled = state?.roomSkillsDisableCodexBrowser === true;
   return {
     generatedAt: '2026-05-04T00:00:00.000Z',
     catalog: [
@@ -629,17 +671,16 @@ function roomSkillSettingsFixture() {
         agents: [
           {
             agentType: 'codex',
-            mode: 'all-enabled',
+            mode: codexDisabled ? 'custom' : 'all-enabled',
             availableSkillIds: [
               'codex-user:agent-browser',
               'runner:agent-browser',
             ],
-            disabledSkillIds: [],
+            disabledSkillIds: codexDisabled ? ['codex-user:agent-browser'] : [],
             explicitEnabledSkillIds: [],
-            effectiveEnabledSkillIds: [
-              'codex-user:agent-browser',
-              'runner:agent-browser',
-            ],
+            effectiveEnabledSkillIds: codexDisabled
+              ? ['runner:agent-browser']
+              : ['codex-user:agent-browser', 'runner:agent-browser'],
           },
           {
             agentType: 'claude-code',

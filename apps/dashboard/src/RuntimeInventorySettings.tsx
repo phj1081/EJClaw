@@ -3,11 +3,13 @@ import { useEffect, useState } from 'react';
 import {
   fetchRoomSkillSettings,
   fetchRuntimeInventory,
+  updateRoomSkillSetting,
   type RuntimeAgentInventory,
   type RuntimeInventorySnapshot,
   type RuntimePathSnapshot,
   type RuntimeSkillDirSnapshot,
   type RoomSkillCatalogItem,
+  type RoomSkillSettingUpdateInput,
   type RoomSkillSettingsSnapshot,
 } from './api';
 import { SettingsSectionHeading } from './SettingsPanelChrome';
@@ -106,8 +108,12 @@ function agentLabel(agentType: 'claude-code' | 'codex') {
 }
 
 function RoomSkillPolicyCard({
+  onToggle,
+  savingKey,
   snapshot,
 }: {
+  onToggle: (input: RoomSkillSettingUpdateInput) => void;
+  savingKey: string | null;
   snapshot: RoomSkillSettingsSnapshot | null;
 }) {
   if (!snapshot) {
@@ -159,6 +165,7 @@ function RoomSkillPolicyCard({
                   const disabledNames = agent.disabledSkillIds
                     .map((id) => catalogById.get(id)?.displayName ?? id)
                     .slice(0, 3);
+                  const enabledIds = new Set(agent.effectiveEnabledSkillIds);
                   return (
                     <div
                       className="runtime-room-agent-policy"
@@ -177,6 +184,39 @@ function RoomSkillPolicyCard({
                       {disabledNames.length > 0 ? (
                         <small>OFF: {disabledNames.join(', ')}</small>
                       ) : null}
+                      <div className="runtime-room-skill-toggles">
+                        {agent.availableSkillIds.map((skillId) => {
+                          const skill = catalogById.get(skillId);
+                          const key = `${room.jid}:${agent.agentType}:${skillId}`;
+                          return (
+                            <label
+                              className="runtime-room-skill-toggle"
+                              key={skillId}
+                            >
+                              <input
+                                checked={enabledIds.has(skillId)}
+                                disabled={savingKey !== null}
+                                onChange={(event) =>
+                                  onToggle({
+                                    roomJid: room.jid,
+                                    agentType: agent.agentType,
+                                    skillId,
+                                    enabled: event.currentTarget.checked,
+                                  })
+                                }
+                                type="checkbox"
+                              />
+                              <span>
+                                <strong>{skill?.displayName ?? skillId}</strong>
+                                <small>
+                                  {skill?.scope ?? 'unknown'}
+                                  {savingKey === key ? ' · 저장 중' : ''}
+                                </small>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}
@@ -201,6 +241,10 @@ export function RuntimeInventorySettings() {
   const [roomSkillSnapshot, setRoomSkillSnapshot] =
     useState<RoomSkillSettingsSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [roomSkillError, setRoomSkillError] = useState<string | null>(null);
+  const [savingRoomSkillKey, setSavingRoomSkillKey] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -219,6 +263,20 @@ export function RuntimeInventorySettings() {
       cancelled = true;
     };
   }, []);
+
+  async function handleRoomSkillToggle(input: RoomSkillSettingUpdateInput) {
+    const key = `${input.roomJid}:${input.agentType}:${input.skillId}`;
+    setSavingRoomSkillKey(key);
+    setRoomSkillError(null);
+    try {
+      const next = await updateRoomSkillSetting(input);
+      setRoomSkillSnapshot(next);
+    } catch (err) {
+      setRoomSkillError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingRoomSkillKey(null);
+    }
+  }
 
   return (
     <section
@@ -255,7 +313,16 @@ export function RuntimeInventorySettings() {
 
           <AgentInventoryCard title="Codex" inventory={snapshot.codex} />
           <AgentInventoryCard title="Claude Code" inventory={snapshot.claude} />
-          <RoomSkillPolicyCard snapshot={roomSkillSnapshot} />
+          {roomSkillError ? (
+            <p className="settings-error">{roomSkillError}</p>
+          ) : null}
+          <RoomSkillPolicyCard
+            onToggle={(input) => {
+              void handleRoomSkillToggle(input);
+            }}
+            savingKey={savingRoomSkillKey}
+            snapshot={roomSkillSnapshot}
+          />
 
           <article className="runtime-agent-card">
             <header className="runtime-card-head">

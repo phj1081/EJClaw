@@ -473,6 +473,13 @@ export interface RoomSkillSettingsSnapshot {
   rooms: RoomSkillPolicyRoom[];
 }
 
+export interface RoomSkillSettingUpdateInput {
+  roomJid: string;
+  agentType: 'claude-code' | 'codex';
+  skillId: string;
+  enabled: boolean;
+}
+
 export interface MoaReferenceStatus {
   model: string;
   checkedAt: string;
@@ -633,6 +640,30 @@ export async function fetchRuntimeInventory(): Promise<RuntimeInventorySnapshot>
 
 export async function fetchRoomSkillSettings(): Promise<RoomSkillSettingsSnapshot> {
   return fetchJson('/api/settings/room-skills');
+}
+
+export async function updateRoomSkillSetting(
+  input: RoomSkillSettingUpdateInput,
+): Promise<RoomSkillSettingsSnapshot> {
+  const response = await fetch('/api/settings/room-skills', {
+    method: 'PATCH',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let msg = `update room skill failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as RoomSkillSettingsSnapshot;
 }
 
 export async function updateCodexFeatures(

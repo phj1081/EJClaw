@@ -241,6 +241,7 @@ function makeDeps(
     updateFastMode: () => fastMode,
     updateModelConfig: () => modelConfig,
     updateMoaSettings: () => moaSettings,
+    updateRoomSkillSetting: () => roomSkillSettings,
     ...overrides,
   };
 }
@@ -336,6 +337,25 @@ describe('web dashboard settings routes', () => {
         calls.push(`moa:${JSON.stringify(input)}`);
         return moaSettings;
       },
+      updateRoomSkillSetting: (input) => {
+        calls.push(`room-skill:${JSON.stringify(input)}`);
+        return {
+          ...roomSkillSettings,
+          rooms: [
+            {
+              ...roomSkillSettings.rooms[0]!,
+              agents: [
+                {
+                  ...roomSkillSettings.rooms[0]!.agents[0]!,
+                  mode: 'custom',
+                  disabledSkillIds: [input.skillId],
+                  effectiveEnabledSkillIds: [],
+                },
+              ],
+            },
+          ],
+        };
+      },
     });
 
     const modelUpdate = await route(
@@ -404,6 +424,31 @@ describe('web dashboard settings routes', () => {
       status: { model: 'glm', ok: true },
     });
 
+    const roomSkill = await route(
+      '/api/settings/room-skills',
+      'PATCH',
+      {
+        roomJid: 'room@example',
+        agentType: 'codex',
+        skillId: 'runner:agent-browser',
+        enabled: false,
+      },
+      deps,
+    );
+    expect(roomSkill?.status).toBe(200);
+    await expect(roomSkill?.json()).resolves.toMatchObject({
+      rooms: [
+        {
+          agents: [
+            {
+              mode: 'custom',
+              disabledSkillIds: ['runner:agent-browser'],
+            },
+          ],
+        },
+      ],
+    });
+
     expect(calls).toEqual([
       'models:{"owner":{"model":"gpt-5.5"}}',
       'add:claude-token',
@@ -411,6 +456,42 @@ describe('web dashboard settings routes', () => {
       'current:4',
       'codex-features:{"goals":true}',
       'moa:{"enabled":false,"models":[{"name":"kimi","enabled":false}]}',
+      'room-skill:{"roomJid":"room@example","agentType":"codex","skillId":"runner:agent-browser","enabled":false}',
     ]);
+  });
+
+  it('rejects unsupported room skill methods with 405', async () => {
+    const response = await route('/api/settings/room-skills', 'DELETE');
+    expect(response?.status).toBe(405);
+    expect(response?.headers.get('allow')).toBe('GET, HEAD, PATCH, PUT');
+    await expect(response?.json()).resolves.toEqual({
+      error: 'Method not allowed',
+    });
+  });
+
+  it('validates room skill mutation payloads', async () => {
+    const missingEnabled = await route('/api/settings/room-skills', 'PATCH', {
+      roomJid: 'room@example',
+      agentType: 'codex',
+      skillId: 'runner:agent-browser',
+    });
+    expect(missingEnabled?.status).toBe(400);
+
+    const invalid = await route(
+      '/api/settings/room-skills',
+      'PATCH',
+      {
+        roomJid: 'room@example',
+        agentType: 'codex',
+        skillId: 'runner:agent-browser',
+        enabled: false,
+      },
+      makeDeps({
+        updateRoomSkillSetting: () => {
+          throw new Error('boom');
+        },
+      }),
+    );
+    expect(invalid?.status).toBe(500);
   });
 });

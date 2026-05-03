@@ -1,9 +1,11 @@
 import path from 'node:path';
 
 import {
+  deleteStoredRoomSkillOverride,
   getAllRoomBindings,
   getRegisteredAgentTypesForJid,
   getStoredRoomSkillOverrides,
+  upsertStoredRoomSkillOverride,
 } from './db.js';
 import {
   getRuntimeInventory,
@@ -55,6 +57,23 @@ export interface RoomSkillSettingsBuildInput {
   roomBindings: Record<string, RegisteredGroup>;
   registeredAgentTypesByJid?: Map<string, AgentType[]>;
   overrides?: StoredRoomSkillOverride[];
+}
+
+export interface RoomSkillSettingUpdateInput {
+  roomJid: string;
+  agentType: string;
+  skillId: string;
+  enabled: boolean;
+}
+
+export class RoomSkillSettingsError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'RoomSkillSettingsError';
+  }
 }
 
 function skillId(scope: RoomSkillScope, name: string): string {
@@ -134,6 +153,26 @@ function overrideKey(
   return `${jid}\u0000${agentType}\u0000${scope}\u0000${name}`;
 }
 
+function parseSkillId(id: string): { scope: RoomSkillScope; name: string } {
+  const separator = id.indexOf(':');
+  if (separator <= 0 || separator === id.length - 1) {
+    throw new RoomSkillSettingsError('skillId must be "<scope>:<name>"', 400);
+  }
+  const scope = id.slice(0, separator);
+  const name = id.slice(separator + 1);
+  if (scope !== 'codex-user' && scope !== 'claude-user' && scope !== 'runner') {
+    throw new RoomSkillSettingsError(`Unsupported skill scope: ${scope}`, 400);
+  }
+  return { scope, name };
+}
+
+function normalizeRoomSkillAgentType(agentType: string): AgentType {
+  if (agentType === 'codex' || agentType === 'claude-code') {
+    return agentType;
+  }
+  throw new RoomSkillSettingsError(`Unsupported agent type: ${agentType}`, 400);
+}
+
 function resolveRoomAgentTypes(
   jid: string,
   group: RegisteredGroup,
@@ -202,7 +241,8 @@ export function buildRoomSkillSettingsSnapshot({
           return {
             agentType,
             mode:
-              disabledSkillIds.length > 0 || explicitEnabledSkillIds.length > 0
+              disabledSkillIds.length > 0 ||
+              effectiveEnabledSkillIds.length !== available.length
                 ? 'custom'
                 : 'all-enabled',
             availableSkillIds: available.map((skill) => skill.id),
@@ -236,4 +276,54 @@ export function getRoomSkillSettings(): RoomSkillSettingsSnapshot {
     registeredAgentTypesByJid,
     overrides: getStoredRoomSkillOverrides(),
   });
+}
+
+export function updateRoomSkillSetting(
+  input: RoomSkillSettingUpdateInput,
+): RoomSkillSettingsSnapshot {
+  const roomJid = input.roomJid.trim();
+  const agentType = normalizeRoomSkillAgentType(input.agentType);
+  const { scope, name } = parseSkillId(input.skillId.trim());
+  const before = getRoomSkillSettings();
+  const room = before.rooms.find((candidate) => candidate.jid === roomJid);
+  if (!room) {
+    throw new RoomSkillSettingsError('Room not found', 404);
+  }
+  const agent = room.agents.find(
+    (candidate) => candidate.agentType === agentType,
+  );
+  if (!agent) {
+    throw new RoomSkillSettingsError(
+      'Agent is not registered for this room',
+      400,
+    );
+  }
+  const skill = before.catalog.find(
+    (candidate) => candidate.scope === scope && candidate.name === name,
+  );
+  if (!skill || !agent.availableSkillIds.includes(skill.id)) {
+    throw new RoomSkillSettingsError(
+      'Skill is not available for this room agent',
+      400,
+    );
+  }
+
+  if (input.enabled) {
+    deleteStoredRoomSkillOverride({
+      chatJid: roomJid,
+      agentType,
+      skillScope: scope,
+      skillName: name,
+    });
+  } else {
+    upsertStoredRoomSkillOverride({
+      chatJid: roomJid,
+      agentType,
+      skillScope: scope,
+      skillName: name,
+      enabled: false,
+    });
+  }
+
+  return getRoomSkillSettings();
 }

@@ -3,7 +3,11 @@ import { Database } from 'bun:sqlite';
 import { describe, expect, it } from 'vitest';
 
 import { initializeDatabaseSchema } from './db/bootstrap.js';
-import { getStoredRoomSkillOverridesFromDatabase } from './db/rooms.js';
+import {
+  deleteStoredRoomSkillOverrideFromDatabase,
+  getStoredRoomSkillOverridesFromDatabase,
+  upsertStoredRoomSkillOverrideInDatabase,
+} from './db/rooms.js';
 import {
   buildRoomSkillSettingsSnapshot,
   type RoomSkillSettingsBuildInput,
@@ -146,6 +150,39 @@ describe('room skill settings', () => {
     });
   });
 
+  it('keeps default mode when explicit enable rows do not change effective skills', () => {
+    const snapshot = buildRoomSkillSettingsSnapshot({
+      generatedAt: '2026-05-04T00:00:00.000Z',
+      inventory: inventoryFixture(),
+      roomBindings: {
+        'room-1': {
+          name: 'Room One',
+          folder: 'room-one',
+          added_at: '2026-05-04T00:00:00.000Z',
+          agentType: 'codex',
+        },
+      },
+      registeredAgentTypesByJid: new Map([['room-1', ['codex']]]),
+      overrides: [
+        {
+          chatJid: 'room-1',
+          agentType: 'codex',
+          skillScope: 'runner',
+          skillName: 'runner-browser',
+          enabled: true,
+          createdAt: '2026-05-04T00:00:00.000Z',
+          updatedAt: '2026-05-04T00:00:00.000Z',
+        },
+      ],
+    });
+
+    expect(snapshot.rooms[0]?.agents[0]).toMatchObject({
+      mode: 'all-enabled',
+      explicitEnabledSkillIds: ['runner:runner-browser'],
+      effectiveEnabledSkillIds: ['codex-user:browser', 'runner:runner-browser'],
+    });
+  });
+
   it('reads normalized room skill overrides from the database', () => {
     const database = new Database(':memory:');
     try {
@@ -188,6 +225,60 @@ describe('room skill settings', () => {
       expect(
         getStoredRoomSkillOverridesFromDatabase(database, 'missing-room'),
       ).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it('upserts and deletes room skill overrides in the database', () => {
+    const database = new Database(':memory:');
+    try {
+      initializeDatabaseSchema(database);
+      database
+        .prepare(
+          `INSERT INTO room_settings (
+             chat_jid, room_mode, mode_source, name, folder, updated_at
+           ) VALUES (?, 'single', 'explicit', ?, ?, ?)`,
+        )
+        .run('room-1', 'Room One', 'room-one', '2026-05-04T00:00:00.000Z');
+
+      upsertStoredRoomSkillOverrideInDatabase(database, {
+        chatJid: 'room-1',
+        agentType: 'codex',
+        skillScope: 'runner',
+        skillName: 'agent-browser',
+        enabled: false,
+      });
+      expect(getStoredRoomSkillOverridesFromDatabase(database)).toMatchObject([
+        {
+          chatJid: 'room-1',
+          agentType: 'codex',
+          skillScope: 'runner',
+          skillName: 'agent-browser',
+          enabled: false,
+        },
+      ]);
+
+      upsertStoredRoomSkillOverrideInDatabase(database, {
+        chatJid: 'room-1',
+        agentType: 'codex',
+        skillScope: 'runner',
+        skillName: 'agent-browser',
+        enabled: true,
+      });
+      expect(
+        getStoredRoomSkillOverridesFromDatabase(database)[0],
+      ).toMatchObject({
+        enabled: true,
+      });
+
+      deleteStoredRoomSkillOverrideFromDatabase(database, {
+        chatJid: 'room-1',
+        agentType: 'codex',
+        skillScope: 'runner',
+        skillName: 'agent-browser',
+      });
+      expect(getStoredRoomSkillOverridesFromDatabase(database)).toEqual([]);
     } finally {
       database.close();
     }

@@ -38,6 +38,14 @@ export interface StoredRoomSkillOverride {
   updatedAt: string;
 }
 
+export interface StoredRoomSkillOverrideInput {
+  chatJid: string;
+  agentType: AgentType;
+  skillScope: string;
+  skillName: string;
+  enabled: boolean;
+}
+
 export interface AssignRoomInput {
   name: string;
   roomMode?: RoomMode;
@@ -371,6 +379,56 @@ export function getStoredRoomSkillOverridesFromDatabase(
       };
     })
     .filter((row): row is StoredRoomSkillOverride => Boolean(row));
+}
+
+export function upsertStoredRoomSkillOverrideInDatabase(
+  database: Database,
+  input: StoredRoomSkillOverrideInput,
+): void {
+  const agentType = normalizeStoredAgentType(input.agentType);
+  if (!agentType) {
+    throw new Error(`Unsupported agent type: ${input.agentType}`);
+  }
+  const now = new Date().toISOString();
+  database
+    .prepare(
+      `INSERT INTO room_skill_overrides (
+         chat_jid, agent_type, skill_scope, skill_name, enabled,
+         created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(chat_jid, agent_type, skill_scope, skill_name)
+       DO UPDATE SET
+         enabled = excluded.enabled,
+         updated_at = excluded.updated_at`,
+    )
+    .run(
+      input.chatJid,
+      agentType,
+      input.skillScope,
+      input.skillName,
+      input.enabled ? 1 : 0,
+      now,
+      now,
+    );
+}
+
+export function deleteStoredRoomSkillOverrideFromDatabase(
+  database: Database,
+  input: Omit<StoredRoomSkillOverrideInput, 'enabled'>,
+): void {
+  const agentType = normalizeStoredAgentType(input.agentType);
+  if (!agentType) {
+    throw new Error(`Unsupported agent type: ${input.agentType}`);
+  }
+  database
+    .prepare(
+      `DELETE FROM room_skill_overrides
+       WHERE chat_jid = ?
+         AND agent_type = ?
+         AND skill_scope = ?
+         AND skill_name = ?`,
+    )
+    .run(input.chatJid, agentType, input.skillScope, input.skillName);
 }
 
 function getStoredRoomModeRowFromDatabase(
