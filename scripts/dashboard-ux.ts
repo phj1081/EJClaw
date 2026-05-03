@@ -47,6 +47,12 @@ async function main() {
         await assertVisible(page.locator('.settings-panel'));
         await assertVisible(page.locator('#settings-codex'));
 
+        await openSettingsSection(page, 'settings-runtime');
+        assert.equal(page.url(), originalUrl);
+        await assertVisible(page.locator('#settings-runtime'));
+        await page.getByText('Runtime inventory').waitFor();
+        await page.getByText('EJClaw bridge').waitFor();
+
         await page
           .locator(
             '.settings-nav button[data-settings-target="settings-accounts"]',
@@ -308,6 +314,11 @@ async function handleMockApi(route: Route, state: MockApiState) {
     return;
   }
 
+  if (method === 'GET' && url.pathname === '/api/settings/runtime-inventory') {
+    await fulfillJson(route, runtimeInventoryFixture());
+    return;
+  }
+
   if (url.pathname === '/api/settings/codex-features') {
     if (method === 'GET') {
       await fulfillJson(route, state.codexFeatures);
@@ -472,6 +483,103 @@ function mockStatusSnapshot() {
         pendingTasks: 0,
       },
     ],
+  };
+}
+
+function runtimeSkill(name: string, description: string, skillPath: string) {
+  return { name, description, path: skillPath };
+}
+
+function runtimeInventoryFixture() {
+  const codexConfig = {
+    label: 'Codex config.toml',
+    path: '/home/.codex/config.toml',
+    exists: true,
+  };
+  const claudeSettings = {
+    label: 'Claude settings.json',
+    path: '/home/.claude/settings.json',
+    exists: true,
+  };
+
+  return {
+    generatedAt: '2026-05-04T00:00:00.000Z',
+    projectRoot: '/repo',
+    dataDir: '/repo/data',
+    service: {
+      id: 'codex-main',
+      sessionScope: 'codex-main',
+      agentType: 'codex',
+    },
+    codex: {
+      configFiles: [
+        codexConfig,
+        {
+          label: 'Codex auth.json',
+          path: '/home/.codex/auth.json',
+          exists: true,
+        },
+      ],
+      skillDirs: [
+        {
+          label: 'Codex user skills',
+          path: '/home/.agents/skills',
+          exists: true,
+          count: 1,
+          skills: [
+            runtimeSkill(
+              'agent-browser',
+              'Browser automation',
+              '/home/.agents/skills/agent-browser',
+            ),
+          ],
+        },
+      ],
+      mcp: { configPath: codexConfig, ejclawConfigured: true, serverCount: 1 },
+    },
+    claude: {
+      configFiles: [claudeSettings],
+      skillDirs: [
+        {
+          label: 'Claude user skills',
+          path: '/home/.claude/skills',
+          exists: true,
+          count: 1,
+          skills: [
+            runtimeSkill(
+              'review-helper',
+              'Review workflow',
+              '/home/.claude/skills/review-helper',
+            ),
+          ],
+        },
+      ],
+      mcp: {
+        configPath: claudeSettings,
+        ejclawConfigured: false,
+        serverCount: 0,
+      },
+    },
+    ejclaw: {
+      runnerSkillDir: {
+        label: 'EJClaw runner skills',
+        path: '/repo/runners/skills',
+        exists: true,
+        count: 1,
+        skills: [
+          runtimeSkill(
+            'agent-browser',
+            'Browser automation',
+            '/repo/runners/skills/agent-browser',
+          ),
+        ],
+      },
+      mcpServer: {
+        label: 'EJClaw IPC MCP server',
+        path: '/repo/runners/agent-runner/dist/ipc-mcp-stdio.js',
+        exists: true,
+      },
+    },
   };
 }
 

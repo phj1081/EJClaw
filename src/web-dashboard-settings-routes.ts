@@ -20,6 +20,10 @@ import {
   type ModelConfigSnapshot,
 } from './settings-store.js';
 import {
+  getRuntimeInventory,
+  type RuntimeInventorySnapshot,
+} from './runtime-inventory.js';
+import {
   checkMoaModel,
   getMoaSettings,
   updateMoaSettings,
@@ -40,6 +44,7 @@ export interface SettingsRouteDependencies {
   getFastMode: typeof getFastMode;
   getModelConfig: typeof getModelConfig;
   getMoaSettings: typeof getMoaSettings;
+  getRuntimeInventory: typeof getRuntimeInventory;
   listClaudeAccounts: typeof listClaudeAccounts;
   listCodexAccounts: typeof listCodexAccounts;
   refreshAllCodexAccounts: typeof refreshAllCodexAccounts;
@@ -67,6 +72,7 @@ const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   getFastMode,
   getModelConfig,
   getMoaSettings,
+  getRuntimeInventory,
   listClaudeAccounts,
   listCodexAccounts,
   refreshAllCodexAccounts,
@@ -207,6 +213,15 @@ function handleAccountsRoute(
   });
 }
 
+function handleRuntimeInventoryRoute(
+  request: Request,
+  jsonResponse: JsonResponse,
+  deps: SettingsRouteDependencies,
+): Response | null {
+  if (!readMethod(request.method)) return null;
+  return jsonResponse(deps.getRuntimeInventory());
+}
+
 async function handleClaudeAccountAddRoute(
   request: Request,
   jsonResponse: JsonResponse,
@@ -320,6 +335,9 @@ export async function handleSettingsRoute({
   if (url.pathname === '/api/settings/models') {
     return handleModelSettingsRoute(request, jsonResponse, deps);
   }
+  if (url.pathname === '/api/settings/runtime-inventory') {
+    return handleRuntimeInventoryRoute(request, jsonResponse, deps);
+  }
   if (url.pathname === '/api/settings/fast-mode') {
     return handleFastModeRoute(request, jsonResponse, deps);
   }
@@ -366,4 +384,5 @@ export type {
   FastModeSnapshot,
   ModelConfigSnapshot,
   MoaSettingsSnapshot,
+  RuntimeInventorySnapshot,
 };

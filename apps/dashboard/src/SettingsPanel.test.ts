@@ -31,21 +31,24 @@ describe('SettingsPanel', () => {
     expect(html).toContain('English');
   });
 
-  it('renders model, MoA, fast mode, and account controls', () => {
+  it('renders model, runtime, MoA, fast mode, and account controls', () => {
     const html = renderToStaticMarkup(createElement(SettingsPanel, baseProps));
 
     expect(html).toContain('role="tablist"');
     expect(html).toContain('role="tabpanel"');
     expect(html).toContain('aria-selected="true"');
     expect(html).toContain('data-settings-target="settings-models"');
+    expect(html).toContain('data-settings-target="settings-runtime"');
     expect(html).toContain('data-settings-target="settings-moa"');
     expect(html).toContain('data-settings-target="settings-codex"');
     expect(html).toContain('data-settings-target="settings-accounts"');
+    expect(html).toContain('aria-controls="settings-runtime"');
     expect(html).toContain('aria-controls="settings-codex"');
     expect(html).not.toContain('href="#settings-codex"');
     expect(html).toContain('settings-apply-card');
     expect(html).not.toContain('settings-apply-bar');
     expect(html).toContain('저장 후 재시작');
+    expect(html).toContain('런타임');
     expect(html).toContain('Claude');
     expect(html).toContain('계정');
     expect(html).toContain('스택 재시작');

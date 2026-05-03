@@ -22,6 +22,7 @@ import {
 } from './api';
 import { type Locale, type Messages } from './i18n';
 import { MoaSettingsPanel } from './MoaSettingsPanel';
+import { RuntimeInventorySettings } from './RuntimeInventorySettings';
 import {
   GeneralSettings,
   SettingsApplyCard,
@@ -81,6 +82,10 @@ export function SettingsPanel({
 
           <div hidden={activeSection !== 'settings-models'}>
             <ModelSettings />
+          </div>
+
+          <div hidden={activeSection !== 'settings-runtime'}>
+            <RuntimeInventorySettings />
           </div>
 
           <div hidden={activeSection !== 'settings-moa'}>
