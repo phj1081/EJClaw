@@ -24,6 +24,10 @@ import {
   type RuntimeInventorySnapshot,
 } from './runtime-inventory.js';
 import {
+  getRoomSkillSettings,
+  type RoomSkillSettingsSnapshot,
+} from './room-skill-settings.js';
+import {
   checkMoaModel,
   getMoaSettings,
   updateMoaSettings,
@@ -45,6 +49,7 @@ export interface SettingsRouteDependencies {
   getModelConfig: typeof getModelConfig;
   getMoaSettings: typeof getMoaSettings;
   getRuntimeInventory: typeof getRuntimeInventory;
+  getRoomSkillSettings: typeof getRoomSkillSettings;
   listClaudeAccounts: typeof listClaudeAccounts;
   listCodexAccounts: typeof listCodexAccounts;
   refreshAllCodexAccounts: typeof refreshAllCodexAccounts;
@@ -73,6 +78,7 @@ const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   getModelConfig,
   getMoaSettings,
   getRuntimeInventory,
+  getRoomSkillSettings,
   listClaudeAccounts,
   listCodexAccounts,
   refreshAllCodexAccounts,
@@ -222,6 +228,15 @@ function handleRuntimeInventoryRoute(
   return jsonResponse(deps.getRuntimeInventory());
 }
 
+function handleRoomSkillsRoute(
+  request: Request,
+  jsonResponse: JsonResponse,
+  deps: SettingsRouteDependencies,
+): Response | null {
+  if (!readMethod(request.method)) return null;
+  return jsonResponse(deps.getRoomSkillSettings());
+}
+
 async function handleClaudeAccountAddRoute(
   request: Request,
   jsonResponse: JsonResponse,
@@ -338,6 +353,9 @@ export async function handleSettingsRoute({
   if (url.pathname === '/api/settings/runtime-inventory') {
     return handleRuntimeInventoryRoute(request, jsonResponse, deps);
   }
+  if (url.pathname === '/api/settings/room-skills') {
+    return handleRoomSkillsRoute(request, jsonResponse, deps);
+  }
   if (url.pathname === '/api/settings/fast-mode') {
     return handleFastModeRoute(request, jsonResponse, deps);
   }
@@ -385,4 +403,5 @@ export type {
   ModelConfigSnapshot,
   MoaSettingsSnapshot,
   RuntimeInventorySnapshot,
+  RoomSkillSettingsSnapshot,
 };

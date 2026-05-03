@@ -12,6 +12,7 @@ import type {
   ModelConfigSnapshot,
 } from './settings-store.js';
 import type { RuntimeInventorySnapshot } from './runtime-inventory.js';
+import type { RoomSkillSettingsSnapshot } from './room-skill-settings.js';
 import type { MoaSettingsSnapshot } from './settings-store-moa.js';
 
 function jsonResponse(value: unknown, init?: ResponseInit): Response {
@@ -158,6 +159,38 @@ const moaSettings: MoaSettingsSnapshot = {
   ],
 };
 
+const roomSkillSettings: RoomSkillSettingsSnapshot = {
+  generatedAt: '2026-05-04T00:00:00.000Z',
+  catalog: [
+    {
+      id: 'runner:agent-browser',
+      scope: 'runner',
+      name: 'agent-browser',
+      displayName: 'agent-browser',
+      description: 'Browser automation',
+      path: '/repo/runners/skills/agent-browser',
+      agentTypes: ['claude-code', 'codex'],
+    },
+  ],
+  rooms: [
+    {
+      jid: 'room@example',
+      name: 'EJClaw',
+      folder: 'ejclaw',
+      agents: [
+        {
+          agentType: 'codex',
+          mode: 'all-enabled',
+          availableSkillIds: ['runner:agent-browser'],
+          disabledSkillIds: [],
+          explicitEnabledSkillIds: [],
+          effectiveEnabledSkillIds: ['runner:agent-browser'],
+        },
+      ],
+    },
+  ],
+};
+
 function makeClaudeAccount(): ClaudeAccountSummary {
   return {
     index: 0,
@@ -197,6 +230,7 @@ function makeDeps(
     getModelConfig: () => modelConfig,
     getMoaSettings: () => moaSettings,
     getRuntimeInventory: () => runtimeInventory,
+    getRoomSkillSettings: () => roomSkillSettings,
     listClaudeAccounts: () => [makeClaudeAccount()],
     listCodexAccounts: () => [makeCodexAccount()],
     refreshAllCodexAccounts: async () => ({ refreshed: [1], failed: [] }),
@@ -249,6 +283,13 @@ describe('web dashboard settings routes', () => {
       service: { id: 'codex-main', agentType: 'codex' },
       codex: { mcp: { ejclawConfigured: true } },
       ejclaw: { runnerSkillDir: { count: 1 } },
+    });
+
+    const roomSkills = await route('/api/settings/room-skills');
+    expect(roomSkills?.status).toBe(200);
+    await expect(roomSkills?.json()).resolves.toMatchObject({
+      catalog: [{ id: 'runner:agent-browser' }],
+      rooms: [{ jid: 'room@example', agents: [{ agentType: 'codex' }] }],
     });
 
     const features = await route('/api/settings/codex-features');

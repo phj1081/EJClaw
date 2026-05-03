@@ -28,6 +28,16 @@ interface StoredRoomModeRow {
   source: RoomModeSource;
 }
 
+export interface StoredRoomSkillOverride {
+  chatJid: string;
+  agentType: AgentType;
+  skillScope: string;
+  skillName: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AssignRoomInput {
   name: string;
   roomMode?: RoomMode;
@@ -305,6 +315,62 @@ export function getStoredRoomRoleAgentPlanFromDatabase(
 ): ReturnType<typeof resolveStoredRoomRoleAgentPlan> | undefined {
   const stored = getStoredRoomSettingsRowFromDatabase(database, chatJid);
   return stored ? resolveStoredRoomRoleAgentPlan(database, stored) : undefined;
+}
+
+export function getStoredRoomSkillOverridesFromDatabase(
+  database: Database,
+  chatJid?: string,
+): StoredRoomSkillOverride[] {
+  const params: string[] = [];
+  const where = chatJid ? 'WHERE chat_jid = ?' : '';
+  if (chatJid) params.push(chatJid);
+
+  let rows: Array<{
+    chat_jid: string;
+    agent_type: string;
+    skill_scope: string;
+    skill_name: string;
+    enabled: number;
+    created_at: string;
+    updated_at: string;
+  }>;
+  try {
+    rows = database
+      .prepare(
+        `SELECT chat_jid, agent_type, skill_scope, skill_name, enabled,
+                created_at, updated_at
+           FROM room_skill_overrides
+           ${where}
+          ORDER BY chat_jid, agent_type, skill_scope, skill_name`,
+      )
+      .all(...params) as Array<{
+      chat_jid: string;
+      agent_type: string;
+      skill_scope: string;
+      skill_name: string;
+      enabled: number;
+      created_at: string;
+      updated_at: string;
+    }>;
+  } catch {
+    return [];
+  }
+
+  return rows
+    .map((row) => {
+      const agentType = normalizeStoredAgentType(row.agent_type);
+      if (!agentType) return null;
+      return {
+        chatJid: row.chat_jid,
+        agentType,
+        skillScope: row.skill_scope,
+        skillName: row.skill_name,
+        enabled: row.enabled === 1,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      };
+    })
+    .filter((row): row is StoredRoomSkillOverride => Boolean(row));
 }
 
 function getStoredRoomModeRowFromDatabase(

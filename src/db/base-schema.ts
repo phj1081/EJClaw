@@ -1,5 +1,25 @@
 import { Database } from 'bun:sqlite';
 
+const ROOM_SKILL_OVERRIDES_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS room_skill_overrides (
+    chat_jid TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    skill_scope TEXT NOT NULL,
+    skill_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chat_jid, agent_type, skill_scope, skill_name),
+    FOREIGN KEY (chat_jid) REFERENCES room_settings(chat_jid) ON DELETE CASCADE,
+    CHECK (agent_type IN ('claude-code', 'codex')),
+    CHECK (enabled IN (0, 1)),
+    CHECK (length(skill_scope) > 0),
+    CHECK (length(skill_name) > 0)
+  );
+  CREATE INDEX IF NOT EXISTS idx_room_skill_overrides_room
+    ON room_skill_overrides(chat_jid, agent_type);
+`;
+
 export function applyBaseSchema(database: Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
@@ -410,8 +430,7 @@ export function applyBaseSchema(database: Database): void {
       last_used_at TEXT,
       archived_at TEXT
     );
-    CREATE INDEX IF NOT EXISTS idx_memories_scope
-      ON memories(scope_kind, scope_key);
+    CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope_kind, scope_key);
     CREATE INDEX IF NOT EXISTS idx_memories_active
       ON memories(scope_kind, scope_key, archived_at, created_at);
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -435,4 +454,5 @@ export function applyBaseSchema(database: Database): void {
       VALUES (new.id, new.content, new.keywords_json);
     END;
   `);
+  database.exec(ROOM_SKILL_OVERRIDES_SCHEMA);
 }

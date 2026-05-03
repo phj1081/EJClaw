@@ -36,9 +36,11 @@ import {
   getRegisteredGroupFromDatabase,
   getStoredRoomRoleAgentPlanFromDatabase,
   getStoredRoomSettingsFromDatabase,
+  getStoredRoomSkillOverridesFromDatabase,
   setExplicitRoomModeInDatabase,
   setRegisteredGroupForTestsInDatabase,
   setStoredRoomOwnerAgentTypeForTestsInDatabase,
+  type StoredRoomSkillOverride,
   updateRegisteredGroupNameInDatabase,
 } from './rooms.js';
 import { type StoredRoomSettings } from './room-registration.js';
@@ -361,6 +363,14 @@ export function getStoredRoomRoleAgentPlan(
   const db = getDatabaseIfInitialized();
   if (!db) return undefined;
   return getStoredRoomRoleAgentPlanFromDatabase(db, chatJid);
+}
+
+export function getStoredRoomSkillOverrides(
+  chatJid?: string,
+): StoredRoomSkillOverride[] {
+  const db = getDatabaseIfInitialized();
+  if (!db) return [];
+  return getStoredRoomSkillOverridesFromDatabase(db, chatJid);
 }
 
 export function getExplicitRoomMode(chatJid: string): RoomMode | undefined {

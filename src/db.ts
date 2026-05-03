@@ -62,6 +62,7 @@ export {
   getSessionForAgentType,
   getStoredRoomRoleAgentPlan,
   getStoredRoomSettings,
+  getStoredRoomSkillOverrides,
   getTaskById,
   getTasksForGroup,
   hasActiveCiWatcherForChat,
