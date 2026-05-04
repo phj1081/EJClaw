@@ -71,6 +71,10 @@ vi.mock('./service-routing.js', () => ({
   hasReviewerLease: vi.fn(() => true),
 }));
 
+vi.mock('./db.js', () => ({
+  getStoredRoomSkillOverrides: vi.fn(() => []),
+}));
+
 // Create a controllable fake ChildProcess
 function createFakeProcess() {
   const proc = new EventEmitter() as EventEmitter & {
@@ -108,6 +112,7 @@ vi.mock('child_process', async () => {
 
 import { runAgentProcess, AgentOutput } from './agent-runner.js';
 import * as agentRunnerEnvironment from './agent-runner-environment.js';
+import { getStoredRoomSkillOverrides } from './db.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -681,10 +686,61 @@ OUROBOROS_LLM_BACKEND = "codex"
   });
 });
 
+describe('agent-runner room skill overrides', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+    vi.mocked(getStoredRoomSkillOverrides).mockReturnValue([]);
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('passes room skill overrides into runner environment setup', async () => {
+    const skillOverride = {
+      chatJid: testInput.chatJid,
+      agentType: 'claude-code' as const,
+      skillScope: 'runner',
+      skillName: 'runner-off',
+      enabled: false,
+      createdAt: '2026-05-04T00:00:00.000Z',
+      updatedAt: '2026-05-04T00:00:00.000Z',
+    };
+    vi.mocked(getStoredRoomSkillOverrides).mockReturnValue([skillOverride]);
+    const prepareGroupEnvironmentSpy = vi.spyOn(
+      agentRunnerEnvironment,
+      'prepareGroupEnvironment',
+    );
+
+    const resultPromise = runAgentProcess(
+      testGroup,
+      testInput,
+      () => {},
+      async () => {},
+    );
+
+    fakeProc.emit('close', 0);
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(getStoredRoomSkillOverrides).toHaveBeenCalledWith(testInput.chatJid);
+    expect(prepareGroupEnvironmentSpy).toHaveBeenCalledWith(
+      testGroup,
+      testInput.isMain,
+      testInput.chatJid,
+      expect.objectContaining({
+        skillOverrides: [skillOverride],
+      }),
+    );
+  });
+});
+
 describe('agent-runner Codex goals', () => {
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
+    vi.mocked(getStoredRoomSkillOverrides).mockReturnValue([]);
     fakeProc = createFakeProcess();
     vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
       const str = String(p);
