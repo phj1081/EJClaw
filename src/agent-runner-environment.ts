@@ -33,6 +33,7 @@ import {
   hasReviewerLease,
 } from './service-routing.js';
 import type { AgentType, RegisteredGroup } from './types.js';
+import type { StoredRoomSkillOverride } from './db/rooms.js';
 
 // writeCodexApiKeyAuth removed — Codex uses OAuth only.
 // API key auth caused unintended billing.
@@ -49,6 +50,72 @@ function syncDirectoryEntries(sources: string[], destination: string): void {
         fs.mkdirSync(destination, { recursive: true });
         fs.copyFileSync(srcPath, dstPath);
       }
+    }
+  }
+}
+
+type SkillSyncScope = 'codex-user' | 'claude-user' | 'runner' | 'workdir';
+
+interface SkillSyncSource {
+  dir: string;
+  scope: SkillSyncScope;
+}
+
+function getDisabledSkillNamesByScope(
+  overrides: StoredRoomSkillOverride[] | undefined,
+  agentType: AgentType,
+): Map<SkillSyncScope, Set<string>> {
+  const disabled = new Map<SkillSyncScope, Set<string>>();
+  for (const override of overrides ?? []) {
+    if (override.agentType !== agentType || override.enabled !== false)
+      continue;
+    if (
+      override.skillScope !== 'codex-user' &&
+      override.skillScope !== 'claude-user' &&
+      override.skillScope !== 'runner'
+    ) {
+      continue;
+    }
+    const names = disabled.get(override.skillScope) ?? new Set<string>();
+    names.add(override.skillName);
+    disabled.set(override.skillScope, names);
+  }
+  return disabled;
+}
+
+function hasDisabledSkillOverrides(
+  overrides: StoredRoomSkillOverride[] | undefined,
+  agentType: AgentType,
+): boolean {
+  return (overrides ?? []).some(
+    (override) =>
+      override.agentType === agentType && override.enabled === false,
+  );
+}
+
+function syncRoomSkillDirectories(args: {
+  sources: SkillSyncSource[];
+  destination: string;
+  agentType: AgentType;
+  overrides?: StoredRoomSkillOverride[];
+}): void {
+  const disabledNamesByScope = getDisabledSkillNamesByScope(
+    args.overrides,
+    args.agentType,
+  );
+
+  fs.rmSync(args.destination, { recursive: true, force: true });
+  fs.mkdirSync(args.destination, { recursive: true });
+
+  for (const source of args.sources) {
+    if (!fs.existsSync(source.dir)) continue;
+    for (const entry of fs.readdirSync(source.dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (disabledNamesByScope.get(source.scope)?.has(entry.name)) continue;
+
+      const srcPath = path.join(source.dir, entry.name);
+      const dstPath = path.join(args.destination, entry.name);
+      fs.cpSync(srcPath, dstPath, { recursive: true });
     }
   }
 }
@@ -301,6 +368,7 @@ function prepareCodexSessionEnvironment(args: {
   isPairedRoom: boolean;
   useFailoverPromptPack: boolean;
   memoryBriefing?: string;
+  skillOverrides?: StoredRoomSkillOverride[];
 }): void {
   // API key auth intentionally removed — Codex uses OAuth only.
   // Never pass any API key to Codex child process to prevent API billing.
@@ -385,15 +453,39 @@ function prepareCodexSessionEnvironment(args: {
 
   // Codex reads skills from ~/.agents/skills/ (user-level) and
   // {workDir}/.agents/skills/ (project-level), NOT from .codex/skills/.
-  // Sync to the user-level path so all Codex sessions can discover them.
-  const codexSkillsDir = path.join(os.homedir(), '.agents', 'skills');
-  syncDirectoryEntries(
-    [
-      path.join(os.homedir(), '.claude', 'skills'),
-      path.join(args.projectRoot, 'runners', 'skills'),
-    ],
-    codexSkillsDir,
-  );
+  if (hasDisabledSkillOverrides(args.skillOverrides, 'codex')) {
+    const sessionHomeDir = path.join(args.sessionRootDir, 'home');
+    args.env.HOME = sessionHomeDir;
+    syncRoomSkillDirectories({
+      sources: [
+        {
+          dir: path.join(os.homedir(), '.claude', 'skills'),
+          scope: 'codex-user',
+        },
+        {
+          dir: path.join(os.homedir(), '.agents', 'skills'),
+          scope: 'codex-user',
+        },
+        {
+          dir: path.join(args.projectRoot, 'runners', 'skills'),
+          scope: 'runner',
+        },
+      ],
+      destination: path.join(sessionHomeDir, '.agents', 'skills'),
+      agentType: 'codex',
+      overrides: args.skillOverrides,
+    });
+  } else {
+    // Preserve the historical global sync path when no room override exists.
+    const codexSkillsDir = path.join(os.homedir(), '.agents', 'skills');
+    syncDirectoryEntries(
+      [
+        path.join(os.homedir(), '.claude', 'skills'),
+        path.join(args.projectRoot, 'runners', 'skills'),
+      ],
+      codexSkillsDir,
+    );
+  }
 
   const mcpServerPath = path.join(
     args.projectRoot,
@@ -411,7 +503,7 @@ function prepareCodexSessionEnvironment(args: {
       chatJid: args.chatJid,
       groupFolder: args.group.folder,
       isMain: args.isMain,
-      agentType: args.group.agentType || 'claude-code',
+      agentType: 'codex',
       workDir:
         args.env.EJCLAW_WORK_DIR || args.group.workDir || args.projectRoot,
     });
@@ -430,6 +522,10 @@ export interface PreparedGroupEnvironment {
   runnerDir: string;
 }
 
+export interface PreparedReadonlySessionEnvironment {
+  codexHomeDir?: string;
+}
+
 export function prepareGroupEnvironment(
   group: RegisteredGroup,
   isMain: boolean,
@@ -438,6 +534,7 @@ export function prepareGroupEnvironment(
     memoryBriefing?: string;
     runtimeTaskId?: string;
     useTaskScopedSession?: boolean;
+    skillOverrides?: StoredRoomSkillOverride[];
   },
 ): PreparedGroupEnvironment {
   const projectRoot = process.cwd();
@@ -463,12 +560,26 @@ export function prepareGroupEnvironment(
   const workDirClaude = group.workDir
     ? path.join(group.workDir, '.claude')
     : null;
-  const skillSources = [
-    path.join(os.homedir(), '.claude', 'skills'),
-    ...(workDirClaude ? [path.join(workDirClaude, 'skills')] : []),
-    path.join(projectRoot, 'runners', 'skills'),
-  ];
-  syncDirectoryEntries(skillSources, path.join(groupSessionsDir, 'skills'));
+  syncRoomSkillDirectories({
+    sources: [
+      {
+        dir: path.join(os.homedir(), '.claude', 'skills'),
+        scope: 'claude-user',
+      },
+      ...(workDirClaude
+        ? [
+            {
+              dir: path.join(workDirClaude, 'skills'),
+              scope: 'workdir' as const,
+            },
+          ]
+        : []),
+      { dir: path.join(projectRoot, 'runners', 'skills'), scope: 'runner' },
+    ],
+    destination: path.join(groupSessionsDir, 'skills'),
+    agentType: 'claude-code',
+    overrides: options?.skillOverrides,
+  });
 
   const groupIpcDir = runtimeTaskId
     ? resolveTaskRuntimeIpcPath(group.folder, runtimeTaskId)
@@ -566,6 +677,7 @@ export function prepareGroupEnvironment(
       isPairedRoom,
       useFailoverPromptPack: useCodexReviewFailoverPromptPack,
       memoryBriefing: options?.memoryBriefing,
+      skillOverrides: options?.skillOverrides,
     });
   } else {
     prepareClaudeEnvironment({ env, envVars, group });
@@ -594,7 +706,8 @@ export function prepareReadonlySessionEnvironment(args: {
   ipcDir?: string;
   hostIpcDir?: string;
   workDir?: string;
-}): void {
+  skillOverrides?: StoredRoomSkillOverride[];
+}): PreparedReadonlySessionEnvironment {
   const {
     sessionDir,
     chatJid,
@@ -606,6 +719,7 @@ export function prepareReadonlySessionEnvironment(args: {
     ipcDir = '/workspace/ipc',
     hostIpcDir = ipcDir,
     workDir = '/workspace/project',
+    skillOverrides,
   } = args;
   const projectRoot = process.cwd();
 
@@ -614,11 +728,40 @@ export function prepareReadonlySessionEnvironment(args: {
   ensureClaudeGlobalSettingsFile(sessionDir);
 
   // Sync skills from host
-  const skillSources = [
-    path.join(os.homedir(), '.claude', 'skills'),
-    path.join(projectRoot, 'runners', 'skills'),
-  ];
-  syncDirectoryEntries(skillSources, path.join(sessionDir, 'skills'));
+  syncRoomSkillDirectories({
+    sources: [
+      {
+        dir: path.join(os.homedir(), '.claude', 'skills'),
+        scope: agentType === 'codex' ? 'codex-user' : 'claude-user',
+      },
+      { dir: path.join(projectRoot, 'runners', 'skills'), scope: 'runner' },
+    ],
+    destination: path.join(sessionDir, 'skills'),
+    agentType,
+    overrides: skillOverrides,
+  });
+  const codexHomeDir =
+    agentType === 'codex' && hasDisabledSkillOverrides(skillOverrides, 'codex')
+      ? sessionDir
+      : undefined;
+  if (codexHomeDir) {
+    syncRoomSkillDirectories({
+      sources: [
+        {
+          dir: path.join(os.homedir(), '.claude', 'skills'),
+          scope: 'codex-user',
+        },
+        {
+          dir: path.join(os.homedir(), '.agents', 'skills'),
+          scope: 'codex-user',
+        },
+        { dir: path.join(projectRoot, 'runners', 'skills'), scope: 'runner' },
+      ],
+      destination: path.join(codexHomeDir, '.agents', 'skills'),
+      agentType,
+      overrides: skillOverrides,
+    });
+  }
 
   // Build CLAUDE.md with role-appropriate prompts (reviewer or arbiter)
   const claudePlatformPrompt = readPlatformPrompt('claude-code', projectRoot);
@@ -688,4 +831,5 @@ export function prepareReadonlySessionEnvironment(args: {
   } else if (fs.existsSync(sessionClaudeMdPath)) {
     fs.unlinkSync(sessionClaudeMdPath);
   }
+  return { codexHomeDir };
 }

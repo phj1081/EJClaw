@@ -108,6 +108,15 @@ const group: RegisteredGroup = {
   agentType: 'codex',
 };
 
+function writeSkill(dir: string, name: string): void {
+  const skillDir = path.join(dir, name);
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, 'SKILL.md'),
+    `---\nname: ${name}\ndescription: ${name} skill\n---\n`,
+  );
+}
+
 describe('prepareGroupEnvironment codex auth handling', () => {
   let tempRoot: string;
   let previousCwd: string;
@@ -367,6 +376,133 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     const segments = agents.trim().split('\n\n---\n\n');
 
     expect(segments).toEqual(['platform prompt']);
+  });
+});
+
+describe('prepareGroupEnvironment room skill overrides', () => {
+  let tempRoot: string;
+  let previousCwd: string;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-agent-skills-'));
+    previousCwd = process.cwd();
+    process.chdir(tempRoot);
+    process.env.EJ_TEST_ROOT = tempRoot;
+    process.env.EJ_TEST_HOME = path.join(tempRoot, 'home');
+    fs.mkdirSync(path.join(process.env.EJ_TEST_HOME, '.codex'), {
+      recursive: true,
+    });
+    mockReadEnvFile.mockReset();
+    mockGetActiveCodexAuthPath.mockReset();
+  });
+
+  afterEach(() => {
+    process.chdir(previousCwd);
+    delete process.env.EJ_TEST_ROOT;
+    delete process.env.EJ_TEST_HOME;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('filters Claude session skills with room overrides at spawn time', () => {
+    mockReadEnvFile.mockReturnValue({});
+    const homeSkills = path.join(
+      process.env.EJ_TEST_HOME!,
+      '.claude',
+      'skills',
+    );
+    const workDir = path.join(tempRoot, 'workdir');
+    const runnerSkills = path.join(tempRoot, 'runners', 'skills');
+    writeSkill(homeSkills, 'claude-keep');
+    writeSkill(path.join(workDir, '.claude', 'skills'), 'workdir-keep');
+    writeSkill(runnerSkills, 'runner-keep');
+    writeSkill(runnerSkills, 'runner-off');
+
+    prepareGroupEnvironment(
+      { ...group, agentType: 'claude-code', workDir },
+      false,
+      'dc:test',
+      {
+        skillOverrides: [
+          {
+            chatJid: 'dc:test',
+            agentType: 'claude-code',
+            skillScope: 'runner',
+            skillName: 'runner-off',
+            enabled: false,
+            createdAt: '2026-05-04T00:00:00.000Z',
+            updatedAt: '2026-05-04T00:00:00.000Z',
+          },
+        ],
+      },
+    );
+
+    const sessionSkills = path.join(
+      tempRoot,
+      'sessions',
+      group.folder,
+      'services',
+      'codex-main',
+      '.claude',
+      'skills',
+    );
+    expect(fs.existsSync(path.join(sessionSkills, 'claude-keep'))).toBe(true);
+    expect(fs.existsSync(path.join(sessionSkills, 'workdir-keep'))).toBe(true);
+    expect(fs.existsSync(path.join(sessionSkills, 'runner-keep'))).toBe(true);
+    expect(fs.existsSync(path.join(sessionSkills, 'runner-off'))).toBe(false);
+  });
+
+  it('uses a session-scoped Codex home when room overrides disable skills', () => {
+    mockReadEnvFile.mockReturnValue({});
+    const codexSkills = path.join(
+      process.env.EJ_TEST_HOME!,
+      '.agents',
+      'skills',
+    );
+    const runnerSkills = path.join(tempRoot, 'runners', 'skills');
+    writeSkill(codexSkills, 'codex-keep');
+    writeSkill(codexSkills, 'codex-off');
+    writeSkill(runnerSkills, 'runner-keep');
+    writeSkill(runnerSkills, 'runner-off');
+
+    const prepared = prepareGroupEnvironment(group, false, 'dc:test', {
+      skillOverrides: [
+        {
+          chatJid: 'dc:test',
+          agentType: 'codex',
+          skillScope: 'codex-user',
+          skillName: 'codex-off',
+          enabled: false,
+          createdAt: '2026-05-04T00:00:00.000Z',
+          updatedAt: '2026-05-04T00:00:00.000Z',
+        },
+        {
+          chatJid: 'dc:test',
+          agentType: 'codex',
+          skillScope: 'runner',
+          skillName: 'runner-off',
+          enabled: false,
+          createdAt: '2026-05-04T00:00:00.000Z',
+          updatedAt: '2026-05-04T00:00:00.000Z',
+        },
+      ],
+    });
+
+    const sessionRoot = path.join(
+      tempRoot,
+      'sessions',
+      group.folder,
+      'services',
+      'codex-main',
+    );
+    const sessionHome = path.join(sessionRoot, 'home');
+    const sessionSkills = path.join(sessionHome, '.agents', 'skills');
+    expect(prepared.env.HOME).toBe(sessionHome);
+    expect(prepared.env.CODEX_HOME).toBe(path.join(sessionRoot, '.codex'));
+    expect(fs.existsSync(path.join(sessionSkills, 'codex-keep'))).toBe(true);
+    expect(fs.existsSync(path.join(sessionSkills, 'runner-keep'))).toBe(true);
+    expect(fs.existsSync(path.join(sessionSkills, 'codex-off'))).toBe(false);
+    expect(fs.existsSync(path.join(sessionSkills, 'runner-off'))).toBe(false);
+    expect(fs.existsSync(path.join(codexSkills, 'codex-off'))).toBe(true);
   });
 });
 

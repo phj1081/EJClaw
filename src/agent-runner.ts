@@ -13,6 +13,7 @@ import {
   prepareGroupEnvironment,
 } from './agent-runner-environment.js';
 import { runSpawnedAgentProcess } from './agent-runner-process.js';
+import { getStoredRoomSkillOverrides } from './db.js';
 export {
   type AvailableGroup,
   writeGroupsSnapshot,
@@ -20,6 +21,7 @@ export {
 } from './agent-runner-snapshot.js';
 import { logger } from './logger.js';
 import { RegisteredGroup, RoomRoleContext } from './types.js';
+import type { StoredRoomSkillOverride } from './db/rooms.js';
 
 export interface AgentInput {
   prompt: string;
@@ -50,6 +52,23 @@ export interface AgentOutput {
   error?: string;
 }
 
+function readRoomSkillOverridesForRunner(
+  chatJid: string,
+): StoredRoomSkillOverride[] {
+  try {
+    return getStoredRoomSkillOverrides(chatJid);
+  } catch (err) {
+    logger.warn(
+      {
+        err,
+        chatJid,
+      },
+      'Failed to read room skill overrides; falling back to default skills',
+    );
+    return [];
+  }
+}
+
 export async function runAgentProcess(
   group: RegisteredGroup,
   input: AgentInput,
@@ -65,6 +84,7 @@ export async function runAgentProcess(
 
   // ── Host process mode (owner) ───────────────────────────────────
   const startTime = Date.now();
+  const skillOverrides = readRoomSkillOverridesForRunner(input.chatJid);
   const { env, groupDir, runnerDir } = prepareGroupEnvironment(
     group,
     input.isMain,
@@ -73,6 +93,7 @@ export async function runAgentProcess(
       memoryBriefing: input.memoryBriefing,
       runtimeTaskId: input.runtimeTaskId,
       useTaskScopedSession: input.useTaskScopedSession,
+      skillOverrides,
     },
   );
 
@@ -88,7 +109,7 @@ export async function runAgentProcess(
     (input.roomRoleContext?.role === 'reviewer' ||
       input.roomRoleContext?.role === 'arbiter')
   ) {
-    prepareReadonlySessionEnvironment({
+    const readonlySession = prepareReadonlySessionEnvironment({
       sessionDir: envOverrides.CLAUDE_CONFIG_DIR,
       chatJid: input.chatJid,
       isMain: input.isMain,
@@ -99,9 +120,13 @@ export async function runAgentProcess(
       ipcDir: env.EJCLAW_IPC_DIR,
       hostIpcDir: env.EJCLAW_HOST_IPC_DIR,
       workDir: envOverrides.EJCLAW_WORK_DIR || env.EJCLAW_WORK_DIR,
+      skillOverrides,
     });
     if ((group.agentType || 'claude-code') === 'codex') {
       env.CODEX_HOME = path.join(envOverrides.CLAUDE_CONFIG_DIR, '.codex');
+      if (readonlySession.codexHomeDir) {
+        env.HOME = readonlySession.codexHomeDir;
+      }
     }
   }
   if (input.runId) {
