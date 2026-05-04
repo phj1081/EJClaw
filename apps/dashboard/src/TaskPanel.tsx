@@ -13,6 +13,7 @@ import { localeTags, type Locale, type Messages } from './i18n';
 import { redactSecretsForPreview } from './redaction';
 import { statusLabel } from './dashboardHelpers';
 import { TaskActionButtons, type TaskActionKey } from './TaskActionButtons';
+import './TaskPanel.css';
 
 export type { TaskActionKey } from './TaskActionButtons';
 
@@ -39,6 +40,15 @@ export interface TaskPanelProps {
 interface TaskGroup {
   key: TaskGroupKey;
   tasks: DashboardTask[];
+}
+
+interface TaskSummary {
+  completed: number;
+  nextTask: DashboardTask | null;
+  paused: number;
+  scheduled: number;
+  total: number;
+  watchers: number;
 }
 
 interface TaskCreateFormProps {
@@ -170,6 +180,23 @@ function taskDisplayName(task: DashboardTask, t: Messages): string {
   return task.id;
 }
 
+function taskHeadline(task: DashboardTask, t: Messages): string {
+  if (task.isWatcher && task.ciProvider) {
+    return `${t.tasks.ciWatch} · ${task.ciProvider}`;
+  }
+  return safePreview(task.promptPreview, taskDisplayName(task, t));
+}
+
+function taskScheduleText(task: DashboardTask, t: Messages): string {
+  const scheduleType =
+    task.scheduleType === 'cron' ||
+    task.scheduleType === 'interval' ||
+    task.scheduleType === 'once'
+      ? t.tasks.scheduleTypes[task.scheduleType]
+      : task.scheduleType;
+  return `${scheduleType} · ${task.scheduleValue || '-'}`;
+}
+
 function isTaskScheduleType(
   value: FormDataEntryValue | null,
 ): value is DashboardTaskScheduleType {
@@ -259,6 +286,102 @@ function buildTaskGroups(tasks: DashboardTask[]): TaskGroup[] {
   ];
 }
 
+function buildTaskSummary(tasks: DashboardTask[]): TaskSummary {
+  const summary: TaskSummary = {
+    completed: 0,
+    nextTask: null,
+    paused: 0,
+    scheduled: 0,
+    total: tasks.length,
+    watchers: 0,
+  };
+
+  for (const task of tasks) {
+    const group = taskGroupKey(task);
+    if (group === 'watchers') summary.watchers += 1;
+    if (group === 'scheduled') summary.scheduled += 1;
+    if (group === 'paused') summary.paused += 1;
+    if (group === 'completed') summary.completed += 1;
+
+    if (task.status !== 'active' || !task.nextRun) continue;
+    const nextTime = new Date(task.nextRun).getTime();
+    if (Number.isNaN(nextTime)) continue;
+    const currentTime = summary.nextTask?.nextRun
+      ? new Date(summary.nextTask.nextRun).getTime()
+      : Number.POSITIVE_INFINITY;
+    if (nextTime < currentTime) {
+      summary.nextTask = task;
+    }
+  }
+
+  return summary;
+}
+
+function TaskSummaryMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <span className="task-summary-metric">
+      <strong>{value}</strong>
+      <small>{label}</small>
+    </span>
+  );
+}
+
+function TaskBoardSummary({
+  locale,
+  summary,
+  t,
+}: {
+  locale: Locale;
+  summary: TaskSummary;
+  t: Messages;
+}) {
+  const nextTask = summary.nextTask;
+  return (
+    <section className="task-command-center" aria-label={t.panels.scheduled}>
+      <div className="task-command-copy">
+        <span className="eyebrow">{t.panels.scheduled}</span>
+        <strong>
+          {summary.total} {t.tasks.count}
+        </strong>
+        <p>
+          {nextTask
+            ? `${t.tasks.next}: ${taskHeadline(nextTask, t)}`
+            : t.tasks.empty}
+        </p>
+      </div>
+      <div className="task-command-next">
+        <small>{t.tasks.next}</small>
+        <strong>
+          {nextTask ? formatRelativeDate(nextTask.nextRun, locale, t) : '-'}
+        </strong>
+        <span>
+          {nextTask
+            ? `${nextTask.groupFolder} · ${taskScheduleText(nextTask, t)}`
+            : t.tasks.noTime}
+        </span>
+      </div>
+      <div className="task-command-metrics">
+        <TaskSummaryMetric
+          label={t.tasks.groups.scheduled}
+          value={summary.scheduled}
+        />
+        <TaskSummaryMetric
+          label={t.tasks.groups.watchers}
+          value={summary.watchers}
+        />
+        <TaskSummaryMetric
+          label={t.tasks.groups.paused}
+          value={summary.paused}
+        />
+        <TaskSummaryMetric
+          label={t.tasks.groups.completed}
+          value={summary.completed}
+        />
+      </div>
+    </section>
+  );
+}
+
 function TaskCreateForm({
   rooms,
   onTaskCreate,
@@ -280,54 +403,62 @@ function TaskCreateForm({
       <div className="task-create-head">
         <span className="eyebrow">{t.tasks.createTitle}</span>
         <strong>{t.tasks.createSubtitle}</strong>
+        <p>{t.tasks.scheduleValueHint}</p>
       </div>
-      <label>
-        <span>{t.tasks.room}</span>
-        <select name="roomJid" required>
-          <option value="">{t.tasks.selectRoom}</option>
-          {rooms.map((room) => (
-            <option key={room.jid} value={room.jid}>
-              {room.name} · {room.folder}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="task-form-wide">
-        <span>{t.tasks.prompt}</span>
-        <textarea
-          name="prompt"
-          placeholder={t.tasks.promptPlaceholder}
-          required
-        />
-      </label>
-      <label>
-        <span>{t.tasks.scheduleType}</span>
-        <select name="scheduleType" required>
-          <option value="once">{t.tasks.scheduleTypes.once}</option>
-          <option value="interval">{t.tasks.scheduleTypes.interval}</option>
-          <option value="cron">{t.tasks.scheduleTypes.cron}</option>
-        </select>
-      </label>
-      <label>
-        <span>{t.tasks.scheduleValue}</span>
-        <input
-          name="scheduleValue"
-          placeholder={t.tasks.scheduleValueHint}
-          required
-        />
-      </label>
-      <label>
-        <span>{t.tasks.context}</span>
-        <select name="contextMode" required>
-          <option value="isolated">{t.tasks.contextModes.isolated}</option>
-          <option value="group">{t.tasks.contextModes.group}</option>
-        </select>
-      </label>
-      <button disabled={taskActionKey === 'create'} type="submit">
-        {taskActionKey === 'create'
-          ? t.tasks.actions.busy
-          : t.tasks.actions.create}
-      </button>
+      <div className="task-create-body">
+        <label className="task-form-wide">
+          <span>{t.tasks.prompt}</span>
+          <textarea
+            name="prompt"
+            placeholder={t.tasks.promptPlaceholder}
+            required
+          />
+        </label>
+        <div className="task-form-controls">
+          <label>
+            <span>{t.tasks.room}</span>
+            <select name="roomJid" required>
+              <option value="">{t.tasks.selectRoom}</option>
+              {rooms.map((room) => (
+                <option key={room.jid} value={room.jid}>
+                  {room.name} · {room.folder}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>{t.tasks.scheduleType}</span>
+            <select name="scheduleType" required>
+              <option value="once">{t.tasks.scheduleTypes.once}</option>
+              <option value="interval">{t.tasks.scheduleTypes.interval}</option>
+              <option value="cron">{t.tasks.scheduleTypes.cron}</option>
+            </select>
+          </label>
+          <label>
+            <span>{t.tasks.scheduleValue}</span>
+            <input
+              name="scheduleValue"
+              placeholder={t.tasks.scheduleValueHint}
+              required
+            />
+          </label>
+          <label>
+            <span>{t.tasks.context}</span>
+            <select name="contextMode" required>
+              <option value="isolated">{t.tasks.contextModes.isolated}</option>
+              <option value="group">{t.tasks.contextModes.group}</option>
+            </select>
+          </label>
+        </div>
+        <div className="task-form-footer">
+          <span>{t.tasks.schedule}</span>
+          <button disabled={taskActionKey === 'create'} type="submit">
+            {taskActionKey === 'create'
+              ? t.tasks.actions.busy
+              : t.tasks.actions.create}
+          </button>
+        </div>
+      </div>
     </form>
   );
 }
@@ -335,10 +466,10 @@ function TaskCreateForm({
 function TaskTimeGrid({ locale, t, task }: TaskDateProps) {
   return (
     <div className="task-time-grid">
-      <span>
+      <span className="task-next-run">
         <small>{t.tasks.next}</small>
-        <strong>{formatTaskDate(task.nextRun, locale)}</strong>
-        <em>{formatRelativeDate(task.nextRun, locale, t)}</em>
+        <strong>{formatRelativeDate(task.nextRun, locale, t)}</strong>
+        <em>{formatTaskDate(task.nextRun, locale)}</em>
       </span>
       <span>
         <small>{t.tasks.last}</small>
@@ -347,8 +478,8 @@ function TaskTimeGrid({ locale, t, task }: TaskDateProps) {
       </span>
       <span>
         <small>{t.tasks.schedule}</small>
-        <strong>{task.scheduleType}</strong>
-        <em>{task.scheduleValue}</em>
+        <strong>{taskScheduleText(task, t)}</strong>
+        <em>{task.contextMode}</em>
       </span>
     </div>
   );
@@ -390,9 +521,20 @@ function TaskPromptDetails({ task, t }: { task: DashboardTask; t: Messages }) {
       <summary>{t.tasks.prompt}</summary>
       <p>{safePreview(task.promptPreview, t.tasks.emptyPrompt)}</p>
       <small>
-        {task.id} · {task.contextMode} · {task.promptLength} {t.units.chars}
+        {task.id} · {taskScheduleText(task, t)} · {task.promptLength}{' '}
+        {t.units.chars}
       </small>
     </details>
+  );
+}
+
+function TaskMetaStrip({ task, t }: { task: DashboardTask; t: Messages }) {
+  return (
+    <div className="task-meta-strip">
+      <span>{task.groupFolder}</span>
+      <span>{task.agentType ?? t.tasks.task}</span>
+      {task.ciProvider ? <span>{task.ciProvider}</span> : null}
+    </div>
   );
 }
 
@@ -460,16 +602,14 @@ function TaskCard({
     <article className={`task-card task-card-${groupKey}`}>
       <div className="task-card-main">
         <div className="task-title">
-          <strong>{taskDisplayName(task, t)}</strong>
-          <span className="mono-chip">{task.groupFolder}</span>
+          <span className="task-kind">{taskDisplayName(task, t)}</span>
+          <strong>{taskHeadline(task, t)}</strong>
+          <TaskMetaStrip task={task} t={t} />
         </div>
         <div className="task-status-line">
           <span className={`pill pill-${task.status}`}>
             {statusLabel(task.status, t)}
           </span>
-          {task.ciProvider ? (
-            <span className="task-provider">{task.ciProvider}</span>
-          ) : null}
         </div>
       </div>
       <TaskActionButtons
@@ -546,6 +686,8 @@ function TaskGroupHead({
 
 function TaskGroupSection(props: TaskGroupSectionProps) {
   const { group, t } = props;
+  if (group.tasks.length === 0) return null;
+
   const label = t.tasks.groups[group.key];
   const body = <TaskGroupBody {...props} />;
 
@@ -585,9 +727,11 @@ export function TaskPanel({
   t,
 }: TaskPanelProps) {
   const taskGroups = useMemo(() => buildTaskGroups(tasks), [tasks]);
+  const taskSummary = useMemo(() => buildTaskSummary(tasks), [tasks]);
 
   return (
     <div className="task-board" aria-label={t.tasks.cardsAria}>
+      <TaskBoardSummary locale={locale} summary={taskSummary} t={t} />
       <TaskCreateForm
         rooms={rooms}
         onTaskCreate={onTaskCreate}
@@ -596,17 +740,19 @@ export function TaskPanel({
       />
 
       {tasks.length === 0 ? <EmptyState>{t.tasks.empty}</EmptyState> : null}
-      {taskGroups.map((group) => (
-        <TaskGroupSection
-          group={group}
-          key={group.key}
-          locale={locale}
-          onTaskAction={onTaskAction}
-          onTaskUpdate={onTaskUpdate}
-          taskActionKey={taskActionKey}
-          t={t}
-        />
-      ))}
+      <div className="task-lanes">
+        {taskGroups.map((group) => (
+          <TaskGroupSection
+            group={group}
+            key={group.key}
+            locale={locale}
+            onTaskAction={onTaskAction}
+            onTaskUpdate={onTaskUpdate}
+            taskActionKey={taskActionKey}
+            t={t}
+          />
+        ))}
+      </div>
     </div>
   );
 }

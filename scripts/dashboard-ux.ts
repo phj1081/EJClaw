@@ -162,6 +162,8 @@ async function main() {
       },
     );
 
+    await runScheduledBoardScenario(browser, baseUrl);
+
     await runScenario(
       'health route redirects to rooms and degraded state is conditional',
       browser,
@@ -194,6 +196,29 @@ async function main() {
     await browser.close();
     await server.close();
   }
+}
+
+async function runScheduledBoardScenario(browser: Browser, baseUrl: string) {
+  await runScenario(
+    'scheduled board surfaces next task without empty lanes',
+    browser,
+    baseUrl,
+    async (page) => {
+      await page.goto(new URL('/#/scheduled', baseUrl).toString(), {
+        waitUntil: 'networkidle',
+      });
+
+      await assertVisible(page.locator('#scheduled .task-command-center'));
+      await assertVisible(page.locator('#scheduled .task-create-form'));
+      await assertVisible(page.getByText('Nightly cleanup').first());
+      await assertVisible(page.getByText('*/15 * * * *').first());
+      assert.equal(await page.locator('#scheduled .task-card').count(), 3);
+      assert.equal(
+        await page.locator('#scheduled .task-group-empty').count(),
+        0,
+      );
+    },
+  );
 }
 
 async function startDashboardServer(): Promise<ViteDevServer> {
@@ -306,7 +331,7 @@ async function handleMockApi(route: Route, state: MockApiState) {
   }
 
   if (method === 'GET' && url.pathname === '/api/tasks') {
-    await fulfillJson(route, []);
+    await fulfillJson(route, mockTasks());
     return;
   }
 
@@ -530,6 +555,52 @@ function mockStatusSnapshot() {
       },
     ],
   };
+}
+
+function mockTask(overrides: Record<string, unknown>) {
+  return {
+    agentType: 'codex',
+    chatJid: 'room@example',
+    ciMetadata: null,
+    ciProvider: null,
+    contextMode: 'group',
+    createdAt: MOCK_TIME,
+    groupFolder: 'ejclaw',
+    id: 'task-fixture',
+    isWatcher: false,
+    lastResult: 'ok',
+    lastRun: MOCK_TIME,
+    nextRun: new Date(Date.now() + 30 * 60_000).toISOString(),
+    promptLength: 28,
+    promptPreview: 'Nightly cleanup',
+    scheduleType: 'cron',
+    scheduleValue: '*/15 * * * *',
+    status: 'active',
+    suspendedUntil: null,
+    ...overrides,
+  };
+}
+
+function mockTasks() {
+  return [
+    mockTask({ id: 'task-nightly-cleanup' }),
+    mockTask({
+      ciProvider: 'github',
+      id: 'task-ci-watch',
+      isWatcher: true,
+      promptPreview: 'Watch PR #133',
+      scheduleType: 'interval',
+      scheduleValue: '5m',
+    }),
+    mockTask({
+      id: 'task-paused-report',
+      nextRun: null,
+      promptPreview: 'Weekly report',
+      scheduleValue: '0 9 * * 1',
+      status: 'paused',
+      suspendedUntil: new Date(Date.now() + 2 * 3_600_000).toISOString(),
+    }),
+  ];
 }
 
 function runtimeSkill(name: string, description: string, skillPath: string) {
