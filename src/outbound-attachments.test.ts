@@ -4,6 +4,7 @@ import path from 'path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { DATA_DIR } from './config.js';
 import { validateOutboundAttachments } from './outbound-attachments.js';
 
 const ONE_PIXEL_PNG = Buffer.from(
@@ -108,6 +109,33 @@ describe('validateOutboundAttachments', () => {
       {
         attachment: fs.realpathSync(imagePath),
         name: 'bar-chart-label-fit-playwright.png',
+      },
+    ]);
+  });
+
+  it('accepts generated artifacts under the EJClaw data artifacts directory', () => {
+    const dir = path.join(DATA_DIR, 'artifacts');
+    fs.mkdirSync(dir, { recursive: true });
+    const imagePath = writeFile(
+      dir,
+      `simsimeee-example-smoke-${Date.now()}.png`,
+      ONE_PIXEL_PNG,
+    );
+    cleanupFiles.push(imagePath);
+
+    const result = validateOutboundAttachments([
+      {
+        path: imagePath,
+        name: 'example-smoke.png',
+        mime: 'image/png',
+      },
+    ]);
+
+    expect(result.rejected).toEqual([]);
+    expect(result.files).toEqual([
+      {
+        attachment: fs.realpathSync(imagePath),
+        name: 'example-smoke.png',
       },
     ]);
   });

@@ -102,14 +102,20 @@ export async function deliverOpenWorkItem(args: {
       }),
       'Attempting to deliver produced work item as a new message',
     );
-    const sendResult = hasAttachments
+    const sendOptions =
+      hasAttachments || args.attachmentBaseDirs?.length
+        ? {
+            ...(args.attachmentBaseDirs?.length
+              ? { attachmentBaseDirs: args.attachmentBaseDirs }
+              : {}),
+            ...(hasAttachments ? { attachments } : {}),
+          }
+        : undefined;
+    const sendResult = sendOptions
       ? await args.channel.sendMessage(
           args.item.chat_jid,
           args.item.result_payload,
-          {
-            attachmentBaseDirs: args.attachmentBaseDirs,
-            attachments,
-          },
+          sendOptions,
         )
       : await args.channel.sendMessage(
           args.item.chat_jid,
