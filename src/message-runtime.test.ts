@@ -1646,12 +1646,11 @@ describe('createMessageRuntime', () => {
     );
   });
 
-  it('includes the latest reviewer summary in merge_ready finalize prompts and truncates it', async () => {
+  it('uses a compact finalize prompt without reinjecting reviewer output', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
     const longReviewerOutput = `검토 요약 ${'a'.repeat(2105)} 끝`;
-    const truncatedReviewerOutput = longReviewerOutput.slice(0, 2000);
 
     vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
@@ -1701,11 +1700,12 @@ describe('createMessageRuntime', () => {
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toBe(
-          `The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.
-If you intend to close this paired turn now, your first line must be TASK_DONE.
-If the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.
-If your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.\n\nReviewer's final assessment:\n${truncatedReviewerOutput}`,
+          'The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.\n' +
+            'If you intend to close this paired turn now, your first line must be TASK_DONE.\n' +
+            'If the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.\n' +
+            'If your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.',
         );
+        expect(input.prompt).not.toContain("Reviewer's final assessment:");
         expect(input.prompt).not.toContain(longReviewerOutput);
         expect(input.prompt).not.toContain('이전 reviewer 요약');
         await onOutput?.({
@@ -1811,8 +1811,9 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, input, _onProcess, onOutput) => {
         expect(input.prompt).toBe(
-          "The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.\nIf you intend to close this paired turn now, your first line must be TASK_DONE.\nIf the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.\nIf your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.\n\nReviewer's final assessment:\n리뷰 승인 요약",
+          'The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.\nIf you intend to close this paired turn now, your first line must be TASK_DONE.\nIf the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.\nIf your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.',
         );
+        expect(input.prompt).not.toContain('리뷰 승인 요약');
         expect(input.prompt).not.toContain('DONE\n승인합니다.');
         await onOutput?.({
           status: 'success',
@@ -1993,7 +1994,7 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     });
   });
 
-  it('includes previous task owner and reviewer finals in a new reviewer prompt when the current task has no outputs', () => {
+  it('includes previous task owner final but omits reviewer final in a new reviewer prompt when the current task has no outputs', () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const currentTask = {
@@ -2070,8 +2071,8 @@ If your first line is DONE_WITH_CONCERNS, the system will reopen review instead 
     );
     expect(pending?.prompt).toContain('Previous task owner final:');
     expect(pending?.prompt).toContain('이전 owner 답변');
-    expect(pending?.prompt).toContain('Previous task reviewer final:');
-    expect(pending?.prompt).toContain('이전 reviewer 피드백');
+    expect(pending?.prompt).not.toContain('Previous task reviewer final:');
+    expect(pending?.prompt).not.toContain('이전 reviewer 피드백');
   });
 
   it('does not build an owner follow-up pending turn from owner STEP_DONE on an active task', () => {

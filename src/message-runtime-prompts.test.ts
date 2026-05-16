@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildFinalizePendingPrompt,
   buildOwnerPendingPrompt,
   buildPairedTurnPrompt,
   buildReviewerPendingPrompt,
@@ -23,12 +24,15 @@ function makeHumanMessage(content: string): NewMessage {
   };
 }
 
-function makeTurnOutput(outputText: string): PairedTurnOutput {
+function makeTurnOutput(
+  outputText: string,
+  role: PairedTurnOutput['role'] = 'owner',
+): PairedTurnOutput {
   return {
     id: 1,
     task_id: 'task-1',
     turn_number: 0,
-    role: 'owner',
+    role,
     output_text: outputText,
     created_at: '2026-04-20T00:59:00.000Z',
   };
@@ -111,7 +115,7 @@ describe('message-runtime-prompts carry-forward guidance', () => {
     ).toBe(false);
   });
 
-  it('includes previous owner and reviewer finals in reviewer pending prompts when the current task has no outputs', () => {
+  it('includes previous owner finals in reviewer pending prompts when the current task has no outputs', () => {
     const prompt = buildReviewerPendingPrompt({
       chatJid: 'group@test',
       timezone: 'UTC',
@@ -129,11 +133,11 @@ describe('message-runtime-prompts carry-forward guidance', () => {
     );
     expect(prompt).toContain('Previous task owner final:');
     expect(prompt).toContain('이전 owner 결론');
-    expect(prompt).toContain('Previous task reviewer final:');
-    expect(prompt).toContain('이전 reviewer 결론');
+    expect(prompt).not.toContain('Previous task reviewer final:');
+    expect(prompt).not.toContain('이전 reviewer 결론');
   });
 
-  it('includes previous owner and reviewer finals in owner pending prompts when the current task has no outputs', () => {
+  it('includes previous owner finals in owner pending prompts when the current task has no outputs', () => {
     const prompt = buildOwnerPendingPrompt({
       chatJid: 'group@test',
       timezone: 'UTC',
@@ -150,7 +154,67 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       'Background from the previous completed paired task:',
     );
     expect(prompt).toContain('Previous task owner final:');
-    expect(prompt).toContain('Previous task reviewer final:');
+    expect(prompt).not.toContain('Previous task reviewer final:');
     expect(prompt).toContain('추가 owner 질문');
+  });
+
+  it('omits previous reviewer finals from prior task context', () => {
+    const prompt = buildReviewerPendingPrompt({
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: [],
+      recentHumanMessages: [makeHumanMessage('새 작업')],
+      lastHumanMessage: '새 작업',
+      priorTaskContext: {
+        ownerFinal: null,
+        reviewerFinal: `TASK_DONE
+검증한 것:
+- CI pass
+
+남은 항목 (변동 없음):
+(관찰) 사용자 직접 functional 검증
+(잠재) 다른 enum 영어 라벨 추가 발견 시
+
+현재 시리즈 상태:
+#129 Settings IA
+#130 Runtime Inventory`,
+      },
+    });
+
+    expect(prompt).not.toContain('Previous task reviewer final:');
+    expect(prompt).not.toContain('검증한 것:');
+    expect(prompt).not.toContain('CI pass');
+    expect(prompt).not.toContain('남은 항목');
+    expect(prompt).not.toContain('(관찰)');
+    expect(prompt).not.toContain('(잠재)');
+    expect(prompt).not.toContain('현재 시리즈 상태');
+    expect(prompt).not.toContain('#129');
+  });
+
+  it('does not reinject reviewer output into finalize prompts', () => {
+    const prompt = buildFinalizePendingPrompt({
+      turnOutputs: [
+        makeTurnOutput(
+          `TASK_DONE
+현재 검증:
+- build pass
+
+다음 단계:
+- unrelated cleanup
+
+누적 배포 대기 상태:
+#131 pending`,
+          'reviewer',
+        ),
+      ],
+    });
+
+    expect(prompt).not.toContain("Reviewer's final assessment:");
+    expect(prompt).not.toContain('현재 검증:');
+    expect(prompt).not.toContain('build pass');
+    expect(prompt).not.toContain('다음 단계');
+    expect(prompt).not.toContain('unrelated cleanup');
+    expect(prompt).not.toContain('누적 배포 대기 상태');
+    expect(prompt).not.toContain('#131');
   });
 });

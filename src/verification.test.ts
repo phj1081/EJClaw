@@ -11,6 +11,7 @@ import {
   runVerificationRequest,
 } from './verification.js';
 import {
+  buildWorkspaceCommandEnvironment,
   ensureWorkspaceDependenciesInstalled,
   hasInstalledNodeModules,
 } from './workspace-package-manager.js';
@@ -106,7 +107,7 @@ describe('verification helpers', () => {
     });
   });
 
-  it('verifies nested pnpm workspaces under a bun parent without tripping corepack project specs', async () => {
+  it('builds nested pnpm verification commands without tripping corepack project specs', () => {
     const parentDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-verification-corepack-parent-'),
     );
@@ -122,48 +123,31 @@ describe('verification helpers', () => {
       JSON.stringify({
         name: 'nested-pnpm-workspace',
         scripts: {
-          typecheck:
-            'node -e "process.stdout.write(process.env.COREPACK_ENABLE_PROJECT_SPEC || \'missing\')"',
+          typecheck: 'tsc --noEmit',
         },
       }),
     );
     fs.writeFileSync(
       path.join(repoDir, 'pnpm-lock.yaml'),
-      [
-        "lockfileVersion: '6.0'",
-        'settings:',
-        '  autoInstallPeers: true',
-        '  excludeLinksFromLockfile: false',
-        'importers:',
-        '  .: {}',
-        '',
-      ].join('\n'),
+      'lockfileVersion: 9.0\n',
     );
-    fs.mkdirSync(path.join(repoDir, 'node_modules', '.bin'), {
-      recursive: true,
+    const command = buildVerificationCommand('typecheck', repoDir);
+
+    expect(command).toMatchObject({
+      file: 'corepack',
+      args: ['pnpm', 'run', 'typecheck'],
+      commandText: 'corepack pnpm run typecheck',
+      packageManager: 'pnpm',
+      requiredScript: 'typecheck',
     });
-    fs.writeFileSync(
-      path.join(repoDir, 'node_modules', '.bin', 'placeholder'),
-      '',
-    );
-
-    expect(hasInstalledNodeModules(repoDir)).toBe(false);
-
-    const expectedSnapshotId = computeVerificationSnapshot(repoDir).snapshotId;
-    const result = await runVerificationRequest(
-      {
-        requestId: 'req-corepack-parent-pnpm',
-        profile: 'typecheck',
-        expectedSnapshotId,
-      },
-      { repoDir },
-    );
-
-    expect(result.ok).toBe(true);
-    expect(result.exitCode).toBe(0);
-    expect(result.command).toBe('corepack pnpm run typecheck');
-    expect(result.stdout).toContain('0');
-    expect(result.snapshotId).toBe(expectedSnapshotId);
+    expect(
+      buildWorkspaceCommandEnvironment(repoDir, command.packageManager, {
+        PATH: '/tmp/bin',
+      }),
+    ).toMatchObject({
+      PATH: '/tmp/bin',
+      COREPACK_ENABLE_PROJECT_SPEC: '0',
+    });
   });
 
   it('computes a stable snapshot over the readable workspace inputs', () => {

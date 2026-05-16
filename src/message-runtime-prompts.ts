@@ -77,11 +77,6 @@ function formatPriorTaskPromptContext(
       `Previous task owner final:\n---\n${truncatePriorTaskFinal(priorTaskContext.ownerFinal)}\n---`,
     );
   }
-  if (priorTaskContext.reviewerFinal?.trim()) {
-    sections.push(
-      `Previous task reviewer final:\n---\n${truncatePriorTaskFinal(priorTaskContext.reviewerFinal)}\n---`,
-    );
-  }
 
   if (sections.length === 0) {
     return '';
@@ -202,18 +197,11 @@ export function buildArbiterPromptForTask(args: {
   });
 }
 
-export function buildFinalizePendingPrompt(args: {
+export function buildFinalizePendingPrompt(_args: {
   turnOutputs: PairedTurnOutput[];
 }): string {
-  const lastReviewerOutput = [...args.turnOutputs]
-    .reverse()
-    .find((output) => output.role === 'reviewer');
-  const reviewerSummary = lastReviewerOutput?.output_text
-    ? `\n\nReviewer's final assessment:\n${lastReviewerOutput.output_text.slice(0, 2000)}`
-    : '';
-
   return `The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.
 If you intend to close this paired turn now, your first line must be TASK_DONE.
 If the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.
-If your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.${reviewerSummary}`;
+If your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.`;
 }
