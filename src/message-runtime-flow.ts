@@ -1,6 +1,5 @@
 import {
   getLastHumanMessageContent,
-  getLatestPreviousPairedTaskForChat,
   getPairedTurnOutputs,
   getRecentChatMessages,
 } from './db.js';
@@ -11,7 +10,6 @@ import {
   buildOwnerPendingPrompt,
   buildPairedTurnPrompt,
   buildReviewerPendingPrompt,
-  type PriorTaskPromptContext,
 } from './message-runtime-prompts.js';
 import {
   requeuePendingPairedTurn,
@@ -35,7 +33,6 @@ import type {
   NewMessage,
   PairedTask,
   PairedRoomRole,
-  PairedTurnOutput,
   PairedTurnReservationIntentKind,
   RegisteredGroup,
 } from './types.js';
@@ -119,11 +116,6 @@ export function buildPendingPairedTurn(args: {
   const cursor = lastRaw?.seq ?? lastRaw?.timestamp ?? null;
   const taskStatus = task.status;
   const turnOutputs = getPairedTurnOutputs(task.id);
-  const priorTaskContext = resolvePriorTaskPromptContext(
-    chatJid,
-    task,
-    turnOutputs,
-  );
   const lastTurnOutput = turnOutputs[turnOutputs.length - 1];
   const nextTurnAction = resolveNextTurnAction({
     taskStatus,
@@ -144,7 +136,6 @@ export function buildPendingPairedTurn(args: {
         turnOutputs,
         recentHumanMessages,
         lastHumanMessage,
-        priorTaskContext,
       }),
       channel: resolveChannel(taskStatus),
       cursor,
@@ -196,7 +187,6 @@ export function buildPendingPairedTurn(args: {
         turnOutputs,
         recentHumanMessages,
         lastHumanMessage,
-        priorTaskContext,
       }),
       channel: resolveChannel(taskStatus),
       cursor,
@@ -208,38 +198,6 @@ export function buildPendingPairedTurn(args: {
   }
 
   return null;
-}
-
-function resolvePriorTaskPromptContext(
-  chatJid: string,
-  task: PairedTask,
-  turnOutputs: PairedTurnOutput[],
-): PriorTaskPromptContext | null {
-  if (turnOutputs.length > 0) {
-    return null;
-  }
-
-  const previousTask = getLatestPreviousPairedTaskForChat(chatJid, task.id);
-  if (!previousTask || previousTask.status !== 'completed') {
-    return null;
-  }
-
-  const previousOutputs = getPairedTurnOutputs(previousTask.id);
-  const ownerFinal = [...previousOutputs]
-    .reverse()
-    .find((output) => output.role === 'owner')?.output_text;
-  const reviewerFinal = [...previousOutputs]
-    .reverse()
-    .find((output) => output.role === 'reviewer')?.output_text;
-
-  if (!ownerFinal && !reviewerFinal) {
-    return null;
-  }
-
-  return {
-    ownerFinal: ownerFinal ?? null,
-    reviewerFinal: reviewerFinal ?? null,
-  };
 }
 
 export async function executePendingPairedTurn(args: {

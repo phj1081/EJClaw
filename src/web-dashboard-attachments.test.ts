@@ -11,22 +11,22 @@ const ONE_PIXEL_PNG = Buffer.from(
   'base64',
 );
 
-const tempFiles: string[] = [];
+const tempDirs: string[] = [];
 
 afterEach(() => {
-  for (const file of tempFiles.splice(0)) {
-    fs.rmSync(file, { force: true });
+  for (const dir of tempDirs.splice(0)) {
+    fs.rmSync(dir, { force: true, recursive: true });
   }
 });
 
 describe('web dashboard attachment previews', () => {
   it('serves validated direct temp image attachments', async () => {
-    const filePath = path.join(
-      os.tmpdir(),
-      `bar-chart-label-fit-playwright-${Date.now()}.png`,
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-dashboard-attachment-'),
     );
+    tempDirs.push(tempDir);
+    const filePath = path.join(tempDir, 'bar-chart-label-fit-playwright.png');
     fs.writeFileSync(filePath, ONE_PIXEL_PNG);
-    tempFiles.push(filePath);
     const handler = createWebDashboardHandler({
       readStatusSnapshots: () => [],
       getTasks: () => [],

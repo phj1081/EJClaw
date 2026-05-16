@@ -1994,7 +1994,7 @@ describe('createMessageRuntime', () => {
     });
   });
 
-  it('includes previous task owner final but omits reviewer final in a new reviewer prompt when the current task has no outputs', () => {
+  it('does not reinject previous task finals in a new reviewer prompt when the current task has no outputs', () => {
     const chatJid = 'group@test';
     const group = makeGroup('claude-code');
     const currentTask = {
@@ -2015,44 +2015,7 @@ describe('createMessageRuntime', () => {
       created_at: '2026-03-30T00:00:10.000Z',
       updated_at: '2026-03-30T00:00:10.000Z',
     } as any;
-    const previousTask = {
-      ...currentTask,
-      id: 'task-previous-reviewer',
-      status: 'completed',
-      completion_reason: 'superseded',
-      created_at: '2026-03-30T00:00:00.000Z',
-      updated_at: '2026-03-30T00:00:09.000Z',
-    } as any;
-
-    vi.mocked(db.getLatestPreviousPairedTaskForChat).mockReturnValue(
-      previousTask,
-    );
-    vi.mocked(db.getPairedTurnOutputs).mockImplementation((taskId: string) => {
-      if (taskId === currentTask.id) {
-        return [];
-      }
-      if (taskId === previousTask.id) {
-        return [
-          {
-            id: 1,
-            task_id: previousTask.id,
-            turn_number: 1,
-            role: 'owner',
-            output_text: 'DONE\n이전 owner 답변',
-            created_at: '2026-03-30T00:00:05.000Z',
-          },
-          {
-            id: 2,
-            task_id: previousTask.id,
-            turn_number: 2,
-            role: 'reviewer',
-            output_text: 'DONE_WITH_CONCERNS\n이전 reviewer 피드백',
-            created_at: '2026-03-30T00:00:06.000Z',
-          },
-        ] as any;
-      }
-      return [];
-    });
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([]);
     vi.mocked(db.getLastHumanMessageContent).mockReturnValue('추가 질문');
 
     const pending = buildPendingPairedTurn({
@@ -2066,11 +2029,13 @@ describe('createMessageRuntime', () => {
     });
 
     expect(pending).not.toBeNull();
-    expect(pending?.prompt).toContain(
+    expect(db.getLatestPreviousPairedTaskForChat).not.toHaveBeenCalled();
+    expect(pending?.prompt).toContain('추가 질문');
+    expect(pending?.prompt).not.toContain(
       'Background from the previous completed paired task:',
     );
-    expect(pending?.prompt).toContain('Previous task owner final:');
-    expect(pending?.prompt).toContain('이전 owner 답변');
+    expect(pending?.prompt).not.toContain('Previous task owner final:');
+    expect(pending?.prompt).not.toContain('이전 owner 답변');
     expect(pending?.prompt).not.toContain('Previous task reviewer final:');
     expect(pending?.prompt).not.toContain('이전 reviewer 피드백');
   });
