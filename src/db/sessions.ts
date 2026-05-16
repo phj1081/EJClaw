@@ -141,8 +141,11 @@ export function deleteAllSessionsForGroupFromDatabase(
   groupFolder: string,
 ): void {
   database
-    .prepare('DELETE FROM sessions WHERE group_folder = ?')
-    .run(groupFolder);
+    .prepare(
+      `DELETE FROM sessions
+       WHERE group_folder IN (?, ?, ?)`,
+    )
+    .run(groupFolder, `${groupFolder}:reviewer`, `${groupFolder}:arbiter`);
 }
 
 export function getAllSessionsForAgentTypeFromDatabase(

@@ -48,10 +48,17 @@ export function createRuntimeState(): RuntimeState {
     groupFolder: string,
     opts?: { allRoles?: boolean },
   ): void => {
-    delete sessions[groupFolder];
     if (opts?.allRoles) {
+      for (const key of [
+        groupFolder,
+        `${groupFolder}:reviewer`,
+        `${groupFolder}:arbiter`,
+      ]) {
+        delete sessions[key];
+      }
       deleteAllSessionsForGroup(groupFolder);
     } else {
+      delete sessions[groupFolder];
       deleteSession(groupFolder);
     }
   };
