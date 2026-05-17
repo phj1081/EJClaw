@@ -62,6 +62,7 @@ export function getDefaultAttachmentBaseDirs(): string[] {
   // resolving symlinks, without allowlisting all of /tmp recursively.
   return unique([
     path.join(DATA_DIR, 'attachments'),
+    path.join(DATA_DIR, 'artifacts'),
     codexHome ? path.join(codexHome, 'generated_images') : null,
     ...getConfiguredAttachmentBaseDirs(),
   ])

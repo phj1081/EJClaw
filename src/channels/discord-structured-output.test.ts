@@ -97,6 +97,7 @@ vi.mock('discord.js', () => {
 });
 
 import { DiscordChannel, type DiscordChannelOpts } from './discord.js';
+import { DATA_DIR } from '../config.js';
 
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
@@ -248,6 +249,40 @@ ${JSON.stringify({
 
     expect(mockChannel.send).toHaveBeenCalledWith({
       content: '스크린샷입니다.',
+      files: [
+        {
+          attachment: fs.realpathSync(filePath),
+          name: path.basename(filePath),
+        },
+      ],
+      flags: 1 << 2,
+    });
+  });
+
+  it('uploads markdown images from the data artifacts directory', async () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    await channel.connect();
+    const artifactsDir = path.join(DATA_DIR, 'artifacts');
+    fs.mkdirSync(artifactsDir, { recursive: true });
+    const filePath = path.join(
+      artifactsDir,
+      `ejclaw-discord-artifact-image-${Date.now()}.png`,
+    );
+    fs.writeFileSync(filePath, ONE_PIXEL_PNG);
+    tempFiles.push(filePath);
+    const mockChannel = {
+      send: vi.fn().mockResolvedValue({ id: 'discord-message-5' }),
+      sendTyping: vi.fn(),
+    };
+    clientRef.current.channels.fetch.mockResolvedValue(mockChannel);
+
+    await channel.sendMessage(
+      'dc:1234567890123456',
+      `캡처 파일입니다.\n![image](${filePath})`,
+    );
+
+    expect(mockChannel.send).toHaveBeenCalledWith({
+      content: '캡처 파일입니다.',
       files: [
         {
           attachment: fs.realpathSync(filePath),
