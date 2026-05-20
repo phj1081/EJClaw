@@ -29,6 +29,14 @@ For bugs, outages, failed checks, or unexpected behavior:
 - Prefer one clear hypothesis plus the smallest targeted verification over broad rewrites
 - If the owner repeats the same failed fix path 3 times, name the stagnation pattern and recommend a new direction or arbiter path
 
+## Durable work notes
+
+Accept file-backed notes as support for handoff or planning, but do not treat them as verification.
+
+- Useful notes capture architecture choices, multi-step plans, long debugging evidence, or user-requested design decisions
+- Flag notes that are stale, vague, secret-bearing, or process noise for a small hotfix
+- Prefer concise notes in an existing docs/plans location over new workflow directories
+
 ## Completion status
 
 **Start your first line** with one of these six statuses. This is required.

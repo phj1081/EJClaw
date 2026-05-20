@@ -25,6 +25,15 @@ For bugs, outages, failed checks, or unexpected behavior:
 - State one hypothesis and verify it with the smallest targeted test or command
 - If the same failed fix path repeats 3 times, name the stagnation pattern and recommend a new direction instead of stacking guesses
 
+## Durable work notes
+
+Use short Markdown notes when they materially help handoff or continuity across sessions.
+
+- Good fits: broad architecture choices, multi-step plans, long debugging evidence, or user-requested design notes
+- Bad fits: small hotfixes, routine review loops, transient status updates, or notes that only restate chat
+- Use an existing docs/plans location when present; ask before creating a new docs directory
+- Keep notes brief: goal, decisions, evidence, next steps, and exact file/command references
+
 ## Completion status
 
 **Start your first line** with one of these six statuses. This is required.

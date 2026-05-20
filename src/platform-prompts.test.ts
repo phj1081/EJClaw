@@ -124,4 +124,29 @@ describe('platform-prompts', () => {
       expect(prompt).not.toContain('The Four Phases');
     }
   });
+
+  it('keeps file-backed note guidance optional and lightweight', () => {
+    const repoRoot = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '..',
+    );
+    const promptsDir = path.join(repoRoot, 'prompts');
+    const ownerPrompt = fs.readFileSync(
+      path.join(promptsDir, 'owner-common-paired-room.md'),
+      'utf-8',
+    );
+    const reviewerPrompt = fs.readFileSync(
+      path.join(promptsDir, 'claude-paired-room.md'),
+      'utf-8',
+    );
+
+    for (const prompt of [ownerPrompt, reviewerPrompt]) {
+      expect(prompt).toContain('## Durable work notes');
+      expect(prompt).toContain('multi-step plans');
+      expect(prompt).toContain('long debugging evidence');
+      expect(prompt).toContain('existing docs/plans location');
+      expect(prompt).not.toContain('docs/superpowers');
+      expect(prompt).not.toContain('Every plan MUST');
+    }
+  });
 });
