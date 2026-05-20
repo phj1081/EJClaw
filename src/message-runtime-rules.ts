@@ -122,6 +122,7 @@ export function resolveQueuedPairedTurnRole(args: {
   hasHumanMessage: boolean;
   lastTurnOutputRole?: PairedRoomRole | null;
   lastTurnOutputVerdict?: VisibleVerdict | null;
+  ownerFailureCount?: number | null;
 }): 'owner' | 'reviewer' | 'arbiter' | null {
   if (args.hasHumanMessage) {
     return resolveQueuedTurnRole({
@@ -134,6 +135,7 @@ export function resolveQueuedPairedTurnRole(args: {
     taskStatus: args.taskStatus,
     lastTurnOutputRole: args.lastTurnOutputRole,
     lastTurnOutputVerdict: args.lastTurnOutputVerdict,
+    ownerFailureCount: args.ownerFailureCount,
   });
 
   switch (nextTurnAction.kind) {
@@ -170,6 +172,7 @@ export function resolveNextTurnAction(args: {
   taskStatus?: PairedTaskStatus | null;
   lastTurnOutputRole?: PairedRoomRole | null;
   lastTurnOutputVerdict?: VisibleVerdict | null;
+  ownerFailureCount?: number | null;
 }): NextTurnAction {
   switch (args.taskStatus) {
     case 'review_ready':
@@ -187,6 +190,9 @@ export function resolveNextTurnAction(args: {
         ? { kind: 'none' }
         : { kind: 'finalize-owner-turn' };
     case 'active':
+      if ((args.ownerFailureCount ?? 0) > 0) {
+        return { kind: 'owner-follow-up' };
+      }
       return args.lastTurnOutputRole === 'reviewer' ||
         args.lastTurnOutputRole === 'arbiter'
         ? { kind: 'owner-follow-up' }
@@ -200,6 +206,7 @@ export function matchesExpectedPairedFollowUpIntent(args: {
   taskStatus?: PairedTaskStatus | null;
   lastTurnOutputRole?: PairedRoomRole | null;
   lastTurnOutputVerdict?: VisibleVerdict | null;
+  ownerFailureCount?: number | null;
   intentKind: ScheduledNextTurnActionKind;
 }): boolean {
   return (
@@ -207,6 +214,7 @@ export function matchesExpectedPairedFollowUpIntent(args: {
       taskStatus: args.taskStatus,
       lastTurnOutputRole: args.lastTurnOutputRole,
       lastTurnOutputVerdict: args.lastTurnOutputVerdict,
+      ownerFailureCount: args.ownerFailureCount,
     }).kind === args.intentKind
   );
 }
@@ -273,6 +281,20 @@ export function resolveFollowUpDispatch(args: {
         ? { kind: 'enqueue', queueKind: 'paired-follow-up' }
         : { kind: 'none' };
   }
+}
+
+export function shouldRetrySilentOwnerExecution(args: {
+  completedRole?: PairedRoomRole;
+  executionStatus?: 'succeeded' | 'failed';
+  sawOutput?: boolean;
+  taskStatus?: PairedTaskStatus | null;
+}): boolean {
+  return (
+    args.completedRole === 'owner' &&
+    args.executionStatus === 'failed' &&
+    args.sawOutput === false &&
+    args.taskStatus === 'active'
+  );
 }
 
 /** Cursor key for a role. Owner uses chatJid, others use chatJid:role. */

@@ -183,6 +183,17 @@ describe('message-agent-executor-rules', () => {
     ).toBe('pending');
   });
 
+  it('resolves pending owner retry after a silent owner failure leaves the task active', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'owner',
+        executionStatus: 'failed',
+        sawOutput: false,
+        taskStatus: 'active',
+      }),
+    ).toBe('pending');
+  });
+
   it('does not request an executor-side follow-up after successful owner output moved the task to review_ready', () => {
     expect(
       resolvePairedFollowUpQueueAction({

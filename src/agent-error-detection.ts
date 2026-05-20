@@ -264,6 +264,8 @@ export function classifyAgentError(
   if (
     lower.includes('503') ||
     lower.includes('overloaded') ||
+    lower.includes('selected model is at capacity') ||
+    lower.includes('model is at capacity') ||
     ((lower.includes('502') || lower.includes('bad gateway')) &&
       (lower.includes('cloudflare') ||
         lower.includes('<html') ||

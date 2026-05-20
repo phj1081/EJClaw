@@ -7,6 +7,7 @@ import {
   matchesExpectedPairedFollowUpIntent,
   resolveFollowUpDispatch,
   resolveNextTurnAction,
+  shouldRetrySilentOwnerExecution,
   type FollowUpDispatch,
   type NextTurnAction,
 } from './message-runtime-rules.js';
@@ -80,11 +81,19 @@ export function resolvePairedFollowUpDecision(args: {
       fallbackLastTurnOutputRole: args.fallbackLastTurnOutputRole,
       fallbackLastTurnOutputVerdict: args.fallbackLastTurnOutputVerdict,
     });
-  const nextTurnAction = resolveNextTurnAction({
+  const silentOwnerRetry = shouldRetrySilentOwnerExecution({
+    completedRole: args.completedRole,
+    executionStatus: args.executionStatus,
+    sawOutput: args.sawOutput,
     taskStatus: args.task?.status ?? null,
-    lastTurnOutputRole,
-    lastTurnOutputVerdict,
   });
+  const nextTurnAction = silentOwnerRetry
+    ? ({ kind: 'owner-follow-up' } as const)
+    : resolveNextTurnAction({
+        taskStatus: args.task?.status ?? null,
+        lastTurnOutputRole,
+        lastTurnOutputVerdict,
+      });
   const dispatch = resolveFollowUpDispatch({
     source: args.source,
     nextTurnAction,
@@ -116,6 +125,7 @@ export function schedulePairedFollowUpIntent(args: {
   fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
   lastTurnOutputRole?: PairedRoomRole | null;
   lastTurnOutputVerdict?: VisibleVerdict | null;
+  allowSilentOwnerRetry?: boolean;
 }): boolean {
   if (!args.task) {
     return false;
@@ -139,7 +149,12 @@ export function schedulePairedFollowUpIntent(args: {
       lastTurnOutputRole: latestOutputContext.role,
       lastTurnOutputVerdict: latestOutputContext.verdict,
       intentKind: args.intentKind,
-    })
+    }) &&
+    !(
+      args.allowSilentOwnerRetry === true &&
+      args.task.status === 'active' &&
+      args.intentKind === 'owner-follow-up'
+    )
   ) {
     return false;
   }
@@ -230,6 +245,12 @@ export function dispatchPairedFollowUpForEvent(args: {
       enqueue: args.enqueue,
       lastTurnOutputRole: decision.lastTurnOutputRole,
       lastTurnOutputVerdict: decision.lastTurnOutputVerdict,
+      allowSilentOwnerRetry: shouldRetrySilentOwnerExecution({
+        completedRole: args.completedRole,
+        executionStatus: args.executionStatus,
+        sawOutput: args.sawOutput,
+        taskStatus: args.task?.status ?? null,
+      }),
     });
 
     return {

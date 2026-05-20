@@ -176,6 +176,34 @@ describe('message-runtime-follow-up', () => {
     expect(enqueueMessageCheck).toHaveBeenCalledTimes(1);
   });
 
+  it('requeues a silent failed owner execution that leaves the task active', () => {
+    const enqueue = vi.fn();
+    const result = dispatchPairedFollowUpForEvent({
+      chatJid: 'group@test',
+      runId: 'run-silent-owner-retry',
+      task: {
+        id: 'task-silent-owner-retry',
+        status: 'active',
+        round_trip_count: 1,
+        updated_at: '2026-03-30T00:00:00.000Z',
+      },
+      source: 'executor-recovery',
+      completedRole: 'owner',
+      executionStatus: 'failed',
+      sawOutput: false,
+      enqueue,
+    });
+
+    expect(result).toMatchObject({
+      kind: 'paired-follow-up',
+      intentKind: 'owner-follow-up',
+      scheduled: true,
+      taskStatus: 'active',
+      lastTurnOutputRole: null,
+    });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the scoped message-check enqueuer when scheduling a paired follow-up intent', () => {
     const enqueueMessageCheck = vi.fn();
     const scheduled = schedulePairedFollowUpWithMessageCheck({

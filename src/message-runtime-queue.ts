@@ -283,6 +283,7 @@ export async function runQueuedGroupTurn(args: {
           hasHumanMessage: false,
           lastTurnOutputRole,
           lastTurnOutputVerdict,
+          ownerFailureCount: currentTask.owner_failure_count,
         })
     : 'owner';
   if (!turnRole) {

@@ -1,6 +1,7 @@
 import {
   resolveFollowUpDispatch,
   resolveNextTurnAction,
+  shouldRetrySilentOwnerExecution,
 } from './message-runtime-rules.js';
 import { parseVisibleVerdict } from './paired-verdict.js';
 import type { PairedRoomRole, PairedTaskStatus } from './types.js';
@@ -23,6 +24,17 @@ export function resolvePairedFollowUpQueueAction(args: {
   taskStatus: PairedTaskStatus | null;
   outputSummary?: string | null;
 }): PairedFollowUpQueueAction {
+  if (
+    shouldRetrySilentOwnerExecution({
+      completedRole: args.completedRole,
+      executionStatus: args.executionStatus,
+      sawOutput: args.sawOutput,
+      taskStatus: args.taskStatus,
+    })
+  ) {
+    return 'pending';
+  }
+
   const nextTurnAction = resolveNextTurnAction({
     taskStatus: args.taskStatus,
     lastTurnOutputRole: args.sawOutput ? args.completedRole : null,

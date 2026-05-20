@@ -124,6 +124,7 @@ export function buildPendingPairedTurn(args: {
       verdict: lastTurnOutput?.verdict ?? null,
       outputText: lastTurnOutput?.output_text ?? null,
     }),
+    ownerFailureCount: task.owner_failure_count,
   });
   const recentMessages = getRecentChatMessages(chatJid, 20);
   const lastHumanMessage = getLastHumanMessageContent(chatJid);

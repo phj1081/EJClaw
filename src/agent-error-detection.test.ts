@@ -55,6 +55,17 @@ describe('agent-error-detection', () => {
     expect(detectClaudeProviderFailureMessage(message)).toBe('overloaded');
   });
 
+  it('classifies Codex model capacity errors as overloaded', () => {
+    expect(
+      classifyAgentError(
+        'Selected model is at capacity. Please try a different model.',
+      ),
+    ).toEqual({
+      category: 'overloaded',
+      reason: 'overloaded',
+    });
+  });
+
   it('marks only Claude quota/auth reasons as Claude rotation reasons', () => {
     expect(shouldRotateClaudeToken('429')).toBe(true);
     expect(shouldRotateClaudeToken('usage-exhausted')).toBe(true);
