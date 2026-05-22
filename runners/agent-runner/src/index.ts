@@ -59,6 +59,7 @@ import {
   createReviewerBashGuardHook,
   createSanitizeBashHook,
 } from './runner-hooks.js';
+import { buildClaudeSdkEnv } from './sdk-env.js';
 
 interface RunnerInput {
   prompt: string;
@@ -642,10 +643,7 @@ async function main(): Promise<void> {
 
   // Build SDK env: merge secrets into process.env for the SDK only.
   // Secrets never touch process.env itself, so Bash subprocesses can't see them.
-  const sdkEnv: Record<string, string | undefined> = { ...process.env };
-  for (const [key, value] of Object.entries(runnerInput.secrets || {})) {
-    sdkEnv[key] = value;
-  }
+  const sdkEnv = buildClaudeSdkEnv(process.env, runnerInput.secrets || {});
   const reviewerRuntime =
     isReviewerRuntimeEnvEnabled(process.env) ||
     isReviewerRuntime(runnerInput.roomRoleContext);
