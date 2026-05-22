@@ -10,7 +10,7 @@
     "start": "bun dist/index.js"
   },
   "dependencies": {
-    "@openai/codex": "0.128.0",
+    "@openai/codex": "0.133.0",
     "ejclaw-runners-shared": "file:../shared"
   },
   "devDependencies": {
