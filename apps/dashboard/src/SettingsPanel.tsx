@@ -20,6 +20,12 @@ import {
   updateFastMode,
   updateModels,
 } from './api';
+import {
+  formatDateTime,
+  formatJwtCacheExpiry,
+  formatLiveStatusBadge,
+  formatUsageBadge,
+} from './codexAccountBadges';
 import { type Locale, type Messages } from './i18n';
 import { MoaSettingsPanel } from './MoaSettingsPanel';
 import { RuntimeInventorySettings } from './RuntimeInventorySettings';
@@ -407,38 +413,6 @@ function CodexFeatureSettings({ t }: { t: Messages }) {
   );
 }
 
-function formatExpiry(
-  iso: string | null,
-  t: Messages,
-): { label: string; cls: string } | null {
-  if (!iso) return null;
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return null;
-  const days = (dt.getTime() - Date.now()) / 86400000;
-  const dateStr = dt.toLocaleDateString('ko-KR', {
-    year: '2-digit',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  const dayCount = String(Math.floor(Math.abs(days)));
-  if (days < 0) {
-    return {
-      label: t.settings.accounts.paymentExpired
-        .replace('{date}', dateStr)
-        .replace('{days}', dayCount),
-      cls: 'is-expired',
-    };
-  }
-  const template =
-    days < 7
-      ? t.settings.accounts.paymentUntilDays
-      : t.settings.accounts.paymentUntil;
-  return {
-    label: template.replace('{date}', dateStr).replace('{days}', dayCount),
-    cls: days < 7 ? 'is-soon' : 'is-active',
-  };
-}
-
 function AccountSettings({ t }: { t: Messages }) {
   const [data, setData] = useState<AccountData | null>(null);
   const [busy, setBusy] = useState(false);
@@ -758,7 +732,14 @@ function CodexAccountRow({
   perRowBusy: string | null;
   t: Messages;
 }) {
-  const expiry = formatExpiry(acc.subscriptionUntil, t);
+  const liveBadge = formatLiveStatusBadge(acc.liveStatus);
+  const usageBadge = formatUsageBadge(acc.liveStatus);
+  const cachedExpiry = acc.liveStatus
+    ? null
+    : formatJwtCacheExpiry(acc.subscriptionUntil);
+  const checkedAt = acc.subscriptionLastChecked
+    ? formatDateTime(acc.subscriptionLastChecked)
+    : null;
   const refreshing = perRowBusy === `refresh:${acc.index}`;
   const switching = perRowBusy === `switch:${acc.index}`;
 
@@ -774,9 +755,39 @@ function CodexAccountRow({
             <span className="settings-account-plan">
               {acc.planType ?? 'unknown'}
             </span>
-            {expiry ? (
-              <span className={`settings-account-badge ${expiry.cls}`}>
-                {expiry.label}
+            {liveBadge ? (
+              <span
+                className={`settings-account-badge ${liveBadge.cls}`}
+                title={liveBadge.title}
+              >
+                {liveBadge.label}
+              </span>
+            ) : cachedExpiry ? (
+              <span
+                className={`settings-account-badge ${cachedExpiry.cls}`}
+                title={cachedExpiry.title}
+              >
+                {cachedExpiry.label}
+              </span>
+            ) : null}
+            {usageBadge ? (
+              <span
+                className="settings-account-badge is-muted"
+                title={usageBadge.title}
+              >
+                {usageBadge.label}
+              </span>
+            ) : null}
+            {checkedAt ? (
+              <span
+                className="settings-account-badge is-muted"
+                title={
+                  acc.liveStatus
+                    ? 'wham/usage live checked_at'
+                    : 'JWT subscription_last_checked cache'
+                }
+              >
+                {t.settings.common.refresh} {checkedAt}
               </span>
             ) : null}
           </span>

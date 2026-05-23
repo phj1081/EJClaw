@@ -7,7 +7,8 @@ export type CodexConfigFeature = 'fast_mode' | 'goals';
 export function codexConfigPath(): string {
   const override = process.env.EJCLAW_CODEX_CONFIG_PATH?.trim();
   if (override) return override;
-  return path.join(os.homedir(), '.codex', 'config.toml');
+  const home = process.env.EJCLAW_SETTINGS_HOME || os.homedir();
+  return path.join(home, '.codex', 'config.toml');
 }
 
 export function readCodexFeatureFromContent(

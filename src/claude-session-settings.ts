@@ -8,10 +8,14 @@ const DEFAULT_CLAUDE_SESSION_ENV = {
   CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
 } as const;
 
+function settingsHomeDir(): string {
+  return process.env.EJCLAW_SETTINGS_HOME || os.homedir();
+}
+
 export function claudeHostSettingsPath(): string {
   const override = process.env.EJCLAW_CLAUDE_SETTINGS_PATH?.trim();
   if (override) return override;
-  return path.join(os.homedir(), '.claude', 'settings.json');
+  return path.join(settingsHomeDir(), '.claude', 'settings.json');
 }
 
 export function readHostClaudeFastMode(): boolean {

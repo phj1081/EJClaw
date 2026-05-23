@@ -362,6 +362,48 @@ export interface ClaudeAccountSummary {
   exists: boolean;
 }
 
+export interface CodexRateLimitWindowSummary {
+  limitWindowSeconds: number | null;
+  resetAfterSeconds: number | null;
+  resetAt: string | null;
+  usedPercent: number | null;
+}
+
+export interface CodexRateLimitSummary {
+  allowed: boolean | null;
+  limitReached: boolean | null;
+  primaryWindow: CodexRateLimitWindowSummary | null;
+  secondaryWindow: CodexRateLimitWindowSummary | null;
+}
+
+export interface CodexAdditionalRateLimitSummary {
+  limitName: string | null;
+  meteredFeature: string | null;
+  rateLimit: CodexRateLimitSummary | null;
+}
+
+export interface CodexCreditsSummary {
+  hasCredits: boolean | null;
+  overageLimitReached: boolean | null;
+  unlimited: boolean | null;
+}
+
+export interface CodexSpendControlSummary {
+  reached: boolean | null;
+}
+
+export interface CodexLiveStatusSummary {
+  checkedAt: string;
+  source: 'wham/usage';
+  planType: string | null;
+  email: string | null;
+  rateLimit: CodexRateLimitSummary | null;
+  rateLimitReachedType: string | null;
+  additionalRateLimits: CodexAdditionalRateLimitSummary[];
+  credits: CodexCreditsSummary | null;
+  spendControl: CodexSpendControlSummary | null;
+}
+
 export interface CodexAccountSummary {
   index: number;
   accountId: string | null;
@@ -369,6 +411,8 @@ export interface CodexAccountSummary {
   planType: string | null;
   subscriptionUntil: string | null;
   subscriptionLastChecked: string | null;
+  subscriptionSource: 'jwt-cache' | null;
+  liveStatus: CodexLiveStatusSummary | null;
   exists: boolean;
 }
 
