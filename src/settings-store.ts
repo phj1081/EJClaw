@@ -20,6 +20,21 @@ import {
   getActiveCodexAuthPath,
   setCurrentCodexAccountIndex as setRotationIndex,
 } from './codex-token-rotation.js';
+import {
+  normalizeCodexLiveStatus,
+  toCodexLiveStatusSummary,
+  type CodexLiveStatus,
+  type CodexLiveStatusSummary,
+} from './codex-live-status.js';
+
+export type {
+  CodexAdditionalRateLimitSummary,
+  CodexCreditsSummary,
+  CodexLiveStatusSummary,
+  CodexRateLimitSummary,
+  CodexRateLimitWindowSummary,
+  CodexSpendControlSummary,
+} from './codex-live-status.js';
 
 export interface ClaudeAccountSummary {
   index: number;
@@ -37,6 +52,8 @@ export interface CodexAccountSummary {
   planType: string | null;
   subscriptionUntil: string | null;
   subscriptionLastChecked: string | null;
+  subscriptionSource: 'jwt-cache' | null;
+  liveStatus: CodexLiveStatusSummary | null;
   exists: boolean;
 }
 
@@ -75,12 +92,16 @@ function readJson<T>(file: string): T | null {
   }
 }
 
+function settingsHomeDir(): string {
+  return process.env.EJCLAW_SETTINGS_HOME || os.homedir();
+}
+
 function claudeCredsPath(index: number): string {
   if (index === 0) {
-    return path.join(os.homedir(), '.claude', '.credentials.json');
+    return path.join(settingsHomeDir(), '.claude', '.credentials.json');
   }
   return path.join(
-    os.homedir(),
+    settingsHomeDir(),
     '.claude-accounts',
     String(index),
     '.credentials.json',
@@ -89,9 +110,14 @@ function claudeCredsPath(index: number): string {
 
 function codexAuthPath(index: number): string {
   if (index === 0) {
-    return path.join(os.homedir(), '.codex', 'auth.json');
+    return path.join(settingsHomeDir(), '.codex', 'auth.json');
   }
-  return path.join(os.homedir(), '.codex-accounts', String(index), 'auth.json');
+  return path.join(
+    settingsHomeDir(),
+    '.codex-accounts',
+    String(index),
+    'auth.json',
+  );
 }
 
 function readClaudeAccount(index: number): ClaudeAccountSummary | null {
@@ -126,6 +152,8 @@ function readCodexAccount(index: number): CodexAccountSummary | null {
   let planType: string | null = null;
   let subscriptionUntil: string | null = null;
   let subscriptionLastChecked: string | null = null;
+  let subscriptionSource: 'jwt-cache' | null = null;
+  let liveStatus: CodexLiveStatusSummary | null = null;
   const idToken = data?.tokens?.id_token;
   if (idToken && typeof idToken === 'string') {
     const parts = idToken.split('.');
@@ -145,6 +173,7 @@ function readCodexAccount(index: number): CodexAccountSummary | null {
           }
           if (typeof auth.chatgpt_subscription_active_until === 'string') {
             subscriptionUntil = auth.chatgpt_subscription_active_until;
+            subscriptionSource = 'jwt-cache';
           }
           if (typeof auth.chatgpt_subscription_last_checked === 'string') {
             subscriptionLastChecked = auth.chatgpt_subscription_last_checked;
@@ -156,10 +185,15 @@ function readCodexAccount(index: number): CodexAccountSummary | null {
     }
   }
   // Live wham/usage data, written by refreshCodexAccount, takes precedence.
+  // When live status exists, do not surface the stale JWT active_until claim as
+  // a real billing expiry. OpenAI/Auth0 can cache that claim for days.
   if (live) {
+    liveStatus = toCodexLiveStatusSummary(live);
     if (typeof live.plan_type === 'string') planType = live.plan_type;
     if (typeof live.email === 'string') email = live.email;
     subscriptionLastChecked = live.checked_at;
+    subscriptionUntil = null;
+    subscriptionSource = null;
   }
   return {
     index,
@@ -168,6 +202,8 @@ function readCodexAccount(index: number): CodexAccountSummary | null {
     planType,
     subscriptionUntil,
     subscriptionLastChecked,
+    subscriptionSource,
+    liveStatus,
     exists: true,
   };
 }
@@ -176,7 +212,7 @@ export function listClaudeAccounts(): ClaudeAccountSummary[] {
   const out: ClaudeAccountSummary[] = [];
   const def = readClaudeAccount(0);
   if (def) out.push(def);
-  const dir = path.join(os.homedir(), '.claude-accounts');
+  const dir = path.join(settingsHomeDir(), '.claude-accounts');
   if (fs.existsSync(dir)) {
     const entries = fs.readdirSync(dir);
     const indices = entries
@@ -196,7 +232,7 @@ export function listCodexAccounts(): CodexAccountSummary[] {
   const out: CodexAccountSummary[] = [];
   const def = readCodexAccount(0);
   if (def) out.push(def);
-  const dir = path.join(os.homedir(), '.codex-accounts');
+  const dir = path.join(settingsHomeDir(), '.codex-accounts');
   if (fs.existsSync(dir)) {
     const entries = fs.readdirSync(dir);
     const indices = entries
@@ -309,18 +345,12 @@ interface CodexAuthFile {
   last_refresh?: string;
 }
 
-interface CodexLiveStatus {
-  checked_at: string;
-  plan_type?: string | null;
-  email?: string | null;
-}
-
 function planStatusPath(index: number): string {
   if (index === 0) {
-    return path.join(os.homedir(), '.codex', 'plan-status.json');
+    return path.join(settingsHomeDir(), '.codex', 'plan-status.json');
   }
   return path.join(
-    os.homedir(),
+    settingsHomeDir(),
     '.codex-accounts',
     String(index),
     'plan-status.json',
@@ -341,24 +371,17 @@ function writeCodexLiveStatus(index: number, status: CodexLiveStatus): void {
   fs.renameSync(tempPath, file);
 }
 
-async function fetchCodexLivePlanType(
+async function fetchCodexLiveUsage(
   accessToken: string,
-): Promise<{ plan_type?: string; email?: string } | null> {
+): Promise<CodexLiveStatus | null> {
   try {
     const res = await fetch(CODEX_USAGE_URL, {
       method: 'GET',
       headers: { authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) return null;
-    const json = (await res.json()) as {
-      plan_type?: unknown;
-      email?: unknown;
-    };
-    return {
-      plan_type:
-        typeof json.plan_type === 'string' ? json.plan_type : undefined,
-      email: typeof json.email === 'string' ? json.email : undefined,
-    };
+    const json = (await res.json()) as unknown;
+    return normalizeCodexLiveStatus(json, new Date().toISOString());
   } catch {
     return null;
   }
@@ -426,21 +449,17 @@ export async function refreshCodexAccount(
   };
   writeCodexAuthFile(file, updated);
 
-  // Hit chatgpt.com/backend-api/wham/usage to read the live plan_type
-  // (the JWT id_token's chatgpt_plan_type / *_active_until / *_last_checked
-  // claims are cached on OpenAI's auth0 side and don't refresh on every
-  // OAuth refresh_token grant). Persist the live values to a sidecar
-  // plan-status.json so readCodexAccount can prefer them.
+  // Hit chatgpt.com/backend-api/wham/usage to read the live plan, rate limit,
+  // and spend-control state. The JWT id_token's chatgpt_plan_type /
+  // *_active_until / *_last_checked claims are cached on OpenAI's Auth0 side and
+  // don't refresh on every OAuth refresh_token grant, so the dashboard must not
+  // present that cached expiry as live billing truth.
   const accessToken =
     payload.access_token ?? data?.tokens?.access_token ?? null;
   if (accessToken) {
-    const live = await fetchCodexLivePlanType(accessToken);
+    const live = await fetchCodexLiveUsage(accessToken);
     if (live) {
-      writeCodexLiveStatus(index, {
-        checked_at: new Date().toISOString(),
-        plan_type: live.plan_type ?? null,
-        email: live.email ?? null,
-      });
+      writeCodexLiveStatus(index, live);
     }
   }
 
@@ -465,7 +484,7 @@ export function getActiveCodexSettingsIndex(): number | null {
   if (codexAuthPath(0) === activePath && fs.existsSync(activePath)) {
     return 0;
   }
-  const dir = path.join(os.homedir(), '.codex-accounts');
+  const dir = path.join(settingsHomeDir(), '.codex-accounts');
   if (fs.existsSync(dir)) {
     const indices = fs
       .readdirSync(dir)
@@ -546,11 +565,11 @@ export function stopCodexAccountRefreshLoop(): void {
 }
 
 function codexConfigPath(): string {
-  return path.join(os.homedir(), '.codex', 'config.toml');
+  return path.join(settingsHomeDir(), '.codex', 'config.toml');
 }
 
 function claudeSettingsPath(): string {
-  return path.join(os.homedir(), '.claude', 'settings.json');
+  return path.join(settingsHomeDir(), '.claude', 'settings.json');
 }
 
 function readCodexFastMode(): boolean {
@@ -677,8 +696,8 @@ export function removeAccountDirectory(
   }
   const baseDir =
     provider === 'claude'
-      ? path.join(os.homedir(), '.claude-accounts', String(index))
-      : path.join(os.homedir(), '.codex-accounts', String(index));
+      ? path.join(settingsHomeDir(), '.claude-accounts', String(index))
+      : path.join(settingsHomeDir(), '.codex-accounts', String(index));
   if (!fs.existsSync(baseDir)) {
     throw new Error(`account directory not found: ${baseDir}`);
   }
@@ -707,7 +726,7 @@ export function addClaudeAccountFromToken(token: string): {
   const exp = typeof payload.exp === 'number' ? payload.exp * 1000 : 0;
   const accountId = typeof payload.sub === 'string' ? payload.sub : null;
 
-  const baseDir = path.join(os.homedir(), '.claude-accounts');
+  const baseDir = path.join(settingsHomeDir(), '.claude-accounts');
   if (!fs.existsSync(baseDir)) {
     fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 });
   }

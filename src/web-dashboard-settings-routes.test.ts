@@ -208,6 +208,28 @@ function makeCodexAccount(): CodexAccountSummary {
     planType: 'pro',
     subscriptionUntil: null,
     subscriptionLastChecked: '2026-04-28T08:00:00.000Z',
+    subscriptionSource: null,
+    liveStatus: {
+      checkedAt: '2026-04-28T08:00:00.000Z',
+      source: 'wham/usage',
+      planType: 'pro',
+      email: 'codex@example.com',
+      rateLimit: {
+        allowed: true,
+        limitReached: false,
+        primaryWindow: {
+          limitWindowSeconds: 18000,
+          resetAfterSeconds: 1200,
+          resetAt: '2026-04-28T08:20:00.000Z',
+          usedPercent: 12,
+        },
+        secondaryWindow: null,
+      },
+      rateLimitReachedType: null,
+      additionalRateLimits: [],
+      credits: null,
+      spendControl: null,
+    },
     exists: true,
   };
 }

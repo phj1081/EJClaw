@@ -20,6 +20,12 @@ import {
   updateFastMode,
   updateModels,
 } from './api';
+import {
+  formatDateTime,
+  formatJwtCacheExpiry,
+  formatLiveStatusBadge,
+  formatUsageBadge,
+} from './codexAccountBadges';
 import { type Locale, type Messages } from './i18n';
 import { MoaSettingsPanel } from './MoaSettingsPanel';
 import { RuntimeInventorySettings } from './RuntimeInventorySettings';
@@ -410,37 +416,6 @@ function CodexFeatureSettings() {
   );
 }
 
-function formatExpiry(
-  iso: string | null,
-): { label: string; cls: string } | null {
-  if (!iso) return null;
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) return null;
-  const days = (dt.getTime() - Date.now()) / 86400000;
-  const dateStr = dt.toLocaleDateString('ko-KR', {
-    year: '2-digit',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  if (days < 0) {
-    const ago = Math.ceil(-days);
-    return {
-      label: `결제 만료 ${dateStr} (${ago}일 전)`,
-      cls: 'is-expired',
-    };
-  }
-  if (days < 7) {
-    return {
-      label: `결제 ${dateStr}까지 (${Math.floor(days)}일)`,
-      cls: 'is-soon',
-    };
-  }
-  return {
-    label: `결제 ${dateStr}까지 (${Math.floor(days)}일)`,
-    cls: 'is-active',
-  };
-}
-
 function AccountSettings() {
   const [data, setData] = useState<AccountData | null>(null);
   const [busy, setBusy] = useState(false);
@@ -702,8 +677,9 @@ function CodexAccounts({
         </ul>
       )}
       <p className="settings-hint">
-        OAuth 토큰은 6시간마다 자동 갱신됩니다. plan 변경/해지가 즉시 반영되게
-        하려면 수동으로 “전체 갱신”을 누르세요.
+        “갱신”은 chatgpt.com wham/usage live plan·rate limit·지출 제한을
+        저장합니다. JWT 만료일 캐시는 live 값이 없을 때만 fallback으로
+        표시합니다.
       </p>
     </div>
   );
@@ -726,7 +702,14 @@ function CodexAccountRow({
   onSwitch: (index: number) => void;
   perRowBusy: string | null;
 }) {
-  const expiry = formatExpiry(acc.subscriptionUntil);
+  const liveBadge = formatLiveStatusBadge(acc.liveStatus);
+  const usageBadge = formatUsageBadge(acc.liveStatus);
+  const cachedExpiry = acc.liveStatus
+    ? null
+    : formatJwtCacheExpiry(acc.subscriptionUntil);
+  const checkedAt = acc.subscriptionLastChecked
+    ? formatDateTime(acc.subscriptionLastChecked)
+    : null;
   const refreshing = perRowBusy === `refresh:${acc.index}`;
   const switching = perRowBusy === `switch:${acc.index}`;
 
@@ -746,16 +729,39 @@ function CodexAccountRow({
         <span className="settings-account-plan">
           {acc.planType ?? 'unknown'}
         </span>
-        {expiry ? (
+        {liveBadge ? (
           <span
-            className={`settings-account-badge ${expiry.cls}`}
+            className={`settings-account-badge ${liveBadge.cls}`}
+            title={liveBadge.title}
+          >
+            {liveBadge.label}
+          </span>
+        ) : cachedExpiry ? (
+          <span
+            className={`settings-account-badge ${cachedExpiry.cls}`}
+            title={cachedExpiry.title}
+          >
+            {cachedExpiry.label}
+          </span>
+        ) : null}
+        {usageBadge ? (
+          <span
+            className="settings-account-badge is-muted"
+            title={usageBadge.title}
+          >
+            {usageBadge.label}
+          </span>
+        ) : null}
+        {checkedAt ? (
+          <span
+            className="settings-account-badge is-muted"
             title={
-              acc.subscriptionLastChecked
-                ? `last checked: ${acc.subscriptionLastChecked.slice(0, 10)}`
-                : undefined
+              acc.liveStatus
+                ? 'wham/usage live checked_at'
+                : 'JWT subscription_last_checked cache'
             }
           >
-            {expiry.label}
+            갱신 {checkedAt}
           </span>
         ) : null}
       </div>
@@ -764,7 +770,7 @@ function CodexAccountRow({
           className="settings-secondary"
           disabled={busy || perRowBusy !== null}
           onClick={() => onRefresh(acc.index)}
-          title="OAuth 토큰을 다시 받아 구독 상태를 갱신합니다"
+          title="OAuth 토큰을 다시 받고 wham/usage live plan·limit 상태를 갱신합니다"
           type="button"
         >
           {refreshing ? '갱신중…' : '갱신'}

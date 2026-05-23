@@ -1127,6 +1127,16 @@ button:disabled {
   color: var(--status-critical, #e0644b);
 }
 
+.settings-account-badge.is-muted {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted-soft);
+}
+
+.settings-account-badge.is-stale {
+  background: rgba(148, 169, 210, 0.14);
+  color: var(--muted-soft);
+}
+
 .settings-account-meta {
   font-size: 12px;
   color: var(--bg-ink);
