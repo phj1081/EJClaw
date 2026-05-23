@@ -46,11 +46,6 @@ interface DashboardState {
 
 type FreshnessLevel = DashboardFreshness;
 
-type BeforeInstallPromptEvent = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
-};
-
 const REFRESH_INTERVAL_MS = 15_000;
 const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale.v2';
 const DEFAULT_VIEW: DashboardView = 'rooms';
@@ -156,16 +151,6 @@ function freshnessLabel(level: FreshnessLevel, t: Messages): string {
   if (level === 'offline') return t.pwa.offline;
   if (level === 'stale') return t.pwa.stale;
   return t.pwa.fresh;
-}
-
-function isStandaloneDisplay(): boolean {
-  if (typeof window === 'undefined') return false;
-  const standaloneNavigator = navigator as Navigator & { standalone?: boolean };
-  return (
-    standaloneNavigator.standalone === true ||
-    (typeof window.matchMedia === 'function' &&
-      window.matchMedia('(display-mode: standalone)').matches)
-  );
 }
 
 function canUsePwaCore(): boolean {
@@ -280,10 +265,6 @@ function App() {
   const [online, setOnline] = useState(() =>
     typeof navigator === 'undefined' ? true : navigator.onLine,
   );
-  const [offlineReady, setOfflineReady] = useState(false);
-  const [installPrompt, setInstallPrompt] =
-    useState<BeforeInstallPromptEvent | null>(null);
-  const [installed, setInstalled] = useState(isStandaloneDisplay);
   const [taskActionKey, setTaskActionKey] = useState<TaskActionKey | null>(
     null,
   );
@@ -311,8 +292,6 @@ function App() {
     persistNickname(trimmed);
   }
   const t = messages[locale];
-  const secureContext =
-    typeof window === 'undefined' ? true : window.isSecureContext;
 
   function setDashboardLocale(nextLocale: Locale) {
     setLocale(nextLocale);
@@ -459,14 +438,6 @@ function App() {
     }
   }
 
-  async function handleInstallApp() {
-    if (!installPrompt) return;
-    await installPrompt.prompt();
-    await installPrompt.userChoice;
-    setInstallPrompt(null);
-    setInstalled(isStandaloneDisplay());
-  }
-
   useEffect(() => {
     document.documentElement.lang = localeTags[locale];
   }, [locale]);
@@ -530,58 +501,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!import.meta.env.PROD || !canUsePwaCore()) {
-      setOfflineReady(false);
-      return;
-    }
+    if (!import.meta.env.PROD || !canUsePwaCore()) return;
 
-    let cancelled = false;
-    void navigator.serviceWorker
-      .register('/sw.js')
-      .then((registration) => {
-        if (!cancelled) {
-          setOfflineReady(
-            Boolean(
-              registration.active ||
-              registration.waiting ||
-              registration.installing,
-            ),
-          );
-        }
-        return navigator.serviceWorker.ready;
-      })
-      .then(() => {
-        if (!cancelled) setOfflineReady(true);
-      })
-      .catch(() => {
-        if (!cancelled) setOfflineReady(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    function handleBeforeInstallPrompt(event: Event) {
-      event.preventDefault();
-      setInstallPrompt(event as BeforeInstallPromptEvent);
-    }
-
-    function handleInstalled() {
-      setInstalled(true);
-      setInstallPrompt(null);
-    }
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleInstalled);
-    return () => {
-      window.removeEventListener(
-        'beforeinstallprompt',
-        handleBeforeInstallPrompt,
-      );
-      window.removeEventListener('appinstalled', handleInstalled);
-    };
+    void navigator.serviceWorker.register('/sw.js').catch(() => {
+      /* ignore registration failures */
+    });
   }, []);
 
   useEffect(() => {
@@ -640,42 +564,27 @@ function App() {
 
   const roomOptions = data ? buildRoomOptions(data.snapshots) : [];
   const freshness = dashboardFreshness(online, data?.overview.generatedAt);
-  const canInstall = Boolean(secureContext && installPrompt && !installed);
 
   return (
     <div className="shell">
       <SideRail
         activeView={activeView}
-        canInstall={canInstall}
         data={data}
-        installed={installed}
-        offlineReady={offlineReady}
-        online={online}
-        onInstall={() => void handleInstallApp()}
         onNavigate={navigateToView}
-        onRefresh={() => void refresh(true)}
-        refreshing={refreshing}
-        secureContext={secureContext}
         t={t}
       />
       <main className="dashboard-content">
         <SectionNav
           activeView={activeView}
-          canInstall={canInstall}
           data={data}
           drawerOpen={drawerOpen}
           freshness={freshness}
           freshnessText={freshnessLabel(freshness, t)}
-          installed={installed}
           onCloseDrawer={() => setDrawerOpen(false)}
-          onInstall={() => void handleInstallApp()}
           onNavigate={navigateToView}
           onOpenDrawer={() => setDrawerOpen(true)}
-          offlineReady={offlineReady}
           onRefresh={() => void refresh(true)}
-          online={online}
           refreshing={refreshing}
-          secureContext={secureContext}
           t={t}
         />
 
@@ -729,7 +638,6 @@ function App() {
               <section className="panel view-panel" id="scheduled">
                 <div className="panel-title">
                   <h2>{t.panels.scheduled}</h2>
-                  <span>{t.panels.promptPreviews}</span>
                 </div>
                 <TaskPanel
                   locale={locale}

@@ -30,18 +30,18 @@ REVIEWER_AGENT_TYPE=claude-code
 # ARBITER_AGENT_TYPE=claude-code
 
 # provider 기본 모델
-CLAUDE_MODEL=claude-opus-4-6
+CLAUDE_MODEL=claude-opus-4-7
 CLAUDE_EFFORT=high
 CLAUDE_THINKING=adaptive
-CODEX_MODEL=gpt-5.4
+CODEX_MODEL=gpt-5.5
 CODEX_EFFORT=xhigh
 
 # 역할별 override
-OWNER_MODEL=gpt-5.4
+OWNER_MODEL=gpt-5.5
 OWNER_EFFORT=xhigh
 OWNER_FALLBACK_ENABLED=true
 
-REVIEWER_MODEL=claude-opus-4-6
+REVIEWER_MODEL=claude-opus-4-7
 REVIEWER_EFFORT=high
 REVIEWER_FALLBACK_ENABLED=true
 

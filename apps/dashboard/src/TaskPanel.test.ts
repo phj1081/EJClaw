@@ -46,13 +46,14 @@ describe('TaskPanel', () => {
 
     expect(html).toContain(t.tasks.groups.scheduled);
     expect(html).toContain('eyejokerdb-main');
-    expect(html).toContain(t.panels.scheduled);
     expect(html).toContain(t.tasks.next);
     expect(html).toContain('10m');
     expect(html).toContain(t.tasks.actions.pause);
     expect(html).toContain(t.tasks.actions.cancel);
     expect(html).toContain('Task completed');
     expect(html).toContain('Run production check');
+    expect(html).toContain('task-row');
+    expect(html).toContain('task-filter-tabs');
     expect(html).not.toContain('internal');
   });
 

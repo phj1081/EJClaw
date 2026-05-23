@@ -149,7 +149,9 @@ async function handleModelSettingsRoute(
   try {
     return jsonResponse(deps.updateModelConfig(body));
   } catch (err) {
-    return jsonResponse({ error: errorMessage(err) }, { status: 500 });
+    const message = errorMessage(err);
+    const status = message.includes('not supported') ? 400 : 500;
+    return jsonResponse({ error: message }, { status });
   }
 }
 

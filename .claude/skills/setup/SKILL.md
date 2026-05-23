@@ -56,7 +56,7 @@ Codex 관련 선택 설정은 **별도 서비스 파일이 아니라 같은 `.en
 
 ```bash
 # 같은 .env 또는 서비스 Environment=에 추가 가능
-CODEX_MODEL=gpt-5.4
+CODEX_MODEL=gpt-5.5
 CODEX_EFFORT=xhigh
 OPENAI_API_KEY=...
 ```

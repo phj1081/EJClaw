@@ -346,12 +346,25 @@ async function main(): Promise<void> {
       );
       continue;
     }
-    channels.push(channel);
-    await channel.connect();
+    try {
+      await channel.connect();
+      channels.push(channel);
+    } catch (err) {
+      logger.error(
+        { channel: channelName, err },
+        'Channel connect failed — skipping',
+      );
+    }
   }
   if (channels.length === 0) {
-    logger.fatal('No channels connected');
-    process.exit(1);
+    if (WEB_DASHBOARD.enabled) {
+      logger.warn(
+        'No channels connected; continuing in web-dashboard-only mode',
+      );
+    } else {
+      logger.fatal('No channels connected');
+      process.exit(1);
+    }
   }
 
   // Start subsystems (independently of connection handler)

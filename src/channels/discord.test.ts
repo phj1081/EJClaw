@@ -53,6 +53,7 @@ vi.mock('../service-routing.js', () => ({
 type Handler = (...args: any[]) => any;
 
 const clientRef = vi.hoisted(() => ({ current: null as any }));
+const loginShouldRejectRef = vi.hoisted(() => ({ value: false }));
 
 vi.mock('discord.js', () => {
   const Events = {
@@ -89,6 +90,9 @@ vi.mock('discord.js', () => {
     }
 
     async login(_token: string) {
+      if (loginShouldRejectRef.value) {
+        throw new Error('An invalid token was provided.');
+      }
       this._ready = true;
       // Fire the ready event
       const readyHandlers = this.eventHandlers.get('ready') || [];
@@ -233,6 +237,7 @@ describe('DiscordChannel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hasReviewerLeaseMock.mockReturnValue(false);
+    loginShouldRejectRef.value = false;
   });
 
   afterEach(() => {
@@ -261,6 +266,17 @@ describe('DiscordChannel', () => {
       await channel.connect();
 
       expect(channel.isConnected()).toBe(true);
+    });
+
+    it('rejects connect() when login fails', async () => {
+      loginShouldRejectRef.value = true;
+      const opts = createTestOpts();
+      const channel = new DiscordChannel('bad-token', opts);
+
+      await expect(channel.connect()).rejects.toThrow(
+        'An invalid token was provided.',
+      );
+      expect(channel.isConnected()).toBe(false);
     });
 
     it('registers message handlers on connect', async () => {

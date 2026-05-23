@@ -47,11 +47,13 @@ describe('SettingsPanel', () => {
     expect(html).not.toContain('href="#settings-codex"');
     expect(html).toContain('settings-apply-card');
     expect(html).not.toContain('settings-apply-bar');
-    expect(html).toContain('저장 후 재시작');
-    expect(html).toContain('런타임');
-    expect(html).toContain('Claude');
-    expect(html).toContain('계정');
-    expect(html).toContain('스택 재시작');
+    expect(html).toContain(t.settings.apply.title);
+    expect(html).toContain(t.settings.sections.runtime.title);
+    expect(html).toContain(t.settings.accounts.claude);
+    expect(html).toContain(t.settings.nav.accounts.title);
+    expect(html).toContain(t.settings.apply.restart);
     expect(html.match(/class="settings-restart"/g)).toHaveLength(1);
+    expect(html).toContain('settings-card');
+    expect(html).toContain('settings-section-stack');
   });
 });

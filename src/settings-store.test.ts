@@ -10,12 +10,15 @@ describe('settings-store Codex features', () => {
   let tempDir: string;
   let previousCwd: string;
   let previousCodexGoals: string | undefined;
+  let previousCodexConfigPath: string | undefined;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-settings-'));
     previousCwd = process.cwd();
     previousCodexGoals = process.env.CODEX_GOALS;
+    previousCodexConfigPath = process.env.EJCLAW_CODEX_CONFIG_PATH;
     delete process.env.CODEX_GOALS;
+    process.env.EJCLAW_CODEX_CONFIG_PATH = path.join(tempDir, 'config.toml');
     process.chdir(tempDir);
   });
 
@@ -26,20 +29,36 @@ describe('settings-store Codex features', () => {
     } else {
       process.env.CODEX_GOALS = previousCodexGoals;
     }
+    if (previousCodexConfigPath === undefined) {
+      delete process.env.EJCLAW_CODEX_CONFIG_PATH;
+    } else {
+      process.env.EJCLAW_CODEX_CONFIG_PATH = previousCodexConfigPath;
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('stores the Codex goals opt-in in the EJClaw .env file', () => {
+  it('stores Codex goals in ~/.codex/config.toml [features]', () => {
     expect(getCodexFeatures()).toEqual({ goals: false });
 
     expect(updateCodexFeatures({ goals: true })).toEqual({ goals: true });
-    expect(fs.readFileSync(path.join(tempDir, '.env'), 'utf-8')).toContain(
-      'CODEX_GOALS=true',
+    expect(fs.readFileSync(process.env.EJCLAW_CODEX_CONFIG_PATH!, 'utf-8')).toContain(
+      'goals = true',
     );
 
     expect(updateCodexFeatures({ goals: false })).toEqual({ goals: false });
-    expect(fs.readFileSync(path.join(tempDir, '.env'), 'utf-8')).toContain(
-      'CODEX_GOALS=false',
+    expect(fs.readFileSync(process.env.EJCLAW_CODEX_CONFIG_PATH!, 'utf-8')).toContain(
+      'goals = false',
+    );
+  });
+
+  it('still honors legacy CODEX_GOALS=true until migrated', () => {
+    fs.writeFileSync(path.join(tempDir, '.env'), 'CODEX_GOALS=true\n');
+    expect(getCodexFeatures()).toEqual({ goals: true });
+
+    updateCodexFeatures({ goals: false });
+    expect(getCodexFeatures()).toEqual({ goals: false });
+    expect(fs.readFileSync(path.join(tempDir, '.env'), 'utf-8')).not.toContain(
+      'CODEX_GOALS',
     );
   });
 });
