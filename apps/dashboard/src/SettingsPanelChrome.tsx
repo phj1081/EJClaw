@@ -30,7 +30,11 @@ export function SettingsNav({
 }) {
   return (
     <div className="settings-nav-scroll">
-      <div className="settings-nav" aria-label={t.settings.navAria} role="tablist">
+      <div
+        className="settings-nav"
+        aria-label={t.settings.navAria}
+        role="tablist"
+      >
         {SETTINGS_NAV_ITEMS.map((item) => {
           const copy = navItem(t, item.navKey);
           return (
@@ -98,9 +102,7 @@ export function GeneralSettings({
             <span className="settings-label">{t.settings.languageLabel}</span>
             <select
               aria-label={t.settings.languageLabel}
-              onChange={(event) =>
-                onLocaleChange(event.target.value as Locale)
-              }
+              onChange={(event) => onLocaleChange(event.target.value as Locale)}
               value={locale}
             >
               {LOCALES.map((item) => (
@@ -155,7 +157,9 @@ export function SettingsCard({
               <p className="settings-hint">{description}</p>
             ) : null}
           </div>
-          {actions ? <div className="settings-card-actions">{actions}</div> : null}
+          {actions ? (
+            <div className="settings-card-actions">{actions}</div>
+          ) : null}
         </header>
       ) : null}
       {children}
@@ -192,7 +196,9 @@ export function SettingsCollapsible({
           {open ? '▾' : '▸'}
         </span>
       </button>
-      {open ? <div className="settings-collapsible-body">{children}</div> : null}
+      {open ? (
+        <div className="settings-collapsible-body">{children}</div>
+      ) : null}
     </section>
   );
 }

@@ -41,14 +41,14 @@ describe('settings-store Codex features', () => {
     expect(getCodexFeatures()).toEqual({ goals: false });
 
     expect(updateCodexFeatures({ goals: true })).toEqual({ goals: true });
-    expect(fs.readFileSync(process.env.EJCLAW_CODEX_CONFIG_PATH!, 'utf-8')).toContain(
-      'goals = true',
-    );
+    expect(
+      fs.readFileSync(process.env.EJCLAW_CODEX_CONFIG_PATH!, 'utf-8'),
+    ).toContain('goals = true');
 
     expect(updateCodexFeatures({ goals: false })).toEqual({ goals: false });
-    expect(fs.readFileSync(process.env.EJCLAW_CODEX_CONFIG_PATH!, 'utf-8')).toContain(
-      'goals = false',
-    );
+    expect(
+      fs.readFileSync(process.env.EJCLAW_CODEX_CONFIG_PATH!, 'utf-8'),
+    ).toContain('goals = false');
   });
 
   it('still honors legacy CODEX_GOALS=true until migrated', () => {

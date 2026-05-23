@@ -10,10 +10,7 @@ import {
 import { SettingsCard, SettingsSectionHeading } from './SettingsPanelChrome';
 import { type Messages } from './i18n';
 
-function agentLabel(
-  agentType: 'claude-code' | 'codex',
-  t: Messages,
-): string {
+function agentLabel(agentType: 'claude-code' | 'codex', t: Messages): string {
   return agentType === 'codex'
     ? t.settings.runtime.agentCodex
     : t.settings.runtime.agentClaude;
@@ -234,9 +231,8 @@ export function RuntimeInventorySettings({ t }: { t: Messages }) {
               {selectedAgent.availableSkillIds.map((skillId) => {
                 const skill = catalogById.get(skillId);
                 const key = `${selectedRoomJid}:${selectedAgent.agentType}:${skillId}`;
-                const enabled = selectedAgent.effectiveEnabledSkillIds.includes(
-                  skillId,
-                );
+                const enabled =
+                  selectedAgent.effectiveEnabledSkillIds.includes(skillId);
                 return (
                   <label
                     aria-busy={savingKey === key}

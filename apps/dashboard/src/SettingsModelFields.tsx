@@ -58,9 +58,7 @@ function effortOptionsForRole(
   return effortValuesForAgent('codex');
 }
 
-export function hasUnsupportedModelEffort(
-  draft: ModelConfigSnapshot,
-): boolean {
+export function hasUnsupportedModelEffort(draft: ModelConfigSnapshot): boolean {
   for (const role of MODEL_ROLES) {
     const agentType = draft.agentTypes[role];
     if (!agentType) continue;

@@ -9,10 +9,7 @@ import {
   updateMoaSettings,
 } from './api';
 import { type Messages } from './i18n';
-import {
-  SettingsSaveBar,
-  SettingsSectionHeading,
-} from './SettingsPanelChrome';
+import { SettingsSaveBar, SettingsSectionHeading } from './SettingsPanelChrome';
 
 export function MoaSettingsPanel({ t }: { t: Messages }) {
   const [config, setConfig] = useState<MoaSettingsSnapshot | null>(null);
@@ -228,7 +225,10 @@ function MoaSettingsContent({
   );
 }
 
-function formatMoaStatus(status: MoaReferenceStatus | null, t: Messages): string {
+function formatMoaStatus(
+  status: MoaReferenceStatus | null,
+  t: Messages,
+): string {
   if (!status) return t.settings.moa.notTested;
   const at = new Date(status.checkedAt);
   const checkedAt = Number.isNaN(at.getTime())
@@ -319,7 +319,9 @@ function MoaModelRow({
           <span className="settings-label">{t.settings.moa.modelLabel}</span>
           <input
             aria-label={`${model.name} MoA model`}
-            onChange={(e) => onModelChange(model.name, { model: e.target.value })}
+            onChange={(e) =>
+              onModelChange(model.name, { model: e.target.value })
+            }
             placeholder="model"
             type="text"
             value={model.model}

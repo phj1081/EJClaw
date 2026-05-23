@@ -382,7 +382,11 @@ function TaskFilterTabs({
 
   return (
     <div className="task-filter-scroll">
-      <div aria-label={t.panels.scheduled} className="task-filter-tabs" role="tablist">
+      <div
+        aria-label={t.panels.scheduled}
+        className="task-filter-tabs"
+        role="tablist"
+      >
         {tabs.map((tab) => (
           <button
             aria-selected={activeFilter === tab.key}
@@ -621,7 +625,9 @@ function TaskCard({
           </span>
           <div className="task-row-copy">
             <span className="task-kind">{taskDisplayName(task, t)}</span>
-            <strong title={taskHeadline(task, t)}>{taskHeadline(task, t)}</strong>
+            <strong title={taskHeadline(task, t)}>
+              {taskHeadline(task, t)}
+            </strong>
             <TaskMetaStrip task={task} t={t} />
           </div>
         </div>
@@ -783,7 +789,10 @@ export function TaskPanel({
 }: TaskPanelProps) {
   const taskGroups = useMemo(() => buildTaskGroups(tasks), [tasks]);
   const taskSummary = useMemo(() => buildTaskSummary(tasks), [tasks]);
-  const filterCounts = useMemo(() => buildFilterCounts(taskGroups), [taskGroups]);
+  const filterCounts = useMemo(
+    () => buildFilterCounts(taskGroups),
+    [taskGroups],
+  );
   const [activeFilter, setActiveFilter] = useState<TaskFilterKey>('all');
 
   const visibleGroups = useMemo(() => {

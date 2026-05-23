@@ -23,7 +23,11 @@ import {
 import { type Locale, type Messages } from './i18n';
 import { MoaSettingsPanel } from './MoaSettingsPanel';
 import { RuntimeInventorySettings } from './RuntimeInventorySettings';
-import { ModelRoleFields, hasUnsupportedModelEffort, type ModelRole } from './SettingsModelFields';
+import {
+  ModelRoleFields,
+  hasUnsupportedModelEffort,
+  type ModelRole,
+} from './SettingsModelFields';
 import {
   GeneralSettings,
   SettingsApplyCard,
@@ -322,7 +326,9 @@ function FastModeSettings({ t }: { t: Messages }) {
               type="checkbox"
             />
           </label>
-          <small className="settings-hint">{t.settings.codex.fastModeApplyHint}</small>
+          <small className="settings-hint">
+            {t.settings.codex.fastModeApplyHint}
+          </small>
         </div>
       )}
     </SettingsCard>
@@ -378,8 +384,12 @@ function CodexFeatureSettings({ t }: { t: Messages }) {
         <>
           <label className="settings-toggle-row">
             <span className="settings-toggle-label">
-              <span className="settings-toggle-title">{t.settings.codex.goal}</span>
-              <small className="settings-hint">{t.settings.codex.goalHint}</small>
+              <span className="settings-toggle-title">
+                {t.settings.codex.goal}
+              </span>
+              <small className="settings-hint">
+                {t.settings.codex.goalHint}
+              </small>
             </span>
             <input
               checked={state.goals}
@@ -388,7 +398,9 @@ function CodexFeatureSettings({ t }: { t: Messages }) {
               type="checkbox"
             />
           </label>
-          <small className="settings-hint">{t.settings.codex.goalApplyHint}</small>
+          <small className="settings-hint">
+            {t.settings.codex.goalApplyHint}
+          </small>
         </>
       )}
     </SettingsCard>
@@ -422,9 +434,7 @@ function formatExpiry(
       ? t.settings.accounts.paymentUntilDays
       : t.settings.accounts.paymentUntil;
   return {
-    label: template
-      .replace('{date}', dateStr)
-      .replace('{days}', dayCount),
+    label: template.replace('{date}', dateStr).replace('{days}', dayCount),
     cls: days < 7 ? 'is-soon' : 'is-active',
   };
 }
@@ -785,7 +795,9 @@ function CodexAccountRow({
           title={t.settings.accounts.refreshTitle}
           type="button"
         >
-          {refreshing ? t.settings.common.refreshing : t.settings.common.refresh}
+          {refreshing
+            ? t.settings.common.refreshing
+            : t.settings.common.refresh}
         </button>
         {!isActive ? (
           <button

@@ -54,7 +54,9 @@ async function main() {
         await assertVisible(page.locator('#settings-runtime'));
         await page.getByRole('heading', { name: '방 선택' }).waitFor();
         const skillToggle = page
-          .locator('#settings-runtime .settings-toggle-row input[type="checkbox"]')
+          .locator(
+            '#settings-runtime .settings-toggle-row input[type="checkbox"]',
+          )
           .first();
         assert.equal(await skillToggle.isChecked(), true);
         await skillToggle.click();
@@ -237,10 +239,7 @@ async function main() {
         await assertVisible(page.locator('#settings-accounts'));
 
         assert.equal(await page.locator('.settings-account-list').count(), 2);
-        assert.equal(
-          await page.locator('.settings-account-row').count(),
-          6,
-        );
+        assert.equal(await page.locator('.settings-account-row').count(), 6);
         assert.equal(await page.locator('.settings-account-card').count(), 0);
 
         const listBox = await page
@@ -263,7 +262,12 @@ async function main() {
       browser,
       baseUrl,
       async (page) => {
-        for (const hash of ['#/rooms', '#/scheduled', '#/usage', '#/settings']) {
+        for (const hash of [
+          '#/rooms',
+          '#/scheduled',
+          '#/usage',
+          '#/settings',
+        ]) {
           await page.goto(new URL(hash, baseUrl).toString(), {
             waitUntil: 'networkidle',
           });
@@ -345,7 +349,13 @@ async function runScenario(
   baseUrl: string,
   run: (page: Page, state: MockApiState) => Promise<void>,
 ) {
-  await runScenarioWithViewport(name, browser, baseUrl, { width: 1280, height: 720 }, run);
+  await runScenarioWithViewport(
+    name,
+    browser,
+    baseUrl,
+    { width: 1280, height: 720 },
+    run,
+  );
 }
 
 async function runMobileScenario(
@@ -354,7 +364,13 @@ async function runMobileScenario(
   baseUrl: string,
   run: (page: Page, state: MockApiState) => Promise<void>,
 ) {
-  await runScenarioWithViewport(name, browser, baseUrl, { width: 390, height: 844 }, run);
+  await runScenarioWithViewport(
+    name,
+    browser,
+    baseUrl,
+    { width: 390, height: 844 },
+    run,
+  );
 }
 
 async function runScenarioWithViewport(

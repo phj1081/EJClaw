@@ -49,8 +49,7 @@ export function agentTypeForRole(
     | Record<string, string | undefined>
     | ((key: string) => string | undefined),
 ): SettingsAgentType | null {
-  const read =
-    typeof env === 'function' ? env : (key: string) => env[key];
+  const read = typeof env === 'function' ? env : (key: string) => env[key];
   const key =
     role === 'owner'
       ? 'OWNER_AGENT_TYPE'

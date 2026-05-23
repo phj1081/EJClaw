@@ -29,10 +29,7 @@ import {
   claudeHostSettingsPath,
   readHostClaudeFastMode,
 } from './claude-session-settings.js';
-import {
-  agentTypeForRole,
-  isEffortSupported,
-} from './settings-effort.js';
+import { agentTypeForRole, isEffortSupported } from './settings-effort.js';
 
 export interface ClaudeAccountSummary {
   index: number;

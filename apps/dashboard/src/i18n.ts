@@ -506,7 +506,8 @@ export const messages = {
         none: '없음',
         saving: '저장 중…',
         saved: '저장됨',
-        savedRestartHint: '저장됨. 적용하려면 사이드바의 스택 재시작을 눌러 주세요.',
+        savedRestartHint:
+          '저장됨. 적용하려면 사이드바의 스택 재시작을 눌러 주세요.',
         save: '저장',
         delete: '삭제',
         refresh: '갱신',
@@ -566,8 +567,7 @@ export const messages = {
         goal: 'Goals (/goal)',
         goalHint:
           '~/.codex/config.toml [features].goals — Codex 0.133 기준 opt-in 기능입니다. 기본값은 꺼짐(OFF)이며, 켜면 /goal 장기 목표 추적을 쓸 수 있습니다.',
-        goalApplyHint:
-          '스택 재시작 없이 다음 Codex 작업부터 적용됩니다.',
+        goalApplyHint: '스택 재시작 없이 다음 Codex 작업부터 적용됩니다.',
       },
       accounts: {
         claude: 'Claude',
@@ -902,7 +902,8 @@ export const messages = {
         general: {
           kicker: 'Dashboard identity',
           title: 'General',
-          description: 'Only the display name and language change immediately in the browser.',
+          description:
+            'Only the display name and language change immediately in the browser.',
         },
         models: {
           kicker: 'Agent routing',
@@ -919,12 +920,14 @@ export const messages = {
         moa: {
           kicker: 'Arbiter references',
           title: 'MoA reference models',
-          description: 'Enable external reference models like Kimi or GLM and verify connectivity.',
+          description:
+            'Enable external reference models like Kimi or GLM and verify connectivity.',
         },
         codex: {
           kicker: 'Codex runtime',
           title: 'Codex options',
-          description: 'Manage fast responses and experimental features. /goal lives here.',
+          description:
+            'Manage fast responses and experimental features. /goal lives here.',
         },
         accounts: {
           kicker: 'Credentials',
@@ -997,7 +1000,8 @@ export const messages = {
         goal: 'Goals (/goal)',
         goalHint:
           '~/.codex/config.toml [features].goals — opt-in on Codex 0.133. Off by default; enables /goal long-running objectives when on.',
-        goalApplyHint: 'Applies on the next Codex run. No stack restart required.',
+        goalApplyHint:
+          'Applies on the next Codex run. No stack restart required.',
       },
       accounts: {
         claude: 'Claude',
@@ -1342,8 +1346,7 @@ export const messages = {
         runtime: {
           kicker: 'Agent skills',
           title: '技能',
-          description:
-            '按房间和代理开关技能。默认全部开启，尚无全局批量设置。',
+          description: '按房间和代理开关技能。默认全部开启，尚无全局批量设置。',
         },
         moa: {
           kicker: 'Arbiter references',
@@ -1405,8 +1408,7 @@ export const messages = {
         agentTypeLabel: '代理',
         agentTypeCodex: 'Codex',
         agentTypeClaude: 'Claude Code',
-        effortInvalid:
-          '“{value}” 不适用于 {agent}，请选择其他推理强度。',
+        effortInvalid: '“{value}” 不适用于 {agent}，请选择其他推理强度。',
         effortSaveBlocked: '存在不支持的推理强度，请先修正再保存。',
         save: '保存模型',
         empty: '无模型配置',
@@ -1431,11 +1433,11 @@ export const messages = {
         codex: 'Codex',
         noAccounts: '无账户',
         autoRefresh: '自动刷新令牌',
-        codexRefreshHint: 'OAuth 令牌每 6 小时自动刷新。计划变更请手动全部刷新。',
+        codexRefreshHint:
+          'OAuth 令牌每 6 小时自动刷新。计划变更请手动全部刷新。',
         tokenPlaceholder:
           'Claude OAuth 令牌（claude CLI 登录后从 ~/.claude/.credentials.json 粘贴 accessToken）',
-        deleteConfirm:
-          '将删除 {provider} 账户 #{index} 目录，无法撤销。继续？',
+        deleteConfirm: '将删除 {provider} 账户 #{index} 目录，无法撤销。继续？',
         refreshFailed: '部分刷新失败: {indexes}',
         paymentExpired: '已过期 {date}（{days} 天前）',
         paymentUntil: '付费至 {date}（{days} 天）',
@@ -1774,12 +1776,14 @@ export const messages = {
         moa: {
           kicker: 'Arbiter references',
           title: 'MoA 参照モデル',
-          description: 'Kimi や GLM などの外部参照モデルを有効化し接続を確認します。',
+          description:
+            'Kimi や GLM などの外部参照モデルを有効化し接続を確認します。',
         },
         codex: {
           kicker: 'Codex runtime',
           title: 'Codex オプション',
-          description: '高速応答と実験機能を管理します。/goal はここにあります。',
+          description:
+            '高速応答と実験機能を管理します。/goal はここにあります。',
         },
         accounts: {
           kicker: 'Credentials',
@@ -1792,7 +1796,8 @@ export const messages = {
         none: 'なし',
         saving: '保存中…',
         saved: '保存済み',
-        savedRestartHint: '保存済み。サイドバーのスタック再起動で適用してください。',
+        savedRestartHint:
+          '保存済み。サイドバーのスタック再起動で適用してください。',
         save: '保存',
         delete: '削除',
         refresh: '更新',
@@ -1852,8 +1857,7 @@ export const messages = {
         goal: 'Goals (/goal)',
         goalHint:
           '~/.codex/config.toml [features].goals — Codex 0.133 の opt-in 機能。デフォルト OFF。ON で /goal を利用。',
-        goalApplyHint:
-          'スタック再起動不要。次の Codex 実行から反映されます。',
+        goalApplyHint: 'スタック再起動不要。次の Codex 実行から反映されます。',
       },
       accounts: {
         claude: 'Claude',
