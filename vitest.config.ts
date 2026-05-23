@@ -5,6 +5,10 @@ export default defineConfig({
   resolve: {
     alias: {
       'bun:sqlite': path.resolve(__dirname, 'test/bun-sqlite-shim.ts'),
+      'ejclaw-runners-shared': path.resolve(
+        __dirname,
+        'runners/shared/src/index.ts',
+      ),
     },
   },
   test: {
