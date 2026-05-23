@@ -10,7 +10,11 @@ import {
 import { SettingsCard, SettingsSectionHeading } from './SettingsPanelChrome';
 import { type Messages } from './i18n';
 
-function agentLabel(agentType: 'claude-code' | 'codex', t: Messages): string {
+type RoomSkillRoom = RoomSkillSettingsSnapshot['rooms'][number];
+type RoomSkillAgent = RoomSkillRoom['agents'][number];
+type AgentType = RoomSkillAgent['agentType'];
+
+function agentLabel(agentType: AgentType, t: Messages): string {
   return agentType === 'codex'
     ? t.settings.runtime.agentCodex
     : t.settings.runtime.agentClaude;
@@ -63,6 +67,131 @@ function applyOptimisticToggle(
   };
 }
 
+interface RoomSkillControlsProps {
+  onAgentChange: (agentType: AgentType) => void;
+  onRoomChange: (roomJid: string) => void;
+  selectedAgentType: AgentType;
+  selectedRoom: RoomSkillRoom | null;
+  selectedRoomJid: string;
+  snapshot: RoomSkillSettingsSnapshot;
+  t: Messages;
+}
+
+function RoomSkillControls({
+  onAgentChange,
+  onRoomChange,
+  selectedAgentType,
+  selectedRoom,
+  selectedRoomJid,
+  snapshot,
+  t,
+}: RoomSkillControlsProps) {
+  return (
+    <div className="settings-form-grid settings-skill-controls">
+      <label className="settings-row">
+        <span className="settings-label">
+          {t.settings.runtime.selectRoomLabel}
+        </span>
+        <select
+          onChange={(event) => onRoomChange(event.target.value)}
+          value={selectedRoomJid}
+        >
+          {snapshot.rooms.map((room) => (
+            <option key={room.jid} value={room.jid}>
+              {room.name} ({room.folder})
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {selectedRoom && selectedRoom.agents.length > 1 ? (
+        <div className="settings-row">
+          <span className="settings-label">
+            {t.settings.runtime.selectAgentLabel}
+          </span>
+          <div className="settings-skill-agent-tabs" role="tablist">
+            {selectedRoom.agents.map((agent) => (
+              <button
+                aria-selected={selectedAgentType === agent.agentType}
+                className={
+                  selectedAgentType === agent.agentType
+                    ? 'is-active'
+                    : undefined
+                }
+                key={agent.agentType}
+                onClick={() => onAgentChange(agent.agentType)}
+                role="tab"
+                type="button"
+              >
+                {agentLabel(agent.agentType, t)}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface SkillToggleListProps {
+  catalogById: Map<string, RoomSkillCatalogItem>;
+  onToggle: (input: RoomSkillSettingUpdateInput) => void;
+  savingKey: string | null;
+  selectedAgent: RoomSkillAgent;
+  selectedRoomJid: string;
+  t: Messages;
+}
+
+function SkillToggleList({
+  catalogById,
+  onToggle,
+  savingKey,
+  selectedAgent,
+  selectedRoomJid,
+  t,
+}: SkillToggleListProps) {
+  return (
+    <div className="settings-toggle-stack">
+      {selectedAgent.availableSkillIds.map((skillId) => {
+        const skill = catalogById.get(skillId);
+        const key = `${selectedRoomJid}:${selectedAgent.agentType}:${skillId}`;
+        const enabled =
+          selectedAgent.effectiveEnabledSkillIds.includes(skillId);
+        return (
+          <label
+            aria-busy={savingKey === key}
+            className={`settings-toggle-row${savingKey === key ? ' is-busy' : ''}`}
+            key={skillId}
+          >
+            <span className="settings-toggle-label">
+              <span className="settings-toggle-title">
+                {skill?.displayName ?? skillId}
+              </span>
+              <small>
+                {skill ? scopeLabel(skill.scope, t) : null}
+                {skill?.description ? ` · ${skill.description}` : null}
+              </small>
+            </span>
+            <input
+              checked={enabled}
+              disabled={savingKey === key}
+              onChange={(event) =>
+                onToggle({
+                  roomJid: selectedRoomJid,
+                  agentType: selectedAgent.agentType,
+                  skillId,
+                  enabled: event.currentTarget.checked,
+                })
+              }
+              type="checkbox"
+            />
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 export function RuntimeInventorySettings({ t }: { t: Messages }) {
   const [snapshot, setSnapshot] = useState<RoomSkillSettingsSnapshot | null>(
     null,
@@ -70,9 +199,8 @@ export function RuntimeInventorySettings({ t }: { t: Messages }) {
   const [error, setError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [selectedRoomJid, setSelectedRoomJid] = useState<string>('');
-  const [selectedAgentType, setSelectedAgentType] = useState<
-    'claude-code' | 'codex'
-  >('codex');
+  const [selectedAgentType, setSelectedAgentType] =
+    useState<AgentType>('codex');
 
   useEffect(() => {
     let cancelled = false;
@@ -180,91 +308,27 @@ export function RuntimeInventorySettings({ t }: { t: Messages }) {
         </SettingsCard>
       ) : (
         <SettingsCard title={t.settings.runtime.selectRoomLabel}>
-          <div className="settings-form-grid settings-skill-controls">
-            <label className="settings-row">
-              <span className="settings-label">
-                {t.settings.runtime.selectRoomLabel}
-              </span>
-              <select
-                onChange={(event) => setSelectedRoomJid(event.target.value)}
-                value={selectedRoomJid}
-              >
-                {snapshot.rooms.map((room) => (
-                  <option key={room.jid} value={room.jid}>
-                    {room.name} ({room.folder})
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            {selectedRoom && selectedRoom.agents.length > 1 ? (
-              <div className="settings-row">
-                <span className="settings-label">
-                  {t.settings.runtime.selectAgentLabel}
-                </span>
-                <div className="settings-skill-agent-tabs" role="tablist">
-                  {selectedRoom.agents.map((agent) => (
-                    <button
-                      aria-selected={selectedAgentType === agent.agentType}
-                      className={
-                        selectedAgentType === agent.agentType
-                          ? 'is-active'
-                          : undefined
-                      }
-                      key={agent.agentType}
-                      onClick={() => setSelectedAgentType(agent.agentType)}
-                      role="tab"
-                      type="button"
-                    >
-                      {agentLabel(agent.agentType, t)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </div>
+          <RoomSkillControls
+            onAgentChange={setSelectedAgentType}
+            onRoomChange={setSelectedRoomJid}
+            selectedAgentType={selectedAgentType}
+            selectedRoom={selectedRoom}
+            selectedRoomJid={selectedRoomJid}
+            snapshot={snapshot}
+            t={t}
+          />
 
           {!selectedAgent || selectedAgent.availableSkillIds.length === 0 ? (
             <p className="settings-hint">{t.settings.runtime.emptySkills}</p>
           ) : (
-            <div className="settings-toggle-stack">
-              {selectedAgent.availableSkillIds.map((skillId) => {
-                const skill = catalogById.get(skillId);
-                const key = `${selectedRoomJid}:${selectedAgent.agentType}:${skillId}`;
-                const enabled =
-                  selectedAgent.effectiveEnabledSkillIds.includes(skillId);
-                return (
-                  <label
-                    aria-busy={savingKey === key}
-                    className={`settings-toggle-row${savingKey === key ? ' is-busy' : ''}`}
-                    key={skillId}
-                  >
-                    <span className="settings-toggle-label">
-                      <span className="settings-toggle-title">
-                        {skill?.displayName ?? skillId}
-                      </span>
-                      <small>
-                        {skill ? scopeLabel(skill.scope, t) : null}
-                        {skill?.description ? ` · ${skill.description}` : null}
-                      </small>
-                    </span>
-                    <input
-                      checked={enabled}
-                      disabled={savingKey === key}
-                      onChange={(event) =>
-                        void handleToggle({
-                          roomJid: selectedRoomJid,
-                          agentType: selectedAgent.agentType,
-                          skillId,
-                          enabled: event.currentTarget.checked,
-                        })
-                      }
-                      type="checkbox"
-                    />
-                  </label>
-                );
-              })}
-            </div>
+            <SkillToggleList
+              catalogById={catalogById}
+              onToggle={(input) => void handleToggle(input)}
+              savingKey={savingKey}
+              selectedAgent={selectedAgent}
+              selectedRoomJid={selectedRoomJid}
+              t={t}
+            />
           )}
         </SettingsCard>
       )}

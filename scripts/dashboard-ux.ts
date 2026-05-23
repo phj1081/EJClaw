@@ -24,287 +24,285 @@ async function main() {
 
   try {
     const baseUrl = server.resolvedUrls?.local[0] ?? 'http://127.0.0.1:5175/';
-
-    await runScenario(
-      'settings nav keeps hash route stable',
-      browser,
-      baseUrl,
-      async (page, state) => {
-        await openSettings(page, baseUrl);
-
-        const originalUrl = page.url();
-        assert.equal(originalUrl.endsWith('/#/settings'), true);
-        assert.equal(
-          await page.locator('.settings-nav a[href^="#settings-"]').count(),
-          0,
-        );
-
-        await page
-          .locator(
-            '.settings-nav button[data-settings-target="settings-codex"]',
-          )
-          .click();
-        await page.waitForTimeout(150);
-        assert.equal(page.url(), originalUrl);
-        await assertVisible(page.locator('.settings-panel'));
-        await assertVisible(page.locator('#settings-codex'));
-
-        await openSettingsSection(page, 'settings-runtime');
-        assert.equal(page.url(), originalUrl);
-        await assertVisible(page.locator('#settings-runtime'));
-        await page.getByRole('heading', { name: '방 선택' }).waitFor();
-        const skillToggle = page
-          .locator(
-            '#settings-runtime .settings-toggle-row input[type="checkbox"]',
-          )
-          .first();
-        assert.equal(await skillToggle.isChecked(), true);
-        await skillToggle.click();
-        assert.equal(await skillToggle.isChecked(), false);
-        assert.equal(state.roomSkillUpdates, 1);
-
-        await page
-          .locator(
-            '.settings-nav button[data-settings-target="settings-accounts"]',
-          )
-          .click();
-        await page.waitForTimeout(150);
-        assert.equal(page.url(), originalUrl);
-        await assertVisible(page.locator('.settings-panel'));
-        await assertVisible(page.locator('#settings-accounts'));
-
-        const sidebar = page.locator('.settings-sidebar');
-        const navBoxBefore = await sidebar.boundingBox();
-        await openSettingsSection(page, 'settings-general');
-        await page.waitForTimeout(150);
-        const navBoxAfter = await sidebar.boundingBox();
-        assert.ok(navBoxBefore && navBoxAfter);
-        assert.equal(navBoxBefore.y, navBoxAfter.y);
-
-        await assertNoSeriousA11yViolations(page);
-      },
-    );
-
-    await runScenario(
-      'codex goal toggle persists and explains restart',
-      browser,
-      baseUrl,
-      async (page, state) => {
-        await openSettings(page, baseUrl);
-        await openSettingsSection(page, 'settings-codex');
-
-        const goalToggle = page.getByRole('checkbox', { name: /\/goal/ });
-        await assertVisible(goalToggle);
-        assert.equal(await goalToggle.isChecked(), false);
-
-        await goalToggle.click();
-        await page
-          .getByText('저장됨. 적용하려면 사이드바의 스택 재시작을 눌러 주세요.')
-          .waitFor();
-
-        assert.equal(await goalToggle.isChecked(), true);
-        assert.equal(state.codexFeatures.goals, true);
-        assert.equal(state.codexFeatureUpdates, 1);
-
-        await assertNoSeriousA11yViolations(page);
-      },
-    );
-
-    await runScenario(
-      'restart action is singular and guarded',
-      browser,
-      baseUrl,
-      async (page, state) => {
-        const dialogMessages: string[] = [];
-        page.on('dialog', async (dialog) => {
-          dialogMessages.push(dialog.message());
-          await dialog.accept();
-        });
-
-        await openSettings(page, baseUrl);
-
-        const restartButtons = page.getByRole('button', {
-          name: '스택 재시작',
-        });
-        assert.equal(await restartButtons.count(), 1);
-
-        await restartButtons.first().click();
-        await page.waitForTimeout(250);
-
-        assert.equal(dialogMessages.length, 1);
-        assert.equal(state.restartRequests, 1);
-
-        await assertNoSeriousA11yViolations(page);
-      },
-    );
-
-    await runScenario(
-      'rooms surface user action badges without inbox navigation',
-      browser,
-      baseUrl,
-      async (page, state) => {
-        state.approvalAction = true;
-        state.ciWatcherFailures = 2;
-
-        await page.goto(new URL('/#/inbox', baseUrl).toString(), {
-          waitUntil: 'networkidle',
-        });
-
-        await page.waitForURL(/#\/rooms$/);
-        await assertVisible(page.locator('#rooms .rooms-v2'));
-        assert.equal(await page.locator('a[href="#/inbox"]').count(), 0);
-        assert.equal(await page.locator('a[href="#/health"]').count(), 0);
-        await assertVisible(page.getByText(/승인|Approval/).first());
-        await assertVisible(page.locator('.system-status-strip'));
-        assert.equal(
-          await page.getByRole('button', { name: 'Dismiss' }).count(),
-          0,
-        );
-
-        // This scenario protects the Inbox information architecture. The
-        // accessibility scan stays scoped to Settings, where this UX suite
-        // currently has stable interactive coverage.
-      },
-    );
-
-    await runScheduledBoardScenario(browser, baseUrl);
-
-    await runScenario(
-      'health route redirects to rooms and degraded state is conditional',
-      browser,
-      baseUrl,
-      async (page, state) => {
-        state.approvalAction = true;
-
-        await page.goto(new URL('/#/rooms', baseUrl).toString(), {
-          waitUntil: 'networkidle',
-        });
-        await assertVisible(page.locator('#rooms .rooms-v2'));
-        assert.equal(await page.locator('.system-status-strip').count(), 0);
-
-        state.ciWatcherFailures = 2;
-        await page.goto(new URL('/?degraded=1#/health', baseUrl).toString(), {
-          waitUntil: 'networkidle',
-        });
-
-        await page.waitForURL(/#\/rooms$/);
-        await assertVisible(page.locator('#rooms .rooms-v2'));
-        await assertVisible(page.locator('.system-status-strip'));
-        assert.equal(await page.locator('#health').count(), 0);
-        assert.equal(await page.locator('a[href="#/health"]').count(), 0);
-        await assertVisible(page.getByText(/CI 실패|CI failure/).first());
-      },
-    );
-
-    await runMobileScenario(
-      'mobile settings keeps nav and content aligned without horizontal scroll',
-      browser,
-      baseUrl,
-      async (page) => {
-        await openSettings(page, baseUrl);
-        await assertNoHorizontalOverflow(page);
-
-        const nav = page.locator('.settings-nav-scroll');
-        const section = page.locator('.settings-section').first();
-        const navBox = await nav.boundingBox();
-        const sectionBox = await section.boundingBox();
-        assert.ok(navBox && sectionBox);
-        assert.equal(Math.round(navBox.x), Math.round(sectionBox.x));
-        assert.equal(Math.round(navBox.width), Math.round(sectionBox.width));
-
-        const selectedTab = page.locator(
-          '.settings-nav button[aria-selected="true"]',
-        );
-        const tabBox = await selectedTab.boundingBox();
-        const subtitleBox = await selectedTab.locator('small').boundingBox();
-        assert.ok(tabBox && subtitleBox);
-        assert.ok(
-          subtitleBox.y + subtitleBox.height <= tabBox.y + tabBox.height + 1,
-          'tab subtitle should not be clipped',
-        );
-
-        await openSettingsSection(page, 'settings-models');
-        await assertNoHorizontalOverflow(page);
-        await assertNoSeriousA11yViolations(page);
-      },
-    );
-
-    await runMobileScenario(
-      'mobile accounts use compact rows for multiple entries',
-      browser,
-      baseUrl,
-      async (page) => {
-        await openSettings(page, baseUrl);
-        await openSettingsSection(page, 'settings-accounts');
-        await assertVisible(page.locator('#settings-accounts'));
-
-        assert.equal(await page.locator('.settings-account-list').count(), 2);
-        assert.equal(await page.locator('.settings-account-row').count(), 6);
-        assert.equal(await page.locator('.settings-account-card').count(), 0);
-
-        const listBox = await page
-          .locator('.settings-account-list')
-          .first()
-          .boundingBox();
-        const rowBox = await page
-          .locator('.settings-account-row')
-          .first()
-          .boundingBox();
-        assert.ok(listBox && rowBox);
-        assert.ok(rowBox.height <= 72, 'account row should stay compact');
-
-        await assertNoHorizontalOverflow(page);
-      },
-    );
-
-    await runMobileScenario(
-      'mobile primary views render without layout overflow',
-      browser,
-      baseUrl,
-      async (page) => {
-        for (const hash of [
-          '#/rooms',
-          '#/scheduled',
-          '#/usage',
-          '#/settings',
-        ]) {
-          await page.goto(new URL(hash, baseUrl).toString(), {
-            waitUntil: 'networkidle',
-          });
-          await assertNoHorizontalOverflow(page);
-        }
-
-        await page.goto(new URL('/#/scheduled', baseUrl).toString(), {
-          waitUntil: 'networkidle',
-        });
-        await assertVisible(page.locator('#scheduled .task-summary-bar'));
-        await assertVisible(page.locator('#scheduled .task-filter-tabs'));
-      },
-    );
-
-    await runMobileScenario(
-      'mobile scheduled board uses compact rows and filter tabs',
-      browser,
-      baseUrl,
-      async (page) => {
-        await page.goto(new URL('/#/scheduled', baseUrl).toString(), {
-          waitUntil: 'networkidle',
-        });
-        await assertVisible(page.locator('#scheduled .task-summary-bar'));
-        await assertVisible(page.locator('#scheduled .task-filter-tabs'));
-        assert.equal(await page.locator('#scheduled .task-row').count(), 3);
-
-        await page.getByRole('tab', { name: /예약|Scheduled/i }).click();
-        assert.equal(await page.locator('#scheduled .task-row').count(), 1);
-        await assertNoHorizontalOverflow(page);
-      },
-    );
-
+    await runDesktopDashboardScenarios(browser, baseUrl);
+    await runMobileDashboardScenarios(browser, baseUrl);
     console.log('dashboard:ux passed');
   } finally {
     await browser.close();
     await server.close();
   }
+}
+
+async function runDesktopDashboardScenarios(browser: Browser, baseUrl: string) {
+  await runScenario(
+    'settings nav keeps hash route stable',
+    browser,
+    baseUrl,
+    async (page, state) => {
+      await openSettings(page, baseUrl);
+
+      const originalUrl = page.url();
+      assert.equal(originalUrl.endsWith('/#/settings'), true);
+      assert.equal(
+        await page.locator('.settings-nav a[href^="#settings-"]').count(),
+        0,
+      );
+
+      await page
+        .locator('.settings-nav button[data-settings-target="settings-codex"]')
+        .click();
+      await page.waitForTimeout(150);
+      assert.equal(page.url(), originalUrl);
+      await assertVisible(page.locator('.settings-panel'));
+      await assertVisible(page.locator('#settings-codex'));
+
+      await openSettingsSection(page, 'settings-runtime');
+      assert.equal(page.url(), originalUrl);
+      await assertVisible(page.locator('#settings-runtime'));
+      await page.getByRole('heading', { name: '방 선택' }).waitFor();
+      const skillToggle = page
+        .locator(
+          '#settings-runtime .settings-toggle-row input[type="checkbox"]',
+        )
+        .first();
+      assert.equal(await skillToggle.isChecked(), true);
+      await skillToggle.click();
+      assert.equal(await skillToggle.isChecked(), false);
+      assert.equal(state.roomSkillUpdates, 1);
+
+      await page
+        .locator(
+          '.settings-nav button[data-settings-target="settings-accounts"]',
+        )
+        .click();
+      await page.waitForTimeout(150);
+      assert.equal(page.url(), originalUrl);
+      await assertVisible(page.locator('.settings-panel'));
+      await assertVisible(page.locator('#settings-accounts'));
+
+      const sidebar = page.locator('.settings-sidebar');
+      const navBoxBefore = await sidebar.boundingBox();
+      await openSettingsSection(page, 'settings-general');
+      await page.waitForTimeout(150);
+      const navBoxAfter = await sidebar.boundingBox();
+      assert.ok(navBoxBefore && navBoxAfter);
+      assert.equal(navBoxBefore.y, navBoxAfter.y);
+
+      await assertNoSeriousA11yViolations(page);
+    },
+  );
+
+  await runScenario(
+    'codex goal toggle persists and explains next-run apply',
+    browser,
+    baseUrl,
+    async (page, state) => {
+      await openSettings(page, baseUrl);
+      await openSettingsSection(page, 'settings-codex');
+
+      const goalToggle = page.getByRole('checkbox', { name: /\/goal/ });
+      await assertVisible(goalToggle);
+      assert.equal(await goalToggle.isChecked(), false);
+
+      await goalToggle.click();
+      await page
+        .getByText('스택 재시작 없이 다음 Codex 작업부터 적용됩니다.')
+        .waitFor();
+
+      assert.equal(await goalToggle.isChecked(), true);
+      assert.equal(state.codexFeatures.goals, true);
+      assert.equal(state.codexFeatureUpdates, 1);
+
+      await assertNoSeriousA11yViolations(page);
+    },
+  );
+
+  await runScenario(
+    'restart action is singular and guarded',
+    browser,
+    baseUrl,
+    async (page, state) => {
+      const dialogMessages: string[] = [];
+      page.on('dialog', async (dialog) => {
+        dialogMessages.push(dialog.message());
+        await dialog.accept();
+      });
+
+      await openSettings(page, baseUrl);
+
+      const restartButtons = page.getByRole('button', {
+        name: '스택 재시작',
+      });
+      assert.equal(await restartButtons.count(), 1);
+
+      await restartButtons.first().click();
+      await page.waitForTimeout(250);
+
+      assert.equal(dialogMessages.length, 1);
+      assert.equal(state.restartRequests, 1);
+
+      await assertNoSeriousA11yViolations(page);
+    },
+  );
+
+  await runScenario(
+    'rooms surface user action badges without inbox navigation',
+    browser,
+    baseUrl,
+    async (page, state) => {
+      state.approvalAction = true;
+      state.ciWatcherFailures = 2;
+
+      await page.goto(new URL('/#/inbox', baseUrl).toString(), {
+        waitUntil: 'networkidle',
+      });
+
+      await page.waitForURL(/#\/rooms$/);
+      await assertVisible(page.locator('#rooms .rooms-v2'));
+      assert.equal(await page.locator('a[href="#/inbox"]').count(), 0);
+      assert.equal(await page.locator('a[href="#/health"]').count(), 0);
+      await assertVisible(page.getByText(/승인|Approval/).first());
+      await assertVisible(page.locator('.system-status-strip'));
+      assert.equal(
+        await page.getByRole('button', { name: 'Dismiss' }).count(),
+        0,
+      );
+
+      // This scenario protects the Inbox information architecture. The
+      // accessibility scan stays scoped to Settings, where this UX suite
+      // currently has stable interactive coverage.
+    },
+  );
+
+  await runScheduledBoardScenario(browser, baseUrl);
+
+  await runScenario(
+    'health route redirects to rooms and degraded state is conditional',
+    browser,
+    baseUrl,
+    async (page, state) => {
+      state.approvalAction = true;
+
+      await page.goto(new URL('/#/rooms', baseUrl).toString(), {
+        waitUntil: 'networkidle',
+      });
+      await assertVisible(page.locator('#rooms .rooms-v2'));
+      assert.equal(await page.locator('.system-status-strip').count(), 0);
+
+      state.ciWatcherFailures = 2;
+      await page.goto(new URL('/?degraded=1#/health', baseUrl).toString(), {
+        waitUntil: 'networkidle',
+      });
+
+      await page.waitForURL(/#\/rooms$/);
+      await assertVisible(page.locator('#rooms .rooms-v2'));
+      await assertVisible(page.locator('.system-status-strip'));
+      assert.equal(await page.locator('#health').count(), 0);
+      assert.equal(await page.locator('a[href="#/health"]').count(), 0);
+      await assertVisible(page.getByText(/CI 실패|CI failure/).first());
+    },
+  );
+}
+
+async function runMobileDashboardScenarios(browser: Browser, baseUrl: string) {
+  await runMobileScenario(
+    'mobile settings keeps nav and content aligned without horizontal scroll',
+    browser,
+    baseUrl,
+    async (page) => {
+      await openSettings(page, baseUrl);
+      await assertNoHorizontalOverflow(page);
+
+      const nav = page.locator('.settings-nav-scroll');
+      const section = page.locator('.settings-section').first();
+      const navBox = await nav.boundingBox();
+      const sectionBox = await section.boundingBox();
+      assert.ok(navBox && sectionBox);
+      assert.equal(Math.round(navBox.x), Math.round(sectionBox.x));
+      assert.equal(Math.round(navBox.width), Math.round(sectionBox.width));
+
+      const selectedTab = page.locator(
+        '.settings-nav button[aria-selected="true"]',
+      );
+      const tabBox = await selectedTab.boundingBox();
+      const subtitleBox = await selectedTab.locator('small').boundingBox();
+      assert.ok(tabBox && subtitleBox);
+      assert.ok(
+        subtitleBox.y + subtitleBox.height <= tabBox.y + tabBox.height + 1,
+        'tab subtitle should not be clipped',
+      );
+
+      await openSettingsSection(page, 'settings-models');
+      await assertNoHorizontalOverflow(page);
+      await assertNoSeriousA11yViolations(page);
+    },
+  );
+
+  await runMobileScenario(
+    'mobile accounts use compact rows for multiple entries',
+    browser,
+    baseUrl,
+    async (page) => {
+      await openSettings(page, baseUrl);
+      await openSettingsSection(page, 'settings-accounts');
+      await assertVisible(page.locator('#settings-accounts'));
+
+      assert.equal(await page.locator('.settings-account-list').count(), 2);
+      assert.equal(await page.locator('.settings-account-row').count(), 6);
+      assert.equal(await page.locator('.settings-account-card').count(), 0);
+
+      const listBox = await page
+        .locator('.settings-account-list')
+        .first()
+        .boundingBox();
+      const rowBox = await page
+        .locator('.settings-account-row')
+        .first()
+        .boundingBox();
+      assert.ok(listBox && rowBox);
+      assert.ok(rowBox.height <= 72, 'account row should stay compact');
+
+      await assertNoHorizontalOverflow(page);
+    },
+  );
+
+  await runMobileScenario(
+    'mobile primary views render without layout overflow',
+    browser,
+    baseUrl,
+    async (page) => {
+      for (const hash of ['#/rooms', '#/scheduled', '#/usage', '#/settings']) {
+        await page.goto(new URL(hash, baseUrl).toString(), {
+          waitUntil: 'networkidle',
+        });
+        await assertNoHorizontalOverflow(page);
+      }
+
+      await page.goto(new URL('/#/scheduled', baseUrl).toString(), {
+        waitUntil: 'networkidle',
+      });
+      await assertVisible(page.locator('#scheduled .task-summary-bar'));
+      await assertVisible(page.locator('#scheduled .task-filter-tabs'));
+    },
+  );
+
+  await runMobileScenario(
+    'mobile scheduled board uses compact rows and filter tabs',
+    browser,
+    baseUrl,
+    async (page) => {
+      await page.goto(new URL('/#/scheduled', baseUrl).toString(), {
+        waitUntil: 'networkidle',
+      });
+      await assertVisible(page.locator('#scheduled .task-summary-bar'));
+      await assertVisible(page.locator('#scheduled .task-filter-tabs'));
+      assert.equal(await page.locator('#scheduled .task-row').count(), 3);
+
+      await page.getByRole('tab', { name: /예약|Scheduled/i }).click();
+      assert.equal(await page.locator('#scheduled .task-row').count(), 1);
+      await assertNoHorizontalOverflow(page);
+    },
+  );
 }
 
 async function runScheduledBoardScenario(browser: Browser, baseUrl: string) {
@@ -386,9 +384,9 @@ async function runScenarioWithViewport(
     isMobile: viewport.width <= 640,
     hasTouch: viewport.width <= 640,
   });
-  await context.addInitScript(() => {
-    window.localStorage.setItem('ejclaw.dashboard.locale.v2', 'ko');
-  });
+  await context.addInitScript(
+    "localStorage.setItem('ejclaw.dashboard.locale.v2', 'ko')",
+  );
   const state = createMockApiState();
   await context.route('**/api/**', (route) => handleMockApi(route, state));
   const page = await context.newPage();
@@ -458,14 +456,17 @@ async function assertNoSeriousA11yViolations(page: Page) {
 }
 
 async function assertNoHorizontalOverflow(page: Page) {
-  const overflow = await page.evaluate(() => {
+  const overflow = await page.evaluate<{
+    body: boolean;
+    document: boolean;
+  }>(`(() => {
     const doc = document.documentElement;
     const tolerance = 1;
     return {
       document: doc.scrollWidth - doc.clientWidth > tolerance,
       body: document.body.scrollWidth - document.body.clientWidth > tolerance,
     };
-  });
+  })()`);
   assert.equal(
     overflow.document,
     false,
@@ -503,11 +504,7 @@ async function handleMockApi(route: Route, state: MockApiState) {
   }
 
   if (method === 'GET' && url.pathname === '/api/settings/models') {
-    await fulfillJson(route, {
-      owner: { model: 'codex', effort: 'high' },
-      reviewer: { model: 'claude', effort: 'medium' },
-      arbiter: { model: 'claude', effort: 'medium' },
-    });
+    await fulfillJson(route, mockModelSettings());
     return;
   }
 
@@ -542,130 +539,18 @@ async function handleMockApi(route: Route, state: MockApiState) {
   }
 
   if (method === 'GET' && url.pathname === '/api/settings/moa') {
-    await fulfillJson(route, {
-      enabled: true,
-      referenceModels: ['kimi', 'glm'],
-      models: [
-        {
-          name: 'kimi',
-          enabled: true,
-          model: 'kimi-k2',
-          baseUrl: 'https://api.moonshot.ai',
-          apiFormat: 'anthropic',
-          apiKeyConfigured: true,
-          lastStatus: null,
-        },
-        {
-          name: 'glm',
-          enabled: true,
-          model: 'glm-4.6',
-          baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-          apiFormat: 'anthropic',
-          apiKeyConfigured: true,
-          lastStatus: null,
-        },
-      ],
-    });
+    await fulfillJson(route, mockMoaSettings());
     return;
   }
 
   if (method === 'GET' && url.pathname === '/api/settings/accounts') {
-    await fulfillJson(route, {
-      claude: [
-        {
-          index: 0,
-          expiresAt: null,
-          scopes: [],
-          subscriptionType: 'max',
-          rateLimitTier: 'default',
-          exists: true,
-        },
-        {
-          index: 1,
-          expiresAt: null,
-          scopes: [],
-          subscriptionType: 'pro',
-          rateLimitTier: 'default',
-          exists: true,
-        },
-        {
-          index: 2,
-          expiresAt: null,
-          scopes: [],
-          subscriptionType: 'team',
-          rateLimitTier: 'default',
-          exists: true,
-        },
-      ],
-      codex: [
-        {
-          index: 0,
-          accountId: 'acct_test',
-          email: 'codex@example.com',
-          planType: 'plus',
-          subscriptionUntil: null,
-          subscriptionLastChecked: '2026-01-01T00:00:00.000Z',
-          subscriptionSource: null,
-          liveStatus: {
-            checkedAt: '2026-01-01T00:00:00.000Z',
-            source: 'wham/usage',
-            planType: 'plus',
-            email: 'codex@example.com',
-            rateLimit: {
-              allowed: true,
-              limitReached: false,
-              primaryWindow: {
-                limitWindowSeconds: 18000,
-                resetAfterSeconds: 3600,
-                resetAt: '2026-01-01T01:00:00.000Z',
-                usedPercent: 8,
-              },
-              secondaryWindow: null,
-            },
-            rateLimitReachedType: null,
-            additionalRateLimits: [],
-            credits: null,
-            spendControl: null,
-          },
-          exists: true,
-        },
-        {
-          index: 1,
-          accountId: 'acct_backup',
-          email: 'backup@example.com',
-          planType: 'plus',
-          subscriptionUntil: '2026-06-01T00:00:00.000Z',
-          subscriptionLastChecked: '2026-01-01T00:00:00.000Z',
-          exists: true,
-        },
-        {
-          index: 2,
-          accountId: 'acct_sandbox',
-          email: 'sandbox@example.com',
-          planType: 'free',
-          subscriptionUntil: null,
-          subscriptionLastChecked: '2026-01-01T00:00:00.000Z',
-          exists: true,
-        },
-      ],
-      codexCurrentIndex: 0,
-    });
+    await fulfillJson(route, mockAccounts());
     return;
   }
 
   if (method === 'POST' && url.pathname === '/api/services/stack/actions') {
     state.restartRequests += 1;
-    await fulfillJson(route, {
-      ok: true,
-      restart: {
-        id: 'restart-test',
-        target: 'stack',
-        requestedAt: new Date(0).toISOString(),
-        completedAt: null,
-        status: 'running',
-        services: ['ejclaw'],
-      },
-    });
+    await fulfillJson(route, mockStackRestart());
     return;
   }
 
@@ -674,6 +559,147 @@ async function handleMockApi(route: Route, state: MockApiState) {
     { error: `Unhandled mock route ${method} ${url.pathname}` },
     404,
   );
+}
+
+function mockModelSettings() {
+  return {
+    owner: { model: 'codex', effort: 'high' },
+    reviewer: { model: 'claude', effort: 'medium' },
+    arbiter: { model: 'claude', effort: 'medium' },
+    agentTypes: {
+      owner: 'codex',
+      reviewer: 'claude-code',
+      arbiter: null,
+    },
+  };
+}
+
+function mockMoaSettings() {
+  return {
+    enabled: true,
+    referenceModels: ['kimi', 'glm'],
+    models: [
+      {
+        name: 'kimi',
+        enabled: true,
+        model: 'kimi-k2',
+        baseUrl: 'https://api.moonshot.ai',
+        apiFormat: 'anthropic',
+        apiKeyConfigured: true,
+        lastStatus: null,
+      },
+      {
+        name: 'glm',
+        enabled: true,
+        model: 'glm-4.6',
+        baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+        apiFormat: 'anthropic',
+        apiKeyConfigured: true,
+        lastStatus: null,
+      },
+    ],
+  };
+}
+
+function mockAccounts() {
+  return {
+    claude: [
+      {
+        index: 0,
+        expiresAt: null,
+        scopes: [],
+        subscriptionType: 'max',
+        rateLimitTier: 'default',
+        exists: true,
+      },
+      {
+        index: 1,
+        expiresAt: null,
+        scopes: [],
+        subscriptionType: 'pro',
+        rateLimitTier: 'default',
+        exists: true,
+      },
+      {
+        index: 2,
+        expiresAt: null,
+        scopes: [],
+        subscriptionType: 'team',
+        rateLimitTier: 'default',
+        exists: true,
+      },
+    ],
+    codex: [
+      {
+        index: 0,
+        accountId: 'acct_test',
+        email: 'codex@example.com',
+        planType: 'plus',
+        subscriptionUntil: null,
+        subscriptionLastChecked: '2026-01-01T00:00:00.000Z',
+        subscriptionSource: null,
+        liveStatus: mockCodexLiveStatus(),
+        exists: true,
+      },
+      {
+        index: 1,
+        accountId: 'acct_backup',
+        email: 'backup@example.com',
+        planType: 'plus',
+        subscriptionUntil: '2026-06-01T00:00:00.000Z',
+        subscriptionLastChecked: '2026-01-01T00:00:00.000Z',
+        exists: true,
+      },
+      {
+        index: 2,
+        accountId: 'acct_sandbox',
+        email: 'sandbox@example.com',
+        planType: 'free',
+        subscriptionUntil: null,
+        subscriptionLastChecked: '2026-01-01T00:00:00.000Z',
+        exists: true,
+      },
+    ],
+    codexCurrentIndex: 0,
+  };
+}
+
+function mockCodexLiveStatus() {
+  return {
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    source: 'wham/usage',
+    planType: 'plus',
+    email: 'codex@example.com',
+    rateLimit: {
+      allowed: true,
+      limitReached: false,
+      primaryWindow: {
+        limitWindowSeconds: 18000,
+        resetAfterSeconds: 3600,
+        resetAt: '2026-01-01T01:00:00.000Z',
+        usedPercent: 8,
+      },
+      secondaryWindow: null,
+    },
+    rateLimitReachedType: null,
+    additionalRateLimits: [],
+    credits: null,
+    spendControl: null,
+  };
+}
+
+function mockStackRestart() {
+  return {
+    ok: true,
+    restart: {
+      id: 'restart-test',
+      target: 'stack',
+      requestedAt: new Date(0).toISOString(),
+      completedAt: null,
+      status: 'running',
+      services: ['ejclaw'],
+    },
+  };
 }
 
 async function handleMockRoomSkillRoute(

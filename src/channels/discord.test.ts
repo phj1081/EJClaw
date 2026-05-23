@@ -233,830 +233,820 @@ async function triggerMessage(message: any) {
 
 // --- Tests ---
 
-describe('DiscordChannel', () => {
+beforeEach(() => {
+  vi.clearAllMocks();
+  hasReviewerLeaseMock.mockReturnValue(false);
+  loginShouldRejectRef.value = false;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe('channel registration', () => {
+  it('warns when the canonical owner token is not configured', () => {
+    const ownerFactory = registeredChannelFactories.get('discord');
+
+    expect(ownerFactory).toBeTypeOf('function');
+    expect(ownerFactory?.(createTestOpts() as any)).toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Discord: DISCORD_OWNER_BOT_TOKEN not set',
+    );
+  });
+});
+
+// --- Connection lifecycle ---
+
+describe('connection lifecycle', () => {
+  it('resolves connect() when client is ready', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+
+    await channel.connect();
+
+    expect(channel.isConnected()).toBe(true);
+  });
+
+  it('rejects connect() when login fails', async () => {
+    loginShouldRejectRef.value = true;
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('bad-token', opts);
+
+    await expect(channel.connect()).rejects.toThrow(
+      'An invalid token was provided.',
+    );
+    expect(channel.isConnected()).toBe(false);
+  });
+
+  it('registers message handlers on connect', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+
+    await channel.connect();
+
+    expect(currentClient().eventHandlers.has('messageCreate')).toBe(true);
+    expect(currentClient().eventHandlers.has('error')).toBe(true);
+    expect(currentClient().eventHandlers.has('ready')).toBe(true);
+  });
+
+  it('disconnects cleanly', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+
+    await channel.connect();
+    expect(channel.isConnected()).toBe(true);
+
+    await channel.disconnect();
+    expect(channel.isConnected()).toBe(false);
+  });
+
+  it('isConnected() returns false before connect', () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+
+    expect(channel.isConnected()).toBe(false);
+  });
+});
+
+// --- Text message handling ---
+
+describe('text message handling', () => {
+  it('delivers message for registered channel', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: 'Hello everyone',
+      guildName: 'Test Server',
+      channelName: 'general',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onChatMetadata).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.any(String),
+      'Test Server #general',
+      'discord',
+      true,
+    );
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        id: 'msg_001',
+        chat_jid: 'dc:1234567890123456',
+        sender: '55512345',
+        sender_name: 'Alice',
+        content: 'Hello everyone',
+        is_from_me: false,
+      }),
+    );
+  });
+
+  it('only emits metadata for unregistered channels', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      channelId: '9999999999999999',
+      content: 'Unknown channel',
+      guildName: 'Other Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onChatMetadata).toHaveBeenCalledWith(
+      'dc:9999999999999999',
+      expect.any(String),
+      expect.any(String),
+      'discord',
+      true,
+    );
+    expect(opts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('ignores its own bot messages', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      authorId: '999888777',
+      isBot: true,
+      content: 'I am the connected bot',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('ignores other bot messages in normal rooms', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      authorId: '111222333',
+      isBot: true,
+      content: 'I am another bot',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).not.toHaveBeenCalled();
+  });
+
+  it('delivers other bot messages in paired rooms', async () => {
+    hasReviewerLeaseMock.mockReturnValue(true);
+
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      authorId: '111222333',
+      isBot: true,
+      content: 'I am another bot',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: 'I am another bot',
+        is_bot_message: true,
+      }),
+    );
+  });
+
+  it('uses member displayName when available (server nickname)', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: 'Hi',
+      memberDisplayName: 'Alice Nickname',
+      authorDisplayName: 'Alice Global',
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({ sender_name: 'Alice Nickname' }),
+    );
+  });
+
+  it('falls back to author displayName when no member', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: 'Hi',
+      memberDisplayName: undefined,
+      authorDisplayName: 'Alice Global',
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({ sender_name: 'Alice Global' }),
+    );
+  });
+
+  it('uses sender name for DM chats (no guild)', async () => {
+    const opts = createTestOpts({
+      roomBindings: vi.fn(() => ({
+        'dc:1234567890123456': {
+          name: 'DM',
+          folder: 'dm',
+          trigger: '@Andy',
+          added_at: '2024-01-01T00:00:00.000Z',
+        },
+      })),
+    });
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: 'Hello',
+      guildName: undefined,
+      authorDisplayName: 'Alice',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onChatMetadata).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.any(String),
+      'Alice',
+      'discord',
+      false,
+    );
+  });
+
+  it('uses guild name + channel name for server messages', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: 'Hello',
+      guildName: 'My Server',
+      channelName: 'bot-chat',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onChatMetadata).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.any(String),
+      'My Server #bot-chat',
+      'discord',
+      true,
+    );
+  });
+});
+
+// --- bot mention handling ---
+
+describe('bot mention handling', () => {
+  it('passes through <@botId> mentions without rewriting them', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: '<@999888777> what time is it?',
+      mentionsBotId: true,
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: '<@999888777> what time is it?',
+      }),
+    );
+  });
+
+  it('leaves mixed text and mentions untouched', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: '@Andy hello <@999888777>',
+      mentionsBotId: true,
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    // Should NOT prepend @Andy — already starts with trigger
+    // But the <@botId> should still be stripped
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: '@Andy hello <@999888777>',
+      }),
+    );
+  });
+
+  it('does not translate when bot is not mentioned', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: 'hello everyone',
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: 'hello everyone',
+      }),
+    );
+  });
+
+  it('passes through <@!botId> nickname mentions without rewriting them', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: '<@!999888777> check this',
+      mentionsBotId: true,
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: '<@!999888777> check this',
+      }),
+    );
+  });
+});
+
+// --- Attachments ---
+
+describe('attachments', () => {
+  let originalFetch: typeof globalThis.fetch;
+
   beforeEach(() => {
-    vi.clearAllMocks();
-    hasReviewerLeaseMock.mockReturnValue(false);
-    loginShouldRejectRef.value = false;
+    originalFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+        text: () => Promise.resolve('Hello from text file'),
+      }),
+    );
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    globalThis.fetch = originalFetch;
   });
 
-  describe('channel registration', () => {
-    it('warns when the canonical owner token is not configured', () => {
-      const ownerFactory = registeredChannelFactories.get('discord');
-
-      expect(ownerFactory).toBeTypeOf('function');
-      expect(ownerFactory?.(createTestOpts() as any)).toBeNull();
-      expect(logger.warn).toHaveBeenCalledWith(
-        'Discord: DISCORD_OWNER_BOT_TOKEN not set',
-      );
-    });
-  });
-
-  // --- Connection lifecycle ---
-
-  describe('connection lifecycle', () => {
-    it('resolves connect() when client is ready', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-
-      await channel.connect();
-
-      expect(channel.isConnected()).toBe(true);
-    });
-
-    it('rejects connect() when login fails', async () => {
-      loginShouldRejectRef.value = true;
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('bad-token', opts);
-
-      await expect(channel.connect()).rejects.toThrow(
-        'An invalid token was provided.',
-      );
-      expect(channel.isConnected()).toBe(false);
-    });
-
-    it('registers message handlers on connect', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-
-      await channel.connect();
-
-      expect(currentClient().eventHandlers.has('messageCreate')).toBe(true);
-      expect(currentClient().eventHandlers.has('error')).toBe(true);
-      expect(currentClient().eventHandlers.has('ready')).toBe(true);
-    });
-
-    it('disconnects cleanly', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-
-      await channel.connect();
-      expect(channel.isConnected()).toBe(true);
-
-      await channel.disconnect();
-      expect(channel.isConnected()).toBe(false);
-    });
-
-    it('isConnected() returns false before connect', () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-
-      expect(channel.isConnected()).toBe(false);
-    });
-  });
-
-  // --- Text message handling ---
-
-  describe('text message handling', () => {
-    it('delivers message for registered channel', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: 'Hello everyone',
-        guildName: 'Test Server',
-        channelName: 'general',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.any(String),
-        'Test Server #general',
-        'discord',
-        true,
-      );
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          id: 'msg_001',
-          chat_jid: 'dc:1234567890123456',
-          sender: '55512345',
-          sender_name: 'Alice',
-          content: 'Hello everyone',
-          is_from_me: false,
-        }),
-      );
-    });
-
-    it('only emits metadata for unregistered channels', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        channelId: '9999999999999999',
-        content: 'Unknown channel',
-        guildName: 'Other Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'dc:9999999999999999',
-        expect.any(String),
-        expect.any(String),
-        'discord',
-        true,
-      );
-      expect(opts.onMessage).not.toHaveBeenCalled();
-    });
-
-    it('ignores its own bot messages', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        authorId: '999888777',
-        isBot: true,
-        content: 'I am the connected bot',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).not.toHaveBeenCalled();
-    });
-
-    it('ignores other bot messages in normal rooms', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        authorId: '111222333',
-        isBot: true,
-        content: 'I am another bot',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).not.toHaveBeenCalled();
-    });
-
-    it('delivers other bot messages in paired rooms', async () => {
-      hasReviewerLeaseMock.mockReturnValue(true);
-
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        authorId: '111222333',
-        isBot: true,
-        content: 'I am another bot',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: 'I am another bot',
-          is_bot_message: true,
-        }),
-      );
-    });
-
-    it('uses member displayName when available (server nickname)', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: 'Hi',
-        memberDisplayName: 'Alice Nickname',
-        authorDisplayName: 'Alice Global',
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({ sender_name: 'Alice Nickname' }),
-      );
-    });
-
-    it('falls back to author displayName when no member', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: 'Hi',
-        memberDisplayName: undefined,
-        authorDisplayName: 'Alice Global',
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({ sender_name: 'Alice Global' }),
-      );
-    });
-
-    it('uses sender name for DM chats (no guild)', async () => {
-      const opts = createTestOpts({
-        roomBindings: vi.fn(() => ({
-          'dc:1234567890123456': {
-            name: 'DM',
-            folder: 'dm',
-            trigger: '@Andy',
-            added_at: '2024-01-01T00:00:00.000Z',
-          },
-        })),
-      });
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: 'Hello',
-        guildName: undefined,
-        authorDisplayName: 'Alice',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.any(String),
-        'Alice',
-        'discord',
-        false,
-      );
-    });
-
-    it('uses guild name + channel name for server messages', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: 'Hello',
-        guildName: 'My Server',
-        channelName: 'bot-chat',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onChatMetadata).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.any(String),
-        'My Server #bot-chat',
-        'discord',
-        true,
-      );
-    });
-  });
-
-  // --- bot mention handling ---
-
-  describe('bot mention handling', () => {
-    it('passes through <@botId> mentions without rewriting them', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: '<@999888777> what time is it?',
-        mentionsBotId: true,
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: '<@999888777> what time is it?',
-        }),
-      );
-    });
-
-    it('leaves mixed text and mentions untouched', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: '@Andy hello <@999888777>',
-        mentionsBotId: true,
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      // Should NOT prepend @Andy — already starts with trigger
-      // But the <@botId> should still be stripped
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: '@Andy hello <@999888777>',
-        }),
-      );
-    });
-
-    it('does not translate when bot is not mentioned', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: 'hello everyone',
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: 'hello everyone',
-        }),
-      );
-    });
-
-    it('passes through <@!botId> nickname mentions without rewriting them', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: '<@!999888777> check this',
-        mentionsBotId: true,
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: '<@!999888777> check this',
-        }),
-      );
-    });
-  });
-
-  // --- Attachments ---
-
-  describe('attachments', () => {
-    let originalFetch: typeof globalThis.fetch;
-
-    beforeEach(() => {
-      originalFetch = globalThis.fetch;
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({
-          ok: true,
-          arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
-          text: () => Promise.resolve('Hello from text file'),
-        }),
-      );
-    });
-
-    afterEach(() => {
-      globalThis.fetch = originalFetch;
-    });
-
-    it('stores image attachment with placeholder', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const attachments = new Map([
-        [
-          'att1',
-          {
-            id: 'att1',
-            name: 'photo.png',
-            contentType: 'image/png',
-            url: 'https://cdn.example.com/photo.png',
-          },
-        ],
-      ]);
-      const msg = createMessage({
-        content: '',
-        attachments,
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: expect.stringMatching(/^\[Image: .+\.png\]$/),
-        }),
-      );
-    });
-
-    it('stores video attachment with placeholder', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const attachments = new Map([
-        ['att1', { name: 'clip.mp4', contentType: 'video/mp4' }],
-      ]);
-      const msg = createMessage({
-        content: '',
-        attachments,
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: '[Video: clip.mp4]',
-        }),
-      );
-    });
-
-    it('stores file attachment with placeholder', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const attachments = new Map([
-        ['att1', { name: 'report.pdf', contentType: 'application/pdf' }],
-      ]);
-      const msg = createMessage({
-        content: '',
-        attachments,
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: '[File: report.pdf]',
-        }),
-      );
-    });
-
-    it('includes text content with attachments', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const attachments = new Map([
-        [
-          'att1',
-          {
-            id: 'att1',
-            name: 'photo.jpg',
-            contentType: 'image/jpeg',
-            url: 'https://cdn.example.com/photo.jpg',
-          },
-        ],
-      ]);
-      const msg = createMessage({
-        content: 'Check this out',
-        attachments,
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: expect.stringMatching(
-            /^Check this out\n\[Image: .+\.jpg\]$/,
-          ),
-        }),
-      );
-    });
-
-    it('handles multiple attachments', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const attachments = new Map([
-        [
-          'att1',
-          {
-            id: 'att1',
-            name: 'a.png',
-            contentType: 'image/png',
-            url: 'https://cdn.example.com/a.png',
-          },
-        ],
-        [
-          'att2',
-          {
-            id: 'att2',
-            name: 'b.txt',
-            contentType: 'text/plain',
-            url: 'https://cdn.example.com/b.txt',
-          },
-        ],
-      ]);
-      const msg = createMessage({
-        content: '',
-        attachments,
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: expect.stringMatching(
-            /^\[Image: .+\.png\]\n\[File: b\.txt\]\nHello from text file$/,
-          ),
-        }),
-      );
-    });
-  });
-
-  // --- Reply context ---
-
-  describe('reply context', () => {
-    it('includes reply author in content', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const msg = createMessage({
-        content: 'I agree with that',
-        reference: { messageId: 'original_msg_id' },
-        guildName: 'Server',
-      });
-      await triggerMessage(msg);
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'dc:1234567890123456',
-        expect.objectContaining({
-          content: '[Reply to Bob] I agree with that',
-        }),
-      );
-    });
-  });
-
-  // --- sendMessage ---
-
-  describe('sendMessage', () => {
-    it('sends message via channel', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      await channel.sendMessage('dc:1234567890123456', 'Hello');
-
-      await currentClient().channels.fetch('1234567890123456');
-      expect(currentClient().channels.fetch).toHaveBeenCalledWith(
-        '1234567890123456',
-      );
-    });
-
-    it('strips dc: prefix from JID', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      await channel.sendMessage('dc:9876543210', 'Test');
-
-      expect(currentClient().channels.fetch).toHaveBeenCalledWith('9876543210');
-    });
-
-    it('propagates send failure to the caller', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      currentClient().channels.fetch.mockRejectedValueOnce(
-        new Error('Channel not found'),
-      );
-
-      await expect(
-        channel.sendMessage('dc:1234567890123456', 'Will fail'),
-      ).rejects.toThrow('Channel not found');
-    });
-
-    it('rejects when client is not initialized', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-
-      // Don't connect — client is null
-      await expect(
-        channel.sendMessage('dc:1234567890123456', 'No client'),
-      ).rejects.toThrow('Discord client not initialized');
-    });
-
-    it('splits messages exceeding 2000 characters', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      const mockChannel = {
-        send: vi.fn().mockResolvedValue(undefined),
-        sendTyping: vi.fn(),
-      };
-      currentClient().channels.fetch.mockResolvedValue(mockChannel);
-
-      const longText = 'x'.repeat(3000);
-      await channel.sendMessage('dc:1234567890123456', longText);
-
-      expect(mockChannel.send).toHaveBeenCalledTimes(2);
-      expect(mockChannel.send).toHaveBeenNthCalledWith(1, {
-        content: 'x'.repeat(2000),
-        files: undefined,
-        flags: 1 << 2,
-      });
-      expect(mockChannel.send).toHaveBeenNthCalledWith(2, {
-        content: 'x'.repeat(1000),
-        files: undefined,
-        flags: 1 << 2,
-      });
-    });
-
-    it('sends structured attachments as Discord files', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-      const { dir, filePath } = createTempPng('structured.png');
-      const mockChannel = {
-        send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
-        sendTyping: vi.fn(),
-      };
-      currentClient().channels.fetch.mockResolvedValue(mockChannel);
-
-      await channel.sendMessage(
-        'dc:1234567890123456',
-        '이미지를 생성했습니다.',
+  it('stores image attachment with placeholder', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const attachments = new Map([
+      [
+        'att1',
         {
-          attachments: [
-            { path: filePath, name: 'result.png', mime: 'image/png' },
-          ],
+          id: 'att1',
+          name: 'photo.png',
+          contentType: 'image/png',
+          url: 'https://cdn.example.com/photo.png',
         },
-      );
-
-      expect(mockChannel.send).toHaveBeenCalledWith({
-        content: '이미지를 생성했습니다.',
-        files: [{ attachment: filePath, name: 'result.png' }],
-        flags: 1 << 2,
-      });
-      fs.rmSync(dir, { recursive: true, force: true });
+      ],
+    ]);
+    const msg = createMessage({
+      content: '',
+      attachments,
+      guildName: 'Server',
     });
+    await triggerMessage(msg);
 
-    it('uses legacy image tags as Discord attachment fallback', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-      const { dir, filePath } = createTempPng('screenshot.png');
-      const mockChannel = {
-        send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
-        sendTyping: vi.fn(),
-      };
-      currentClient().channels.fetch.mockResolvedValue(mockChannel);
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: expect.stringMatching(/^\[Image: .+\.png\]$/),
+      }),
+    );
+  });
 
-      await channel.sendMessage(
-        'dc:1234567890123456',
-        `스크린샷입니다.\n[Image: screenshot.png → ${filePath}]`,
-      );
+  it('stores video attachment with placeholder', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
 
-      expect(mockChannel.send).toHaveBeenCalledWith({
-        content: '스크린샷입니다.',
-        files: [{ attachment: filePath, name: 'screenshot.png' }],
-        flags: 1 << 2,
-      });
-      fs.rmSync(dir, { recursive: true, force: true });
+    const attachments = new Map([
+      ['att1', { name: 'clip.mp4', contentType: 'video/mp4' }],
+    ]);
+    const msg = createMessage({
+      content: '',
+      attachments,
+      guildName: 'Server',
     });
+    await triggerMessage(msg);
 
-    it('logs channel name and Discord message ids after sending', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: '[Video: clip.mp4]',
+      }),
+    );
+  });
 
-      const mockChannel = {
-        send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
-        sendTyping: vi.fn(),
-      };
-      currentClient().channels.fetch.mockResolvedValue(mockChannel);
+  it('stores file attachment with placeholder', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
 
-      await channel.sendMessage('dc:1234567890123456', 'Hello');
+    const attachments = new Map([
+      ['att1', { name: 'report.pdf', contentType: 'application/pdf' }],
+    ]);
+    const msg = createMessage({
+      content: '',
+      attachments,
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
 
-      expect(logger.info).toHaveBeenCalledWith(
-        expect.objectContaining({
-          jid: 'dc:1234567890123456',
-          channelName: 'discord',
-          deliveryMode: 'send',
-          chunkCount: 1,
-          messageId: 'discord-message-1',
-          messageIds: ['discord-message-1'],
-        }),
-        'Discord message sent',
-      );
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: '[File: report.pdf]',
+      }),
+    );
+  });
+
+  it('includes text content with attachments', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const attachments = new Map([
+      [
+        'att1',
+        {
+          id: 'att1',
+          name: 'photo.jpg',
+          contentType: 'image/jpeg',
+          url: 'https://cdn.example.com/photo.jpg',
+        },
+      ],
+    ]);
+    const msg = createMessage({
+      content: 'Check this out',
+      attachments,
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: expect.stringMatching(/^Check this out\n\[Image: .+\.jpg\]$/),
+      }),
+    );
+  });
+
+  it('handles multiple attachments', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const attachments = new Map([
+      [
+        'att1',
+        {
+          id: 'att1',
+          name: 'a.png',
+          contentType: 'image/png',
+          url: 'https://cdn.example.com/a.png',
+        },
+      ],
+      [
+        'att2',
+        {
+          id: 'att2',
+          name: 'b.txt',
+          contentType: 'text/plain',
+          url: 'https://cdn.example.com/b.txt',
+        },
+      ],
+    ]);
+    const msg = createMessage({
+      content: '',
+      attachments,
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: expect.stringMatching(
+          /^\[Image: .+\.png\]\n\[File: b\.txt\]\nHello from text file$/,
+        ),
+      }),
+    );
+  });
+});
+
+// --- Reply context ---
+
+describe('reply context', () => {
+  it('includes reply author in content', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const msg = createMessage({
+      content: 'I agree with that',
+      reference: { messageId: 'original_msg_id' },
+      guildName: 'Server',
+    });
+    await triggerMessage(msg);
+
+    expect(opts.onMessage).toHaveBeenCalledWith(
+      'dc:1234567890123456',
+      expect.objectContaining({
+        content: '[Reply to Bob] I agree with that',
+      }),
+    );
+  });
+});
+
+// --- sendMessage ---
+
+describe('sendMessage', () => {
+  it('sends message via channel', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    await channel.sendMessage('dc:1234567890123456', 'Hello');
+
+    await currentClient().channels.fetch('1234567890123456');
+    expect(currentClient().channels.fetch).toHaveBeenCalledWith(
+      '1234567890123456',
+    );
+  });
+
+  it('strips dc: prefix from JID', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    await channel.sendMessage('dc:9876543210', 'Test');
+
+    expect(currentClient().channels.fetch).toHaveBeenCalledWith('9876543210');
+  });
+
+  it('propagates send failure to the caller', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    currentClient().channels.fetch.mockRejectedValueOnce(
+      new Error('Channel not found'),
+    );
+
+    await expect(
+      channel.sendMessage('dc:1234567890123456', 'Will fail'),
+    ).rejects.toThrow('Channel not found');
+  });
+
+  it('rejects when client is not initialized', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+
+    // Don't connect — client is null
+    await expect(
+      channel.sendMessage('dc:1234567890123456', 'No client'),
+    ).rejects.toThrow('Discord client not initialized');
+  });
+
+  it('splits messages exceeding 2000 characters', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const mockChannel = {
+      send: vi.fn().mockResolvedValue(undefined),
+      sendTyping: vi.fn(),
+    };
+    currentClient().channels.fetch.mockResolvedValue(mockChannel);
+
+    const longText = 'x'.repeat(3000);
+    await channel.sendMessage('dc:1234567890123456', longText);
+
+    expect(mockChannel.send).toHaveBeenCalledTimes(2);
+    expect(mockChannel.send).toHaveBeenNthCalledWith(1, {
+      content: 'x'.repeat(2000),
+      files: undefined,
+      flags: 1 << 2,
+    });
+    expect(mockChannel.send).toHaveBeenNthCalledWith(2, {
+      content: 'x'.repeat(1000),
+      files: undefined,
+      flags: 1 << 2,
     });
   });
 
-  // --- ownsJid ---
+  it('sends structured attachments as Discord files', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+    const { dir, filePath } = createTempPng('structured.png');
+    const mockChannel = {
+      send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
+      sendTyping: vi.fn(),
+    };
+    currentClient().channels.fetch.mockResolvedValue(mockChannel);
 
-  describe('ownsJid', () => {
-    it('owns dc: JIDs', () => {
-      const channel = new DiscordChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('dc:1234567890123456')).toBe(true);
+    await channel.sendMessage('dc:1234567890123456', '이미지를 생성했습니다.', {
+      attachments: [{ path: filePath, name: 'result.png', mime: 'image/png' }],
     });
 
-    it('can be configured as an outbound-only role bot', () => {
-      const channel = new DiscordChannel(
-        'test-token',
-        createTestOpts(),
-        undefined,
-        'discord-review',
-        false,
-        false,
-      );
-      expect(channel.ownsJid('dc:1234567890123456')).toBe(false);
+    expect(mockChannel.send).toHaveBeenCalledWith({
+      content: '이미지를 생성했습니다.',
+      files: [{ attachment: filePath, name: 'result.png' }],
+      flags: 1 << 2,
     });
-
-    it('does not own WhatsApp group JIDs', () => {
-      const channel = new DiscordChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('12345@g.us')).toBe(false);
-    });
-
-    it('does not own Telegram JIDs', () => {
-      const channel = new DiscordChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('tg:123456789')).toBe(false);
-    });
-
-    it('does not own unknown JID formats', () => {
-      const channel = new DiscordChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('random-string')).toBe(false);
-    });
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  // --- setTyping ---
+  it('uses legacy image tags as Discord attachment fallback', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+    const { dir, filePath } = createTempPng('screenshot.png');
+    const mockChannel = {
+      send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
+      sendTyping: vi.fn(),
+    };
+    currentClient().channels.fetch.mockResolvedValue(mockChannel);
 
-  describe('setTyping', () => {
-    it('sends typing indicator when isTyping is true', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
+    await channel.sendMessage(
+      'dc:1234567890123456',
+      `스크린샷입니다.\n[Image: screenshot.png → ${filePath}]`,
+    );
 
-      const mockChannel = {
-        send: vi.fn(),
-        sendTyping: vi.fn().mockResolvedValue(undefined),
-      };
-      currentClient().channels.fetch.mockResolvedValue(mockChannel);
-
-      await channel.setTyping('dc:1234567890123456', true);
-
-      expect(mockChannel.sendTyping).toHaveBeenCalled();
+    expect(mockChannel.send).toHaveBeenCalledWith({
+      content: '스크린샷입니다.',
+      files: [{ attachment: filePath, name: 'screenshot.png' }],
+      flags: 1 << 2,
     });
-
-    it('does nothing when isTyping is false', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      await channel.setTyping('dc:1234567890123456', false);
-
-      // channels.fetch should NOT be called
-      expect(currentClient().channels.fetch).not.toHaveBeenCalled();
-    });
-
-    it('does not send stale typing after typing was disabled mid-flight', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-      await channel.connect();
-
-      let resolveFetch!: (value: unknown) => void;
-      const fetchPromise = new Promise((resolve) => {
-        resolveFetch = resolve;
-      });
-      const mockChannel = {
-        send: vi.fn(),
-        sendTyping: vi.fn().mockResolvedValue(undefined),
-      };
-
-      currentClient().channels.fetch.mockImplementationOnce(() => fetchPromise);
-
-      const typingPromise = channel.setTyping('dc:1234567890123456', true);
-      await Promise.resolve();
-      await channel.setTyping('dc:1234567890123456', false);
-      resolveFetch(mockChannel);
-      await typingPromise;
-
-      expect(mockChannel.sendTyping).not.toHaveBeenCalled();
-    });
-
-    it('does nothing when client is not initialized', async () => {
-      const opts = createTestOpts();
-      const channel = new DiscordChannel('test-token', opts);
-
-      // Don't connect
-      await channel.setTyping('dc:1234567890123456', true);
-
-      // No error
-    });
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  // --- Channel properties ---
+  it('logs channel name and Discord message ids after sending', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
 
-  describe('channel properties', () => {
-    it('has name "discord"', () => {
-      const channel = new DiscordChannel('test-token', createTestOpts());
-      expect(channel.name).toBe('discord');
+    const mockChannel = {
+      send: vi.fn().mockResolvedValue({ id: 'discord-message-1' }),
+      sendTyping: vi.fn(),
+    };
+    currentClient().channels.fetch.mockResolvedValue(mockChannel);
+
+    await channel.sendMessage('dc:1234567890123456', 'Hello');
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jid: 'dc:1234567890123456',
+        channelName: 'discord',
+        deliveryMode: 'send',
+        chunkCount: 1,
+        messageId: 'discord-message-1',
+        messageIds: ['discord-message-1'],
+      }),
+      'Discord message sent',
+    );
+  });
+});
+
+// --- ownsJid ---
+
+describe('ownsJid', () => {
+  it('owns dc: JIDs', () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    expect(channel.ownsJid('dc:1234567890123456')).toBe(true);
+  });
+
+  it('can be configured as an outbound-only role bot', () => {
+    const channel = new DiscordChannel(
+      'test-token',
+      createTestOpts(),
+      undefined,
+      'discord-review',
+      false,
+      false,
+    );
+    expect(channel.ownsJid('dc:1234567890123456')).toBe(false);
+  });
+
+  it('does not own WhatsApp group JIDs', () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    expect(channel.ownsJid('12345@g.us')).toBe(false);
+  });
+
+  it('does not own Telegram JIDs', () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    expect(channel.ownsJid('tg:123456789')).toBe(false);
+  });
+
+  it('does not own unknown JID formats', () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    expect(channel.ownsJid('random-string')).toBe(false);
+  });
+});
+
+// --- setTyping ---
+
+describe('setTyping', () => {
+  it('sends typing indicator when isTyping is true', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    const mockChannel = {
+      send: vi.fn(),
+      sendTyping: vi.fn().mockResolvedValue(undefined),
+    };
+    currentClient().channels.fetch.mockResolvedValue(mockChannel);
+
+    await channel.setTyping('dc:1234567890123456', true);
+
+    expect(mockChannel.sendTyping).toHaveBeenCalled();
+  });
+
+  it('does nothing when isTyping is false', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    await channel.setTyping('dc:1234567890123456', false);
+
+    // channels.fetch should NOT be called
+    expect(currentClient().channels.fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not send stale typing after typing was disabled mid-flight', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+    await channel.connect();
+
+    let resolveFetch!: (value: unknown) => void;
+    const fetchPromise = new Promise((resolve) => {
+      resolveFetch = resolve;
     });
+    const mockChannel = {
+      send: vi.fn(),
+      sendTyping: vi.fn().mockResolvedValue(undefined),
+    };
+
+    currentClient().channels.fetch.mockImplementationOnce(() => fetchPromise);
+
+    const typingPromise = channel.setTyping('dc:1234567890123456', true);
+    await Promise.resolve();
+    await channel.setTyping('dc:1234567890123456', false);
+    resolveFetch(mockChannel);
+    await typingPromise;
+
+    expect(mockChannel.sendTyping).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when client is not initialized', async () => {
+    const opts = createTestOpts();
+    const channel = new DiscordChannel('test-token', opts);
+
+    // Don't connect
+    await channel.setTyping('dc:1234567890123456', true);
+
+    // No error
+  });
+});
+
+// --- Channel properties ---
+
+describe('channel properties', () => {
+  it('has name "discord"', () => {
+    const channel = new DiscordChannel('test-token', createTestOpts());
+    expect(channel.name).toBe('discord');
   });
 });

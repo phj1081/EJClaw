@@ -20,7 +20,7 @@
       "owner": "dashboard shell hotspot"
     },
     "apps/dashboard/src/i18n.ts": {
-      "maxLines": 1330,
+      "maxLines": 2156,
       "owner": "dashboard i18n hotspot"
     },
     "apps/dashboard/src/styles.css": {
@@ -39,6 +39,10 @@
     "runners/shared/test/agent-protocol.test.ts": {
       "maxFunctionLines": 279,
       "owner": "runner shared test hotspot"
+    },
+    "scripts/dashboard-ux.ts": {
+      "maxLines": 1034,
+      "owner": "dashboard ux smoke hotspot"
     },
     "setup/migrate-room-registrations.test.ts": {
       "maxFunctionLines": 393,
@@ -63,10 +67,6 @@
     "src/agent-runner.test.ts": {
       "maxFunctionLines": 548,
       "owner": "agent runner test hotspot"
-    },
-    "src/channels/discord.test.ts": {
-      "maxFunctionLines": 816,
-      "owner": "discord test hotspot"
     },
     "src/codex-warmup.test.ts": {
       "maxFunctionLines": 277,

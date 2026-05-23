@@ -53,14 +53,14 @@ function effortOptionsForRole(
   draft: ModelConfigSnapshot,
   role: ModelRole,
 ): readonly EffortValue[] {
-  const agentType = draft.agentTypes[role];
+  const agentType = draft.agentTypes?.[role];
   if (agentType) return effortValuesForAgent(agentType);
   return effortValuesForAgent('codex');
 }
 
 export function hasUnsupportedModelEffort(draft: ModelConfigSnapshot): boolean {
   for (const role of MODEL_ROLES) {
-    const agentType = draft.agentTypes[role];
+    const agentType = draft.agentTypes?.[role];
     if (!agentType) continue;
     if (!isEffortSupported(agentType, draft[role].effort)) return true;
   }
@@ -80,7 +80,7 @@ export function ModelRoleFields({
     <div className="settings-model-stack">
       {MODEL_ROLES.map((role) => {
         const roleConfig = draft[role];
-        const agentType = draft.agentTypes[role];
+        const agentType = draft.agentTypes?.[role] ?? null;
         const effortOptions = effortOptionsForRole(draft, role);
         const effortInvalid =
           agentType !== null &&
