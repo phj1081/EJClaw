@@ -60,6 +60,7 @@ import {
   createSanitizeBashHook,
 } from './runner-hooks.js';
 import { buildClaudeSdkEnv } from './sdk-env.js';
+import { buildEjclawMcpServerConfig } from './mcp-config.js';
 
 interface RunnerInput {
   prompt: string;
@@ -299,23 +300,15 @@ async function runQuery(
       settingSources: ['project', 'user'],
       abortController: agentAbortController,
       mcpServers: {
-        ejclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {
-            EJCLAW_CHAT_JID: runnerInput.chatJid,
-            EJCLAW_GROUP_FOLDER: runnerInput.groupFolder,
-            EJCLAW_IS_MAIN: runnerInput.isMain ? '1' : '0',
-            EJCLAW_AGENT_TYPE: process.env.EJCLAW_AGENT_TYPE || 'claude-code',
-            EJCLAW_ROOM_ROLE: runnerInput.roomRoleContext?.role || '',
-            ...(process.env.EJCLAW_IPC_DIR && {
-              EJCLAW_IPC_DIR: process.env.EJCLAW_IPC_DIR,
-            }),
-            ...(process.env.EJCLAW_HOST_IPC_DIR && {
-              EJCLAW_HOST_IPC_DIR: process.env.EJCLAW_HOST_IPC_DIR,
-            }),
-          },
-        },
+        ejclaw: buildEjclawMcpServerConfig(mcpServerPath, {
+          chatJid: runnerInput.chatJid,
+          groupFolder: runnerInput.groupFolder,
+          isMain: runnerInput.isMain,
+          agentType: process.env.EJCLAW_AGENT_TYPE || 'claude-code',
+          roomRole: runnerInput.roomRoleContext?.role || '',
+          ipcDir: process.env.EJCLAW_IPC_DIR,
+          hostIpcDir: process.env.EJCLAW_HOST_IPC_DIR,
+        }),
       },
       hooks: {
         PreCompact: [
