@@ -1,12 +1,5 @@
 import { type ReactNode } from 'react';
-import {
-  Clock,
-  Download,
-  Gauge,
-  MessageSquare,
-  RefreshCw,
-  Settings,
-} from 'lucide-react';
+import { Clock, Gauge, MessageSquare, Settings } from 'lucide-react';
 
 import { type DashboardOverview, type StatusSnapshot } from './api';
 import { type Messages } from './i18n';
@@ -59,23 +52,6 @@ function navBadge(
     return stats.processing;
   }
   return null;
-}
-
-function pwaStateLabel({
-  installed,
-  offlineReady,
-  secureContext,
-  t,
-}: {
-  installed: boolean;
-  offlineReady: boolean;
-  secureContext: boolean;
-  t: Messages;
-}) {
-  if (!secureContext) return t.pwa.secureRequired;
-  if (installed) return t.pwa.installed;
-  if (offlineReady) return t.pwa.ready;
-  return t.pwa.app;
 }
 
 function DashboardBrandLink({
@@ -138,95 +114,15 @@ function DashboardNavLinks({
   );
 }
 
-function DashboardNavActions({
-  canInstall,
-  installed,
-  offlineReady,
-  onInstall,
-  onRefresh,
-  online,
-  refreshing,
-  secureContext,
-  t,
-}: {
-  canInstall: boolean;
-  installed: boolean;
-  offlineReady: boolean;
-  onInstall: () => void;
-  onRefresh: () => void;
-  online: boolean;
-  refreshing: boolean;
-  secureContext: boolean;
-  t: Messages;
-}) {
-  const pwaState = pwaStateLabel({ installed, offlineReady, secureContext, t });
-  const status = `${online ? t.pwa.online : t.pwa.offline} · ${pwaState}`;
-  return (
-    <div className="rail-foot">
-      <div className="rail-status-line" title={status}>
-        <span
-          className={`rail-status-dot ${online ? 'is-online' : 'is-offline'}`}
-          aria-label={online ? t.pwa.online : t.pwa.offline}
-        />
-        <span className="rail-foot-label">{status}</span>
-      </div>
-      <div className="rail-actions">
-        {canInstall ? (
-          <button
-            className="rail-btn"
-            onClick={onInstall}
-            title={t.pwa.install}
-            aria-label={t.pwa.install}
-            type="button"
-          >
-            <Download size={16} strokeWidth={2} aria-hidden />
-            <span className="rail-btn-label">{t.pwa.install}</span>
-          </button>
-        ) : null}
-        <button
-          aria-busy={refreshing}
-          aria-label={t.actions.refresh}
-          className={`rail-btn${refreshing ? ' is-spinning' : ''}`}
-          disabled={refreshing}
-          onClick={onRefresh}
-          title={refreshing ? t.actions.refreshing : t.actions.refresh}
-          type="button"
-        >
-          <RefreshCw size={16} strokeWidth={2} aria-hidden />
-          <span className="rail-btn-label">
-            {refreshing ? t.actions.refreshing : t.actions.refresh}
-          </span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export function SideRail({
   activeView,
-  canInstall,
   data,
-  installed,
-  offlineReady,
-  onInstall,
   onNavigate,
-  onRefresh,
-  online,
-  refreshing,
-  secureContext,
   t,
 }: {
   activeView: DashboardView;
-  canInstall: boolean;
   data: DashboardNavData | null;
-  installed: boolean;
-  offlineReady: boolean;
-  onInstall: () => void;
   onNavigate: (view: DashboardView) => void;
-  onRefresh: () => void;
-  online: boolean;
-  refreshing: boolean;
-  secureContext: boolean;
   t: Messages;
 }) {
   return (
@@ -238,60 +134,38 @@ export function SideRail({
         onNavigate={onNavigate}
         t={t}
       />
-      <DashboardNavActions
-        canInstall={canInstall}
-        installed={installed}
-        offlineReady={offlineReady}
-        online={online}
-        onInstall={onInstall}
-        onRefresh={onRefresh}
-        refreshing={refreshing}
-        secureContext={secureContext}
-        t={t}
-      />
     </aside>
   );
 }
 
 export function SectionNav({
   activeView,
-  canInstall,
   data,
   drawerOpen,
   freshness,
   freshnessText,
-  installed,
   onCloseDrawer,
-  onInstall,
   onNavigate,
   onOpenDrawer,
-  offlineReady,
   onRefresh,
-  online,
   refreshing,
-  secureContext,
   t,
 }: {
   activeView: DashboardView;
-  canInstall: boolean;
   data: DashboardNavData | null;
   drawerOpen: boolean;
   freshness: DashboardFreshness;
   freshnessText: string;
-  installed: boolean;
   onCloseDrawer: () => void;
-  onInstall: () => void;
   onNavigate: (view: DashboardView) => void;
   onOpenDrawer: () => void;
-  offlineReady: boolean;
   onRefresh: () => void;
-  online: boolean;
   refreshing: boolean;
-  secureContext: boolean;
   t: Messages;
 }) {
   const activeLabel =
     navItems(t).find((item) => item.view === activeView)?.label ?? t.nav.rooms;
+  const showManualRefresh = freshness !== 'fresh';
 
   return (
     <>
@@ -312,16 +186,18 @@ export function SectionNav({
         <span className={`topbar-status topbar-status-${freshness}`}>
           {freshnessText}
         </span>
-        <button
-          aria-busy={refreshing}
-          aria-label={refreshing ? t.actions.refreshing : t.actions.refresh}
-          className="refresh-button"
-          disabled={refreshing}
-          onClick={onRefresh}
-          type="button"
-        >
-          {refreshing ? '...' : t.actions.refresh}
-        </button>
+        {showManualRefresh ? (
+          <button
+            aria-busy={refreshing}
+            aria-label={refreshing ? t.actions.refreshing : t.actions.refresh}
+            className="refresh-button"
+            disabled={refreshing}
+            onClick={onRefresh}
+            type="button"
+          >
+            {refreshing ? '...' : t.actions.refresh}
+          </button>
+        ) : null}
       </nav>
 
       {drawerOpen ? (
@@ -359,17 +235,6 @@ export function SectionNav({
               data={data}
               onAfterNavigate={onCloseDrawer}
               onNavigate={onNavigate}
-              t={t}
-            />
-            <DashboardNavActions
-              canInstall={canInstall}
-              installed={installed}
-              offlineReady={offlineReady}
-              online={online}
-              onInstall={onInstall}
-              onRefresh={onRefresh}
-              refreshing={refreshing}
-              secureContext={secureContext}
               t={t}
             />
           </aside>

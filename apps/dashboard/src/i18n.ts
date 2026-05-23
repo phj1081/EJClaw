@@ -38,6 +38,140 @@ export interface Messages {
     nicknamePlaceholder: string;
     nicknameHelp: string;
     languageLabel: string;
+    navAria: string;
+    contentAria: string;
+    sidebarAria: string;
+    nav: {
+      general: { title: string; detail: string };
+      models: { title: string; detail: string };
+      runtime: { title: string; detail: string };
+      moa: { title: string; detail: string };
+      codex: { title: string; detail: string };
+      accounts: { title: string; detail: string };
+    };
+    apply: {
+      aria: string;
+      kicker: string;
+      title: string;
+      hint: string;
+      restart: string;
+    };
+    sections: {
+      general: { kicker: string; title: string; description: string };
+      models: { kicker: string; title: string; description: string };
+      runtime: { kicker: string; title: string; description: string };
+      moa: { kicker: string; title: string; description: string };
+      codex: { kicker: string; title: string; description: string };
+      accounts: { kicker: string; title: string; description: string };
+    };
+    common: {
+      loading: string;
+      none: string;
+      saving: string;
+      saved: string;
+      savedRestartHint: string;
+      save: string;
+      delete: string;
+      refresh: string;
+      refreshing: string;
+      refreshAll: string;
+      switch: string;
+      switching: string;
+      default: string;
+      inUse: string;
+      add: string;
+    };
+    models: {
+      roleOwner: string;
+      roleReviewer: string;
+      roleArbiter: string;
+      roleOwnerHint: string;
+      roleReviewerHint: string;
+      roleArbiterHint: string;
+      modelLabel: string;
+      effortLabel: string;
+      modelDefault: string;
+      modelCustom: string;
+      modelCustomLabel: string;
+      modelPlaceholder: string;
+      groupCodex: string;
+      groupClaude: string;
+      groupCustom: string;
+      effortDefault: string;
+      effortOptions: {
+        low: string;
+        medium: string;
+        high: string;
+        xhigh: string;
+        max: string;
+      };
+      agentTypeLabel: string;
+      agentTypeCodex: string;
+      agentTypeClaude: string;
+      effortInvalid: string;
+      effortSaveBlocked: string;
+      save: string;
+      empty: string;
+    };
+    codex: {
+      fastMode: string;
+      features: string;
+      codexFast: string;
+      codexFastHint: string;
+      claudeFast: string;
+      claudeFastHint: string;
+      fastModeApplyHint: string;
+      goal: string;
+      goalHint: string;
+      goalApplyHint: string;
+    };
+    accounts: {
+      claude: string;
+      codex: string;
+      noAccounts: string;
+      autoRefresh: string;
+      codexRefreshHint: string;
+      tokenPlaceholder: string;
+      deleteConfirm: string;
+      refreshFailed: string;
+      paymentExpired: string;
+      paymentUntil: string;
+      paymentUntilDays: string;
+      primaryAccount: string;
+      activeAccount: string;
+      addTokenLabel: string;
+      refreshTitle: string;
+      switchTitle: string;
+    };
+    moa: {
+      master: string;
+      masterHint: string;
+      save: string;
+      empty: string;
+      test: string;
+      testing: string;
+      testAfterSave: string;
+      notTested: string;
+      statusOk: string;
+      statusFail: string;
+      apiKeyPlaceholder: string;
+      apiKeySet: string;
+      modelLabel: string;
+      baseUrlLabel: string;
+      formatLabel: string;
+    };
+    runtime: {
+      defaultHint: string;
+      selectRoomLabel: string;
+      selectAgentLabel: string;
+      scopeCodexUser: string;
+      scopeClaudeUser: string;
+      scopeRunner: string;
+      emptyRooms: string;
+      emptySkills: string;
+      agentCodex: string;
+      agentClaude: string;
+    };
   };
   error: {
     api: string;
@@ -83,7 +217,6 @@ export interface Messages {
     rooms: string;
     queue: string;
     scheduled: string;
-    promptPreviews: string;
   };
   service: {
     empty: string;
@@ -218,6 +351,8 @@ export interface Messages {
     now: string;
     createTitle: string;
     createSubtitle: string;
+    filterAll: string;
+    details: string;
     room: string;
     selectRoom: string;
     scheduleType: string;
@@ -312,6 +447,180 @@ export const messages = {
       nicknamePlaceholder: 'Web Dashboard',
       nicknameHelp: '룸에서 메시지 보낼 때 표시될 이름',
       languageLabel: '언어',
+      navAria: '설정 섹션',
+      contentAria: '설정 항목',
+      sidebarAria: '설정 탐색과 적용',
+      nav: {
+        general: { title: '일반', detail: '표시 · 언어' },
+        models: { title: '모델', detail: 'owner · reviewer · arbiter' },
+        runtime: { title: '스킬', detail: '방별 ON · OFF' },
+        moa: { title: 'MoA', detail: '참조 모델 · 연결 테스트' },
+        codex: { title: 'Codex', detail: 'fast mode · /goal' },
+        accounts: { title: '계정', detail: 'Claude · Codex' },
+      },
+      apply: {
+        aria: '변경 적용',
+        kicker: 'Apply',
+        title: '저장 후 재시작',
+        hint: '모델, MoA, Codex, 계정 변경은 스택 재시작 후 반영됩니다.',
+        restart: '스택 재시작',
+      },
+      sections: {
+        general: {
+          kicker: 'Dashboard identity',
+          title: '일반',
+          description: '브라우저에서 보이는 이름과 언어만 즉시 바뀝니다.',
+        },
+        models: {
+          kicker: 'Agent routing',
+          title: '모델',
+          description:
+            '역할별 모델과 추론 강도를 선택합니다. 저장 후 스택 재시작이 필요합니다.',
+        },
+        runtime: {
+          kicker: 'Agent skills',
+          title: '스킬',
+          description:
+            '방마다 에이전트가 쓸 스킬을 켜거나 끕니다. 전역 일괄 설정은 없고, 기본값은 모두 켜짐입니다.',
+        },
+        moa: {
+          kicker: 'Arbiter references',
+          title: 'MoA 참조 모델',
+          description:
+            'Kimi, GLM 같은 외부 참조 모델을 켜고 연결 상태를 바로 확인합니다.',
+        },
+        codex: {
+          kicker: 'Codex runtime',
+          title: 'Codex 옵션',
+          description:
+            '빠른 응답과 실험 기능을 관리합니다. /goal은 여기에서 찾을 수 있습니다.',
+        },
+        accounts: {
+          kicker: 'Credentials',
+          title: '계정',
+          description: 'Claude OAuth와 Codex 계정 상태를 확인하고 전환합니다.',
+        },
+      },
+      common: {
+        loading: '불러오는 중…',
+        none: '없음',
+        saving: '저장 중…',
+        saved: '저장됨',
+        savedRestartHint:
+          '저장됨. 적용하려면 사이드바의 스택 재시작을 눌러 주세요.',
+        save: '저장',
+        delete: '삭제',
+        refresh: '갱신',
+        refreshing: '갱신중…',
+        refreshAll: '전체 갱신',
+        switch: '전환',
+        switching: '전환중…',
+        default: '기본',
+        inUse: '사용중',
+        add: '추가',
+      },
+      models: {
+        roleOwner: 'Owner',
+        roleReviewer: 'Reviewer',
+        roleArbiter: 'Arbiter',
+        roleOwnerHint: '작업을 직접 수행하는 에이전트',
+        roleReviewerHint: '변경 사항을 검토하는 에이전트',
+        roleArbiterHint: '최종 판단을 내리는 에이전트',
+        modelLabel: '모델',
+        effortLabel: '추론 강도',
+        modelDefault: '기본값 (.env 상속)',
+        modelCustom: '직접 입력…',
+        modelCustomLabel: '모델 ID',
+        modelPlaceholder: '예: gpt-5.5, claude-opus-4-7',
+        groupCodex: 'Codex',
+        groupClaude: 'Claude',
+        groupCustom: '사용자 지정',
+        effortDefault: '기본값 (.env 상속)',
+        effortOptions: {
+          low: '낮음',
+          medium: '보통',
+          high: '높음',
+          xhigh: '매우 높음',
+          max: '최대',
+        },
+        agentTypeLabel: '에이전트',
+        agentTypeCodex: 'Codex',
+        agentTypeClaude: 'Claude Code',
+        effortInvalid:
+          '"{value}"는 {agent}에서 지원하지 않는 추론 강도입니다. 다른 값을 선택해 주세요.',
+        effortSaveBlocked:
+          '지원하지 않는 추론 강도가 있습니다. 저장하기 전에 수정해 주세요.',
+        save: '모델 저장',
+        empty: '모델 정보 없음',
+      },
+      codex: {
+        fastMode: '패스트 모드',
+        features: 'Codex 기능',
+        codexFast: 'Codex (GPT)',
+        codexFastHint:
+          '~/.codex/config.toml [features].fast_mode — GPT 5.5 등에서 응답 속도를 높입니다. 사용량이 더 듭니다.',
+        claudeFast: 'Claude',
+        claudeFastHint:
+          '~/.claude/settings.json fastMode — Opus 4.x(4.6·4.7 등)에서 세션 settings.json으로 동기화됩니다.',
+        fastModeApplyHint:
+          '스택 재시작 없이 다음 Codex/Claude 작업부터 적용됩니다.',
+        goal: 'Goals (/goal)',
+        goalHint:
+          '~/.codex/config.toml [features].goals — Codex 0.133 기준 opt-in 기능입니다. 기본값은 꺼짐(OFF)이며, 켜면 /goal 장기 목표 추적을 쓸 수 있습니다.',
+        goalApplyHint: '스택 재시작 없이 다음 Codex 작업부터 적용됩니다.',
+      },
+      accounts: {
+        claude: 'Claude',
+        codex: 'Codex',
+        noAccounts: '계정 없음',
+        autoRefresh: '토큰 자동갱신',
+        codexRefreshHint:
+          'OAuth 토큰은 6시간마다 자동 갱신됩니다. plan 변경/해지가 즉시 반영되게 하려면 수동으로 “전체 갱신”을 누르세요.',
+        tokenPlaceholder:
+          'Claude OAuth 토큰 (claude CLI 로그인 후 ~/.claude/.credentials.json 에서 accessToken 값을 페이스트)',
+        deleteConfirm:
+          '{provider} 계정 #{index} 디렉터리를 삭제합니다. 되돌릴 수 없습니다. 계속할까요?',
+        refreshFailed: '일부 갱신 실패: {indexes}',
+        paymentExpired: '결제 만료 {date} ({days}일 전)',
+        paymentUntil: '결제 {date}까지 ({days}일)',
+        paymentUntilDays: '결제 {date}까지 ({days}일)',
+        primaryAccount: '기본 계정',
+        activeAccount: '사용 중',
+        addTokenLabel: 'OAuth 토큰 추가',
+        refreshTitle: '구독 상태를 다시 조회합니다',
+        switchTitle: '다음 Codex 호출부터 이 계정을 사용합니다',
+      },
+      moa: {
+        master: 'MoA 사용',
+        masterHint:
+          'Arbiter 호출 전에 외부 참조 모델 의견을 수집합니다. 저장 후 스택 재시작이 필요합니다.',
+        save: 'MoA 저장',
+        empty: 'MoA 설정 없음',
+        test: '연결 테스트',
+        testing: '테스트중…',
+        testAfterSave: '저장 후 테스트',
+        notTested: '연결 테스트 전',
+        statusOk: '정상',
+        statusFail: '실패',
+        apiKeyPlaceholder: 'new API key',
+        apiKeySet: 'API key set',
+        modelLabel: '모델 ID',
+        baseUrlLabel: 'Base URL',
+        formatLabel: 'API 형식',
+      },
+      runtime: {
+        defaultHint:
+          '기본값은 모든 스킬이 켜져 있습니다. 여기서 끈 스킬만 해당 방·에이전트에 저장됩니다. 전체(모든 방) 일괄 설정은 아직 없습니다.',
+        selectRoomLabel: '방 선택',
+        selectAgentLabel: '에이전트',
+        scopeCodexUser: 'Codex 스킬',
+        scopeClaudeUser: 'Claude 스킬',
+        scopeRunner: '공통 러너 스킬',
+        emptyRooms: '등록된 Discord 방이 없습니다.',
+        emptySkills: '이 방·에이전트에 연결된 스킬이 없습니다.',
+        agentCodex: 'Codex',
+        agentClaude: 'Claude Code',
+      },
     },
     error: {
       api: '문제 발생',
@@ -357,7 +666,6 @@ export const messages = {
       rooms: '룸',
       queue: '큐',
       scheduled: '예약',
-      promptPreviews: '프롬프트 미리보기',
     },
     service: {
       empty: '하트비트 없음. 서비스 로그 확인.',
@@ -492,6 +800,8 @@ export const messages = {
       now: '지금',
       createTitle: '작업 예약',
       createSubtitle: '룸에 반복 작업 걸기',
+      filterAll: '전체',
+      details: '상세',
       room: '방',
       selectRoom: '방 선택',
       scheduleType: '방식',
@@ -570,6 +880,181 @@ export const messages = {
       nicknamePlaceholder: 'Web Dashboard',
       nicknameHelp: 'Name shown when sending messages from this dashboard',
       languageLabel: 'Language',
+      navAria: 'Settings sections',
+      contentAria: 'Settings items',
+      sidebarAria: 'Settings navigation and apply',
+      nav: {
+        general: { title: 'General', detail: 'Display · language' },
+        models: { title: 'Models', detail: 'owner · reviewer · arbiter' },
+        runtime: { title: 'Skills', detail: 'per-room on/off' },
+        moa: { title: 'MoA', detail: 'reference models · test' },
+        codex: { title: 'Codex', detail: 'fast mode · /goal' },
+        accounts: { title: 'Accounts', detail: 'Claude · Codex' },
+      },
+      apply: {
+        aria: 'Apply changes',
+        kicker: 'Apply',
+        title: 'Restart after save',
+        hint: 'Model, MoA, Codex, and account changes apply after a stack restart.',
+        restart: 'Restart stack',
+      },
+      sections: {
+        general: {
+          kicker: 'Dashboard identity',
+          title: 'General',
+          description:
+            'Only the display name and language change immediately in the browser.',
+        },
+        models: {
+          kicker: 'Agent routing',
+          title: 'Models',
+          description:
+            'Pick a model and inference depth for each role. Restart the stack after saving.',
+        },
+        runtime: {
+          kicker: 'Agent skills',
+          title: 'Skills',
+          description:
+            'Turn skills on or off per room and agent. Default is all on; there is no global bulk setting yet.',
+        },
+        moa: {
+          kicker: 'Arbiter references',
+          title: 'MoA reference models',
+          description:
+            'Enable external reference models like Kimi or GLM and verify connectivity.',
+        },
+        codex: {
+          kicker: 'Codex runtime',
+          title: 'Codex options',
+          description:
+            'Manage fast responses and experimental features. /goal lives here.',
+        },
+        accounts: {
+          kicker: 'Credentials',
+          title: 'Accounts',
+          description: 'Review and switch Claude OAuth and Codex accounts.',
+        },
+      },
+      common: {
+        loading: 'Loading…',
+        none: 'None',
+        saving: 'Saving…',
+        saved: 'Saved',
+        savedRestartHint: 'Saved. Use Restart stack in the sidebar to apply.',
+        save: 'Save',
+        delete: 'Delete',
+        refresh: 'Refresh',
+        refreshing: 'Refreshing…',
+        refreshAll: 'Refresh all',
+        switch: 'Switch',
+        switching: 'Switching…',
+        default: 'Default',
+        inUse: 'In use',
+        add: 'Add',
+      },
+      models: {
+        roleOwner: 'Owner',
+        roleReviewer: 'Reviewer',
+        roleArbiter: 'Arbiter',
+        roleOwnerHint: 'Runs the main work',
+        roleReviewerHint: 'Reviews proposed changes',
+        roleArbiterHint: 'Makes the final call',
+        modelLabel: 'Model',
+        effortLabel: 'Inference depth',
+        modelDefault: 'Default (.env)',
+        modelCustom: 'Custom…',
+        modelCustomLabel: 'Model ID',
+        modelPlaceholder: 'e.g. gpt-5.5, claude-opus-4-7',
+        groupCodex: 'Codex',
+        groupClaude: 'Claude',
+        groupCustom: 'Custom',
+        effortDefault: 'Default (.env)',
+        effortOptions: {
+          low: 'Low',
+          medium: 'Medium',
+          high: 'High',
+          xhigh: 'Very high',
+          max: 'Max',
+        },
+        agentTypeLabel: 'Agent',
+        agentTypeCodex: 'Codex',
+        agentTypeClaude: 'Claude Code',
+        effortInvalid:
+          '"{value}" is not supported for {agent}. Choose another effort level.',
+        effortSaveBlocked:
+          'Unsupported effort levels are set. Fix them before saving.',
+        save: 'Save models',
+        empty: 'No model config',
+      },
+      codex: {
+        fastMode: 'Fast mode',
+        features: 'Codex features',
+        codexFast: 'Codex (GPT)',
+        codexFastHint:
+          '~/.codex/config.toml [features].fast_mode — faster responses on GPT 5.5 and newer; higher usage.',
+        claudeFast: 'Claude',
+        claudeFastHint:
+          '~/.claude/settings.json fastMode — synced into session settings.json for Opus 4.x (4.6, 4.7, …).',
+        fastModeApplyHint:
+          'Applies on the next Codex/Claude run. No stack restart required.',
+        goal: 'Goals (/goal)',
+        goalHint:
+          '~/.codex/config.toml [features].goals — opt-in on Codex 0.133. Off by default; enables /goal long-running objectives when on.',
+        goalApplyHint:
+          'Applies on the next Codex run. No stack restart required.',
+      },
+      accounts: {
+        claude: 'Claude',
+        codex: 'Codex',
+        noAccounts: 'No accounts',
+        autoRefresh: 'Auto token refresh',
+        codexRefreshHint:
+          'OAuth tokens refresh every 6 hours. Use Refresh all for immediate plan changes.',
+        tokenPlaceholder:
+          'Claude OAuth token (paste accessToken from ~/.claude/.credentials.json after claude CLI login)',
+        deleteConfirm:
+          'Delete {provider} account #{index} directory. This cannot be undone. Continue?',
+        refreshFailed: 'Some refreshes failed: {indexes}',
+        paymentExpired: 'Expired {date} ({days}d ago)',
+        paymentUntil: 'Paid until {date} ({days}d)',
+        paymentUntilDays: 'Paid until {date} ({days}d)',
+        primaryAccount: 'Primary',
+        activeAccount: 'Active',
+        addTokenLabel: 'Add OAuth token',
+        refreshTitle: 'Refresh subscription status',
+        switchTitle: 'Use this account for the next Codex call',
+      },
+      moa: {
+        master: 'Enable MoA',
+        masterHint:
+          'Collect external reference opinions before arbiter calls. Stack restart required after save.',
+        save: 'Save MoA',
+        empty: 'No MoA settings',
+        test: 'Test connection',
+        testing: 'Testing…',
+        testAfterSave: 'Save to test',
+        notTested: 'Not tested yet',
+        statusOk: 'OK',
+        statusFail: 'Failed',
+        apiKeyPlaceholder: 'new API key',
+        apiKeySet: 'API key set',
+        modelLabel: 'Model ID',
+        baseUrlLabel: 'Base URL',
+        formatLabel: 'API format',
+      },
+      runtime: {
+        defaultHint:
+          'All skills start enabled. Only per-room, per-agent disables are saved. Global bulk settings are not available yet.',
+        selectRoomLabel: 'Room',
+        selectAgentLabel: 'Agent',
+        scopeCodexUser: 'Codex skill',
+        scopeClaudeUser: 'Claude skill',
+        scopeRunner: 'Shared runner skill',
+        emptyRooms: 'No registered Discord rooms.',
+        emptySkills: 'No skills for this room and agent.',
+        agentCodex: 'Codex',
+        agentClaude: 'Claude Code',
+      },
     },
     error: {
       api: 'Something went wrong',
@@ -615,7 +1100,6 @@ export const messages = {
       rooms: 'Rooms',
       queue: 'Queue',
       scheduled: 'Scheduled',
-      promptPreviews: 'Prompt previews',
     },
     service: {
       empty: 'No heartbeat yet. Check service logs.',
@@ -750,6 +1234,8 @@ export const messages = {
       now: 'now',
       createTitle: 'Create task',
       createSubtitle: 'Schedule work from web',
+      filterAll: 'All',
+      details: 'Details',
       room: 'Room',
       selectRoom: 'Select room',
       scheduleType: 'Type',
@@ -828,6 +1314,170 @@ export const messages = {
       nicknamePlaceholder: 'Web Dashboard',
       nicknameHelp: '从此面板发送消息时显示的名称',
       languageLabel: '语言',
+      navAria: '设置分区',
+      contentAria: '设置项',
+      sidebarAria: '设置导航与应用',
+      nav: {
+        general: { title: '常规', detail: '显示 · 语言' },
+        models: { title: '模型', detail: 'owner · reviewer · arbiter' },
+        runtime: { title: '技能', detail: '按房间开关' },
+        moa: { title: 'MoA', detail: '参考模型 · 连接测试' },
+        codex: { title: 'Codex', detail: 'fast mode · /goal' },
+        accounts: { title: '账户', detail: 'Claude · Codex' },
+      },
+      apply: {
+        aria: '应用更改',
+        kicker: 'Apply',
+        title: '保存后重启',
+        hint: '模型、MoA、Codex、账户更改需在栈重启后生效。',
+        restart: '重启栈',
+      },
+      sections: {
+        general: {
+          kicker: 'Dashboard identity',
+          title: '常规',
+          description: '仅浏览器中的显示名称和语言会立即更改。',
+        },
+        models: {
+          kicker: 'Agent routing',
+          title: '模型',
+          description: '为各角色选择模型和推理强度。保存后需重启栈。',
+        },
+        runtime: {
+          kicker: 'Agent skills',
+          title: '技能',
+          description: '按房间和代理开关技能。默认全部开启，尚无全局批量设置。',
+        },
+        moa: {
+          kicker: 'Arbiter references',
+          title: 'MoA 参考模型',
+          description: '启用 Kimi、GLM 等外部参考模型并验证连接。',
+        },
+        codex: {
+          kicker: 'Codex runtime',
+          title: 'Codex 选项',
+          description: '管理快速响应和实验功能。/goal 在此设置。',
+        },
+        accounts: {
+          kicker: 'Credentials',
+          title: '账户',
+          description: '查看并切换 Claude OAuth 和 Codex 账户。',
+        },
+      },
+      common: {
+        loading: '加载中…',
+        none: '无',
+        saving: '保存中…',
+        saved: '已保存',
+        savedRestartHint: '已保存。请在侧边栏点击重启栈以应用。',
+        save: '保存',
+        delete: '删除',
+        refresh: '刷新',
+        refreshing: '刷新中…',
+        refreshAll: '全部刷新',
+        switch: '切换',
+        switching: '切换中…',
+        default: '默认',
+        inUse: '使用中',
+        add: '添加',
+      },
+      models: {
+        roleOwner: 'Owner',
+        roleReviewer: 'Reviewer',
+        roleArbiter: 'Arbiter',
+        roleOwnerHint: '执行主要工作的代理',
+        roleReviewerHint: '审查变更的代理',
+        roleArbiterHint: '做最终裁决的代理',
+        modelLabel: '模型',
+        effortLabel: '推理强度',
+        modelDefault: '默认 (.env)',
+        modelCustom: '自定义…',
+        modelCustomLabel: '模型 ID',
+        modelPlaceholder: '例如 gpt-5.5, claude-opus-4-7',
+        groupCodex: 'Codex',
+        groupClaude: 'Claude',
+        groupCustom: '自定义',
+        effortDefault: '默认 (.env)',
+        effortOptions: {
+          low: '低',
+          medium: '中',
+          high: '高',
+          xhigh: '很高',
+          max: '最大',
+        },
+        agentTypeLabel: '代理',
+        agentTypeCodex: 'Codex',
+        agentTypeClaude: 'Claude Code',
+        effortInvalid: '“{value}” 不适用于 {agent}，请选择其他推理强度。',
+        effortSaveBlocked: '存在不支持的推理强度，请先修正再保存。',
+        save: '保存模型',
+        empty: '无模型配置',
+      },
+      codex: {
+        fastMode: '快速模式',
+        features: 'Codex 功能',
+        codexFast: 'Codex (GPT)',
+        codexFastHint:
+          '~/.codex/config.toml [features].fast_mode — GPT 5.5 等更快响应，用量更高。',
+        claudeFast: 'Claude',
+        claudeFastHint:
+          '~/.claude/settings.json fastMode — 同步到会话 settings.json，适用于 Opus 4.x（4.6、4.7 等）。',
+        fastModeApplyHint: '无需重启栈，下次 Codex/Claude 任务起生效。',
+        goal: 'Goals (/goal)',
+        goalHint:
+          '~/.codex/config.toml [features].goals — Codex 0.133 可选功能，默认关闭；开启后可使用 /goal。',
+        goalApplyHint: '无需重启栈，下次 Codex 任务起生效。',
+      },
+      accounts: {
+        claude: 'Claude',
+        codex: 'Codex',
+        noAccounts: '无账户',
+        autoRefresh: '自动刷新令牌',
+        codexRefreshHint:
+          'OAuth 令牌每 6 小时自动刷新。计划变更请手动全部刷新。',
+        tokenPlaceholder:
+          'Claude OAuth 令牌（claude CLI 登录后从 ~/.claude/.credentials.json 粘贴 accessToken）',
+        deleteConfirm: '将删除 {provider} 账户 #{index} 目录，无法撤销。继续？',
+        refreshFailed: '部分刷新失败: {indexes}',
+        paymentExpired: '已过期 {date}（{days} 天前）',
+        paymentUntil: '付费至 {date}（{days} 天）',
+        paymentUntilDays: '付费至 {date}（{days} 天）',
+        primaryAccount: '主账户',
+        activeAccount: '使用中',
+        addTokenLabel: '添加 OAuth 令牌',
+        refreshTitle: '重新查询订阅状态',
+        switchTitle: '下次 Codex 调用起使用此账户',
+      },
+      moa: {
+        master: '启用 MoA',
+        masterHint: 'Arbiter 调用前收集外部参考意见。保存后需重启栈。',
+        save: '保存 MoA',
+        empty: '无 MoA 设置',
+        test: '连接测试',
+        testing: '测试中…',
+        testAfterSave: '保存后测试',
+        notTested: '尚未测试',
+        statusOk: '正常',
+        statusFail: '失败',
+        apiKeyPlaceholder: 'new API key',
+        apiKeySet: 'API key set',
+        modelLabel: '模型 ID',
+        baseUrlLabel: 'Base URL',
+        formatLabel: 'API 格式',
+      },
+      runtime: {
+        defaultHint:
+          '默认所有技能开启。仅保存按房间、按代理的关闭项。尚无全局批量设置。',
+        selectRoomLabel: '选择房间',
+        selectAgentLabel: '代理',
+        scopeCodexUser: 'Codex 技能',
+        scopeClaudeUser: 'Claude 技能',
+        scopeRunner: '共享 runner 技能',
+        emptyRooms: '没有已注册的 Discord 房间。',
+        emptySkills: '此房间和代理没有可用技能。',
+        agentCodex: 'Codex',
+        agentClaude: 'Claude Code',
+      },
     },
     error: {
       api: '发生问题',
@@ -873,7 +1523,6 @@ export const messages = {
       rooms: '房间',
       queue: '队列',
       scheduled: '计划',
-      promptPreviews: '提示预览',
     },
     service: {
       empty: '暂无心跳。检查服务日志。',
@@ -1008,6 +1657,8 @@ export const messages = {
       now: '现在',
       createTitle: 'Create task',
       createSubtitle: 'Schedule work from web',
+      filterAll: 'All',
+      details: 'Details',
       room: 'Room',
       selectRoom: 'Select room',
       scheduleType: 'Type',
@@ -1086,6 +1737,180 @@ export const messages = {
       nicknamePlaceholder: 'Web Dashboard',
       nicknameHelp: 'このダッシュボードからメッセージを送る時に表示される名前',
       languageLabel: '言語',
+      navAria: '設定セクション',
+      contentAria: '設定項目',
+      sidebarAria: '設定ナビと適用',
+      nav: {
+        general: { title: '一般', detail: '表示 · 言語' },
+        models: { title: 'モデル', detail: 'owner · reviewer · arbiter' },
+        runtime: { title: 'スキル', detail: 'ルーム別 ON/OFF' },
+        moa: { title: 'MoA', detail: '参照モデル · 接続テスト' },
+        codex: { title: 'Codex', detail: 'fast mode · /goal' },
+        accounts: { title: 'アカウント', detail: 'Claude · Codex' },
+      },
+      apply: {
+        aria: '変更を適用',
+        kicker: 'Apply',
+        title: '保存後に再起動',
+        hint: 'モデル、MoA、Codex、アカウントの変更はスタック再起動後に反映されます。',
+        restart: 'スタック再起動',
+      },
+      sections: {
+        general: {
+          kicker: 'Dashboard identity',
+          title: '一般',
+          description: 'ブラウザ上の表示名と言語だけがすぐに変わります。',
+        },
+        models: {
+          kicker: 'Agent routing',
+          title: 'モデル',
+          description:
+            '役割ごとにモデルと推論強度を選びます。保存後にスタック再起動が必要です。',
+        },
+        runtime: {
+          kicker: 'Agent skills',
+          title: 'スキル',
+          description:
+            'ルームとエージェントごとにスキルを ON/OFF します。デフォルトはすべて ON で、全体一括設定はまだありません。',
+        },
+        moa: {
+          kicker: 'Arbiter references',
+          title: 'MoA 参照モデル',
+          description:
+            'Kimi や GLM などの外部参照モデルを有効化し接続を確認します。',
+        },
+        codex: {
+          kicker: 'Codex runtime',
+          title: 'Codex オプション',
+          description:
+            '高速応答と実験機能を管理します。/goal はここにあります。',
+        },
+        accounts: {
+          kicker: 'Credentials',
+          title: 'アカウント',
+          description: 'Claude OAuth と Codex アカウントの状態確認と切り替え。',
+        },
+      },
+      common: {
+        loading: '読み込み中…',
+        none: 'なし',
+        saving: '保存中…',
+        saved: '保存済み',
+        savedRestartHint:
+          '保存済み。サイドバーのスタック再起動で適用してください。',
+        save: '保存',
+        delete: '削除',
+        refresh: '更新',
+        refreshing: '更新中…',
+        refreshAll: '一括更新',
+        switch: '切替',
+        switching: '切替中…',
+        default: 'デフォルト',
+        inUse: '使用中',
+        add: '追加',
+      },
+      models: {
+        roleOwner: 'Owner',
+        roleReviewer: 'Reviewer',
+        roleArbiter: 'Arbiter',
+        roleOwnerHint: '作業を実行するエージェント',
+        roleReviewerHint: '変更をレビューするエージェント',
+        roleArbiterHint: '最終判断を下すエージェント',
+        modelLabel: 'モデル',
+        effortLabel: '推論強度',
+        modelDefault: 'デフォルト (.env)',
+        modelCustom: 'カスタム…',
+        modelCustomLabel: 'モデル ID',
+        modelPlaceholder: '例: gpt-5.5, claude-opus-4-7',
+        groupCodex: 'Codex',
+        groupClaude: 'Claude',
+        groupCustom: 'カスタム',
+        effortDefault: 'デフォルト (.env)',
+        effortOptions: {
+          low: '低',
+          medium: '中',
+          high: '高',
+          xhigh: '最高',
+          max: '最大',
+        },
+        agentTypeLabel: 'エージェント',
+        agentTypeCodex: 'Codex',
+        agentTypeClaude: 'Claude Code',
+        effortInvalid:
+          '「{value}」は {agent} では使えない推論強度です。別の値を選んでください。',
+        effortSaveBlocked:
+          'サポート外の推論強度があります。保存前に修正してください。',
+        save: 'モデル保存',
+        empty: 'モデル情報なし',
+      },
+      codex: {
+        fastMode: 'ファストモード',
+        features: 'Codex 機能',
+        codexFast: 'Codex (GPT)',
+        codexFastHint:
+          '~/.codex/config.toml [features].fast_mode — GPT 5.5 などで応答を高速化。使用量は増えます。',
+        claudeFast: 'Claude',
+        claudeFastHint:
+          '~/.claude/settings.json fastMode — セッション settings.json に同期。Opus 4.x（4.6・4.7 等）向け。',
+        fastModeApplyHint:
+          'スタック再起動不要。次の Codex/Claude 実行から反映されます。',
+        goal: 'Goals (/goal)',
+        goalHint:
+          '~/.codex/config.toml [features].goals — Codex 0.133 の opt-in 機能。デフォルト OFF。ON で /goal を利用。',
+        goalApplyHint: 'スタック再起動不要。次の Codex 実行から反映されます。',
+      },
+      accounts: {
+        claude: 'Claude',
+        codex: 'Codex',
+        noAccounts: 'アカウントなし',
+        autoRefresh: 'トークン自動更新',
+        codexRefreshHint:
+          'OAuth トークンは 6 時間ごとに自動更新されます。プラン変更は「一括更新」を押してください。',
+        tokenPlaceholder:
+          'Claude OAuth トークン（claude CLI ログイン後 ~/.claude/.credentials.json の accessToken を貼り付け）',
+        deleteConfirm:
+          '{provider} アカウント #{index} ディレクトリを削除します。元に戻せません。続行しますか？',
+        refreshFailed: '一部の更新に失敗: {indexes}',
+        paymentExpired: '期限切れ {date}（{days} 日前）',
+        paymentUntil: '支払い {date} まで（{days} 日）',
+        paymentUntilDays: '支払い {date} まで（{days} 日）',
+        primaryAccount: 'プライマリ',
+        activeAccount: '使用中',
+        addTokenLabel: 'OAuth トークン追加',
+        refreshTitle: 'サブスクリプション状態を再取得',
+        switchTitle: '次回 Codex 呼び出しからこのアカウントを使用',
+      },
+      moa: {
+        master: 'MoA を使用',
+        masterHint:
+          'Arbiter 呼び出し前に外部参照モデルの意見を集めます。保存後にスタック再起動が必要です。',
+        save: 'MoA 保存',
+        empty: 'MoA 設定なし',
+        test: '接続テスト',
+        testing: 'テスト中…',
+        testAfterSave: '保存後にテスト',
+        notTested: '未テスト',
+        statusOk: '正常',
+        statusFail: '失敗',
+        apiKeyPlaceholder: 'new API key',
+        apiKeySet: 'API key set',
+        modelLabel: 'モデル ID',
+        baseUrlLabel: 'Base URL',
+        formatLabel: 'API 形式',
+      },
+      runtime: {
+        defaultHint:
+          'デフォルトですべてのスキルは ON です。ルーム・エージェント単位の OFF のみ保存されます。全体一括設定はまだありません。',
+        selectRoomLabel: 'ルーム',
+        selectAgentLabel: 'エージェント',
+        scopeCodexUser: 'Codex スキル',
+        scopeClaudeUser: 'Claude スキル',
+        scopeRunner: '共通 runner スキル',
+        emptyRooms: '登録済み Discord ルームがありません。',
+        emptySkills: 'このルームとエージェントに利用可能なスキルがありません。',
+        agentCodex: 'Codex',
+        agentClaude: 'Claude Code',
+      },
     },
     error: {
       api: '問題が発生しました',
@@ -1133,7 +1958,6 @@ export const messages = {
       rooms: 'ルーム',
       queue: 'キュー',
       scheduled: '予定',
-      promptPreviews: 'プロンプトプレビュー',
     },
     service: {
       empty: 'ハートビートなし。サービスログを確認。',
@@ -1268,6 +2092,8 @@ export const messages = {
       now: '今',
       createTitle: 'Create task',
       createSubtitle: 'Schedule work from web',
+      filterAll: 'All',
+      details: 'Details',
       room: 'Room',
       selectRoom: 'Select room',
       scheduleType: 'Type',

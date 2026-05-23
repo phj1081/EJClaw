@@ -52,18 +52,15 @@ async function main() {
         await openSettingsSection(page, 'settings-runtime');
         assert.equal(page.url(), originalUrl);
         await assertVisible(page.locator('#settings-runtime'));
-        await page.getByText('Runtime inventory').waitFor();
-        await page.getByText('EJClaw bridge').waitFor();
-        const codexPolicy = page
-          .locator('.runtime-room-agent-policy')
-          .filter({ hasText: 'Codex' })
+        await page.getByRole('heading', { name: '방 선택' }).waitFor();
+        const skillToggle = page
+          .locator(
+            '#settings-runtime .settings-toggle-row input[type="checkbox"]',
+          )
           .first();
-        const codexBrowserToggle = codexPolicy
-          .locator('input[type="checkbox"]')
-          .first();
-        assert.equal(await codexBrowserToggle.isChecked(), true);
-        await codexBrowserToggle.click();
-        await codexPolicy.getByText('1개 OFF').waitFor();
+        assert.equal(await skillToggle.isChecked(), true);
+        await skillToggle.click();
+        assert.equal(await skillToggle.isChecked(), false);
         assert.equal(state.roomSkillUpdates, 1);
 
         await page
@@ -75,6 +72,14 @@ async function main() {
         assert.equal(page.url(), originalUrl);
         await assertVisible(page.locator('.settings-panel'));
         await assertVisible(page.locator('#settings-accounts'));
+
+        const sidebar = page.locator('.settings-sidebar');
+        const navBoxBefore = await sidebar.boundingBox();
+        await openSettingsSection(page, 'settings-general');
+        await page.waitForTimeout(150);
+        const navBoxAfter = await sidebar.boundingBox();
+        assert.ok(navBoxBefore && navBoxAfter);
+        assert.equal(navBoxBefore.y, navBoxAfter.y);
 
         await assertNoSeriousA11yViolations(page);
       },
@@ -94,7 +99,7 @@ async function main() {
 
         await goalToggle.click();
         await page
-          .getByText('저장됨. 적용하려면 상단의 스택 재시작을 눌러 주세요.')
+          .getByText('저장됨. 적용하려면 사이드바의 스택 재시작을 눌러 주세요.')
           .waitFor();
 
         assert.equal(await goalToggle.isChecked(), true);
@@ -191,6 +196,110 @@ async function main() {
       },
     );
 
+    await runMobileScenario(
+      'mobile settings keeps nav and content aligned without horizontal scroll',
+      browser,
+      baseUrl,
+      async (page) => {
+        await openSettings(page, baseUrl);
+        await assertNoHorizontalOverflow(page);
+
+        const nav = page.locator('.settings-nav-scroll');
+        const section = page.locator('.settings-section').first();
+        const navBox = await nav.boundingBox();
+        const sectionBox = await section.boundingBox();
+        assert.ok(navBox && sectionBox);
+        assert.equal(Math.round(navBox.x), Math.round(sectionBox.x));
+        assert.equal(Math.round(navBox.width), Math.round(sectionBox.width));
+
+        const selectedTab = page.locator(
+          '.settings-nav button[aria-selected="true"]',
+        );
+        const tabBox = await selectedTab.boundingBox();
+        const subtitleBox = await selectedTab.locator('small').boundingBox();
+        assert.ok(tabBox && subtitleBox);
+        assert.ok(
+          subtitleBox.y + subtitleBox.height <= tabBox.y + tabBox.height + 1,
+          'tab subtitle should not be clipped',
+        );
+
+        await openSettingsSection(page, 'settings-models');
+        await assertNoHorizontalOverflow(page);
+        await assertNoSeriousA11yViolations(page);
+      },
+    );
+
+    await runMobileScenario(
+      'mobile accounts use compact rows for multiple entries',
+      browser,
+      baseUrl,
+      async (page) => {
+        await openSettings(page, baseUrl);
+        await openSettingsSection(page, 'settings-accounts');
+        await assertVisible(page.locator('#settings-accounts'));
+
+        assert.equal(await page.locator('.settings-account-list').count(), 2);
+        assert.equal(await page.locator('.settings-account-row').count(), 6);
+        assert.equal(await page.locator('.settings-account-card').count(), 0);
+
+        const listBox = await page
+          .locator('.settings-account-list')
+          .first()
+          .boundingBox();
+        const rowBox = await page
+          .locator('.settings-account-row')
+          .first()
+          .boundingBox();
+        assert.ok(listBox && rowBox);
+        assert.ok(rowBox.height <= 72, 'account row should stay compact');
+
+        await assertNoHorizontalOverflow(page);
+      },
+    );
+
+    await runMobileScenario(
+      'mobile primary views render without layout overflow',
+      browser,
+      baseUrl,
+      async (page) => {
+        for (const hash of [
+          '#/rooms',
+          '#/scheduled',
+          '#/usage',
+          '#/settings',
+        ]) {
+          await page.goto(new URL(hash, baseUrl).toString(), {
+            waitUntil: 'networkidle',
+          });
+          await assertNoHorizontalOverflow(page);
+        }
+
+        await page.goto(new URL('/#/scheduled', baseUrl).toString(), {
+          waitUntil: 'networkidle',
+        });
+        await assertVisible(page.locator('#scheduled .task-summary-bar'));
+        await assertVisible(page.locator('#scheduled .task-filter-tabs'));
+      },
+    );
+
+    await runMobileScenario(
+      'mobile scheduled board uses compact rows and filter tabs',
+      browser,
+      baseUrl,
+      async (page) => {
+        await page.goto(new URL('/#/scheduled', baseUrl).toString(), {
+          waitUntil: 'networkidle',
+        });
+        await assertVisible(page.locator('#scheduled .task-summary-bar'));
+        await assertVisible(page.locator('#scheduled .task-filter-tabs'));
+        assert.equal(await page.locator('#scheduled .task-row').count(), 3);
+
+        await page.getByRole('tab', { name: /예약|Scheduled/i }).click();
+        assert.equal(await page.locator('#scheduled .task-row').count(), 1);
+        await assertNoHorizontalOverflow(page);
+      },
+    );
+
     console.log('dashboard:ux passed');
   } finally {
     await browser.close();
@@ -208,11 +317,10 @@ async function runScheduledBoardScenario(browser: Browser, baseUrl: string) {
         waitUntil: 'networkidle',
       });
 
-      await assertVisible(page.locator('#scheduled .task-command-center'));
-      await assertVisible(page.locator('#scheduled .task-create-form'));
+      await assertVisible(page.locator('#scheduled .task-summary-bar'));
+      await assertVisible(page.locator('#scheduled .task-create-panel'));
       await assertVisible(page.getByText('Nightly cleanup').first());
-      await assertVisible(page.getByText('*/15 * * * *').first());
-      assert.equal(await page.locator('#scheduled .task-card').count(), 3);
+      assert.equal(await page.locator('#scheduled .task-row').count(), 3);
       assert.equal(
         await page.locator('#scheduled .task-group-empty').count(),
         0,
@@ -241,8 +349,45 @@ async function runScenario(
   baseUrl: string,
   run: (page: Page, state: MockApiState) => Promise<void>,
 ) {
+  await runScenarioWithViewport(
+    name,
+    browser,
+    baseUrl,
+    { width: 1280, height: 720 },
+    run,
+  );
+}
+
+async function runMobileScenario(
+  name: string,
+  browser: Browser,
+  baseUrl: string,
+  run: (page: Page, state: MockApiState) => Promise<void>,
+) {
+  await runScenarioWithViewport(
+    name,
+    browser,
+    baseUrl,
+    { width: 390, height: 844 },
+    run,
+  );
+}
+
+async function runScenarioWithViewport(
+  name: string,
+  browser: Browser,
+  baseUrl: string,
+  viewport: { width: number; height: number },
+  run: (page: Page, state: MockApiState) => Promise<void>,
+) {
   const context = await browser.newContext({
-    viewport: { width: 1280, height: 720 },
+    locale: 'ko-KR',
+    viewport,
+    isMobile: viewport.width <= 640,
+    hasTouch: viewport.width <= 640,
+  });
+  await context.addInitScript(() => {
+    window.localStorage.setItem('ejclaw.dashboard.locale.v2', 'ko');
   });
   const state = createMockApiState();
   await context.route('**/api/**', (route) => handleMockApi(route, state));
@@ -310,6 +455,23 @@ async function assertNoSeriousA11yViolations(page: Page) {
     })),
     [],
   );
+}
+
+async function assertNoHorizontalOverflow(page: Page) {
+  const overflow = await page.evaluate(() => {
+    const doc = document.documentElement;
+    const tolerance = 1;
+    return {
+      document: doc.scrollWidth - doc.clientWidth > tolerance,
+      body: document.body.scrollWidth - document.body.clientWidth > tolerance,
+    };
+  });
+  assert.equal(
+    overflow.document,
+    false,
+    'document should not scroll horizontally',
+  );
+  assert.equal(overflow.body, false, 'body should not scroll horizontally');
 }
 
 async function handleMockApi(route: Route, state: MockApiState) {
@@ -414,7 +576,23 @@ async function handleMockApi(route: Route, state: MockApiState) {
           index: 0,
           expiresAt: null,
           scopes: [],
+          subscriptionType: 'max',
+          rateLimitTier: 'default',
+          exists: true,
+        },
+        {
+          index: 1,
+          expiresAt: null,
+          scopes: [],
           subscriptionType: 'pro',
+          rateLimitTier: 'default',
+          exists: true,
+        },
+        {
+          index: 2,
+          expiresAt: null,
+          scopes: [],
+          subscriptionType: 'team',
           rateLimitTier: 'default',
           exists: true,
         },
@@ -449,6 +627,24 @@ async function handleMockApi(route: Route, state: MockApiState) {
             credits: null,
             spendControl: null,
           },
+          exists: true,
+        },
+        {
+          index: 1,
+          accountId: 'acct_backup',
+          email: 'backup@example.com',
+          planType: 'plus',
+          subscriptionUntil: '2026-06-01T00:00:00.000Z',
+          subscriptionLastChecked: '2026-01-01T00:00:00.000Z',
+          exists: true,
+        },
+        {
+          index: 2,
+          accountId: 'acct_sandbox',
+          email: 'sandbox@example.com',
+          planType: 'free',
+          subscriptionUntil: null,
+          subscriptionLastChecked: '2026-01-01T00:00:00.000Z',
           exists: true,
         },
       ],

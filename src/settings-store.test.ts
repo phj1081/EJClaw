@@ -29,6 +29,7 @@ describe('settings-store Codex features', () => {
     delete process.env.CODEX_GOALS;
     process.env.HOME = tempDir;
     process.env.EJCLAW_SETTINGS_HOME = tempDir;
+    fs.mkdirSync(path.join(tempDir, '.codex'), { recursive: true });
     process.chdir(tempDir);
   });
 
@@ -59,17 +60,28 @@ describe('settings-store Codex features', () => {
     return `${encode({ alg: 'none', typ: 'JWT' })}.${encode(payload)}.`;
   }
 
-  it('stores the Codex goals opt-in in the EJClaw .env file', () => {
+  it('stores Codex goals in ~/.codex/config.toml [features]', () => {
     expect(getCodexFeatures()).toEqual({ goals: false });
 
     expect(updateCodexFeatures({ goals: true })).toEqual({ goals: true });
-    expect(fs.readFileSync(path.join(tempDir, '.env'), 'utf-8')).toContain(
-      'CODEX_GOALS=true',
-    );
+    expect(
+      fs.readFileSync(path.join(tempDir, '.codex', 'config.toml'), 'utf-8'),
+    ).toContain('goals = true');
 
     expect(updateCodexFeatures({ goals: false })).toEqual({ goals: false });
-    expect(fs.readFileSync(path.join(tempDir, '.env'), 'utf-8')).toContain(
-      'CODEX_GOALS=false',
+    expect(
+      fs.readFileSync(path.join(tempDir, '.codex', 'config.toml'), 'utf-8'),
+    ).toContain('goals = false');
+  });
+
+  it('still honors legacy CODEX_GOALS=true until migrated', () => {
+    fs.writeFileSync(path.join(tempDir, '.env'), 'CODEX_GOALS=true\n');
+    expect(getCodexFeatures()).toEqual({ goals: true });
+
+    updateCodexFeatures({ goals: false });
+    expect(getCodexFeatures()).toEqual({ goals: false });
+    expect(fs.readFileSync(path.join(tempDir, '.env'), 'utf-8')).not.toContain(
+      'CODEX_GOALS',
     );
   });
 

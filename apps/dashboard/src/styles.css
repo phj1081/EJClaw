@@ -539,47 +539,6 @@ button:disabled {
   line-height: 1;
 }
 
-.rail-foot {
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-  align-content: end;
-  padding-top: 4px;
-  border-top: 1px solid var(--divider);
-}
-
-.rail-status-line {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-.rail-status-dot {
-  display: inline-block;
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted-soft);
-  margin: 4px 0;
-}
-
-.rail-status-dot.is-online {
-  background: var(--green);
-  box-shadow: 0 0 6px rgba(108, 176, 135, 0.5);
-}
-
-.rail-status-dot.is-offline {
-  background: var(--accent);
-}
-
-.rail-actions {
-  display: grid;
-  gap: 4px;
-  justify-items: center;
-}
-
 .rail-btn {
   display: inline-flex;
   width: 32px;
@@ -610,26 +569,16 @@ button:disabled {
   height: 16px;
 }
 
-@keyframes rail-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.rail-btn.is-spinning svg {
-  animation: rail-spin 0.9s linear infinite;
-}
-
 .rail-label,
-.rail-btn-label,
-.rail-foot-label {
+.rail-btn-label {
   display: none;
 }
 
 .settings-panel {
   display: grid;
-  max-width: 1160px;
   width: 100%;
+  max-width: 1160px;
+  margin-inline: auto;
 }
 
 .settings-kicker {
@@ -648,10 +597,16 @@ button:disabled {
 }
 
 .settings-sidebar {
-  position: sticky;
-  top: 72px;
+  align-self: start;
   display: grid;
   gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.settings-nav-scroll {
+  min-width: 0;
+  width: 100%;
 }
 
 .settings-nav {
@@ -685,13 +640,20 @@ button:disabled {
     transform 140ms ease;
 }
 
+.settings-nav button {
+  border-left: 3px solid transparent;
+}
+
 .settings-nav button:hover,
 .settings-nav button:focus-visible,
 .settings-nav button[aria-selected='true'] {
-  transform: translateX(2px);
   border-color: rgba(214, 130, 88, 0.24);
   background: rgba(214, 130, 88, 0.08);
   color: var(--bg-ink);
+}
+
+.settings-nav button[aria-selected='true'] {
+  border-left-color: rgba(214, 130, 88, 0.72);
 }
 
 .settings-nav button:focus-visible {
@@ -813,6 +775,209 @@ button:disabled {
 
 .settings-section-stack {
   display: grid;
+  gap: 12px;
+}
+
+.settings-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 14px;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.04), transparent 58%),
+    rgba(255, 255, 255, 0.018);
+}
+
+.settings-card-head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.settings-card-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settings-card-head h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--bg-ink);
+}
+
+.settings-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.settings-collapsible {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.012);
+  overflow: hidden;
+}
+
+.settings-collapsible-trigger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--bg-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-collapsible-trigger:hover,
+.settings-collapsible-trigger:focus-visible {
+  background: rgba(255, 255, 255, 0.03);
+  outline: none;
+}
+
+.settings-collapsible-trigger:focus-visible {
+  box-shadow: inset 0 0 0 2px rgba(214, 130, 88, 0.28);
+}
+
+.settings-collapsible-text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-collapsible-text strong {
+  font-size: 13px;
+}
+
+.settings-collapsible-text small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.settings-collapsible-chevron {
+  color: var(--accent-strong);
+  font-size: 14px;
+}
+
+.settings-collapsible-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 10px 10px;
+}
+
+.settings-model-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-model-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-model-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.035), transparent 58%),
+    rgba(255, 255, 255, 0.018);
+}
+
+.settings-model-card-head {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-model-card-head strong {
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.settings-model-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-inline-meta {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted-soft);
+  font-size: 12px;
+}
+
+.settings-field-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-field-card-head {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.settings-field-card-head strong {
+  font-size: 14px;
+  letter-spacing: -0.02em;
+}
+
+.settings-toggle-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-moa-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.settings-moa-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-moa-card-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.settings-moa-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -929,6 +1094,43 @@ button:disabled {
   accent-color: var(--accent);
 }
 
+.settings-toggle-row.is-busy {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.settings-skill-default-hint {
+  margin: 0 0 12px;
+}
+
+.settings-skill-controls {
+  margin-bottom: 4px;
+}
+
+.settings-skill-agent-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-skill-agent-tabs button {
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-skill-agent-tabs button.is-active,
+.settings-skill-agent-tabs button[aria-selected='true'] {
+  border-color: rgba(214, 130, 88, 0.42);
+  background: rgba(214, 130, 88, 0.14);
+  color: var(--bg-ink);
+}
+
 .settings-save,
 .settings-restart {
   min-height: 44px;
@@ -965,6 +1167,17 @@ button:disabled {
   font-size: 12px;
 }
 
+.settings-effort-warn {
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid rgba(224, 100, 75, 0.28);
+  border-radius: 6px;
+  background: rgba(224, 100, 75, 0.06);
+  color: var(--status-critical);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .settings-account-group {
   display: grid;
   gap: 10px;
@@ -975,7 +1188,136 @@ button:disabled {
   margin: 0;
   padding: 0;
   display: grid;
+  gap: 4px;
+}
+
+.settings-account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.settings-account-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-account-row.is-primary,
+.settings-account-row.is-active-account {
+  border-color: rgba(80, 180, 130, 0.42);
+  background: rgba(80, 180, 130, 0.06);
+}
+
+.settings-account-row-main {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.settings-account-row-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.settings-account-row-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.settings-account-row-copy .settings-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-account-row-meta {
+  display: inline-flex;
   gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.settings-account-card {
+  display: grid;
+  gap: 12px;
+  min-height: 100%;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-account-card.is-primary,
+.settings-account-card.is-active-account {
+  border-color: rgba(80, 180, 130, 0.42);
+  background: rgba(80, 180, 130, 0.06);
+}
+
+.settings-account-card-head,
+.settings-account-card-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.settings-account-card-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-account-card-body strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-account-index {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.settings-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.settings-pill.is-primary,
+.settings-pill.is-active {
+  border: 1px solid rgba(80, 180, 130, 0.34);
+  background: rgba(80, 180, 130, 0.12);
+  color: #d7f5e7;
+}
+
+.settings-pill.is-compact {
+  min-height: 20px;
+  padding: 0 7px;
+  font-size: 10px;
+  flex: none;
 }
 
 .settings-account-group-head {
@@ -985,36 +1327,23 @@ button:disabled {
   justify-content: space-between;
 }
 
-.settings-account-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 12px;
-  border: 1px solid var(--panel-border);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
-}
-
-.settings-account-row.is-active-account {
-  border-color: rgba(80, 180, 130, 0.45);
-  background: rgba(80, 180, 130, 0.06);
-}
-
 .settings-account-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .settings-secondary {
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: 32px;
+  padding: 0 8px;
   border: 1px solid var(--panel-border-strong);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--bg-ink);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1153,13 +1482,13 @@ button:disabled {
 }
 
 .settings-delete {
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: 32px;
+  padding: 0 8px;
   border: 1px solid rgba(224, 100, 75, 0.32);
   border-radius: 999px;
   background: rgba(224, 100, 75, 0.06);
   color: var(--status-critical);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1171,9 +1500,9 @@ button:disabled {
 
 .settings-add-token {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  align-items: end;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
 }
 
 .settings-add-token textarea {
@@ -1189,7 +1518,7 @@ button:disabled {
 }
 
 .settings-add-token button {
-  align-self: end;
+  justify-self: start;
   min-height: 44px;
   padding: 0 14px;
   border: 0;
@@ -1208,55 +1537,224 @@ button:disabled {
 
 @media (max-width: 980px) {
   .settings-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
 
   .settings-sidebar {
     position: static;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .settings-nav-scroll {
+    width: 100%;
+    min-width: 0;
+    border-bottom: 1px solid var(--panel-border);
   }
 
   .settings-nav {
-    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scroll-padding-inline: 0;
+    -webkit-overflow-scrolling: touch;
+    grid-template-columns: unset;
+    margin: 0;
+    padding: 6px 0 10px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .settings-nav button {
+    flex: 0 0 auto;
+    min-width: 118px;
+    min-height: 54px;
+    scroll-snap-align: start;
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    background: rgba(19, 24, 22, 0.72);
+    border-left: 1px solid var(--panel-border);
+    padding: 8px 10px;
+    align-content: start;
+  }
+
+  .settings-nav button[aria-selected='true'] {
+    border-color: rgba(214, 130, 88, 0.38);
+    border-left-color: rgba(214, 130, 88, 0.72);
+    background: rgba(214, 130, 88, 0.12);
+    margin-bottom: 0;
+    padding-bottom: 8px;
+  }
+
+  .settings-nav button small {
+    line-height: 1.35;
+    white-space: normal;
   }
 
   .settings-apply-card {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
   }
+
+  .settings-model-grid,
+  .settings-model-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
-  .settings-nav {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .settings-nav button {
-    min-height: 58px;
+    min-height: 52px;
+    min-width: 108px;
+    padding: 7px 9px;
   }
 
   .settings-apply-card {
     align-items: stretch;
     grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .settings-restart {
+    width: 100%;
   }
 
   .settings-form-grid,
   .settings-row-inline,
-  .settings-account-row,
-  .settings-add-token {
+  .settings-moa-fields {
     grid-template-columns: 1fr;
   }
 
-  .settings-moa-grid {
-    grid-template-columns: 1fr;
+  .settings-card-head,
+  .settings-moa-card-head {
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .settings-account-main {
-    grid-template-columns: 28px minmax(0, 1fr);
+  .settings-card-actions {
+    width: 100%;
+  }
+
+  .settings-card-actions .settings-secondary {
+    width: 100%;
+  }
+
+  .settings-account-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding: 8px;
+  }
+
+  .settings-account-row-main {
+    width: 100%;
   }
 
   .settings-account-actions {
-    justify-content: flex-start;
-    flex-wrap: wrap;
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .settings-account-actions .settings-secondary,
+  .settings-account-actions .settings-delete {
+    flex: 1 1 0;
+    min-width: 72px;
+  }
+
+  .settings-add-token .settings-save {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  .dashboard-content {
+    padding: 6px 10px calc(16px + env(safe-area-inset-bottom));
+    gap: 6px;
+  }
+
+  .panel {
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .panel-title {
+    margin-bottom: 6px;
+  }
+
+  .panel-title h2 {
+    font-size: 20px;
+  }
+
+  .error-card {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px;
+    gap: 10px;
+    margin-top: 8px;
+    border-radius: 14px;
+  }
+
+  .error-card button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .settings-section {
+    padding: 12px;
+    border-radius: 12px;
+    gap: 10px;
+    scroll-margin-top: 68px;
+  }
+
+  .settings-section-head h3 {
+    font-size: 16px;
+  }
+
+  .settings-section-head p {
+    font-size: 11px;
+  }
+
+  .settings-card {
+    padding: 10px;
+    gap: 8px;
+    border-radius: 12px;
+  }
+
+  .settings-toggle-row {
+    gap: 10px;
+    padding: 8px 10px;
+  }
+
+  .settings-model-card {
+    padding: 10px;
+  }
+
+  .settings-nav button strong {
+    font-size: 12px;
+  }
+
+  .settings-nav button small {
+    font-size: 10px;
+  }
+
+  .settings-account-index {
+    font-size: 11px;
+    min-width: 24px;
+  }
+
+  .settings-account-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+  }
+
+  .settings-account-plan {
+    font-size: 10px;
+    padding: 1px 6px;
   }
 }
 
@@ -1405,8 +1903,7 @@ button:disabled {
 }
 
 .nav-drawer .rail-label,
-.nav-drawer .rail-btn-label,
-.nav-drawer .rail-foot-label {
+.nav-drawer .rail-btn-label {
   display: inline;
 }
 
@@ -1422,23 +1919,6 @@ button:disabled {
 .nav-drawer .rail-badge {
   position: static;
   margin-left: auto;
-}
-
-.nav-drawer .rail-foot {
-  justify-items: stretch;
-  padding-top: 10px;
-}
-
-.nav-drawer .rail-status-line {
-  padding: 0 8px;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.nav-drawer .rail-actions {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  justify-items: stretch;
 }
 
 .nav-drawer .rail-btn {
@@ -1557,15 +2037,6 @@ button:disabled {
 
 .ops-offline {
   border-color: rgba(183, 71, 52, 0.28);
-}
-
-.ops-tile-pwa button {
-  min-height: 30px;
-  width: fit-content;
-  padding: 0 10px;
-  box-shadow: none;
-  font-size: 12px;
-  font-weight: 800;
 }
 
 .skeleton-card {

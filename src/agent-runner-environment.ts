@@ -12,6 +12,8 @@ import {
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
 import { getActiveCodexAuthPath } from './codex-token-rotation.js';
+import { readCodexFeatureFromFile } from './codex-config-features.js';
+import { ensureClaudeSessionSettings } from './claude-session-settings.js';
 import {
   getConfiguredClaudeTokens,
   getCurrentToken,
@@ -130,27 +132,7 @@ function readOptionalPromptFile(
   return prompt || undefined;
 }
 
-function ensureClaudeSessionSettings(groupSessionsDir: string): void {
-  const settingsFile = path.join(groupSessionsDir, 'settings.json');
-  if (fs.existsSync(settingsFile)) return;
-
-  fs.writeFileSync(
-    settingsFile,
-    JSON.stringify(
-      {
-        env: {
-          CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-          CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-          CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
-        },
-      },
-      null,
-      2,
-    ) + '\n',
-  );
-}
-
-export function ensureClaudeGlobalSettingsFile(sessionDir: string): void {
+function ensureClaudeGlobalSettingsFile(sessionDir: string): void {
   const settingsFile = path.join(sessionDir, '.claude.json');
   if (fs.existsSync(settingsFile)) return;
 
@@ -387,15 +369,6 @@ function prepareCodexSessionEnvironment(args: {
     process.env.CODEX_EFFORT;
   if (codexEffort) args.env.CODEX_EFFORT = codexEffort;
 
-  const codexGoals =
-    args.group.agentConfig?.codexGoals ??
-    (args.envVars.CODEX_GOALS === 'true' || process.env.CODEX_GOALS === 'true');
-  if (codexGoals) {
-    args.env.CODEX_GOALS = 'true';
-  } else {
-    delete args.env.CODEX_GOALS;
-  }
-
   const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
   syncHostCodexSessionFiles(sessionCodexDir);
 
@@ -412,6 +385,18 @@ function prepareCodexSessionEnvironment(args: {
         [baseToml, overlayToml].filter(Boolean).join('\n\n') + '\n',
       );
     }
+  }
+
+  const goalsFromConfig = readCodexFeatureFromFile(sessionConfigPath, 'goals');
+  const codexGoals =
+    args.group.agentConfig?.codexGoals ??
+    (goalsFromConfig ||
+      args.envVars.CODEX_GOALS === 'true' ||
+      process.env.CODEX_GOALS === 'true');
+  if (codexGoals) {
+    args.env.CODEX_GOALS = 'true';
+  } else {
+    delete args.env.CODEX_GOALS;
   }
 
   const sessionAgentsPath = path.join(sessionCodexDir, 'AGENTS.md');

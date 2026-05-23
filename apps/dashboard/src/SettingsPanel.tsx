@@ -30,9 +30,16 @@ import { type Locale, type Messages } from './i18n';
 import { MoaSettingsPanel } from './MoaSettingsPanel';
 import { RuntimeInventorySettings } from './RuntimeInventorySettings';
 import {
+  ModelRoleFields,
+  hasUnsupportedModelEffort,
+  type ModelRole,
+} from './SettingsModelFields';
+import {
   GeneralSettings,
   SettingsApplyCard,
+  SettingsCard,
   SettingsNav,
+  SettingsSaveBar,
   SettingsSectionHeading,
   type SettingsSectionId,
 } from './SettingsPanelChrome';
@@ -68,14 +75,15 @@ export function SettingsPanel({
   return (
     <div className="settings-panel">
       <div className="settings-layout">
-        <aside className="settings-sidebar" aria-label="설정 탐색과 적용">
+        <aside className="settings-sidebar" aria-label={t.settings.sidebarAria}>
           <SettingsNav
             activeSection={activeSection}
             onSelect={setActiveSection}
+            t={t}
           />
-          <SettingsApplyCard onRestartStack={onRestartStack} />
+          <SettingsApplyCard onRestartStack={onRestartStack} t={t} />
         </aside>
-        <main className="settings-content" aria-label="설정 항목">
+        <main className="settings-content" aria-label={t.settings.contentAria}>
           <div hidden={activeSection !== 'settings-general'}>
             <GeneralSettings
               locale={locale}
@@ -87,23 +95,23 @@ export function SettingsPanel({
           </div>
 
           <div hidden={activeSection !== 'settings-models'}>
-            <ModelSettings />
+            <ModelSettings t={t} />
           </div>
 
           <div hidden={activeSection !== 'settings-runtime'}>
-            <RuntimeInventorySettings />
+            <RuntimeInventorySettings t={t} />
           </div>
 
           <div hidden={activeSection !== 'settings-moa'}>
-            <MoaSettingsPanel />
+            <MoaSettingsPanel t={t} />
           </div>
 
           <div hidden={activeSection !== 'settings-codex'}>
-            <CodexRuntimeSettings />
+            <CodexRuntimeSettings t={t} />
           </div>
 
           <div hidden={activeSection !== 'settings-accounts'}>
-            <AccountSettings />
+            <AccountSettings t={t} />
           </div>
         </main>
       </div>
@@ -111,12 +119,13 @@ export function SettingsPanel({
   );
 }
 
-function ModelSettings() {
+function ModelSettings({ t }: { t: Messages }) {
   const [config, setConfig] = useState<ModelConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<ModelConfigSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const section = t.settings.sections.models;
 
   useEffect(() => {
     let cancelled = false;
@@ -142,10 +151,18 @@ function ModelSettings() {
 
   async function save() {
     if (!draft || !config) return;
+    if (hasUnsupportedModelEffort(draft)) {
+      setError(t.settings.models.effortSaveBlocked);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const next = await updateModels(draft);
+      const next = await updateModels({
+        owner: draft.owner,
+        reviewer: draft.reviewer,
+        arbiter: draft.arbiter,
+      });
       setConfig(next);
       setDraft(next);
       setSavedAt(Date.now());
@@ -156,10 +173,7 @@ function ModelSettings() {
     }
   }
 
-  function setRole(
-    role: keyof ModelConfigSnapshot,
-    patch: Partial<ModelRoleConfig>,
-  ) {
+  function setRole(role: ModelRole, patch: Partial<ModelRoleConfig>) {
     setDraft((prev) =>
       prev
         ? {
@@ -174,6 +188,7 @@ function ModelSettings() {
     draft !== null &&
     config !== null &&
     JSON.stringify(draft) !== JSON.stringify(config);
+  const effortBlocked = draft !== null && hasUnsupportedModelEffort(draft);
 
   return (
     <section
@@ -183,59 +198,41 @@ function ModelSettings() {
       role="tabpanel"
     >
       <SettingsSectionHeading
-        detail="Agent routing"
-        title="모델"
-        description="역할별 모델과 reasoning effort를 지정합니다."
+        description={section.description}
+        detail={section.kicker}
+        title={section.title}
       />
       {error ? <p className="settings-error">{error}</p> : null}
       {!draft ? (
         <p className="settings-hint">
-          {busy ? '불러오는 중…' : '모델 정보 없음'}
+          {busy ? t.settings.common.loading : t.settings.models.empty}
         </p>
       ) : (
         <>
-          {(['owner', 'reviewer', 'arbiter'] as const).map((role) => (
-            <div className="settings-row settings-row-inline" key={role}>
-              <span className="settings-label">{role}</span>
-              <input
-                aria-label={`${role} model`}
-                onChange={(e) => setRole(role, { model: e.target.value })}
-                placeholder="claude / codex / claude-opus-4-7 …"
-                type="text"
-                value={draft[role].model}
-              />
-              <input
-                aria-label={`${role} effort`}
-                className="settings-input-narrow"
-                onChange={(e) => setRole(role, { effort: e.target.value })}
-                placeholder="effort"
-                type="text"
-                value={draft[role].effort}
-              />
-            </div>
-          ))}
-          <div className="settings-actions">
-            <button
-              className="settings-save"
-              disabled={!dirty || busy}
-              onClick={() => void save()}
-              type="button"
-            >
-              {busy ? '저장 중…' : '모델 저장'}
-            </button>
-            {savedAt && !dirty ? (
-              <small className="settings-hint">
-                저장됨. 적용하려면 상단의 스택 재시작을 눌러 주세요.
-              </small>
-            ) : null}
-          </div>
+          <ModelRoleFields
+            draft={draft}
+            onChange={(role, patch) => setRole(role, patch)}
+            t={t}
+          />
+          <SettingsSaveBar
+            busy={busy}
+            dirty={dirty}
+            label={t.settings.models.save}
+            onSave={() => void save()}
+            saveDisabled={effortBlocked}
+            savedHint={t.settings.common.savedRestartHint}
+            savingLabel={t.settings.common.saving}
+            showSavedHint={savedAt !== null && !dirty}
+          />
         </>
       )}
     </section>
   );
 }
 
-function CodexRuntimeSettings() {
+function CodexRuntimeSettings({ t }: { t: Messages }) {
+  const section = t.settings.sections.codex;
+
   return (
     <section
       aria-labelledby="settings-codex-tab"
@@ -244,19 +241,19 @@ function CodexRuntimeSettings() {
       role="tabpanel"
     >
       <SettingsSectionHeading
-        detail="Codex runtime"
-        title="Codex 옵션"
-        description="빠른 응답과 실험 기능을 관리합니다. /goal은 여기에서 찾을 수 있습니다."
+        description={section.description}
+        detail={section.kicker}
+        title={section.title}
       />
       <div className="settings-section-stack">
-        <FastModeSettings />
-        <CodexFeatureSettings />
+        <FastModeSettings t={t} />
+        <CodexFeatureSettings t={t} />
       </div>
     </section>
   );
 }
 
-function FastModeSettings() {
+function FastModeSettings({ t }: { t: Messages }) {
   const [state, setState] = useState<FastModeSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -297,19 +294,19 @@ function FastModeSettings() {
   }
 
   return (
-    <section className="settings-subsection">
-      <h4>패스트 모드</h4>
+    <SettingsCard title={t.settings.codex.fastMode}>
       {error ? <p className="settings-error">{error}</p> : null}
       {!state ? (
-        <p className="settings-hint">불러오는 중…</p>
+        <p className="settings-hint">{t.settings.common.loading}</p>
       ) : (
-        <>
+        <div className="settings-toggle-stack">
           <label className="settings-toggle-row">
             <span className="settings-toggle-label">
-              <span className="settings-toggle-title">Codex (GPT)</span>
+              <span className="settings-toggle-title">
+                {t.settings.codex.codexFast}
+              </span>
               <small className="settings-hint">
-                ~/.codex/config.toml [features].fast_mode — 사용량 더 소모하지만
-                응답이 빨라집니다.
+                {t.settings.codex.codexFastHint}
               </small>
             </span>
             <input
@@ -321,10 +318,11 @@ function FastModeSettings() {
           </label>
           <label className="settings-toggle-row">
             <span className="settings-toggle-label">
-              <span className="settings-toggle-title">Claude</span>
+              <span className="settings-toggle-title">
+                {t.settings.codex.claudeFast}
+              </span>
               <small className="settings-hint">
-                ~/.claude/settings.json fastMode — 인터랙티브 세션의 /fast 와
-                동일 키. opus-4-6 한정으로 동작.
+                {t.settings.codex.claudeFastHint}
               </small>
             </span>
             <input
@@ -334,17 +332,19 @@ function FastModeSettings() {
               type="checkbox"
             />
           </label>
-        </>
+          <small className="settings-hint">
+            {t.settings.codex.fastModeApplyHint}
+          </small>
+        </div>
       )}
-    </section>
+    </SettingsCard>
   );
 }
 
-function CodexFeatureSettings() {
+function CodexFeatureSettings({ t }: { t: Messages }) {
   const [state, setState] = useState<CodexFeatureSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -373,7 +373,6 @@ function CodexFeatureSettings() {
     try {
       const fresh = await updateCodexFeatures({ goals: optimistic.goals });
       setState(fresh);
-      setSavedAt(Date.now());
     } catch (err) {
       setState(previous);
       setError(err instanceof Error ? err.message : String(err));
@@ -383,19 +382,19 @@ function CodexFeatureSettings() {
   }
 
   return (
-    <section className="settings-subsection">
-      <h4>Codex 실험 기능</h4>
+    <SettingsCard title={t.settings.codex.features}>
       {error ? <p className="settings-error">{error}</p> : null}
       {!state ? (
-        <p className="settings-hint">불러오는 중…</p>
+        <p className="settings-hint">{t.settings.common.loading}</p>
       ) : (
         <>
           <label className="settings-toggle-row">
             <span className="settings-toggle-label">
-              <span className="settings-toggle-title">/goal</span>
+              <span className="settings-toggle-title">
+                {t.settings.codex.goal}
+              </span>
               <small className="settings-hint">
-                CODEX_GOALS=true — Codex 0.128의 under-development goals
-                기능입니다. 기본 OFF이며, 저장 후 스택 재시작이 필요합니다.
+                {t.settings.codex.goalHint}
               </small>
             </span>
             <input
@@ -405,23 +404,22 @@ function CodexFeatureSettings() {
               type="checkbox"
             />
           </label>
-          {savedAt ? (
-            <small className="settings-hint">
-              저장됨. 적용하려면 상단의 스택 재시작을 눌러 주세요.
-            </small>
-          ) : null}
+          <small className="settings-hint">
+            {t.settings.codex.goalApplyHint}
+          </small>
         </>
       )}
-    </section>
+    </SettingsCard>
   );
 }
 
-function AccountSettings() {
+function AccountSettings({ t }: { t: Messages }) {
   const [data, setData] = useState<AccountData | null>(null);
   const [busy, setBusy] = useState(false);
   const [perRowBusy, setPerRowBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tokenInput, setTokenInput] = useState('');
+  const section = t.settings.sections.accounts;
 
   async function refresh() {
     setBusy(true);
@@ -443,7 +441,9 @@ function AccountSettings() {
   async function handleDelete(provider: AccountProvider, index: number) {
     if (
       !window.confirm(
-        `${provider} 계정 #${index} 디렉터리를 삭제합니다. 되돌릴 수 없습니다. 계속할까요?`,
+        t.settings.accounts.deleteConfirm
+          .replace('{provider}', provider)
+          .replace('{index}', String(index)),
       )
     ) {
       return;
@@ -497,7 +497,10 @@ function AccountSettings() {
       await refresh();
       if (result.failed.length > 0) {
         setError(
-          `일부 갱신 실패: ${result.failed.map((f) => `#${f.index}`).join(', ')}`,
+          t.settings.accounts.refreshFailed.replace(
+            '{indexes}',
+            result.failed.map((f) => `#${f.index}`).join(', '),
+          ),
         );
       }
     } catch (err) {
@@ -528,28 +531,32 @@ function AccountSettings() {
       role="tabpanel"
     >
       <SettingsSectionHeading
-        detail="Credentials"
-        title="계정"
-        description="Claude OAuth와 Codex 계정 상태를 확인하고 전환합니다."
+        description={section.description}
+        detail={section.kicker}
+        title={section.title}
       />
       {error ? <p className="settings-error">{error}</p> : null}
-      <ClaudeAccounts
-        busy={busy}
-        data={data}
-        onAdd={() => void handleAdd()}
-        onDelete={(index) => void handleDelete('claude', index)}
-        onTokenInputChange={setTokenInput}
-        tokenInput={tokenInput}
-      />
-      <CodexAccounts
-        busy={busy}
-        data={data}
-        onDelete={(index) => void handleDelete('codex', index)}
-        onRefresh={(index) => void handleCodexRefresh(index)}
-        onRefreshAll={() => void handleRefreshAllCodex()}
-        onSwitch={(index) => void handleSwitchCodex(index)}
-        perRowBusy={perRowBusy}
-      />
+      <div className="settings-section-stack">
+        <ClaudeAccounts
+          busy={busy}
+          data={data}
+          onAdd={() => void handleAdd()}
+          onDelete={(index) => void handleDelete('claude', index)}
+          onTokenInputChange={setTokenInput}
+          t={t}
+          tokenInput={tokenInput}
+        />
+        <CodexAccounts
+          busy={busy}
+          data={data}
+          onDelete={(index) => void handleDelete('codex', index)}
+          onRefresh={(index) => void handleCodexRefresh(index)}
+          onRefreshAll={() => void handleRefreshAllCodex()}
+          onSwitch={(index) => void handleSwitchCodex(index)}
+          perRowBusy={perRowBusy}
+          t={t}
+        />
+      </div>
     </section>
   );
 }
@@ -561,6 +568,7 @@ function ClaudeAccounts({
   onDelete,
   onTokenInputChange,
   tokenInput,
+  t,
 }: {
   busy: boolean;
   data: AccountData | null;
@@ -568,61 +576,78 @@ function ClaudeAccounts({
   onDelete: (index: number) => void;
   onTokenInputChange: (value: string) => void;
   tokenInput: string;
+  t: Messages;
 }) {
   return (
-    <div className="settings-account-group">
-      <h4>Claude</h4>
+    <SettingsCard title={t.settings.accounts.claude}>
       {!data ? (
-        <p className="settings-hint">{busy ? '불러오는 중…' : '없음'}</p>
+        <p className="settings-hint">
+          {busy ? t.settings.common.loading : t.settings.common.none}
+        </p>
       ) : data.claude.length === 0 ? (
-        <p className="settings-hint">계정 없음</p>
+        <p className="settings-hint">{t.settings.accounts.noAccounts}</p>
       ) : (
         <ul className="settings-account-list">
           {data.claude.map((acc) => (
-            <li key={acc.index} className="settings-account-row">
-              <div className="settings-account-main">
-                <span className="settings-account-tag">#{acc.index}</span>
-                <span className="settings-account-email">
-                  {acc.subscriptionType ?? 'unknown'}
-                  {acc.rateLimitTier ? ` · ${acc.rateLimitTier}` : ''}
-                </span>
-                <span className="settings-account-plan">claude</span>
-                <span className="settings-account-badge is-active">
-                  토큰 자동갱신
-                </span>
-              </div>
-              {acc.index > 0 ? (
-                <button
-                  className="settings-delete"
-                  disabled={busy}
-                  onClick={() => onDelete(acc.index)}
-                  type="button"
-                >
-                  삭제
-                </button>
-              ) : (
-                <span className="settings-account-default">기본</span>
-              )}
+            <li key={acc.index}>
+              <article
+                className={`settings-account-row${acc.index === 0 ? ' is-primary' : ''}`}
+              >
+                <div className="settings-account-row-main">
+                  <span className="settings-account-index">#{acc.index}</span>
+                  <div className="settings-account-row-copy">
+                    <strong>{acc.subscriptionType ?? 'unknown'}</strong>
+                    <span className="settings-hint">
+                      {acc.rateLimitTier ?? 'claude-code'}
+                      {' · '}
+                      {t.settings.accounts.autoRefresh}
+                    </span>
+                  </div>
+                  {acc.index === 0 ? (
+                    <span className="settings-pill is-primary is-compact">
+                      {t.settings.accounts.primaryAccount}
+                    </span>
+                  ) : null}
+                </div>
+                {acc.index > 0 ? (
+                  <div className="settings-account-actions">
+                    <button
+                      className="settings-delete"
+                      disabled={busy}
+                      onClick={() => onDelete(acc.index)}
+                      type="button"
+                    >
+                      {t.settings.common.delete}
+                    </button>
+                  </div>
+                ) : null}
+              </article>
             </li>
           ))}
         </ul>
       )}
       <div className="settings-add-token">
-        <textarea
-          onChange={(e) => onTokenInputChange(e.target.value)}
-          placeholder="Claude OAuth 토큰 (claude CLI 로그인 후 ~/.claude/.credentials.json 에서 accessToken 값을 페이스트)"
-          rows={2}
-          value={tokenInput}
-        />
+        <label className="settings-row">
+          <span className="settings-label">
+            {t.settings.accounts.addTokenLabel}
+          </span>
+          <textarea
+            onChange={(e) => onTokenInputChange(e.target.value)}
+            placeholder={t.settings.accounts.tokenPlaceholder}
+            rows={2}
+            value={tokenInput}
+          />
+        </label>
         <button
+          className="settings-save"
           disabled={!tokenInput.trim() || busy}
           onClick={onAdd}
           type="button"
         >
-          추가
+          {t.settings.common.add}
         </button>
       </div>
-    </div>
+    </SettingsCard>
   );
 }
 
@@ -634,6 +659,7 @@ function CodexAccounts({
   onRefreshAll,
   onSwitch,
   perRowBusy,
+  t,
 }: {
   busy: boolean;
   data: AccountData | null;
@@ -642,46 +668,48 @@ function CodexAccounts({
   onRefreshAll: () => void;
   onSwitch: (index: number) => void;
   perRowBusy: string | null;
+  t: Messages;
 }) {
   return (
-    <div className="settings-account-group">
-      <div className="settings-account-group-head">
-        <h4>Codex</h4>
+    <SettingsCard
+      actions={
         <button
           className="settings-secondary"
           disabled={busy}
           onClick={onRefreshAll}
           type="button"
         >
-          전체 갱신
+          {t.settings.common.refreshAll}
         </button>
-      </div>
+      }
+      description={t.settings.accounts.codexRefreshHint}
+      title={t.settings.accounts.codex}
+    >
       {!data ? (
-        <p className="settings-hint">{busy ? '불러오는 중…' : '없음'}</p>
+        <p className="settings-hint">
+          {busy ? t.settings.common.loading : t.settings.common.none}
+        </p>
       ) : data.codex.length === 0 ? (
-        <p className="settings-hint">계정 없음</p>
+        <p className="settings-hint">{t.settings.accounts.noAccounts}</p>
       ) : (
         <ul className="settings-account-list">
           {data.codex.map((acc) => (
-            <CodexAccountRow
-              acc={acc}
-              busy={busy}
-              isActive={data.codexCurrentIndex === acc.index}
-              key={acc.index}
-              onDelete={onDelete}
-              onRefresh={onRefresh}
-              onSwitch={onSwitch}
-              perRowBusy={perRowBusy}
-            />
+            <li key={acc.index}>
+              <CodexAccountRow
+                acc={acc}
+                busy={busy}
+                isActive={data.codexCurrentIndex === acc.index}
+                onDelete={onDelete}
+                onRefresh={onRefresh}
+                onSwitch={onSwitch}
+                perRowBusy={perRowBusy}
+                t={t}
+              />
+            </li>
           ))}
         </ul>
       )}
-      <p className="settings-hint">
-        “갱신”은 chatgpt.com wham/usage live plan·rate limit·지출 제한을
-        저장합니다. JWT 만료일 캐시는 live 값이 없을 때만 fallback으로
-        표시합니다.
-      </p>
-    </div>
+    </SettingsCard>
   );
 }
 
@@ -693,6 +721,7 @@ function CodexAccountRow({
   onRefresh,
   onSwitch,
   perRowBusy,
+  t,
 }: {
   acc: CodexAccountSummary;
   busy: boolean;
@@ -701,6 +730,7 @@ function CodexAccountRow({
   onRefresh: (index: number) => void;
   onSwitch: (index: number) => void;
   perRowBusy: string | null;
+  t: Messages;
 }) {
   const liveBadge = formatLiveStatusBadge(acc.liveStatus);
   const usageBadge = formatUsageBadge(acc.liveStatus);
@@ -714,54 +744,57 @@ function CodexAccountRow({
   const switching = perRowBusy === `switch:${acc.index}`;
 
   return (
-    <li
+    <article
       className={`settings-account-row${isActive ? ' is-active-account' : ''}`}
     >
-      <div className="settings-account-main">
-        <span className="settings-account-tag">
-          {isActive ? '●' : ''}#{acc.index}
-        </span>
-        {acc.email ? (
-          <span className="settings-account-email" title={acc.email}>
-            {acc.email}
+      <div className="settings-account-row-main">
+        <span className="settings-account-index">#{acc.index}</span>
+        <div className="settings-account-row-copy">
+          <strong>{acc.email ?? acc.planType ?? 'Codex account'}</strong>
+          <span className="settings-account-row-meta">
+            <span className="settings-account-plan">
+              {acc.planType ?? 'unknown'}
+            </span>
+            {liveBadge ? (
+              <span
+                className={`settings-account-badge ${liveBadge.cls}`}
+                title={liveBadge.title}
+              >
+                {liveBadge.label}
+              </span>
+            ) : cachedExpiry ? (
+              <span
+                className={`settings-account-badge ${cachedExpiry.cls}`}
+                title={cachedExpiry.title}
+              >
+                {cachedExpiry.label}
+              </span>
+            ) : null}
+            {usageBadge ? (
+              <span
+                className="settings-account-badge is-muted"
+                title={usageBadge.title}
+              >
+                {usageBadge.label}
+              </span>
+            ) : null}
+            {checkedAt ? (
+              <span
+                className="settings-account-badge is-muted"
+                title={
+                  acc.liveStatus
+                    ? 'wham/usage live checked_at'
+                    : 'JWT subscription_last_checked cache'
+                }
+              >
+                {t.settings.common.refresh} {checkedAt}
+              </span>
+            ) : null}
           </span>
-        ) : null}
-        <span className="settings-account-plan">
-          {acc.planType ?? 'unknown'}
-        </span>
-        {liveBadge ? (
-          <span
-            className={`settings-account-badge ${liveBadge.cls}`}
-            title={liveBadge.title}
-          >
-            {liveBadge.label}
-          </span>
-        ) : cachedExpiry ? (
-          <span
-            className={`settings-account-badge ${cachedExpiry.cls}`}
-            title={cachedExpiry.title}
-          >
-            {cachedExpiry.label}
-          </span>
-        ) : null}
-        {usageBadge ? (
-          <span
-            className="settings-account-badge is-muted"
-            title={usageBadge.title}
-          >
-            {usageBadge.label}
-          </span>
-        ) : null}
-        {checkedAt ? (
-          <span
-            className="settings-account-badge is-muted"
-            title={
-              acc.liveStatus
-                ? 'wham/usage live checked_at'
-                : 'JWT subscription_last_checked cache'
-            }
-          >
-            갱신 {checkedAt}
+        </div>
+        {isActive ? (
+          <span className="settings-pill is-active is-compact">
+            {t.settings.accounts.activeAccount}
           </span>
         ) : null}
       </div>
@@ -770,24 +803,24 @@ function CodexAccountRow({
           className="settings-secondary"
           disabled={busy || perRowBusy !== null}
           onClick={() => onRefresh(acc.index)}
-          title="OAuth 토큰을 다시 받고 wham/usage live plan·limit 상태를 갱신합니다"
+          title={t.settings.accounts.refreshTitle}
           type="button"
         >
-          {refreshing ? '갱신중…' : '갱신'}
+          {refreshing
+            ? t.settings.common.refreshing
+            : t.settings.common.refresh}
         </button>
         {!isActive ? (
           <button
             className="settings-secondary"
             disabled={busy || perRowBusy !== null}
             onClick={() => onSwitch(acc.index)}
-            title="이 계정으로 즉시 전환합니다 (다음 codex 호출부터 적용)"
+            title={t.settings.accounts.switchTitle}
             type="button"
           >
-            {switching ? '전환중…' : '전환'}
+            {switching ? t.settings.common.switching : t.settings.common.switch}
           </button>
-        ) : (
-          <span className="settings-account-default">사용중</span>
-        )}
+        ) : null}
         {acc.index > 0 ? (
           <button
             className="settings-delete"
@@ -795,10 +828,10 @@ function CodexAccountRow({
             onClick={() => onDelete(acc.index)}
             type="button"
           >
-            삭제
+            {t.settings.common.delete}
           </button>
         ) : null}
       </div>
-    </li>
+    </article>
   );
 }

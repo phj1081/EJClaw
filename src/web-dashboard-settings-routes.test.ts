@@ -42,6 +42,11 @@ const modelConfig: ModelConfigSnapshot = {
   owner: { model: 'gpt-5.4', effort: 'medium' },
   reviewer: { model: 'claude-sonnet', effort: 'high' },
   arbiter: { model: 'gpt-5.4', effort: 'high' },
+  agentTypes: {
+    owner: 'codex',
+    reviewer: 'claude-code',
+    arbiter: null,
+  },
 };
 
 const fastMode: FastModeSnapshot = { codex: true, claude: false };

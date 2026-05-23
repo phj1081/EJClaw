@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
 import type {
   CreateScheduledTaskInput,
@@ -18,6 +18,7 @@ import './TaskPanel.css';
 export type { TaskActionKey } from './TaskActionButtons';
 
 type TaskGroupKey = 'watchers' | 'scheduled' | 'paused' | 'completed';
+type TaskFilterKey = TaskGroupKey | 'all';
 type TaskResultTone = 'ok' | 'fail' | 'none';
 
 export interface RoomOption {
@@ -317,16 +318,7 @@ function buildTaskSummary(tasks: DashboardTask[]): TaskSummary {
   return summary;
 }
 
-function TaskSummaryMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <span className="task-summary-metric">
-      <strong>{value}</strong>
-      <small>{label}</small>
-    </span>
-  );
-}
-
-function TaskBoardSummary({
+function TaskSummaryBar({
   locale,
   summary,
   t,
@@ -337,48 +329,79 @@ function TaskBoardSummary({
 }) {
   const nextTask = summary.nextTask;
   return (
-    <section className="task-command-center" aria-label={t.panels.scheduled}>
-      <div className="task-command-copy">
-        <span className="eyebrow">{t.panels.scheduled}</span>
-        <strong>
-          {summary.total} {t.tasks.count}
-        </strong>
-        <p>
-          {nextTask
-            ? `${t.tasks.next}: ${taskHeadline(nextTask, t)}`
-            : t.tasks.empty}
-        </p>
-      </div>
-      <div className="task-command-next">
+    <section className="task-summary-bar" aria-label={t.panels.scheduled}>
+      <div className="task-summary-next">
         <small>{t.tasks.next}</small>
         <strong>
           {nextTask ? formatRelativeDate(nextTask.nextRun, locale, t) : '-'}
         </strong>
         <span>
           {nextTask
-            ? `${nextTask.groupFolder} · ${taskScheduleText(nextTask, t)}`
-            : t.tasks.noTime}
+            ? taskHeadline(nextTask, t)
+            : summary.total > 0
+              ? `${summary.total} ${t.tasks.count}`
+              : t.tasks.empty}
         </span>
       </div>
-      <div className="task-command-metrics">
-        <TaskSummaryMetric
-          label={t.tasks.groups.scheduled}
-          value={summary.scheduled}
-        />
-        <TaskSummaryMetric
-          label={t.tasks.groups.watchers}
-          value={summary.watchers}
-        />
-        <TaskSummaryMetric
-          label={t.tasks.groups.paused}
-          value={summary.paused}
-        />
-        <TaskSummaryMetric
-          label={t.tasks.groups.completed}
-          value={summary.completed}
-        />
+      <div className="task-summary-chips" aria-hidden="true">
+        <span className="task-chip">
+          {t.tasks.groups.scheduled} {summary.scheduled}
+        </span>
+        <span className="task-chip">
+          {t.tasks.groups.watchers} {summary.watchers}
+        </span>
+        <span className="task-chip">
+          {t.tasks.groups.paused} {summary.paused}
+        </span>
+        <span className="task-chip">
+          {t.tasks.groups.completed} {summary.completed}
+        </span>
       </div>
     </section>
+  );
+}
+
+function TaskFilterTabs({
+  activeFilter,
+  counts,
+  onSelect,
+  t,
+}: {
+  activeFilter: TaskFilterKey;
+  counts: Record<TaskFilterKey, number>;
+  onSelect: (filter: TaskFilterKey) => void;
+  t: Messages;
+}) {
+  const tabs: Array<{ key: TaskFilterKey; label: string }> = [
+    { key: 'all', label: t.tasks.filterAll },
+    { key: 'scheduled', label: t.tasks.groups.scheduled },
+    { key: 'watchers', label: t.tasks.groups.watchers },
+    { key: 'paused', label: t.tasks.groups.paused },
+    { key: 'completed', label: t.tasks.groups.completed },
+  ];
+
+  return (
+    <div className="task-filter-scroll">
+      <div
+        aria-label={t.panels.scheduled}
+        className="task-filter-tabs"
+        role="tablist"
+      >
+        {tabs.map((tab) => (
+          <button
+            aria-selected={activeFilter === tab.key}
+            className="task-filter-tab"
+            key={tab.key}
+            onClick={() => onSelect(tab.key)}
+            role="tab"
+            type="button"
+          >
+            <strong>{tab.label}</strong>
+            <small>{counts[tab.key]}</small>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -389,32 +412,30 @@ function TaskCreateForm({
   t,
 }: TaskCreateFormProps) {
   return (
-    <form
-      className="task-create-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const form = new FormData(event.currentTarget);
-        const input = readTaskForm(form, true);
-        if (!input) return;
-        onTaskCreate(input);
-        event.currentTarget.reset();
-      }}
-    >
-      <div className="task-create-head">
-        <span className="eyebrow">{t.tasks.createTitle}</span>
-        <strong>{t.tasks.createSubtitle}</strong>
-        <p>{t.tasks.scheduleValueHint}</p>
-      </div>
-      <div className="task-create-body">
+    <details className="task-create-panel">
+      <summary>{t.tasks.createTitle}</summary>
+      <form
+        className="task-create-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const input = readTaskForm(form, true);
+          if (!input) return;
+          onTaskCreate(input);
+          event.currentTarget.reset();
+        }}
+      >
+        <p className="task-create-hint">{t.tasks.scheduleValueHint}</p>
         <label className="task-form-wide">
           <span>{t.tasks.prompt}</span>
           <textarea
             name="prompt"
             placeholder={t.tasks.promptPlaceholder}
             required
+            rows={3}
           />
         </label>
-        <div className="task-form-controls">
+        <div className="task-form-grid">
           <label>
             <span>{t.tasks.room}</span>
             <select name="roomJid" required>
@@ -450,16 +471,13 @@ function TaskCreateForm({
             </select>
           </label>
         </div>
-        <div className="task-form-footer">
-          <span>{t.tasks.schedule}</span>
-          <button disabled={taskActionKey === 'create'} type="submit">
-            {taskActionKey === 'create'
-              ? t.tasks.actions.busy
-              : t.tasks.actions.create}
-          </button>
-        </div>
-      </div>
-    </form>
+        <button disabled={taskActionKey === 'create'} type="submit">
+          {taskActionKey === 'create'
+            ? t.tasks.actions.busy
+            : t.tasks.actions.create}
+        </button>
+      </form>
+    </details>
   );
 }
 
@@ -515,16 +533,16 @@ function TaskResult({ task, t }: { task: DashboardTask; t: Messages }) {
   );
 }
 
-function TaskPromptDetails({ task, t }: { task: DashboardTask; t: Messages }) {
+function TaskPromptBlock({ task, t }: { task: DashboardTask; t: Messages }) {
   return (
-    <details className="task-prompt">
-      <summary>{t.tasks.prompt}</summary>
+    <div className="task-prompt-block">
+      <span>{t.tasks.prompt}</span>
       <p>{safePreview(task.promptPreview, t.tasks.emptyPrompt)}</p>
       <small>
         {task.id} · {taskScheduleText(task, t)} · {task.promptLength}{' '}
         {t.units.chars}
       </small>
-    </details>
+    </div>
   );
 }
 
@@ -599,35 +617,50 @@ function TaskCard({
   t,
 }: TaskCardProps) {
   return (
-    <article className={`task-card task-card-${groupKey}`}>
-      <div className="task-card-main">
-        <div className="task-title">
-          <span className="task-kind">{taskDisplayName(task, t)}</span>
-          <strong>{taskHeadline(task, t)}</strong>
-          <TaskMetaStrip task={task} t={t} />
-        </div>
-        <div className="task-status-line">
+    <article className={`task-row task-row-${groupKey}`}>
+      <div className="task-row-head">
+        <div className="task-row-lead">
           <span className={`pill pill-${task.status}`}>
             {statusLabel(task.status, t)}
           </span>
+          <div className="task-row-copy">
+            <span className="task-kind">{taskDisplayName(task, t)}</span>
+            <strong title={taskHeadline(task, t)}>
+              {taskHeadline(task, t)}
+            </strong>
+            <TaskMetaStrip task={task} t={t} />
+          </div>
+        </div>
+        <div className="task-row-aside">
+          <div className="task-row-next">
+            <small>{t.tasks.next}</small>
+            <strong>{formatRelativeDate(task.nextRun, locale, t)}</strong>
+            <em>{formatTaskDate(task.nextRun, locale)}</em>
+          </div>
+          <TaskActionButtons
+            className="task-row-actions"
+            onTaskAction={onTaskAction}
+            task={task}
+            taskActionKey={taskActionKey}
+            t={t}
+          />
         </div>
       </div>
-      <TaskActionButtons
-        onTaskAction={onTaskAction}
-        task={task}
-        taskActionKey={taskActionKey}
-        t={t}
-      />
-      <TaskTimeGrid locale={locale} t={t} task={task} />
-      <TaskSuspendedUntil locale={locale} t={t} task={task} />
-      <TaskResult task={task} t={t} />
-      <TaskPromptDetails task={task} t={t} />
-      <TaskEditForm
-        onTaskUpdate={onTaskUpdate}
-        task={task}
-        taskActionKey={taskActionKey}
-        t={t}
-      />
+      <details className="task-row-details">
+        <summary>{t.tasks.details}</summary>
+        <div className="task-row-details-body">
+          <TaskTimeGrid locale={locale} t={t} task={task} />
+          <TaskSuspendedUntil locale={locale} t={t} task={task} />
+          <TaskResult task={task} t={t} />
+          <TaskPromptBlock task={task} t={t} />
+          <TaskEditForm
+            onTaskUpdate={onTaskUpdate}
+            task={task}
+            taskActionKey={taskActionKey}
+            t={t}
+          />
+        </div>
+      </details>
     </article>
   );
 }
@@ -673,38 +706,51 @@ function TaskGroupHead({
 }) {
   return (
     <div className="task-group-head">
-      <div>
-        <span className="eyebrow">{label}</span>
-        <strong>
-          {group.tasks.length} {countLabel}
-        </strong>
-      </div>
-      <span className={`pill pill-${group.key}`}>{group.tasks.length}</span>
+      <strong>
+        {label} · {group.tasks.length} {countLabel}
+      </strong>
     </div>
   );
 }
 
-function TaskGroupSection(props: TaskGroupSectionProps) {
-  const { group, t } = props;
+function TaskGroupSection({
+  group,
+  locale,
+  onTaskAction,
+  onTaskUpdate,
+  showHead,
+  taskActionKey,
+  t,
+}: TaskGroupSectionProps & { showHead: boolean }) {
   if (group.tasks.length === 0) return null;
 
   const label = t.tasks.groups[group.key];
-  const body = <TaskGroupBody {...props} />;
+  const body = (
+    <TaskGroupBody
+      group={group}
+      locale={locale}
+      onTaskAction={onTaskAction}
+      onTaskUpdate={onTaskUpdate}
+      taskActionKey={taskActionKey}
+      t={t}
+    />
+  );
 
   if (group.key === 'completed') {
     return (
       <details className="task-group task-group-completed">
         <summary className="task-group-head">
-          <div>
-            <span className="eyebrow">{label}</span>
-            <strong>
-              {group.tasks.length} {t.tasks.count}
-            </strong>
-          </div>
+          <strong>{label}</strong>
           <span className={`pill pill-${group.key}`}>{group.tasks.length}</span>
         </summary>
         {body}
       </details>
+    );
+  }
+
+  if (!showHead) {
+    return (
+      <section className={`task-group task-group-${group.key}`}>{body}</section>
     );
   }
 
@@ -714,6 +760,21 @@ function TaskGroupSection(props: TaskGroupSectionProps) {
       {body}
     </section>
   );
+}
+
+function buildFilterCounts(groups: TaskGroup[]): Record<TaskFilterKey, number> {
+  const counts: Record<TaskFilterKey, number> = {
+    all: 0,
+    watchers: 0,
+    scheduled: 0,
+    paused: 0,
+    completed: 0,
+  };
+  for (const group of groups) {
+    counts[group.key] = group.tasks.length;
+    counts.all += group.tasks.length;
+  }
+  return counts;
 }
 
 export function TaskPanel({
@@ -728,26 +789,48 @@ export function TaskPanel({
 }: TaskPanelProps) {
   const taskGroups = useMemo(() => buildTaskGroups(tasks), [tasks]);
   const taskSummary = useMemo(() => buildTaskSummary(tasks), [tasks]);
+  const filterCounts = useMemo(
+    () => buildFilterCounts(taskGroups),
+    [taskGroups],
+  );
+  const [activeFilter, setActiveFilter] = useState<TaskFilterKey>('all');
+
+  const visibleGroups = useMemo(() => {
+    if (activeFilter === 'all') {
+      return taskGroups.filter((group) => group.tasks.length > 0);
+    }
+    return taskGroups.filter((group) => group.key === activeFilter);
+  }, [activeFilter, taskGroups]);
 
   return (
     <div className="task-board" aria-label={t.tasks.cardsAria}>
-      <TaskBoardSummary locale={locale} summary={taskSummary} t={t} />
+      <TaskSummaryBar locale={locale} summary={taskSummary} t={t} />
+      <TaskFilterTabs
+        activeFilter={activeFilter}
+        counts={filterCounts}
+        onSelect={setActiveFilter}
+        t={t}
+      />
       <TaskCreateForm
-        rooms={rooms}
         onTaskCreate={onTaskCreate}
+        rooms={rooms}
         taskActionKey={taskActionKey}
         t={t}
       />
 
       {tasks.length === 0 ? <EmptyState>{t.tasks.empty}</EmptyState> : null}
+      {tasks.length > 0 && visibleGroups.length === 0 ? (
+        <EmptyState>{t.tasks.groupEmpty}</EmptyState>
+      ) : null}
       <div className="task-lanes">
-        {taskGroups.map((group) => (
+        {visibleGroups.map((group) => (
           <TaskGroupSection
             group={group}
             key={group.key}
             locale={locale}
             onTaskAction={onTaskAction}
             onTaskUpdate={onTaskUpdate}
+            showHead={activeFilter === 'all'}
             taskActionKey={taskActionKey}
             t={t}
           />

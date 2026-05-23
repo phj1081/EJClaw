@@ -26,6 +26,12 @@ import {
   type CodexLiveStatus,
   type CodexLiveStatusSummary,
 } from './codex-live-status.js';
+import {
+  readCodexFeatureFromFile,
+  writeCodexFeatureToFile,
+} from './codex-config-features.js';
+import { readHostClaudeFastMode } from './claude-session-settings.js';
+import { agentTypeForRole, isEffortSupported } from './settings-effort.js';
 
 export type {
   CodexAdditionalRateLimitSummary,
@@ -62,10 +68,17 @@ export interface ModelRoleConfig {
   effort: string;
 }
 
+export interface ModelAgentTypes {
+  owner: 'claude-code' | 'codex';
+  reviewer: 'claude-code' | 'codex';
+  arbiter: 'claude-code' | 'codex' | null;
+}
+
 export interface ModelConfigSnapshot {
   owner: ModelRoleConfig;
   reviewer: ModelRoleConfig;
   arbiter: ModelRoleConfig;
+  agentTypes: ModelAgentTypes;
 }
 
 export interface FastModeSnapshot {
@@ -269,7 +282,19 @@ function readEnvOrProcess(key: string): string | undefined {
 }
 
 export function getModelConfig(): ModelConfigSnapshot {
-  const out: Partial<ModelConfigSnapshot> = {};
+  const env = readEnvFile();
+  const envLookup = (key: string): string | undefined => {
+    const fromFile = pickEnvValue(env, key);
+    if (fromFile !== undefined) return fromFile;
+    return process.env[key];
+  };
+  const out: Partial<ModelConfigSnapshot> = {
+    agentTypes: {
+      owner: agentTypeForRole('owner', envLookup) ?? 'codex',
+      reviewer: agentTypeForRole('reviewer', envLookup) ?? 'claude-code',
+      arbiter: agentTypeForRole('arbiter', envLookup),
+    },
+  };
   for (const role of ROLE_KEYS) {
     const model = readEnvOrProcess(`${role}_MODEL`) ?? '';
     const effort = readEnvOrProcess(`${role}_EFFORT`) ?? '';
@@ -308,6 +333,8 @@ export function updateModelConfig(
   if (fs.existsSync(file)) {
     content = fs.readFileSync(file, 'utf-8');
   }
+  const envLookup = (key: string): string | undefined =>
+    pickEnvValue(content, key) ?? process.env[key];
 
   for (const role of ROLE_KEYS) {
     const update = (
@@ -318,6 +345,19 @@ export function updateModelConfig(
       content = setOrInsertEnvLine(content, `${role}_MODEL`, update.model);
     }
     if (update.effort !== undefined) {
+      const agentType = agentTypeForRole(
+        role.toLowerCase() as 'owner' | 'reviewer' | 'arbiter',
+        envLookup,
+      );
+      if (
+        update.effort &&
+        agentType &&
+        !isEffortSupported(agentType, update.effort)
+      ) {
+        throw new Error(
+          `${role}_EFFORT=${update.effort} is not supported for ${agentType} agents`,
+        );
+      }
       content = setOrInsertEnvLine(content, `${role}_EFFORT`, update.effort);
     }
   }
@@ -564,7 +604,7 @@ export function stopCodexAccountRefreshLoop(): void {
   }
 }
 
-function codexConfigPath(): string {
+function codexConfigFile(): string {
   return path.join(settingsHomeDir(), '.codex', 'config.toml');
 }
 
@@ -573,51 +613,15 @@ function claudeSettingsPath(): string {
 }
 
 function readCodexFastMode(): boolean {
-  const file = codexConfigPath();
-  if (!fs.existsSync(file)) return false;
-  const content = fs.readFileSync(file, 'utf-8');
-  // [features] section, look for fast_mode = true|false
-  const featuresMatch = content.match(/\[features\][\s\S]*?(?=^\[|$)/m);
-  const block = featuresMatch ? featuresMatch[0] : content;
-  const m = block.match(/^\s*fast_mode\s*=\s*(true|false)\s*$/m);
-  return m ? m[1] === 'true' : false;
+  return readCodexFeatureFromFile(codexConfigFile(), 'fast_mode');
 }
 
 function writeCodexFastMode(value: boolean): void {
-  const file = codexConfigPath();
-  let content = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
-  if (/^\s*fast_mode\s*=\s*(true|false)\s*$/m.test(content)) {
-    content = content.replace(
-      /^\s*fast_mode\s*=\s*(true|false)\s*$/m,
-      `fast_mode = ${value}`,
-    );
-  } else if (/^\[features\]/m.test(content)) {
-    content = content.replace(
-      /^\[features\]\s*$/m,
-      `[features]\nfast_mode = ${value}`,
-    );
-  } else {
-    const trimmed = content.replace(/\s*$/, '');
-    content = `${trimmed}\n\n[features]\nfast_mode = ${value}\n`;
-  }
-  const tempPath = `${file}.tmp`;
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(tempPath, content, { mode: 0o600 });
-  fs.renameSync(tempPath, file);
+  writeCodexFeatureToFile(codexConfigFile(), 'fast_mode', value);
 }
 
 function readClaudeFastMode(): boolean {
-  const file = claudeSettingsPath();
-  if (!fs.existsSync(file)) return false;
-  try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf-8')) as Record<
-      string,
-      unknown
-    >;
-    return data.fastMode === true;
-  } catch {
-    return false;
-  }
+  return readHostClaudeFastMode();
 }
 
 function writeClaudeFastMode(value: boolean): void {
@@ -658,19 +662,26 @@ export function updateFastMode(
 }
 
 function readCodexGoals(): boolean {
+  const fromConfig = readCodexFeatureFromFile(codexConfigFile(), 'goals');
+  if (fromConfig) return true;
+  // Legacy .env opt-in kept for backward compatibility until migrated.
   return readEnvOrProcess('CODEX_GOALS') === 'true';
 }
 
 function writeCodexGoals(value: boolean): void {
+  writeCodexFeatureToFile(codexConfigFile(), 'goals', value);
+
   const file = envFilePath();
-  const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
-  const updated = setOrInsertEnvLine(
-    content,
-    'CODEX_GOALS',
-    value ? 'true' : 'false',
-  );
+  if (!fs.existsSync(file)) return;
+  const content = fs.readFileSync(file, 'utf-8');
+  if (!/^CODEX_GOALS=.*$/m.test(content)) return;
+  const updated = content
+    .split('\n')
+    .filter((line) => !/^CODEX_GOALS=.*$/.test(line))
+    .join('\n')
+    .replace(/\n+$/, '');
   const tempPath = `${file}.tmp`;
-  fs.writeFileSync(tempPath, updated, { mode: 0o600 });
+  fs.writeFileSync(tempPath, updated ? `${updated}\n` : '', { mode: 0o600 });
   fs.renameSync(tempPath, file);
 }
 

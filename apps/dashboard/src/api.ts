@@ -421,10 +421,17 @@ export interface ModelRoleConfig {
   effort: string;
 }
 
+export interface ModelAgentTypes {
+  owner: 'claude-code' | 'codex';
+  reviewer: 'claude-code' | 'codex';
+  arbiter: 'claude-code' | 'codex' | null;
+}
+
 export interface ModelConfigSnapshot {
   owner: ModelRoleConfig;
   reviewer: ModelRoleConfig;
   arbiter: ModelRoleConfig;
+  agentTypes: ModelAgentTypes;
 }
 
 export interface FastModeSnapshot {

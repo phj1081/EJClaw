@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -576,6 +577,24 @@ describe('prepareGroupEnvironment Codex goals handling', () => {
     const prepared = prepareGroupEnvironment(group, false, 'dc:test');
 
     expect(prepared.env.CODEX_GOALS).toBe('true');
+  });
+
+  it('enables goals from host ~/.codex/config.toml [features]', () => {
+    mockReadEnvFile.mockReturnValue({});
+    const homedirSpy = vi
+      .spyOn(os, 'homedir')
+      .mockReturnValue(process.env.EJ_TEST_HOME!);
+    fs.writeFileSync(
+      path.join(process.env.EJ_TEST_HOME!, '.codex', 'config.toml'),
+      '[features]\ngoals = true\n',
+    );
+
+    try {
+      const prepared = prepareGroupEnvironment(group, false, 'dc:test');
+      expect(prepared.env.CODEX_GOALS).toBe('true');
+    } finally {
+      homedirSpy.mockRestore();
+    }
   });
 });
 

@@ -8,8 +8,10 @@ import {
   fetchMoaSettings,
   updateMoaSettings,
 } from './api';
+import { type Messages } from './i18n';
+import { SettingsSaveBar, SettingsSectionHeading } from './SettingsPanelChrome';
 
-export function MoaSettingsPanel() {
+export function MoaSettingsPanel({ t }: { t: Messages }) {
   const [config, setConfig] = useState<MoaSettingsSnapshot | null>(null);
   const [draft, setDraft] = useState<MoaSettingsSnapshot | null>(null);
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
@@ -17,6 +19,7 @@ export function MoaSettingsPanel() {
   const [checking, setChecking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const section = t.settings.sections.moa;
 
   useEffect(() => {
     let cancelled = false;
@@ -119,15 +122,15 @@ export function MoaSettingsPanel() {
       id="settings-moa"
       role="tabpanel"
     >
-      <header className="settings-section-head">
-        <span>Arbiter references</span>
-        <h3>MoA 참조 모델</h3>
-        <p>Kimi, GLM 같은 외부 참조 모델을 켜고 연결 상태를 바로 확인합니다.</p>
-      </header>
+      <SettingsSectionHeading
+        description={section.description}
+        detail={section.kicker}
+        title={section.title}
+      />
       {error ? <p className="settings-error">{error}</p> : null}
       {!draft ? (
         <p className="settings-hint">
-          {busy ? '불러오는 중…' : 'MoA 설정 없음'}
+          {busy ? t.settings.common.loading : t.settings.moa.empty}
         </p>
       ) : (
         <MoaSettingsContent
@@ -148,6 +151,7 @@ export function MoaSettingsPanel() {
             )
           }
           savedAt={savedAt}
+          t={t}
         />
       )}
     </section>
@@ -166,6 +170,7 @@ function MoaSettingsContent({
   onTest,
   onToggle,
   savedAt,
+  t,
 }: {
   apiKeys: Record<string, string>;
   busy: boolean;
@@ -181,6 +186,7 @@ function MoaSettingsContent({
   onTest: (name: string) => Promise<void>;
   onToggle: () => void;
   savedAt: number | null;
+  t: Messages;
 }) {
   return (
     <>
@@ -188,8 +194,9 @@ function MoaSettingsContent({
         busy={busy}
         enabled={draft.enabled}
         onToggle={onToggle}
+        t={t}
       />
-      <ul className="settings-account-list">
+      <ul className="settings-moa-list">
         {draft.models.map((model) => (
           <MoaModelRow
             apiKeyValue={apiKeys[model.name] ?? ''}
@@ -201,47 +208,54 @@ function MoaSettingsContent({
             onApiKeyChange={onApiKeyChange}
             onModelChange={onModelChange}
             onTest={onTest}
+            t={t}
           />
         ))}
       </ul>
-      <MoaSettingsActions
-        busy={busy}
-        checking={checking}
+      <SettingsSaveBar
+        busy={busy || checking !== null}
         dirty={dirty}
-        onSave={onSave}
-        savedAt={savedAt}
+        label={t.settings.moa.save}
+        onSave={() => void onSave()}
+        savedHint={t.settings.common.savedRestartHint}
+        savingLabel={t.settings.common.saving}
+        showSavedHint={savedAt !== null && !dirty}
       />
     </>
   );
 }
 
-function formatMoaStatus(status: MoaReferenceStatus | null): string {
-  if (!status) return '연결 테스트 전';
+function formatMoaStatus(
+  status: MoaReferenceStatus | null,
+  t: Messages,
+): string {
+  if (!status) return t.settings.moa.notTested;
   const at = new Date(status.checkedAt);
   const checkedAt = Number.isNaN(at.getTime())
     ? status.checkedAt
     : at.toLocaleString('ko-KR');
-  if (status.ok) return `정상 · ${checkedAt}`;
-  return `실패 · ${checkedAt} · ${status.error ?? 'unknown error'}`;
+  if (status.ok) {
+    return `${t.settings.moa.statusOk} · ${checkedAt}`;
+  }
+  return `${t.settings.moa.statusFail} · ${checkedAt} · ${status.error ?? 'unknown error'}`;
 }
 
 function MoaMasterToggle({
   busy,
   enabled,
   onToggle,
+  t,
 }: {
   busy: boolean;
   enabled: boolean;
   onToggle: () => void;
+  t: Messages;
 }) {
   return (
     <label className="settings-toggle-row">
       <span className="settings-toggle-label">
-        <span className="settings-toggle-title">MoA 사용</span>
-        <small className="settings-hint">
-          Arbiter 호출 전에 외부 참조 모델 의견을 수집합니다. 저장 후 스택
-          재시작이 필요합니다.
-        </small>
+        <span className="settings-toggle-title">{t.settings.moa.master}</span>
+        <small className="settings-hint">{t.settings.moa.masterHint}</small>
       </span>
       <input
         checked={enabled}
@@ -250,38 +264,6 @@ function MoaMasterToggle({
         type="checkbox"
       />
     </label>
-  );
-}
-
-function MoaSettingsActions({
-  busy,
-  checking,
-  dirty,
-  onSave,
-  savedAt,
-}: {
-  busy: boolean;
-  checking: string | null;
-  dirty: boolean;
-  onSave: () => Promise<void>;
-  savedAt: number | null;
-}) {
-  return (
-    <div className="settings-actions">
-      <button
-        className="settings-save"
-        disabled={!dirty || busy || checking !== null}
-        onClick={() => void onSave()}
-        type="button"
-      >
-        {busy ? '저장 중…' : 'MoA 저장'}
-      </button>
-      {savedAt && !dirty ? (
-        <small className="settings-hint">
-          저장됨. 적용하려면 상단의 스택 재시작을 눌러 주세요.
-        </small>
-      ) : null}
-    </div>
   );
 }
 
@@ -294,6 +276,7 @@ function MoaModelRow({
   onApiKeyChange,
   onModelChange,
   onTest,
+  t,
 }: {
   apiKeyValue: string;
   busy: boolean;
@@ -306,10 +289,11 @@ function MoaModelRow({
     patch: Partial<MoaModelSettingsSnapshot>,
   ) => void;
   onTest: (name: string) => Promise<void>;
+  t: Messages;
 }) {
   return (
-    <li className="settings-account-row settings-moa-row">
-      <div className="settings-moa-grid">
+    <li className="settings-moa-card">
+      <header className="settings-moa-card-head">
         <label className="settings-moa-name">
           <input
             checked={model.enabled}
@@ -321,49 +305,69 @@ function MoaModelRow({
           />
           <span className="settings-account-tag">{model.name}</span>
         </label>
-        <input
-          aria-label={`${model.name} MoA model`}
-          onChange={(e) => onModelChange(model.name, { model: e.target.value })}
-          placeholder="model"
-          type="text"
-          value={model.model}
-        />
-        <input
-          aria-label={`${model.name} MoA base URL`}
-          onChange={(e) =>
-            onModelChange(model.name, { baseUrl: e.target.value })
-          }
-          placeholder="base URL"
-          type="text"
-          value={model.baseUrl}
-        />
-        <select
-          aria-label={`${model.name} MoA API format`}
-          onChange={(e) =>
-            onModelChange(model.name, {
-              apiFormat: e.target.value as 'openai' | 'anthropic',
-            })
-          }
-          value={model.apiFormat}
-        >
-          <option value="anthropic">anthropic</option>
-          <option value="openai">openai</option>
-        </select>
-        <input
-          aria-label={`${model.name} MoA API key`}
-          onChange={(e) => onApiKeyChange(model.name, e.target.value)}
-          placeholder={model.apiKeyConfigured ? 'API key set' : 'new API key'}
-          type="password"
-          value={apiKeyValue}
-        />
         <span
           className={`settings-account-badge ${
             model.lastStatus?.ok === false ? 'is-expired' : 'is-active'
           }`}
           title={model.lastStatus?.error ?? undefined}
         >
-          {formatMoaStatus(model.lastStatus)}
+          {formatMoaStatus(model.lastStatus, t)}
         </span>
+      </header>
+      <div className="settings-moa-fields">
+        <label className="settings-row">
+          <span className="settings-label">{t.settings.moa.modelLabel}</span>
+          <input
+            aria-label={`${model.name} MoA model`}
+            onChange={(e) =>
+              onModelChange(model.name, { model: e.target.value })
+            }
+            placeholder="model"
+            type="text"
+            value={model.model}
+          />
+        </label>
+        <label className="settings-row">
+          <span className="settings-label">{t.settings.moa.baseUrlLabel}</span>
+          <input
+            aria-label={`${model.name} MoA base URL`}
+            onChange={(e) =>
+              onModelChange(model.name, { baseUrl: e.target.value })
+            }
+            placeholder="https://…"
+            type="text"
+            value={model.baseUrl}
+          />
+        </label>
+        <label className="settings-row">
+          <span className="settings-label">{t.settings.moa.formatLabel}</span>
+          <select
+            aria-label={`${model.name} MoA API format`}
+            onChange={(e) =>
+              onModelChange(model.name, {
+                apiFormat: e.target.value as 'openai' | 'anthropic',
+              })
+            }
+            value={model.apiFormat}
+          >
+            <option value="anthropic">anthropic</option>
+            <option value="openai">openai</option>
+          </select>
+        </label>
+        <label className="settings-row">
+          <span className="settings-label">API key</span>
+          <input
+            aria-label={`${model.name} MoA API key`}
+            onChange={(e) => onApiKeyChange(model.name, e.target.value)}
+            placeholder={
+              model.apiKeyConfigured
+                ? t.settings.moa.apiKeySet
+                : t.settings.moa.apiKeyPlaceholder
+            }
+            type="password"
+            value={apiKeyValue}
+          />
+        </label>
       </div>
       <div className="settings-account-actions">
         <button
@@ -375,10 +379,10 @@ function MoaModelRow({
           type="button"
         >
           {checking === model.name
-            ? '테스트중…'
+            ? t.settings.moa.testing
             : dirty
-              ? '저장 후 테스트'
-              : '연결 테스트'}
+              ? t.settings.moa.testAfterSave
+              : t.settings.moa.test}
         </button>
       </div>
     </li>
