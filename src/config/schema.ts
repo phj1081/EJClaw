@@ -83,6 +83,7 @@ export interface AppConfig {
     host: string;
     port: number;
     staticDir: string;
+    token: string;
   };
   codexWarmup: {
     enabled: boolean;

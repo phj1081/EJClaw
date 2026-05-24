@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import { timingSafeEqual } from 'crypto';
 
 import { WEB_DASHBOARD } from './config.js';
 import {
@@ -66,6 +67,12 @@ const MANAGED_SERVICE_CALLER_FALLBACK_MESSAGE =
   'Stack restart unit is not installed yet. Run setup service from an external shell before retrying from a managed EJClaw service.';
 const UNIT_NOT_FOUND_PATTERN =
   /(Unit .* not found|Could not find the requested service|not-found)/i;
+
+type JsonResponse = (
+  value: unknown,
+  init?: ResponseInit,
+  request?: Request,
+) => Response;
 
 export type { ServiceRestartRecord } from './web-dashboard-service-routes.js';
 
@@ -138,6 +145,7 @@ export interface WebDashboardHandlerOptions {
   enqueueMessageCheck?: (chatJid: string, groupFolder: string) => void;
   nudgeScheduler?: () => void;
   restartServiceStack?: () => string[];
+  authToken?: string;
   now?: () => string;
 }
 
@@ -236,6 +244,43 @@ function serveStaticFile(staticDir: string, pathname: string): Response {
   });
 }
 
+function extractDashboardAuthToken(request: Request): string {
+  const authorization = request.headers.get('authorization') ?? '';
+  const bearer = authorization.match(/^Bearer\s+(.+)$/i);
+  if (bearer) return bearer[1]!.trim();
+  return request.headers.get('x-ejclaw-dashboard-token')?.trim() ?? '';
+}
+
+function safeTokenEquals(actual: string, expected: string): boolean {
+  const actualBytes = Buffer.from(actual);
+  const expectedBytes = Buffer.from(expected);
+  if (actualBytes.length !== expectedBytes.length) return false;
+  return timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function isDashboardApiAuthorized(request: Request, token: string): boolean {
+  if (!token) return true;
+  const actual = extractDashboardAuthToken(request);
+  return Boolean(actual) && safeTokenEquals(actual, token);
+}
+
+function rejectUnauthorizedApi(
+  url: URL,
+  request: Request,
+  token: string,
+  jsonResponse: JsonResponse,
+): Response | null {
+  if (!url.pathname.startsWith('/api/')) return null;
+  if (isDashboardApiAuthorized(request, token)) return null;
+  return jsonResponse(
+    { error: 'Unauthorized' },
+    {
+      status: 401,
+      headers: { 'www-authenticate': 'Bearer' },
+    },
+  );
+}
+
 function isRoot(): boolean {
   return typeof process.getuid === 'function' && process.getuid() === 0;
 }
@@ -329,7 +374,7 @@ export function createWebDashboardHandler(
   const restartServiceStack =
     opts.restartServiceStack ?? restartEjclawStackServices;
   const statusMaxAgeMs = opts.statusMaxAgeMs ?? DEFAULT_STATUS_MAX_AGE_MS;
-
+  const authToken = opts.authToken ?? WEB_DASHBOARD.token;
   const roomsTimelineDeps: RoomsTimelineRouteDependencies = {
     statusMaxAgeMs,
     readSnapshots,
@@ -342,19 +387,22 @@ export function createWebDashboardHandler(
     loadRecentDeliveredWorkItemsForChat,
     loadRecentChatMessages,
   };
-
   if (opts.startBackgroundCacheRefresh !== false) {
     startRoomsTimelineCacheRefresh(roomsTimelineDeps);
   }
-
   const rememberRoomMessageId = createRoomMessageIdCache();
   const inboxDismissTracker = createInboxDismissTracker();
   const recentServiceRestarts: ServiceRestartRecord[] = [];
   const activeServiceRestartTargets = new Set<string>();
-
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-
+    const authFailure = rejectUnauthorizedApi(
+      url,
+      request,
+      authToken,
+      jsonResponse,
+    );
+    if (authFailure) return authFailure;
     const scheduledTaskRoute = await handleScheduledTaskRoute({
       url,
       request,
@@ -368,7 +416,6 @@ export function createWebDashboardHandler(
       now: opts.now,
     });
     if (scheduledTaskRoute) return scheduledTaskRoute;
-
     const inboxActionRoute = await handleInboxActionRoute({
       url,
       request,
@@ -384,7 +431,6 @@ export function createWebDashboardHandler(
       now: opts.now,
     });
     if (inboxActionRoute) return inboxActionRoute;
-
     const roomMessageRoute = await handleRoomMessageRoute({
       url,
       request,
@@ -398,7 +444,6 @@ export function createWebDashboardHandler(
       now: opts.now,
     });
     if (roomMessageRoute) return roomMessageRoute;
-
     const roomTimelineRoute = handleRoomTimelineRoute({
       url,
       request,
@@ -406,7 +451,6 @@ export function createWebDashboardHandler(
       ...roomsTimelineDeps,
     });
     if (roomTimelineRoute) return roomTimelineRoute;
-
     const serviceRoute = await handleServiceRoute({
       url,
       request,
@@ -417,18 +461,15 @@ export function createWebDashboardHandler(
       now: opts.now,
     });
     if (serviceRoute) return serviceRoute;
-
     const settingsRoute = await handleSettingsRoute({
       url,
       request,
       jsonResponse,
     });
     if (settingsRoute) return settingsRoute;
-
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return jsonResponse({ error: 'Method not allowed' }, { status: 405 });
     }
-
     const simpleGetRoute = handleSimpleGetRoute({
       url,
       statusMaxAgeMs,
@@ -437,7 +478,6 @@ export function createWebDashboardHandler(
       jsonResponse,
     });
     if (simpleGetRoute) return simpleGetRoute;
-
     const overviewRoute = handleOverviewRoute({
       url,
       jsonResponse,
@@ -450,17 +490,14 @@ export function createWebDashboardHandler(
       now: opts.now,
     });
     if (overviewRoute) return overviewRoute;
-
     if (url.pathname.startsWith('/api/')) {
       return jsonResponse({ error: 'Not found' }, { status: 404 });
     }
-
     if (!opts.staticDir) {
       return new Response('Dashboard static directory is not configured', {
         status: 404,
       });
     }
-
     return serveStaticFile(opts.staticDir, url.pathname);
   };
 }

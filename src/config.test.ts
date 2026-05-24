@@ -46,6 +46,7 @@ describe('config/env loading', () => {
     delete process.env.WEB_DASHBOARD_HOST;
     delete process.env.WEB_DASHBOARD_PORT;
     delete process.env.WEB_DASHBOARD_STATIC_DIR;
+    delete process.env.WEB_DASHBOARD_TOKEN;
     delete process.env.SESSION_COMMAND_USER_IDS;
     vi.resetModules();
   });
@@ -175,12 +176,14 @@ describe('config/env loading', () => {
     expect(config.WEB_DASHBOARD.staticDir).toBe(
       path.resolve(tempRoot, 'apps', 'dashboard', 'dist'),
     );
+    expect(config.WEB_DASHBOARD.token).toBe('');
 
     vi.resetModules();
     process.env.WEB_DASHBOARD_ENABLED = 'true';
     process.env.WEB_DASHBOARD_HOST = '0.0.0.0';
     process.env.WEB_DASHBOARD_PORT = '9001';
     process.env.WEB_DASHBOARD_STATIC_DIR = './custom-dashboard-dist';
+    process.env.WEB_DASHBOARD_TOKEN = 'mobile-secret';
     config = await import('./config.js');
 
     expect(config.WEB_DASHBOARD).toEqual({
@@ -188,6 +191,7 @@ describe('config/env loading', () => {
       host: '0.0.0.0',
       port: 9001,
       staticDir: path.resolve(tempRoot, 'custom-dashboard-dist'),
+      token: 'mobile-secret',
     });
   });
 

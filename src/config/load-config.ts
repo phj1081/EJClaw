@@ -274,6 +274,7 @@ export function loadConfig(): AppConfig {
         readNonEmptyText('WEB_DASHBOARD_STATIC_DIR') ??
           path.join(projectRoot, 'apps', 'dashboard', 'dist'),
       ),
+      token: readNonEmptyText('WEB_DASHBOARD_TOKEN') ?? '',
     },
     codexWarmup: {
       enabled: readBoolean('CODEX_WARMUP_ENABLED', false),

@@ -21,18 +21,18 @@ import {
   resolveWorkspaceInstallCommand,
 } from './workspace-package-manager.js';
 
-describe('workspace package manager helpers', () => {
-  let tempRoot: string;
+let tempRoot: string;
 
-  beforeEach(() => {
-    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-pkgmgr-'));
-    execFileSyncMock.mockReset();
-  });
+beforeEach(() => {
+  tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-pkgmgr-'));
+  execFileSyncMock.mockReset();
+});
 
-  afterEach(() => {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
-  });
+afterEach(() => {
+  fs.rmSync(tempRoot, { recursive: true, force: true });
+});
 
+describe('workspace package manager detection', () => {
   it('detects package managers from packageManager field and lockfiles', () => {
     const pnpmRepo = path.join(tempRoot, 'pnpm');
     fs.mkdirSync(pnpmRepo, { recursive: true });
@@ -110,7 +110,9 @@ describe('workspace package manager helpers', () => {
       commandText: 'bun run build',
     });
   });
+});
 
+describe('workspace dependency installs', () => {
   it('installs dependencies once and tracks install fingerprint', () => {
     const repoDir = path.join(tempRoot, 'repo');
     fs.mkdirSync(repoDir, { recursive: true });
@@ -312,7 +314,9 @@ describe('workspace package manager helpers', () => {
     expect(execFileSyncMock).toHaveBeenCalledTimes(2);
     expect(hasInstalledNodeModules(repoDir)).toBe(true);
   });
+});
 
+describe('workspace package manager environment', () => {
   it('disables corepack project specs only for lockfile-selected pnpm workspaces under a conflicting ancestor', () => {
     const parentDir = path.join(tempRoot, 'parent');
     fs.mkdirSync(parentDir, { recursive: true });
