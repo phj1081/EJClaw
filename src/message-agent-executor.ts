@@ -1,5 +1,6 @@
 import { AgentOutput } from './agent-runner.js';
 import { GroupQueue } from './group-queue.js';
+import type { Logger } from 'pino';
 import type { AgentTriggerReason } from './agent-error-detection.js';
 import { getMoaConfig } from './config.js';
 import { createPairedExecutionLifecycle } from './message-agent-executor-paired.js';
@@ -12,8 +13,81 @@ import { collectMoaReferences, formatMoaReferencesForPrompt } from './moa.js';
 import { readArbiterPrompt } from './platform-prompts.js';
 import { shouldRetryFreshSessionOnAgentFailure } from './session-recovery.js';
 import type { AgentType, PairedRoomRole, RegisteredGroup } from './types.js';
+import {
+  clearCompactRefreshIfUnchanged,
+  maybeApplyCompactRefresh,
+  type AppliedCompactRefresh,
+} from './compact-refresh.js';
 
 // ── Main executor ─────────────────────────────────────────────────
+
+function buildPromptWithCompactRefresh(args: {
+  prompt: string;
+  sessionFolder: string;
+  sessionId?: string;
+  role: PairedRoomRole;
+}): { effectivePrompt: string; compactRefresh: AppliedCompactRefresh | null } {
+  const compactRefresh = maybeApplyCompactRefresh({
+    sessionFolder: args.sessionFolder,
+    sessionId: args.sessionId,
+    role: args.role,
+    prompt: args.prompt,
+  });
+  return {
+    effectivePrompt: compactRefresh?.prompt ?? args.prompt,
+    compactRefresh,
+  };
+}
+
+function clearAppliedCompactRefreshAfterSuccess(args: {
+  result: 'success' | 'error';
+  sessionFolder: string;
+  compactRefresh: AppliedCompactRefresh | null;
+}): void {
+  if (args.result !== 'success' || !args.compactRefresh) return;
+  clearCompactRefreshIfUnchanged({
+    sessionFolder: args.sessionFolder,
+    flag: args.compactRefresh.flag,
+  });
+}
+
+async function enrichArbiterPromptWithMoa(args: {
+  prompt: string;
+  enabled: boolean;
+  log: Pick<Logger, 'info' | 'warn'>;
+}): Promise<string> {
+  const moaConfig = getMoaConfig();
+  if (!args.enabled || !moaConfig.enabled) return args.prompt;
+  args.log.info(
+    { models: moaConfig.referenceModels.map((m) => m.name) },
+    'MoA: collecting reference opinions before arbiter',
+  );
+  const systemPrompt =
+    readArbiterPrompt(process.cwd()) || 'You are an arbiter.';
+  try {
+    const references = await collectMoaReferences({
+      config: moaConfig,
+      systemPrompt,
+      contextPrompt: args.prompt,
+    });
+    const moaSection = formatMoaReferencesForPrompt(references);
+    if (!moaSection) return args.prompt;
+    args.log.info(
+      {
+        successCount: references.filter((r) => !r.error).length,
+        totalCount: references.length,
+      },
+      'MoA: injected reference opinions into arbiter prompt',
+    );
+    return args.prompt + '\n' + moaSection;
+  } catch (err) {
+    args.log.warn(
+      { err, models: moaConfig.referenceModels.map((m) => m.name) },
+      'MoA: failed to collect reference opinions; continuing without enrichment',
+    );
+    return args.prompt;
+  }
+}
 
 export interface MessageAgentExecutorDeps {
   assistantName: string;
@@ -81,54 +155,18 @@ export async function runAgentForGroup(
     clearRoleSdkSessions();
   }
 
-  // ── MoA prompt enrichment ─────────────────────────────────────
-  // When MoA is enabled and we're in arbiter mode, query external API
-  // models (Kimi, GLM, etc.) in parallel for their opinions, then inject
-  // those opinions into the arbiter's prompt. The SDK-based arbiter
-  // agent naturally aggregates all perspectives.
-  let moaEnrichedPrompt = prompt;
-  const moaConfig = getMoaConfig();
-  if (arbiterMode && moaConfig.enabled && pairedExecutionContext) {
-    log.info(
-      {
-        models: moaConfig.referenceModels.map((m) => m.name),
-      },
-      'MoA: collecting reference opinions before arbiter',
-    );
+  const moaEnrichedPrompt = await enrichArbiterPromptWithMoa({
+    prompt,
+    enabled: arbiterMode && Boolean(pairedExecutionContext),
+    log,
+  });
 
-    const systemPrompt =
-      readArbiterPrompt(process.cwd()) || 'You are an arbiter.';
-
-    try {
-      const references = await collectMoaReferences({
-        config: moaConfig,
-        systemPrompt,
-        contextPrompt: prompt,
-      });
-
-      const moaSection = formatMoaReferencesForPrompt(references);
-      if (moaSection) {
-        moaEnrichedPrompt = prompt + '\n' + moaSection;
-        log.info(
-          {
-            successCount: references.filter((r) => !r.error).length,
-            totalCount: references.length,
-          },
-          'MoA: injected reference opinions into arbiter prompt',
-        );
-      }
-    } catch (err) {
-      log.warn(
-        {
-          err,
-          models: moaConfig.referenceModels.map((m) => m.name),
-        },
-        'MoA: failed to collect reference opinions; continuing without enrichment',
-      );
-    }
-  }
-
-  const effectivePrompt = moaEnrichedPrompt;
+  const { effectivePrompt, compactRefresh } = buildPromptWithCompactRefresh({
+    prompt: moaEnrichedPrompt,
+    sessionFolder,
+    sessionId: currentSessionId,
+    role: activeRole,
+  });
   const pairedExecutionLifecycle = createPairedExecutionLifecycle({
     pairedExecutionContext,
     pairedTurnIdentity: runtimePairedTurnIdentity,
@@ -237,7 +275,7 @@ export async function runAgentForGroup(
     });
 
   try {
-    return await executeMessageAgentAttemptLifecycle({
+    const result = await executeMessageAgentAttemptLifecycle({
       provider,
       runAttempt,
       isClaudeCodeAgent,
@@ -260,6 +298,12 @@ export async function runAgentForGroup(
       },
       log,
     });
+    clearAppliedCompactRefreshAfterSuccess({
+      result,
+      sessionFolder,
+      compactRefresh,
+    });
+    return result;
   } finally {
     await pairedExecutionLifecycle.asyncFinalize();
   }

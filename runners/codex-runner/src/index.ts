@@ -63,6 +63,10 @@ interface RunnerOutput {
   phase?: 'progress' | 'final';
   newSessionId?: string;
   error?: string;
+  compaction?: {
+    completed: boolean;
+    trigger?: string | null;
+  };
 }
 
 // ── Constants ──────────────────────────────────────────────────────
@@ -83,6 +87,12 @@ let closeRequested = false;
 
 function writeOutput(output: RunnerOutput): void {
   writeProtocolOutput(output);
+}
+
+function compactionOutput(
+  completed: boolean | undefined,
+): Pick<RunnerOutput, 'compaction'> {
+  return completed ? { compaction: { completed: true, trigger: null } } : {};
 }
 
 function normalizeStructuredOutput(result: string | null): {
@@ -212,7 +222,11 @@ async function executeAppServerTurn(
   threadId: string,
   prompt: string,
   retryCount = 0,
-): Promise<{ result: string | null; error?: string }> {
+): Promise<{
+  result: string | null;
+  error?: string;
+  compactionCompleted?: boolean;
+}> {
   let lastProgressMessage: string | null = null;
   const activeTurn = await client.startTurn(
     threadId,
@@ -282,10 +296,10 @@ async function executeAppServerTurn(
   try {
     const { state, result } = await activeTurn.wait();
     if (state.status === 'completed') {
-      return { result };
+      return { result, compactionCompleted: state.compactionCompleted };
     }
     if (state.status === 'interrupted' && consumeCloseSentinel()) {
-      return { result };
+      return { result, compactionCompleted: state.compactionCompleted };
     }
     if (state.status === 'interrupted' && retryCount < 1) {
       log('Codex turn interrupted, retrying once...');
@@ -295,6 +309,7 @@ async function executeAppServerTurn(
       result,
       error:
         state.errorMessage || `Codex turn finished with status ${state.status}`,
+      compactionCompleted: state.compactionCompleted,
     };
   } finally {
     polling = false;
@@ -320,6 +335,7 @@ async function runAppServerCompact(
       result: null,
       newSessionId: threadId,
       error: state.errorMessage || 'Conversation compaction failed.',
+      ...compactionOutput(state.compactionCompleted),
     });
     return;
   }
@@ -330,6 +346,7 @@ async function runAppServerCompact(
       ? 'Conversation compacted.'
       : 'Compaction requested but contextCompaction was not observed.',
     newSessionId: threadId,
+    ...compactionOutput(state.compactionCompleted),
   });
 }
 
@@ -386,7 +403,7 @@ async function runAppServerSession(
     }
 
     log('Starting app-server turn...');
-    const { result, error } = await executeAppServerTurn(
+    const { result, error, compactionCompleted } = await executeAppServerTurn(
       client,
       threadId,
       prompt,
@@ -400,6 +417,7 @@ async function runAppServerSession(
         ...normalized,
         newSessionId: threadId,
         error,
+        ...compactionOutput(compactionCompleted),
       });
     } else {
       const normalized = normalizeStructuredOutput(result || null);
@@ -408,6 +426,7 @@ async function runAppServerSession(
         ...normalized,
         ...(result ? { phase: 'final' as const } : {}),
         newSessionId: threadId,
+        ...compactionOutput(compactionCompleted),
       });
     }
 

@@ -18,6 +18,24 @@ export interface RunnerOutput {
   output?: RunnerStructuredOutput;
   newSessionId?: string;
   error?: string;
+  compaction?: {
+    completed: boolean;
+    trigger?: string | null;
+  };
+}
+
+export type RunnerCompaction = NonNullable<RunnerOutput['compaction']>;
+
+export function buildCompactionOutput(
+  compaction: RunnerCompaction | undefined,
+): Pick<RunnerOutput, 'compaction'> {
+  return compaction ? { compaction } : {};
+}
+
+export function compactBoundaryOutput(
+  trigger: string | null | undefined,
+): RunnerCompaction {
+  return { completed: true, trigger: trigger || null };
 }
 
 type ContentBlock =
