@@ -417,7 +417,6 @@ export function createPairedExecutionLifecycle(args: {
         const mention = sender ? `<@${sender}>` : '';
         const notifications: Record<string, string> = {
           escalated: `${mention} ⚠️ 자동 해결 불가 — 확인이 필요합니다.`,
-          arbiter_escalated: `${mention} ⚠️ 중재자 판단: 사람 개입이 필요합니다.`,
         };
         const message = notifications[finishedTask.completion_reason];
         if (message) {
