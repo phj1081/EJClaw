@@ -4,6 +4,7 @@ import type {
   AgentType,
   MessageSourceKind,
   OutboundAttachment,
+  PairedRoomRole,
   PairedTask,
   RegisteredGroup,
   RoomMode,
@@ -120,6 +121,8 @@ export interface TaskIpcPayload {
   schedule_type?: string;
   schedule_value?: string;
   context_mode?: string;
+  agent_type?: AgentType;
+  room_role?: PairedRoomRole;
   ci_provider?: 'github';
   ci_metadata?: string;
   groupFolder?: string;

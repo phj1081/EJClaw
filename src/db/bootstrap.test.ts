@@ -41,6 +41,7 @@ function getExpectedSchemaMigrations(): Array<{
     { version: 14, name: 'work_item_attachments' },
     { version: 15, name: 'turn_progress_text' },
     { version: 16, name: 'room_skill_overrides' },
+    { version: 17, name: 'scheduled_task_room_role' },
   ];
 }
 

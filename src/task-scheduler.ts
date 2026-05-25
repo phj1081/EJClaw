@@ -107,6 +107,28 @@ export function computeNextRun(task: ScheduledTask): string | null {
   return null;
 }
 
+async function forwardScheduledOutput(
+  deps: SchedulerDependencies,
+  task: ScheduledTask,
+  outputText: string,
+  taskRoomRole: ScheduledTask['room_role'],
+): Promise<void> {
+  await sendScheduledMessage(deps, task.chat_jid, outputText, taskRoomRole);
+}
+
+function writeCurrentTaskSnapshot(
+  context: TaskExecutionContext,
+  task: ScheduledTask,
+  taskAgentType: TaskExecutionContext['taskAgentType'],
+): void {
+  writeTaskSnapshotForGroup(
+    taskAgentType,
+    task.group_folder,
+    context.isMain,
+    context.runtimeTaskId,
+  );
+}
+
 async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
@@ -149,14 +171,10 @@ async function runTask(
   });
 
   log.info('Running scheduled task');
+  const taskAgentType = context.taskAgentType;
 
   // Update tasks snapshot for agent to read (filtered by group)
-  writeTaskSnapshotForGroup(
-    context.taskAgentType,
-    task.group_folder,
-    context.isMain,
-    context.runtimeTaskId,
-  );
+  writeCurrentTaskSnapshot(context, task, taskAgentType);
 
   let result: string | null = null;
   let error: string | null;
@@ -164,7 +182,7 @@ async function runTask(
     sendTrackedMessage: deps.sendTrackedMessage,
     editTrackedMessage: deps.editTrackedMessage,
   });
-  const isClaudeAgent = context.taskAgentType === 'claude-code';
+  const isClaudeAgent = taskAgentType === 'claude-code';
 
   try {
     await statusTracker.update('checking');
@@ -233,8 +251,12 @@ async function runTask(
 
           if (outputText) {
             attemptResult = outputText;
-            // Paired-room scheduler output must use the reviewer bot slot.
-            await sendScheduledMessage(deps, task.chat_jid, outputText);
+            await forwardScheduledOutput(
+              deps,
+              task,
+              outputText,
+              task.room_role,
+            );
           }
 
           if (streamedOutput.status === 'error') {

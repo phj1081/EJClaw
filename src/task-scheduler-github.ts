@@ -61,6 +61,7 @@ export async function runGithubCiTask(
           deps,
           task.chat_jid,
           check.completionMessage,
+          task.room_role,
         );
       }
       deleteTask(task.id);

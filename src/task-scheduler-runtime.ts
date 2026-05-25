@@ -14,7 +14,7 @@ import {
   getTaskRuntimeTaskId,
   shouldUseTaskScopedSession,
 } from './task-watch-status.js';
-import type { AgentType, ScheduledTask } from './types.js';
+import type { AgentType, PairedRoomRole, ScheduledTask } from './types.js';
 import type {
   SchedulerDependencies,
   TaskExecutionContext,
@@ -49,8 +49,9 @@ export async function sendScheduledMessage(
   deps: SchedulerDependencies,
   chatJid: string,
   text: string,
+  senderRoomRole?: PairedRoomRole | null,
 ): Promise<void> {
-  if (!hasReviewerLease(chatJid)) {
+  if (!hasReviewerLease(chatJid) || senderRoomRole !== 'reviewer') {
     await deps.sendMessage(chatJid, text);
     return;
   }

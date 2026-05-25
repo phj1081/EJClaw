@@ -1,12 +1,18 @@
 import { Database } from 'bun:sqlite';
 
-import { AgentType, ScheduledTask, TaskRunLog } from '../types.js';
+import {
+  AgentType,
+  PairedRoomRole,
+  ScheduledTask,
+  TaskRunLog,
+} from '../types.js';
 
 export type CreateScheduledTaskInput = Omit<
   ScheduledTask,
   | 'last_run'
   | 'last_result'
   | 'agent_type'
+  | 'room_role'
   | 'ci_provider'
   | 'ci_metadata'
   | 'max_duration_ms'
@@ -14,6 +20,7 @@ export type CreateScheduledTaskInput = Omit<
   | 'status_started_at'
 > & {
   agent_type?: AgentType | null;
+  room_role?: PairedRoomRole | null;
   ci_provider?: ScheduledTask['ci_provider'];
   ci_metadata?: string | null;
   max_duration_ms?: number | null;
@@ -45,8 +52,8 @@ export function createTaskInDatabase(
   database
     .prepare(
       `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_type, ci_provider, ci_metadata, max_duration_ms, status_message_id, status_started_at, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, agent_type, room_role, ci_provider, ci_metadata, max_duration_ms, status_message_id, status_started_at, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     )
     .run(
@@ -54,6 +61,7 @@ export function createTaskInDatabase(
       task.group_folder,
       task.chat_jid,
       task.agent_type || 'claude-code',
+      task.room_role ?? null,
       task.ci_provider ?? null,
       task.ci_metadata ?? null,
       task.max_duration_ms ?? null,

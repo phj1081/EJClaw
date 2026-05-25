@@ -16,16 +16,26 @@ import {
 } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
+import { normalizeStoredAgentType } from './db/room-registration.js';
 import {
   DEFAULT_WATCH_CI_MAX_DURATION_MS,
   isWatchCiTask,
 } from './task-watch-status.js';
 import type { IpcDeps, TaskIpcPayload } from './ipc-types.js';
+import type { PairedRoomRole } from './types.js';
 
 type RoomBindings = ReturnType<IpcDeps['roomBindings']>;
 type ScheduleType = 'cron' | 'interval' | 'once';
 type TaskUpdates = Parameters<typeof updateTask>[1];
 type MemorySourceKind = Parameters<typeof rememberMemory>[0]['sourceKind'];
+
+function normalizePairedRoomRole(
+  role: string | null | undefined,
+): PairedRoomRole | undefined {
+  return role === 'owner' || role === 'reviewer' || role === 'arbiter'
+    ? role
+    : undefined;
+}
 
 export async function processTaskIpc(
   data: TaskIpcPayload,
@@ -173,11 +183,17 @@ function handleScheduleTask(
     data.context_mode === 'group' || data.context_mode === 'isolated'
       ? data.context_mode
       : 'isolated';
+  const scheduledAgentType =
+    normalizeStoredAgentType(data.agent_type) ??
+    targetGroupEntry.agentType ??
+    'claude-code';
+  const scheduledRoomRole = normalizePairedRoomRole(data.room_role);
   createTask({
     id: taskId,
     group_folder: targetFolder,
     chat_jid: resolvedTargetJid,
-    agent_type: targetGroupEntry.agentType || 'claude-code',
+    agent_type: scheduledAgentType,
+    room_role: scheduledRoomRole ?? null,
     ci_provider: data.ci_provider ?? null,
     ci_metadata: data.ci_metadata ?? null,
     max_duration_ms: isWatchCiTask({ prompt: data.prompt })
@@ -197,7 +213,8 @@ function handleScheduleTask(
       sourceGroup,
       targetFolder,
       contextMode,
-      agentType: targetGroupEntry.agentType || 'claude-code',
+      agentType: scheduledAgentType,
+      roomRole: scheduledRoomRole ?? null,
     },
     'Task created via IPC',
   );

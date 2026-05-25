@@ -139,6 +139,34 @@ describe('schedule_task authorization', () => {
     expect(allTasks[0].agent_type).toBe('codex');
   });
 
+  it('stores the scheduling caller agent type when provided', async () => {
+    groups['other@g.us'] = {
+      ...OTHER_GROUP,
+      agentType: 'claude-code',
+    };
+    _setRegisteredGroupForTests('other@g.us', groups['other@g.us']);
+
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'caller owned task',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00',
+        targetJid: 'other@g.us',
+        agent_type: 'codex',
+        room_role: 'owner',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const allTasks = getAllTasks();
+    expect(allTasks).toHaveLength(1);
+    expect(allTasks[0].agent_type).toBe('codex');
+    expect(allTasks[0].room_role).toBe('owner');
+  });
+
   it('non-main group cannot schedule for another group', async () => {
     await processTaskIpc(
       {

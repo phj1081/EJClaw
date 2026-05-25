@@ -41,8 +41,21 @@ const chatJid = process.env.EJCLAW_CHAT_JID!;
 const groupFolder = process.env.EJCLAW_GROUP_FOLDER!;
 const isMain = process.env.EJCLAW_IS_MAIN === '1';
 const agentType = process.env.EJCLAW_AGENT_TYPE || 'claude-code';
+const roomRole = process.env.EJCLAW_ROOM_ROLE;
 const runtimeTaskId = process.env.EJCLAW_RUNTIME_TASK_ID;
 const allowGenericScheduling = agentType !== 'codex';
+
+function currentAgentType(): 'claude-code' | 'codex' {
+  return agentType === 'codex' ? 'codex' : 'claude-code';
+}
+
+function currentRoomRole(): 'owner' | 'reviewer' | 'arbiter' | undefined {
+  return roomRole === 'owner' ||
+    roomRole === 'reviewer' ||
+    roomRole === 'arbiter'
+    ? roomRole
+    : undefined;
+}
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -214,6 +227,8 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         prompt: args.prompt,
         schedule_type: args.schedule_type,
         schedule_value: args.schedule_value,
+        agent_type: currentAgentType(),
+        room_role: currentRoomRole(),
         context_mode: args.context_mode || 'group',
         targetJid,
         createdBy: groupFolder,
@@ -301,6 +316,18 @@ server.tool(
       ),
   },
   async (args) => {
+    if (roomRole && roomRole !== 'owner') {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'watch_ci is owner-only in paired rooms. Ask the owner to schedule the watcher.',
+          },
+        ],
+        isError: true,
+      };
+    }
+
     const isGitHubWatcher = args.ci_provider === 'github';
     const target =
       args.target ||
@@ -383,6 +410,8 @@ server.tool(
       prompt,
       schedule_type: 'interval' as const,
       schedule_value: String(pollSeconds * 1000),
+      agent_type: currentAgentType(),
+      room_role: currentRoomRole(),
       context_mode: args.context_mode || DEFAULT_WATCH_CI_CONTEXT_MODE,
       ci_provider: args.ci_provider,
       ci_metadata: isGitHubWatcher
