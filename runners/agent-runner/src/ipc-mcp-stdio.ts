@@ -30,6 +30,7 @@ import {
 } from './verification.js';
 import { resolveIpcDirectories } from './ipc-paths.js';
 import { buildSendMessageIpcPayload } from './ipc-message.js';
+import { registerRepoEvidenceTool } from './ipc-repo-evidence-tool.js';
 
 const { ipcDir: IPC_DIR, hostIpcDir: HOST_IPC_DIR } = resolveIpcDirectories(
   process.env,
@@ -535,6 +536,8 @@ server.tool(
     }
   },
 );
+
+registerRepoEvidenceTool(server, REPO_ROOT);
 
 server.tool(
   'list_tasks',
