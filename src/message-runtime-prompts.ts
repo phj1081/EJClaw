@@ -8,6 +8,8 @@ const CARRIED_FORWARD_OWNER_FINAL_MARKER =
 const CARRIED_FORWARD_OWNER_FINAL_GUIDANCE = `System note:
 If you see a message beginning with "${CARRIED_FORWARD_OWNER_FINAL_MARKER}", treat it as background only. Do not repeat, continue, or answer that carried-forward final directly. Respond only to the latest human request and the current task.`;
 
+const ARBITER_TURN_OUTPUT_CONTEXT_LIMIT = 6;
+
 function turnOutputsToMessages(
   outputs: PairedTurnOutput[],
   chatJid: string,
@@ -33,6 +35,16 @@ function mergeHumanAndTurnOutputMessages(
     ...humanMessages,
     ...turnOutputsToMessages(turnOutputs, chatJid),
   ].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
+function latestTurnOutputs(
+  outputs: PairedTurnOutput[],
+  limit: number,
+): PairedTurnOutput[] {
+  if (outputs.length <= limit) {
+    return outputs;
+  }
+  return outputs.slice(-limit);
 }
 
 function hasCarriedForwardOwnerFinal(outputs: PairedTurnOutput[]): boolean {
@@ -136,7 +148,13 @@ export function buildArbiterPromptForTask(args: {
 }): string {
   const messages =
     args.turnOutputs.length > 0
-      ? turnOutputsToMessages(args.turnOutputs, args.chatJid)
+      ? turnOutputsToMessages(
+          latestTurnOutputs(
+            args.turnOutputs,
+            ARBITER_TURN_OUTPUT_CONTEXT_LIMIT,
+          ),
+          args.chatJid,
+        )
       : args.labeledRecentMessages;
 
   return buildArbiterContextPrompt({

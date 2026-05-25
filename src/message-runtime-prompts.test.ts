@@ -111,7 +111,9 @@ describe('message-runtime-prompts carry-forward guidance', () => {
       'Do not repeat, continue, or answer that carried-forward final directly.',
     );
   });
+});
 
+describe('message-runtime-prompts output-only context', () => {
   it('keeps reviewer pending prompts output-only when current task outputs exist', () => {
     const prompt = buildReviewerPendingPrompt({
       chatJid: 'group@test',
@@ -193,6 +195,34 @@ describe('message-runtime-prompts carry-forward guidance', () => {
 
     expect(prompt).toContain('owner 주장');
     expect(prompt).toContain('reviewer 반박');
+    expect(prompt).not.toContain('예전 유저 지시');
+  });
+
+  it('limits arbiter prompts to recent turn outputs', () => {
+    const prompt = buildArbiterPromptForTask({
+      task: makeTask({ status: 'arbiter_requested' }),
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: Array.from({ length: 8 }, (_, index) => {
+        const turnNumber = index + 1;
+        return makeTurnOutput(
+          `arbiter-context-output-${String(turnNumber).padStart(2, '0')}`,
+          turnNumber % 2 === 0 ? 'reviewer' : 'owner',
+          {
+            id: turnNumber,
+            turn_number: turnNumber,
+            created_at: `2026-04-20T02:${String(turnNumber).padStart(2, '0')}:00.000Z`,
+          },
+        );
+      }),
+      recentMessages: [makeHumanMessage('예전 유저 지시')],
+      labeledRecentMessages: [makeHumanMessage('예전 유저 지시')],
+    });
+
+    expect(prompt).not.toContain('arbiter-context-output-01');
+    expect(prompt).not.toContain('arbiter-context-output-02');
+    expect(prompt).toContain('arbiter-context-output-03');
+    expect(prompt).toContain('arbiter-context-output-08');
     expect(prompt).not.toContain('예전 유저 지시');
   });
 
