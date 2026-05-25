@@ -320,6 +320,16 @@ async function handleHostEvidenceRequest(
     action: data.action,
     tailLines:
       typeof data.tail_lines === 'number' ? data.tail_lines : undefined,
+    taskId: typeof data.task_id === 'string' ? data.task_id : undefined,
+    minutes: typeof data.minutes === 'number' ? data.minutes : undefined,
+    limit: typeof data.limit === 'number' ? data.limit : undefined,
+    repo: typeof data.repo === 'string' ? data.repo : undefined,
+    prNumber: typeof data.pr_number === 'number' ? data.pr_number : undefined,
+    runId: typeof data.run_id === 'number' ? data.run_id : undefined,
+    artifactKind:
+      typeof data.artifact_kind === 'string' ? data.artifact_kind : undefined,
+    sourceGroup,
+    isMain,
   });
 
   writeHostEvidenceResponse(sourceGroup, {

@@ -89,6 +89,15 @@ describe('host evidence IPC', () => {
       requestId: 'req-1',
       action: 'ejclaw_service_status',
       tailLines: undefined,
+      taskId: undefined,
+      minutes: undefined,
+      limit: undefined,
+      repo: undefined,
+      prNumber: undefined,
+      runId: undefined,
+      artifactKind: undefined,
+      sourceGroup: 'other-group',
+      isMain: false,
     });
     expect(response.requestId).toBe('req-1');
     expect(response.ok).toBe(true);

@@ -10,6 +10,9 @@ describe('host evidence helpers', () => {
   it('recognizes only allowlisted actions', () => {
     expect(isHostEvidenceAction('ejclaw_service_status')).toBe(true);
     expect(isHostEvidenceAction('ejclaw_service_logs')).toBe(true);
+    expect(isHostEvidenceAction('db_paired_task_status')).toBe(true);
+    expect(isHostEvidenceAction('ejclaw_deploy_state')).toBe(true);
+    expect(isHostEvidenceAction('github_pr_status')).toBe(true);
     expect(isHostEvidenceAction('rm -rf /')).toBe(false);
   });
 
