@@ -12,14 +12,17 @@ import type { NewMessage, PairedTask, PairedTurnOutput } from './types.js';
 const CARRY_FORWARD_MARKER =
   '[Carried forward context from the previous task: latest owner final]';
 
-function makeHumanMessage(content: string): NewMessage {
+function makeHumanMessage(
+  content: string,
+  timestamp: string = '2026-04-20T01:00:00.000Z',
+): NewMessage {
   return {
     id: `msg-${content}`,
     chat_jid: 'group@test',
     sender: 'user@test',
     sender_name: 'User',
     content,
-    timestamp: '2026-04-20T01:00:00.000Z',
+    timestamp,
     is_bot_message: false,
     is_from_me: false,
   };
@@ -134,6 +137,32 @@ describe('message-runtime-prompts output-only context', () => {
     expect(prompt).not.toContain('과거 요청을 다시 기준으로 보면 안 됨');
   });
 
+  it('includes current task user scope in reviewer pending prompts without pulling older human messages', () => {
+    const prompt = buildReviewerPendingPrompt({
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: [
+        makeTurnOutput('TASK_DONE\n현재 owner 결과', 'owner', {
+          turn_number: 1,
+          created_at: '2026-04-20T02:10:00.000Z',
+        }),
+      ],
+      recentHumanMessages: [
+        makeHumanMessage('이전 작업의 gap 요청', '2026-04-20T01:50:00.000Z'),
+        makeHumanMessage(
+          '뒤쪽 트레일 주변 디졸브 넣어줘',
+          '2026-04-20T02:00:01.000Z',
+        ),
+      ],
+      lastHumanMessage: '뒤쪽 트레일 주변 디졸브 넣어줘',
+      taskCreatedAt: '2026-04-20T02:00:00.000Z',
+    });
+
+    expect(prompt).toContain('뒤쪽 트레일 주변 디졸브 넣어줘');
+    expect(prompt).toContain('현재 owner 결과');
+    expect(prompt).not.toContain('이전 작업의 gap 요청');
+  });
+
   it('prepends a carry-forward warning to owner pending prompts', () => {
     const prompt = buildOwnerPendingPrompt({
       chatJid: 'group@test',
@@ -175,6 +204,38 @@ describe('message-runtime-prompts output-only context', () => {
     expect(prompt).not.toContain('이전 작업의 사용자 메시지');
   });
 
+  it('includes current task user scope in owner pending prompts without pulling older human messages', () => {
+    const prompt = buildOwnerPendingPrompt({
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: [
+        makeTurnOutput('DONE_WITH_CONCERNS\n현재 reviewer 피드백', 'reviewer', {
+          id: 2,
+          turn_number: 2,
+          created_at: '2026-04-20T02:11:00.000Z',
+        }),
+      ],
+      recentHumanMessages: [
+        makeHumanMessage(
+          '이전 작업의 사용자 메시지',
+          '2026-04-20T01:50:00.000Z',
+        ),
+        makeHumanMessage(
+          '현재 task에서 추가한 조건',
+          '2026-04-20T02:00:01.000Z',
+        ),
+      ],
+      lastHumanMessage: '현재 task에서 추가한 조건',
+      taskCreatedAt: '2026-04-20T02:00:00.000Z',
+    });
+
+    expect(prompt).toContain('현재 task에서 추가한 조건');
+    expect(prompt).toContain('현재 reviewer 피드백');
+    expect(prompt).not.toContain('이전 작업의 사용자 메시지');
+  });
+});
+
+describe('message-runtime-prompts arbiter output context', () => {
   it('keeps arbiter prompts output-only when turn outputs exist', () => {
     const prompt = buildArbiterPromptForTask({
       task: makeTask({ status: 'arbiter_requested' }),
@@ -189,8 +250,12 @@ describe('message-runtime-prompts output-only context', () => {
           turn_number: 2,
         }),
       ],
-      recentMessages: [makeHumanMessage('예전 유저 지시')],
-      labeledRecentMessages: [makeHumanMessage('예전 유저 지시')],
+      recentMessages: [
+        makeHumanMessage('예전 유저 지시', '2026-04-20T00:50:00.000Z'),
+      ],
+      labeledRecentMessages: [
+        makeHumanMessage('예전 유저 지시', '2026-04-20T00:50:00.000Z'),
+      ],
     });
 
     expect(prompt).toContain('owner 주장');
@@ -215,8 +280,12 @@ describe('message-runtime-prompts output-only context', () => {
           },
         );
       }),
-      recentMessages: [makeHumanMessage('예전 유저 지시')],
-      labeledRecentMessages: [makeHumanMessage('예전 유저 지시')],
+      recentMessages: [
+        makeHumanMessage('예전 유저 지시', '2026-04-20T00:50:00.000Z'),
+      ],
+      labeledRecentMessages: [
+        makeHumanMessage('예전 유저 지시', '2026-04-20T00:50:00.000Z'),
+      ],
     });
 
     expect(prompt).not.toContain('arbiter-context-output-01');
@@ -226,6 +295,46 @@ describe('message-runtime-prompts output-only context', () => {
     expect(prompt).not.toContain('예전 유저 지시');
   });
 
+  it('includes current task user scope in arbiter prompts while keeping the output cap', () => {
+    const prompt = buildArbiterPromptForTask({
+      task: makeTask({
+        status: 'arbiter_requested',
+        created_at: '2026-04-20T02:00:00.000Z',
+      }),
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: Array.from({ length: 8 }, (_, index) => {
+        const turnNumber = index + 1;
+        return makeTurnOutput(
+          `arbiter-context-output-${String(turnNumber).padStart(2, '0')}`,
+          turnNumber % 2 === 0 ? 'reviewer' : 'owner',
+          {
+            id: turnNumber,
+            turn_number: turnNumber,
+            created_at: `2026-04-20T02:${String(turnNumber).padStart(2, '0')}:00.000Z`,
+          },
+        );
+      }),
+      recentMessages: [
+        makeHumanMessage('이전 작업의 유저 지시', '2026-04-20T01:50:00.000Z'),
+        makeHumanMessage(
+          '현재 task의 트레일 디졸브 요청',
+          '2026-04-20T02:00:01.000Z',
+        ),
+      ],
+      labeledRecentMessages: [],
+    });
+
+    expect(prompt).toContain('현재 task의 트레일 디졸브 요청');
+    expect(prompt).not.toContain('이전 작업의 유저 지시');
+    expect(prompt).not.toContain('arbiter-context-output-01');
+    expect(prompt).not.toContain('arbiter-context-output-02');
+    expect(prompt).toContain('arbiter-context-output-03');
+    expect(prompt).toContain('arbiter-context-output-08');
+  });
+});
+
+describe('message-runtime-prompts prompt hygiene', () => {
   it('preserves turn output order instead of timestamp interleaving', () => {
     const prompt = buildReviewerPendingPrompt({
       chatJid: 'group@test',

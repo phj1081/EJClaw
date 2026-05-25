@@ -9,6 +9,7 @@ const CARRIED_FORWARD_OWNER_FINAL_GUIDANCE = `System note:
 If you see a message beginning with "${CARRIED_FORWARD_OWNER_FINAL_MARKER}", treat it as background only. Do not repeat, continue, or answer that carried-forward final directly. Respond only to the latest human request and the current task.`;
 
 const ARBITER_TURN_OUTPUT_CONTEXT_LIMIT = 6;
+const TASK_USER_CONTEXT_START_SKEW_MS = 5_000;
 
 function turnOutputsToMessages(
   outputs: PairedTurnOutput[],
@@ -45,6 +46,23 @@ function latestTurnOutputs(
     return outputs;
   }
   return outputs.slice(-limit);
+}
+
+function currentTaskHumanMessages(
+  messages: NewMessage[],
+  taskCreatedAt: string | null | undefined,
+): NewMessage[] {
+  if (!taskCreatedAt) return [];
+  const taskStartMs = Date.parse(taskCreatedAt);
+  if (!Number.isFinite(taskStartMs)) return [];
+  return messages.filter((message) => {
+    if (message.is_bot_message) return false;
+    const messageMs = Date.parse(message.timestamp);
+    return (
+      Number.isFinite(messageMs) &&
+      messageMs >= taskStartMs - TASK_USER_CONTEXT_START_SKEW_MS
+    );
+  });
 }
 
 function hasCarriedForwardOwnerFinal(outputs: PairedTurnOutput[]): boolean {
@@ -95,9 +113,13 @@ function turnOutputsOnlyPrompt(
   chatJid: string,
   timezone: string,
   turnOutputs: PairedTurnOutput[],
+  taskHumanMessages: NewMessage[] = [],
 ): string {
   return prependCarriedForwardGuidance(
-    formatMessages(turnOutputsToMessages(turnOutputs, chatJid), timezone),
+    formatMessages(
+      [...taskHumanMessages, ...turnOutputsToMessages(turnOutputs, chatJid)],
+      timezone,
+    ),
     turnOutputs,
   );
 }
@@ -108,9 +130,15 @@ export function buildReviewerPendingPrompt(args: {
   turnOutputs: PairedTurnOutput[];
   recentHumanMessages: NewMessage[];
   lastHumanMessage: string | null | undefined;
+  taskCreatedAt?: string | null;
 }): string {
   if (args.turnOutputs.length > 0) {
-    return turnOutputsOnlyPrompt(args.chatJid, args.timezone, args.turnOutputs);
+    return turnOutputsOnlyPrompt(
+      args.chatJid,
+      args.timezone,
+      args.turnOutputs,
+      currentTaskHumanMessages(args.recentHumanMessages, args.taskCreatedAt),
+    );
   }
 
   if (!args.lastHumanMessage) {
@@ -126,9 +154,15 @@ export function buildOwnerPendingPrompt(args: {
   turnOutputs: PairedTurnOutput[];
   recentHumanMessages: NewMessage[];
   lastHumanMessage: string | null | undefined;
+  taskCreatedAt?: string | null;
 }): string {
   if (args.turnOutputs.length > 0) {
-    return turnOutputsOnlyPrompt(args.chatJid, args.timezone, args.turnOutputs);
+    return turnOutputsOnlyPrompt(
+      args.chatJid,
+      args.timezone,
+      args.turnOutputs,
+      currentTaskHumanMessages(args.recentHumanMessages, args.taskCreatedAt),
+    );
   }
 
   if (!args.lastHumanMessage) {
@@ -146,15 +180,22 @@ export function buildArbiterPromptForTask(args: {
   recentMessages: NewMessage[];
   labeledRecentMessages: NewMessage[];
 }): string {
+  const taskHumanMessages = currentTaskHumanMessages(
+    args.recentMessages,
+    args.task.created_at,
+  );
   const messages =
     args.turnOutputs.length > 0
-      ? turnOutputsToMessages(
-          latestTurnOutputs(
-            args.turnOutputs,
-            ARBITER_TURN_OUTPUT_CONTEXT_LIMIT,
+      ? [
+          ...taskHumanMessages,
+          ...turnOutputsToMessages(
+            latestTurnOutputs(
+              args.turnOutputs,
+              ARBITER_TURN_OUTPUT_CONTEXT_LIMIT,
+            ),
+            args.chatJid,
           ),
-          args.chatJid,
-        )
+        ]
       : args.labeledRecentMessages;
 
   return buildArbiterContextPrompt({
