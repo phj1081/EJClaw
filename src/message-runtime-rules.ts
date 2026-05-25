@@ -52,11 +52,6 @@ export function finalizeQueuedRunCursor(args: {
   startSeq: number | null;
   endSeq: number | null;
   rollbackOnSilentError: boolean;
-  cursorAdvanced: boolean;
-  previousCursor: string | undefined;
-  lastAgentTimestamps: Record<string, string>;
-  saveState: () => void;
-  cursorKey: string;
   log: {
     warn: (bindings: Record<string, unknown>, message: string) => void;
   };
@@ -66,14 +61,6 @@ export function finalizeQueuedRunCursor(args: {
     args.outputStatus === 'error' &&
     args.visiblePhase === 'silent'
   ) {
-    if (args.cursorAdvanced) {
-      if (args.previousCursor === undefined) {
-        delete args.lastAgentTimestamps[args.cursorKey];
-      } else {
-        args.lastAgentTimestamps[args.cursorKey] = args.previousCursor;
-      }
-      args.saveState();
-    }
     args.log.warn(
       {
         messageSeqStart: args.startSeq,

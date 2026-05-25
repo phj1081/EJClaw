@@ -144,7 +144,7 @@ describe('message-runtime queued cursor handling', () => {
     expect(outcome).toBe(false);
     expect(executeTurn).toHaveBeenCalledTimes(1);
     expect(lastAgentTimestamps).toEqual({});
-    expect(saveState).toHaveBeenCalledTimes(2);
+    expect(saveState).not.toHaveBeenCalled();
     expect(logMocks.warn).toHaveBeenCalledWith(
       {
         messageSeqStart: 48,
@@ -182,5 +182,70 @@ describe('message-runtime queued cursor handling', () => {
     expect(outcome).toBe(true);
     expect(lastAgentTimestamps).toEqual({ 'group@test': '48' });
     expect(saveState).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not advance the queued human cursor before the owner turn finishes', async () => {
+    const task = makeTask({
+      owner_service_id: 'codex',
+      owner_agent_type: 'codex',
+    });
+    createPairedTask(task);
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn(() => undefined);
+    const executeTurn: RunQueuedGroupTurnArgs['executeTurn'] = vi.fn(
+      async () => {
+        expect(lastAgentTimestamps).toEqual({});
+        expect(saveState).not.toHaveBeenCalled();
+        return {
+          outputStatus: 'success' as const,
+          deliverySucceeded: true,
+          visiblePhase: 'final',
+        };
+      },
+    );
+
+    const outcome = await runQueuedGroupTurn(
+      makeQueuedTurnArgs({
+        task,
+        executeTurn,
+        lastAgentTimestamps,
+        saveState,
+      }),
+    );
+
+    expect(outcome).toBe(true);
+    expect(executeTurn).toHaveBeenCalledTimes(1);
+    expect(lastAgentTimestamps).toEqual({ 'group@test': '48' });
+    expect(saveState).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the queued human cursor when the owner turn aborts before completion', async () => {
+    const task = makeTask({
+      owner_service_id: 'codex',
+      owner_agent_type: 'codex',
+    });
+    createPairedTask(task);
+    const executeTurn: RunQueuedGroupTurnArgs['executeTurn'] = vi.fn(
+      async () => {
+        throw new Error('process terminated during restart');
+      },
+    );
+    const lastAgentTimestamps: Record<string, string> = {};
+    const saveState = vi.fn(() => undefined);
+
+    await expect(
+      runQueuedGroupTurn(
+        makeQueuedTurnArgs({
+          task,
+          executeTurn,
+          lastAgentTimestamps,
+          saveState,
+        }),
+      ),
+    ).rejects.toThrow('process terminated during restart');
+
+    expect(executeTurn).toHaveBeenCalledTimes(1);
+    expect(lastAgentTimestamps).toEqual({});
+    expect(saveState).not.toHaveBeenCalled();
   });
 });

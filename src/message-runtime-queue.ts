@@ -379,17 +379,7 @@ export async function runQueuedGroupTurn(args: {
     return true;
   }
 
-  const previousCursor = args.lastAgentTimestamps[cursorKey];
   const cursorAdvanced = endSeq !== null;
-  if (cursorAdvanced) {
-    advanceLastAgentCursor(
-      args.lastAgentTimestamps,
-      args.saveState,
-      chatJid,
-      endSeq,
-      cursorKey,
-    );
-  }
 
   const { outputStatus, deliverySucceeded, visiblePhase } =
     await args.executeTurn({
@@ -416,15 +406,20 @@ export async function runQueuedGroupTurn(args: {
         hasHumanMsg &&
         turnRole === 'owner' &&
         currentTask?.owner_agent_type === 'codex',
-      cursorAdvanced,
-      previousCursor,
-      lastAgentTimestamps: args.lastAgentTimestamps,
-      saveState: args.saveState,
-      cursorKey,
       log,
     })
   ) {
     return false;
+  }
+
+  if (cursorAdvanced) {
+    advanceLastAgentCursor(
+      args.lastAgentTimestamps,
+      args.saveState,
+      chatJid,
+      endSeq,
+      cursorKey,
+    );
   }
 
   if (!deliverySucceeded) {
