@@ -15,13 +15,7 @@ import {
   DEFAULT_WATCH_CI_CONTEXT_MODE,
   normalizeWatchCiIntervalSeconds,
 } from './watch-ci.js';
-import {
-  formatHostEvidenceResponse,
-  HOST_EVIDENCE_ACTIONS,
-  normalizeHostEvidenceTailLines,
-  resolveHostEvidenceResponsesDir,
-  waitForHostEvidenceResponse,
-} from './host-evidence.js';
+import { resolveHostEvidenceResponsesDir } from './host-evidence.js';
 import {
   computeVerificationSnapshotId,
   formatVerificationResponse,
@@ -30,6 +24,7 @@ import {
 } from './verification.js';
 import { resolveIpcDirectories } from './ipc-paths.js';
 import { buildSendMessageIpcPayload } from './ipc-message.js';
+import { registerHostEvidenceTools } from './ipc-host-evidence-tool.js';
 import { registerRepoEvidenceTool } from './ipc-repo-evidence-tool.js';
 
 const { ipcDir: IPC_DIR, hostIpcDir: HOST_IPC_DIR } = resolveIpcDirectories(
@@ -414,69 +409,13 @@ server.tool(
   },
 );
 
-server.tool(
-  'read_host_evidence',
-  'Read host-side deployment evidence through a narrow allowlist. Use this instead of broad shell access when reviewer/arbiter needs service status or recent logs.',
-  {
-    action: z
-      .enum(HOST_EVIDENCE_ACTIONS)
-      .describe(
-        'ejclaw_service_status=systemctl --user show ejclaw, ejclaw_service_logs=recent journalctl lines',
-      ),
-    tail_lines: z
-      .number()
-      .int()
-      .min(1)
-      .max(200)
-      .optional()
-      .describe(
-        'Only for ejclaw_service_logs. Number of recent journal lines to fetch. Defaults to 20.',
-      ),
-  },
-  async (args) => {
-    const requestId = `host-evidence-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
-
-    writeIpcFile(TASKS_DIR, {
-      type: 'host_evidence_request',
-      requestId,
-      action: args.action,
-      tail_lines:
-        args.action === 'ejclaw_service_logs'
-          ? normalizeHostEvidenceTailLines(args.tail_lines)
-          : undefined,
-      groupFolder,
-      timestamp: new Date().toISOString(),
-    });
-
-    try {
-      const response = await waitForHostEvidenceResponse(
-        HOST_EVIDENCE_RESPONSES_DIR,
-        requestId,
-      );
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: formatHostEvidenceResponse(response),
-          },
-        ],
-        isError: !response.ok,
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: error instanceof Error ? error.message : String(error),
-          },
-        ],
-        isError: true,
-      };
-    }
-  },
-);
+registerHostEvidenceTools({
+  server,
+  tasksDir: TASKS_DIR,
+  responseDir: HOST_EVIDENCE_RESPONSES_DIR,
+  groupFolder,
+  writeIpcFile,
+});
 
 server.tool(
   'run_verification',

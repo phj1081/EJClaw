@@ -144,6 +144,13 @@ export interface TaskIpcPayload {
   requestId?: string;
   action?: string;
   tail_lines?: number;
+  task_id?: string;
+  minutes?: number;
+  limit?: number;
+  repo?: string;
+  pr_number?: number;
+  run_id?: number;
+  artifact_kind?: string;
   profile?: string;
   expected_snapshot_id?: string;
 }

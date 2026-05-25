@@ -4,6 +4,39 @@ import path from 'path';
 export const HOST_EVIDENCE_ACTIONS = [
   'ejclaw_service_status',
   'ejclaw_service_logs',
+  'ejclaw_deploy_state',
+  'ejclaw_artifact_metadata',
+  'db_paired_task_status',
+  'db_paired_task_flow',
+  'db_recent_paired_failures',
+  'github_pr_status',
+  'github_pr_diff_stat',
+  'github_run_status',
+] as const;
+
+export const DB_EVIDENCE_ACTIONS = [
+  'db_paired_task_status',
+  'db_paired_task_flow',
+  'db_recent_paired_failures',
+] as const;
+
+export const DEPLOY_EVIDENCE_ACTIONS = [
+  'ejclaw_deploy_state',
+  'ejclaw_artifact_metadata',
+] as const;
+
+export const GITHUB_EVIDENCE_ACTIONS = [
+  'github_pr_status',
+  'github_pr_diff_stat',
+  'github_run_status',
+] as const;
+
+export const ARTIFACT_EVIDENCE_KINDS = [
+  'build_outputs',
+  'dashboard_dist',
+  'runner_dist',
+  'android_debug_apk',
+  'attachments_dir',
 ] as const;
 
 export type HostEvidenceAction = (typeof HOST_EVIDENCE_ACTIONS)[number];

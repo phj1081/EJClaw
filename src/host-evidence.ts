@@ -2,11 +2,34 @@ import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { DATA_DIR, WEB_DASHBOARD } from './config.js';
+import {
+  collectArtifactMetadata,
+  collectDeployState,
+  DEPLOY_EVIDENCE_ACTIONS,
+  type DeployEvidenceAction,
+} from './deploy-evidence.js';
+import {
+  DB_EVIDENCE_ACTIONS,
+  isDbEvidenceAction,
+  type DbEvidenceAction,
+  runDbEvidenceRequest,
+} from './db-evidence.js';
+import { requireDatabase } from './db/runtime-database.js';
+import {
+  GITHUB_EVIDENCE_ACTIONS,
+  isGitHubEvidenceAction,
+  runGitHubEvidenceCommand,
+  type GitHubEvidenceAction,
+} from './github-evidence.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 
 export const HOST_EVIDENCE_ACTIONS = [
   'ejclaw_service_status',
   'ejclaw_service_logs',
+  ...DEPLOY_EVIDENCE_ACTIONS,
+  ...DB_EVIDENCE_ACTIONS,
+  ...GITHUB_EVIDENCE_ACTIONS,
 ] as const;
 
 export type HostEvidenceAction = (typeof HOST_EVIDENCE_ACTIONS)[number];
@@ -15,11 +38,25 @@ export interface HostEvidenceRequest {
   requestId: string;
   action: HostEvidenceAction;
   tailLines?: number;
+  taskId?: string;
+  minutes?: number;
+  limit?: number;
+  repo?: string;
+  prNumber?: number;
+  runId?: number;
+  artifactKind?: string;
+  sourceGroup?: string;
+  isMain?: boolean;
 }
 
 export interface HostEvidenceResult {
   ok: boolean;
-  action: HostEvidenceAction | 'ejclaw_room_runtime';
+  action:
+    | HostEvidenceAction
+    | DbEvidenceAction
+    | DeployEvidenceAction
+    | GitHubEvidenceAction
+    | 'ejclaw_room_runtime';
   command: string;
   stdout: string;
   stderr: string;
@@ -42,6 +79,7 @@ const MAX_LOG_TAIL_LINES = 200;
 const MAX_OUTPUT_CHARS = 16_000;
 const COMMAND_TIMEOUT_MS = 5_000;
 const COMMAND_MAX_BUFFER = 1024 * 1024;
+const PROJECT_ROOT = process.cwd();
 
 export function isHostEvidenceAction(
   value: unknown,
@@ -108,6 +146,10 @@ export function buildHostEvidenceCommand(
         commandText: `journalctl ${args.join(' ')}`,
       };
     }
+    default:
+      throw new Error(
+        `Host evidence action has no shell command: ${request.action}`,
+      );
   }
 }
 
@@ -164,9 +206,96 @@ function extractExitCode(error: unknown): number {
 export async function runHostEvidenceRequest(
   request: HostEvidenceRequest,
 ): Promise<HostEvidenceResult> {
-  const command = buildHostEvidenceCommand(request);
-
+  let commandText = '';
   try {
+    if (isDbEvidenceAction(request.action)) {
+      commandText = `internal:${request.action}`;
+      return {
+        ok: true,
+        action: request.action,
+        command: commandText,
+        stdout: truncateHostEvidenceText(
+          runDbEvidenceRequest(
+            requireDatabase(),
+            {
+              action: request.action,
+              taskId: request.taskId,
+              minutes: request.minutes,
+              limit: request.limit,
+            },
+            {
+              sourceGroup: request.sourceGroup ?? '',
+              isMain: request.isMain === true,
+            },
+          ),
+        ),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+
+    if (request.action === 'ejclaw_deploy_state') {
+      commandText = `internal:${request.action}`;
+      return {
+        ok: true,
+        action: request.action,
+        command: commandText,
+        stdout: truncateHostEvidenceText(
+          await collectDeployState({
+            projectRoot: PROJECT_ROOT,
+            dataDir: DATA_DIR,
+            dashboardStaticDir: WEB_DASHBOARD.staticDir,
+          }),
+        ),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+
+    if (request.action === 'ejclaw_artifact_metadata') {
+      commandText = `internal:${request.action}`;
+      return {
+        ok: true,
+        action: request.action,
+        command: commandText,
+        stdout: truncateHostEvidenceText(
+          collectArtifactMetadata(
+            {
+              projectRoot: PROJECT_ROOT,
+              dataDir: DATA_DIR,
+              dashboardStaticDir: WEB_DASHBOARD.staticDir,
+            },
+            {
+              action: request.action,
+              artifactKind: request.artifactKind,
+            },
+          ),
+        ),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+
+    if (isGitHubEvidenceAction(request.action)) {
+      const githubResult = await runGitHubEvidenceCommand({
+        action: request.action,
+        repo: request.repo,
+        prNumber: request.prNumber,
+        runId: request.runId,
+      });
+      commandText = githubResult.command;
+      return {
+        ok: true,
+        action: request.action,
+        command: commandText,
+        stdout: truncateHostEvidenceText(githubResult.stdout),
+        stderr: truncateHostEvidenceText(githubResult.stderr),
+        exitCode: 0,
+      };
+    }
+
+    const command = buildHostEvidenceCommand(request);
+    commandText = command.commandText;
     const { stdout, stderr } = await execFileCapture(
       command.file,
       command.args,
@@ -174,7 +303,7 @@ export async function runHostEvidenceRequest(
     return {
       ok: true,
       action: request.action,
-      command: command.commandText,
+      command: commandText,
       stdout: truncateHostEvidenceText(stdout),
       stderr: truncateHostEvidenceText(stderr),
       exitCode: 0,
@@ -192,7 +321,10 @@ export async function runHostEvidenceRequest(
     return {
       ok: false,
       action: request.action,
-      command: command.commandText,
+      command:
+        typeof error === 'object' && error !== null && 'command' in error
+          ? String((error as { command?: unknown }).command ?? commandText)
+          : commandText,
       stdout: truncateHostEvidenceText(stdout),
       stderr: truncateHostEvidenceText(stderr),
       exitCode: extractExitCode(error),
