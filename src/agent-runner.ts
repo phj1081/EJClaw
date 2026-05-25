@@ -12,10 +12,6 @@ import {
   prepareReadonlySessionEnvironment,
   prepareGroupEnvironment,
 } from './agent-runner-environment.js';
-import {
-  preparePromptIngestion,
-  recordPromptIngestion,
-} from './agent-prompt-ingestion.js';
 import { runSpawnedAgentProcess } from './agent-runner-process.js';
 import { getStoredRoomSkillOverrides } from './db.js';
 export {
@@ -168,19 +164,6 @@ export async function runAgentProcess(
     'Spawning agent process',
   );
 
-  const runnerInput: AgentInput = {
-    ...input,
-    ...(group.agentConfig?.codexGoals === true ? { codexGoals: true } : {}),
-  };
-  const promptIngestion = preparePromptIngestion({
-    agentType: group.agentType || 'claude-code',
-    env,
-    prompt: runnerInput.prompt,
-    sessionId: runnerInput.sessionId,
-    memoryBriefing: runnerInput.memoryBriefing,
-  });
-  runnerInput.prompt = promptIngestion.prompt;
-
   const logsDir = path.join(groupDir, 'logs');
   fs.mkdirSync(logsDir, { recursive: true });
 
@@ -193,6 +176,10 @@ export async function runAgentProcess(
 
     onProcess(proc, processName, env.EJCLAW_IPC_DIR);
 
+    const runnerInput: AgentInput = {
+      ...input,
+      ...(group.agentConfig?.codexGoals === true ? { codexGoals: true } : {}),
+    };
     proc.stdin.write(JSON.stringify(runnerInput));
     proc.stdin.end();
 
@@ -204,11 +191,6 @@ export async function runAgentProcess(
       logsDir,
       startTime,
       onOutput,
-    }).then((result) => {
-      if (result.status === 'success') {
-        recordPromptIngestion(promptIngestion);
-      }
-      resolve(result);
-    });
+    }).then(resolve);
   });
 }
