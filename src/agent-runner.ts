@@ -50,6 +50,10 @@ export interface AgentOutput {
   agentDone?: boolean;
   newSessionId?: string;
   error?: string;
+  compaction?: {
+    completed: boolean;
+    trigger?: string | null;
+  };
 }
 
 function readRoomSkillOverridesForRunner(

@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import { createEvaluatedOutputHandler } from './agent-attempt.js';
 import type { AttemptStreamedTrigger } from './agent-attempt-retry.js';
 import { runAgentProcess, type AgentOutput } from './agent-runner.js';
+import { markCompactRefreshNeeded } from './compact-refresh.js';
 import { getCodexAccountCount } from './codex-token-rotation.js';
 import type { PreparedPairedExecutionContext } from './paired-execution-context.js';
 import {
@@ -32,6 +33,35 @@ interface AgentInput {
   isMain: boolean;
   assistantName: string;
   roomRoleContext?: RoomRoleContext;
+}
+
+function maybeMarkCompactRefreshForOutput(args: {
+  output: AgentOutput;
+  activeRole: string;
+  sessionFolder: string;
+}): void {
+  if (
+    (args.activeRole !== 'owner' && args.activeRole !== 'reviewer') ||
+    args.output.compaction?.completed !== true ||
+    !args.output.newSessionId
+  ) {
+    return;
+  }
+  markCompactRefreshNeeded({
+    sessionFolder: args.sessionFolder,
+    sessionId: args.output.newSessionId,
+    trigger: args.output.compaction.trigger ?? null,
+  });
+}
+
+function createProviderLog(
+  log: Logger,
+  provider: 'claude' | 'codex',
+  agentType: AgentType,
+): Logger {
+  const providerLog = log.child({ provider, agentType });
+  providerLog.info('Using provider');
+  return providerLog;
 }
 
 export async function runMessageAgentAttempt(args: {
@@ -111,6 +141,7 @@ export async function runMessageAgentAttempt(args: {
       structuredOutput,
       evaluation,
     }) => {
+      maybeMarkCompactRefreshForOutput({ output, activeRole, sessionFolder });
       const outputPhase = output.phase ?? 'final';
       if (outputPhase !== 'final') {
         log.info(
@@ -252,11 +283,7 @@ export async function runMessageAgentAttempt(args: {
     await streamedOutputHandler.handleOutput(output);
   };
 
-  const providerLog = log.child({
-    provider,
-    agentType: effectiveAgentType,
-  });
-  providerLog.info('Using provider');
+  const providerLog = createProviderLog(log, provider, effectiveAgentType);
 
   try {
     const output = await runAgentProcess(
@@ -273,6 +300,7 @@ export async function runMessageAgentAttempt(args: {
     if (output.newSessionId && shouldPersistSession) {
       onPersistSession(output.newSessionId);
     }
+    maybeMarkCompactRefreshForOutput({ output, activeRole, sessionFolder });
 
     providerLog.info(
       {

@@ -42,10 +42,13 @@ import {
 import { drainIpcInput, shouldClose } from './ipc-input.js';
 import {
   MessageStream,
+  buildCompactionOutput,
   buildMultimodalContent,
+  compactBoundaryOutput,
   extractAssistantText,
   normalizeStructuredOutput,
   readStdin,
+  type RunnerCompaction,
   writeOutput,
 } from './output-protocol.js';
 import {
@@ -90,6 +93,30 @@ function log(message: string): void {
   console.error(`[agent-runner] ${message}`);
 }
 
+function compactBoundaryFromMessage(
+  message: unknown,
+): RunnerCompaction | undefined {
+  if (
+    !(
+      typeof message === 'object' &&
+      message !== null &&
+      (message as { type?: string }).type === 'system' &&
+      (message as { subtype?: string }).subtype === 'compact_boundary'
+    )
+  ) {
+    return undefined;
+  }
+  const meta = (
+    message as {
+      compact_metadata?: { trigger?: string; pre_tokens?: number };
+    }
+  ).compact_metadata;
+  log(
+    `Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`,
+  );
+  return compactBoundaryOutput(meta?.trigger);
+}
+
 // 번들 CLI binary를 명시해야 SDK가 musl/glibc 잘못 탐색하는 걸 우회함.
 // (SDK 0.2.114의 W7() 헬퍼는 linux-x64-musl를 linux-x64보다 먼저 시도하므로
 // glibc 호스트에서 musl 패키지가 빈 껍데기로 설치돼 있으면 실패한다.)
@@ -127,6 +154,7 @@ async function runQuery(
   newSessionId?: string;
   closedDuringQuery: boolean;
   terminalResultObserved: boolean;
+  compaction?: RunnerCompaction;
 }> {
   const stream = new MessageStream((text) => buildMultimodalContent(text, log));
   stream.push(prompt);
@@ -172,6 +200,7 @@ async function runQuery(
   let resultCount = 0;
   let terminalResultObserved = false;
   let pendingProgressText: string | null = null;
+  let compaction: RunnerCompaction | undefined;
   const trackedAgentTasks = new TopLevelAgentTaskTracker();
 
   // Discover additional directories
@@ -360,19 +389,7 @@ async function runQuery(
       log(`Session initialized: ${newSessionId}`);
     }
 
-    if (
-      message.type === 'system' &&
-      (message as { subtype?: string }).subtype === 'compact_boundary'
-    ) {
-      const meta = (
-        message as {
-          compact_metadata?: { trigger?: string; pre_tokens?: number };
-        }
-      ).compact_metadata;
-      log(
-        `Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`,
-      );
-    }
+    compaction = compactBoundaryFromMessage(message) ?? compaction;
 
     if (
       message.type === 'system' &&
@@ -522,6 +539,7 @@ async function runQuery(
           result: textResult || null,
           newSessionId,
           error: errorText || `Agent error: ${message.subtype}`,
+          ...buildCompactionOutput(compaction),
         });
       } else {
         const normalized = normalizeStructuredOutput(textResult || null);
@@ -529,6 +547,7 @@ async function runQuery(
           status: 'success',
           ...normalized,
           newSessionId,
+          ...buildCompactionOutput(compaction),
         });
       }
 
@@ -561,6 +580,7 @@ async function runQuery(
           status: 'success',
           ...normalizeStructuredOutput(textResult),
           newSessionId,
+          ...buildCompactionOutput(compaction),
         });
         terminalResultObserved = true;
         ipcPolling = false;
@@ -600,6 +620,7 @@ async function runQuery(
       status: 'success',
       ...normalizeStructuredOutput(pendingProgressText),
       newSessionId,
+      ...buildCompactionOutput(compaction),
     });
     terminalResultObserved = true;
     resultCount++;
@@ -609,7 +630,12 @@ async function runQuery(
   log(
     `Query done. Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}`,
   );
-  return { newSessionId, closedDuringQuery, terminalResultObserved };
+  return {
+    newSessionId,
+    closedDuringQuery,
+    terminalResultObserved,
+    compaction,
+  };
 }
 
 async function main(): Promise<void> {
@@ -698,6 +724,7 @@ async function main(): Promise<void> {
     log(`Handling session command: ${trimmedPrompt}`);
     let slashSessionId: string | undefined;
     let compactBoundarySeen = false;
+    let slashCompaction: RunnerCompaction | undefined;
     let hadError = false;
     let resultEmitted = false;
 
@@ -745,20 +772,10 @@ async function main(): Promise<void> {
           log(`Session after slash command: ${slashSessionId}`);
         }
 
-        // Observe compact_boundary to confirm compaction completed
-        if (
-          message.type === 'system' &&
-          (message as { subtype?: string }).subtype === 'compact_boundary'
-        ) {
+        const observedCompaction = compactBoundaryFromMessage(message);
+        if (observedCompaction) {
           compactBoundarySeen = true;
-          const meta = (
-            message as {
-              compact_metadata?: { trigger?: string; pre_tokens?: number };
-            }
-          ).compact_metadata;
-          log(
-            `Compact boundary — trigger=${meta?.trigger || '?'} pre_tokens=${meta?.pre_tokens ?? '?'}`,
-          );
+          slashCompaction = observedCompaction;
         }
 
         if (message.type === 'result') {
@@ -775,12 +792,14 @@ async function main(): Promise<void> {
               result: null,
               error: textResult || 'Session command failed.',
               newSessionId: slashSessionId,
+              ...buildCompactionOutput(slashCompaction),
             });
           } else {
             writeOutput({
               status: 'success',
               result: textResult || 'Conversation compacted.',
               newSessionId: slashSessionId,
+              ...buildCompactionOutput(slashCompaction),
             });
           }
           resultEmitted = true;
@@ -812,6 +831,7 @@ async function main(): Promise<void> {
           ? 'Conversation compacted.'
           : 'Compaction requested but compact_boundary was not observed.',
         newSessionId: slashSessionId,
+        ...buildCompactionOutput(slashCompaction),
       });
     } else if (!hadError) {
       // Emit session-only marker so host updates session tracking
@@ -819,6 +839,7 @@ async function main(): Promise<void> {
         status: 'success',
         result: null,
         newSessionId: slashSessionId,
+        ...buildCompactionOutput(slashCompaction),
       });
     }
     return;
@@ -843,7 +864,12 @@ async function main(): Promise<void> {
     }
 
     if (!queryResult.closedDuringQuery && !queryResult.terminalResultObserved) {
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      writeOutput({
+        status: 'success',
+        result: null,
+        newSessionId: sessionId,
+        ...buildCompactionOutput(queryResult.compaction),
+      });
     } else if (queryResult.terminalResultObserved) {
       log('Terminal result already emitted, exiting single-turn runtime');
     } else {
