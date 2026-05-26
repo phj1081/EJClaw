@@ -446,12 +446,18 @@ export function getPairedTurnAttemptIdFromDatabase(
 export function recoverInterruptedPairedTurnAttemptsForServiceInDatabase(
   database: Database,
   args: {
-    serviceId: string;
+    serviceIds: string[];
     now?: string;
     error?: string;
   },
 ): InterruptedPairedTurnAttemptRecoveryCandidate[] {
-  const serviceId = normalizeServiceId(args.serviceId);
+  const serviceIds = Array.from(
+    new Set(args.serviceIds.map((serviceId) => normalizeServiceId(serviceId))),
+  ).filter((serviceId) => serviceId.length > 0);
+  if (serviceIds.length === 0) {
+    return [];
+  }
+  const servicePlaceholders = serviceIds.map(() => '?').join(', ');
   const now = args.now ?? new Date().toISOString();
   const error =
     args.error ?? 'Interrupted by service restart before completion.';
@@ -473,19 +479,22 @@ export function recoverInterruptedPairedTurnAttemptsForServiceInDatabase(
           JOIN paired_tasks tasks
             ON tasks.id = attempts.task_id
          WHERE attempts.state = 'running'
-           AND attempts.executor_service_id = ?
+           AND attempts.executor_service_id IN (${servicePlaceholders})
            AND tasks.status != 'completed'
            AND NOT EXISTS (
              SELECT 1
                FROM paired_task_execution_leases leases
               WHERE leases.task_id = attempts.task_id
                 AND leases.turn_id = attempts.turn_id
-                AND leases.claimed_service_id = attempts.executor_service_id
+                AND leases.claimed_service_id NOT IN (${servicePlaceholders})
            )
          ORDER BY attempts.updated_at ASC, attempts.attempt_no ASC
         `,
       )
-      .all(serviceId) as InterruptedPairedTurnAttemptRecoveryCandidate[];
+      .all(
+        ...serviceIds,
+        ...serviceIds,
+      ) as InterruptedPairedTurnAttemptRecoveryCandidate[];
 
     if (rows.length === 0) {
       return rows;
@@ -501,11 +510,11 @@ export function recoverInterruptedPairedTurnAttemptsForServiceInDatabase(
                last_error = ?
          WHERE attempt_id = ?
            AND state = 'running'
-           AND executor_service_id = ?
+           AND executor_service_id IN (${servicePlaceholders})
       `,
     );
     for (const row of rows) {
-      update.run(now, now, error, row.attempt_id, serviceId);
+      update.run(now, now, error, row.attempt_id, ...serviceIds);
     }
     return rows;
   })();

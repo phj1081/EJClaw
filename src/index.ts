@@ -1,5 +1,9 @@
 import {
   ASSISTANT_NAME,
+  ARBITER_SERVICE_ID,
+  CLAUDE_SERVICE_ID,
+  CODEX_MAIN_SERVICE_ID,
+  CODEX_REVIEW_SERVICE_ID,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   SERVICE_ID,
@@ -262,7 +266,13 @@ async function announceRestartRecovery(
 
 function queueInterruptedPairedTurnAttemptRecovery(): void {
   for (const candidate of recoverInterruptedPairedTurnAttemptsForService({
-    serviceId: SERVICE_ID,
+    serviceIds: [
+      SERVICE_ID,
+      CLAUDE_SERVICE_ID,
+      CODEX_MAIN_SERVICE_ID,
+      CODEX_REVIEW_SERVICE_ID,
+      ARBITER_SERVICE_ID,
+    ].filter((serviceId): serviceId is string => Boolean(serviceId)),
   })) {
     const binding = runtimeState.getRoomBindings()[candidate.chat_jid];
     if (!binding) {

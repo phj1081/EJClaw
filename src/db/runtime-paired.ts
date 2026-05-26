@@ -242,7 +242,7 @@ export function getPairedTurnAttempts(
 }
 
 export function recoverInterruptedPairedTurnAttemptsForService(args: {
-  serviceId: string;
+  serviceIds: string[];
   now?: string;
   error?: string;
 }): InterruptedPairedTurnAttemptRecoveryCandidate[] {

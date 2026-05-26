@@ -7,7 +7,8 @@ import {
   markPairedTurnRunning,
   recoverInterruptedPairedTurnAttemptsForService,
 } from './db.js';
-import { CODEX_MAIN_SERVICE_ID } from './config.js';
+import { CLAUDE_SERVICE_ID, CODEX_MAIN_SERVICE_ID } from './config.js';
+import { requireDatabase } from './db/runtime-database.js';
 import { buildPairedTurnIdentity } from './paired-turn-identity.js';
 import type { PairedTask } from './types.js';
 
@@ -46,7 +47,7 @@ describe('paired turn attempt restart recovery', () => {
     _initTestDatabase();
   });
 
-  it('fails same-service running attempts so restart recovery can retry the turn', () => {
+  it('fails local-service running attempts so restart recovery can retry the turn', () => {
     const task = makeTask();
     createPairedTask(task);
     const turnIdentity = buildPairedTurnIdentity({
@@ -64,7 +65,7 @@ describe('paired turn attempt restart recovery', () => {
     });
 
     const recovered = recoverInterruptedPairedTurnAttemptsForService({
-      serviceId: CODEX_MAIN_SERVICE_ID,
+      serviceIds: [CLAUDE_SERVICE_ID, CODEX_MAIN_SERVICE_ID],
       now: '2026-05-27T00:11:00.000Z',
     });
 
@@ -130,7 +131,7 @@ describe('paired turn attempt restart recovery', () => {
 
     expect(
       recoverInterruptedPairedTurnAttemptsForService({
-        serviceId: CODEX_MAIN_SERVICE_ID,
+        serviceIds: [CODEX_MAIN_SERVICE_ID],
         now: '2026-05-27T00:11:00.000Z',
       }),
     ).toEqual([]);
@@ -138,6 +139,82 @@ describe('paired turn attempt restart recovery', () => {
       expect.objectContaining({
         state: 'running',
         active_run_id: 'reviewer-run',
+      }),
+    ]);
+  });
+
+  it('recovers codex executor attempts even when the orchestration lease used the claude service id', () => {
+    const task = makeTask({ id: 'cross-service-lease-task' });
+    createPairedTask(task);
+    const turnIdentity = buildPairedTurnIdentity({
+      taskId: task.id,
+      taskUpdatedAt: task.updated_at,
+      intentKind: 'owner-turn',
+      role: 'owner',
+    });
+
+    markPairedTurnRunning({
+      turnIdentity,
+      executorServiceId: CODEX_MAIN_SERVICE_ID,
+      executorAgentType: 'codex',
+      runId: 'codex-run-before-restart',
+    });
+    requireDatabase()
+      .prepare(
+        `
+          INSERT INTO paired_task_execution_leases (
+            task_id,
+            chat_jid,
+            role,
+            turn_id,
+            turn_attempt_id,
+            turn_attempt_no,
+            intent_kind,
+            claimed_run_id,
+            claimed_service_id,
+            task_status,
+            task_updated_at,
+            claimed_at,
+            updated_at,
+            expires_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        task.id,
+        task.chat_jid,
+        'owner',
+        turnIdentity.turnId,
+        `${turnIdentity.turnId}:attempt:1`,
+        1,
+        'owner-turn',
+        'orchestrator-run-before-restart',
+        CLAUDE_SERVICE_ID,
+        task.status,
+        task.updated_at,
+        '2026-05-27T00:10:00.000Z',
+        '2026-05-27T00:10:00.000Z',
+        '2026-05-27T00:20:00.000Z',
+      );
+
+    expect(
+      recoverInterruptedPairedTurnAttemptsForService({
+        serviceIds: [CLAUDE_SERVICE_ID, CODEX_MAIN_SERVICE_ID],
+        now: '2026-05-27T00:11:00.000Z',
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        task_id: task.id,
+        turn_id: turnIdentity.turnId,
+        role: 'owner',
+        intent_kind: 'owner-turn',
+      }),
+    ]);
+    expect(getPairedTurnAttempts(turnIdentity.turnId)).toEqual([
+      expect.objectContaining({
+        state: 'failed',
+        active_run_id: null,
       }),
     ]);
   });
