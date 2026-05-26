@@ -2,11 +2,15 @@ import { getErrorMessage } from './utils.js';
 
 import {
   deleteTask,
+  getLatestOpenPairedTaskForChat,
   getTaskById,
   logTaskRun,
+  storeChatMetadata,
+  storeMessage,
   updateTask,
   updateTaskAfterRun,
 } from './db.js';
+import { resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { createTaskStatusTracker } from './task-status-tracker.js';
 import { extractWatchCiTarget } from './task-watch-status.js';
@@ -20,6 +24,53 @@ import {
 import { sendScheduledMessage } from './task-scheduler-runtime.js';
 import type { SchedulerDependencies } from './task-scheduler-types.js';
 import type { ScheduledTask } from './types.js';
+
+function enqueueOwnerAfterTerminalCiWatcher(args: {
+  task: ScheduledTask;
+  deps: SchedulerDependencies;
+  completionText: string | null | undefined;
+}): void {
+  if (args.task.room_role !== 'owner') {
+    return;
+  }
+
+  const pairedTask = getLatestOpenPairedTaskForChat(args.task.chat_jid);
+  if (!pairedTask) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  const content = [
+    '[CI watcher completed]',
+    args.completionText?.trim() || 'CI watcher completed.',
+  ].join('\n');
+  storeChatMetadata(args.task.chat_jid, timestamp, undefined, 'discord', true);
+  storeMessage({
+    id: `watch-ci-completed:${args.task.id}:${Date.now()}`,
+    chat_jid: args.task.chat_jid,
+    sender: 'ci-watcher',
+    sender_name: 'CI watcher',
+    content,
+    timestamp,
+    is_from_me: false,
+    is_bot_message: false,
+    message_source_kind: 'trusted_external_bot',
+  });
+  args.deps.queue.enqueueMessageCheck(
+    args.task.chat_jid,
+    resolveGroupIpcPath(args.task.group_folder),
+  );
+  logger.info(
+    {
+      taskId: args.task.id,
+      chatJid: args.task.chat_jid,
+      groupFolder: args.task.group_folder,
+      pairedTaskId: pairedTask.id,
+      pairedTaskStatus: pairedTask.status,
+    },
+    'Queued owner follow-up after terminal CI watcher completion',
+  );
+}
 
 export async function runGithubCiTask(
   task: ScheduledTask,
@@ -66,6 +117,11 @@ export async function runGithubCiTask(
       }
       deleteTask(task.id);
       completedAndDeleted = true;
+      enqueueOwnerAfterTerminalCiWatcher({
+        task,
+        deps,
+        completionText: check.completionMessage ?? result,
+      });
       logger.info(
         {
           taskId: task.id,
