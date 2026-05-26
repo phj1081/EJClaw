@@ -384,6 +384,42 @@ describe('resume_task authorization', () => {
   });
 });
 
+// --- update_task behavior ---
+
+describe('update_task behavior', () => {
+  it('updates once tasks even when next_run is not recomputed', async () => {
+    createTask({
+      id: 'task-once-update',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'original once task',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-once-update',
+        prompt: 'updated once task',
+        schedule_value: '2025-07-01T00:00:00',
+      },
+      'other-group',
+      false,
+      deps,
+    );
+
+    const task = getTaskById('task-once-update')!;
+    expect(task.prompt).toBe('updated once task');
+    expect(task.schedule_value).toBe('2025-07-01T00:00:00');
+    expect(task.next_run).toBe('2025-06-01T00:00:00.000Z');
+  });
+});
+
 // --- cancel_task authorization ---
 
 describe('cancel_task authorization', () => {

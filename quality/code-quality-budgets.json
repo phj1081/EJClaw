@@ -109,11 +109,6 @@
       "maxFunctionLines": 314,
       "owner": "main service entrypoint hotspot"
     },
-    "src/ipc-task-processor.ts": {
-      "maxFunctionLines": 566,
-      "maxComplexity": 107,
-      "owner": "ipc task processor hotspot"
-    },
     "src/message-agent-executor-attempt-runner.ts": {
       "maxFunctionLines": 275,
       "maxComplexity": 47,
