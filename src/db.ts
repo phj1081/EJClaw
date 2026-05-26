@@ -117,6 +117,7 @@ export {
   listPairedWorkspacesForTask,
   markPairedTurnRunning,
   refreshPairedTaskExecutionLease,
+  recoverInterruptedPairedTurnAttemptsForService,
   releasePairedTaskExecutionLease,
   reservePairedTurnReservation,
   setChannelOwnerLease,
@@ -133,7 +134,10 @@ export type {
   MemorySourceKind,
   RecallMemoryQuery,
 } from './db/memories.js';
-export type { PairedTurnAttemptRecord } from './db/paired-turn-attempts.js';
+export type {
+  InterruptedPairedTurnAttemptRecoveryCandidate,
+  PairedTurnAttemptRecord,
+} from './db/paired-turn-attempts.js';
 export type { PairedTurnRecord } from './db/paired-turns.js';
 export type { ChatInfo } from './db/messages.js';
 export type { WorkItem } from './db/work-items.js';

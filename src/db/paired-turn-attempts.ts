@@ -34,6 +34,18 @@ export interface PairedTurnAttemptRecord {
   last_error: string | null;
 }
 
+export interface InterruptedPairedTurnAttemptRecoveryCandidate {
+  chat_jid: string;
+  group_folder: string;
+  task_id: string;
+  task_status: string;
+  turn_id: string;
+  attempt_id: string;
+  attempt_no: number;
+  role: PairedRoomRole;
+  intent_kind: PairedTurnIdentity['intentKind'];
+}
+
 export interface OwnerCodexBadRequestFailureSummary {
   taskId: string;
   failures: number;
@@ -429,6 +441,74 @@ export function getPairedTurnAttemptIdFromDatabase(
     | { attempt_id: string }
     | undefined;
   return row?.attempt_id ?? null;
+}
+
+export function recoverInterruptedPairedTurnAttemptsForServiceInDatabase(
+  database: Database,
+  args: {
+    serviceId: string;
+    now?: string;
+    error?: string;
+  },
+): InterruptedPairedTurnAttemptRecoveryCandidate[] {
+  const serviceId = normalizeServiceId(args.serviceId);
+  const now = args.now ?? new Date().toISOString();
+  const error =
+    args.error ?? 'Interrupted by service restart before completion.';
+  return database.transaction(() => {
+    const rows = database
+      .prepare(
+        `
+          SELECT
+            tasks.chat_jid,
+            tasks.group_folder,
+            attempts.task_id,
+            tasks.status AS task_status,
+            attempts.turn_id,
+            attempts.attempt_id,
+            attempts.attempt_no,
+            attempts.role,
+            attempts.intent_kind
+          FROM paired_turn_attempts attempts
+          JOIN paired_tasks tasks
+            ON tasks.id = attempts.task_id
+         WHERE attempts.state = 'running'
+           AND attempts.executor_service_id = ?
+           AND tasks.status != 'completed'
+           AND NOT EXISTS (
+             SELECT 1
+               FROM paired_task_execution_leases leases
+              WHERE leases.task_id = attempts.task_id
+                AND leases.turn_id = attempts.turn_id
+                AND leases.claimed_service_id = attempts.executor_service_id
+           )
+         ORDER BY attempts.updated_at ASC, attempts.attempt_no ASC
+        `,
+      )
+      .all(serviceId) as InterruptedPairedTurnAttemptRecoveryCandidate[];
+
+    if (rows.length === 0) {
+      return rows;
+    }
+
+    const update = database.prepare(
+      `
+        UPDATE paired_turn_attempts
+           SET state = 'failed',
+               active_run_id = NULL,
+               updated_at = ?,
+               completed_at = ?,
+               last_error = ?
+         WHERE attempt_id = ?
+           AND state = 'running'
+           AND executor_service_id = ?
+      `,
+    );
+    for (const row of rows) {
+      update.run(now, now, error, row.attempt_id, serviceId);
+    }
+    return rows;
+  })();
 }
 
 export function getOwnerCodexBadRequestFailureSummaryForTaskFromDatabase(

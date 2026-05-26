@@ -19,6 +19,7 @@ import { writeGroupsSnapshot } from './agent-runner.js';
 import {
   hasRecentRestartAnnouncement,
   initDatabase,
+  recoverInterruptedPairedTurnAttemptsForService,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
@@ -259,6 +260,45 @@ async function announceRestartRecovery(
   return null;
 }
 
+function queueInterruptedPairedTurnAttemptRecovery(): void {
+  for (const candidate of recoverInterruptedPairedTurnAttemptsForService({
+    serviceId: SERVICE_ID,
+  })) {
+    const binding = runtimeState.getRoomBindings()[candidate.chat_jid];
+    if (!binding) {
+      logger.warn(
+        {
+          chatJid: candidate.chat_jid,
+          groupFolder: candidate.group_folder,
+          taskId: candidate.task_id,
+          turnId: candidate.turn_id,
+          attemptId: candidate.attempt_id,
+        },
+        'Skipped interrupted paired turn recovery because room binding is missing',
+      );
+      continue;
+    }
+    queue.enqueueMessageCheck(
+      candidate.chat_jid,
+      resolveGroupIpcPath(binding.folder),
+    );
+    logger.info(
+      {
+        chatJid: candidate.chat_jid,
+        groupFolder: binding.folder,
+        taskId: candidate.task_id,
+        taskStatus: candidate.task_status,
+        turnId: candidate.turn_id,
+        attemptId: candidate.attempt_id,
+        attemptNo: candidate.attempt_no,
+        role: candidate.role,
+        intentKind: candidate.intent_kind,
+      },
+      'Queued interrupted paired turn attempt for restart recovery',
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const processStartedAtMs = Date.now();
   initDatabase();
@@ -477,6 +517,7 @@ async function main(): Promise<void> {
   });
   queue.setProcessMessagesFn(runtime.processGroupMessages);
   queue.enterRecoveryMode();
+  queueInterruptedPairedTurnAttemptRecovery();
   runtime.recoverPendingMessages();
   const restartContext = await announceRestartRecovery(processStartedAtMs);
   const roomBindings = runtimeState.getRoomBindings();

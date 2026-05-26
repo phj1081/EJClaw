@@ -45,6 +45,8 @@ import {
   clearPairedTurnAttemptsInDatabase,
   getOwnerCodexBadRequestFailureSummaryForTaskFromDatabase,
   getPairedTurnAttemptsForTurnFromDatabase,
+  recoverInterruptedPairedTurnAttemptsForServiceInDatabase,
+  type InterruptedPairedTurnAttemptRecoveryCandidate,
   type OwnerCodexBadRequestFailureSummary,
   type PairedTurnAttemptRecord,
 } from './paired-turn-attempts.js';
@@ -237,6 +239,17 @@ export function getPairedTurnAttempts(
   turnId: string,
 ): PairedTurnAttemptRecord[] {
   return getPairedTurnAttemptsForTurnFromDatabase(requireDatabase(), turnId);
+}
+
+export function recoverInterruptedPairedTurnAttemptsForService(args: {
+  serviceId: string;
+  now?: string;
+  error?: string;
+}): InterruptedPairedTurnAttemptRecoveryCandidate[] {
+  return recoverInterruptedPairedTurnAttemptsForServiceInDatabase(
+    requireDatabase(),
+    args,
+  );
 }
 
 export function getOwnerCodexBadRequestFailureSummaryForTask(args: {
