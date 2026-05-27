@@ -155,10 +155,6 @@
       "maxNesting": 1,
       "owner": "message runtime test hotspot"
     },
-    "src/message-runtime.ts": {
-      "maxFunctionLines": 620,
-      "owner": "message runtime hotspot"
-    },
     "src/message-turn-controller.test.ts": {
       "maxFunctionLines": 730,
       "owner": "message turn controller test hotspot"
