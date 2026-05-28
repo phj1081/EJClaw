@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildRoleRuntimeConfigEvidence,
   buildHostEvidenceCommand,
   clampHostEvidenceTailLines,
   isHostEvidenceAction,
@@ -10,7 +11,10 @@ describe('host evidence helpers', () => {
   it('recognizes only allowlisted actions', () => {
     expect(isHostEvidenceAction('ejclaw_service_status')).toBe(true);
     expect(isHostEvidenceAction('ejclaw_service_logs')).toBe(true);
+    expect(isHostEvidenceAction('ejclaw_role_runtime_config')).toBe(true);
     expect(isHostEvidenceAction('db_paired_task_status')).toBe(true);
+    expect(isHostEvidenceAction('db_recent_scheduled_tasks')).toBe(true);
+    expect(isHostEvidenceAction('db_scheduled_task_runs')).toBe(true);
     expect(isHostEvidenceAction('ejclaw_deploy_state')).toBe(true);
     expect(isHostEvidenceAction('github_pr_status')).toBe(true);
     expect(isHostEvidenceAction('github_run_jobs')).toBe(true);
@@ -43,5 +47,23 @@ describe('host evidence helpers', () => {
     expect(logs.args).toEqual(
       expect.arrayContaining(['--user', '-u', 'ejclaw', '-n', '42']),
     );
+  });
+
+  it('returns role runtime config without secret-shaped fields', () => {
+    const text = buildRoleRuntimeConfigEvidence();
+    const parsed = JSON.parse(text) as {
+      roles: {
+        owner: { agent_type: string; effective_model: string };
+        reviewer: { agent_type: string; effective_model: string };
+        arbiter: { agent_type: string | null; effective_model: string | null };
+      };
+    };
+
+    expect(parsed.roles.owner.agent_type).toMatch(/^(codex|claude-code)$/);
+    expect(parsed.roles.reviewer.agent_type).toMatch(/^(codex|claude-code)$/);
+    expect(text).not.toMatch(/api[_-]?key/i);
+    expect(text).not.toMatch(/token/i);
+    expect(text).not.toMatch(/secret/i);
+    expect(text).not.toMatch(/password/i);
   });
 });

@@ -2,7 +2,27 @@ import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { DATA_DIR, WEB_DASHBOARD } from './config.js';
+import {
+  ARBITER_AGENT_TYPE,
+  ARBITER_MODEL_CONFIG,
+  ARBITER_SERVICE_ID,
+  CLAUDE_SERVICE_ID,
+  CODEX_MAIN_SERVICE_ID,
+  CODEX_REVIEW_SERVICE_ID,
+  CURRENT_RUNTIME_AGENT_TYPE,
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_CODEX_MODEL,
+  OWNER_AGENT_TYPE,
+  OWNER_MODEL_CONFIG,
+  REVIEWER_AGENT_TYPE,
+  REVIEWER_MODEL_CONFIG,
+  REVIEWER_SERVICE_ID_FOR_TYPE,
+  SERVICE_ID,
+  SERVICE_SESSION_SCOPE,
+  DATA_DIR,
+  WEB_DASHBOARD,
+} from './config.js';
+import type { AgentType } from './types.js';
 import {
   collectArtifactMetadata,
   collectDeployState,
@@ -27,6 +47,7 @@ import { resolveGroupIpcPath } from './group-folder.js';
 export const HOST_EVIDENCE_ACTIONS = [
   'ejclaw_service_status',
   'ejclaw_service_logs',
+  'ejclaw_role_runtime_config',
   ...DEPLOY_EVIDENCE_ACTIONS,
   ...DB_EVIDENCE_ACTIONS,
   ...GITHUB_EVIDENCE_ACTIONS,
@@ -163,6 +184,95 @@ export function truncateHostEvidenceText(value: string | undefined): string {
   return `${value.slice(0, MAX_OUTPUT_CHARS)}\n...[truncated]`;
 }
 
+function effectiveModelForAgentType(
+  agentType: AgentType | null | undefined,
+  configuredModel: string | undefined,
+): string | null {
+  if (!agentType) {
+    return null;
+  }
+  if (configuredModel) {
+    return configuredModel;
+  }
+  return agentType === 'claude-code'
+    ? DEFAULT_CLAUDE_MODEL
+    : DEFAULT_CODEX_MODEL;
+}
+
+function ownerServiceIdForAgentType(agentType: AgentType): string {
+  return agentType === 'claude-code'
+    ? CLAUDE_SERVICE_ID
+    : CODEX_MAIN_SERVICE_ID;
+}
+
+function buildRoleRuntimeConfigRole(
+  role: 'owner' | 'reviewer' | 'arbiter',
+  agentType: AgentType | null | undefined,
+  modelConfig: {
+    model?: string;
+    effort?: string;
+    fallbackEnabled: boolean;
+  },
+  serviceId: string | null,
+): Record<string, unknown> {
+  return {
+    role,
+    enabled: role !== 'arbiter' || Boolean(agentType),
+    agent_type: agentType ?? null,
+    service_id: serviceId,
+    configured_model: modelConfig.model ?? null,
+    effective_model: effectiveModelForAgentType(agentType, modelConfig.model),
+    effort: modelConfig.effort ?? null,
+    fallback_enabled: modelConfig.fallbackEnabled,
+  };
+}
+
+export function buildRoleRuntimeConfigEvidence(): string {
+  return JSON.stringify(
+    {
+      action: 'ejclaw_role_runtime_config',
+      current_service: {
+        service_id: SERVICE_ID,
+        session_scope: SERVICE_SESSION_SCOPE,
+        runtime_agent_type: CURRENT_RUNTIME_AGENT_TYPE,
+      },
+      defaults: {
+        claude_model: DEFAULT_CLAUDE_MODEL,
+        codex_model: DEFAULT_CODEX_MODEL,
+      },
+      services: {
+        claude: CLAUDE_SERVICE_ID,
+        codex_main: CODEX_MAIN_SERVICE_ID,
+        codex_review: CODEX_REVIEW_SERVICE_ID,
+        reviewer_for_type: REVIEWER_SERVICE_ID_FOR_TYPE,
+        arbiter: ARBITER_SERVICE_ID,
+      },
+      roles: {
+        owner: buildRoleRuntimeConfigRole(
+          'owner',
+          OWNER_AGENT_TYPE,
+          OWNER_MODEL_CONFIG,
+          ownerServiceIdForAgentType(OWNER_AGENT_TYPE),
+        ),
+        reviewer: buildRoleRuntimeConfigRole(
+          'reviewer',
+          REVIEWER_AGENT_TYPE,
+          REVIEWER_MODEL_CONFIG,
+          REVIEWER_SERVICE_ID_FOR_TYPE,
+        ),
+        arbiter: buildRoleRuntimeConfigRole(
+          'arbiter',
+          ARBITER_AGENT_TYPE,
+          ARBITER_MODEL_CONFIG,
+          ARBITER_SERVICE_ID,
+        ),
+      },
+    },
+    null,
+    2,
+  );
+}
+
 function execFileCapture(
   file: string,
   args: string[],
@@ -210,6 +320,18 @@ export async function runHostEvidenceRequest(
 ): Promise<HostEvidenceResult> {
   let commandText = '';
   try {
+    if (request.action === 'ejclaw_role_runtime_config') {
+      commandText = `internal:${request.action}`;
+      return {
+        ok: true,
+        action: request.action,
+        command: commandText,
+        stdout: truncateHostEvidenceText(buildRoleRuntimeConfigEvidence()),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+
     if (isDbEvidenceAction(request.action)) {
       commandText = `internal:${request.action}`;
       return {

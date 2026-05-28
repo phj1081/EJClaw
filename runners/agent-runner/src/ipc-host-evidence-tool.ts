@@ -79,7 +79,7 @@ export function registerHostEvidenceTools(
 
   server.tool(
     'read_host_evidence',
-    'Read host-side deployment evidence through a narrow allowlist. Use this instead of broad shell access when reviewer/arbiter needs service status, deploy state, DB state, GitHub PR state, or artifact metadata.',
+    'Read host-side deployment evidence through a narrow allowlist. Use this instead of broad shell access when reviewer/arbiter needs service status, role runtime config, deploy state, DB state, GitHub PR state, or artifact metadata.',
     {
       action: z
         .enum(HOST_EVIDENCE_ACTIONS)

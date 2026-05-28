@@ -4,11 +4,14 @@ import path from 'path';
 export const HOST_EVIDENCE_ACTIONS = [
   'ejclaw_service_status',
   'ejclaw_service_logs',
+  'ejclaw_role_runtime_config',
   'ejclaw_deploy_state',
   'ejclaw_artifact_metadata',
   'db_paired_task_status',
   'db_paired_task_flow',
   'db_recent_paired_failures',
+  'db_recent_scheduled_tasks',
+  'db_scheduled_task_runs',
   'github_pr_status',
   'github_pr_diff_stat',
   'github_run_status',
@@ -20,6 +23,8 @@ export const DB_EVIDENCE_ACTIONS = [
   'db_paired_task_status',
   'db_paired_task_flow',
   'db_recent_paired_failures',
+  'db_recent_scheduled_tasks',
+  'db_scheduled_task_runs',
 ] as const;
 
 export const DEPLOY_EVIDENCE_ACTIONS = [

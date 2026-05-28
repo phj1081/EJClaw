@@ -1,11 +1,16 @@
 import type { Database } from 'bun:sqlite';
 
+import { parseGitHubCiMetadata } from './github-ci.js';
+import { extractWatchCiTarget } from './task-watch-status.js';
+
 type SqlBinding = string | number | bigint | boolean | null | Uint8Array;
 
 export const DB_EVIDENCE_ACTIONS = [
   'db_paired_task_status',
   'db_paired_task_flow',
   'db_recent_paired_failures',
+  'db_recent_scheduled_tasks',
+  'db_scheduled_task_runs',
 ] as const;
 
 export type DbEvidenceAction = (typeof DB_EVIDENCE_ACTIONS)[number];
@@ -331,6 +336,155 @@ function runRecentPairedFailures(
   });
 }
 
+function normalizeScheduledTaskEvidenceRow(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const prompt = typeof row.prompt === 'string' ? row.prompt : '';
+  const metadata = parseGitHubCiMetadata(
+    typeof row.ci_metadata === 'string' ? row.ci_metadata : null,
+  );
+
+  return {
+    id: row.id,
+    group_folder: row.group_folder,
+    chat_jid: row.chat_jid,
+    agent_type: row.agent_type,
+    room_role: row.room_role,
+    ci_provider: row.ci_provider,
+    ci_repo: metadata?.repo ?? null,
+    ci_run_id: metadata?.run_id ?? null,
+    ci_poll_count: metadata?.poll_count ?? null,
+    ci_consecutive_errors: metadata?.consecutive_errors ?? null,
+    ci_last_checked_at: metadata?.last_checked_at ?? null,
+    ci_target: extractWatchCiTarget(prompt),
+    max_duration_ms: row.max_duration_ms,
+    status_message_id: row.status_message_id,
+    status_started_at: row.status_started_at,
+    schedule_type: row.schedule_type,
+    schedule_value: row.schedule_value,
+    next_run: row.next_run,
+    last_run: row.last_run,
+    last_result_chars: row.last_result_chars,
+    status: row.status,
+    created_at: row.created_at,
+    prompt_chars: row.prompt_chars,
+  };
+}
+
+function runRecentScheduledTasks(
+  database: Database,
+  request: DbEvidenceRequest,
+  scope: DbEvidenceScope,
+): string {
+  const minutes = normalizeDbEvidenceMinutes(request.minutes);
+  const limit = normalizeDbEvidenceLimit(request.limit);
+  const cutoff = new Date(Date.now() - minutes * 60_000).toISOString();
+  const groupScope = groupScopeClause(scope);
+
+  const rows = database
+    .prepare(
+      `
+        SELECT id,
+               group_folder,
+               chat_jid,
+               agent_type,
+               room_role,
+               ci_provider,
+               ci_metadata,
+               max_duration_ms,
+               status_message_id,
+               status_started_at,
+               prompt,
+               length(prompt) AS prompt_chars,
+               schedule_type,
+               schedule_value,
+               next_run,
+               last_run,
+               length(last_result) AS last_result_chars,
+               status,
+               created_at
+          FROM scheduled_tasks
+         WHERE (
+             created_at >= ?
+             OR last_run >= ?
+             OR next_run >= ?
+             OR status_started_at >= ?
+             OR status IN ('active', 'paused')
+           )
+           ${groupScope.clause}
+         ORDER BY COALESCE(last_run, status_started_at, next_run, created_at) DESC
+         LIMIT ?
+      `,
+    )
+    .all(cutoff, cutoff, cutoff, cutoff, ...groupScope.params, limit) as Array<
+    Record<string, unknown>
+  >;
+
+  return stringifyEvidence({
+    action: request.action,
+    window_minutes: minutes,
+    cutoff,
+    tasks: rows.map(normalizeScheduledTaskEvidenceRow),
+  });
+}
+
+function runScheduledTaskRuns(
+  database: Database,
+  request: DbEvidenceRequest,
+  scope: DbEvidenceScope,
+): string {
+  const minutes = normalizeDbEvidenceMinutes(request.minutes);
+  const limit = normalizeDbEvidenceLimit(request.limit);
+  const cutoff = new Date(Date.now() - minutes * 60_000).toISOString();
+  const taskId = request.taskId
+    ? normalizeDbEvidenceTaskId(request.taskId)
+    : null;
+  const params: SqlBinding[] = [cutoff];
+  const clauses = ['logs.run_at >= ?'];
+
+  if (taskId) {
+    clauses.push('logs.task_id = ?');
+    params.push(taskId);
+  }
+  if (!scope.isMain) {
+    clauses.push('tasks.group_folder = ?');
+    params.push(scope.sourceGroup);
+  }
+  params.push(limit);
+
+  const rows = database
+    .prepare(
+      `
+        SELECT logs.task_id,
+               tasks.group_folder,
+               tasks.chat_jid,
+               tasks.agent_type,
+               tasks.room_role,
+               tasks.ci_provider,
+               logs.run_at,
+               logs.duration_ms,
+               logs.status,
+               length(logs.result) AS result_chars,
+               length(logs.error) AS error_chars
+          FROM task_run_logs logs
+          LEFT JOIN scheduled_tasks tasks
+            ON tasks.id = logs.task_id
+         WHERE ${clauses.join(' AND ')}
+         ORDER BY logs.run_at DESC, logs.id DESC
+         LIMIT ?
+      `,
+    )
+    .all(...params);
+
+  return stringifyEvidence({
+    action: request.action,
+    window_minutes: minutes,
+    cutoff,
+    task_id: taskId,
+    runs: rows,
+  });
+}
+
 export function runDbEvidenceRequest(
   database: Database,
   request: DbEvidenceRequest,
@@ -343,5 +497,9 @@ export function runDbEvidenceRequest(
       return runPairedTaskFlow(database, request, scope);
     case 'db_recent_paired_failures':
       return runRecentPairedFailures(database, request, scope);
+    case 'db_recent_scheduled_tasks':
+      return runRecentScheduledTasks(database, request, scope);
+    case 'db_scheduled_task_runs':
+      return runScheduledTaskRuns(database, request, scope);
   }
 }
