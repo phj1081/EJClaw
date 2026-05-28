@@ -672,7 +672,7 @@ describe('runAgentForGroup room memory', () => {
     });
     const config = await import('./config.js');
     vi.mocked(config.getRoleModelConfig).mockReturnValue({
-      model: 'claude-opus-4-6',
+      model: 'claude-opus-4-8',
       effort: 'high',
       fallbackEnabled: true,
     });

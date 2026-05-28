@@ -30,7 +30,8 @@ REVIEWER_AGENT_TYPE=claude-code
 # ARBITER_AGENT_TYPE=claude-code
 
 # provider 기본 모델
-CLAUDE_MODEL=claude-opus-4-7
+# 공식 Claude API 모델 ID입니다.
+CLAUDE_MODEL=claude-opus-4-8
 CLAUDE_EFFORT=high
 CLAUDE_THINKING=adaptive
 CODEX_MODEL=gpt-5.5
@@ -41,11 +42,11 @@ OWNER_MODEL=gpt-5.5
 OWNER_EFFORT=xhigh
 OWNER_FALLBACK_ENABLED=true
 
-REVIEWER_MODEL=claude-opus-4-7
+REVIEWER_MODEL=claude-opus-4-8
 REVIEWER_EFFORT=high
 REVIEWER_FALLBACK_ENABLED=true
 
-ARBITER_MODEL=claude-sonnet-4-6
+ARBITER_MODEL=claude-opus-4-8
 ARBITER_EFFORT=high
 ARBITER_FALLBACK_ENABLED=true
 ```
