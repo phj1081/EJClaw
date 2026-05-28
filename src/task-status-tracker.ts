@@ -58,8 +58,7 @@ export function createTaskStatusTracker(
       nextRun,
     })}`;
 
-    const sendFreshTerminalStatus = phase === 'completed';
-    if (statusMessageId && !sendFreshTerminalStatus) {
+    if (statusMessageId) {
       try {
         await transport.editTrackedMessage!(
           task.chat_jid,
@@ -82,18 +81,6 @@ export function createTaskStatusTracker(
         statusMessageId = null;
         persist();
       }
-    } else if (statusMessageId && sendFreshTerminalStatus) {
-      logger.debug(
-        {
-          taskId: task.id,
-          chatJid: task.chat_jid,
-          statusMessageId,
-          phase,
-        },
-        'Sending terminal watcher status as a new message instead of editing the existing status message',
-      );
-      statusMessageId = null;
-      persist();
     }
 
     const nextMessageId = await transport.sendTrackedMessage!(

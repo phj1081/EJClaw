@@ -1741,7 +1741,7 @@ Check the run.
     expect(updatedTask?.status_started_at).toBe('2026-03-19T07:00:00.000Z');
   });
 
-  it('sends a fresh watcher status message when the watcher completes', async () => {
+  it('edits the existing watcher status message when the watcher completes', async () => {
     vi.setSystemTime(new Date('2026-03-19T07:05:00.000Z'));
     createTask({
       id: 'task-watch-status-completed',
@@ -1780,18 +1780,20 @@ Check the run.
 
     await tracker.update('completed');
 
-    expect(editTrackedMessage).not.toHaveBeenCalled();
-    expect(sendTrackedMessage).toHaveBeenCalledWith(
+    expect(editTrackedMessage).toHaveBeenCalledWith(
       'shared@g.us',
+      'msg-old',
       expect.stringContaining(`${TASK_STATUS_MESSAGE_PREFIX}CI 감시 종료:`),
     );
-    expect(sendTrackedMessage).toHaveBeenCalledWith(
+    expect(editTrackedMessage).toHaveBeenCalledWith(
       'shared@g.us',
+      'msg-old',
       expect.stringContaining('- 상태: 완료'),
     );
+    expect(sendTrackedMessage).not.toHaveBeenCalled();
 
     const updatedTask = getTaskById('task-watch-status-completed');
-    expect(updatedTask?.status_message_id).toBe('msg-terminal');
+    expect(updatedTask?.status_message_id).toBe('msg-old');
     expect(updatedTask?.status_started_at).toBe('2026-03-19T07:00:00.000Z');
   });
 

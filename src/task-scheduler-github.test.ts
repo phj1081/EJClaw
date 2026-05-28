@@ -44,6 +44,8 @@ import type { ScheduledTask } from './types.js';
 
 function buildSchedulerDeps(overrides: {
   sendMessage?: SchedulerDependencies['sendMessage'];
+  sendTrackedMessage?: SchedulerDependencies['sendTrackedMessage'];
+  editTrackedMessage?: SchedulerDependencies['editTrackedMessage'];
   enqueueMessageCheck?: (chatJid: string, ipcDir?: string) => void;
 }): SchedulerDependencies {
   return {
@@ -55,6 +57,8 @@ function buildSchedulerDeps(overrides: {
     } as any,
     onProcess: () => {},
     sendMessage: overrides.sendMessage ?? vi.fn(async () => {}),
+    sendTrackedMessage: overrides.sendTrackedMessage,
+    editTrackedMessage: overrides.editTrackedMessage,
   };
 }
 
@@ -90,6 +94,8 @@ function createReviewReadyPairedTask(now: string): void {
 function createGithubWatcherTask(overrides: {
   id?: string;
   roomRole?: ScheduledTask['room_role'];
+  statusMessageId?: string | null;
+  statusStartedAt?: string | null;
   now: string;
 }): ScheduledTask {
   const taskId = overrides.id ?? 'task-github-owner-complete';
@@ -118,6 +124,8 @@ Managed by host-driven watcher.
     context_mode: 'isolated',
     next_run: overrides.now,
     status: 'active',
+    status_message_id: overrides.statusMessageId,
+    status_started_at: overrides.statusStartedAt,
     created_at: overrides.now,
   });
   return getTaskById(taskId)!;
@@ -150,6 +158,102 @@ describe('GitHub CI watcher scheduler', () => {
       'shared@g.us',
       'CI 완료: GitHub Actions run 777777\n판정: 성공',
     );
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(
+      'shared@g.us',
+      expect.stringContaining('shared-group'),
+    );
+    expect(getRecentChatMessages('shared@g.us', 5).at(-1)).toMatchObject({
+      sender: 'ci-watcher',
+      sender_name: 'CI watcher',
+      is_bot_message: false,
+      message_source_kind: 'trusted_external_bot',
+      content:
+        '[CI watcher completed]\nCI 완료: GitHub Actions run 777777\n판정: 성공',
+    });
+    expect(getTaskById(task.id)).toBeUndefined();
+  });
+
+  it('queues an owner turn even when the paired task already closed before CI completion', async () => {
+    checkGitHubActionsRunMock.mockResolvedValueOnce({
+      terminal: true,
+      resultSummary: '성공: owner/repo run 777777',
+      completionMessage: 'CI 완료: GitHub Actions run 777777\n판정: 성공',
+    });
+    const now = '2026-02-22T00:00:00.000Z';
+    const task = createGithubWatcherTask({ now, roomRole: 'owner' });
+    const enqueueMessageCheck = vi.fn();
+
+    await runGithubCiTask(task, buildSchedulerDeps({ enqueueMessageCheck }));
+
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(
+      'shared@g.us',
+      expect.stringContaining('shared-group'),
+    );
+    expect(getRecentChatMessages('shared@g.us', 5).at(-1)).toMatchObject({
+      sender: 'ci-watcher',
+      sender_name: 'CI watcher',
+      is_bot_message: false,
+      message_source_kind: 'trusted_external_bot',
+      content:
+        '[CI watcher completed]\nCI 완료: GitHub Actions run 777777\n판정: 성공',
+    });
+    expect(getTaskById(task.id)).toBeUndefined();
+  });
+
+  it('does not queue owner wake-up for non-owner CI watchers', async () => {
+    checkGitHubActionsRunMock.mockResolvedValueOnce({
+      terminal: true,
+      resultSummary: '성공: owner/repo run 777777',
+      completionMessage: 'CI 완료: GitHub Actions run 777777\n판정: 성공',
+    });
+    const now = '2026-02-22T00:00:00.000Z';
+    createReviewReadyPairedTask(now);
+    const task = createGithubWatcherTask({ now, roomRole: 'reviewer' });
+    const enqueueMessageCheck = vi.fn();
+
+    await runGithubCiTask(task, buildSchedulerDeps({ enqueueMessageCheck }));
+
+    expect(enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(getRecentChatMessages('shared@g.us', 5)).toEqual([]);
+    expect(getTaskById(task.id)).toBeUndefined();
+  });
+
+  it('edits the tracked watcher status and still wakes owner without a duplicate bot completion message', async () => {
+    checkGitHubActionsRunMock.mockResolvedValueOnce({
+      terminal: true,
+      resultSummary: '성공: owner/repo run 777777',
+      completionMessage: 'CI 완료: GitHub Actions run 777777\n판정: 성공',
+    });
+    const now = '2026-02-22T00:00:00.000Z';
+    createReviewReadyPairedTask(now);
+    const task = createGithubWatcherTask({
+      now,
+      roomRole: 'owner',
+      statusMessageId: 'status-msg-1',
+      statusStartedAt: now,
+    });
+    const sendMessage = vi.fn(async () => {});
+    const sendTrackedMessage = vi.fn(async () => 'status-msg-new');
+    const editTrackedMessage = vi.fn(async () => {});
+    const enqueueMessageCheck = vi.fn();
+
+    await runGithubCiTask(
+      task,
+      buildSchedulerDeps({
+        sendMessage,
+        sendTrackedMessage,
+        editTrackedMessage,
+        enqueueMessageCheck,
+      }),
+    );
+
+    expect(editTrackedMessage).toHaveBeenCalledWith(
+      'shared@g.us',
+      'status-msg-1',
+      expect.stringContaining('CI 감시 종료: GitHub Actions run 777777'),
+    );
+    expect(sendTrackedMessage).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
     expect(enqueueMessageCheck).toHaveBeenCalledWith(
       'shared@g.us',
       expect.stringContaining('shared-group'),

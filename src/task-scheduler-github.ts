@@ -2,7 +2,6 @@ import { getErrorMessage } from './utils.js';
 
 import {
   deleteTask,
-  getLatestOpenPairedTaskForChat,
   getTaskById,
   logTaskRun,
   storeChatMetadata,
@@ -34,11 +33,6 @@ function enqueueOwnerAfterTerminalCiWatcher(args: {
     return;
   }
 
-  const pairedTask = getLatestOpenPairedTaskForChat(args.task.chat_jid);
-  if (!pairedTask) {
-    return;
-  }
-
   const timestamp = new Date().toISOString();
   const content = [
     '[CI watcher completed]',
@@ -46,7 +40,7 @@ function enqueueOwnerAfterTerminalCiWatcher(args: {
   ].join('\n');
   storeChatMetadata(args.task.chat_jid, timestamp, undefined, 'discord', true);
   storeMessage({
-    id: `watch-ci-completed:${args.task.id}:${Date.now()}`,
+    id: `watch-ci-completed:${args.task.id}`,
     chat_jid: args.task.chat_jid,
     sender: 'ci-watcher',
     sender_name: 'CI watcher',
@@ -65,8 +59,6 @@ function enqueueOwnerAfterTerminalCiWatcher(args: {
       taskId: args.task.id,
       chatJid: args.task.chat_jid,
       groupFolder: args.task.group_folder,
-      pairedTaskId: pairedTask.id,
-      pairedTaskStatus: pairedTask.status,
     },
     'Queued owner follow-up after terminal CI watcher completion',
   );
@@ -107,7 +99,7 @@ export async function runGithubCiTask(
 
     if (check.terminal) {
       await statusTracker.update('completed');
-      if (check.completionMessage) {
+      if (!statusTracker.enabled && check.completionMessage) {
         await sendScheduledMessage(
           deps,
           task.chat_jid,
