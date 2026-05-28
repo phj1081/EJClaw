@@ -64,7 +64,10 @@ describe('GitHub watcher delivery identity', () => {
 
     const task = getTaskById('task-github-codex-paired-complete');
     expect(task).toBeDefined();
-    const deps = { sendMessage: vi.fn(async () => {}) } as any;
+    const deps = {
+      sendMessage: vi.fn(async () => {}),
+      queue: { enqueueMessageCheck: vi.fn() },
+    } as any;
 
     await runGithubCiTask(task!, deps);
 
