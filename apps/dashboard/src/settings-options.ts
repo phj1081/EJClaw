@@ -1,6 +1,6 @@
 export const PRESET_MODELS = {
   codex: ['gpt-5.5', 'gpt-5.5-pro', 'gpt-5.4', 'gpt-5.3-codex'],
-  claude: ['claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6'],
+  claude: ['claude-opus-4-8'],
 } as const;
 
 export type AgentType = 'claude-code' | 'codex';

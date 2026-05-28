@@ -531,7 +531,7 @@ export const messages = {
         modelDefault: '기본값 (.env 상속)',
         modelCustom: '직접 입력…',
         modelCustomLabel: '모델 ID',
-        modelPlaceholder: '예: gpt-5.5, claude-opus-4-7',
+        modelPlaceholder: '예: gpt-5.5, claude-opus-4-8',
         groupCodex: 'Codex',
         groupClaude: 'Claude',
         groupCustom: '사용자 지정',
@@ -561,7 +561,7 @@ export const messages = {
           '~/.codex/config.toml [features].fast_mode — GPT 5.5 등에서 응답 속도를 높입니다. 사용량이 더 듭니다.',
         claudeFast: 'Claude',
         claudeFastHint:
-          '~/.claude/settings.json fastMode — Opus 4.x(4.6·4.7 등)에서 세션 settings.json으로 동기화됩니다.',
+          '~/.claude/settings.json fastMode — Opus 4.8에서 세션 settings.json으로 동기화됩니다.',
         fastModeApplyHint:
           '스택 재시작 없이 다음 Codex/Claude 작업부터 적용됩니다.',
         goal: 'Goals (/goal)',
@@ -964,7 +964,7 @@ export const messages = {
         modelDefault: 'Default (.env)',
         modelCustom: 'Custom…',
         modelCustomLabel: 'Model ID',
-        modelPlaceholder: 'e.g. gpt-5.5, claude-opus-4-7',
+        modelPlaceholder: 'e.g. gpt-5.5, claude-opus-4-8',
         groupCodex: 'Codex',
         groupClaude: 'Claude',
         groupCustom: 'Custom',
@@ -994,7 +994,7 @@ export const messages = {
           '~/.codex/config.toml [features].fast_mode — faster responses on GPT 5.5 and newer; higher usage.',
         claudeFast: 'Claude',
         claudeFastHint:
-          '~/.claude/settings.json fastMode — synced into session settings.json for Opus 4.x (4.6, 4.7, …).',
+          '~/.claude/settings.json fastMode — synced into session settings.json for Opus 4.8.',
         fastModeApplyHint:
           'Applies on the next Codex/Claude run. No stack restart required.',
         goal: 'Goals (/goal)',
@@ -1393,7 +1393,7 @@ export const messages = {
         modelDefault: '默认 (.env)',
         modelCustom: '自定义…',
         modelCustomLabel: '模型 ID',
-        modelPlaceholder: '例如 gpt-5.5, claude-opus-4-7',
+        modelPlaceholder: '例如 gpt-5.5, claude-opus-4-8',
         groupCodex: 'Codex',
         groupClaude: 'Claude',
         groupCustom: '自定义',
@@ -1421,7 +1421,7 @@ export const messages = {
           '~/.codex/config.toml [features].fast_mode — GPT 5.5 等更快响应，用量更高。',
         claudeFast: 'Claude',
         claudeFastHint:
-          '~/.claude/settings.json fastMode — 同步到会话 settings.json，适用于 Opus 4.x（4.6、4.7 等）。',
+          '~/.claude/settings.json fastMode — 同步到会话 settings.json，适用于 Opus 4.8。',
         fastModeApplyHint: '无需重启栈，下次 Codex/Claude 任务起生效。',
         goal: 'Goals (/goal)',
         goalHint:
@@ -1821,7 +1821,7 @@ export const messages = {
         modelDefault: 'デフォルト (.env)',
         modelCustom: 'カスタム…',
         modelCustomLabel: 'モデル ID',
-        modelPlaceholder: '例: gpt-5.5, claude-opus-4-7',
+        modelPlaceholder: '例: gpt-5.5, claude-opus-4-8',
         groupCodex: 'Codex',
         groupClaude: 'Claude',
         groupCustom: 'カスタム',
@@ -1851,7 +1851,7 @@ export const messages = {
           '~/.codex/config.toml [features].fast_mode — GPT 5.5 などで応答を高速化。使用量は増えます。',
         claudeFast: 'Claude',
         claudeFastHint:
-          '~/.claude/settings.json fastMode — セッション settings.json に同期。Opus 4.x（4.6・4.7 等）向け。',
+          '~/.claude/settings.json fastMode — セッション settings.json に同期。Opus 4.8 向け。',
         fastModeApplyHint:
           'スタック再起動不要。次の Codex/Claude 実行から反映されます。',
         goal: 'Goals (/goal)',
