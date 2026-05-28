@@ -13,6 +13,8 @@ describe('host evidence helpers', () => {
     expect(isHostEvidenceAction('db_paired_task_status')).toBe(true);
     expect(isHostEvidenceAction('ejclaw_deploy_state')).toBe(true);
     expect(isHostEvidenceAction('github_pr_status')).toBe(true);
+    expect(isHostEvidenceAction('github_run_jobs')).toBe(true);
+    expect(isHostEvidenceAction('github_workflow_file')).toBe(true);
     expect(isHostEvidenceAction('rm -rf /')).toBe(false);
   });
 

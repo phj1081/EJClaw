@@ -54,6 +54,9 @@ export async function handleHostEvidenceRequest(
     repo: typeof data.repo === 'string' ? data.repo : undefined,
     prNumber: typeof data.pr_number === 'number' ? data.pr_number : undefined,
     runId: typeof data.run_id === 'number' ? data.run_id : undefined,
+    workflowPath:
+      typeof data.workflow_path === 'string' ? data.workflow_path : undefined,
+    ref: typeof data.ref === 'string' ? data.ref : undefined,
     artifactKind:
       typeof data.artifact_kind === 'string' ? data.artifact_kind : undefined,
     sourceGroup,

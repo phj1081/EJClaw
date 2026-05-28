@@ -4,6 +4,8 @@ export const GITHUB_EVIDENCE_ACTIONS = [
   'github_pr_status',
   'github_pr_diff_stat',
   'github_run_status',
+  'github_run_jobs',
+  'github_workflow_file',
 ] as const;
 
 export type GitHubEvidenceAction = (typeof GITHUB_EVIDENCE_ACTIONS)[number];
@@ -13,15 +15,20 @@ export interface GitHubEvidenceRequest {
   repo?: string;
   prNumber?: number;
   runId?: number;
+  workflowPath?: string;
+  ref?: string;
 }
 
 interface GitHubCommandSpec {
   file: string;
   args: string[];
   commandText: string;
+  decodeBase64Stdout?: boolean;
 }
 
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const WORKFLOW_PATH_PATTERN = /^\.github\/workflows\/[A-Za-z0-9_.-]+\.ya?ml$/;
+const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/;
 const COMMAND_TIMEOUT_MS = 10_000;
 const COMMAND_MAX_BUFFER = 2 * 1024 * 1024;
 const MAX_OUTPUT_CHARS = 24_000;
@@ -51,6 +58,32 @@ export function normalizePositiveInteger(
     throw new Error(`Missing or invalid ${label} for GitHub evidence`);
   }
   return value;
+}
+
+export function normalizeGitHubWorkflowPath(value?: string): string {
+  const workflowPath = value?.trim();
+  if (!workflowPath || !WORKFLOW_PATH_PATTERN.test(workflowPath)) {
+    throw new Error(`Unsupported GitHub workflow path for evidence: ${value}`);
+  }
+  return workflowPath;
+}
+
+export function normalizeGitHubRef(value?: string): string {
+  const ref = value?.trim();
+  if (
+    !ref ||
+    ref.includes('..') ||
+    ref.includes('//') ||
+    ref.endsWith('/') ||
+    !REF_PATTERN.test(ref)
+  ) {
+    throw new Error(`Missing or invalid ref for GitHub evidence`);
+  }
+  return ref;
+}
+
+export function decodeGitHubContentBase64(value: string): string {
+  return Buffer.from(value.replace(/\s+/g, ''), 'base64').toString('utf8');
 }
 
 export function buildGitHubEvidenceCommand(
@@ -102,6 +135,35 @@ export function buildGitHubEvidenceCommand(
         commandText: `gh ${args.join(' ')}`,
       };
     }
+    case 'github_run_jobs': {
+      const runId = normalizePositiveInteger(request.runId, 'run_id');
+      const args = [
+        'run',
+        'view',
+        String(runId),
+        '--repo',
+        repo,
+        '--json',
+        'databaseId,name,status,conclusion,url,headBranch,headSha,jobs',
+      ];
+      return {
+        file: 'gh',
+        args,
+        commandText: `gh ${args.join(' ')}`,
+      };
+    }
+    case 'github_workflow_file': {
+      const workflowPath = normalizeGitHubWorkflowPath(request.workflowPath);
+      const ref = normalizeGitHubRef(request.ref);
+      const endpoint = `repos/${repo}/contents/${workflowPath}?ref=${encodeURIComponent(ref)}`;
+      const args = ['api', endpoint, '--jq', '.content'];
+      return {
+        file: 'gh',
+        args,
+        commandText: `gh ${args.join(' ')}`,
+        decodeBase64Stdout: true,
+      };
+    }
   }
 }
 
@@ -142,9 +204,12 @@ export function runGitHubEvidenceCommand(
           );
           return;
         }
+        const normalizedStdout = command.decodeBase64Stdout
+          ? decodeGitHubContentBase64(stdout)
+          : stdout;
         resolve({
           command: command.commandText,
-          stdout: truncateGitHubEvidenceText(stdout),
+          stdout: truncateGitHubEvidenceText(normalizedStdout),
           stderr: truncateGitHubEvidenceText(stderr),
         });
       },

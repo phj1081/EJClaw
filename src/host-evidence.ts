@@ -44,6 +44,8 @@ export interface HostEvidenceRequest {
   repo?: string;
   prNumber?: number;
   runId?: number;
+  workflowPath?: string;
+  ref?: string;
   artifactKind?: string;
   sourceGroup?: string;
   isMain?: boolean;
@@ -282,6 +284,8 @@ export async function runHostEvidenceRequest(
         repo: request.repo,
         prNumber: request.prNumber,
         runId: request.runId,
+        workflowPath: request.workflowPath,
+        ref: request.ref,
       });
       commandText = githubResult.command;
       return {

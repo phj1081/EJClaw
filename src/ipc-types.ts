@@ -153,6 +153,8 @@ export interface TaskIpcPayload {
   repo?: string;
   pr_number?: number;
   run_id?: number;
+  workflow_path?: string;
+  ref?: string;
   artifact_kind?: string;
   profile?: string;
   expected_snapshot_id?: string;

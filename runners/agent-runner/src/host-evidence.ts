@@ -12,6 +12,8 @@ export const HOST_EVIDENCE_ACTIONS = [
   'github_pr_status',
   'github_pr_diff_stat',
   'github_run_status',
+  'github_run_jobs',
+  'github_workflow_file',
 ] as const;
 
 export const DB_EVIDENCE_ACTIONS = [
@@ -29,6 +31,8 @@ export const GITHUB_EVIDENCE_ACTIONS = [
   'github_pr_status',
   'github_pr_diff_stat',
   'github_run_status',
+  'github_run_jobs',
+  'github_workflow_file',
 ] as const;
 
 export const ARTIFACT_EVIDENCE_KINDS = [

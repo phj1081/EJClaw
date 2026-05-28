@@ -114,6 +114,16 @@ export function registerHostEvidenceTools(
         .describe('Only for GitHub evidence, in owner/repo form.'),
       pr_number: z.number().int().positive().optional(),
       run_id: z.number().int().positive().optional(),
+      workflow_path: z
+        .string()
+        .optional()
+        .describe(
+          'Only for github_workflow_file, e.g. .github/workflows/ci.yml.',
+        ),
+      ref: z
+        .string()
+        .optional()
+        .describe('Only for github_workflow_file; branch, tag, or commit SHA.'),
       artifact_kind: z.enum(ARTIFACT_EVIDENCE_KINDS).optional(),
     },
     async (args) =>
@@ -129,6 +139,8 @@ export function registerHostEvidenceTools(
         repo: args.repo,
         pr_number: args.pr_number,
         run_id: args.run_id,
+        workflow_path: args.workflow_path,
+        ref: args.ref,
         artifact_kind: args.artifact_kind,
       }),
   );
@@ -176,6 +188,16 @@ export function registerHostEvidenceTools(
       repo: z.string().describe('GitHub repository in owner/repo form.'),
       pr_number: z.number().int().positive().optional(),
       run_id: z.number().int().positive().optional(),
+      workflow_path: z
+        .string()
+        .optional()
+        .describe(
+          'Only for github_workflow_file, e.g. .github/workflows/ci.yml.',
+        ),
+      ref: z
+        .string()
+        .optional()
+        .describe('Only for github_workflow_file; branch, tag, or commit SHA.'),
     },
     async (args) =>
       requestHostEvidence(options, {
@@ -183,6 +205,8 @@ export function registerHostEvidenceTools(
         repo: args.repo,
         pr_number: args.pr_number,
         run_id: args.run_id,
+        workflow_path: args.workflow_path,
+        ref: args.ref,
       }),
   );
 }

@@ -95,6 +95,8 @@ describe('host evidence IPC', () => {
       repo: undefined,
       prNumber: undefined,
       runId: undefined,
+      workflowPath: undefined,
+      ref: undefined,
       artifactKind: undefined,
       sourceGroup: 'other-group',
       isMain: false,
