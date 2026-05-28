@@ -34,7 +34,7 @@ import {
   getEffectiveChannelLease,
   hasReviewerLease,
 } from './service-routing.js';
-import type { AgentType, RegisteredGroup } from './types.js';
+import type { AgentType, PairedRoomRole, RegisteredGroup } from './types.js';
 import type { StoredRoomSkillOverride } from './db/rooms.js';
 
 // writeCodexApiKeyAuth removed — Codex uses OAuth only.
@@ -173,6 +173,7 @@ function upsertEjclawMcpServerSection(args: {
   groupFolder: string;
   isMain: boolean;
   agentType: AgentType;
+  roomRole?: PairedRoomRole;
   workDir?: string;
 }): void {
   const stripEjclawMcpServerSections = (input: string): string => {
@@ -221,6 +222,7 @@ EJCLAW_CHAT_JID = ${JSON.stringify(args.chatJid)}
 EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.groupFolder)}
 EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
 EJCLAW_AGENT_TYPE = ${JSON.stringify(args.agentType)}
+${args.roomRole ? `EJCLAW_ROOM_ROLE = ${JSON.stringify(args.roomRole)}\n` : ''}
 ${args.workDir ? `EJCLAW_WORK_DIR = ${JSON.stringify(args.workDir)}\n` : ''}
 `;
   fs.writeFileSync(args.sessionConfigPath, toml.trimEnd() + '\n' + mcpSection);
@@ -347,6 +349,7 @@ function prepareCodexSessionEnvironment(args: {
   sessionRootDir: string;
   chatJid: string;
   isMain: boolean;
+  roomRole?: PairedRoomRole;
   isPairedRoom: boolean;
   useFailoverPromptPack: boolean;
   memoryBriefing?: string;
@@ -489,6 +492,7 @@ function prepareCodexSessionEnvironment(args: {
       groupFolder: args.group.folder,
       isMain: args.isMain,
       agentType: 'codex',
+      roomRole: args.roomRole,
       workDir:
         args.env.EJCLAW_WORK_DIR || args.group.workDir || args.projectRoot,
     });
@@ -520,6 +524,7 @@ export function prepareGroupEnvironment(
     runtimeTaskId?: string;
     useTaskScopedSession?: boolean;
     skillOverrides?: StoredRoomSkillOverride[];
+    roomRole?: PairedRoomRole;
   },
 ): PreparedGroupEnvironment {
   const projectRoot = process.cwd();
@@ -659,6 +664,7 @@ export function prepareGroupEnvironment(
       sessionRootDir,
       chatJid,
       isMain,
+      roomRole: options?.roomRole,
       isPairedRoom,
       useFailoverPromptPack: useCodexReviewFailoverPromptPack,
       memoryBriefing: options?.memoryBriefing,
@@ -799,6 +805,7 @@ export function prepareReadonlySessionEnvironment(args: {
         groupFolder,
         isMain,
         agentType,
+        roomRole: role,
         workDir,
       });
     }

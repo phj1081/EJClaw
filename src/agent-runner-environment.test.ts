@@ -118,6 +118,21 @@ function writeSkill(dir: string, name: string): void {
   );
 }
 
+function resetRoutingMocks(): void {
+  vi.mocked(config.isReviewService).mockReturnValue(false);
+  vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(false);
+  vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+    chat_jid: 'dc:test',
+    owner_service_id: 'claude',
+    reviewer_service_id: 'codex-main',
+    arbiter_service_id: null,
+    owner_failover_active: false,
+    activated_at: null,
+    reason: null,
+    explicit: false,
+  });
+}
+
 describe('prepareGroupEnvironment codex auth handling', () => {
   let tempRoot: string;
   let previousCwd: string;
@@ -377,6 +392,79 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     const segments = agents.trim().split('\n\n---\n\n');
 
     expect(segments).toEqual(['platform prompt']);
+  });
+});
+
+describe('prepareGroupEnvironment Codex MCP room role env', () => {
+  let tempRoot: string;
+  let previousCwd: string;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-agent-env-'));
+    previousCwd = process.cwd();
+    process.chdir(tempRoot);
+
+    process.env.EJ_TEST_ROOT = tempRoot;
+    process.env.EJ_TEST_HOME = path.join(tempRoot, 'home');
+    fs.mkdirSync(process.env.EJ_TEST_HOME, { recursive: true });
+
+    mockReadEnvFile.mockReset();
+    mockGetActiveCodexAuthPath.mockReset();
+    resetRoutingMocks();
+  });
+
+  afterEach(() => {
+    process.chdir(previousCwd);
+    delete process.env.EJ_TEST_ROOT;
+    delete process.env.EJ_TEST_HOME;
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  function writeMcpServer(): void {
+    const mcpServerPath = path.join(
+      tempRoot,
+      'runners',
+      'agent-runner',
+      'dist',
+      'ipc-mcp-stdio.js',
+    );
+    fs.mkdirSync(path.dirname(mcpServerPath), { recursive: true });
+    fs.writeFileSync(mcpServerPath, '// test mcp server\n');
+  }
+
+  function readCodexConfigToml(): string {
+    return fs.readFileSync(
+      path.join(
+        tempRoot,
+        'sessions',
+        group.folder,
+        'services',
+        'codex-main',
+        '.codex',
+        'config.toml',
+      ),
+      'utf-8',
+    );
+  }
+
+  it('writes paired owner role into the Codex MCP config env', () => {
+    mockReadEnvFile.mockReturnValue({});
+    writeMcpServer();
+
+    prepareGroupEnvironment(group, false, 'dc:test', {
+      roomRole: 'owner',
+    });
+
+    expect(readCodexConfigToml()).toContain('EJCLAW_ROOM_ROLE = "owner"');
+  });
+
+  it('omits room role from non-paired Codex MCP config env', () => {
+    mockReadEnvFile.mockReturnValue({});
+    writeMcpServer();
+
+    prepareGroupEnvironment(group, true, 'dc:test');
+
+    expect(readCodexConfigToml()).not.toContain('EJCLAW_ROOM_ROLE');
   });
 });
 
@@ -694,6 +782,7 @@ args = ["other.js"]
     expect(toml).toContain('[mcp_servers.ejclaw]');
     expect(toml).toContain('EJCLAW_IPC_DIR = "/workspace/ipc"');
     expect(toml).toContain('EJCLAW_GROUP_FOLDER = "codex-test-group"');
+    expect(toml).toContain('EJCLAW_ROOM_ROLE = "reviewer"');
     expect(toml).toContain('EJCLAW_WORK_DIR = "/workspace/project"');
     expect(toml).not.toContain('old-ipc.js');
     expect(toml).not.toContain('"/old/ipc"');

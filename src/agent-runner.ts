@@ -98,6 +98,7 @@ export async function runAgentProcess(
       runtimeTaskId: input.runtimeTaskId,
       useTaskScopedSession: input.useTaskScopedSession,
       skillOverrides,
+      roomRole: input.roomRoleContext?.role,
     },
   );
 
