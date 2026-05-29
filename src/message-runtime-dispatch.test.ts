@@ -144,4 +144,33 @@ describe('processLoopGroupMessages', () => {
     expect(args.enqueueMessageCheck).not.toHaveBeenCalled();
     expect(args.lastAgentTimestamps).toEqual({ [chatJid]: '12' });
   });
+
+  it('pipes trusted external bot events instead of treating them as human interrupts', async () => {
+    hasReviewerLeaseMock.mockReturnValue(true);
+    const args = defaultArgs({
+      groupMessages: [
+        message({
+          id: 'watch-ci-completed:task-1',
+          sender: 'ci-watcher',
+          sender_name: 'CI watcher',
+          content: '[CI watcher completed]\nCI succeeded',
+          is_from_me: false,
+          is_bot_message: false,
+          message_source_kind: 'trusted_external_bot',
+          seq: 13,
+        }),
+      ],
+      isRunningMessageTurn: vi.fn(() => true),
+    });
+
+    await processLoopGroupMessages(args);
+
+    expect(args.sendQueuedMessage).toHaveBeenCalledWith(
+      chatJid,
+      '[CI watcher completed]\nCI succeeded',
+    );
+    expect(args.closeStdin).not.toHaveBeenCalled();
+    expect(args.enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(args.lastAgentTimestamps).toEqual({ [chatJid]: '13' });
+  });
 });

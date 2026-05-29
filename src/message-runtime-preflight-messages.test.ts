@@ -83,6 +83,14 @@ describe('message-runtime-preflight-messages', () => {
         seq: 13,
         is_bot_message: true,
       }),
+      makeMessage({
+        id: 'trusted-system',
+        content: '[CI watcher completed]',
+        seq: 14,
+        is_from_me: false,
+        is_bot_message: false,
+        message_source_kind: 'trusted_external_bot',
+      }),
     ]);
 
     const messages = getFreshHumanPreflightMessages({

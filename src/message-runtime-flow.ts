@@ -17,6 +17,7 @@ import {
 } from './message-runtime-follow-up.js';
 import {
   advanceLastAgentCursor,
+  isBotOrTrustedSystemMessage,
   resolveCursorKey,
   resolveNextTurnAction,
 } from './message-runtime-rules.js';
@@ -83,10 +84,7 @@ export function isBotOnlyPairedRoomTurn(
   messages: NewMessage[],
 ): boolean {
   return (
-    hasReviewerLease(chatJid) &&
-    messages.every(
-      (message) => message.is_from_me === true || !!message.is_bot_message,
-    )
+    hasReviewerLease(chatJid) && messages.every(isBotOrTrustedSystemMessage)
   );
 }
 

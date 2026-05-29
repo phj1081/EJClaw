@@ -2,6 +2,7 @@ import { getMessagesSinceSeq } from './db.js';
 import {
   filterLoopingPairedBotMessages,
   getProcessableMessages,
+  isExternalHumanMessage,
 } from './message-runtime-rules.js';
 import type { WorkItem } from './db/work-items.js';
 import type { Channel, NewMessage } from './types.js';
@@ -24,9 +25,7 @@ export function getFreshHumanPreflightMessages(args: {
     getProcessableMessages(args.chatJid, preflightRawMessages, args.channel),
     args.failureFinalText,
   );
-  return preflightMessages.filter(
-    (message) => message.is_from_me !== true && !message.is_bot_message,
-  );
+  return preflightMessages.filter(isExternalHumanMessage);
 }
 
 export function hasHumanMessageAfterWorkItem(

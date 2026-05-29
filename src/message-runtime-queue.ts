@@ -15,6 +15,7 @@ import { resolveStoredVisibleVerdict } from './paired-verdict.js';
 import {
   advanceLastAgentCursor,
   finalizeQueuedRunCursor,
+  isExternalHumanMessage,
   resolveActiveRole,
   resolveCursorKeyForRole,
   resolveQueuedPairedTurnRole,
@@ -243,9 +244,7 @@ export async function runQueuedGroupTurn(args: {
     args;
   let currentTask = task;
   const hasHumanMsg = task
-    ? !missedMessages.every(
-        (message) => message.is_from_me === true || !!message.is_bot_message,
-      )
+    ? missedMessages.some(isExternalHumanMessage)
     : !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
   let fallbackMessages = missedMessages;
   if (currentTask !== undefined && hasHumanMsg) {

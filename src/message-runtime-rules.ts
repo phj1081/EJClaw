@@ -26,6 +26,35 @@ import {
 
 const BOT_COLLABORATION_WINDOW_MS = 12 * 60 * 60 * 1000;
 
+export type MessageOriginFlags = Pick<
+  NewMessage,
+  'is_from_me' | 'is_bot_message' | 'message_source_kind'
+>;
+
+export function isTrustedExternalBotMessage(
+  message: Pick<NewMessage, 'message_source_kind'>,
+): boolean {
+  return message.message_source_kind === 'trusted_external_bot';
+}
+
+export function isExternalHumanMessage(message: MessageOriginFlags): boolean {
+  return (
+    message.is_from_me !== true &&
+    !message.is_bot_message &&
+    !isTrustedExternalBotMessage(message)
+  );
+}
+
+export function isBotOrTrustedSystemMessage(
+  message: MessageOriginFlags,
+): boolean {
+  return (
+    message.is_from_me === true ||
+    !!message.is_bot_message ||
+    isTrustedExternalBotMessage(message)
+  );
+}
+
 export function advanceLastAgentCursor(
   lastAgentTimestamps: Record<string, string>,
   saveState: () => void,
@@ -439,9 +468,7 @@ export function createImplicitContinuationTracker(idleTimeout: number) {
         implicitContinuationUntil.delete(chatJid);
         return false;
       }
-      return messages.some(
-        (message) => message.is_from_me !== true && !message.is_bot_message,
-      );
+      return messages.some(isExternalHumanMessage);
     },
   };
 }
@@ -451,9 +478,7 @@ export function shouldSkipBotOnlyCollaboration(
   messages: NewMessage[],
 ): boolean {
   if (hasReviewerLease(chatJid)) return false;
-  const allFromBots = messages.every(
-    (message) => message.is_from_me || !!message.is_bot_message,
-  );
+  const allFromBots = messages.every(isBotOrTrustedSystemMessage);
   if (!allFromBots) return false;
   const lastHuman = getLastHumanMessageTimestamp(chatJid);
   if (!lastHuman) return true;

@@ -9,6 +9,7 @@ import {
   advanceLastAgentCursor,
   filterLoopingPairedBotMessages,
   getProcessableMessages,
+  isExternalHumanMessage,
   resolveCursorKey,
   shouldSkipBotOnlyCollaboration,
 } from './message-runtime-rules.js';
@@ -32,9 +33,7 @@ import type {
 type RuntimeLog = Pick<typeof logger, 'info' | 'debug'>;
 
 function hasExternalHumanMessage(messages: NewMessage[]): boolean {
-  return messages.some(
-    (message) => message.is_from_me !== true && !message.is_bot_message,
-  );
+  return messages.some(isExternalHumanMessage);
 }
 
 export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
