@@ -98,7 +98,7 @@ export interface PairedExecutionLifecycle {
   asyncFinalize(): Promise<void>;
 }
 
-export function createPairedExecutionLifecycle(args: {
+interface CreatePairedExecutionLifecycleArgs {
   pairedExecutionContext?: PreparedPairedExecutionContext;
   pairedTurnIdentity?: PairedTurnIdentity;
   completedRole: PairedRoomRole;
@@ -109,38 +109,138 @@ export function createPairedExecutionLifecycle(args: {
   getCloseReason?: () => string | null;
   onOutput?: (output: AgentOutput) => Promise<void>;
   log: ExecutorLog;
-}): PairedExecutionLifecycle {
-  const {
-    pairedExecutionContext,
-    pairedTurnIdentity,
-    completedRole,
-    chatJid,
-    runId,
-    enqueueMessageCheck,
-    getDirectTerminalDeliveryText,
-    getCloseReason,
-    onOutput,
-    log,
-  } = args;
+}
 
-  let pairedExecutionStatus: 'succeeded' | 'failed' = 'failed';
-  let pairedExecutionSummary: string | null = null;
-  let pairedFinalOutput: string | null = null;
-  let pairedSummaryLocked = false;
-  let pairedExecutionCompleted = false;
-  let pairedExecutionDelegated = false;
-  let pairedSawOutput = false;
-  let pairedTurnOutputPersisted = false;
-  let pairedTurnStateFinalized = false;
-  let leaseHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  const requiresVisibleVerdict =
-    pairedExecutionContext?.requiresVisibleVerdict === true;
-  const missingVisibleVerdictSummary =
-    'Execution completed without a visible terminal verdict.';
-  const wasInterruptedByHumanMessage = (): boolean =>
-    isHumanMessageCloseReason(getCloseReason?.() ?? null);
+type PairedExecutionStatus = 'succeeded' | 'failed';
 
-  const currentRunOwnsActiveAttempt = (reason: string): boolean => {
+interface FinalizeState {
+  directTerminalOutput: string | null;
+  effectiveStatus: PairedExecutionStatus;
+  sawOutputForFollowUp: boolean;
+  interruptedByHumanMessage: boolean;
+}
+
+class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
+  private pairedExecutionStatus: PairedExecutionStatus = 'failed';
+  private pairedExecutionSummary: string | null = null;
+  private pairedFinalOutput: string | null = null;
+  private pairedSummaryLocked = false;
+  private pairedExecutionCompleted = false;
+  private pairedExecutionDelegated = false;
+  private pairedSawOutput = false;
+  private pairedTurnOutputPersisted = false;
+  private pairedTurnStateFinalized = false;
+  private leaseHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(private readonly args: CreatePairedExecutionLifecycleArgs) {
+    if (!this.args.pairedExecutionContext) {
+      return;
+    }
+    this.leaseHeartbeatTimer = setInterval(
+      () => this.heartbeatLeaseIfNeeded(),
+      PAIRED_TASK_EXECUTION_LEASE_HEARTBEAT_MS,
+    );
+    this.leaseHeartbeatTimer.unref?.();
+  }
+
+  updateSummary({
+    outputText,
+    errorText,
+  }: {
+    outputText?: string | null;
+    errorText?: string | null;
+  }): void {
+    if (this.pairedSummaryLocked) {
+      return;
+    }
+
+    if (outputText && outputText.length > 0) {
+      this.pairedExecutionSummary = outputText.slice(0, 500);
+      return;
+    }
+
+    if (errorText && errorText.length > 0) {
+      this.pairedExecutionSummary = errorText.slice(0, 500);
+    }
+  }
+
+  recordFinalOutputBeforeDelivery(outputText: string): boolean {
+    if (this.wasInterruptedByHumanMessage()) return false;
+    if (!this.currentRunOwnsActiveAttempt('streamed-final-output')) {
+      return false;
+    }
+    this.lockVisibleVerdict(outputText);
+    this.completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded();
+    this.persistPairedTurnOutputIfNeeded();
+    return true;
+  }
+
+  completeImmediately({ status }: { status: PairedExecutionStatus }): void {
+    const { completedRole, pairedExecutionContext, runId } = this.args;
+    if (!pairedExecutionContext || this.pairedExecutionCompleted) {
+      return;
+    }
+
+    this.pairedExecutionStatus = status;
+    if (status === 'succeeded') {
+      this.persistPairedTurnOutputIfNeeded();
+    }
+
+    this.clearLeaseHeartbeat();
+    completePairedExecutionContext({
+      taskId: pairedExecutionContext.task.id,
+      role: completedRole,
+      status,
+      runId,
+      summary: this.pairedExecutionSummary,
+    });
+    this.pairedExecutionCompleted = true;
+  }
+
+  markDelegated(): void {
+    this.pairedExecutionDelegated = true;
+  }
+
+  markStatus(status: PairedExecutionStatus): void {
+    this.pairedExecutionStatus = status;
+  }
+
+  markSawOutput(sawOutput: boolean): void {
+    this.pairedSawOutput = sawOutput;
+  }
+
+  getSummary(): string | null {
+    return this.pairedExecutionSummary;
+  }
+
+  async asyncFinalize(): Promise<void> {
+    this.clearLeaseHeartbeat();
+
+    if (!this.currentRunOwnsActiveAttempt('async-finalize')) {
+      return;
+    }
+
+    if (this.releaseDelegatedExecutionIfNeeded()) {
+      return;
+    }
+
+    const state = this.resolveFinalizeState();
+    this.completeStoredExecutionIfNeeded(state);
+    this.finalizePairedTurnState(
+      state.effectiveStatus,
+      state.effectiveStatus === 'failed' ? this.pairedExecutionSummary : null,
+    );
+
+    await this.notifyCompletionAndQueueFollowUp(state);
+  }
+
+  private wasInterruptedByHumanMessage(): boolean {
+    return isHumanMessageCloseReason(this.args.getCloseReason?.() ?? null);
+  }
+
+  private currentRunOwnsActiveAttempt(reason: string): boolean {
+    const { log, pairedExecutionContext, pairedTurnIdentity, runId } =
+      this.args;
     if (!pairedTurnIdentity) {
       return true;
     }
@@ -176,13 +276,14 @@ export function createPairedExecutionLifecycle(args: {
       'Skipping paired final side effects because this run no longer owns the active attempt',
     );
     return false;
-  };
+  }
 
-  const finalizePairedTurnState = (
+  private finalizePairedTurnState(
     status: 'succeeded' | 'failed',
     errorText?: string | null,
-  ) => {
-    if (!pairedTurnIdentity || pairedTurnStateFinalized) {
+  ): void {
+    const { pairedTurnIdentity } = this.args;
+    if (!pairedTurnIdentity || this.pairedTurnStateFinalized) {
       return;
     }
     if (status === 'succeeded') {
@@ -190,20 +291,22 @@ export function createPairedExecutionLifecycle(args: {
     } else {
       failPairedTurn({
         turnIdentity: pairedTurnIdentity,
-        error: errorText ?? pairedExecutionSummary,
+        error: errorText ?? this.pairedExecutionSummary,
       });
     }
-    pairedTurnStateFinalized = true;
-  };
+    this.pairedTurnStateFinalized = true;
+  }
 
-  const clearLeaseHeartbeat = () => {
-    if (!leaseHeartbeatTimer) {
+  private clearLeaseHeartbeat(): void {
+    if (!this.leaseHeartbeatTimer) {
       return;
     }
-    clearInterval(leaseHeartbeatTimer);
-    leaseHeartbeatTimer = null;
-  };
-  const heartbeatLeaseIfNeeded = () => {
+    clearInterval(this.leaseHeartbeatTimer);
+    this.leaseHeartbeatTimer = null;
+  }
+
+  private heartbeatLeaseIfNeeded(): void {
+    const { pairedExecutionContext, runId, log } = this.args;
     if (!pairedExecutionContext) {
       return;
     }
@@ -231,22 +334,15 @@ export function createPairedExecutionLifecycle(args: {
         'Failed to refresh paired execution lease heartbeat',
       );
     }
-  };
-
-  if (pairedExecutionContext) {
-    leaseHeartbeatTimer = setInterval(
-      heartbeatLeaseIfNeeded,
-      PAIRED_TASK_EXECUTION_LEASE_HEARTBEAT_MS,
-    );
-    leaseHeartbeatTimer.unref?.();
   }
 
-  const persistPairedTurnOutputIfNeeded = () => {
+  private persistPairedTurnOutputIfNeeded(): void {
+    const { completedRole, pairedExecutionContext } = this.args;
     if (
       !pairedExecutionContext ||
-      pairedTurnOutputPersisted ||
-      !pairedFinalOutput ||
-      pairedFinalOutput.length === 0
+      this.pairedTurnOutputPersisted ||
+      !this.pairedFinalOutput ||
+      this.pairedFinalOutput.length === 0
     ) {
       return;
     }
@@ -256,57 +352,65 @@ export function createPairedExecutionLifecycle(args: {
       pairedExecutionContext.task.id,
       turnNumber,
       completedRole,
-      pairedFinalOutput,
+      this.pairedFinalOutput,
     );
-    pairedTurnOutputPersisted = true;
-  };
+    this.pairedTurnOutputPersisted = true;
+  }
 
-  const completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded = () => {
+  private completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded(): void {
+    const { completedRole, pairedExecutionContext, runId } = this.args;
     if (
       completedRole !== 'owner' ||
       !pairedExecutionContext ||
-      pairedExecutionCompleted ||
-      !pairedFinalOutput ||
-      pairedFinalOutput.length === 0
+      this.pairedExecutionCompleted ||
+      !this.pairedFinalOutput ||
+      this.pairedFinalOutput.length === 0
     ) {
       return;
     }
 
-    pairedExecutionStatus = 'succeeded';
-    pairedSawOutput = true;
-    persistPairedTurnOutputIfNeeded();
-    clearLeaseHeartbeat();
+    this.pairedExecutionStatus = 'succeeded';
+    this.pairedSawOutput = true;
+    this.persistPairedTurnOutputIfNeeded();
+    this.clearLeaseHeartbeat();
     completePairedExecutionContext({
       taskId: pairedExecutionContext.task.id,
       role: completedRole,
       status: 'succeeded',
       runId,
-      summary: pairedExecutionSummary,
+      summary: this.pairedExecutionSummary,
     });
-    pairedExecutionCompleted = true;
-  };
+    this.pairedExecutionCompleted = true;
+  }
 
-  const lockVisibleVerdict = (outputText: string) => {
+  private lockVisibleVerdict(outputText: string): void {
     if (outputText.length === 0) {
       return;
     }
-    if (!pairedFinalOutput || pairedFinalOutput.length === 0) {
-      pairedFinalOutput = outputText;
+    if (!this.pairedFinalOutput || this.pairedFinalOutput.length === 0) {
+      this.pairedFinalOutput = outputText;
     }
-    if (!pairedSummaryLocked) {
-      pairedExecutionSummary = outputText.slice(0, 500);
-      pairedSummaryLocked = true;
+    if (!this.pairedSummaryLocked) {
+      this.pairedExecutionSummary = outputText.slice(0, 500);
+      this.pairedSummaryLocked = true;
     }
-    pairedSawOutput = true;
-  };
+    this.pairedSawOutput = true;
+  }
 
-  const adoptDirectTerminalDeliveryIfNeeded = () => {
+  private adoptDirectTerminalDeliveryIfNeeded(): string | null {
+    const {
+      completedRole,
+      getDirectTerminalDeliveryText,
+      log,
+      pairedExecutionContext,
+      runId,
+    } = this.args;
     const outputText = getDirectTerminalDeliveryText?.();
     if (!outputText || outputText.length === 0) {
       return null;
     }
-    if (!pairedFinalOutput || pairedFinalOutput.length === 0) {
-      lockVisibleVerdict(outputText);
+    if (!this.pairedFinalOutput || this.pairedFinalOutput.length === 0) {
+      this.lockVisibleVerdict(outputText);
       log.info(
         {
           pairedTaskId: pairedExecutionContext?.task.id ?? null,
@@ -315,226 +419,230 @@ export function createPairedExecutionLifecycle(args: {
         },
         'Adopted direct terminal delivery as paired final output',
       );
-    } else if (!pairedSummaryLocked) {
-      pairedExecutionSummary = pairedFinalOutput.slice(0, 500);
-      pairedSummaryLocked = true;
+    } else if (!this.pairedSummaryLocked) {
+      this.pairedExecutionSummary = this.pairedFinalOutput.slice(0, 500);
+      this.pairedSummaryLocked = true;
     }
     return outputText;
-  };
+  }
 
-  return {
-    updateSummary({ outputText, errorText }) {
-      if (pairedSummaryLocked) {
-        return;
-      }
-
-      if (outputText && outputText.length > 0) {
-        pairedExecutionSummary = outputText.slice(0, 500);
-        return;
-      }
-
-      if (errorText && errorText.length > 0) {
-        pairedExecutionSummary = errorText.slice(0, 500);
-      }
-    },
-
-    recordFinalOutputBeforeDelivery(outputText) {
-      if (wasInterruptedByHumanMessage()) return false;
-      if (!currentRunOwnsActiveAttempt('streamed-final-output')) {
-        return false;
-      }
-      lockVisibleVerdict(outputText);
-      completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded();
-      persistPairedTurnOutputIfNeeded();
-      return true;
-    },
-
-    completeImmediately({ status }) {
-      if (!pairedExecutionContext || pairedExecutionCompleted) {
-        return;
-      }
-
-      pairedExecutionStatus = status;
-      if (status === 'succeeded') {
-        persistPairedTurnOutputIfNeeded();
-      }
-
-      clearLeaseHeartbeat();
-      completePairedExecutionContext({
+  private releaseDelegatedExecutionIfNeeded(): boolean {
+    const { log, pairedExecutionContext, runId } = this.args;
+    if (!pairedExecutionContext || !this.pairedExecutionDelegated) {
+      return false;
+    }
+    try {
+      releasePairedTaskExecutionLease({
         taskId: pairedExecutionContext.task.id,
-        role: completedRole,
-        status,
         runId,
-        summary: pairedExecutionSummary,
       });
-      pairedExecutionCompleted = true;
-    },
-
-    markDelegated() {
-      pairedExecutionDelegated = true;
-    },
-
-    markStatus(status) {
-      pairedExecutionStatus = status;
-    },
-
-    markSawOutput(sawOutput) {
-      pairedSawOutput = sawOutput;
-    },
-
-    getSummary() {
-      return pairedExecutionSummary;
-    },
-
-    async asyncFinalize() {
-      clearLeaseHeartbeat();
-
-      if (!currentRunOwnsActiveAttempt('async-finalize')) {
-        return;
-      }
-
-      if (pairedExecutionContext && pairedExecutionDelegated) {
-        try {
-          releasePairedTaskExecutionLease({
-            taskId: pairedExecutionContext.task.id,
-            runId,
-          });
-        } catch (err) {
-          log.warn(
-            {
-              pairedTaskId: pairedExecutionContext.task.id,
-              runId,
-              err,
-            },
-            'Failed to release paired execution lease for delegated fallback handoff',
-          );
-        }
-        pairedExecutionCompleted = true;
-        return;
-      }
-
-      const directTerminalOutput = adoptDirectTerminalDeliveryIfNeeded();
-
-      const missingVisibleVerdict =
-        requiresVisibleVerdict &&
-        (!pairedFinalOutput || pairedFinalOutput.length === 0);
-      if (missingVisibleVerdict) {
-        pairedExecutionSummary = missingVisibleVerdictSummary;
-        log.warn(
-          {
-            pairedTaskId: pairedExecutionContext?.task.id ?? null,
-            role: completedRole,
-            runId,
-          },
-          'Treating paired execution as failed because it ended without a visible terminal verdict',
-        );
-      }
-      const effectiveStatus =
-        completedRole === 'owner' &&
-        pairedExecutionStatus === 'succeeded' &&
-        !pairedSawOutput
-          ? 'failed'
-          : missingVisibleVerdict && pairedExecutionStatus === 'succeeded'
-            ? 'failed'
-            : pairedExecutionStatus;
-      const sawOutputForFollowUp = missingVisibleVerdict
-        ? false
-        : pairedSawOutput;
-      const interruptedByHumanMessage = wasInterruptedByHumanMessage();
-
-      if (pairedExecutionContext && !pairedExecutionCompleted) {
-        if (interruptedByHumanMessage) {
-          releaseInterruptedPairedExecution(
-            pairedExecutionContext.task.id,
-            runId,
-            log,
-          );
-        } else {
-          if (effectiveStatus === 'succeeded') {
-            try {
-              persistPairedTurnOutputIfNeeded();
-            } catch (err) {
-              log.warn(
-                { pairedTaskId: pairedExecutionContext.task.id, err },
-                'Failed to store paired turn output',
-              );
-            }
-          }
-          completeStoredExecution(
-            pairedExecutionContext.task.id,
-            completedRole,
-            effectiveStatus,
-            runId,
-            pairedExecutionSummary,
-          );
-        }
-        pairedExecutionCompleted = true;
-      }
-
-      finalizePairedTurnState(
-        effectiveStatus,
-        effectiveStatus === 'failed' ? pairedExecutionSummary : null,
-      );
-
-      if (!pairedExecutionContext) {
-        return;
-      }
-      if (interruptedByHumanMessage) {
-        return;
-      }
-      const finishedTask = getPairedTaskById(pairedExecutionContext.task.id);
-      await notifyPairedCompletionIfNeeded({
-        task: finishedTask,
-        chatJid,
-        onOutput,
-      });
-
-      const queueAction =
-        directTerminalOutput &&
-        (completedRole === 'reviewer' || completedRole === 'arbiter')
-          ? 'none'
-          : resolvePairedFollowUpQueueAction({
-              completedRole,
-              executionStatus: effectiveStatus,
-              sawOutput: sawOutputForFollowUp,
-              taskStatus: finishedTask?.status ?? null,
-              outputSummary: pairedExecutionSummary,
-            });
-      if (queueAction !== 'pending' || !finishedTask) {
-        return;
-      }
-
-      const followUpResult = enqueuePairedFollowUpAfterEvent({
-        chatJid,
-        runId,
-        task: finishedTask,
-        source: 'executor-recovery',
-        completedRole,
-        executionStatus: effectiveStatus,
-        sawOutput: sawOutputForFollowUp,
-        fallbackLastTurnOutputRole: sawOutputForFollowUp ? completedRole : null,
-        fallbackLastTurnOutputVerdict:
-          sawOutputForFollowUp && pairedExecutionSummary
-            ? parseVisibleVerdict(pairedExecutionSummary)
-            : null,
-        enqueueMessageCheck,
-      });
-      if (followUpResult.kind !== 'paired-follow-up') {
-        return;
-      }
-      log.info(
+    } catch (err) {
+      log.warn(
         {
-          taskId: pairedExecutionContext.task.id,
-          role: completedRole,
-          pairedExecutionStatus: effectiveStatus,
-          taskStatus: finishedTask.status,
-          intentKind: followUpResult.intentKind,
-          scheduled: followUpResult.scheduled,
+          pairedTaskId: pairedExecutionContext.task.id,
+          runId,
+          err,
         },
-        followUpResult.scheduled
-          ? 'Queued paired follow-up after failed reviewer/arbiter execution left a pending task state'
-          : 'Skipped duplicate paired follow-up after failed reviewer/arbiter execution while task state was unchanged',
+        'Failed to release paired execution lease for delegated fallback handoff',
       );
-    },
-  };
+    }
+    this.pairedExecutionCompleted = true;
+    return true;
+  }
+
+  private resolveFinalizeState(): FinalizeState {
+    const directTerminalOutput = this.adoptDirectTerminalDeliveryIfNeeded();
+    const missingVisibleVerdict = this.resolveMissingVisibleVerdict();
+    const effectiveStatus = this.resolveEffectiveStatus(missingVisibleVerdict);
+    const sawOutputForFollowUp = missingVisibleVerdict
+      ? false
+      : this.pairedSawOutput;
+
+    return {
+      directTerminalOutput,
+      effectiveStatus,
+      sawOutputForFollowUp,
+      interruptedByHumanMessage: this.wasInterruptedByHumanMessage(),
+    };
+  }
+
+  private resolveMissingVisibleVerdict(): boolean {
+    const { completedRole, log, pairedExecutionContext, runId } = this.args;
+    const missingVisibleVerdict =
+      pairedExecutionContext?.requiresVisibleVerdict === true &&
+      (!this.pairedFinalOutput || this.pairedFinalOutput.length === 0);
+    if (!missingVisibleVerdict) {
+      return false;
+    }
+    this.pairedExecutionSummary =
+      'Execution completed without a visible terminal verdict.';
+    log.warn(
+      {
+        pairedTaskId: pairedExecutionContext?.task.id ?? null,
+        role: completedRole,
+        runId,
+      },
+      'Treating paired execution as failed because it ended without a visible terminal verdict',
+    );
+    return true;
+  }
+
+  private resolveEffectiveStatus(
+    missingVisibleVerdict: boolean,
+  ): PairedExecutionStatus {
+    if (
+      this.args.completedRole === 'owner' &&
+      this.pairedExecutionStatus === 'succeeded' &&
+      !this.pairedSawOutput
+    ) {
+      return 'failed';
+    }
+    if (missingVisibleVerdict && this.pairedExecutionStatus === 'succeeded') {
+      return 'failed';
+    }
+    return this.pairedExecutionStatus;
+  }
+
+  private completeStoredExecutionIfNeeded(state: FinalizeState): void {
+    const { completedRole, log, pairedExecutionContext, runId } = this.args;
+    if (!pairedExecutionContext || this.pairedExecutionCompleted) {
+      return;
+    }
+    if (state.interruptedByHumanMessage) {
+      releaseInterruptedPairedExecution(
+        pairedExecutionContext.task.id,
+        runId,
+        log,
+      );
+      this.pairedExecutionCompleted = true;
+      return;
+    }
+    this.persistSuccessfulOutputBeforeCompletion(state.effectiveStatus);
+    completeStoredExecution(
+      pairedExecutionContext.task.id,
+      completedRole,
+      state.effectiveStatus,
+      runId,
+      this.pairedExecutionSummary,
+    );
+    this.pairedExecutionCompleted = true;
+  }
+
+  private persistSuccessfulOutputBeforeCompletion(
+    effectiveStatus: PairedExecutionStatus,
+  ): void {
+    if (effectiveStatus !== 'succeeded') {
+      return;
+    }
+    try {
+      this.persistPairedTurnOutputIfNeeded();
+    } catch (err) {
+      this.args.log.warn(
+        { pairedTaskId: this.args.pairedExecutionContext?.task.id, err },
+        'Failed to store paired turn output',
+      );
+    }
+  }
+
+  private async notifyCompletionAndQueueFollowUp(
+    state: FinalizeState,
+  ): Promise<void> {
+    const { chatJid, onOutput, pairedExecutionContext } = this.args;
+    if (!pairedExecutionContext || state.interruptedByHumanMessage) {
+      return;
+    }
+    const finishedTask = getPairedTaskById(pairedExecutionContext.task.id);
+    await notifyPairedCompletionIfNeeded({
+      task: finishedTask,
+      chatJid,
+      onOutput,
+    });
+    this.queueFollowUpIfNeeded(state, finishedTask);
+  }
+
+  private queueFollowUpIfNeeded(
+    state: FinalizeState,
+    finishedTask: PairedTaskRecord | null | undefined,
+  ): void {
+    const queueAction = this.resolveQueueAction(state, finishedTask);
+    if (queueAction !== 'pending' || !finishedTask) {
+      return;
+    }
+    const followUpResult = this.enqueueFollowUp(state, finishedTask);
+    this.logFollowUpResult(followUpResult, state, finishedTask);
+  }
+
+  private resolveQueueAction(
+    state: FinalizeState,
+    finishedTask: PairedTaskRecord | null | undefined,
+  ): ReturnType<typeof resolvePairedFollowUpQueueAction> | 'none' {
+    const { completedRole } = this.args;
+    if (
+      state.directTerminalOutput &&
+      (completedRole === 'reviewer' || completedRole === 'arbiter')
+    ) {
+      return 'none';
+    }
+    return resolvePairedFollowUpQueueAction({
+      completedRole,
+      executionStatus: state.effectiveStatus,
+      sawOutput: state.sawOutputForFollowUp,
+      taskStatus: finishedTask?.status ?? null,
+      outputSummary: this.pairedExecutionSummary,
+    });
+  }
+
+  private enqueueFollowUp(
+    state: FinalizeState,
+    finishedTask: PairedTaskRecord,
+  ): ReturnType<typeof enqueuePairedFollowUpAfterEvent> {
+    const { chatJid, completedRole, enqueueMessageCheck, runId } = this.args;
+    return enqueuePairedFollowUpAfterEvent({
+      chatJid,
+      runId,
+      task: finishedTask,
+      source: 'executor-recovery',
+      completedRole,
+      executionStatus: state.effectiveStatus,
+      sawOutput: state.sawOutputForFollowUp,
+      fallbackLastTurnOutputRole: state.sawOutputForFollowUp
+        ? completedRole
+        : null,
+      fallbackLastTurnOutputVerdict:
+        state.sawOutputForFollowUp && this.pairedExecutionSummary
+          ? parseVisibleVerdict(this.pairedExecutionSummary)
+          : null,
+      enqueueMessageCheck,
+    });
+  }
+
+  private logFollowUpResult(
+    followUpResult: ReturnType<typeof enqueuePairedFollowUpAfterEvent>,
+    state: FinalizeState,
+    finishedTask: PairedTaskRecord,
+  ): void {
+    const { completedRole, log, pairedExecutionContext } = this.args;
+    if (followUpResult.kind !== 'paired-follow-up') {
+      return;
+    }
+    log.info(
+      {
+        taskId: pairedExecutionContext?.task.id,
+        role: completedRole,
+        pairedExecutionStatus: state.effectiveStatus,
+        taskStatus: finishedTask.status,
+        intentKind: followUpResult.intentKind,
+        scheduled: followUpResult.scheduled,
+      },
+      followUpResult.scheduled
+        ? 'Queued paired follow-up after failed reviewer/arbiter execution left a pending task state'
+        : 'Skipped duplicate paired follow-up after failed reviewer/arbiter execution while task state was unchanged',
+    );
+  }
+}
+
+export function createPairedExecutionLifecycle(
+  args: CreatePairedExecutionLifecycleArgs,
+): PairedExecutionLifecycle {
+  return new PairedExecutionLifecycleController(args);
 }
