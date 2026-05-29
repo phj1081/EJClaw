@@ -1,8 +1,4 @@
-import {
-  getAgentOutputText,
-  hasAgentOutputPayload,
-  isSilentAgentOutput,
-} from './agent-output.js';
+import { getAgentOutputText, hasAgentOutputPayload } from './agent-output.js';
 import {
   classifyClaudeAuthError,
   classifyRotationTrigger,
@@ -62,7 +58,6 @@ export function evaluateStreamedOutput(
   const countsAsFinalOutput =
     output.phase === undefined || output.phase === 'final';
   const outputText = getAgentOutputText(output);
-  const silentOutput = isSilentAgentOutput(output);
 
   if (
     isPrimaryClaude &&
@@ -139,8 +134,7 @@ export function evaluateStreamedOutput(
     options.trackSuccessNullResult &&
     isPrimaryClaude &&
     output.status === 'success' &&
-    !state.sawOutput &&
-    !silentOutput
+    !state.sawOutput
   ) {
     nextState.sawSuccessNullResultWithoutOutput = true;
   }

@@ -13,10 +13,10 @@
   },
   "overrides": {
     "apps/dashboard/src/App.tsx": {
-      "maxLines": 4612,
-      "maxFunctionLines": 583,
-      "maxComplexity": 79,
-      "maxNesting": 4,
+      "maxLines": 684,
+      "maxFunctionLines": 425,
+      "maxComplexity": 11,
+      "maxNesting": 3,
       "owner": "dashboard shell hotspot"
     },
     "apps/dashboard/src/i18n.ts": {

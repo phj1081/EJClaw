@@ -53,10 +53,3 @@ export function hasAgentOutputPayload(output: {
   }
   return output.result !== null && output.result !== undefined;
 }
-
-export function isSilentAgentOutput(_output: {
-  output?: StructuredAgentOutput;
-  result?: string | object | null;
-}): boolean {
-  return false;
-}
