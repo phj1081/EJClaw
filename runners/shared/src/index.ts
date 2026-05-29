@@ -4,6 +4,13 @@ export {
 } from './room-role-context.js';
 export { EJCLAW_ENV, type EjclawEnvName } from './ejclaw-env.js';
 export {
+  isPairedRoomRole,
+  normalizePairedRoomRole,
+  normalizePairedRoomRoleOrNull,
+  PAIRED_ROOM_ROLES,
+  type PairedRoomRole,
+} from './paired-room-role.js';
+export {
   extractMarkdownImageAttachments,
   extractMediaAttachments,
   extractImageTagPaths,

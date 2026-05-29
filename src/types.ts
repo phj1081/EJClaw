@@ -1,4 +1,19 @@
+import {
+  PAIRED_ROOM_ROLES,
+  isPairedRoomRole,
+  normalizePairedRoomRole,
+  normalizePairedRoomRoleOrNull,
+  type PairedRoomRole,
+} from 'ejclaw-runners-shared';
 import type { VisibleVerdict } from './paired-verdict.js';
+
+export {
+  PAIRED_ROOM_ROLES,
+  isPairedRoomRole,
+  normalizePairedRoomRole,
+  normalizePairedRoomRoleOrNull,
+  type PairedRoomRole,
+};
 
 export interface AgentConfig {
   timeout?: number; // Default: 300000 (5 minutes)
@@ -54,8 +69,6 @@ export interface DeleteRecentMessagesByContentOptions {
   exceptMessageId?: string | null;
   limit?: number;
 }
-
-export type PairedRoomRole = 'owner' | 'reviewer' | 'arbiter';
 
 export type PairedTaskStatus =
   | 'active'

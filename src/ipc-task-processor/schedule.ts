@@ -9,7 +9,7 @@ import {
   isWatchCiTask,
 } from '../task-watch-status.js';
 import type { IpcDeps, TaskIpcPayload } from '../ipc-types.js';
-import type { PairedRoomRole, RegisteredGroup } from '../types.js';
+import { normalizePairedRoomRole, type RegisteredGroup } from '../types.js';
 
 type RoomBindings = ReturnType<IpcDeps['roomBindings']>;
 type ScheduleType = 'cron' | 'interval' | 'once';
@@ -18,14 +18,6 @@ interface ResolvedScheduleTarget {
   folder: string;
   jid: string;
   room: RegisteredGroup;
-}
-
-function normalizePairedRoomRole(
-  role: string | null | undefined,
-): PairedRoomRole | undefined {
-  return role === 'owner' || role === 'reviewer' || role === 'arbiter'
-    ? role
-    : undefined;
 }
 
 export function handleScheduleTask(

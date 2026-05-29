@@ -9,7 +9,11 @@ import {
   inferRoleFromServiceShadow,
   resolveRoleServiceShadow,
 } from '../role-service-shadow.js';
-import type { AgentType, PairedRoomRole } from '../types.js';
+import {
+  normalizePairedRoomRoleOrNull,
+  type AgentType,
+  type PairedRoomRole,
+} from '../types.js';
 import { normalizeStoredAgentType } from './room-registration.js';
 
 interface RequiredRoleMetadataInput {
@@ -336,14 +340,6 @@ export function readCanonicalChannelOwnerLeaseMetadata(input: {
   };
 }
 
-function normalizeHandoffRole(
-  role: string | null | undefined,
-): PairedRoomRole | null {
-  return role === 'owner' || role === 'reviewer' || role === 'arbiter'
-    ? role
-    : null;
-}
-
 function assertStoredRoleMatchesServiceShadow(args: {
   context: string;
   storedRole: PairedRoomRole | null;
@@ -389,11 +385,11 @@ export function fillCanonicalServiceHandoffMetadata(input: {
 }): CanonicalServiceHandoffMetadata {
   const context = `service_handoffs(${input.id})`;
   const sourceRole =
-    normalizeHandoffRole(input.source_role) ??
-    normalizeHandoffRole(input.intended_role);
+    normalizePairedRoomRoleOrNull(input.source_role) ??
+    normalizePairedRoomRoleOrNull(input.intended_role);
   const targetRole =
-    normalizeHandoffRole(input.target_role) ??
-    normalizeHandoffRole(input.intended_role);
+    normalizePairedRoomRoleOrNull(input.target_role) ??
+    normalizePairedRoomRoleOrNull(input.intended_role);
   const storedSourceAgentType = normalizeStoredAgentType(
     input.source_agent_type,
   );
@@ -541,11 +537,11 @@ export function readCanonicalServiceHandoffMetadata(input: {
 }): CanonicalServiceHandoffMetadata {
   const context = `service_handoffs(${input.id})`;
   const sourceRole =
-    normalizeHandoffRole(input.source_role) ??
-    normalizeHandoffRole(input.intended_role);
+    normalizePairedRoomRoleOrNull(input.source_role) ??
+    normalizePairedRoomRoleOrNull(input.intended_role);
   const targetRole =
-    normalizeHandoffRole(input.target_role) ??
-    normalizeHandoffRole(input.intended_role);
+    normalizePairedRoomRoleOrNull(input.target_role) ??
+    normalizePairedRoomRoleOrNull(input.intended_role);
   const sourceServiceId = readStoredHandoffServiceId({
     context,
     field: 'source_service_id',

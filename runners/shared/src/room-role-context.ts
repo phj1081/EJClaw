@@ -1,8 +1,9 @@
+import type { PairedRoomRole } from './paired-room-role.js';
 import type { RunnerAgentType } from './reviewer-runtime-policy.js';
 
 export interface RoomRoleContext {
   serviceId: string;
-  role: 'owner' | 'reviewer' | 'arbiter';
+  role: PairedRoomRole;
   ownerServiceId: string;
   reviewerServiceId: string;
   ownerAgentType?: RunnerAgentType;

@@ -10,7 +10,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
-import { EJCLAW_ENV } from 'ejclaw-runners-shared';
+import { EJCLAW_ENV, normalizePairedRoomRole } from 'ejclaw-runners-shared';
 import {
   buildCiWatchPrompt,
   DEFAULT_WATCH_CI_CONTEXT_MODE,
@@ -51,11 +51,7 @@ function currentAgentType(): 'claude-code' | 'codex' {
 }
 
 function currentRoomRole(): 'owner' | 'reviewer' | 'arbiter' | undefined {
-  return roomRole === 'owner' ||
-    roomRole === 'reviewer' ||
-    roomRole === 'arbiter'
-    ? roomRole
-    : undefined;
+  return normalizePairedRoomRole(roomRole);
 }
 
 function writeIpcFile(dir: string, data: object): string {

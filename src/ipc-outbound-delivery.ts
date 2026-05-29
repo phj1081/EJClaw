@@ -4,6 +4,7 @@ import { resolveRuntimeAttachmentBaseDirs } from './attachment-base-dirs.js';
 import { deliverOpenWorkItem } from './message-runtime-delivery.js';
 import { parseVisibleVerdict } from './paired-verdict.js';
 import { resolveChannelForDeliveryRole } from './router.js';
+import { normalizePairedRoomRole } from './types.js';
 import type {
   Channel,
   OutboundAttachment,
@@ -65,19 +66,6 @@ export type IpcOutboundDeliveryResult =
   | 'delivered'
   | 'queued_retry'
   | 'skipped_recorded_terminal';
-
-function normalizeDeliveryRole(
-  senderRole: string | undefined,
-): PairedRoomRole | undefined {
-  if (
-    senderRole === 'owner' ||
-    senderRole === 'reviewer' ||
-    senderRole === 'arbiter'
-  ) {
-    return senderRole;
-  }
-  return undefined;
-}
 
 function isTerminalStatusMessage(text: string): boolean {
   return parseVisibleVerdict(text) !== 'continue';
@@ -143,7 +131,7 @@ export async function deliverIpcOutboundMessage(
   deps: IpcOutboundDeliveryDeps,
 ): Promise<IpcOutboundDeliveryResult> {
   const log = deps.log ?? logger;
-  const deliveryRole = normalizeDeliveryRole(args.senderRole);
+  const deliveryRole = normalizePairedRoomRole(args.senderRole);
   if (
     args.runId &&
     (deliveryRole === 'reviewer' || deliveryRole === 'arbiter') &&
