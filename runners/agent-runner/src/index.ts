@@ -18,6 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import {
+  EJCLAW_ENV,
   IPC_CLOSE_SENTINEL,
   IPC_INPUT_SUBDIR,
   IPC_POLL_MS,
@@ -78,12 +79,12 @@ interface RunnerInput {
 }
 
 // Paths configurable via env vars.
-const GROUP_DIR = process.env.EJCLAW_GROUP_DIR || '/workspace/group';
-const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
-const HOST_IPC_DIR = process.env.EJCLAW_HOST_IPC_DIR || IPC_DIR;
+const GROUP_DIR = process.env[EJCLAW_ENV.groupDir] || '/workspace/group';
+const IPC_DIR = process.env[EJCLAW_ENV.ipcDir] || '/workspace/ipc';
+const HOST_IPC_DIR = process.env[EJCLAW_ENV.hostIpcDir] || IPC_DIR;
 // Optional: override cwd (agent works in this directory instead of GROUP_DIR)
-const WORK_DIR = process.env.EJCLAW_WORK_DIR || '';
-const GROUP_FOLDER = process.env.EJCLAW_GROUP_FOLDER || '';
+const WORK_DIR = process.env[EJCLAW_ENV.workDir] || '';
+const GROUP_FOLDER = process.env[EJCLAW_ENV.groupFolder] || '';
 
 const IPC_INPUT_DIR = path.join(IPC_DIR, IPC_INPUT_SUBDIR);
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, IPC_CLOSE_SENTINEL);
@@ -333,10 +334,10 @@ async function runQuery(
           chatJid: runnerInput.chatJid,
           groupFolder: runnerInput.groupFolder,
           isMain: runnerInput.isMain,
-          agentType: process.env.EJCLAW_AGENT_TYPE || 'claude-code',
+          agentType: process.env[EJCLAW_ENV.agentType] || 'claude-code',
           roomRole: runnerInput.roomRoleContext?.role || '',
-          ipcDir: process.env.EJCLAW_IPC_DIR,
-          hostIpcDir: process.env.EJCLAW_HOST_IPC_DIR,
+          ipcDir: process.env[EJCLAW_ENV.ipcDir],
+          hostIpcDir: process.env[EJCLAW_ENV.hostIpcDir],
         }),
       },
       hooks: {

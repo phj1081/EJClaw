@@ -1,4 +1,5 @@
 import path from 'path';
+import { EJCLAW_ENV } from 'ejclaw-runners-shared';
 
 export interface ResolvedIpcDirectories {
   ipcDir: string;
@@ -13,8 +14,8 @@ export function isTaskScopedIpcDir(ipcDir: string): boolean {
 export function resolveIpcDirectories(
   env: NodeJS.ProcessEnv,
 ): ResolvedIpcDirectories {
-  const ipcDir = env.EJCLAW_IPC_DIR || '/workspace/ipc';
-  const hostIpcDir = env.EJCLAW_HOST_IPC_DIR;
+  const ipcDir = env[EJCLAW_ENV.ipcDir] || '/workspace/ipc';
+  const hostIpcDir = env[EJCLAW_ENV.hostIpcDir];
 
   if (!hostIpcDir && isTaskScopedIpcDir(ipcDir)) {
     throw new Error(

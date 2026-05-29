@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EJCLAW_ENV } from 'ejclaw-runners-shared';
 
 const { mockReadEnvFile, mockGetActiveCodexAuthPath } = vi.hoisted(() => ({
   mockReadEnvFile: vi.fn<() => Record<string, string>>(),
@@ -455,7 +456,7 @@ describe('prepareGroupEnvironment Codex MCP room role env', () => {
       roomRole: 'owner',
     });
 
-    expect(readCodexConfigToml()).toContain('EJCLAW_ROOM_ROLE = "owner"');
+    expect(readCodexConfigToml()).toContain(`${EJCLAW_ENV.roomRole} = "owner"`);
   });
 
   it('omits room role from non-paired Codex MCP config env', () => {
@@ -464,7 +465,7 @@ describe('prepareGroupEnvironment Codex MCP room role env', () => {
 
     prepareGroupEnvironment(group, true, 'dc:test');
 
-    expect(readCodexConfigToml()).not.toContain('EJCLAW_ROOM_ROLE');
+    expect(readCodexConfigToml()).not.toContain(EJCLAW_ENV.roomRole);
   });
 });
 
@@ -741,7 +742,7 @@ command = "node"
 args = ["old-ipc.js"]
 
 [mcp_servers.ejclaw.env]
-EJCLAW_IPC_DIR = "/old/ipc"
+${EJCLAW_ENV.ipcDir} = "/old/ipc"
 
 [mcp_servers.other]
 command = "node"
@@ -780,10 +781,10 @@ args = ["other.js"]
     expect(toml).toContain('model = "gpt-5.4"');
     expect(toml).toContain('[mcp_servers.other]');
     expect(toml).toContain('[mcp_servers.ejclaw]');
-    expect(toml).toContain('EJCLAW_IPC_DIR = "/workspace/ipc"');
-    expect(toml).toContain('EJCLAW_GROUP_FOLDER = "codex-test-group"');
-    expect(toml).toContain('EJCLAW_ROOM_ROLE = "reviewer"');
-    expect(toml).toContain('EJCLAW_WORK_DIR = "/workspace/project"');
+    expect(toml).toContain(`${EJCLAW_ENV.ipcDir} = "/workspace/ipc"`);
+    expect(toml).toContain(`${EJCLAW_ENV.groupFolder} = "codex-test-group"`);
+    expect(toml).toContain(`${EJCLAW_ENV.roomRole} = "reviewer"`);
+    expect(toml).toContain(`${EJCLAW_ENV.workDir} = "/workspace/project"`);
     expect(toml).not.toContain('old-ipc.js');
     expect(toml).not.toContain('"/old/ipc"');
     expect(toml.match(/\[mcp_servers\.ejclaw\]/g)).toHaveLength(1);

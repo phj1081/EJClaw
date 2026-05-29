@@ -16,6 +16,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  EJCLAW_ENV,
   extractImageTagPaths,
   IPC_CLOSE_SENTINEL,
   IPC_INPUT_SUBDIR,
@@ -71,9 +72,9 @@ interface RunnerOutput {
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const GROUP_DIR = process.env.EJCLAW_GROUP_DIR || '/workspace/group';
-const IPC_DIR = process.env.EJCLAW_IPC_DIR || '/workspace/ipc';
-const WORK_DIR = process.env.EJCLAW_WORK_DIR || '';
+const GROUP_DIR = process.env[EJCLAW_ENV.groupDir] || '/workspace/group';
+const IPC_DIR = process.env[EJCLAW_ENV.ipcDir] || '/workspace/ipc';
+const WORK_DIR = process.env[EJCLAW_ENV.workDir] || '';
 const IPC_INPUT_DIR = path.join(IPC_DIR, IPC_INPUT_SUBDIR);
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, IPC_CLOSE_SENTINEL);
 

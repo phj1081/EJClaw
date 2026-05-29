@@ -2,7 +2,10 @@ import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import { isUnsafeHostPairedModeEnabled } from 'ejclaw-runners-shared';
+import {
+  EJCLAW_ENV,
+  isUnsafeHostPairedModeEnabled,
+} from 'ejclaw-runners-shared';
 
 /**
  * Agent Process Runner for EJClaw
@@ -122,9 +125,9 @@ export async function runAgentProcess(
       agentType: group.agentType || 'claude-code',
       memoryBriefing: input.memoryBriefing,
       role: input.roomRoleContext.role,
-      ipcDir: env.EJCLAW_IPC_DIR,
-      hostIpcDir: env.EJCLAW_HOST_IPC_DIR,
-      workDir: envOverrides.EJCLAW_WORK_DIR || env.EJCLAW_WORK_DIR,
+      ipcDir: env[EJCLAW_ENV.ipcDir],
+      hostIpcDir: env[EJCLAW_ENV.hostIpcDir],
+      workDir: envOverrides[EJCLAW_ENV.workDir] || env[EJCLAW_ENV.workDir],
       skillOverrides,
     });
     if ((group.agentType || 'claude-code') === 'codex') {
@@ -135,7 +138,7 @@ export async function runAgentProcess(
     }
   }
   if (input.runId) {
-    env.EJCLAW_RUN_ID = input.runId;
+    env[EJCLAW_ENV.runId] = input.runId;
   }
 
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
@@ -179,7 +182,7 @@ export async function runAgentProcess(
       env,
     });
 
-    onProcess(proc, processName, env.EJCLAW_IPC_DIR);
+    onProcess(proc, processName, env[EJCLAW_ENV.ipcDir]);
 
     const runnerInput: AgentInput = {
       ...input,

@@ -2,6 +2,7 @@ export {
   prependRoomRoleHeader,
   type RoomRoleContext,
 } from './room-role-context.js';
+export { EJCLAW_ENV, type EjclawEnvName } from './ejclaw-env.js';
 export {
   extractMarkdownImageAttachments,
   extractMediaAttachments,

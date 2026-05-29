@@ -10,6 +10,7 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
+import { EJCLAW_ENV } from 'ejclaw-runners-shared';
 import {
   buildCiWatchPrompt,
   DEFAULT_WATCH_CI_CONTEXT_MODE,
@@ -34,15 +35,15 @@ const MESSAGES_DIR = path.join(HOST_IPC_DIR, 'messages');
 const TASKS_DIR = path.join(HOST_IPC_DIR, 'tasks');
 const HOST_EVIDENCE_RESPONSES_DIR =
   resolveHostEvidenceResponsesDir(HOST_IPC_DIR);
-const REPO_ROOT = process.env.EJCLAW_WORK_DIR || process.cwd();
+const REPO_ROOT = process.env[EJCLAW_ENV.workDir] || process.cwd();
 
 // Context from environment variables (set by the agent runner)
-const chatJid = process.env.EJCLAW_CHAT_JID!;
-const groupFolder = process.env.EJCLAW_GROUP_FOLDER!;
-const isMain = process.env.EJCLAW_IS_MAIN === '1';
-const agentType = process.env.EJCLAW_AGENT_TYPE || 'claude-code';
-const roomRole = process.env.EJCLAW_ROOM_ROLE;
-const runtimeTaskId = process.env.EJCLAW_RUNTIME_TASK_ID;
+const chatJid = process.env[EJCLAW_ENV.chatJid]!;
+const groupFolder = process.env[EJCLAW_ENV.groupFolder]!;
+const isMain = process.env[EJCLAW_ENV.isMain] === '1';
+const agentType = process.env[EJCLAW_ENV.agentType] || 'claude-code';
+const roomRole = process.env[EJCLAW_ENV.roomRole];
+const runtimeTaskId = process.env[EJCLAW_ENV.runtimeTaskId];
 const allowGenericScheduling = agentType !== 'codex';
 
 function currentAgentType(): 'claude-code' | 'codex' {
@@ -93,8 +94,8 @@ server.tool(
       chatJid,
       text: args.text,
       sender: args.sender || undefined,
-      senderRole: process.env.EJCLAW_ROOM_ROLE || undefined,
-      runId: process.env.EJCLAW_RUN_ID || undefined,
+      senderRole: process.env[EJCLAW_ENV.roomRole] || undefined,
+      runId: process.env[EJCLAW_ENV.runId] || undefined,
       groupFolder,
     });
 

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { EJCLAW_ENV } from 'ejclaw-runners-shared';
 
 import {
   GROUPS_DIR,
@@ -210,20 +211,22 @@ function upsertEjclawMcpServerSection(args: {
     ? fs.readFileSync(args.sessionConfigPath, 'utf-8')
     : '';
   toml = stripEjclawMcpServerSections(toml);
+  const tomlEnvLine = (name: string, value: string): string =>
+    `${name} = ${JSON.stringify(value)}`;
   const mcpSection = `
 [mcp_servers.ejclaw]
 command = "node"
 args = [${JSON.stringify(args.mcpServerPath)}]
 
 [mcp_servers.ejclaw.env]
-EJCLAW_IPC_DIR = ${JSON.stringify(args.ipcDir)}
-EJCLAW_HOST_IPC_DIR = ${JSON.stringify(args.hostIpcDir)}
-EJCLAW_CHAT_JID = ${JSON.stringify(args.chatJid)}
-EJCLAW_GROUP_FOLDER = ${JSON.stringify(args.groupFolder)}
-EJCLAW_IS_MAIN = ${JSON.stringify(args.isMain ? '1' : '0')}
-EJCLAW_AGENT_TYPE = ${JSON.stringify(args.agentType)}
-${args.roomRole ? `EJCLAW_ROOM_ROLE = ${JSON.stringify(args.roomRole)}\n` : ''}
-${args.workDir ? `EJCLAW_WORK_DIR = ${JSON.stringify(args.workDir)}\n` : ''}
+${tomlEnvLine(EJCLAW_ENV.ipcDir, args.ipcDir)}
+${tomlEnvLine(EJCLAW_ENV.hostIpcDir, args.hostIpcDir)}
+${tomlEnvLine(EJCLAW_ENV.chatJid, args.chatJid)}
+${tomlEnvLine(EJCLAW_ENV.groupFolder, args.groupFolder)}
+${tomlEnvLine(EJCLAW_ENV.isMain, args.isMain ? '1' : '0')}
+${tomlEnvLine(EJCLAW_ENV.agentType, args.agentType)}
+${args.roomRole ? `${tomlEnvLine(EJCLAW_ENV.roomRole, args.roomRole)}\n` : ''}
+${args.workDir ? `${tomlEnvLine(EJCLAW_ENV.workDir, args.workDir)}\n` : ''}
 `;
   fs.writeFileSync(args.sessionConfigPath, toml.trimEnd() + '\n' + mcpSection);
 }
@@ -263,18 +266,18 @@ function buildBaseRunnerEnv(args: {
         : currentPath,
     TZ: TIMEZONE,
     HOME: os.homedir(),
-    EJCLAW_GROUP_DIR: args.groupDir,
-    EJCLAW_IPC_DIR: args.groupIpcDir,
-    EJCLAW_HOST_IPC_DIR: args.hostIpcDir,
-    EJCLAW_GLOBAL_DIR: args.globalDir,
-    ...(args.group.workDir ? { EJCLAW_WORK_DIR: args.group.workDir } : {}),
-    EJCLAW_CHAT_JID: args.chatJid,
-    EJCLAW_GROUP_FOLDER: args.group.folder,
-    EJCLAW_IS_MAIN: args.isMain ? '1' : '0',
-    EJCLAW_AGENT_TYPE: args.agentType,
+    [EJCLAW_ENV.groupDir]: args.groupDir,
+    [EJCLAW_ENV.ipcDir]: args.groupIpcDir,
+    [EJCLAW_ENV.hostIpcDir]: args.hostIpcDir,
+    [EJCLAW_ENV.globalDir]: args.globalDir,
+    ...(args.group.workDir ? { [EJCLAW_ENV.workDir]: args.group.workDir } : {}),
+    [EJCLAW_ENV.chatJid]: args.chatJid,
+    [EJCLAW_ENV.groupFolder]: args.group.folder,
+    [EJCLAW_ENV.isMain]: args.isMain ? '1' : '0',
+    [EJCLAW_ENV.agentType]: args.agentType,
     CLAUDE_CONFIG_DIR: args.groupSessionsDir,
     ...(args.runtimeTaskId
-      ? { EJCLAW_RUNTIME_TASK_ID: args.runtimeTaskId }
+      ? { [EJCLAW_ENV.runtimeTaskId]: args.runtimeTaskId }
       : {}),
   };
 }
@@ -486,15 +489,15 @@ function prepareCodexSessionEnvironment(args: {
     upsertEjclawMcpServerSection({
       sessionConfigPath,
       mcpServerPath,
-      ipcDir: args.env.EJCLAW_IPC_DIR,
-      hostIpcDir: args.env.EJCLAW_HOST_IPC_DIR,
+      ipcDir: args.env[EJCLAW_ENV.ipcDir],
+      hostIpcDir: args.env[EJCLAW_ENV.hostIpcDir],
       chatJid: args.chatJid,
       groupFolder: args.group.folder,
       isMain: args.isMain,
       agentType: 'codex',
       roomRole: args.roomRole,
       workDir:
-        args.env.EJCLAW_WORK_DIR || args.group.workDir || args.projectRoot,
+        args.env[EJCLAW_ENV.workDir] || args.group.workDir || args.projectRoot,
     });
   }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { EJCLAW_ENV } from 'ejclaw-runners-shared';
 
 import { buildEjclawMcpServerConfig } from '../src/mcp-config.js';
 
@@ -19,13 +20,13 @@ describe('ejclaw MCP config', () => {
       args: ['/runner/dist/ipc-mcp-stdio.js'],
       alwaysLoad: true,
       env: {
-        EJCLAW_CHAT_JID: 'dc:room',
-        EJCLAW_GROUP_FOLDER: 'ejclaw',
-        EJCLAW_IS_MAIN: '1',
-        EJCLAW_AGENT_TYPE: 'claude-code',
-        EJCLAW_ROOM_ROLE: 'reviewer',
-        EJCLAW_IPC_DIR: '/tmp/ipc/task',
-        EJCLAW_HOST_IPC_DIR: '/tmp/ipc/host',
+        [EJCLAW_ENV.chatJid]: 'dc:room',
+        [EJCLAW_ENV.groupFolder]: 'ejclaw',
+        [EJCLAW_ENV.isMain]: '1',
+        [EJCLAW_ENV.agentType]: 'claude-code',
+        [EJCLAW_ENV.roomRole]: 'reviewer',
+        [EJCLAW_ENV.ipcDir]: '/tmp/ipc/task',
+        [EJCLAW_ENV.hostIpcDir]: '/tmp/ipc/host',
       },
     });
   });

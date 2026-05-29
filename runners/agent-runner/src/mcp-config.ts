@@ -1,4 +1,5 @@
 import type { McpStdioServerConfig } from '@anthropic-ai/claude-agent-sdk';
+import { EJCLAW_ENV } from 'ejclaw-runners-shared';
 
 export interface EjclawMcpServerConfigInput {
   chatJid: string;
@@ -19,16 +20,16 @@ export function buildEjclawMcpServerConfig(
     args: [mcpServerPath],
     alwaysLoad: true,
     env: {
-      EJCLAW_CHAT_JID: input.chatJid,
-      EJCLAW_GROUP_FOLDER: input.groupFolder,
-      EJCLAW_IS_MAIN: input.isMain ? '1' : '0',
-      EJCLAW_AGENT_TYPE: input.agentType,
-      EJCLAW_ROOM_ROLE: input.roomRole,
+      [EJCLAW_ENV.chatJid]: input.chatJid,
+      [EJCLAW_ENV.groupFolder]: input.groupFolder,
+      [EJCLAW_ENV.isMain]: input.isMain ? '1' : '0',
+      [EJCLAW_ENV.agentType]: input.agentType,
+      [EJCLAW_ENV.roomRole]: input.roomRole,
       ...(input.ipcDir && {
-        EJCLAW_IPC_DIR: input.ipcDir,
+        [EJCLAW_ENV.ipcDir]: input.ipcDir,
       }),
       ...(input.hostIpcDir && {
-        EJCLAW_HOST_IPC_DIR: input.hostIpcDir,
+        [EJCLAW_ENV.hostIpcDir]: input.hostIpcDir,
       }),
     },
   };
