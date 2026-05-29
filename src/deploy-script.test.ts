@@ -7,7 +7,7 @@ type PackageJson = {
 };
 
 describe('deploy script', () => {
-  it('refreshes root file dependencies after pulling before building', () => {
+  it('refreshes root file dependencies after pulling and after building shared dist', () => {
     const packageJson = JSON.parse(
       fs.readFileSync(
         path.resolve(import.meta.dirname, '../package.json'),
@@ -17,11 +17,20 @@ describe('deploy script', () => {
 
     const deploy = packageJson.scripts?.deploy ?? '';
     const pullIndex = deploy.indexOf('git pull --ff-only');
-    const rootInstallIndex = deploy.indexOf('bun install --frozen-lockfile');
+    const firstRootInstallIndex = deploy.indexOf(
+      'bun install --frozen-lockfile',
+    );
     const buildIndex = deploy.indexOf('bun run build:all');
+    const secondRootInstallIndex = deploy.indexOf(
+      'bun install --frozen-lockfile',
+      firstRootInstallIndex + 1,
+    );
+    const verifyIndex = deploy.indexOf('bun run verify:dist');
 
     expect(pullIndex).toBeGreaterThanOrEqual(0);
-    expect(rootInstallIndex).toBeGreaterThan(pullIndex);
-    expect(rootInstallIndex).toBeLessThan(buildIndex);
+    expect(firstRootInstallIndex).toBeGreaterThan(pullIndex);
+    expect(firstRootInstallIndex).toBeLessThan(buildIndex);
+    expect(secondRootInstallIndex).toBeGreaterThan(buildIndex);
+    expect(secondRootInstallIndex).toBeLessThan(verifyIndex);
   });
 });
