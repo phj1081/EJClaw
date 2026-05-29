@@ -38,7 +38,7 @@ function isRetryableCodexSessionFailureAttempt(args: {
       });
 }
 
-export async function executeMessageAgentAttemptLifecycle(args: {
+interface ExecuteMessageAgentAttemptLifecycleArgs {
   provider: 'claude' | 'codex';
   runAttempt: (provider: 'claude' | 'codex') => Promise<MessageAgentAttempt>;
   isClaudeCodeAgent: boolean;
@@ -69,143 +69,166 @@ export async function executeMessageAgentAttemptLifecycle(args: {
     warn: (obj: Record<string, unknown> | string, msg?: string) => void;
     error: (obj: Record<string, unknown> | string, msg?: string) => void;
   };
-}): Promise<AttemptResult> {
-  const {
-    provider,
-    runAttempt,
-    isClaudeCodeAgent,
-    canRetryClaudeCredentials,
-    clearStoredSession,
-    clearRoleSdkSessions,
-    sessionFolder,
-    maybeHandoffToCodex,
-    hasDirectTerminalDelivery,
-    pairedExecutionLifecycle,
-    shouldRetryFreshSessionOnAgentFailure,
-    rotationLogContext,
-    log,
-  } = args;
+}
 
-  let resetSessionRequested = false;
-  const rememberAttempt = (
-    attempt: MessageAgentAttempt,
-  ): MessageAgentAttempt => {
+interface RecoveryResult {
+  attempt: MessageAgentAttempt;
+  resolved: AttemptResult | null;
+}
+
+class MessageAgentAttemptLifecycleRunner {
+  private resetSessionRequested = false;
+
+  constructor(private readonly args: ExecuteMessageAgentAttemptLifecycleArgs) {}
+
+  async execute(): Promise<AttemptResult> {
+    let primaryAttempt = await this.runTrackedAttempt(this.args.provider);
+    const recoveredSessionAttempt =
+      await this.recoverRetryableClaudeSessionFailure(primaryAttempt);
+    if (recoveredSessionAttempt.resolved) {
+      return recoveredSessionAttempt.resolved;
+    }
+    primaryAttempt = recoveredSessionAttempt.attempt;
+
+    const recoveredCodexSessionAttempt =
+      await this.recoverRetryableCodexSessionFailure(primaryAttempt);
+    if (recoveredCodexSessionAttempt.resolved) {
+      return recoveredCodexSessionAttempt.resolved;
+    }
+    primaryAttempt = recoveredCodexSessionAttempt.attempt;
+
+    if (primaryAttempt.error) {
+      return this.handlePrimaryAttemptFailure(
+        primaryAttempt,
+        getErrorMessage(primaryAttempt.error),
+      );
+    }
+
+    return this.finalizePrimaryAttempt(primaryAttempt);
+  }
+
+  private rememberAttempt(attempt: MessageAgentAttempt): MessageAgentAttempt {
     if (attempt.resetSessionRequested) {
-      resetSessionRequested = true;
+      this.resetSessionRequested = true;
     }
     return attempt;
-  };
+  }
 
-  const runTrackedAttempt = async (
+  private async runTrackedAttempt(
     currentProvider: 'claude' | 'codex',
-  ): Promise<MessageAgentAttempt> =>
-    rememberAttempt(await runAttempt(currentProvider));
+  ): Promise<MessageAgentAttempt> {
+    return this.rememberAttempt(await this.args.runAttempt(currentProvider));
+  }
 
-  const retryCodexWithRotation = async (
+  private async retryCodexWithRotation(
     initialTrigger: { reason: CodexRotationReason },
     rotationMessage?: string,
-  ): Promise<AttemptResult> => {
+  ): Promise<AttemptResult> {
     return runCodexAttemptWithRotation({
       initialTrigger,
-      runAttempt: () => runTrackedAttempt('codex'),
-      logContext: rotationLogContext,
+      runAttempt: () => this.runTrackedAttempt('codex'),
+      logContext: this.args.rotationLogContext,
       rotationMessage,
     });
-  };
+  }
 
-  const retryClaudeWithRotation = async (
+  private async retryClaudeWithRotation(
     initialTrigger: {
       reason: AgentTriggerReason;
       retryAfterMs?: number;
     },
     rotationMessage?: string,
-  ): Promise<AttemptResult> => {
+  ): Promise<AttemptResult> {
     return runClaudeAttemptWithRotation({
       initialTrigger,
-      runAttempt: () => runTrackedAttempt('claude'),
-      logContext: rotationLogContext,
+      runAttempt: () => this.runTrackedAttempt('claude'),
+      logContext: this.args.rotationLogContext,
       rotationMessage,
       onSuccess: ({ sawOutput }) => {
-        pairedExecutionLifecycle.markSawOutput(sawOutput);
+        this.args.pairedExecutionLifecycle.markSawOutput(sawOutput);
       },
     });
-  };
+  }
 
-  const maybeHandoffAfterError = (
+  private maybeHandoffAfterError(
     reason: AgentTriggerReason,
     attempt: MessageAgentAttempt,
-  ): AttemptResult => {
-    if (maybeHandoffToCodex(reason, attempt.sawVisibleOutput)) {
+  ): AttemptResult {
+    if (this.args.maybeHandoffToCodex(reason, attempt.sawVisibleOutput)) {
       return 'success';
     }
     return 'error';
-  };
+  }
 
-  const retryClaudeAttemptIfNeeded = async (
+  private async retryClaudeAttemptIfNeeded(
     attempt: MessageAgentAttempt,
     rotationMessage?: string | null,
-  ): Promise<AttemptResult | null> => {
+  ): Promise<AttemptResult | null> {
     const retryAction = await executeAttemptRetryAction({
-      provider,
-      canRetryClaudeCredentials,
+      provider: this.args.provider,
+      canRetryClaudeCredentials: this.args.canRetryClaudeCredentials,
       canRetryCodex: false,
       attempt,
       rotationMessage,
-      runClaude: retryClaudeWithRotation,
-      runCodex: retryCodexWithRotation,
+      runClaude: (trigger, message) =>
+        this.retryClaudeWithRotation(trigger, message),
+      runCodex: (trigger, message) =>
+        this.retryCodexWithRotation(trigger, message),
     });
     if (retryAction.kind !== 'claude') {
       return null;
     }
 
     if (retryAction.result === 'error') {
-      return maybeHandoffAfterError(retryAction.trigger.reason, attempt);
+      return this.maybeHandoffAfterError(retryAction.trigger.reason, attempt);
     }
 
-    pairedExecutionLifecycle.markStatus('succeeded');
+    this.args.pairedExecutionLifecycle.markStatus('succeeded');
     return retryAction.result;
-  };
+  }
 
-  const retryCodexAttemptIfNeeded = async (
+  private async retryCodexAttemptIfNeeded(
     attempt: MessageAgentAttempt,
     rotationMessage?: string | null,
-  ): Promise<AttemptResult | null> => {
+  ): Promise<AttemptResult | null> {
     const retryAction = await executeAttemptRetryAction({
-      provider,
+      provider: this.args.provider,
       canRetryClaudeCredentials: false,
-      canRetryCodex: !isClaudeCodeAgent && getCodexAccountCount() > 1,
+      canRetryCodex: !this.args.isClaudeCodeAgent && getCodexAccountCount() > 1,
       attempt,
       rotationMessage,
-      runClaude: retryClaudeWithRotation,
-      runCodex: retryCodexWithRotation,
+      runClaude: (trigger, message) =>
+        this.retryClaudeWithRotation(trigger, message),
+      runCodex: (trigger, message) =>
+        this.retryCodexWithRotation(trigger, message),
     });
     if (retryAction.kind !== 'codex') {
       return null;
     }
 
     if (retryAction.result === 'success') {
-      pairedExecutionLifecycle.markStatus('succeeded');
+      this.args.pairedExecutionLifecycle.markStatus('succeeded');
     }
     return retryAction.result;
-  };
+  }
 
-  const isRetryableClaudeSessionFailure = (
+  private isRetryableClaudeSessionFailure(
     attempt: MessageAgentAttempt,
-  ): boolean =>
-    isRetryableClaudeSessionFailureAttempt({
+  ): boolean {
+    return isRetryableClaudeSessionFailureAttempt({
       attempt,
-      isClaudeCodeAgent,
-      provider,
-      shouldRetryFreshSessionOnAgentFailure,
+      isClaudeCodeAgent: this.args.isClaudeCodeAgent,
+      provider: this.args.provider,
+      shouldRetryFreshSessionOnAgentFailure:
+        this.args.shouldRetryFreshSessionOnAgentFailure,
     });
+  }
 
-  const recoverRetryableClaudeSessionFailure = async (
+  private async recoverRetryableClaudeSessionFailure(
     attempt: MessageAgentAttempt,
-  ): Promise<{
-    attempt: MessageAgentAttempt;
-    resolved: AttemptResult | null;
-  }> => {
-    if (!isRetryableClaudeSessionFailure(attempt)) {
+  ): Promise<RecoveryResult> {
+    const { clearRoleSdkSessions, clearStoredSession, log } = this.args;
+    if (!this.isRetryableClaudeSessionFailure(attempt)) {
       return { attempt, resolved: null };
     }
 
@@ -215,8 +238,8 @@ export async function executeMessageAgentAttemptLifecycle(args: {
       'Cleared poisoned Claude session before visible output, retrying fresh session',
     );
 
-    const freshAttempt = await runTrackedAttempt('claude');
-    if (!isRetryableClaudeSessionFailure(freshAttempt)) {
+    const freshAttempt = await this.runTrackedAttempt('claude');
+    if (!this.isRetryableClaudeSessionFailure(freshAttempt)) {
       return { attempt: freshAttempt, resolved: null };
     }
 
@@ -225,16 +248,15 @@ export async function executeMessageAgentAttemptLifecycle(args: {
     log.error('Retryable Claude session failure persisted after fresh retry');
     return {
       attempt: freshAttempt,
-      resolved: maybeHandoffAfterError('session-failure', freshAttempt),
+      resolved: this.maybeHandoffAfterError('session-failure', freshAttempt),
     };
-  };
+  }
 
-  const recoverRetryableCodexSessionFailure = async (
+  private async recoverRetryableCodexSessionFailure(
     attempt: MessageAgentAttempt,
-  ): Promise<{
-    attempt: MessageAgentAttempt;
-    resolved: AttemptResult | null;
-  }> => {
+  ): Promise<RecoveryResult> {
+    const { clearRoleSdkSessions, clearStoredSession, log, provider } =
+      this.args;
     if (!isRetryableCodexSessionFailureAttempt({ provider, attempt })) {
       return { attempt, resolved: null };
     }
@@ -245,7 +267,7 @@ export async function executeMessageAgentAttemptLifecycle(args: {
       'Cleared poisoned Codex session before visible output, retrying fresh session',
     );
 
-    const freshAttempt = await runTrackedAttempt('codex');
+    const freshAttempt = await this.runTrackedAttempt('codex');
     if (
       !isRetryableCodexSessionFailureAttempt({
         provider,
@@ -262,13 +284,14 @@ export async function executeMessageAgentAttemptLifecycle(args: {
       attempt: freshAttempt,
       resolved: 'error',
     };
-  };
+  }
 
-  const handlePrimaryAttemptFailure = async (
+  private async handlePrimaryAttemptFailure(
     attempt: MessageAgentAttempt,
     rotationMessage: string,
-  ): Promise<AttemptResult> => {
-    const claudeRetryResult = await retryClaudeAttemptIfNeeded(
+  ): Promise<AttemptResult> {
+    const { log, provider } = this.args;
+    const claudeRetryResult = await this.retryClaudeAttemptIfNeeded(
       attempt,
       rotationMessage,
     );
@@ -276,7 +299,7 @@ export async function executeMessageAgentAttemptLifecycle(args: {
       return claudeRetryResult;
     }
 
-    const codexRetryResult = await retryCodexAttemptIfNeeded(
+    const codexRetryResult = await this.retryCodexAttemptIfNeeded(
       attempt,
       rotationMessage,
     );
@@ -303,74 +326,41 @@ export async function executeMessageAgentAttemptLifecycle(args: {
       'Agent process error',
     );
     return 'error';
-  };
+  }
 
-  const finalizePrimaryAttempt = async (
+  private async finalizePrimaryAttempt(
     attempt: MessageAgentAttempt,
-  ): Promise<AttemptResult> => {
+  ): Promise<AttemptResult> {
+    const { log, provider } = this.args;
     const output = attempt.output;
     if (!output) {
       log.error({ provider }, 'Agent produced no output object');
       return 'error';
     }
 
-    if (!pairedExecutionLifecycle.getSummary()) {
-      const finalOutputText = getAgentOutputText(output);
-      pairedExecutionLifecycle.updateSummary({
-        outputText:
-          typeof finalOutputText === 'string' && finalOutputText.length > 0
-            ? finalOutputText
-            : null,
-        errorText:
-          typeof output.error === 'string' && output.error.length > 0
-            ? output.error
-            : null,
-      });
-    }
+    this.updateSummaryFromOutputIfNeeded(output);
 
     if (
       !attempt.sawOutput &&
-      !hasDirectTerminalDelivery() &&
+      !this.args.hasDirectTerminalDelivery() &&
       output.status !== 'error'
     ) {
-      const claudeRetryResult = await retryClaudeAttemptIfNeeded(attempt);
+      const claudeRetryResult = await this.retryClaudeAttemptIfNeeded(attempt);
       if (claudeRetryResult) {
         return claudeRetryResult;
       }
     }
 
-    if (
-      isClaudeCodeAgent &&
-      (resetSessionRequested || shouldResetSessionOnAgentFailure(output))
-    ) {
-      clearStoredSession();
-      log.warn(
-        { sessionFolder },
-        'Cleared poisoned agent session after unrecoverable error',
-      );
-    }
-
-    if (
-      !isClaudeCodeAgent &&
-      provider === 'codex' &&
-      (resetSessionRequested || shouldResetCodexSessionOnAgentFailure(output))
-    ) {
-      clearStoredSession();
-      clearRoleSdkSessions();
-      log.warn(
-        { sessionFolder },
-        'Cleared poisoned Codex session after unrecoverable error',
-      );
-    }
+    this.clearPoisonedSessionAfterFailure(output);
 
     if (output.status === 'error') {
-      return handlePrimaryAttemptFailure(
+      return this.handlePrimaryAttemptFailure(
         attempt,
         output.error ?? 'Agent process error',
       );
     }
 
-    const codexRetryResult = await retryCodexAttemptIfNeeded(
+    const codexRetryResult = await this.retryCodexAttemptIfNeeded(
       attempt,
       output.error ?? output.result,
     );
@@ -379,13 +369,7 @@ export async function executeMessageAgentAttemptLifecycle(args: {
     }
 
     if (attempt.streamedTriggerReason) {
-      if (
-        isClaudeCodeAgent &&
-        maybeHandoffToCodex(
-          attempt.streamedTriggerReason.reason,
-          attempt.sawVisibleOutput,
-        )
-      ) {
+      if (this.resolveStreamedTriggerHandoff(attempt)) {
         return 'success';
       }
       log.error(
@@ -397,45 +381,98 @@ export async function executeMessageAgentAttemptLifecycle(args: {
       return 'error';
     }
 
-    if (
-      attempt.sawSuccessNullResultWithoutOutput &&
-      !attempt.sawOutput &&
-      !hasDirectTerminalDelivery()
-    ) {
+    if (this.isSuccessWithoutVisibleOutput(attempt)) {
       log.error(
         'Agent returned success with null result and no visible output',
       );
       return 'error';
     }
 
-    pairedExecutionLifecycle.markStatus('succeeded');
-    pairedExecutionLifecycle.markSawOutput(
-      attempt.sawOutput || hasDirectTerminalDelivery(),
+    this.args.pairedExecutionLifecycle.markStatus('succeeded');
+    this.args.pairedExecutionLifecycle.markSawOutput(
+      attempt.sawOutput || this.args.hasDirectTerminalDelivery(),
     );
     return 'success';
-  };
-
-  let primaryAttempt = await runTrackedAttempt(provider);
-  const recoveredSessionAttempt =
-    await recoverRetryableClaudeSessionFailure(primaryAttempt);
-  if (recoveredSessionAttempt.resolved) {
-    return recoveredSessionAttempt.resolved;
   }
-  primaryAttempt = recoveredSessionAttempt.attempt;
 
-  const recoveredCodexSessionAttempt =
-    await recoverRetryableCodexSessionFailure(primaryAttempt);
-  if (recoveredCodexSessionAttempt.resolved) {
-    return recoveredCodexSessionAttempt.resolved;
+  private updateSummaryFromOutputIfNeeded(
+    output: NonNullable<MessageAgentAttempt['output']>,
+  ): void {
+    const { pairedExecutionLifecycle } = this.args;
+    if (pairedExecutionLifecycle.getSummary()) {
+      return;
+    }
+    const finalOutputText = getAgentOutputText(output);
+    pairedExecutionLifecycle.updateSummary({
+      outputText:
+        typeof finalOutputText === 'string' && finalOutputText.length > 0
+          ? finalOutputText
+          : null,
+      errorText:
+        typeof output.error === 'string' && output.error.length > 0
+          ? output.error
+          : null,
+    });
   }
-  primaryAttempt = recoveredCodexSessionAttempt.attempt;
 
-  if (primaryAttempt.error) {
-    return handlePrimaryAttemptFailure(
-      primaryAttempt,
-      getErrorMessage(primaryAttempt.error),
+  private clearPoisonedSessionAfterFailure(
+    output: NonNullable<MessageAgentAttempt['output']>,
+  ): void {
+    const {
+      clearRoleSdkSessions,
+      clearStoredSession,
+      isClaudeCodeAgent,
+      log,
+      provider,
+      sessionFolder,
+    } = this.args;
+    if (
+      isClaudeCodeAgent &&
+      (this.resetSessionRequested || shouldResetSessionOnAgentFailure(output))
+    ) {
+      clearStoredSession();
+      log.warn(
+        { sessionFolder },
+        'Cleared poisoned agent session after unrecoverable error',
+      );
+      return;
+    }
+    if (
+      !isClaudeCodeAgent &&
+      provider === 'codex' &&
+      (this.resetSessionRequested ||
+        shouldResetCodexSessionOnAgentFailure(output))
+    ) {
+      clearStoredSession();
+      clearRoleSdkSessions();
+      log.warn(
+        { sessionFolder },
+        'Cleared poisoned Codex session after unrecoverable error',
+      );
+    }
+  }
+
+  private resolveStreamedTriggerHandoff(attempt: MessageAgentAttempt): boolean {
+    if (!attempt.streamedTriggerReason || !this.args.isClaudeCodeAgent) {
+      return false;
+    }
+    return this.args.maybeHandoffToCodex(
+      attempt.streamedTriggerReason.reason,
+      attempt.sawVisibleOutput,
     );
   }
 
-  return finalizePrimaryAttempt(primaryAttempt);
+  private isSuccessWithoutVisibleOutput(attempt: MessageAgentAttempt): boolean {
+    return (
+      attempt.sawSuccessNullResultWithoutOutput &&
+      !attempt.sawOutput &&
+      !this.args.hasDirectTerminalDelivery()
+    );
+  }
+}
+
+export async function executeMessageAgentAttemptLifecycle(
+  args: ExecuteMessageAgentAttemptLifecycleArgs,
+): Promise<AttemptResult> {
+  return new MessageAgentAttemptLifecycleRunner(args).execute();
 }
