@@ -47,7 +47,15 @@ export function handleFailedReviewerExecution(args: {
         updatedAt: now,
         patch: {
           ...(signal.kind === 'request_owner_finalize'
-            ? { source_ref: approvedSourceRef }
+            ? {
+                source_ref: approvedSourceRef,
+                owner_failure_count: 0,
+                owner_step_done_streak: 0,
+                finalize_step_done_count: 0,
+                empty_step_done_streak: 0,
+                arbiter_verdict: null,
+                arbiter_requested_at: null,
+              }
             : {}),
           ...(signal.kind === 'complete'
             ? { completion_reason: signal.completionReason }
@@ -119,6 +127,12 @@ export function handleReviewerCompletion(args: {
         updatedAt: now,
         patch: {
           source_ref: approvedSourceRef,
+          owner_failure_count: 0,
+          owner_step_done_streak: 0,
+          finalize_step_done_count: 0,
+          empty_step_done_streak: 0,
+          arbiter_verdict: null,
+          arbiter_requested_at: null,
         },
       });
       logger.info(

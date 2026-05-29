@@ -23,7 +23,12 @@ export const ALLOWED_PAIRED_STATUS_TRANSITIONS: Record<
   merge_ready: new Set(['active', 'arbiter_requested', 'completed']),
   completed: new Set(),
   arbiter_requested: new Set(['in_arbitration', 'completed']),
-  in_arbitration: new Set(['active', 'arbiter_requested', 'completed']),
+  in_arbitration: new Set([
+    'active',
+    'review_ready',
+    'arbiter_requested',
+    'completed',
+  ]),
 };
 
 export function assertPairedTaskStatusTransition(args: {

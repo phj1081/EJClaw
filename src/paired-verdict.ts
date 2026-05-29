@@ -75,10 +75,13 @@ export function classifyArbiterVerdict(
   if (!cleaned) return 'unknown';
   const firstLine = cleaned.split('\n')[0].trim();
   const verdictMatch = firstLine.match(
-    /\*{0,2}(?:VERDICT\s*[:—-]\s*)?(PROCEED|REVISE|RESET|ESCALATE)\*{0,2}/i,
+    /\*{0,2}(?:VERDICT\s*[:—-]\s*)?(PROCEED|REVISE|RESET|ESCALATE|CONTINUE)\*{0,2}/i,
   );
   if (verdictMatch) {
-    return verdictMatch[1].toLowerCase() as ArbiterVerdictResult;
+    const normalized = verdictMatch[1].toLowerCase();
+    return normalized === 'continue'
+      ? 'proceed'
+      : (normalized as ArbiterVerdictResult);
   }
   return 'unknown';
 }

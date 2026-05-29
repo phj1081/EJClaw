@@ -1296,6 +1296,8 @@ describe('paired execution context', () => {
       buildPairedTask({
         status: 'in_review',
         source_ref: 'stale-ref',
+        owner_step_done_streak: 2,
+        empty_step_done_streak: 2,
       }),
     );
     vi.mocked(db.getPairedWorkspace).mockImplementation((_taskId, role) =>
@@ -1314,6 +1316,8 @@ describe('paired execution context', () => {
       expect.objectContaining({
         status: 'merge_ready',
         source_ref: approvedSourceRef,
+        owner_step_done_streak: 0,
+        empty_step_done_streak: 0,
       }),
     );
   });
