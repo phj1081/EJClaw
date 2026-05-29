@@ -39,6 +39,50 @@ function parseLegacyAgentOutput(stdout: string): AgentOutput {
   return JSON.parse(jsonLine) as AgentOutput;
 }
 
+function logStreamedOutputDeliveryError(
+  err: unknown,
+  group: RegisteredGroup,
+  input: AgentInput,
+): void {
+  logger.warn(
+    {
+      group: group.name,
+      chatJid: input.chatJid,
+      runId: input.runId,
+      error: getErrorMessage(err),
+    },
+    'Streamed agent output delivery failed',
+  );
+}
+
+function writeTimeoutLog(args: {
+  logsDir: string;
+  input: AgentInput;
+  group: RegisteredGroup;
+  processName: string;
+  duration: number;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  hadStreamingOutput: boolean;
+}): void {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.writeFileSync(
+    path.join(args.logsDir, `agent-${args.input.runId || 'adhoc'}-${ts}.log`),
+    [
+      `=== Agent Run Log (TIMEOUT) ===`,
+      `Timestamp: ${new Date().toISOString()}`,
+      `Group: ${args.group.name}`,
+      `ChatJid: ${args.input.chatJid}`,
+      `RunId: ${args.input.runId || 'n/a'}`,
+      `Process: ${args.processName}`,
+      `Duration: ${args.duration}ms`,
+      `Exit Code: ${args.code}`,
+      `Signal: ${args.signal}`,
+      `Had Streaming Output: ${args.hadStreamingOutput}`,
+    ].join('\n'),
+  );
+}
+
 export function runSpawnedAgentProcess(
   args: RunSpawnedAgentProcessArgs,
 ): Promise<AgentOutput> {
@@ -151,7 +195,9 @@ export function runSpawnedAgentProcess(
               'Streamed agent error output',
             );
           }
-          outputChain = outputChain.then(() => onOutput(parsed));
+          outputChain = outputChain
+            .then(() => onOutput(parsed))
+            .catch((err) => logStreamedOutputDeliveryError(err, group, input));
         } catch (err) {
           logger.warn(
             {
@@ -210,22 +256,16 @@ export function runSpawnedAgentProcess(
       const duration = Date.now() - startTime;
 
       if (timedOut) {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        fs.writeFileSync(
-          path.join(logsDir, `agent-${input.runId || 'adhoc'}-${ts}.log`),
-          [
-            `=== Agent Run Log (TIMEOUT) ===`,
-            `Timestamp: ${new Date().toISOString()}`,
-            `Group: ${group.name}`,
-            `ChatJid: ${input.chatJid}`,
-            `RunId: ${input.runId || 'n/a'}`,
-            `Process: ${processName}`,
-            `Duration: ${duration}ms`,
-            `Exit Code: ${code}`,
-            `Signal: ${signal}`,
-            `Had Streaming Output: ${hadStreamingOutput}`,
-          ].join('\n'),
-        );
+        writeTimeoutLog({
+          logsDir,
+          input,
+          group,
+          processName,
+          duration,
+          code,
+          signal,
+          hadStreamingOutput,
+        });
 
         if (hadStreamingOutput) {
           logger.info(
