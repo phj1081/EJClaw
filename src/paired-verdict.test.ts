@@ -69,6 +69,7 @@ describe('paired verdict parser', () => {
       ),
     ).toBe('reset');
     expect(classifyArbiterVerdict('ESCALATE\nblocked')).toBe('escalate');
+    expect(classifyArbiterVerdict('CONTINUE\nsame as proceed')).toBe('proceed');
     expect(classifyArbiterVerdict('no verdict here')).toBe('unknown');
   });
 });

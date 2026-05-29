@@ -212,6 +212,7 @@ export function buildFinalizePendingPrompt(_args: {
 }): string {
   return `The reviewer approved the current task scope (TASK_DONE / legacy DONE). Finalize and report the result.
 If you intend to close this paired turn now, your first line must be TASK_DONE.
-If the original request still has remaining work and the owner flow should continue, your first line may be STEP_DONE.
+Do not use STEP_DONE only because a broader roadmap still has remaining work; close the approved slice and continue the next slice in a new owner turn.
+Use STEP_DONE only when this same approved scope still needs additional owner changes and another review pass.
 If your first line is DONE_WITH_CONCERNS, the system will reopen review instead of finishing.`;
 }

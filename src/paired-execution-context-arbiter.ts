@@ -1,8 +1,9 @@
-import { ARBITER_DEADLOCK_THRESHOLD } from './config.js';
 import { logger } from './logger.js';
 import { transitionPairedTaskStatus } from './paired-task-status.js';
 import { classifyArbiterVerdict } from './paired-verdict.js';
 import type { PairedTask } from './types.js';
+
+const ARBITER_RESOLUTION_ROUND_TRIP_COUNT = 0;
 
 export function handleFailedArbiterExecution(args: {
   task: PairedTask;
@@ -50,6 +51,27 @@ export function handleArbiterCompletion(args: {
 
   switch (arbiterVerdict) {
     case 'proceed':
+      transitionPairedTaskStatus({
+        taskId,
+        currentStatus: 'in_arbitration',
+        nextStatus: 'review_ready',
+        expectedUpdatedAt: task.updated_at,
+        updatedAt: now,
+        patch: {
+          round_trip_count: ARBITER_RESOLUTION_ROUND_TRIP_COUNT,
+          owner_failure_count: 0,
+          owner_step_done_streak: 0,
+          finalize_step_done_count: 0,
+          empty_step_done_streak: 0,
+          arbiter_verdict: arbiterVerdict,
+          arbiter_requested_at: null,
+        },
+      });
+      logger.info(
+        { taskId, arbiterVerdict },
+        'Arbiter proceeded — returning task to reviewer for approval',
+      );
+      return;
     case 'revise':
     case 'reset':
       transitionPairedTaskStatus({
@@ -59,13 +81,18 @@ export function handleArbiterCompletion(args: {
         expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
-          round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
+          round_trip_count: ARBITER_RESOLUTION_ROUND_TRIP_COUNT,
+          owner_failure_count: 0,
+          owner_step_done_streak: 0,
+          finalize_step_done_count: 0,
+          empty_step_done_streak: 0,
           arbiter_verdict: arbiterVerdict,
+          arbiter_requested_at: null,
         },
       });
       logger.info(
         { taskId, arbiterVerdict },
-        'Arbiter resolved deadlock — resuming ping-pong',
+        'Arbiter requested owner changes — resuming owner flow',
       );
       return;
     case 'escalate':
@@ -86,17 +113,22 @@ export function handleArbiterCompletion(args: {
       transitionPairedTaskStatus({
         taskId,
         currentStatus: 'in_arbitration',
-        nextStatus: 'active',
+        nextStatus: 'review_ready',
         expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
-          round_trip_count: Math.max(0, ARBITER_DEADLOCK_THRESHOLD - 1),
+          round_trip_count: ARBITER_RESOLUTION_ROUND_TRIP_COUNT,
+          owner_failure_count: 0,
+          owner_step_done_streak: 0,
+          finalize_step_done_count: 0,
+          empty_step_done_streak: 0,
           arbiter_verdict: 'unknown',
+          arbiter_requested_at: null,
         },
       });
       logger.warn(
         { taskId, summary: summary?.slice(0, 200) },
-        'Arbiter verdict unrecognized — falling back to proceed',
+        'Arbiter verdict unrecognized — returning task to reviewer as proceed fallback',
       );
       return;
   }
