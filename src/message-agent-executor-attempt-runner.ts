@@ -1,6 +1,9 @@
 import type { Logger } from 'pino';
 
-import { createEvaluatedOutputHandler } from './agent-attempt.js';
+import {
+  createEvaluatedOutputHandler,
+  type EvaluatedAgentOutput,
+} from './agent-attempt.js';
 import type { AttemptStreamedTrigger } from './agent-attempt-retry.js';
 import { runAgentProcess, type AgentOutput } from './agent-runner.js';
 import { markCompactRefreshNeeded } from './compact-refresh.js';
@@ -64,7 +67,7 @@ function createProviderLog(
   return providerLog;
 }
 
-export async function runMessageAgentAttempt(args: {
+interface RunMessageAgentAttemptArgs {
   provider: 'claude' | 'codex';
   currentSessionId: string | undefined;
   isClaudeCodeAgent: boolean;
@@ -100,240 +103,289 @@ export async function runMessageAgentAttempt(args: {
     recordFinalOutputBeforeDelivery(outputText: string): boolean;
   };
   log: Logger;
-}): Promise<MessageAgentAttempt> {
-  const {
-    provider,
-    currentSessionId,
-    isClaudeCodeAgent,
-    canRetryClaudeCredentials,
-    shouldPersistSession,
-    effectiveGroup,
-    agentInput,
-    activeRole,
-    effectiveServiceId,
-    effectiveAgentType,
-    sessionFolder,
-    roomRoleContext,
-    pairedExecutionContext,
-    fallbackWorkspaceDir,
-    onPersistSession,
-    registerProcess,
-    onOutput,
-    pairedExecutionLifecycle,
-    log,
-  } = args;
-  const attemptSessionId = currentSessionId;
-  let resetSessionRequested = false;
-  const streamedOutputHandler = createEvaluatedOutputHandler({
-    agentType: isClaudeCodeAgent ? 'claude-code' : 'codex',
-    provider,
-    evaluationOptions: {
-      suppressClaudeAuthErrorOutput: provider === 'claude',
-      trackSuccessNullResult: true,
-      shortCircuitTriggeredErrors:
-        provider === 'claude'
-          ? canRetryClaudeCredentials
-          : getCodexAccountCount() > 1,
-    },
-    onEvaluatedOutput: async ({
-      output,
-      outputText,
-      structuredOutput,
-      evaluation,
-    }) => {
-      maybeMarkCompactRefreshForOutput({ output, activeRole, sessionFolder });
-      const outputPhase = output.phase ?? 'final';
-      if (outputPhase !== 'final') {
-        log.info(
-          {
-            provider,
-            outputPhase,
-            outputStatus: output.status,
-            visibility: structuredOutput?.visibility ?? null,
-            preview:
-              outputText && outputText.length > 0
-                ? outputText.slice(0, 160)
-                : null,
-            errorPreview:
-              typeof output.error === 'string' && output.error.length > 0
-                ? output.error.slice(0, 160)
-                : null,
-            activeRole,
-            effectiveServiceId,
-            effectiveAgentType,
-            sessionFolder,
-            resumedSession: attemptSessionId ?? null,
-            streamedSessionId: output.newSessionId ?? null,
-            roomRoleServiceId: roomRoleContext?.serviceId ?? null,
-            roomRole: roomRoleContext?.role ?? null,
-            pairedTaskId: pairedExecutionContext?.task.id ?? null,
-            workspaceDir:
-              pairedExecutionContext?.workspace?.workspace_dir ??
-              fallbackWorkspaceDir ??
-              null,
-          },
-          'Observed streamed agent activity',
-        );
-      }
-      if (
-        isClaudeCodeAgent &&
-        provider === 'claude' &&
-        shouldResetSessionOnAgentFailure(output)
-      ) {
-        resetSessionRequested = true;
-      }
-      if (
-        !isClaudeCodeAgent &&
-        provider === 'codex' &&
-        shouldResetCodexSessionOnAgentFailure(output)
-      ) {
-        resetSessionRequested = true;
-      }
-      if (
-        output.newSessionId &&
-        !resetSessionRequested &&
-        shouldPersistSession
-      ) {
-        onPersistSession(output.newSessionId);
-      }
+}
 
-      pairedExecutionLifecycle.updateSummary({
-        outputText,
-        errorText: typeof output.error === 'string' ? output.error : null,
+type StreamedOutputHandler = ReturnType<typeof createEvaluatedOutputHandler>;
+
+class MessageAgentAttemptRunner {
+  private resetSessionRequested = false;
+  private readonly attemptSessionId: string | undefined;
+  private readonly streamedOutputHandler: StreamedOutputHandler;
+
+  constructor(private readonly args: RunMessageAgentAttemptArgs) {
+    this.attemptSessionId = args.currentSessionId;
+    this.streamedOutputHandler = createEvaluatedOutputHandler({
+      agentType: args.isClaudeCodeAgent ? 'claude-code' : 'codex',
+      provider: args.provider,
+      evaluationOptions: {
+        suppressClaudeAuthErrorOutput: args.provider === 'claude',
+        trackSuccessNullResult: true,
+        shortCircuitTriggeredErrors:
+          args.provider === 'claude'
+            ? args.canRetryClaudeCredentials
+            : getCodexAccountCount() > 1,
+      },
+      onEvaluatedOutput: (event) => this.handleEvaluatedOutput(event),
+    });
+  }
+
+  async run(): Promise<MessageAgentAttempt> {
+    const providerLog = createProviderLog(
+      this.args.log,
+      this.args.provider,
+      this.args.effectiveAgentType,
+    );
+
+    try {
+      const output = await this.runAgentProcessWithStreaming();
+      this.persistReturnedSession(output);
+      maybeMarkCompactRefreshForOutput({
+        output,
+        activeRole: this.args.activeRole,
+        sessionFolder: this.args.sessionFolder,
       });
-      if (evaluation.newTrigger && outputText && output.status === 'success') {
-        log.warn(
-          {
-            reason: evaluation.newTrigger.reason,
-            resultPreview: outputText.slice(0, 120),
-          },
-          'Detected Claude rotation trigger in successful output',
-        );
-      } else if (evaluation.newTrigger && typeof output.error === 'string') {
-        log.warn(
-          {
-            reason: evaluation.newTrigger.reason,
-            errorPreview: output.error.slice(0, 120),
-          },
-          provider === 'claude'
-            ? 'Detected Claude rotation trigger in streamed error output'
-            : 'Detected Codex rotation trigger in streamed error output',
-        );
-      }
-
-      if (evaluation.suppressedAuthError) {
-        log.warn(
-          {
-            resultPreview: outputText ? outputText.slice(0, 120) : undefined,
-          },
-          'Suppressed Claude 401 auth error from chat output',
-        );
-        return;
-      }
-
-      if (evaluation.suppressedRetryableSessionFailure) {
-        log.warn(
-          {
-            resultPreview: outputText
-              ? outputText.slice(0, 160)
-              : output.error?.slice(0, 160),
-          },
-          provider === 'claude'
-            ? 'Suppressed retryable Claude session failure from chat output'
-            : 'Suppressed retryable Codex session failure from chat output',
-        );
-        return;
-      }
-
-      if (!evaluation.shouldForwardOutput) {
-        return;
-      }
-      if (outputText && outputText.length > 0) {
-        streamedOutputHandler.markVisibleOutput();
-      }
-      if (
-        outputPhase === 'final' &&
-        output.status === 'success' &&
-        outputText &&
-        outputText.length > 0
-      ) {
-        let finalOutputAccepted = true;
-        try {
-          finalOutputAccepted =
-            pairedExecutionLifecycle.recordFinalOutputBeforeDelivery(
-              outputText,
-            );
-        } catch (err) {
-          log.warn(
-            { pairedTaskId: pairedExecutionContext?.task.id ?? null, err },
-            'Failed to persist paired turn output and status before delivery',
-          );
-        }
-        if (!finalOutputAccepted) {
-          return;
-        }
-      }
-      if (onOutput) {
-        await onOutput(output);
-      }
-    },
-  });
-
-  const wrappedOnOutput = async (output: AgentOutput) => {
-    await streamedOutputHandler.handleOutput(output);
-  };
-
-  const providerLog = createProviderLog(log, provider, effectiveAgentType);
-
-  try {
-    const output = await runAgentProcess(
-      effectiveGroup,
-      {
-        ...agentInput,
-        sessionId: attemptSessionId,
-      },
-      registerProcess,
-      wrappedOnOutput,
-      pairedExecutionContext?.envOverrides,
-    );
-
-    if (output.newSessionId && shouldPersistSession) {
-      onPersistSession(output.newSessionId);
+      providerLog.info(
+        {
+          status: output.status,
+          sawOutput: this.streamedOutputHandler.getState().sawOutput,
+        },
+        `Provider response completed (provider: ${this.args.provider})`,
+      );
+      return this.buildAttempt({ output });
+    } catch (error) {
+      return this.buildAttempt({ error });
     }
-    maybeMarkCompactRefreshForOutput({ output, activeRole, sessionFolder });
+  }
 
-    providerLog.info(
+  private async runAgentProcessWithStreaming(): Promise<AgentOutput> {
+    return runAgentProcess(
+      this.args.effectiveGroup,
       {
-        status: output.status,
-        sawOutput: streamedOutputHandler.getState().sawOutput,
+        ...this.args.agentInput,
+        sessionId: this.attemptSessionId,
       },
-      `Provider response completed (provider: ${provider})`,
+      this.args.registerProcess,
+      (output) => this.streamedOutputHandler.handleOutput(output),
+      this.args.pairedExecutionContext?.envOverrides,
     );
+  }
 
-    const streamedState = streamedOutputHandler.getState();
+  private async handleEvaluatedOutput(
+    event: EvaluatedAgentOutput,
+  ): Promise<void> {
+    maybeMarkCompactRefreshForOutput({
+      output: event.output,
+      activeRole: this.args.activeRole,
+      sessionFolder: this.args.sessionFolder,
+    });
+    this.logNonFinalOutput(event);
+    this.trackSessionResetRequest(event.output);
+    this.persistStreamedSession(event.output);
+    this.updatePairedSummary(event);
+    this.logEvaluationTrigger(event);
+    if (this.suppressedOutputWasHandled(event)) {
+      return;
+    }
+    if (!event.evaluation.shouldForwardOutput) {
+      return;
+    }
+    await this.forwardOutputIfAccepted(event);
+  }
+
+  private logNonFinalOutput(event: EvaluatedAgentOutput): void {
+    const outputPhase = event.output.phase ?? 'final';
+    if (outputPhase === 'final') {
+      return;
+    }
+    this.args.log.info(
+      {
+        provider: this.args.provider,
+        outputPhase,
+        outputStatus: event.output.status,
+        visibility: event.structuredOutput?.visibility ?? null,
+        preview:
+          event.outputText && event.outputText.length > 0
+            ? event.outputText.slice(0, 160)
+            : null,
+        errorPreview:
+          typeof event.output.error === 'string' &&
+          event.output.error.length > 0
+            ? event.output.error.slice(0, 160)
+            : null,
+        activeRole: this.args.activeRole,
+        effectiveServiceId: this.args.effectiveServiceId,
+        effectiveAgentType: this.args.effectiveAgentType,
+        sessionFolder: this.args.sessionFolder,
+        resumedSession: this.attemptSessionId ?? null,
+        streamedSessionId: event.output.newSessionId ?? null,
+        roomRoleServiceId: this.args.roomRoleContext?.serviceId ?? null,
+        roomRole: this.args.roomRoleContext?.role ?? null,
+        pairedTaskId: this.args.pairedExecutionContext?.task.id ?? null,
+        workspaceDir:
+          this.args.pairedExecutionContext?.workspace?.workspace_dir ??
+          this.args.fallbackWorkspaceDir ??
+          null,
+      },
+      'Observed streamed agent activity',
+    );
+  }
+
+  private trackSessionResetRequest(output: AgentOutput): void {
+    if (
+      this.args.isClaudeCodeAgent &&
+      this.args.provider === 'claude' &&
+      shouldResetSessionOnAgentFailure(output)
+    ) {
+      this.resetSessionRequested = true;
+    }
+    if (
+      !this.args.isClaudeCodeAgent &&
+      this.args.provider === 'codex' &&
+      shouldResetCodexSessionOnAgentFailure(output)
+    ) {
+      this.resetSessionRequested = true;
+    }
+  }
+
+  private persistStreamedSession(output: AgentOutput): void {
+    if (
+      output.newSessionId &&
+      !this.resetSessionRequested &&
+      this.args.shouldPersistSession
+    ) {
+      this.args.onPersistSession(output.newSessionId);
+    }
+  }
+
+  private persistReturnedSession(output: AgentOutput): void {
+    if (output.newSessionId && this.args.shouldPersistSession) {
+      this.args.onPersistSession(output.newSessionId);
+    }
+  }
+
+  private updatePairedSummary(event: EvaluatedAgentOutput): void {
+    this.args.pairedExecutionLifecycle.updateSummary({
+      outputText: event.outputText,
+      errorText:
+        typeof event.output.error === 'string' ? event.output.error : null,
+    });
+  }
+
+  private logEvaluationTrigger(event: EvaluatedAgentOutput): void {
+    if (
+      event.evaluation.newTrigger &&
+      event.outputText &&
+      event.output.status === 'success'
+    ) {
+      this.args.log.warn(
+        {
+          reason: event.evaluation.newTrigger.reason,
+          resultPreview: event.outputText.slice(0, 120),
+        },
+        'Detected Claude rotation trigger in successful output',
+      );
+      return;
+    }
+    if (event.evaluation.newTrigger && typeof event.output.error === 'string') {
+      this.args.log.warn(
+        {
+          reason: event.evaluation.newTrigger.reason,
+          errorPreview: event.output.error.slice(0, 120),
+        },
+        this.args.provider === 'claude'
+          ? 'Detected Claude rotation trigger in streamed error output'
+          : 'Detected Codex rotation trigger in streamed error output',
+      );
+    }
+  }
+
+  private suppressedOutputWasHandled(event: EvaluatedAgentOutput): boolean {
+    if (event.evaluation.suppressedAuthError) {
+      this.args.log.warn(
+        {
+          resultPreview: event.outputText
+            ? event.outputText.slice(0, 120)
+            : undefined,
+        },
+        'Suppressed Claude 401 auth error from chat output',
+      );
+      return true;
+    }
+    if (event.evaluation.suppressedRetryableSessionFailure) {
+      this.args.log.warn(
+        {
+          resultPreview: event.outputText
+            ? event.outputText.slice(0, 160)
+            : event.output.error?.slice(0, 160),
+        },
+        this.args.provider === 'claude'
+          ? 'Suppressed retryable Claude session failure from chat output'
+          : 'Suppressed retryable Codex session failure from chat output',
+      );
+      return true;
+    }
+    return false;
+  }
+
+  private async forwardOutputIfAccepted(
+    event: EvaluatedAgentOutput,
+  ): Promise<void> {
+    if (event.outputText && event.outputText.length > 0) {
+      this.streamedOutputHandler.markVisibleOutput();
+    }
+    if (!this.finalOutputWasAccepted(event)) {
+      return;
+    }
+    await this.args.onOutput?.(event.output);
+  }
+
+  private finalOutputWasAccepted(event: EvaluatedAgentOutput): boolean {
+    const outputPhase = event.output.phase ?? 'final';
+    if (
+      outputPhase !== 'final' ||
+      event.output.status !== 'success' ||
+      !event.outputText ||
+      event.outputText.length === 0
+    ) {
+      return true;
+    }
+    try {
+      return this.args.pairedExecutionLifecycle.recordFinalOutputBeforeDelivery(
+        event.outputText,
+      );
+    } catch (err) {
+      this.args.log.warn(
+        {
+          pairedTaskId: this.args.pairedExecutionContext?.task.id ?? null,
+          err,
+        },
+        'Failed to persist paired turn output and status before delivery',
+      );
+      return true;
+    }
+  }
+
+  private buildAttempt(args: {
+    output?: AgentOutput;
+    error?: unknown;
+  }): MessageAgentAttempt {
+    const streamedState = this.streamedOutputHandler.getState();
     return {
-      output,
+      ...args,
       sawOutput: streamedState.sawOutput,
       sawVisibleOutput: streamedState.sawVisibleOutput,
       sawSuccessNullResultWithoutOutput:
         streamedState.sawSuccessNullResultWithoutOutput,
       retryableSessionFailureDetected:
         streamedState.retryableSessionFailureDetected === true,
-      resetSessionRequested,
-      streamedTriggerReason: streamedState.streamedTriggerReason,
-    };
-  } catch (error) {
-    const streamedState = streamedOutputHandler.getState();
-    return {
-      error,
-      sawOutput: streamedState.sawOutput,
-      sawVisibleOutput: streamedState.sawVisibleOutput,
-      sawSuccessNullResultWithoutOutput:
-        streamedState.sawSuccessNullResultWithoutOutput,
-      retryableSessionFailureDetected:
-        streamedState.retryableSessionFailureDetected === true,
-      resetSessionRequested,
+      resetSessionRequested: this.resetSessionRequested,
       streamedTriggerReason: streamedState.streamedTriggerReason,
     };
   }
+}
+
+export async function runMessageAgentAttempt(
+  args: RunMessageAgentAttemptArgs,
+): Promise<MessageAgentAttempt> {
+  return new MessageAgentAttemptRunner(args).run();
 }
