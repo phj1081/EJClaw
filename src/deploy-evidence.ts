@@ -2,22 +2,22 @@ import { createHash } from 'crypto';
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import {
+  ARTIFACT_EVIDENCE_KINDS,
+  DEPLOY_EVIDENCE_ACTIONS,
+  isArtifactEvidenceKind,
+  isDeployEvidenceAction,
+  type ArtifactEvidenceKind,
+  type DeployEvidenceAction,
+} from 'ejclaw-runners-shared';
 
-export const DEPLOY_EVIDENCE_ACTIONS = [
-  'ejclaw_deploy_state',
-  'ejclaw_artifact_metadata',
-] as const;
-
-export const ARTIFACT_EVIDENCE_KINDS = [
-  'build_outputs',
-  'dashboard_dist',
-  'runner_dist',
-  'android_debug_apk',
-  'attachments_dir',
-] as const;
-
-export type DeployEvidenceAction = (typeof DEPLOY_EVIDENCE_ACTIONS)[number];
-export type ArtifactEvidenceKind = (typeof ARTIFACT_EVIDENCE_KINDS)[number];
+export {
+  ARTIFACT_EVIDENCE_KINDS,
+  DEPLOY_EVIDENCE_ACTIONS,
+  isDeployEvidenceAction,
+  type ArtifactEvidenceKind,
+  type DeployEvidenceAction,
+};
 
 export interface DeployEvidenceRequest {
   action: DeployEvidenceAction;
@@ -35,21 +35,12 @@ const COMMAND_MAX_BUFFER = 1024 * 1024;
 const MAX_DIR_ENTRIES = 5_000;
 const MAX_LATEST_FILES = 12;
 
-export function isDeployEvidenceAction(
-  value: unknown,
-): value is DeployEvidenceAction {
-  return (
-    typeof value === 'string' &&
-    DEPLOY_EVIDENCE_ACTIONS.includes(value as DeployEvidenceAction)
-  );
-}
-
 export function normalizeArtifactEvidenceKind(
   value?: string,
 ): ArtifactEvidenceKind {
   if (!value) return 'build_outputs';
-  if (ARTIFACT_EVIDENCE_KINDS.includes(value as ArtifactEvidenceKind)) {
-    return value as ArtifactEvidenceKind;
+  if (isArtifactEvidenceKind(value)) {
+    return value;
   }
   throw new Error(`Unsupported artifact evidence kind: ${value}`);
 }

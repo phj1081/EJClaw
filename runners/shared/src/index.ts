@@ -11,6 +11,23 @@ export {
   type PairedRoomRole,
 } from './paired-room-role.js';
 export {
+  ARTIFACT_EVIDENCE_KINDS,
+  DB_EVIDENCE_ACTIONS,
+  DEPLOY_EVIDENCE_ACTIONS,
+  GITHUB_EVIDENCE_ACTIONS,
+  HOST_EVIDENCE_ACTIONS,
+  isArtifactEvidenceKind,
+  isDbEvidenceAction,
+  isDeployEvidenceAction,
+  isGitHubEvidenceAction,
+  isHostEvidenceAction,
+  type ArtifactEvidenceKind,
+  type DbEvidenceAction,
+  type DeployEvidenceAction,
+  type GitHubEvidenceAction,
+  type HostEvidenceAction,
+} from './evidence-actions.js';
+export {
   extractMarkdownImageAttachments,
   extractMediaAttachments,
   extractImageTagPaths,

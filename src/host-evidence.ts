@@ -24,36 +24,23 @@ import {
 } from './config.js';
 import type { AgentType } from './types.js';
 import {
+  HOST_EVIDENCE_ACTIONS,
+  isHostEvidenceAction,
+  type HostEvidenceAction,
+} from 'ejclaw-runners-shared';
+import {
   collectArtifactMetadata,
   collectDeployState,
-  DEPLOY_EVIDENCE_ACTIONS,
-  type DeployEvidenceAction,
 } from './deploy-evidence.js';
-import {
-  DB_EVIDENCE_ACTIONS,
-  isDbEvidenceAction,
-  type DbEvidenceAction,
-  runDbEvidenceRequest,
-} from './db-evidence.js';
+import { isDbEvidenceAction, runDbEvidenceRequest } from './db-evidence.js';
 import { requireDatabase } from './db/runtime-database.js';
 import {
-  GITHUB_EVIDENCE_ACTIONS,
   isGitHubEvidenceAction,
   runGitHubEvidenceCommand,
-  type GitHubEvidenceAction,
 } from './github-evidence.js';
 import { resolveGroupIpcPath } from './group-folder.js';
 
-export const HOST_EVIDENCE_ACTIONS = [
-  'ejclaw_service_status',
-  'ejclaw_service_logs',
-  'ejclaw_role_runtime_config',
-  ...DEPLOY_EVIDENCE_ACTIONS,
-  ...DB_EVIDENCE_ACTIONS,
-  ...GITHUB_EVIDENCE_ACTIONS,
-] as const;
-
-export type HostEvidenceAction = (typeof HOST_EVIDENCE_ACTIONS)[number];
+export { HOST_EVIDENCE_ACTIONS, isHostEvidenceAction, type HostEvidenceAction };
 
 export interface HostEvidenceRequest {
   requestId: string;
@@ -74,12 +61,7 @@ export interface HostEvidenceRequest {
 
 export interface HostEvidenceResult {
   ok: boolean;
-  action:
-    | HostEvidenceAction
-    | DbEvidenceAction
-    | DeployEvidenceAction
-    | GitHubEvidenceAction
-    | 'ejclaw_room_runtime';
+  action: HostEvidenceAction | 'ejclaw_room_runtime';
   command: string;
   stdout: string;
   stderr: string;
@@ -103,15 +85,6 @@ const MAX_OUTPUT_CHARS = 16_000;
 const COMMAND_TIMEOUT_MS = 5_000;
 const COMMAND_MAX_BUFFER = 1024 * 1024;
 const PROJECT_ROOT = process.cwd();
-
-export function isHostEvidenceAction(
-  value: unknown,
-): value is HostEvidenceAction {
-  return (
-    typeof value === 'string' &&
-    HOST_EVIDENCE_ACTIONS.includes(value as HostEvidenceAction)
-  );
-}
 
 export function clampHostEvidenceTailLines(value?: number): number {
   if (!Number.isFinite(value)) {

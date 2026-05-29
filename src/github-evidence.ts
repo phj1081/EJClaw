@@ -1,14 +1,15 @@
 import { execFile } from 'child_process';
+import {
+  GITHUB_EVIDENCE_ACTIONS,
+  isGitHubEvidenceAction,
+  type GitHubEvidenceAction,
+} from 'ejclaw-runners-shared';
 
-export const GITHUB_EVIDENCE_ACTIONS = [
-  'github_pr_status',
-  'github_pr_diff_stat',
-  'github_run_status',
-  'github_run_jobs',
-  'github_workflow_file',
-] as const;
-
-export type GitHubEvidenceAction = (typeof GITHUB_EVIDENCE_ACTIONS)[number];
+export {
+  GITHUB_EVIDENCE_ACTIONS,
+  isGitHubEvidenceAction,
+  type GitHubEvidenceAction,
+};
 
 export interface GitHubEvidenceRequest {
   action: GitHubEvidenceAction;
@@ -32,15 +33,6 @@ const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/;
 const COMMAND_TIMEOUT_MS = 10_000;
 const COMMAND_MAX_BUFFER = 2 * 1024 * 1024;
 const MAX_OUTPUT_CHARS = 24_000;
-
-export function isGitHubEvidenceAction(
-  value: unknown,
-): value is GitHubEvidenceAction {
-  return (
-    typeof value === 'string' &&
-    GITHUB_EVIDENCE_ACTIONS.includes(value as GitHubEvidenceAction)
-  );
-}
 
 export function normalizeGitHubRepo(value?: string): string {
   const repo = value?.trim();

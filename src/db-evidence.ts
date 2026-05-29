@@ -1,19 +1,16 @@
 import type { Database } from 'bun:sqlite';
+import {
+  DB_EVIDENCE_ACTIONS,
+  isDbEvidenceAction,
+  type DbEvidenceAction,
+} from 'ejclaw-runners-shared';
 
 import { parseGitHubCiMetadata } from './github-ci.js';
 import { extractWatchCiTarget } from './task-watch-status.js';
 
 type SqlBinding = string | number | bigint | boolean | null | Uint8Array;
 
-export const DB_EVIDENCE_ACTIONS = [
-  'db_paired_task_status',
-  'db_paired_task_flow',
-  'db_recent_paired_failures',
-  'db_recent_scheduled_tasks',
-  'db_scheduled_task_runs',
-] as const;
-
-export type DbEvidenceAction = (typeof DB_EVIDENCE_ACTIONS)[number];
+export { DB_EVIDENCE_ACTIONS, isDbEvidenceAction, type DbEvidenceAction };
 
 export interface DbEvidenceRequest {
   action: DbEvidenceAction;
@@ -32,13 +29,6 @@ const MAX_RECENT_MINUTES = 24 * 60;
 const DEFAULT_ROW_LIMIT = 20;
 const MAX_ROW_LIMIT = 100;
 const TASK_ID_PATTERN = /^[A-Za-z0-9._:@/-]{1,200}$/;
-
-export function isDbEvidenceAction(value: unknown): value is DbEvidenceAction {
-  return (
-    typeof value === 'string' &&
-    DB_EVIDENCE_ACTIONS.includes(value as DbEvidenceAction)
-  );
-}
 
 export function normalizeDbEvidenceMinutes(value?: number): number {
   if (!Number.isFinite(value)) {

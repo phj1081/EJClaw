@@ -1,54 +1,22 @@
 import fs from 'fs';
 import path from 'path';
+import {
+  ARTIFACT_EVIDENCE_KINDS,
+  DB_EVIDENCE_ACTIONS,
+  DEPLOY_EVIDENCE_ACTIONS,
+  GITHUB_EVIDENCE_ACTIONS,
+  HOST_EVIDENCE_ACTIONS,
+  type HostEvidenceAction,
+} from 'ejclaw-runners-shared';
 
-export const HOST_EVIDENCE_ACTIONS = [
-  'ejclaw_service_status',
-  'ejclaw_service_logs',
-  'ejclaw_role_runtime_config',
-  'ejclaw_deploy_state',
-  'ejclaw_artifact_metadata',
-  'db_paired_task_status',
-  'db_paired_task_flow',
-  'db_recent_paired_failures',
-  'db_recent_scheduled_tasks',
-  'db_scheduled_task_runs',
-  'github_pr_status',
-  'github_pr_diff_stat',
-  'github_run_status',
-  'github_run_jobs',
-  'github_workflow_file',
-] as const;
-
-export const DB_EVIDENCE_ACTIONS = [
-  'db_paired_task_status',
-  'db_paired_task_flow',
-  'db_recent_paired_failures',
-  'db_recent_scheduled_tasks',
-  'db_scheduled_task_runs',
-] as const;
-
-export const DEPLOY_EVIDENCE_ACTIONS = [
-  'ejclaw_deploy_state',
-  'ejclaw_artifact_metadata',
-] as const;
-
-export const GITHUB_EVIDENCE_ACTIONS = [
-  'github_pr_status',
-  'github_pr_diff_stat',
-  'github_run_status',
-  'github_run_jobs',
-  'github_workflow_file',
-] as const;
-
-export const ARTIFACT_EVIDENCE_KINDS = [
-  'build_outputs',
-  'dashboard_dist',
-  'runner_dist',
-  'android_debug_apk',
-  'attachments_dir',
-] as const;
-
-export type HostEvidenceAction = (typeof HOST_EVIDENCE_ACTIONS)[number];
+export {
+  ARTIFACT_EVIDENCE_KINDS,
+  DB_EVIDENCE_ACTIONS,
+  DEPLOY_EVIDENCE_ACTIONS,
+  GITHUB_EVIDENCE_ACTIONS,
+  HOST_EVIDENCE_ACTIONS,
+  type HostEvidenceAction,
+};
 
 export interface HostEvidenceResponse {
   requestId: string;
