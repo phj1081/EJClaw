@@ -14,7 +14,7 @@
     "@anthropic-ai/sdk": "0.100.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "cron-parser": "^5.0.0",
-    "ejclaw-runners-shared": "file:../shared",
+    "ejclaw-runners-shared": "workspace:*",
     "zod": "^4.0.0"
   },
   "devDependencies": {

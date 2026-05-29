@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@openai/codex": "0.133.0",
-    "ejclaw-runners-shared": "file:../shared"
+    "ejclaw-runners-shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
