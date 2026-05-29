@@ -27,11 +27,6 @@
       "maxLines": 4875,
       "owner": "dashboard stylesheet hotspot"
     },
-    "runners/agent-runner/src/index.ts": {
-      "maxFunctionLines": 506,
-      "maxComplexity": 81,
-      "owner": "agent runner hotspot"
-    },
     "runners/agent-runner/test/reviewer-runtime.test.ts": {
       "maxFunctionLines": 271,
       "owner": "agent runner test hotspot"
