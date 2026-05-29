@@ -118,10 +118,6 @@
       "maxFunctionLines": 417,
       "owner": "message executor lifecycle hotspot"
     },
-    "src/message-agent-executor-paired.ts": {
-      "maxFunctionLines": 440,
-      "owner": "message executor paired hotspot"
-    },
     "src/message-agent-executor-target.ts": {
       "maxFunctionLines": 274,
       "maxComplexity": 48,
