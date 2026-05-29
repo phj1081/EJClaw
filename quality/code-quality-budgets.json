@@ -109,11 +109,6 @@
       "maxFunctionLines": 314,
       "owner": "main service entrypoint hotspot"
     },
-    "src/message-agent-executor-target.ts": {
-      "maxFunctionLines": 274,
-      "maxComplexity": 48,
-      "owner": "message executor target hotspot"
-    },
     "src/message-agent-executor.test.ts": {
       "maxLines": 3847,
       "maxFunctionLines": 2500,
