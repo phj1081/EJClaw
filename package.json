@@ -18,7 +18,7 @@
     "build:all": "bun run build && bun run dashboard:build && bun run build:runners",
     "build:runtime": "bun run build:all",
     "verify:dist": "bash scripts/check-dist-fresh.sh",
-    "deploy": "git pull --ff-only && bun run build:all && bun run verify:dist && bun setup/index.ts --step migrate-room-registrations && systemctl --user restart ejclaw",
+    "deploy": "git pull --ff-only && bun install --frozen-lockfile && bun run build:all && bun run verify:dist && bun setup/index.ts --step migrate-room-registrations && systemctl --user restart ejclaw",
     "start": "bun dist/index.js",
     "dev": "bun --watch src/index.ts",
     "test": "vitest run",
