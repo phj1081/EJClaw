@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  expandImagePromptReferences,
+  expandPromptAttachmentReferences,
   extractImageTagPaths,
   imageTagCaption,
   missingImageTagCaption,
@@ -23,7 +23,7 @@ export function parseAppServerInput(
   text: string,
   log: (message: string) => void = () => undefined,
 ): AppServerInputItem[] {
-  const expandedText = expandImagePromptReferences(text);
+  const expandedText = expandPromptAttachmentReferences(text);
   const { imagePaths } = extractImageTagPaths(expandedText);
   const input: AppServerInputItem[] = [];
   const pushText = (value: string) => {
@@ -59,8 +59,8 @@ export function parseAppServerInput(
       input.push({ type: 'localImage', path: part.path });
       log(`Adding image input: ${part.path}`);
     }
-  } else if (text) {
-    input.push({ type: 'text', text });
+  } else if (expandedText) {
+    input.push({ type: 'text', text: expandedText });
   }
 
   if (input.length === 0) {

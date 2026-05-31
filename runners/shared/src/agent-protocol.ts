@@ -5,6 +5,10 @@ export const IMAGE_TAG_RE =
   /\[Image:\s*(?:(?:[^\]\n]*?)\s*→\s*)?(\/[^\]\n]+)\]/g;
 const IMAGE_TAG_SEGMENT_RE = /\[Image:\s*(?:(.*?)\s*→\s*)?(\/[^\]\n]+)\]/g;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
+const MODEL_DOCUMENT_EXT_RE =
+  /\.(pdf|txt|md|markdown|csv|json|log|xml|yaml|yml|toml|ini|cfg|conf)$/i;
+const PROMPT_ATTACHMENT_TAG_SEGMENT_RE =
+  /\[(Image|File|Document|Attachment):\s*(?:(.*?)\s*→\s*)?(\/[^\]\n]+)\]/g;
 const MARKDOWN_IMAGE_ABSOLUTE_LINK_RE = /!\[[^\]\n]*\]\((\/[^)\n]+)\)/g;
 const MEDIA_TAG_RE =
   /^[ \t]*MEDIA:\s*(?:"([^"\n]+)"|'([^'\n]+)'|`([^`\n]+)`|(\/\S+))[ \t]*$/gm;
@@ -122,9 +126,60 @@ export function expandImagePromptReferences(text: string): string {
   );
 }
 
+export function isModelDocumentPath(filePath: string): boolean {
+  return MODEL_DOCUMENT_EXT_RE.test(filePath);
+}
+
+function promptReferenceTag(filePath: string): 'Image' | 'File' | null {
+  if (IMAGE_EXT_RE.test(filePath)) return 'Image';
+  if (MODEL_DOCUMENT_EXT_RE.test(filePath)) return 'File';
+  return null;
+}
+
+export function expandPromptAttachmentReferences(text: string): string {
+  const codeSpans = fencedCodeSpans(text);
+  const withMediaAttachments = text.replace(
+    MEDIA_TAG_RE,
+    (full: string, doubleQuoted, singleQuoted, backticked, bare, offset) => {
+      if (isInsideSpans(offset, codeSpans)) return full;
+      const filePath = String(
+        doubleQuoted ?? singleQuoted ?? backticked ?? bare ?? '',
+      ).trim();
+      if (!filePath.startsWith('/')) return full;
+      const tag = promptReferenceTag(filePath);
+      if (!tag) return full;
+      const name = attachmentName(filePath) ?? filePath;
+      return `[${tag}: ${name} → ${filePath}]`;
+    },
+  );
+
+  const markdownCodeSpans = fencedCodeSpans(withMediaAttachments);
+  return withMediaAttachments.replace(
+    MARKDOWN_IMAGE_ABSOLUTE_LINK_RE,
+    (full: string, rawPath: string, offset: number) => {
+      if (isInsideSpans(offset, markdownCodeSpans)) return full;
+      const filePath = rawPath.trim();
+      if (!IMAGE_EXT_RE.test(filePath)) return full;
+      const name = attachmentName(filePath) ?? filePath;
+      return `[Image: ${name} → ${filePath}]`;
+    },
+  );
+}
+
 export type ImageTagPromptPart =
   | { type: 'text'; text: string }
   | { type: 'image'; label: string | null; path: string; raw: string };
+
+export type PromptAttachmentPart =
+  | { type: 'text'; text: string }
+  | {
+      type: 'attachment';
+      kind: 'image' | 'document' | 'unsupported';
+      label: string | null;
+      path: string;
+      raw: string;
+      tag: 'Image' | 'File' | 'Document' | 'Attachment';
+    };
 
 export function splitImageTagPromptParts(text: string): ImageTagPromptPart[] {
   const imagePattern = cloneImageTagSegmentPattern();
@@ -151,6 +206,49 @@ export function splitImageTagPromptParts(text: string): ImageTagPromptPart[] {
   return parts.length > 0 ? parts : [{ type: 'text', text }];
 }
 
+export function splitPromptAttachmentParts(
+  text: string,
+): PromptAttachmentPart[] {
+  const pattern = new RegExp(
+    PROMPT_ATTACHMENT_TAG_SEGMENT_RE.source,
+    PROMPT_ATTACHMENT_TAG_SEGMENT_RE.flags,
+  );
+  const parts: PromptAttachmentPart[] = [];
+  let cursor = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    if (start > cursor) {
+      parts.push({ type: 'text', text: text.slice(cursor, start) });
+    }
+
+    const raw = match[0];
+    const tag = match[1] as 'Image' | 'File' | 'Document' | 'Attachment';
+    const label = match[2]?.trim() || null;
+    const filePath = match[3].trim();
+    const kind = IMAGE_EXT_RE.test(filePath)
+      ? 'image'
+      : MODEL_DOCUMENT_EXT_RE.test(filePath)
+        ? 'document'
+        : 'unsupported';
+    parts.push({
+      type: 'attachment',
+      kind,
+      label,
+      path: filePath,
+      raw,
+      tag,
+    });
+    cursor = start + raw.length;
+  }
+
+  if (cursor < text.length) {
+    parts.push({ type: 'text', text: text.slice(cursor) });
+  }
+
+  return parts.length > 0 ? parts : [{ type: 'text', text }];
+}
+
 export function imageTagCaption(
   part: Extract<ImageTagPromptPart, { type: 'image' }>,
 ): string {
@@ -165,6 +263,34 @@ export function missingImageTagCaption(
 ): string {
   const label = part.label ? `${part.label} → ` : '';
   return `[Image unavailable: ${label}${part.path} — ${reason}]`;
+}
+
+export function attachmentEvidenceCaption(
+  part: Extract<PromptAttachmentPart, { type: 'attachment' }>,
+): string {
+  const subject =
+    part.kind === 'image'
+      ? 'Image'
+      : part.kind === 'document'
+        ? 'Document'
+        : 'Attachment';
+  return part.label
+    ? `${subject} evidence: ${part.label}`
+    : `${subject} evidence: ${part.path}`;
+}
+
+export function missingAttachmentCaption(
+  part: Extract<PromptAttachmentPart, { type: 'attachment' }>,
+  reason: string,
+): string {
+  const subject =
+    part.kind === 'image'
+      ? 'Image'
+      : part.kind === 'document'
+        ? 'Document'
+        : 'Attachment';
+  const label = part.label ? `${part.label} → ` : '';
+  return `[${subject} unavailable: ${label}${part.path} — ${reason}]`;
 }
 
 function attachmentName(filePath: string): string | undefined {

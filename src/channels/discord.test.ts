@@ -681,7 +681,7 @@ describe('attachments', () => {
     );
   });
 
-  it('stores file attachment with a visible unsupported marker', async () => {
+  it('stores PDF file attachment as a structured document reference', async () => {
     const opts = createTestOpts();
     const channel = new DiscordChannel('test-token', opts);
     await channel.connect();
@@ -707,9 +707,7 @@ describe('attachments', () => {
     expect(opts.onMessage).toHaveBeenCalledWith(
       'dc:1234567890123456',
       expect.objectContaining({
-        content: expect.stringMatching(
-          /^\[File unavailable: report\.pdf → .+\.pdf — application\/pdf is not loaded as structured model input\]$/,
-        ),
+        content: expect.stringMatching(/^\[File: report\.pdf → .+\.pdf\]$/),
       }),
     );
   });

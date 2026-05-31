@@ -1,3 +1,5 @@
+import { isModelDocumentPath } from 'ejclaw-runners-shared';
+
 import { buildArbiterContextPrompt } from './arbiter-context.js';
 import { TASK_USER_CONTEXT_START_SKEW_MS } from './message-runtime-task-context.js';
 import { formatMessages } from './router.js';
@@ -21,6 +23,12 @@ function isImageAttachment(attachment: OutboundAttachment): boolean {
   return /\.(?:png|jpe?g|gif|webp|bmp)$/i.test(attachment.path);
 }
 
+function isDocumentAttachment(attachment: OutboundAttachment): boolean {
+  const mime = attachment.mime?.toLowerCase();
+  if (mime === 'application/pdf' || mime?.startsWith('text/')) return true;
+  return isModelDocumentPath(attachment.path);
+}
+
 function attachmentLabel(attachment: OutboundAttachment): string {
   return attachment.name?.trim() || attachment.path.split('/').at(-1) || 'file';
 }
@@ -39,11 +47,15 @@ function formatTurnOutputAttachmentContext(
   if (!attachments?.length) return '';
   const lines = attachments.map((attachment) => {
     const label = attachmentLabel(attachment);
-    return isImageAttachment(attachment)
-      ? `[Image: ${label} → ${attachment.path}]`
-      : `[Attachment unavailable: ${label} → ${attachment.path} — ${nonImageAttachmentReason(
-          attachment,
-        )}]`;
+    if (isImageAttachment(attachment)) {
+      return `[Image: ${label} → ${attachment.path}]`;
+    }
+    if (isDocumentAttachment(attachment)) {
+      return `[File: ${label} → ${attachment.path}]`;
+    }
+    return `[Attachment unavailable: ${label} → ${attachment.path} — ${nonImageAttachmentReason(
+      attachment,
+    )}]`;
   });
   return `\n\nAttached evidence from this turn:\n${lines.join('\n')}`;
 }
