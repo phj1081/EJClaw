@@ -1,4 +1,5 @@
 import { buildArbiterContextPrompt } from './arbiter-context.js';
+import { TASK_USER_CONTEXT_START_SKEW_MS } from './message-runtime-task-context.js';
 import { formatMessages } from './router.js';
 import type {
   NewMessage,
@@ -14,7 +15,6 @@ const CARRIED_FORWARD_OWNER_FINAL_GUIDANCE = `System note:
 If you see a message beginning with "${CARRIED_FORWARD_OWNER_FINAL_MARKER}", treat it as background only. Do not repeat, continue, or answer that carried-forward final directly. Respond only to the latest human request and the current task.`;
 
 const ARBITER_TURN_OUTPUT_CONTEXT_LIMIT = 6;
-const TASK_USER_CONTEXT_START_SKEW_MS = 5_000;
 
 function isImageAttachment(attachment: OutboundAttachment): boolean {
   if (attachment.mime?.toLowerCase().startsWith('image/')) return true;

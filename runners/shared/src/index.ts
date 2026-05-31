@@ -38,6 +38,7 @@ export {
   type TaskContextMode,
 } from './task-runtime.js';
 export {
+  expandImagePromptReferences,
   extractMarkdownImageAttachments,
   extractMediaAttachments,
   extractImageTagPaths,

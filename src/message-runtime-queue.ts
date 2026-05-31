@@ -1,4 +1,4 @@
-import { getPairedTurnOutputs, getRecentChatMessages } from './db.js';
+import { getPairedTurnOutputs } from './db.js';
 import { logger } from './logger.js';
 import {
   buildArbiterPromptForTask,
@@ -21,6 +21,7 @@ import {
   resolveQueuedPairedTurnRole,
   resolveQueuedTurnRole,
 } from './message-runtime-rules.js';
+import { getTaskContextMessages } from './message-runtime-task-context.js';
 import { claimPairedTurnExecution } from './paired-follow-up-scheduler.js';
 import type {
   ExecuteTurnFn,
@@ -67,7 +68,10 @@ function buildQueuedGroupTurnPrompt(args: {
   formatMessages: (messages: NewMessage[], timezone: string) => string;
 }): string {
   if (args.turnRole === 'arbiter' && args.currentTask) {
-    const recentMessages = getRecentChatMessages(args.chatJid, 20);
+    const recentMessages = getTaskContextMessages(
+      args.chatJid,
+      args.currentTask,
+    );
     return buildArbiterPromptForTask({
       task: args.currentTask,
       chatJid: args.chatJid,
@@ -165,13 +169,13 @@ export async function runPendingPairedTurnIfNeeded(args: {
     return null;
   }
 
-  const recentMessages = getRecentChatMessages(chatJid, 20);
-  const recentHumanMessages = recentMessages.filter(
+  const taskContextMessages = getTaskContextMessages(chatJid, task);
+  const recentHumanMessages = taskContextMessages.filter(
     (message) => !message.is_bot_message,
   );
   const labeledRecentMessages = args.labelPairedSenders(
     chatJid,
-    recentMessages,
+    taskContextMessages,
   );
   const pendingTurn = buildPendingPairedTurn({
     chatJid,
@@ -255,9 +259,11 @@ export async function runQueuedGroupTurn(args: {
     });
     currentTask = resolvedTask.task;
     if (resolvedTask.supersededTask) {
-      fallbackMessages = getRecentChatMessages(chatJid, 20).filter(
-        (message) => !message.is_bot_message,
-      );
+      fallbackMessages = currentTask
+        ? getTaskContextMessages(chatJid, currentTask).filter(
+            (message) => !message.is_bot_message,
+          )
+        : missedMessages;
     }
   }
   const taskStatus = currentTask?.status;

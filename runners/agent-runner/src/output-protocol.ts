@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  expandImagePromptReferences,
   extractImageTagPaths,
   imageTagCaption,
   missingImageTagCaption,
@@ -79,7 +80,8 @@ export function buildMultimodalContent(
   text: string,
   log: LogFn,
 ): StreamContent {
-  const { imagePaths } = extractImageTagPaths(text);
+  const expandedText = expandImagePromptReferences(text);
+  const { imagePaths } = extractImageTagPaths(expandedText);
   if (imagePaths.length === 0) return text;
 
   const blocks: ContentBlock[] = [];
@@ -88,7 +90,7 @@ export function buildMultimodalContent(
     if (trimmed) blocks.push({ type: 'text', text: trimmed });
   };
 
-  for (const part of splitImageTagPromptParts(text)) {
+  for (const part of splitImageTagPromptParts(expandedText)) {
     if (part.type === 'text') {
       pushText(part.text);
       continue;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  expandImagePromptReferences,
   extractImageTagPaths,
   imageTagCaption,
   missingImageTagCaption,
@@ -57,6 +58,23 @@ describe('shared agent protocol helpers', () => {
     expect(missingImageTagCaption(part, 'file not found')).toBe(
       '[Image unavailable: screenshot.png → /tmp/a.png — file not found]',
     );
+  });
+
+  it('expands MEDIA image directives into image prompt tags', () => {
+    expect(expandImagePromptReferences('증거\nMEDIA:/tmp/render.png\n끝')).toBe(
+      '증거\n[Image: render.png → /tmp/render.png]\n끝',
+    );
+  });
+
+  it('expands markdown image links into image prompt tags', () => {
+    expect(
+      expandImagePromptReferences('증거 ![render](/tmp/render.png) 끝'),
+    ).toBe('증거 [Image: render.png → /tmp/render.png] 끝');
+  });
+
+  it('keeps non-image media and fenced media text unchanged', () => {
+    const text = 'MEDIA:/tmp/demo.mp4\n```text\nMEDIA:/tmp/render.png\n```';
+    expect(expandImagePromptReferences(text)).toBe(text);
   });
 
   it('normalizes plain text runner output as public text', () => {

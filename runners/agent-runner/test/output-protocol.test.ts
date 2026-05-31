@@ -94,4 +94,57 @@ describe('agent-runner multimodal prompts', () => {
     ]);
     expect(logs).toContain(`Unsupported image type, skipping: ${imagePath}`);
   });
+
+  it('loads MEDIA image directives as Claude image blocks', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-media-image-'));
+    cleanupDirs.push(dir);
+    const imagePath = path.join(dir, 'media-render.png');
+    fs.writeFileSync(imagePath, ONE_PIXEL_PNG);
+
+    const content = buildMultimodalContent(`증거\nMEDIA:${imagePath}`, () => {
+      // no-op
+    });
+
+    expect(content).toEqual([
+      { type: 'text', text: '증거' },
+      { type: 'text', text: 'Image evidence: media-render.png' },
+      {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: 'image/png',
+          data: ONE_PIXEL_PNG.toString('base64'),
+        },
+      },
+    ]);
+  });
+
+  it('loads markdown image links as Claude image blocks', () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-markdown-image-'),
+    );
+    cleanupDirs.push(dir);
+    const imagePath = path.join(dir, 'markdown-render.png');
+    fs.writeFileSync(imagePath, ONE_PIXEL_PNG);
+
+    const content = buildMultimodalContent(
+      `증거 ![render](${imagePath})`,
+      () => {
+        // no-op
+      },
+    );
+
+    expect(content).toEqual([
+      { type: 'text', text: '증거' },
+      { type: 'text', text: 'Image evidence: markdown-render.png' },
+      {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: 'image/png',
+          data: ONE_PIXEL_PNG.toString('base64'),
+        },
+      },
+    ]);
+  });
 });

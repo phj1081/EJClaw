@@ -1,8 +1,4 @@
-import {
-  getLastHumanMessageContent,
-  getPairedTurnOutputs,
-  getRecentChatMessages,
-} from './db.js';
+import { getLastHumanMessageContent, getPairedTurnOutputs } from './db.js';
 import { logger } from './logger.js';
 import {
   buildArbiterPromptForTask,
@@ -22,6 +18,7 @@ import {
   resolveNextTurnAction,
 } from './message-runtime-rules.js';
 import type { ExecuteTurnFn } from './message-runtime-types.js';
+import { getTaskContextMessages } from './message-runtime-task-context.js';
 import { buildPairedTurnIdentity } from './paired-turn-identity.js';
 import { resolveStoredVisibleVerdict } from './paired-verdict.js';
 import {
@@ -106,7 +103,6 @@ export function buildPendingPairedTurn(args: {
     timezone,
     task,
     rawMissedMessages,
-    recentHumanMessages,
     labeledRecentMessages,
     resolveChannel,
   } = args;
@@ -124,7 +120,7 @@ export function buildPendingPairedTurn(args: {
     }),
     ownerFailureCount: task.owner_failure_count,
   });
-  const recentMessages = getRecentChatMessages(chatJid, 20);
+  const taskContextMessages = getTaskContextMessages(chatJid, task);
   const lastHumanMessage = getLastHumanMessageContent(chatJid);
 
   if (nextTurnAction.kind === 'reviewer-turn') {
@@ -133,7 +129,9 @@ export function buildPendingPairedTurn(args: {
         chatJid,
         timezone,
         turnOutputs,
-        recentHumanMessages,
+        recentHumanMessages: taskContextMessages.filter(
+          (message) => !message.is_bot_message,
+        ),
         lastHumanMessage,
         taskCreatedAt: task.created_at,
       }),
@@ -154,7 +152,7 @@ export function buildPendingPairedTurn(args: {
         chatJid,
         timezone,
         turnOutputs,
-        recentMessages,
+        recentMessages: taskContextMessages,
         labeledRecentMessages,
       }),
       channel: resolveChannel(taskStatus),
@@ -185,7 +183,9 @@ export function buildPendingPairedTurn(args: {
         chatJid,
         timezone,
         turnOutputs,
-        recentHumanMessages,
+        recentHumanMessages: taskContextMessages.filter(
+          (message) => !message.is_bot_message,
+        ),
         lastHumanMessage,
         taskCreatedAt: task.created_at,
       }),

@@ -92,6 +92,36 @@ export function extractImageTagPaths(text: string): {
   };
 }
 
+export function expandImagePromptReferences(text: string): string {
+  const codeSpans = fencedCodeSpans(text);
+  const withMediaImages = text.replace(
+    MEDIA_TAG_RE,
+    (full: string, doubleQuoted, singleQuoted, backticked, bare, offset) => {
+      if (isInsideSpans(offset, codeSpans)) return full;
+      const filePath = String(
+        doubleQuoted ?? singleQuoted ?? backticked ?? bare ?? '',
+      ).trim();
+      if (!filePath.startsWith('/') || !IMAGE_EXT_RE.test(filePath)) {
+        return full;
+      }
+      const name = attachmentName(filePath) ?? filePath;
+      return `[Image: ${name} → ${filePath}]`;
+    },
+  );
+
+  const markdownCodeSpans = fencedCodeSpans(withMediaImages);
+  return withMediaImages.replace(
+    MARKDOWN_IMAGE_ABSOLUTE_LINK_RE,
+    (full: string, rawPath: string, offset: number) => {
+      if (isInsideSpans(offset, markdownCodeSpans)) return full;
+      const filePath = rawPath.trim();
+      if (!IMAGE_EXT_RE.test(filePath)) return full;
+      const name = attachmentName(filePath) ?? filePath;
+      return `[Image: ${name} → ${filePath}]`;
+    },
+  );
+}
+
 export type ImageTagPromptPart =
   | { type: 'text'; text: string }
   | { type: 'image'; label: string | null; path: string; raw: string };

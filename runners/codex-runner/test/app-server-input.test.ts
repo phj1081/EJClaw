@@ -86,4 +86,36 @@ describe('codex app-server input', () => {
     ]);
     expect(logs).toContain(`Unsupported image type, skipping: ${imagePath}`);
   });
+
+  it('loads MEDIA image directives as local image input items', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-codex-media-'));
+    cleanupDirs.push(dir);
+    const imagePath = path.join(dir, 'media-render.png');
+    fs.writeFileSync(imagePath, ONE_PIXEL_PNG);
+
+    const input = parseAppServerInput(`증거\nMEDIA:${imagePath}`);
+
+    expect(input).toEqual([
+      { type: 'text', text: '증거' },
+      { type: 'text', text: 'Image evidence: media-render.png' },
+      { type: 'localImage', path: imagePath },
+    ]);
+  });
+
+  it('loads markdown image links as local image input items', () => {
+    const dir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'ejclaw-codex-markdown-'),
+    );
+    cleanupDirs.push(dir);
+    const imagePath = path.join(dir, 'markdown-render.png');
+    fs.writeFileSync(imagePath, ONE_PIXEL_PNG);
+
+    const input = parseAppServerInput(`증거 ![render](${imagePath})`);
+
+    expect(input).toEqual([
+      { type: 'text', text: '증거' },
+      { type: 'text', text: 'Image evidence: markdown-render.png' },
+      { type: 'localImage', path: imagePath },
+    ]);
+  });
 });
