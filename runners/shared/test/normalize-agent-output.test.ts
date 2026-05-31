@@ -10,10 +10,11 @@ describe('normalizeAgentOutput', () => {
   it('extracts markdown image attachments without rewriting normal links', () => {
     expect(
       extractMarkdownImageAttachments(
-        '결과입니다.\n![screenshot](/tmp/result.png)\n[code](/tmp/source.ts#L10)',
+        '결과입니다.\n![screenshot](/tmp/result.png)\n[render link](/tmp/render.png)\n[code](/tmp/source.ts#L10)',
       ),
     ).toEqual({
-      cleanText: '결과입니다.\n\n[code](/tmp/source.ts#L10)',
+      cleanText:
+        '결과입니다.\n\n[render link](/tmp/render.png)\n[code](/tmp/source.ts#L10)',
       attachments: [
         {
           path: '/tmp/result.png',

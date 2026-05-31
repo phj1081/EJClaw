@@ -1106,6 +1106,31 @@ describe('assign_room success', () => {
     expect(group!.folder).toBe('new-group');
   });
 
+  it('assign_room persists trigger metadata through IPC', async () => {
+    await processTaskIpc(
+      {
+        type: 'assign_room',
+        jid: 'triggered@g.us',
+        name: 'Triggered Group',
+        folder: 'triggered-group',
+        trigger: '@Repro',
+        requiresTrigger: true,
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getStoredRoomSettings('triggered@g.us')).toMatchObject({
+      trigger: '@Repro',
+      requiresTrigger: true,
+    });
+    expect(getRegisteredGroup('triggered@g.us')).toMatchObject({
+      trigger: '@Repro',
+      requiresTrigger: true,
+    });
+  });
+
   it('assign_room auto-fills missing folder for single rooms without exposing trigger metadata', async () => {
     await processTaskIpc(
       {

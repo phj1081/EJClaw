@@ -53,6 +53,8 @@ export interface AssignRoomInput {
   reviewerAgentType?: AgentType;
   arbiterAgentType?: AgentType | null;
   folder?: string;
+  trigger?: string;
+  requiresTrigger?: boolean;
   isMain?: boolean;
   workDir?: string;
   addedAt?: string;
@@ -204,8 +206,9 @@ export function assignRoomInDatabase(
   const snapshot: RoomRegistrationSnapshot = {
     name: input.name,
     folder,
-    triggerPattern: existing?.trigger ?? '',
-    requiresTrigger: existing?.requiresTrigger ?? false,
+    triggerPattern: input.trigger ?? existing?.trigger ?? '',
+    requiresTrigger:
+      input.requiresTrigger ?? existing?.requiresTrigger ?? false,
     isMain: input.isMain ?? existing?.isMain ?? false,
     ownerAgentType,
     workDir: input.workDir ?? existing?.workDir ?? null,

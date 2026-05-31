@@ -170,6 +170,33 @@ describe('message-runtime-prompts output-only context', () => {
     );
   });
 
+  it('makes non-image turn attachments visibly unavailable instead of implying inspection', () => {
+    const prompt = buildReviewerPendingPrompt({
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: [
+        makeTurnOutput('TASK_DONE\nPDF 증거 첨부', 'owner', {
+          turn_number: 1,
+          created_at: '2026-04-20T02:00:00.000Z',
+          attachments: [
+            {
+              path: '/tmp/report.pdf',
+              name: 'report.pdf',
+              mime: 'application/pdf',
+            },
+          ],
+        }),
+      ],
+      recentHumanMessages: [],
+      lastHumanMessage: null,
+      taskCreatedAt: '2026-04-20T01:00:00.000Z',
+    });
+
+    expect(prompt).toContain(
+      '[Attachment unavailable: report.pdf → /tmp/report.pdf — application/pdf is not loaded as structured model input]',
+    );
+  });
+
   it('includes current task user scope in reviewer pending prompts without pulling older human messages', () => {
     const prompt = buildReviewerPendingPrompt({
       chatJid: 'group@test',

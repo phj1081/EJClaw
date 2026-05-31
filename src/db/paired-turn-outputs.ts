@@ -73,7 +73,10 @@ function hydratePairedTurnOutputRow(
 ): PairedTurnOutput {
   return {
     ...row,
-    attachments: parseAttachmentPayload(row.attachment_payload),
+    attachments: parseAttachmentPayload(row.attachment_payload, {
+      table: 'paired_turn_outputs',
+      rowId: row.id,
+    }),
   };
 }
 

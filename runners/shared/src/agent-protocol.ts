@@ -5,7 +5,7 @@ export const IMAGE_TAG_RE =
   /\[Image:\s*(?:(?:[^\]\n]*?)\s*→\s*)?(\/[^\]\n]+)\]/g;
 const IMAGE_TAG_SEGMENT_RE = /\[Image:\s*(?:(.*?)\s*→\s*)?(\/[^\]\n]+)\]/g;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
-const MARKDOWN_ABSOLUTE_LINK_RE = /!?\[[^\]\n]*\]\((\/[^)\n]+)\)/g;
+const MARKDOWN_IMAGE_ABSOLUTE_LINK_RE = /!\[[^\]\n]*\]\((\/[^)\n]+)\)/g;
 const MEDIA_TAG_RE =
   /^[ \t]*MEDIA:\s*(?:"([^"\n]+)"|'([^'\n]+)'|`([^`\n]+)`|(\/\S+))[ \t]*$/gm;
 
@@ -158,7 +158,7 @@ export function extractMarkdownImageAttachments(text: string): {
 } {
   const attachments: RunnerOutputAttachment[] = [];
   const cleanText = text.replace(
-    MARKDOWN_ABSOLUTE_LINK_RE,
+    MARKDOWN_IMAGE_ABSOLUTE_LINK_RE,
     (full: string, rawPath: string) => {
       const trimmed = rawPath.trim();
       if (!IMAGE_EXT_RE.test(trimmed)) return full;

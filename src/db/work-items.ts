@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 
 import { SERVICE_SESSION_SCOPE, normalizeServiceId } from '../config.js';
+import { logger } from '../logger.js';
 import {
   inferAgentTypeFromServiceShadow,
   inferRoleFromServiceShadow,
@@ -101,31 +102,102 @@ function hydrateWorkItemRow(row: StoredWorkItemRow): WorkItem {
     ...row,
     agent_type: agentType,
     service_id: readStoredWorkItemServiceId(row),
-    attachments: parseAttachmentPayload(row.attachment_payload),
+    attachments: parseAttachmentPayload(row.attachment_payload, {
+      table: 'work_items',
+      rowId: row.id,
+    }),
   };
+}
+
+export interface AttachmentPayloadContext {
+  table?: string;
+  rowId?: string | number;
+}
+
+function payloadPreview(payload: string): string {
+  return payload.length > 200 ? `${payload.slice(0, 200)}...` : payload;
+}
+
+function isAttachmentPayloadEntry(
+  item: unknown,
+): item is { path: string; name?: unknown; mime?: unknown } {
+  return (
+    item !== null &&
+    typeof item === 'object' &&
+    !Array.isArray(item) &&
+    typeof (item as { path?: unknown }).path === 'string'
+  );
+}
+
+function logMalformedAttachmentPayload(args: {
+  payload: string;
+  context?: AttachmentPayloadContext;
+  reason: string;
+  err?: unknown;
+}): void {
+  logger.warn(
+    {
+      ...args.context,
+      reason: args.reason,
+      payloadLength: args.payload.length,
+      payloadPreview: payloadPreview(args.payload),
+      ...(args.err ? { err: args.err } : {}),
+    },
+    'Ignored malformed attachment payload',
+  );
 }
 
 export function parseAttachmentPayload(
   payload: string | null | undefined,
+  context?: AttachmentPayloadContext,
 ): OutboundAttachment[] {
   if (!payload) return [];
   try {
     const parsed = JSON.parse(payload) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (item): item is OutboundAttachment =>
-          item !== null &&
-          typeof item === 'object' &&
-          !Array.isArray(item) &&
-          typeof (item as { path?: unknown }).path === 'string',
-      )
-      .map((item) => ({
-        path: item.path,
-        ...(typeof item.name === 'string' ? { name: item.name } : {}),
-        ...(typeof item.mime === 'string' ? { mime: item.mime } : {}),
-      }));
-  } catch {
+    if (!Array.isArray(parsed)) {
+      logMalformedAttachmentPayload({
+        payload,
+        context,
+        reason: 'not_array',
+      });
+      return [];
+    }
+
+    const attachments: OutboundAttachment[] = [];
+    let invalidEntryCount = 0;
+    for (const item of parsed) {
+      if (isAttachmentPayloadEntry(item)) {
+        attachments.push({
+          path: item.path,
+          ...(typeof item.name === 'string' ? { name: item.name } : {}),
+          ...(typeof item.mime === 'string' ? { mime: item.mime } : {}),
+        });
+      } else {
+        invalidEntryCount += 1;
+      }
+    }
+
+    if (invalidEntryCount > 0) {
+      logger.warn(
+        {
+          ...context,
+          invalidEntryCount,
+          validEntryCount: attachments.length,
+          payloadLength: payload.length,
+          payloadPreview: payloadPreview(payload),
+        },
+        'Ignored invalid attachment payload entries',
+      );
+    }
+
+    return attachments;
+  } catch (err) {
+    logMalformedAttachmentPayload({
+      payload,
+      context,
+      reason: 'invalid_json',
+      err,
+    });
     return [];
   }
 }

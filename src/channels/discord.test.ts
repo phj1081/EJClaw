@@ -648,7 +648,7 @@ describe('attachments', () => {
     );
   });
 
-  it('stores video attachment with local path', async () => {
+  it('stores video attachment with a visible unsupported marker', async () => {
     const opts = createTestOpts();
     const channel = new DiscordChannel('test-token', opts);
     await channel.connect();
@@ -674,12 +674,14 @@ describe('attachments', () => {
     expect(opts.onMessage).toHaveBeenCalledWith(
       'dc:1234567890123456',
       expect.objectContaining({
-        content: expect.stringMatching(/^\[Video: clip\.mp4 → .+\.mp4\]$/),
+        content: expect.stringMatching(
+          /^\[Video unavailable: clip\.mp4 → .+\.mp4 — video\/mp4 is not loaded as structured model input\]$/,
+        ),
       }),
     );
   });
 
-  it('stores file attachment with local path', async () => {
+  it('stores file attachment with a visible unsupported marker', async () => {
     const opts = createTestOpts();
     const channel = new DiscordChannel('test-token', opts);
     await channel.connect();
@@ -705,12 +707,14 @@ describe('attachments', () => {
     expect(opts.onMessage).toHaveBeenCalledWith(
       'dc:1234567890123456',
       expect.objectContaining({
-        content: expect.stringMatching(/^\[File: report\.pdf → .+\.pdf\]$/),
+        content: expect.stringMatching(
+          /^\[File unavailable: report\.pdf → .+\.pdf — application\/pdf is not loaded as structured model input\]$/,
+        ),
       }),
     );
   });
 
-  it('stores zip attachment with local path', async () => {
+  it('stores zip attachment with a visible unsupported marker', async () => {
     const opts = createTestOpts();
     const channel = new DiscordChannel('test-token', opts);
     await channel.connect();
@@ -737,7 +741,7 @@ describe('attachments', () => {
       'dc:1234567890123456',
       expect.objectContaining({
         content: expect.stringMatching(
-          /^\[File: display_latency_atopile_rev09\.zip → .+\.zip\]$/,
+          /^\[File unavailable: display_latency_atopile_rev09\.zip → .+\.zip — application\/zip is not loaded as structured model input\]$/,
         ),
       }),
     );

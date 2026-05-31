@@ -71,6 +71,15 @@ function formatAttachmentReference(
   return `[${label}: ${att.name || 'file'} → ${filePath}]`;
 }
 
+function formatUnavailableAttachmentReference(
+  label: 'Audio' | 'File' | 'Image' | 'Video',
+  att: Attachment,
+  filePath: string,
+  contentType: string,
+): string {
+  return `[${label} unavailable: ${att.name || 'file'} → ${filePath} — ${contentType} is not loaded as structured model input]`;
+}
+
 function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
@@ -112,7 +121,15 @@ export async function describeDownloadedAttachment(
     attachmentDefaultExtension(contentType),
   );
   const reference = formatAttachmentReference(label, att, filePath);
-  if (!isTextAttachment(att, contentType)) return reference;
+  if (!isTextAttachment(att, contentType)) {
+    if (label === 'Image') return reference;
+    return formatUnavailableAttachmentReference(
+      label,
+      att,
+      filePath,
+      contentType,
+    );
+  }
 
   let text = fs.readFileSync(filePath, 'utf8');
   const MAX_TEXT_LENGTH = 32_000;

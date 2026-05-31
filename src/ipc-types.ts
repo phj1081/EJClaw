@@ -131,6 +131,8 @@ export interface TaskIpcPayload {
   jid?: string;
   name?: string;
   folder?: string;
+  trigger?: string;
+  requiresTrigger?: boolean;
   room_mode?: RoomMode;
   owner_agent_type?: AgentType;
   reviewer_agent_type?: AgentType;

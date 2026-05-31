@@ -25,6 +25,14 @@ function attachmentLabel(attachment: OutboundAttachment): string {
   return attachment.name?.trim() || attachment.path.split('/').at(-1) || 'file';
 }
 
+function nonImageAttachmentReason(attachment: OutboundAttachment): string {
+  const mime = attachment.mime?.trim();
+  if (mime) {
+    return `${mime} is not loaded as structured model input`;
+  }
+  return 'non-image attachment is not loaded as structured model input';
+}
+
 function formatTurnOutputAttachmentContext(
   attachments: OutboundAttachment[] | undefined,
 ): string {
@@ -33,7 +41,9 @@ function formatTurnOutputAttachmentContext(
     const label = attachmentLabel(attachment);
     return isImageAttachment(attachment)
       ? `[Image: ${label} → ${attachment.path}]`
-      : `[Attachment: ${label} → ${attachment.path}]`;
+      : `[Attachment unavailable: ${label} → ${attachment.path} — ${nonImageAttachmentReason(
+          attachment,
+        )}]`;
   });
   return `\n\nAttached evidence from this turn:\n${lines.join('\n')}`;
 }

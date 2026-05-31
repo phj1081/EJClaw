@@ -35,6 +35,8 @@ export function handleAssignRoom(
     reviewerAgentType: data.reviewer_agent_type,
     arbiterAgentType: data.arbiter_agent_type,
     folder: data.folder,
+    trigger: data.trigger,
+    requiresTrigger: data.requiresTrigger,
     isMain: data.isMain,
     workDir: data.workDir,
   });
@@ -63,6 +65,23 @@ function validateAssignRoomRequest(
     logger.warn(
       { sourceGroup, folder: data.folder },
       `Invalid ${data.type} request - unsafe folder name`,
+    );
+    return { ok: false };
+  }
+  if (data.trigger !== undefined && typeof data.trigger !== 'string') {
+    logger.warn(
+      { sourceGroup, trigger: data.trigger },
+      'Invalid assign_room request - trigger must be a string',
+    );
+    return { ok: false };
+  }
+  if (
+    data.requiresTrigger !== undefined &&
+    typeof data.requiresTrigger !== 'boolean'
+  ) {
+    logger.warn(
+      { sourceGroup, requiresTrigger: data.requiresTrigger },
+      'Invalid assign_room request - requiresTrigger must be a boolean',
     );
     return { ok: false };
   }
