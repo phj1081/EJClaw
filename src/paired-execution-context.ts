@@ -259,13 +259,17 @@ function carryForwardLatestOwnerFinal(args: {
     0,
     'owner',
     `[Carried forward context from the previous task: latest owner final]\n${latestOwnerFinal.output_text}`,
-    latestOwnerFinal.created_at,
+    {
+      createdAt: latestOwnerFinal.created_at,
+      attachments: latestOwnerFinal.attachments,
+    },
   );
   logger.info(
     {
       sourceTaskId: args.sourceTask.id,
       targetTaskId: args.targetTask.id,
       carriedChars: latestOwnerFinal.output_text.length,
+      attachmentCount: latestOwnerFinal.attachments?.length ?? 0,
     },
     'Carried forward latest owner final into superseding paired task',
   );

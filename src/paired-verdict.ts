@@ -11,7 +11,8 @@ export type VisibleVerdict =
 
 export type ArbiterVerdictResult = ArbiterVerdict | 'unknown';
 
-const VISIBLE_VERDICT_SCAN_LINE_LIMIT = 5;
+const VISIBLE_VERDICT_SCAN_LINE_LIMIT = 12;
+const ARBITER_VERDICT_SCAN_LINE_LIMIT = 12;
 
 function leadingVisibleLines(text: string, limit: number): string[] {
   const lines: string[] = [];
@@ -35,6 +36,10 @@ function leadingVisibleLines(text: string, limit: number): string[] {
   return lines;
 }
 
+function stripInternalBlocks(text: string): string {
+  return text.replace(/<internal>[\s\S]*?(?:<\/internal>|$)/g, '');
+}
+
 function parseVisibleVerdictLine(line: string): VisibleVerdict | null {
   if (/^\*{0,2}BLOCKED(?:\*{0,2})?\b/i.test(line)) return 'blocked';
   if (/^\*{0,2}NEEDS_CONTEXT(?:\*{0,2})?\b/i.test(line)) return 'needs_context';
@@ -52,7 +57,7 @@ export function parseVisibleVerdict(
   summary: string | null | undefined,
 ): VisibleVerdict {
   if (!summary) return 'continue';
-  const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  const cleaned = stripInternalBlocks(summary).trim();
   if (!cleaned) return 'continue';
   for (const line of leadingVisibleLines(
     cleaned,
@@ -68,17 +73,21 @@ export function classifyArbiterVerdict(
   summary: string | null | undefined,
 ): ArbiterVerdictResult {
   if (!summary) return 'unknown';
-  const cleaned = summary.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+  const cleaned = stripInternalBlocks(summary).trim();
   if (!cleaned) return 'unknown';
-  const firstLine = cleaned.split('\n')[0].trim();
-  const verdictMatch = firstLine.match(
-    /\*{0,2}(?:VERDICT\s*[:—-]\s*)?(PROCEED|REVISE|RESET|ESCALATE|CONTINUE)\*{0,2}/i,
-  );
-  if (verdictMatch) {
-    const normalized = verdictMatch[1].toLowerCase();
-    return normalized === 'continue'
-      ? 'proceed'
-      : (normalized as ArbiterVerdict);
+  for (const line of leadingVisibleLines(
+    cleaned,
+    ARBITER_VERDICT_SCAN_LINE_LIMIT,
+  )) {
+    const verdictMatch = line.match(
+      /\*{0,2}(?:VERDICT\s*[:—-]\s*)?(PROCEED|REVISE|RESET|ESCALATE|CONTINUE)\*{0,2}/i,
+    );
+    if (verdictMatch) {
+      const normalized = verdictMatch[1].toLowerCase();
+      return normalized === 'continue'
+        ? 'proceed'
+        : (normalized as ArbiterVerdict);
+    }
   }
   return 'unknown';
 }

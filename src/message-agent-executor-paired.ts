@@ -422,7 +422,7 @@ class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
       this.pairedFinalAttachments = attachments;
     }
     if (!this.pairedSummaryLocked) {
-      this.pairedExecutionSummary = outputText.slice(0, 500);
+      this.pairedExecutionSummary = outputText;
       this.pairedSummaryLocked = true;
     }
     this.pairedSawOutput = true;
@@ -451,7 +451,7 @@ class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
         'Adopted direct terminal delivery as paired final output',
       );
     } else if (!this.pairedSummaryLocked) {
-      this.pairedExecutionSummary = this.pairedFinalOutput.slice(0, 500);
+      this.pairedExecutionSummary = this.pairedFinalOutput;
       this.pairedSummaryLocked = true;
     }
     return outputText;

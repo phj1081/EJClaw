@@ -14,6 +14,15 @@ import {
 
 const MAX_TURN_OUTPUT_CHARS = 50_000;
 
+function storedOutputText(outputText: string): string {
+  if (outputText.length <= MAX_TURN_OUTPUT_CHARS) {
+    return outputText;
+  }
+
+  const notice = `\n\n[Output truncated: ${outputText.length} > ${MAX_TURN_OUTPUT_CHARS} chars]`;
+  return `${outputText.slice(0, MAX_TURN_OUTPUT_CHARS - notice.length)}${notice}`;
+}
+
 export function insertPairedTurnOutputInDatabase(
   database: Database,
   taskId: string,
@@ -48,7 +57,7 @@ export function insertPairedTurnOutputInDatabase(
       taskId,
       turnNumber,
       role,
-      outputText.slice(0, MAX_TURN_OUTPUT_CHARS),
+      storedOutputText(outputText),
       serializeAttachmentPayload(options.attachments),
       parseVisibleVerdict(outputText),
       options.createdAt ?? new Date().toISOString(),

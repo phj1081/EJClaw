@@ -8,6 +8,33 @@ import {
 } from './db/paired-turn-outputs.js';
 
 describe('paired turn output attachments', () => {
+  it('marks truncated output text so reviewers know evidence was clipped', () => {
+    const database = new Database(':memory:');
+    try {
+      applyBaseSchema(database);
+
+      insertPairedTurnOutputInDatabase(
+        database,
+        'paired-task-turn-output-truncated',
+        1,
+        'owner',
+        'x'.repeat(60_000),
+      );
+
+      const [output] = getPairedTurnOutputsFromDatabase(
+        database,
+        'paired-task-turn-output-truncated',
+      );
+
+      expect(output.output_text).toHaveLength(50_000);
+      expect(output.output_text).toMatch(
+        /\[Output truncated: 60000 > 50000 chars\]/,
+      );
+    } finally {
+      database.close();
+    }
+  });
+
   it('preserves attachments for reviewer evidence prompts', () => {
     const database = new Database(':memory:');
     try {

@@ -113,22 +113,17 @@ export function handleArbiterCompletion(args: {
       transitionPairedTaskStatus({
         taskId,
         currentStatus: 'in_arbitration',
-        nextStatus: 'review_ready',
+        nextStatus: 'completed',
         expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
-          round_trip_count: ARBITER_RESOLUTION_ROUND_TRIP_COUNT,
-          owner_failure_count: 0,
-          owner_step_done_streak: 0,
-          finalize_step_done_count: 0,
-          empty_step_done_streak: 0,
           arbiter_verdict: 'unknown',
-          arbiter_requested_at: null,
+          completion_reason: 'arbiter_escalated',
         },
       });
       logger.warn(
         { taskId, summary: summary?.slice(0, 200) },
-        'Arbiter verdict unrecognized — returning task to reviewer as proceed fallback',
+        'Arbiter verdict unrecognized — escalating instead of treating it as approval',
       );
       return;
   }

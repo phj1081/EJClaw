@@ -3,6 +3,7 @@ export const OUTPUT_END_MARKER = '---EJCLAW_OUTPUT_END---';
 
 export const IMAGE_TAG_RE =
   /\[Image:\s*(?:(?:[^\]\n]*?)\s*→\s*)?(\/[^\]\n]+)\]/g;
+const IMAGE_TAG_SEGMENT_RE = /\[Image:\s*(?:(.*?)\s*→\s*)?(\/[^\]\n]+)\]/g;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp)$/i;
 const MARKDOWN_ABSOLUTE_LINK_RE = /!?\[[^\]\n]*\]\((\/[^)\n]+)\)/g;
 const MEDIA_TAG_RE =
@@ -63,6 +64,10 @@ function cloneImageTagPattern(): RegExp {
   return new RegExp(IMAGE_TAG_RE.source, IMAGE_TAG_RE.flags);
 }
 
+function cloneImageTagSegmentPattern(): RegExp {
+  return new RegExp(IMAGE_TAG_SEGMENT_RE.source, IMAGE_TAG_SEGMENT_RE.flags);
+}
+
 export function writeProtocolOutput<T>(
   output: T,
   writeLine: (line: string) => void = console.log,
@@ -85,6 +90,51 @@ export function extractImageTagPaths(text: string): {
     cleanText: text.replace(cloneImageTagPattern(), '').trim(),
     imagePaths,
   };
+}
+
+export type ImageTagPromptPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; label: string | null; path: string; raw: string };
+
+export function splitImageTagPromptParts(text: string): ImageTagPromptPart[] {
+  const imagePattern = cloneImageTagSegmentPattern();
+  const parts: ImageTagPromptPart[] = [];
+  let cursor = 0;
+
+  for (const match of text.matchAll(imagePattern)) {
+    const start = match.index ?? 0;
+    if (start > cursor) {
+      parts.push({ type: 'text', text: text.slice(cursor, start) });
+    }
+
+    const raw = match[0];
+    const label = match[1]?.trim() || null;
+    const imagePath = match[2].trim();
+    parts.push({ type: 'image', label, path: imagePath, raw });
+    cursor = start + raw.length;
+  }
+
+  if (cursor < text.length) {
+    parts.push({ type: 'text', text: text.slice(cursor) });
+  }
+
+  return parts.length > 0 ? parts : [{ type: 'text', text }];
+}
+
+export function imageTagCaption(
+  part: Extract<ImageTagPromptPart, { type: 'image' }>,
+): string {
+  return part.label
+    ? `Image evidence: ${part.label}`
+    : `Image evidence: ${part.path}`;
+}
+
+export function missingImageTagCaption(
+  part: Extract<ImageTagPromptPart, { type: 'image' }>,
+  reason: string,
+): string {
+  const label = part.label ? `${part.label} → ` : '';
+  return `[Image unavailable: ${label}${part.path} — ${reason}]`;
 }
 
 function attachmentName(filePath: string): string | undefined {

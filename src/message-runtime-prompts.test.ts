@@ -323,6 +323,9 @@ describe('message-runtime-prompts arbiter output context', () => {
 
     expect(prompt).not.toContain('arbiter-context-output-01');
     expect(prompt).not.toContain('arbiter-context-output-02');
+    expect(prompt).toContain(
+      '[Earlier paired turn outputs omitted: 2 older outputs not shown]',
+    );
     expect(prompt).toContain('arbiter-context-output-03');
     expect(prompt).toContain('arbiter-context-output-08');
     expect(prompt).not.toContain('예전 유저 지시');
@@ -362,6 +365,9 @@ describe('message-runtime-prompts arbiter output context', () => {
     expect(prompt).not.toContain('이전 작업의 유저 지시');
     expect(prompt).not.toContain('arbiter-context-output-01');
     expect(prompt).not.toContain('arbiter-context-output-02');
+    expect(prompt).toContain(
+      '[Earlier paired turn outputs omitted: 2 older outputs not shown]',
+    );
     expect(prompt).toContain('arbiter-context-output-03');
     expect(prompt).toContain('arbiter-context-output-08');
   });

@@ -60,6 +60,45 @@ function turnOutputsToMessages(
   }));
 }
 
+function omittedTurnOutputsMessage(args: {
+  chatJid: string;
+  omittedCount: number;
+  firstVisibleOutput?: PairedTurnOutput;
+}): NewMessage {
+  return {
+    id: `turn-output-omitted-${args.firstVisibleOutput?.task_id ?? 'unknown'}-${args.omittedCount}`,
+    chat_jid: args.chatJid,
+    sender: 'system',
+    sender_name: 'system',
+    content: `[Earlier paired turn outputs omitted: ${args.omittedCount} older outputs not shown]`,
+    timestamp:
+      args.firstVisibleOutput?.created_at ?? '1970-01-01T00:00:00.000Z',
+    is_bot_message: true as const,
+    is_from_me: false as const,
+  };
+}
+
+function latestTurnOutputMessagesWithOmissionMarker(
+  outputs: PairedTurnOutput[],
+  chatJid: string,
+  limit: number,
+): NewMessage[] {
+  const latestOutputs = latestTurnOutputs(outputs, limit);
+  const messages = turnOutputsToMessages(latestOutputs, chatJid);
+  const omittedCount = outputs.length - latestOutputs.length;
+  if (omittedCount <= 0) {
+    return messages;
+  }
+  return [
+    omittedTurnOutputsMessage({
+      chatJid,
+      omittedCount,
+      firstVisibleOutput: latestOutputs[0],
+    }),
+    ...messages,
+  ];
+}
+
 function mergeHumanAndTurnOutputMessages(
   chatJid: string,
   humanMessages: NewMessage[],
@@ -221,12 +260,10 @@ export function buildArbiterPromptForTask(args: {
     args.turnOutputs.length > 0
       ? [
           ...taskHumanMessages,
-          ...turnOutputsToMessages(
-            latestTurnOutputs(
-              args.turnOutputs,
-              ARBITER_TURN_OUTPUT_CONTEXT_LIMIT,
-            ),
+          ...latestTurnOutputMessagesWithOmissionMarker(
+            args.turnOutputs,
             args.chatJid,
+            ARBITER_TURN_OUTPUT_CONTEXT_LIMIT,
           ),
         ]
       : args.labeledRecentMessages;

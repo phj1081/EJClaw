@@ -36,6 +36,10 @@ describe('agent-runner multimodal prompts', () => {
     expect(content).toEqual([
       { type: 'text', text: '리뷰 증거' },
       {
+        type: 'text',
+        text: 'Image evidence: settings-v0.1.92-deployed-390.png',
+      },
+      {
         type: 'image',
         source: {
           type: 'base64',
@@ -45,5 +49,49 @@ describe('agent-runner multimodal prompts', () => {
       },
     ]);
     expect(logs).toContain(`Added image block: ${imagePath} (image/png)`);
+  });
+
+  it('keeps missing image evidence visible in Claude prompts', () => {
+    const missingPath = path.join(
+      os.tmpdir(),
+      'ejclaw-missing-image-evidence.png',
+    );
+    const logs: string[] = [];
+
+    const content = buildMultimodalContent(
+      `리뷰 증거\n[Image: expected-render.png → ${missingPath}]`,
+      (message) => logs.push(message),
+    );
+
+    expect(content).toEqual([
+      { type: 'text', text: '리뷰 증거' },
+      {
+        type: 'text',
+        text: `[Image unavailable: expected-render.png → ${missingPath} — file not found]`,
+      },
+    ]);
+    expect(logs).toContain(`Image not found, skipping: ${missingPath}`);
+  });
+
+  it('keeps unsupported image evidence visible instead of mislabeled', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-bmp-image-'));
+    cleanupDirs.push(dir);
+    const imagePath = path.join(dir, 'settings.bmp');
+    fs.writeFileSync(imagePath, Buffer.from('BMunsupported'));
+    const logs: string[] = [];
+
+    const content = buildMultimodalContent(
+      `리뷰 증거\n[Image: settings.bmp → ${imagePath}]`,
+      (message) => logs.push(message),
+    );
+
+    expect(content).toEqual([
+      { type: 'text', text: '리뷰 증거' },
+      {
+        type: 'text',
+        text: `[Image unavailable: settings.bmp → ${imagePath} — unsupported image type .bmp]`,
+      },
+    ]);
+    expect(logs).toContain(`Unsupported image type, skipping: ${imagePath}`);
   });
 });

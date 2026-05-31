@@ -34,8 +34,56 @@ describe('codex app-server input', () => {
 
     expect(input).toEqual([
       { type: 'text', text: '리뷰 증거' },
+      {
+        type: 'text',
+        text: 'Image evidence: settings-v0.1.92-deployed-390.png',
+      },
       { type: 'localImage', path: imagePath },
     ]);
     expect(logs).toContain(`Adding image input: ${imagePath}`);
+  });
+
+  it('keeps missing image evidence visible in Codex prompts', () => {
+    const missingPath = path.join(
+      os.tmpdir(),
+      'ejclaw-missing-codex-image-evidence.png',
+    );
+    const logs: string[] = [];
+
+    const input = parseAppServerInput(
+      `리뷰 증거\n[Image: expected-render.png → ${missingPath}]`,
+      (message) => logs.push(message),
+    );
+
+    expect(input).toEqual([
+      { type: 'text', text: '리뷰 증거' },
+      {
+        type: 'text',
+        text: `[Image unavailable: expected-render.png → ${missingPath} — file not found]`,
+      },
+    ]);
+    expect(logs).toContain(`Image not found, skipping: ${missingPath}`);
+  });
+
+  it('keeps unsupported image evidence visible in Codex prompts', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-codex-bmp-'));
+    cleanupDirs.push(dir);
+    const imagePath = path.join(dir, 'settings.bmp');
+    fs.writeFileSync(imagePath, Buffer.from('BMunsupported'));
+    const logs: string[] = [];
+
+    const input = parseAppServerInput(
+      `리뷰 증거\n[Image: settings.bmp → ${imagePath}]`,
+      (message) => logs.push(message),
+    );
+
+    expect(input).toEqual([
+      { type: 'text', text: '리뷰 증거' },
+      {
+        type: 'text',
+        text: `[Image unavailable: settings.bmp → ${imagePath} — unsupported image type .bmp]`,
+      },
+    ]);
+    expect(logs).toContain(`Unsupported image type, skipping: ${imagePath}`);
   });
 });

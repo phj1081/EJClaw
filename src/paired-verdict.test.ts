@@ -43,7 +43,7 @@ describe('paired verdict parser', () => {
     ).toBe('continue');
   });
 
-  it('does not scan beyond the leading visible line window', () => {
+  it('accepts status tokens after a longer evidence preface', () => {
     expect(
       parseVisibleVerdict(
         [
@@ -55,14 +55,41 @@ describe('paired verdict parser', () => {
           'TASK_DONE',
         ].join('\n'),
       ),
+    ).toBe('task_done');
+  });
+
+  it('does not scan beyond the leading visible line window', () => {
+    expect(
+      parseVisibleVerdict(
+        [
+          '01',
+          '02',
+          '03',
+          '04',
+          '05',
+          '06',
+          '07',
+          '08',
+          '09',
+          '10',
+          '11',
+          '12',
+          'TASK_DONE',
+        ].join('\n'),
+      ),
     ).toBe('continue');
   });
 
-  it('classifies arbiter verdicts from the first visible line', () => {
+  it('classifies arbiter verdicts from leading visible lines', () => {
     expect(classifyArbiterVerdict('PROCEED\ncontinue')).toBe('proceed');
     expect(classifyArbiterVerdict('**VERDICT: REVISE**\nfix it')).toBe(
       'revise',
     );
+    expect(
+      classifyArbiterVerdict(
+        ['중재 판단을 정리합니다.', 'VERDICT: REVISE', 'fix it'].join('\n'),
+      ),
+    ).toBe('revise');
     expect(
       classifyArbiterVerdict(
         '<internal>private notes</internal>\nVERDICT — RESET\nrestart',

@@ -3,7 +3,10 @@ import path from 'path';
 
 import {
   extractImageTagPaths,
+  imageTagCaption,
+  missingImageTagCaption,
   normalizeAgentOutput,
+  splitImageTagPromptParts,
   type RunnerStructuredOutput,
   writeProtocolOutput,
 } from 'ejclaw-runners-shared';
@@ -76,36 +79,55 @@ export function buildMultimodalContent(
   text: string,
   log: LogFn,
 ): StreamContent {
-  const { cleanText, imagePaths } = extractImageTagPaths(text);
+  const { imagePaths } = extractImageTagPaths(text);
   if (imagePaths.length === 0) return text;
 
   const blocks: ContentBlock[] = [];
-  if (cleanText) {
-    blocks.push({ type: 'text', text: cleanText });
-  }
+  const pushText = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed) blocks.push({ type: 'text', text: trimmed });
+  };
 
-  for (const imgPath of imagePaths) {
+  for (const part of splitImageTagPromptParts(text)) {
+    if (part.type === 'text') {
+      pushText(part.text);
+      continue;
+    }
+
     try {
-      if (!fs.existsSync(imgPath)) {
-        log(`Image not found, skipping: ${imgPath}`);
+      if (!fs.existsSync(part.path)) {
+        log(`Image not found, skipping: ${part.path}`);
+        pushText(missingImageTagCaption(part, 'file not found'));
         continue;
       }
-      const data = fs.readFileSync(imgPath).toString('base64');
-      const ext = path.extname(imgPath).toLowerCase();
-      const mediaType = (MIME_TYPES[ext] || 'image/png') as
+      const ext = path.extname(part.path).toLowerCase();
+      const mediaType = MIME_TYPES[ext] as
         | 'image/jpeg'
         | 'image/png'
         | 'image/gif'
-        | 'image/webp';
+        | 'image/webp'
+        | undefined;
+      if (!mediaType) {
+        log(`Unsupported image type, skipping: ${part.path}`);
+        pushText(
+          missingImageTagCaption(
+            part,
+            `unsupported image type ${ext || 'unknown'}`,
+          ),
+        );
+        continue;
+      }
+      const data = fs.readFileSync(part.path).toString('base64');
+      pushText(imageTagCaption(part));
       blocks.push({
         type: 'image',
         source: { type: 'base64', media_type: mediaType, data },
       });
-      log(`Added image block: ${imgPath} (${mediaType})`);
+      log(`Added image block: ${part.path} (${mediaType})`);
     } catch (err) {
-      log(
-        `Failed to read image ${imgPath}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      const reason = err instanceof Error ? err.message : String(err);
+      log(`Failed to read image ${part.path}: ${reason}`);
+      pushText(missingImageTagCaption(part, `read failed: ${reason}`));
     }
   }
 
