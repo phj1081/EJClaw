@@ -33,11 +33,11 @@ const log = {
   warn: vi.fn(),
 };
 
-describe('createPairedExecutionLifecycle', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
+describe('createPairedExecutionLifecycle output persistence', () => {
   it('stores final output attachments with the paired turn output', () => {
     const lifecycle = createPairedExecutionLifecycle({
       pairedExecutionContext: {
@@ -101,7 +101,67 @@ describe('createPairedExecutionLifecycle', () => {
       },
     );
   });
+});
 
+describe('createPairedExecutionLifecycle verdict routing', () => {
+  it('uses the full final output for paired verdict routing', () => {
+    const lifecycle = createPairedExecutionLifecycle({
+      pairedExecutionContext: {
+        task: {
+          id: 'paired-task-long-final',
+          chat_jid: 'group@test',
+          group_folder: 'test-group',
+          owner_service_id: 'codex-main',
+          reviewer_service_id: 'claude',
+          title: null,
+          source_ref: 'HEAD',
+          plan_notes: null,
+          round_trip_count: 0,
+          review_requested_at: null,
+          status: 'active',
+          arbiter_verdict: null,
+          arbiter_requested_at: null,
+          completion_reason: null,
+          created_at: '2026-04-09T00:00:00.000Z',
+          updated_at: '2026-04-09T00:00:00.000Z',
+        },
+        workspace: null,
+        envOverrides: {},
+      },
+      pairedTurnIdentity: {
+        turnId: 'paired-task-long-final:2026-04-09T00:00:00.000Z:owner-turn',
+        taskId: 'paired-task-long-final',
+        taskUpdatedAt: '2026-04-09T00:00:00.000Z',
+        intentKind: 'owner-turn',
+        role: 'owner',
+      },
+      completedRole: 'owner',
+      chatJid: 'group@test',
+      runId: 'run-long-final',
+      enqueueMessageCheck: vi.fn(),
+      log,
+    });
+    const longPreface = '검증 증거 '.repeat(100);
+    const finalOutput = `${longPreface}\nTASK_DONE\n뒤쪽 상태줄도 라우팅에 반영되어야 합니다.`;
+
+    lifecycle.recordFinalOutputBeforeDelivery(finalOutput);
+
+    expect(
+      pairedExecutionContextModule.completePairedExecutionContext,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'paired-task-long-final',
+        role: 'owner',
+        status: 'succeeded',
+        runId: 'run-long-final',
+        summary: finalOutput,
+      }),
+    );
+    expect(finalOutput.indexOf('TASK_DONE')).toBeGreaterThan(500);
+  });
+});
+
+describe('createPairedExecutionLifecycle completion handling', () => {
   it('does not emit a second public notification after arbiter ESCALATE', async () => {
     const outputs: AgentOutput[] = [];
 

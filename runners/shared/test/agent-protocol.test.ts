@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import {
   extractImageTagPaths,
+  imageTagCaption,
+  missingImageTagCaption,
   normalizeEjclawStructuredOutput,
   normalizePublicTextOutput,
+  splitImageTagPromptParts,
   writeProtocolOutput,
 } from '../src/agent-protocol.js';
 
@@ -23,6 +26,37 @@ describe('shared agent protocol helpers', () => {
       cleanText: 'second',
       imagePaths: ['/tmp/b.png'],
     });
+  });
+
+  it('splits labeled image tags for multimodal prompt builders', () => {
+    expect(
+      splitImageTagPromptParts(
+        'before [Image: screenshot.png → /tmp/a.png] after',
+      ),
+    ).toEqual([
+      { type: 'text', text: 'before ' },
+      {
+        type: 'image',
+        label: 'screenshot.png',
+        path: '/tmp/a.png',
+        raw: '[Image: screenshot.png → /tmp/a.png]',
+      },
+      { type: 'text', text: ' after' },
+    ]);
+  });
+
+  it('formats image evidence captions and missing-image warnings', () => {
+    const part = {
+      type: 'image' as const,
+      label: 'screenshot.png',
+      path: '/tmp/a.png',
+      raw: '[Image: screenshot.png → /tmp/a.png]',
+    };
+
+    expect(imageTagCaption(part)).toBe('Image evidence: screenshot.png');
+    expect(missingImageTagCaption(part, 'file not found')).toBe(
+      '[Image unavailable: screenshot.png → /tmp/a.png — file not found]',
+    );
   });
 
   it('normalizes plain text runner output as public text', () => {

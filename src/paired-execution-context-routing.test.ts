@@ -169,7 +169,7 @@ describe('paired execution routing loop guards', () => {
     );
   });
 
-  it('routes unknown arbiter verdicts to reviewer as a proceed fallback', () => {
+  it('escalates unknown arbiter verdicts instead of treating them as approval', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({
         status: 'in_arbitration',
@@ -190,12 +190,9 @@ describe('paired execution routing loop guards', () => {
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({
-        status: 'review_ready',
-        round_trip_count: 0,
-        owner_step_done_streak: 0,
-        empty_step_done_streak: 0,
+        status: 'completed',
         arbiter_verdict: 'unknown',
-        arbiter_requested_at: null,
+        completion_reason: 'arbiter_escalated',
       }),
     );
   });
