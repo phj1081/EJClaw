@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { Attachment } from 'discord.js';
+import { isModelDocumentPath } from 'ejclaw-runners-shared';
 
 import { DATA_DIR } from '../config.js';
 import { logger } from '../logger.js';
@@ -63,6 +64,15 @@ function isTextAttachment(att: Attachment, contentType: string): boolean {
   );
 }
 
+function isStructuredDocumentAttachment(
+  att: Attachment,
+  contentType: string,
+): boolean {
+  if (contentType === 'application/pdf') return true;
+  if (contentType.startsWith('text/')) return true;
+  return isModelDocumentPath(att.name || '');
+}
+
 function formatAttachmentReference(
   label: 'Audio' | 'File' | 'Image' | 'Video',
   att: Attachment,
@@ -121,6 +131,9 @@ export async function describeDownloadedAttachment(
     attachmentDefaultExtension(contentType),
   );
   const reference = formatAttachmentReference(label, att, filePath);
+  if (label === 'File' && isStructuredDocumentAttachment(att, contentType)) {
+    if (!isTextAttachment(att, contentType)) return reference;
+  }
   if (!isTextAttachment(att, contentType)) {
     if (label === 'Image') return reference;
     return formatUnavailableAttachmentReference(

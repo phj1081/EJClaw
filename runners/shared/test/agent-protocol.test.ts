@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  attachmentEvidenceCaption,
+  expandPromptAttachmentReferences,
   expandImagePromptReferences,
   extractImageTagPaths,
   imageTagCaption,
+  missingAttachmentCaption,
   missingImageTagCaption,
   normalizeEjclawStructuredOutput,
   normalizePublicTextOutput,
+  splitPromptAttachmentParts,
   splitImageTagPromptParts,
   writeProtocolOutput,
 } from '../src/agent-protocol.js';
@@ -77,6 +81,60 @@ describe('shared agent protocol helpers', () => {
     expect(expandImagePromptReferences(text)).toBe(text);
   });
 
+  it('expands supported MEDIA documents into file prompt tags', () => {
+    expect(
+      expandPromptAttachmentReferences('증거\nMEDIA:/tmp/report.pdf'),
+    ).toBe('증거\n[File: report.pdf → /tmp/report.pdf]');
+  });
+
+  it('splits image and document prompt attachments in order', () => {
+    expect(
+      splitPromptAttachmentParts(
+        'before [Image: render.png → /tmp/render.png] middle [File: report.pdf → /tmp/report.pdf] after',
+      ),
+    ).toEqual([
+      { type: 'text', text: 'before ' },
+      {
+        type: 'attachment',
+        kind: 'image',
+        label: 'render.png',
+        path: '/tmp/render.png',
+        raw: '[Image: render.png → /tmp/render.png]',
+        tag: 'Image',
+      },
+      { type: 'text', text: ' middle ' },
+      {
+        type: 'attachment',
+        kind: 'document',
+        label: 'report.pdf',
+        path: '/tmp/report.pdf',
+        raw: '[File: report.pdf → /tmp/report.pdf]',
+        tag: 'File',
+      },
+      { type: 'text', text: ' after' },
+    ]);
+  });
+
+  it('formats document evidence captions and missing-document warnings', () => {
+    const part = {
+      type: 'attachment' as const,
+      kind: 'document' as const,
+      label: 'report.pdf',
+      path: '/tmp/report.pdf',
+      raw: '[File: report.pdf → /tmp/report.pdf]',
+      tag: 'File' as const,
+    };
+
+    expect(attachmentEvidenceCaption(part)).toBe(
+      'Document evidence: report.pdf',
+    );
+    expect(missingAttachmentCaption(part, 'file not found')).toBe(
+      '[Document unavailable: report.pdf → /tmp/report.pdf — file not found]',
+    );
+  });
+});
+
+describe('shared agent output normalization', () => {
   it('normalizes plain text runner output as public text', () => {
     expect(normalizePublicTextOutput('DONE')).toEqual({
       result: 'DONE',

@@ -118,4 +118,12 @@ describe('codex app-server input', () => {
       { type: 'localImage', path: imagePath },
     ]);
   });
+
+  it('keeps supported document references visible for Codex when no structured document input exists', () => {
+    const input = parseAppServerInput('증거\nMEDIA:/tmp/report.pdf');
+
+    expect(input).toEqual([
+      { type: 'text', text: '증거\n[File: report.pdf → /tmp/report.pdf]' },
+    ]);
+  });
 });

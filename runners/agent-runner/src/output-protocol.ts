@@ -2,12 +2,12 @@ import fs from 'fs';
 import path from 'path';
 
 import {
-  expandImagePromptReferences,
-  extractImageTagPaths,
-  imageTagCaption,
-  missingImageTagCaption,
+  attachmentEvidenceCaption,
+  expandPromptAttachmentReferences,
+  missingAttachmentCaption,
   normalizeAgentOutput,
-  splitImageTagPromptParts,
+  splitPromptAttachmentParts,
+  type PromptAttachmentPart,
   type RunnerStructuredOutput,
   writeProtocolOutput,
 } from 'ejclaw-runners-shared';
@@ -51,6 +51,21 @@ type ContentBlock =
         media_type: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
         data: string;
       };
+    }
+  | {
+      type: 'document';
+      title?: string | null;
+      source:
+        | {
+            type: 'base64';
+            media_type: 'application/pdf';
+            data: string;
+          }
+        | {
+            type: 'text';
+            media_type: 'text/plain';
+            data: string;
+          };
     };
 
 interface SDKUserMessage {
@@ -76,13 +91,72 @@ const MIME_TYPES: Record<string, string> = {
   '.webp': 'image/webp',
 };
 
+const TEXT_DOCUMENT_EXTENSIONS = new Set([
+  '.txt',
+  '.md',
+  '.markdown',
+  '.csv',
+  '.json',
+  '.log',
+  '.xml',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.cfg',
+  '.conf',
+]);
+
+function loadDocumentBlock(
+  part: Extract<PromptAttachmentPart, { type: 'attachment' }>,
+  log: LogFn,
+): ContentBlock | string {
+  try {
+    if (!fs.existsSync(part.path)) {
+      log(`Document not found, skipping: ${part.path}`);
+      return missingAttachmentCaption(part, 'file not found');
+    }
+
+    const ext = path.extname(part.path).toLowerCase();
+    if (ext === '.pdf') {
+      const data = fs.readFileSync(part.path).toString('base64');
+      log(`Added document block: ${part.path} (application/pdf)`);
+      return {
+        type: 'document',
+        title: part.label ?? path.basename(part.path),
+        source: { type: 'base64', media_type: 'application/pdf', data },
+      };
+    }
+
+    if (TEXT_DOCUMENT_EXTENSIONS.has(ext)) {
+      const data = fs.readFileSync(part.path, 'utf8');
+      log(`Added document block: ${part.path} (text/plain)`);
+      return {
+        type: 'document',
+        title: part.label ?? path.basename(part.path),
+        source: { type: 'text', media_type: 'text/plain', data },
+      };
+    }
+
+    log(`Unsupported document type, skipping: ${part.path}`);
+    return missingAttachmentCaption(
+      part,
+      `unsupported document type ${ext || 'unknown'}`,
+    );
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log(`Failed to read document ${part.path}: ${reason}`);
+    return missingAttachmentCaption(part, `read failed: ${reason}`);
+  }
+}
+
 export function buildMultimodalContent(
   text: string,
   log: LogFn,
 ): StreamContent {
-  const expandedText = expandImagePromptReferences(text);
-  const { imagePaths } = extractImageTagPaths(expandedText);
-  if (imagePaths.length === 0) return text;
+  const expandedText = expandPromptAttachmentReferences(text);
+  const parts = splitPromptAttachmentParts(expandedText);
+  if (!parts.some((part) => part.type === 'attachment')) return text;
 
   const blocks: ContentBlock[] = [];
   const pushText = (value: string) => {
@@ -90,16 +164,32 @@ export function buildMultimodalContent(
     if (trimmed) blocks.push({ type: 'text', text: trimmed });
   };
 
-  for (const part of splitImageTagPromptParts(expandedText)) {
+  for (const part of parts) {
     if (part.type === 'text') {
       pushText(part.text);
+      continue;
+    }
+
+    if (part.kind === 'document') {
+      pushText(attachmentEvidenceCaption(part));
+      const block = loadDocumentBlock(part, log);
+      if (typeof block === 'string') {
+        pushText(block);
+      } else {
+        blocks.push(block);
+      }
+      continue;
+    }
+
+    if (part.kind !== 'image') {
+      pushText(part.raw);
       continue;
     }
 
     try {
       if (!fs.existsSync(part.path)) {
         log(`Image not found, skipping: ${part.path}`);
-        pushText(missingImageTagCaption(part, 'file not found'));
+        pushText(missingAttachmentCaption(part, 'file not found'));
         continue;
       }
       const ext = path.extname(part.path).toLowerCase();
@@ -112,7 +202,7 @@ export function buildMultimodalContent(
       if (!mediaType) {
         log(`Unsupported image type, skipping: ${part.path}`);
         pushText(
-          missingImageTagCaption(
+          missingAttachmentCaption(
             part,
             `unsupported image type ${ext || 'unknown'}`,
           ),
@@ -120,7 +210,7 @@ export function buildMultimodalContent(
         continue;
       }
       const data = fs.readFileSync(part.path).toString('base64');
-      pushText(imageTagCaption(part));
+      pushText(attachmentEvidenceCaption(part));
       blocks.push({
         type: 'image',
         source: { type: 'base64', media_type: mediaType, data },
@@ -129,7 +219,7 @@ export function buildMultimodalContent(
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       log(`Failed to read image ${part.path}: ${reason}`);
-      pushText(missingImageTagCaption(part, `read failed: ${reason}`));
+      pushText(missingAttachmentCaption(part, `read failed: ${reason}`));
     }
   }
 

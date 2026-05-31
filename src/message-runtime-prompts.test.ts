@@ -170,7 +170,7 @@ describe('message-runtime-prompts output-only context', () => {
     );
   });
 
-  it('makes non-image turn attachments visibly unavailable instead of implying inspection', () => {
+  it('carries supported document turn attachments into reviewer prompts as file inputs', () => {
     const prompt = buildReviewerPendingPrompt({
       chatJid: 'group@test',
       timezone: 'UTC',
@@ -192,9 +192,7 @@ describe('message-runtime-prompts output-only context', () => {
       taskCreatedAt: '2026-04-20T01:00:00.000Z',
     });
 
-    expect(prompt).toContain(
-      '[Attachment unavailable: report.pdf → /tmp/report.pdf — application/pdf is not loaded as structured model input]',
-    );
+    expect(prompt).toContain('[File: report.pdf → /tmp/report.pdf]');
   });
 
   it('includes current task user scope in reviewer pending prompts without pulling older human messages', () => {

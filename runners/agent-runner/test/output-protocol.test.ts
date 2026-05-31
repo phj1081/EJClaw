@@ -10,6 +10,7 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
   'base64',
 );
+const MINIMAL_PDF = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
 
 const cleanupDirs: string[] = [];
 
@@ -143,6 +144,64 @@ describe('agent-runner multimodal prompts', () => {
           type: 'base64',
           media_type: 'image/png',
           data: ONE_PIXEL_PNG.toString('base64'),
+        },
+      },
+    ]);
+  });
+
+  it('loads PDF file tags as Claude document blocks', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-pdf-doc-'));
+    cleanupDirs.push(dir);
+    const pdfPath = path.join(dir, 'report.pdf');
+    fs.writeFileSync(pdfPath, MINIMAL_PDF);
+    const logs: string[] = [];
+
+    const content = buildMultimodalContent(
+      `검토 자료\n[File: report.pdf → ${pdfPath}]`,
+      (message) => logs.push(message),
+    );
+
+    expect(content).toEqual([
+      { type: 'text', text: '검토 자료' },
+      { type: 'text', text: 'Document evidence: report.pdf' },
+      {
+        type: 'document',
+        title: 'report.pdf',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: MINIMAL_PDF.toString('base64'),
+        },
+      },
+    ]);
+    expect(logs).toContain(
+      `Added document block: ${pdfPath} (application/pdf)`,
+    );
+  });
+
+  it('loads text file tags as Claude text document blocks', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-text-doc-'));
+    cleanupDirs.push(dir);
+    const textPath = path.join(dir, 'notes.md');
+    fs.writeFileSync(textPath, '# Notes\nEvidence text');
+
+    const content = buildMultimodalContent(
+      `검토 자료\nMEDIA:${textPath}`,
+      () => {
+        // no-op
+      },
+    );
+
+    expect(content).toEqual([
+      { type: 'text', text: '검토 자료' },
+      { type: 'text', text: 'Document evidence: notes.md' },
+      {
+        type: 'document',
+        title: 'notes.md',
+        source: {
+          type: 'text',
+          media_type: 'text/plain',
+          data: '# Notes\nEvidence text',
         },
       },
     ]);
