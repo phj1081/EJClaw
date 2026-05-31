@@ -153,6 +153,47 @@ describe('web dashboard attachment data', () => {
     });
   });
 
+  it('shows stored paired turn output attachments in room activity', () => {
+    const task = makePairedTask({ id: 'paired-output-attachments' });
+    const output: PairedTurnOutput = {
+      id: 1,
+      task_id: task.id,
+      turn_number: 1,
+      role: 'owner',
+      output_text: 'TASK_DONE\n\n새 렌더 증거 첨부',
+      attachments: [
+        {
+          path: '/tmp/settings-v0.1.92-deployed-390.png',
+          name: 'settings-v0.1.92-deployed-390.png',
+          mime: 'image/png',
+        },
+      ],
+      verdict: 'task_done',
+      created_at: '2026-04-26T05:30:00.000Z',
+    };
+
+    const activity = buildWebDashboardRoomActivity({
+      serviceId: 'codex-main',
+      entry: roomEntry,
+      pairedTask: task,
+      turns: [],
+      attempts: [],
+      outputs: [output],
+      messages: [],
+    });
+
+    expect(activity.pairedTask?.outputs[0]).toMatchObject({
+      outputText: 'TASK_DONE\n\n새 렌더 증거 첨부',
+      attachments: [
+        {
+          path: '/tmp/settings-v0.1.92-deployed-390.png',
+          name: 'settings-v0.1.92-deployed-390.png',
+          mime: 'image/png',
+        },
+      ],
+    });
+  });
+
   it('turns markdown image output into dashboard attachments', () => {
     const message: NewMessage = {
       id: 'msg-markdown-image',

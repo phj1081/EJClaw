@@ -180,7 +180,7 @@ export function applyBaseSchema(database: Database): void {
       task_id TEXT NOT NULL,
       turn_number INTEGER NOT NULL,
       role TEXT NOT NULL,
-      output_text TEXT NOT NULL,
+      output_text TEXT NOT NULL, attachment_payload TEXT,
       verdict TEXT,
       created_at TEXT NOT NULL,
       UNIQUE(task_id, turn_number, role)

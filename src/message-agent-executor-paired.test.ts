@@ -38,6 +38,70 @@ describe('createPairedExecutionLifecycle', () => {
     vi.clearAllMocks();
   });
 
+  it('stores final output attachments with the paired turn output', () => {
+    const lifecycle = createPairedExecutionLifecycle({
+      pairedExecutionContext: {
+        task: {
+          id: 'paired-task-output-attachment',
+          chat_jid: 'group@test',
+          group_folder: 'test-group',
+          owner_service_id: 'codex-main',
+          reviewer_service_id: 'claude',
+          title: null,
+          source_ref: 'HEAD',
+          plan_notes: null,
+          round_trip_count: 0,
+          review_requested_at: null,
+          status: 'active',
+          arbiter_verdict: null,
+          arbiter_requested_at: null,
+          completion_reason: null,
+          created_at: '2026-04-09T00:00:00.000Z',
+          updated_at: '2026-04-09T00:00:00.000Z',
+        },
+        workspace: null,
+        envOverrides: {},
+      },
+      pairedTurnIdentity: {
+        turnId:
+          'paired-task-output-attachment:2026-04-09T00:00:00.000Z:owner-turn',
+        taskId: 'paired-task-output-attachment',
+        taskUpdatedAt: '2026-04-09T00:00:00.000Z',
+        intentKind: 'owner-turn',
+        role: 'owner',
+      },
+      completedRole: 'owner',
+      chatJid: 'group@test',
+      runId: 'run-output-attachment',
+      enqueueMessageCheck: vi.fn(),
+      log,
+    });
+
+    lifecycle.recordFinalOutputBeforeDelivery('TASK_DONE\n새 렌더 첨부', [
+      {
+        path: '/tmp/settings-v0.1.92-deployed-390.png',
+        name: 'settings-v0.1.92-deployed-390.png',
+        mime: 'image/png',
+      },
+    ]);
+
+    expect(db.insertPairedTurnOutput).toHaveBeenCalledWith(
+      'paired-task-output-attachment',
+      1,
+      'owner',
+      'TASK_DONE\n새 렌더 첨부',
+      {
+        attachments: [
+          {
+            path: '/tmp/settings-v0.1.92-deployed-390.png',
+            name: 'settings-v0.1.92-deployed-390.png',
+            mime: 'image/png',
+          },
+        ],
+      },
+    );
+  });
+
   it('does not emit a second public notification after arbiter ESCALATE', async () => {
     const outputs: AgentOutput[] = [];
 

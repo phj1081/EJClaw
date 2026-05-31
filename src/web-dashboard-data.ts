@@ -560,7 +560,10 @@ function sanitizeRoomTurnOutput(
     verdict: output.verdict ?? null,
     createdAt: output.created_at,
     outputText: buildRoomBody(normalized.text),
-    attachments: normalized.attachments,
+    attachments:
+      normalized.attachments.length > 0
+        ? normalized.attachments
+        : (output.attachments ?? []),
   };
 }
 

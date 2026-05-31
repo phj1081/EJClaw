@@ -20,7 +20,8 @@ import { enqueuePairedFollowUpAfterEvent } from './message-runtime-follow-up.js'
 import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import { resolvePairedTurnRunOwnership } from './paired-turn-run-ownership.js';
 import { isHumanMessageCloseReason } from './message-close-reasons.js';
-import type { PairedRoomRole } from './types.js';
+import { persistPairedTurnOutputAttachments } from './paired-turn-output-attachments.js';
+import type { OutboundAttachment, PairedRoomRole } from './types.js';
 
 type ExecutorLog = Pick<typeof logger, 'info' | 'warn'>;
 
@@ -89,7 +90,10 @@ export interface PairedExecutionLifecycle {
     outputText?: string | null;
     errorText?: string | null;
   }): void;
-  recordFinalOutputBeforeDelivery(outputText: string): boolean;
+  recordFinalOutputBeforeDelivery(
+    outputText: string,
+    attachments?: OutboundAttachment[],
+  ): boolean;
   completeImmediately(args: { status: 'succeeded' | 'failed' }): void;
   markDelegated(): void;
   markStatus(status: 'succeeded' | 'failed'): void;
@@ -124,6 +128,7 @@ class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
   private pairedExecutionStatus: PairedExecutionStatus = 'failed';
   private pairedExecutionSummary: string | null = null;
   private pairedFinalOutput: string | null = null;
+  private pairedFinalAttachments: OutboundAttachment[] = [];
   private pairedSummaryLocked = false;
   private pairedExecutionCompleted = false;
   private pairedExecutionDelegated = false;
@@ -164,12 +169,15 @@ class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
     }
   }
 
-  recordFinalOutputBeforeDelivery(outputText: string): boolean {
+  recordFinalOutputBeforeDelivery(
+    outputText: string,
+    attachments: OutboundAttachment[] = [],
+  ): boolean {
     if (this.wasInterruptedByHumanMessage()) return false;
     if (!this.currentRunOwnsActiveAttempt('streamed-final-output')) {
       return false;
     }
-    this.lockVisibleVerdict(outputText);
+    this.lockVisibleVerdict(outputText, attachments);
     this.completeSuccessfulOwnerTurnBeforeDeliveryIfNeeded();
     this.persistPairedTurnOutputIfNeeded();
     return true;
@@ -348,12 +356,31 @@ class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
     }
 
     const turnNumber = getLatestTurnNumber(pairedExecutionContext.task.id) + 1;
-    insertPairedTurnOutput(
-      pairedExecutionContext.task.id,
-      turnNumber,
-      completedRole,
-      this.pairedFinalOutput,
-    );
+    const attachments =
+      this.pairedFinalAttachments.length > 0
+        ? persistPairedTurnOutputAttachments({
+            taskId: pairedExecutionContext.task.id,
+            turnNumber,
+            role: completedRole,
+            attachments: this.pairedFinalAttachments,
+          })
+        : [];
+    if (attachments.length > 0) {
+      insertPairedTurnOutput(
+        pairedExecutionContext.task.id,
+        turnNumber,
+        completedRole,
+        this.pairedFinalOutput,
+        { attachments },
+      );
+    } else {
+      insertPairedTurnOutput(
+        pairedExecutionContext.task.id,
+        turnNumber,
+        completedRole,
+        this.pairedFinalOutput,
+      );
+    }
     this.pairedTurnOutputPersisted = true;
   }
 
@@ -383,12 +410,16 @@ class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
     this.pairedExecutionCompleted = true;
   }
 
-  private lockVisibleVerdict(outputText: string): void {
+  private lockVisibleVerdict(
+    outputText: string,
+    attachments: OutboundAttachment[] = [],
+  ): void {
     if (outputText.length === 0) {
       return;
     }
     if (!this.pairedFinalOutput || this.pairedFinalOutput.length === 0) {
       this.pairedFinalOutput = outputText;
+      this.pairedFinalAttachments = attachments;
     }
     if (!this.pairedSummaryLocked) {
       this.pairedExecutionSummary = outputText.slice(0, 500);

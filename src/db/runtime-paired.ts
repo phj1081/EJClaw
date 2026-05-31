@@ -362,15 +362,24 @@ export function insertPairedTurnOutput(
   turnNumber: number,
   role: PairedRoomRole,
   outputText: string,
-  createdAt?: string,
+  createdAtOrOptions?:
+    | string
+    | {
+        createdAt?: string;
+        attachments?: import('../types.js').OutboundAttachment[];
+      },
 ): void {
+  const options =
+    typeof createdAtOrOptions === 'string'
+      ? { createdAt: createdAtOrOptions }
+      : (createdAtOrOptions ?? {});
   insertPairedTurnOutputInDatabase(
     requireDatabase(),
     taskId,
     turnNumber,
     role,
     outputText,
-    createdAt,
+    options,
   );
 }
 

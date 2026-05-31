@@ -105,7 +105,7 @@ function hydrateWorkItemRow(row: StoredWorkItemRow): WorkItem {
   };
 }
 
-function parseAttachmentPayload(
+export function parseAttachmentPayload(
   payload: string | null | undefined,
 ): OutboundAttachment[] {
   if (!payload) return [];
@@ -130,7 +130,7 @@ function parseAttachmentPayload(
   }
 }
 
-function serializeAttachmentPayload(
+export function serializeAttachmentPayload(
   attachments: OutboundAttachment[] | undefined,
 ): string | null {
   if (!attachments?.length) return null;

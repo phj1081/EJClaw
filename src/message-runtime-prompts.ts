@@ -1,6 +1,11 @@
 import { buildArbiterContextPrompt } from './arbiter-context.js';
 import { formatMessages } from './router.js';
-import type { NewMessage, PairedTask, PairedTurnOutput } from './types.js';
+import type {
+  NewMessage,
+  OutboundAttachment,
+  PairedTask,
+  PairedTurnOutput,
+} from './types.js';
 
 const CARRIED_FORWARD_OWNER_FINAL_MARKER =
   '[Carried forward context from the previous task: latest owner final]';
@@ -11,6 +16,34 @@ If you see a message beginning with "${CARRIED_FORWARD_OWNER_FINAL_MARKER}", tre
 const ARBITER_TURN_OUTPUT_CONTEXT_LIMIT = 6;
 const TASK_USER_CONTEXT_START_SKEW_MS = 5_000;
 
+function isImageAttachment(attachment: OutboundAttachment): boolean {
+  if (attachment.mime?.toLowerCase().startsWith('image/')) return true;
+  return /\.(?:png|jpe?g|gif|webp|bmp)$/i.test(attachment.path);
+}
+
+function attachmentLabel(attachment: OutboundAttachment): string {
+  return attachment.name?.trim() || attachment.path.split('/').at(-1) || 'file';
+}
+
+function formatTurnOutputAttachmentContext(
+  attachments: OutboundAttachment[] | undefined,
+): string {
+  if (!attachments?.length) return '';
+  const lines = attachments.map((attachment) => {
+    const label = attachmentLabel(attachment);
+    return isImageAttachment(attachment)
+      ? `[Image: ${label} → ${attachment.path}]`
+      : `[Attachment: ${label} → ${attachment.path}]`;
+  });
+  return `\n\nAttached evidence from this turn:\n${lines.join('\n')}`;
+}
+
+function formatTurnOutputMessageContent(turnOutput: PairedTurnOutput): string {
+  return `${turnOutput.output_text}${formatTurnOutputAttachmentContext(
+    turnOutput.attachments,
+  )}`;
+}
+
 function turnOutputsToMessages(
   outputs: PairedTurnOutput[],
   chatJid: string,
@@ -20,7 +53,7 @@ function turnOutputsToMessages(
     chat_jid: chatJid,
     sender: turnOutput.role,
     sender_name: turnOutput.role,
-    content: turnOutput.output_text,
+    content: formatTurnOutputMessageContent(turnOutput),
     timestamp: turnOutput.created_at,
     is_bot_message: true as const,
     is_from_me: false as const,

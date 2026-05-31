@@ -17,7 +17,6 @@ import path from 'path';
 
 import {
   EJCLAW_ENV,
-  extractImageTagPaths,
   IPC_CLOSE_SENTINEL,
   IPC_INPUT_SUBDIR,
   IPC_POLL_MS,
@@ -26,10 +25,8 @@ import {
   type RunnerStructuredOutput,
 } from 'ejclaw-runners-shared';
 
-import {
-  CodexAppServerClient,
-  type AppServerInputItem,
-} from './app-server-client.js';
+import { CodexAppServerClient } from './app-server-client.js';
+import { parseAppServerInput } from './app-server-input.js';
 import {
   prependRoomRoleHeader,
   type RoomRoleContext,
@@ -173,37 +170,6 @@ function drainIpcInput(): string[] {
   }
 }
 
-function extractImagePaths(text: string): {
-  cleanText: string;
-  imagePaths: string[];
-} {
-  return extractImageTagPaths(text);
-}
-
-function parseAppServerInput(text: string): AppServerInputItem[] {
-  const { cleanText, imagePaths } = extractImagePaths(text);
-  const input: AppServerInputItem[] = [];
-
-  if (cleanText) {
-    input.push({ type: 'text', text: cleanText });
-  }
-
-  for (const imgPath of imagePaths) {
-    if (fs.existsSync(imgPath)) {
-      input.push({ type: 'localImage', path: imgPath });
-      log(`Adding image input: ${imgPath}`);
-    } else {
-      log(`Image not found, skipping: ${imgPath}`);
-    }
-  }
-
-  if (input.length === 0) {
-    input.push({ type: 'text', text });
-  }
-
-  return input;
-}
-
 function formatProgressElapsed(ms: number): string {
   const elapsedSeconds = Math.floor(ms / 10_000) * 10;
   const hours = Math.floor(elapsedSeconds / 3600);
@@ -231,7 +197,7 @@ async function executeAppServerTurn(
   let lastProgressMessage: string | null = null;
   const activeTurn = await client.startTurn(
     threadId,
-    parseAppServerInput(prompt),
+    parseAppServerInput(prompt, log),
     {
       cwd: EFFECTIVE_CWD,
       model: CODEX_MODEL || undefined,
@@ -277,7 +243,7 @@ async function executeAppServerTurn(
       const merged = messages.join('\n');
       log(`Steering active turn with ${messages.length} queued message(s)`);
       try {
-        await activeTurn.steer(parseAppServerInput(merged));
+        await activeTurn.steer(parseAppServerInput(merged, log));
       } catch (err) {
         log(
           `turn/steer failed: ${err instanceof Error ? err.message : String(err)}`,

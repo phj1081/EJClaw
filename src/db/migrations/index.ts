@@ -17,6 +17,7 @@ import { WORK_ITEM_ATTACHMENTS_MIGRATION } from './014_work-item-attachments.js'
 import { TURN_PROGRESS_TEXT_MIGRATION } from './015_turn-progress-text.js';
 import { ROOM_SKILL_OVERRIDES_MIGRATION } from './016_room-skill-overrides.js';
 import { SCHEDULED_TASK_ROOM_ROLE_MIGRATION } from './017_scheduled-task-room-role.js';
+import { PAIRED_TURN_OUTPUT_ATTACHMENTS_MIGRATION } from './018_paired-turn-output-attachments.js';
 import type {
   SchemaMigrationArgs,
   SchemaMigrationDefinition,
@@ -42,6 +43,7 @@ const ORDERED_SCHEMA_MIGRATIONS: readonly SchemaMigrationDefinition[] = [
   TURN_PROGRESS_TEXT_MIGRATION,
   ROOM_SKILL_OVERRIDES_MIGRATION,
   SCHEDULED_TASK_ROOM_ROLE_MIGRATION,
+  PAIRED_TURN_OUTPUT_ATTACHMENTS_MIGRATION,
 ];
 
 function ensureSchemaMigrationsTable(database: Database): void {

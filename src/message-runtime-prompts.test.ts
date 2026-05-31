@@ -137,6 +137,39 @@ describe('message-runtime-prompts output-only context', () => {
     expect(prompt).not.toContain('과거 요청을 다시 기준으로 보면 안 됨');
   });
 
+  it('carries owner turn attachments into reviewer prompts as image inputs', () => {
+    const prompt = buildReviewerPendingPrompt({
+      chatJid: 'group@test',
+      timezone: 'UTC',
+      turnOutputs: [
+        makeTurnOutput('TASK_DONE\n새 렌더 증거 첨부', 'owner', {
+          turn_number: 1,
+          created_at: '2026-04-20T02:00:00.000Z',
+          attachments: [
+            {
+              path: '/tmp/settings-v0.1.92-deployed-390.png',
+              name: 'settings-v0.1.92-deployed-390.png',
+              mime: 'image/png',
+            },
+          ],
+        }),
+      ],
+      recentHumanMessages: [
+        makeHumanMessage(
+          '원본 스크린샷\n[Image: old-phone.jpg → /tmp/old-phone.jpg]',
+          '2026-04-20T01:30:00.000Z',
+        ),
+      ],
+      lastHumanMessage: '원본 스크린샷',
+      taskCreatedAt: '2026-04-20T01:00:00.000Z',
+    });
+
+    expect(prompt).toContain('새 렌더 증거 첨부');
+    expect(prompt).toContain(
+      '[Image: settings-v0.1.92-deployed-390.png → /tmp/settings-v0.1.92-deployed-390.png]',
+    );
+  });
+
   it('includes current task user scope in reviewer pending prompts without pulling older human messages', () => {
     const prompt = buildReviewerPendingPrompt({
       chatJid: 'group@test',

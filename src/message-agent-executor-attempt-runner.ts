@@ -5,6 +5,7 @@ import {
   type EvaluatedAgentOutput,
 } from './agent-attempt.js';
 import type { AttemptStreamedTrigger } from './agent-attempt-retry.js';
+import { getAgentOutputAttachments } from './agent-output.js';
 import { runAgentProcess, type AgentOutput } from './agent-runner.js';
 import { markCompactRefreshNeeded } from './compact-refresh.js';
 import { getCodexAccountCount } from './codex-token-rotation.js';
@@ -13,7 +14,12 @@ import {
   shouldResetCodexSessionOnAgentFailure,
   shouldResetSessionOnAgentFailure,
 } from './session-recovery.js';
-import type { AgentType, RegisteredGroup, RoomRoleContext } from './types.js';
+import type {
+  AgentType,
+  OutboundAttachment,
+  RegisteredGroup,
+  RoomRoleContext,
+} from './types.js';
 
 export interface MessageAgentAttempt {
   output?: AgentOutput;
@@ -100,7 +106,10 @@ interface RunMessageAgentAttemptArgs {
       outputText?: string | null;
       errorText?: string | null;
     }): void;
-    recordFinalOutputBeforeDelivery(outputText: string): boolean;
+    recordFinalOutputBeforeDelivery(
+      outputText: string,
+      attachments?: OutboundAttachment[],
+    ): boolean;
   };
   log: Logger;
 }
@@ -352,6 +361,7 @@ class MessageAgentAttemptRunner {
     try {
       return this.args.pairedExecutionLifecycle.recordFinalOutputBeforeDelivery(
         event.outputText,
+        getAgentOutputAttachments(event.output),
       );
     } catch (err) {
       this.args.log.warn(

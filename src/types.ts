@@ -146,6 +146,7 @@ export interface PairedTurnOutput {
   turn_number: number;
   role: PairedRoomRole;
   output_text: string;
+  attachments?: OutboundAttachment[];
   verdict?: VisibleVerdict | null;
   created_at: string;
 }
