@@ -8,6 +8,7 @@ import {
   imageTagCaption,
   missingAttachmentCaption,
   missingImageTagCaption,
+  normalizeAgentOutput,
   normalizeEjclawStructuredOutput,
   normalizePublicTextOutput,
   splitPromptAttachmentParts,
@@ -33,6 +34,17 @@ describe('shared agent protocol helpers', () => {
     });
   });
 
+  it('does not extract image tags from code examples', () => {
+    const text =
+      'inline `[Image: x.png → /x.png]` and fenced\n```text\n[Image: y.png → /y.png]\n```\nreal [Image: z.png → /z.png]';
+
+    expect(extractImageTagPaths(text)).toEqual({
+      cleanText:
+        'inline `[Image: x.png → /x.png]` and fenced\n```text\n[Image: y.png → /y.png]\n```\nreal',
+      imagePaths: ['/z.png'],
+    });
+  });
+
   it('splits labeled image tags for multimodal prompt builders', () => {
     expect(
       splitImageTagPromptParts(
@@ -47,6 +59,21 @@ describe('shared agent protocol helpers', () => {
         raw: '[Image: screenshot.png → /tmp/a.png]',
       },
       { type: 'text', text: ' after' },
+    ]);
+  });
+
+  it('does not split image tags from code examples into prompt images', () => {
+    const text =
+      '`[Image: inline.png → /tmp/inline.png]` [Image: real.png → /tmp/real.png]';
+
+    expect(splitImageTagPromptParts(text)).toEqual([
+      { type: 'text', text: '`[Image: inline.png → /tmp/inline.png]` ' },
+      {
+        type: 'image',
+        label: 'real.png',
+        path: '/tmp/real.png',
+        raw: '[Image: real.png → /tmp/real.png]',
+      },
     ]);
   });
 
@@ -77,7 +104,8 @@ describe('shared agent protocol helpers', () => {
   });
 
   it('keeps non-image media and fenced media text unchanged', () => {
-    const text = 'MEDIA:/tmp/demo.mp4\n```text\nMEDIA:/tmp/render.png\n```';
+    const text =
+      'MEDIA:/tmp/demo.mp4\n```text\nMEDIA:/tmp/render.png\n```\n`MEDIA:/tmp/inline.png`';
     expect(expandImagePromptReferences(text)).toBe(text);
   });
 
@@ -115,6 +143,23 @@ describe('shared agent protocol helpers', () => {
     ]);
   });
 
+  it('does not split prompt attachments from code examples', () => {
+    const text =
+      '`[File: inline.pdf → /tmp/inline.pdf]` [File: report.pdf → /tmp/report.pdf]';
+
+    expect(splitPromptAttachmentParts(text)).toEqual([
+      { type: 'text', text: '`[File: inline.pdf → /tmp/inline.pdf]` ' },
+      {
+        type: 'attachment',
+        kind: 'document',
+        label: 'report.pdf',
+        path: '/tmp/report.pdf',
+        raw: '[File: report.pdf → /tmp/report.pdf]',
+        tag: 'File',
+      },
+    ]);
+  });
+
   it('formats document evidence captions and missing-document warnings', () => {
     const part = {
       type: 'attachment' as const,
@@ -131,6 +176,19 @@ describe('shared agent protocol helpers', () => {
     expect(missingAttachmentCaption(part, 'file not found')).toBe(
       '[Document unavailable: report.pdf → /tmp/report.pdf — file not found]',
     );
+  });
+
+  it('does not extract markdown image attachments from code examples', () => {
+    const normalized = normalizeAgentOutput(
+      'inline `![x](/x.png)` and fenced\n```md\n![y](/y.png)\n```\nreal ![z](/z.png)',
+    );
+
+    expect(normalized.output).toEqual({
+      visibility: 'public',
+      text: 'inline `![x](/x.png)` and fenced\n```md\n![y](/y.png)\n```\nreal',
+      attachments: [{ path: '/z.png', name: 'z.png' }],
+    });
+    expect(normalized.attachmentSource).toBe('markdown-image');
   });
 });
 

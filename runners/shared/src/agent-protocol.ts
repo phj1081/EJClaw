@@ -85,19 +85,26 @@ export function extractImageTagPaths(text: string): {
   cleanText: string;
   imagePaths: string[];
 } {
+  const codeSpans = codeSyntaxSpans(text);
   const imagePattern = cloneImageTagPattern();
-  const imagePaths = [...text.matchAll(imagePattern)].map((match) =>
-    match[1].trim(),
+  const imagePaths: string[] = [];
+  const cleanText = text.replace(
+    imagePattern,
+    (full: string, rawPath: string, offset: number) => {
+      if (isInsideSpans(offset, codeSpans)) return full;
+      imagePaths.push(rawPath.trim());
+      return '';
+    },
   );
 
   return {
-    cleanText: text.replace(cloneImageTagPattern(), '').trim(),
+    cleanText: cleanText.trim(),
     imagePaths,
   };
 }
 
 export function expandImagePromptReferences(text: string): string {
-  const codeSpans = fencedCodeSpans(text);
+  const codeSpans = codeSyntaxSpans(text);
   const withMediaImages = text.replace(
     MEDIA_TAG_RE,
     (full: string, doubleQuoted, singleQuoted, backticked, bare, offset) => {
@@ -113,7 +120,7 @@ export function expandImagePromptReferences(text: string): string {
     },
   );
 
-  const markdownCodeSpans = fencedCodeSpans(withMediaImages);
+  const markdownCodeSpans = codeSyntaxSpans(withMediaImages);
   return withMediaImages.replace(
     MARKDOWN_IMAGE_ABSOLUTE_LINK_RE,
     (full: string, rawPath: string, offset: number) => {
@@ -137,7 +144,7 @@ function promptReferenceTag(filePath: string): 'Image' | 'File' | null {
 }
 
 export function expandPromptAttachmentReferences(text: string): string {
-  const codeSpans = fencedCodeSpans(text);
+  const codeSpans = codeSyntaxSpans(text);
   const withMediaAttachments = text.replace(
     MEDIA_TAG_RE,
     (full: string, doubleQuoted, singleQuoted, backticked, bare, offset) => {
@@ -153,7 +160,7 @@ export function expandPromptAttachmentReferences(text: string): string {
     },
   );
 
-  const markdownCodeSpans = fencedCodeSpans(withMediaAttachments);
+  const markdownCodeSpans = codeSyntaxSpans(withMediaAttachments);
   return withMediaAttachments.replace(
     MARKDOWN_IMAGE_ABSOLUTE_LINK_RE,
     (full: string, rawPath: string, offset: number) => {
@@ -183,11 +190,13 @@ export type PromptAttachmentPart =
 
 export function splitImageTagPromptParts(text: string): ImageTagPromptPart[] {
   const imagePattern = cloneImageTagSegmentPattern();
+  const codeSpans = codeSyntaxSpans(text);
   const parts: ImageTagPromptPart[] = [];
   let cursor = 0;
 
   for (const match of text.matchAll(imagePattern)) {
     const start = match.index ?? 0;
+    if (isInsideSpans(start, codeSpans)) continue;
     if (start > cursor) {
       parts.push({ type: 'text', text: text.slice(cursor, start) });
     }
@@ -213,11 +222,13 @@ export function splitPromptAttachmentParts(
     PROMPT_ATTACHMENT_TAG_SEGMENT_RE.source,
     PROMPT_ATTACHMENT_TAG_SEGMENT_RE.flags,
   );
+  const codeSpans = codeSyntaxSpans(text);
   const parts: PromptAttachmentPart[] = [];
   let cursor = 0;
 
   for (const match of text.matchAll(pattern)) {
     const start = match.index ?? 0;
+    if (isInsideSpans(start, codeSpans)) continue;
     if (start > cursor) {
       parts.push({ type: 'text', text: text.slice(cursor, start) });
     }
@@ -312,10 +323,12 @@ export function extractMarkdownImageAttachments(text: string): {
   cleanText: string;
   attachments: RunnerOutputAttachment[];
 } {
+  const codeSpans = codeSyntaxSpans(text);
   const attachments: RunnerOutputAttachment[] = [];
   const cleanText = text.replace(
     MARKDOWN_IMAGE_ABSOLUTE_LINK_RE,
-    (full: string, rawPath: string) => {
+    (full: string, rawPath: string, offset: number) => {
+      if (isInsideSpans(offset, codeSpans)) return full;
       const trimmed = rawPath.trim();
       if (!IMAGE_EXT_RE.test(trimmed)) return full;
 
@@ -338,6 +351,25 @@ function fencedCodeSpans(text: string): Array<[number, number]> {
     match.index ?? 0,
     (match.index ?? 0) + match[0].length,
   ]);
+}
+
+function inlineCodeSpans(
+  text: string,
+  fencedSpans: Array<[number, number]>,
+): Array<[number, number]> {
+  return [...text.matchAll(/`[^`\n]+`/g)]
+    .map((match): [number, number] => [
+      match.index ?? 0,
+      (match.index ?? 0) + match[0].length,
+    ])
+    .filter(([start]) => !isInsideSpans(start, fencedSpans));
+}
+
+function codeSyntaxSpans(text: string): Array<[number, number]> {
+  const fencedSpans = fencedCodeSpans(text);
+  return [...fencedSpans, ...inlineCodeSpans(text, fencedSpans)].sort(
+    ([a], [b]) => a - b,
+  );
 }
 
 function isInsideSpans(index: number, spans: Array<[number, number]>): boolean {
@@ -372,7 +404,7 @@ export function extractMediaAttachments(text: string): {
   cleanText: string;
   attachments: RunnerOutputAttachment[];
 } {
-  const codeSpans = fencedCodeSpans(text);
+  const codeSpans = codeSyntaxSpans(text);
   const attachments: RunnerOutputAttachment[] = [];
   const cleanText = text.replace(
     MEDIA_TAG_RE,
