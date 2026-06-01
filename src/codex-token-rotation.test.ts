@@ -165,6 +165,192 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
     expect(mod.getCodexAccountCount()).toBe(4);
     expect(mod.getActiveCodexAuthPath()).not.toBe(fallbackAuthPath);
   });
+
+  it('marks refresh-token reuse as dead auth instead of a recoverable cooldown', async () => {
+    const agentErrors = await import('./agent-error-detection.js');
+    vi.mocked(agentErrors.classifyCodexAuthError).mockReturnValueOnce({
+      category: 'auth-expired',
+      reason: 'auth-expired',
+    });
+
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    expect(mod.rotateCodexToken('refresh token was already used')).toBe(true);
+
+    const accounts = mod.getAllCodexAccounts();
+    expect(accounts[0]).toEqual(
+      expect.objectContaining({
+        isAuthDead: true,
+        authStatus: 'dead_auth',
+      }),
+    );
+    expect(accounts[0].isRateLimited).toBe(false);
+    expect(accounts[1].isActive).toBe(true);
+  });
+
+  it('recovers a dead_auth account when canonical auth.json is refreshed before lease claim', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    try {
+      const agentErrors = await import('./agent-error-detection.js');
+      vi.mocked(agentErrors.classifyCodexAuthError).mockReturnValueOnce({
+        category: 'auth-expired',
+        reason: 'auth-expired',
+      });
+
+      const mod = await import('./codex-token-rotation.js');
+      const utils = await import('./utils.js');
+      mod.initCodexTokenRotation();
+
+      expect(mod.rotateCodexToken('refresh token was already used')).toBe(true);
+      expect(mod.getAllCodexAccounts()[0].isAuthDead).toBe(true);
+
+      const refreshedAt = new Date('2026-01-01T00:00:10.000Z');
+      const authPath = path.join(tempHome, '.codex-accounts', '0', 'auth.json');
+      fs.writeFileSync(
+        authPath,
+        JSON.stringify({
+          auth_mode: 'chatgpt',
+          tokens: { account_id: 'acct-0', access_token: 'refreshed-token' },
+        }),
+      );
+      fs.utimesSync(authPath, refreshedAt, refreshedAt);
+
+      mod.setCurrentCodexAccountIndex(0);
+      const lease = mod.claimCodexAuthLease();
+      try {
+        expect(lease).toEqual(
+          expect.objectContaining({ accountIndex: 0, authPath }),
+        );
+        expect(mod.getAllCodexAccounts()[0]).toEqual(
+          expect.objectContaining({
+            authStatus: 'healthy',
+            isAuthDead: false,
+            isActive: true,
+          }),
+        );
+        expect(vi.mocked(utils.writeJsonFile)).toHaveBeenCalled();
+      } finally {
+        lease?.release();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leases different accounts for concurrent Codex runs', async () => {
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    const first = mod.claimCodexAuthLease();
+    const second = mod.claimCodexAuthLease();
+
+    try {
+      expect(first).toEqual(
+        expect.objectContaining({
+          accountIndex: 0,
+          authPath: expect.any(String),
+        }),
+      );
+      expect(second).toEqual(
+        expect.objectContaining({
+          accountIndex: 1,
+          authPath: expect.any(String),
+        }),
+      );
+      expect(second?.authPath).not.toBe(first?.authPath);
+    } finally {
+      second?.release();
+      first?.release();
+    }
+  });
+
+  it('syncs a refreshed session auth.json back to the canonical slot atomically', async () => {
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    const canonicalAuthPath = path.join(
+      tempHome,
+      '.codex-accounts',
+      '0',
+      'auth.json',
+    );
+    const sessionAuthPath = path.join(
+      tempHome,
+      'session',
+      '.codex',
+      'auth.json',
+    );
+    fs.mkdirSync(path.dirname(sessionAuthPath), { recursive: true });
+    fs.writeFileSync(
+      sessionAuthPath,
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: {
+          account_id: 'acct-0',
+          access_token: 'new-access',
+          refresh_token: 'new-refresh',
+        },
+      }),
+    );
+
+    const synced = mod.syncCodexSessionAuthBack({
+      canonicalAuthPath,
+      sessionAuthPath,
+      accountIndex: 0,
+    });
+
+    expect(synced).toBe(true);
+    const canonical = JSON.parse(fs.readFileSync(canonicalAuthPath, 'utf-8'));
+    expect(canonical.tokens).toEqual(
+      expect.objectContaining({
+        account_id: 'acct-0',
+        access_token: 'new-access',
+        refresh_token: 'new-refresh',
+      }),
+    );
+  });
+
+  it('refuses to sync a session auth.json that belongs to another Codex account', async () => {
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    const canonicalAuthPath = path.join(
+      tempHome,
+      '.codex-accounts',
+      '0',
+      'auth.json',
+    );
+    const before = fs.readFileSync(canonicalAuthPath, 'utf-8');
+    const sessionAuthPath = path.join(
+      tempHome,
+      'wrong-account',
+      '.codex',
+      'auth.json',
+    );
+    fs.mkdirSync(path.dirname(sessionAuthPath), { recursive: true });
+    fs.writeFileSync(
+      sessionAuthPath,
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: {
+          account_id: 'acct-other',
+          access_token: 'other-access',
+          refresh_token: 'other-refresh',
+        },
+      }),
+    );
+
+    expect(
+      mod.syncCodexSessionAuthBack({
+        canonicalAuthPath,
+        sessionAuthPath,
+        accountIndex: 0,
+      }),
+    ).toBe(false);
+    expect(fs.readFileSync(canonicalAuthPath, 'utf-8')).toBe(before);
+  });
 });
 
 describe('codex-token-rotation single-account fallback', () => {

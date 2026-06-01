@@ -5,9 +5,18 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EJCLAW_ENV } from 'ejclaw-runners-shared';
 
-const { mockReadEnvFile, mockGetActiveCodexAuthPath } = vi.hoisted(() => ({
+const {
+  mockReadEnvFile,
+  mockGetActiveCodexAuthPath,
+  mockGetCodexAccountCount,
+  mockClaimCodexAuthLease,
+  mockFindCodexAccountIndexByAuthPath,
+} = vi.hoisted(() => ({
   mockReadEnvFile: vi.fn<() => Record<string, string>>(),
   mockGetActiveCodexAuthPath: vi.fn<() => string | null>(),
+  mockGetCodexAccountCount: vi.fn<() => number>(),
+  mockClaimCodexAuthLease: vi.fn<() => null>(),
+  mockFindCodexAccountIndexByAuthPath: vi.fn<() => number | null>(),
 }));
 
 vi.mock('./config.js', () => ({
@@ -29,6 +38,9 @@ vi.mock('./env.js', () => ({
 
 vi.mock('./codex-token-rotation.js', () => ({
   getActiveCodexAuthPath: mockGetActiveCodexAuthPath,
+  getCodexAccountCount: mockGetCodexAccountCount,
+  claimCodexAuthLease: mockClaimCodexAuthLease,
+  findCodexAccountIndexByAuthPath: mockFindCodexAccountIndexByAuthPath,
 }));
 
 vi.mock('./token-rotation.js', () => ({
@@ -159,6 +171,12 @@ describe('prepareGroupEnvironment codex auth handling', () => {
 
     mockReadEnvFile.mockReset();
     mockGetActiveCodexAuthPath.mockReset();
+    mockGetCodexAccountCount.mockReset();
+    mockGetCodexAccountCount.mockReturnValue(0);
+    mockClaimCodexAuthLease.mockReset();
+    mockClaimCodexAuthLease.mockReturnValue(null);
+    mockFindCodexAccountIndexByAuthPath.mockReset();
+    mockFindCodexAccountIndexByAuthPath.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -238,6 +256,36 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
 
     expect(auth).toEqual(rotatedAuth);
+  });
+
+  it('fails fast instead of launching Codex without OAuth when rotation accounts exist but no lease is available', () => {
+    const rotatedAuthPath = path.join(tempRoot, 'rotated-auth.json');
+    fs.writeFileSync(
+      rotatedAuthPath,
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { access_token: 'locked-token' },
+      }),
+    );
+    mockGetCodexAccountCount.mockReturnValue(1);
+    mockClaimCodexAuthLease.mockReturnValue(null);
+    mockGetActiveCodexAuthPath.mockReturnValue(rotatedAuthPath);
+    mockReadEnvFile.mockReturnValue({});
+
+    expect(() => prepareGroupEnvironment(group, false, 'dc:test')).toThrow(
+      /auth-expired: All Codex rotation accounts unavailable/,
+    );
+
+    const authPath = path.join(
+      tempRoot,
+      'sessions',
+      group.folder,
+      'services',
+      'codex-main',
+      '.codex',
+      'auth.json',
+    );
+    expect(fs.existsSync(authPath)).toBe(false);
   });
 
   it('uses the failover owner prompt pack for codex-review when it owns an explicit failover lease', () => {
@@ -411,6 +459,12 @@ describe('prepareGroupEnvironment Codex MCP room role env', () => {
 
     mockReadEnvFile.mockReset();
     mockGetActiveCodexAuthPath.mockReset();
+    mockGetCodexAccountCount.mockReset();
+    mockGetCodexAccountCount.mockReturnValue(0);
+    mockClaimCodexAuthLease.mockReset();
+    mockClaimCodexAuthLease.mockReturnValue(null);
+    mockFindCodexAccountIndexByAuthPath.mockReset();
+    mockFindCodexAccountIndexByAuthPath.mockReturnValue(null);
     resetRoutingMocks();
   });
 
@@ -484,6 +538,12 @@ describe('prepareGroupEnvironment room skill overrides', () => {
     });
     mockReadEnvFile.mockReset();
     mockGetActiveCodexAuthPath.mockReset();
+    mockGetCodexAccountCount.mockReset();
+    mockGetCodexAccountCount.mockReturnValue(0);
+    mockClaimCodexAuthLease.mockReset();
+    mockClaimCodexAuthLease.mockReturnValue(null);
+    mockFindCodexAccountIndexByAuthPath.mockReset();
+    mockFindCodexAccountIndexByAuthPath.mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -616,6 +676,12 @@ describe('prepareGroupEnvironment Codex goals handling', () => {
 
     mockReadEnvFile.mockReset();
     mockGetActiveCodexAuthPath.mockReset();
+    mockGetCodexAccountCount.mockReset();
+    mockGetCodexAccountCount.mockReturnValue(0);
+    mockClaimCodexAuthLease.mockReset();
+    mockClaimCodexAuthLease.mockReturnValue(null);
+    mockFindCodexAccountIndexByAuthPath.mockReset();
+    mockFindCodexAccountIndexByAuthPath.mockReturnValue(null);
     vi.mocked(config.isReviewService).mockReturnValue(false);
     vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(false);
     vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
@@ -706,6 +772,12 @@ describe('prepareReadonlySessionEnvironment codex compatibility', () => {
 
     mockReadEnvFile.mockReset();
     mockGetActiveCodexAuthPath.mockReset();
+    mockGetCodexAccountCount.mockReset();
+    mockGetCodexAccountCount.mockReturnValue(0);
+    mockClaimCodexAuthLease.mockReset();
+    mockClaimCodexAuthLease.mockReturnValue(null);
+    mockFindCodexAccountIndexByAuthPath.mockReset();
+    mockFindCodexAccountIndexByAuthPath.mockReturnValue(null);
   });
 
   afterEach(() => {

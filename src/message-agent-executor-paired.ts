@@ -505,8 +505,11 @@ class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
     if (!missingVisibleVerdict) {
       return false;
     }
-    this.pairedExecutionSummary =
+    const noVerdictSummary =
       'Execution completed without a visible terminal verdict.';
+    this.pairedExecutionSummary = this.pairedExecutionSummary
+      ? `${this.pairedExecutionSummary}\n${noVerdictSummary}`
+      : noVerdictSummary;
     log.warn(
       {
         pairedTaskId: pairedExecutionContext?.task.id ?? null,

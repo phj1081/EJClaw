@@ -224,6 +224,7 @@ describe('runCodexRotationLoop', () => {
 
     expect(outcome).toEqual({ type: 'success' });
     expect(rotateCodexToken).toHaveBeenCalledTimes(1);
+    expect(rotateCodexToken).toHaveBeenCalledWith('auth-expired');
     expect(markCodexTokenHealthy).toHaveBeenCalledTimes(1);
   });
 

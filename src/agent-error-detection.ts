@@ -249,6 +249,8 @@ export function classifyAgentError(
     lower.includes('429') ||
     lower.includes('rate limit') ||
     lower.includes('usage limit') ||
+    lower.includes('out of credits') ||
+    lower.includes('workspace out of credits') ||
     lower.includes('hit your limit') ||
     lower.includes('too many requests') ||
     lower.includes('rate_limit')
@@ -335,11 +337,17 @@ export function classifyCodexAuthError(
   const lower = error.toLowerCase();
 
   if (
+    lower.includes('auth-expired') ||
+    lower.includes('auth expired') ||
     lower.includes('401') ||
     lower.includes('authentication_error') ||
     lower.includes('failed to authenticate') ||
+    lower.includes('access token could not be refreshed') ||
     lower.includes('oauth token has expired') ||
+    lower.includes('refresh token was already used') ||
     lower.includes('refresh your existing token') ||
+    lower.includes('log out and sign in again') ||
+    lower.includes('app_session_terminated') ||
     lower.includes('unauthorized')
   ) {
     return { category: 'auth-expired', reason: 'auth-expired' };

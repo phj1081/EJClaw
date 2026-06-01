@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyAgentError,
   classifyClaudeAuthError,
+  classifyCodexAuthError,
   detectClaudeProviderFailureMessage,
   isClaudeOrgAccessDeniedMessage,
   shouldRotateClaudeToken,
@@ -63,6 +64,32 @@ describe('agent-error-detection', () => {
     ).toEqual({
       category: 'overloaded',
       reason: 'overloaded',
+    });
+  });
+
+  it('classifies Codex reused refresh-token errors as auth-expired', () => {
+    expect(
+      classifyCodexAuthError(
+        'Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.',
+      ),
+    ).toEqual({
+      category: 'auth-expired',
+      reason: 'auth-expired',
+    });
+  });
+
+  it('classifies a Codex auth-expired trigger reason as auth-expired', () => {
+    expect(classifyCodexAuthError('auth-expired')).toEqual({
+      category: 'auth-expired',
+      reason: 'auth-expired',
+    });
+  });
+
+  it('classifies Codex workspace credit exhaustion as rate-limit', () => {
+    expect(classifyAgentError('Workspace out of credits')).toEqual({
+      category: 'rate-limit',
+      reason: '429',
+      retryAfterMs: undefined,
     });
   });
 

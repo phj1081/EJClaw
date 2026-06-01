@@ -172,6 +172,19 @@ describe('message-agent-executor-rules', () => {
     ).toBe('pending');
   });
 
+  it('does not requeue a silent arbiter failure caused by Codex account auth expiry', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'arbiter',
+        executionStatus: 'failed',
+        sawOutput: false,
+        taskStatus: 'arbiter_requested',
+        outputSummary:
+          'Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.\nExecution completed without a visible terminal verdict.',
+      }),
+    ).toBe('none');
+  });
+
   it('resolves pending arbiter follow-up requeue after repeated owner execution failures', () => {
     expect(
       resolvePairedFollowUpQueueAction({

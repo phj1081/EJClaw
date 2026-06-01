@@ -12,7 +12,13 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import { readEnvFile } from './env.js';
-import { getActiveCodexAuthPath } from './codex-token-rotation.js';
+import {
+  claimCodexAuthLease,
+  findCodexAccountIndexByAuthPath,
+  getActiveCodexAuthPath,
+  getCodexAccountCount,
+  type CodexAuthLease,
+} from './codex-token-rotation.js';
 import { readCodexFeatureFromFile } from './codex-config-features.js';
 import { ensureClaudeSessionSettings } from './claude-session-settings.js';
 import {
@@ -140,17 +146,32 @@ function ensureClaudeGlobalSettingsFile(sessionDir: string): void {
   fs.writeFileSync(settingsFile, '{}\n');
 }
 
-function syncHostCodexSessionFiles(sessionCodexDir: string): void {
+export interface PreparedCodexSessionAuth {
+  canonicalAuthPath: string;
+  sessionAuthPath: string;
+  accountIndex: number | null;
+  lease?: CodexAuthLease;
+}
+
+function syncHostCodexSessionFiles(
+  sessionCodexDir: string,
+): PreparedCodexSessionAuth | null {
   const hostCodexDir = path.join(os.homedir(), '.codex');
   fs.mkdirSync(sessionCodexDir, { recursive: true });
 
   const authDst = path.join(sessionCodexDir, 'auth.json');
-  const rotatedAuthSrc = getActiveCodexAuthPath();
+  const hasRotationAccounts = getCodexAccountCount() > 0;
+  const lease = claimCodexAuthLease();
+  const rotatedAuthSrc =
+    lease?.authPath ?? (!hasRotationAccounts ? getActiveCodexAuthPath() : null);
+  const fallbackAuthSrc = path.join(hostCodexDir, 'auth.json');
   const authSrc =
     rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
       ? rotatedAuthSrc
-      : path.join(hostCodexDir, 'auth.json');
-  if (fs.existsSync(authSrc)) {
+      : !hasRotationAccounts && fs.existsSync(fallbackAuthSrc)
+        ? fallbackAuthSrc
+        : null;
+  if (authSrc) {
     fs.copyFileSync(authSrc, authDst);
   } else if (fs.existsSync(authDst)) {
     fs.unlinkSync(authDst);
@@ -163,6 +184,28 @@ function syncHostCodexSessionFiles(sessionCodexDir: string): void {
       fs.copyFileSync(src, dst);
     }
   }
+
+  if (
+    !rotatedAuthSrc ||
+    authSrc !== rotatedAuthSrc ||
+    !fs.existsSync(authDst)
+  ) {
+    lease?.release();
+    if (hasRotationAccounts) {
+      throw new Error(
+        'auth-expired: All Codex rotation accounts unavailable; re-auth required before launching Codex',
+      );
+    }
+    return null;
+  }
+
+  return {
+    canonicalAuthPath: rotatedAuthSrc,
+    sessionAuthPath: authDst,
+    accountIndex:
+      lease?.accountIndex ?? findCodexAccountIndexByAuthPath(rotatedAuthSrc),
+    ...(lease ? { lease } : {}),
+  };
 }
 
 function upsertEjclawMcpServerSection(args: {
@@ -357,7 +400,7 @@ function prepareCodexSessionEnvironment(args: {
   useFailoverPromptPack: boolean;
   memoryBriefing?: string;
   skillOverrides?: StoredRoomSkillOverride[];
-}): void {
+}): PreparedCodexSessionAuth | null {
   // API key auth intentionally removed — Codex uses OAuth only.
   // Never pass any API key to Codex child process to prevent API billing.
   delete args.env.OPENAI_API_KEY;
@@ -376,7 +419,7 @@ function prepareCodexSessionEnvironment(args: {
   if (codexEffort) args.env.CODEX_EFFORT = codexEffort;
 
   const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
-  syncHostCodexSessionFiles(sessionCodexDir);
+  const codexSessionAuth = syncHostCodexSessionFiles(sessionCodexDir);
 
   const overlayPath = path.join(args.groupDir, '.codex', 'config.toml');
   const sessionConfigPath = path.join(sessionCodexDir, 'config.toml');
@@ -506,16 +549,19 @@ function prepareCodexSessionEnvironment(args: {
   delete args.env.ANTHROPIC_BASE_URL;
   delete args.env.CLAUDE_CODE_OAUTH_TOKEN;
   args.env.CODEX_HOME = sessionCodexDir;
+  return codexSessionAuth;
 }
 
 export interface PreparedGroupEnvironment {
   env: Record<string, string>;
   groupDir: string;
   runnerDir: string;
+  codexSessionAuth?: PreparedCodexSessionAuth | null;
 }
 
 export interface PreparedReadonlySessionEnvironment {
   codexHomeDir?: string;
+  codexSessionAuth?: PreparedCodexSessionAuth | null;
 }
 
 export function prepareGroupEnvironment(
@@ -657,8 +703,9 @@ export function prepareGroupEnvironment(
     runtimeTaskId,
   });
 
+  let codexSessionAuth: PreparedCodexSessionAuth | null = null;
   if (agentType === 'codex') {
-    prepareCodexSessionEnvironment({
+    codexSessionAuth = prepareCodexSessionEnvironment({
       env,
       envVars,
       projectRoot,
@@ -677,7 +724,7 @@ export function prepareGroupEnvironment(
     prepareClaudeEnvironment({ env, envVars, group });
   }
 
-  return { env, groupDir, runnerDir };
+  return { env, groupDir, runnerDir, codexSessionAuth };
 }
 
 /**
@@ -716,6 +763,7 @@ export function prepareReadonlySessionEnvironment(args: {
     skillOverrides,
   } = args;
   const projectRoot = process.cwd();
+  let codexSessionAuth: PreparedCodexSessionAuth | null = null;
 
   fs.mkdirSync(sessionDir, { recursive: true });
   ensureClaudeSessionSettings(sessionDir);
@@ -785,7 +833,7 @@ export function prepareReadonlySessionEnvironment(args: {
   if (sessionClaudeMd) {
     fs.writeFileSync(sessionClaudeMdPath, sessionClaudeMd + '\n');
     const sessionCodexDir = path.join(sessionDir, '.codex');
-    syncHostCodexSessionFiles(sessionCodexDir);
+    codexSessionAuth = syncHostCodexSessionFiles(sessionCodexDir);
     fs.writeFileSync(
       path.join(sessionCodexDir, 'AGENTS.md'),
       sessionClaudeMd + '\n',
@@ -826,5 +874,5 @@ export function prepareReadonlySessionEnvironment(args: {
   } else if (fs.existsSync(sessionClaudeMdPath)) {
     fs.unlinkSync(sessionClaudeMdPath);
   }
-  return { codexHomeDir };
+  return { codexHomeDir, codexSessionAuth };
 }

@@ -10,6 +10,7 @@ import { getErrorMessage } from './utils.js';
 export interface AttemptStreamedTrigger {
   reason: AgentTriggerReason;
   retryAfterMs?: number;
+  message?: string;
 }
 
 export interface AttemptRetryState {
@@ -131,7 +132,10 @@ export function resolveAttemptRetryAction(args: {
   attempt: Pick<AttemptRetryState, 'sawOutput' | 'streamedTriggerReason'>;
   rotationMessage?: string | null;
 }): AttemptRetryAction {
-  const normalizedRotationMessage = args.rotationMessage ?? undefined;
+  const normalizedRotationMessage =
+    args.rotationMessage ??
+    args.attempt.streamedTriggerReason?.message ??
+    undefined;
 
   const claudeTrigger = resolveClaudeRetryTrigger({
     canRetryClaudeCredentials: args.canRetryClaudeCredentials,

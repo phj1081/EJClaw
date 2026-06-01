@@ -1,15 +1,52 @@
 import { logger } from './logger.js';
+import {
+  classifyAgentError,
+  classifyCodexAuthError,
+} from './agent-error-detection.js';
 import { transitionPairedTaskStatus } from './paired-task-status.js';
 import { classifyArbiterVerdict } from './paired-verdict.js';
 import type { PairedTask } from './types.js';
 
 const ARBITER_RESOLUTION_ROUND_TRIP_COUNT = 0;
 
+function isTerminalCodexAccountFailure(summary?: string | null): boolean {
+  if (!summary) return false;
+  if (classifyCodexAuthError(summary).category !== 'none') return true;
+  if (classifyAgentError(summary).category === 'rate-limit') return true;
+  return /all\s+codex(?:\s+rotation)?\s+accounts/i.test(summary);
+}
+
 export function handleFailedArbiterExecution(args: {
   task: PairedTask;
   taskId: string;
+  summary?: string | null;
 }): void {
-  const { task, taskId } = args;
+  const { task, taskId, summary } = args;
+  if (isTerminalCodexAccountFailure(summary)) {
+    const now = new Date().toISOString();
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus: task.status,
+      nextStatus: 'completed',
+      expectedUpdatedAt: task.updated_at,
+      updatedAt: now,
+      patch: {
+        arbiter_verdict: 'escalate',
+        arbiter_requested_at: null,
+        completion_reason: 'arbiter_codex_unavailable',
+      },
+    });
+    logger.warn(
+      {
+        taskId,
+        role: 'arbiter',
+        status: task.status,
+        summary: summary?.slice(0, 200),
+      },
+      'Completed arbiter task after terminal Codex account failure instead of re-arming arbitration loop',
+    );
+    return;
+  }
   const now = new Date().toISOString();
   const fallbackStatus =
     task.status === 'in_arbitration' || task.status === 'arbiter_requested'

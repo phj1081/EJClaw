@@ -36,6 +36,7 @@ import { clearGlobalFailover } from './service-routing.js';
 export interface TriggerInfo {
   reason: AgentTriggerReason;
   retryAfterMs?: number;
+  message?: string;
 }
 
 export interface RotationAttemptResult {
@@ -208,6 +209,34 @@ function evaluateCodexAttempt(
 
   if (
     !attempt.sawOutput &&
+    typeof output.error === 'string' &&
+    output.error.length > 0
+  ) {
+    const retryTrigger =
+      attempt.streamedTriggerReason &&
+      isCodexRotationReason(attempt.streamedTriggerReason.reason)
+        ? {
+            shouldRotate: true as const,
+            reason: attempt.streamedTriggerReason.reason,
+          }
+        : detectCodexRotationTrigger(output.error);
+    if (retryTrigger.shouldRotate) {
+      return {
+        type: 'continue',
+        trigger: { reason: retryTrigger.reason },
+        rotationMessage: output.error,
+      };
+    }
+
+    logger.error(
+      { ...logContext, provider: 'codex', error: output.error },
+      'Rotated Codex account returned an error field without visible output',
+    );
+    return { type: 'error' };
+  }
+
+  if (
+    !attempt.sawOutput &&
     attempt.streamedTriggerReason &&
     output.status !== 'error'
   ) {
@@ -350,7 +379,7 @@ export async function runClaudeRotationLoop(
 }
 
 export async function runCodexRotationLoop(
-  initialTrigger: { reason: CodexRotationReason },
+  initialTrigger: { reason: CodexRotationReason; message?: string },
   runAttempt: () => Promise<CodexRotationAttemptResult>,
   logContext: Record<string, unknown>,
   rotationMessage?: string,
@@ -358,7 +387,13 @@ export async function runCodexRotationLoop(
   let trigger = initialTrigger;
   let lastRotationMessage = rotationMessage;
 
-  while (getCodexAccountCount() > 1 && rotateCodexToken(lastRotationMessage)) {
+  while (getCodexAccountCount() > 1) {
+    const rotationReasonMessage =
+      lastRotationMessage ?? trigger.message ?? trigger.reason;
+    if (!rotateCodexToken(rotationReasonMessage)) {
+      break;
+    }
+
     logger.info(
       { ...logContext, reason: trigger.reason },
       'Codex account unhealthy, retrying with rotated account',

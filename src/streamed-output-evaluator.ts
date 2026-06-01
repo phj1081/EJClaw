@@ -19,6 +19,7 @@ import {
 export interface StreamedTriggerReason {
   reason: AgentTriggerReason;
   retryAfterMs?: number;
+  message?: string;
 }
 
 export interface StreamedOutputState {
@@ -140,6 +141,28 @@ export function evaluateStreamedOutput(
   }
 
   if (
+    isPrimaryCodex &&
+    typeof output.error === 'string' &&
+    output.error.length > 0 &&
+    !nextState.sawOutput &&
+    !nextState.streamedTriggerReason
+  ) {
+    const trigger = detectCodexRotationTrigger(output.error);
+    if (trigger.shouldRotate) {
+      const newTrigger: StreamedTriggerReason = {
+        reason: trigger.reason,
+        message: output.error,
+      };
+      nextState.streamedTriggerReason = newTrigger;
+      return {
+        state: nextState,
+        shouldForwardOutput: !options.shortCircuitTriggeredErrors,
+        newTrigger,
+      };
+    }
+  }
+
+  if (
     output.status === 'error' &&
     !nextState.sawOutput &&
     !nextState.streamedTriggerReason
@@ -157,7 +180,7 @@ export function evaluateStreamedOutput(
     } else if (isPrimaryCodex) {
       const trigger = detectCodexRotationTrigger(output.error);
       if (trigger.shouldRotate) {
-        newTrigger = { reason: trigger.reason };
+        newTrigger = { reason: trigger.reason, message: output.error };
       }
     }
 

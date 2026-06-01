@@ -513,18 +513,26 @@ describe('evaluateStreamedOutput', () => {
 
   describe('error → Codex rotation trigger', () => {
     it('returns rotation trigger for Codex primary', () => {
+      const errorMessage =
+        'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header';
       vi.mocked(detectCodexRotationTrigger).mockReturnValue({
         shouldRotate: true,
         reason: '429',
       });
 
       const result = evaluateStreamedOutput(
-        errorOutput('429 rate limit'),
+        errorOutput(errorMessage),
         freshState(),
         codexOpts,
       );
-      expect(result.newTrigger).toEqual({ reason: '429' });
-      expect(result.state.streamedTriggerReason).toEqual({ reason: '429' });
+      expect(result.newTrigger).toEqual({
+        reason: '429',
+        message: errorMessage,
+      });
+      expect(result.state.streamedTriggerReason).toEqual({
+        reason: '429',
+        message: errorMessage,
+      });
     });
 
     it('does not check Codex rotation for Claude agent type', () => {

@@ -14,6 +14,7 @@ import {
   shouldResetCodexSessionOnAgentFailure,
   shouldResetSessionOnAgentFailure,
 } from './session-recovery.js';
+import { getErrorMessage } from './utils.js';
 import type {
   AgentType,
   OutboundAttachment,
@@ -162,6 +163,9 @@ class MessageAgentAttemptRunner {
       );
       return this.buildAttempt({ output });
     } catch (error) {
+      this.args.pairedExecutionLifecycle.updateSummary({
+        errorText: getErrorMessage(error),
+      });
       return this.buildAttempt({ error });
     }
   }

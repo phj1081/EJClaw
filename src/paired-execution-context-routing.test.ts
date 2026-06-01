@@ -197,6 +197,33 @@ describe('paired execution routing loop guards', () => {
     );
   });
 
+  it('does not re-arm arbiter loop after terminal Codex account failure', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'in_arbitration',
+        updated_at: '2026-03-28T00:00:05.000Z',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'arbiter',
+      status: 'failed',
+      summary:
+        'auth-expired: All Codex rotation accounts unavailable; re-auth required before launching Codex\nExecution completed without a visible terminal verdict.',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'completed',
+        arbiter_verdict: 'escalate',
+        arbiter_requested_at: null,
+        completion_reason: 'arbiter_codex_unavailable',
+      }),
+    );
+  });
+
   it('keeps arbiter REVISE on owner flow while clearing stale loop counters', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({

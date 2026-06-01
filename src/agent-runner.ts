@@ -14,7 +14,9 @@ import {
 import {
   prepareReadonlySessionEnvironment,
   prepareGroupEnvironment,
+  type PreparedCodexSessionAuth,
 } from './agent-runner-environment.js';
+import { syncCodexSessionAuthBack } from './codex-token-rotation.js';
 import { runSpawnedAgentProcess } from './agent-runner-process.js';
 import { getStoredRoomSkillOverrides } from './db.js';
 export {
@@ -76,6 +78,36 @@ function readRoomSkillOverridesForRunner(
   }
 }
 
+function releaseCodexAuthSession(
+  auth: PreparedCodexSessionAuth | null | undefined,
+): void {
+  auth?.lease?.release();
+}
+
+function finalizeCodexAuthSession(
+  auth: PreparedCodexSessionAuth | null | undefined,
+): void {
+  if (!auth) return;
+  try {
+    syncCodexSessionAuthBack({
+      canonicalAuthPath: auth.canonicalAuthPath,
+      sessionAuthPath: auth.sessionAuthPath,
+      accountIndex: auth.accountIndex,
+    });
+  } catch (err) {
+    logger.warn(
+      {
+        err,
+        canonicalAuthPath: auth.canonicalAuthPath,
+        accountIndex: auth.accountIndex,
+      },
+      'Failed to sync Codex session auth back to canonical slot',
+    );
+  } finally {
+    auth.lease?.release();
+  }
+}
+
 export async function runAgentProcess(
   group: RegisteredGroup,
   input: AgentInput,
@@ -92,18 +124,15 @@ export async function runAgentProcess(
   // ── Host process mode (owner) ───────────────────────────────────
   const startTime = Date.now();
   const skillOverrides = readRoomSkillOverridesForRunner(input.chatJid);
-  const { env, groupDir, runnerDir } = prepareGroupEnvironment(
-    group,
-    input.isMain,
-    input.chatJid,
-    {
-      memoryBriefing: input.memoryBriefing,
-      runtimeTaskId: input.runtimeTaskId,
-      useTaskScopedSession: input.useTaskScopedSession,
-      skillOverrides,
-      roomRole: input.roomRoleContext?.role,
-    },
-  );
+  const prepared = prepareGroupEnvironment(group, input.isMain, input.chatJid, {
+    memoryBriefing: input.memoryBriefing,
+    runtimeTaskId: input.runtimeTaskId,
+    useTaskScopedSession: input.useTaskScopedSession,
+    skillOverrides,
+    roomRole: input.roomRoleContext?.role,
+  });
+  const { env, groupDir, runnerDir } = prepared;
+  let codexSessionAuth = prepared.codexSessionAuth;
 
   // Apply env overrides (caller-provided)
   if (envOverrides) {
@@ -131,6 +160,8 @@ export async function runAgentProcess(
       skillOverrides,
     });
     if ((group.agentType || 'claude-code') === 'codex') {
+      releaseCodexAuthSession(codexSessionAuth);
+      codexSessionAuth = readonlySession.codexSessionAuth;
       env.CODEX_HOME = path.join(envOverrides.CLAUDE_CONFIG_DIR, '.codex');
       if (readonlySession.codexHomeDir) {
         env.HOME = readonlySession.codexHomeDir;
@@ -152,6 +183,7 @@ export async function runAgentProcess(
       { runnerDir, chatJid: input.chatJid, runId: input.runId },
       'Runner not built. Run: cd runners/agent-runner && bun install && bun run build',
     );
+    releaseCodexAuthSession(codexSessionAuth);
     return {
       status: 'error',
       result: null,
@@ -199,6 +231,22 @@ export async function runAgentProcess(
       logsDir,
       startTime,
       onOutput,
-    }).then(resolve);
+    })
+      .then((output) => {
+        finalizeCodexAuthSession(codexSessionAuth);
+        resolve(output);
+      })
+      .catch((err: unknown) => {
+        finalizeCodexAuthSession(codexSessionAuth);
+        logger.error(
+          { err, processName, chatJid: input.chatJid, runId: input.runId },
+          'Spawned agent process runner failed',
+        );
+        resolve({
+          status: 'error',
+          result: null,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
   });
 }

@@ -666,7 +666,11 @@ export function completePairedExecutionContext(args: {
         return;
       }
       if (role === 'arbiter') {
-        handleFailedArbiterExecution({ task, taskId });
+        handleFailedArbiterExecution({
+          task,
+          taskId,
+          summary: args.summary,
+        });
         return;
       }
       handleFailedOwnerExecution({ task, taskId, summary: args.summary });

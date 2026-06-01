@@ -23,7 +23,6 @@ import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 import {
   computeCooldownUntil,
-  findNextAvailable,
   parseRetryAfterFromError,
 } from './token-rotation-base.js';
 import { readJsonFile, writeJsonFile } from './utils.js';
@@ -34,13 +33,25 @@ interface CodexAccount {
   index: number;
   authPath: string;
   accountId: string;
+  authFileMtimeMs: number;
   planType: string;
   subscriptionUntil: string | null;
   rateLimitedUntil: number | null;
+  authStatus: 'healthy' | 'dead_auth';
+  authDeadAt: number | null;
+  authDeadReason: string | null;
+  leasedUntil: number | null;
+  leaseId: string | null;
   lastUsagePct?: number;
   lastUsageD7Pct?: number;
   resetAt?: string;
   resetD7At?: string;
+}
+
+export interface CodexAuthLease {
+  accountIndex: number;
+  authPath: string;
+  release: () => void;
 }
 
 export type CodexRotationTriggerResult =
@@ -77,9 +88,19 @@ const accounts: CodexAccount[] = [];
 let currentIndex = 0;
 let initialized = false;
 
+const CODEX_AUTH_LEASE_MS = 2 * 60 * 60_000;
+
 const ACCOUNTS_DIR = path.join(os.homedir(), '.codex-accounts');
 const DEFAULT_CODEX_DIR = path.join(os.homedir(), '.codex');
 const DEFAULT_AUTH_PATH = path.join(DEFAULT_CODEX_DIR, 'auth.json');
+
+function readAuthFileMtimeMs(authPath: string): number {
+  try {
+    return fs.statSync(authPath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
 
 function loadCodexAccount(
   authPath: string,
@@ -99,9 +120,15 @@ function loadCodexAccount(
     index: accounts.length,
     authPath,
     accountId,
+    authFileMtimeMs: readAuthFileMtimeMs(authPath),
     planType: jwt.planType,
     subscriptionUntil: jwt.expiresAt,
     rateLimitedUntil: null,
+    authStatus: 'healthy',
+    authDeadAt: null,
+    authDeadReason: null,
+    leasedUntil: null,
+    leaseId: null,
   });
   return true;
 }
@@ -149,6 +176,8 @@ function saveCodexState(): void {
     const state = {
       currentIndex,
       rateLimits: accounts.map((a) => a.rateLimitedUntil),
+      authDeadAts: accounts.map((a) => a.authDeadAt),
+      authDeadReasons: accounts.map((a) => a.authDeadReason),
       usagePcts: accounts.map((a) => a.lastUsagePct ?? null),
       usageD7Pcts: accounts.map((a) => a.lastUsageD7Pct ?? null),
       resetAts: accounts.map((a) => a.resetAt ?? null),
@@ -167,6 +196,8 @@ function loadCodexState(quiet = false): void {
   const state = readJsonFile<{
     currentIndex?: number;
     rateLimits?: (number | null)[];
+    authDeadAts?: (number | null)[];
+    authDeadReasons?: (string | null)[];
     usagePcts?: (number | null)[];
     usageD7Pcts?: (number | null)[];
     resetAts?: (string | null)[];
@@ -175,6 +206,7 @@ function loadCodexState(quiet = false): void {
   if (!state) return;
 
   const now = Date.now();
+  let restoredDeadAuth = false;
   if (
     typeof state.currentIndex === 'number' &&
     state.currentIndex < accounts.length
@@ -194,6 +226,39 @@ function loadCodexState(quiet = false): void {
         accounts[i].rateLimitedUntil = null;
       }
     }
+  }
+  if (Array.isArray(state.authDeadAts)) {
+    for (
+      let i = 0;
+      i < Math.min(state.authDeadAts.length, accounts.length);
+      i++
+    ) {
+      const deadAt = state.authDeadAts[i];
+      const acct = accounts[i];
+      if (typeof deadAt === 'number' && deadAt > 0) {
+        const currentMtime = readAuthFileMtimeMs(acct.authPath);
+        acct.authFileMtimeMs = currentMtime;
+        if (currentMtime > deadAt) {
+          acct.authStatus = 'dead_auth';
+          acct.authDeadAt = deadAt;
+          acct.authDeadReason = state.authDeadReasons?.[i] ?? 'auth-expired';
+          restoredDeadAuth =
+            restoreDeadAuthIfAuthFileChanged(acct) || restoredDeadAuth;
+        } else {
+          acct.authStatus = 'dead_auth';
+          acct.authDeadAt = deadAt;
+          acct.authDeadReason = state.authDeadReasons?.[i] ?? 'auth-expired';
+          acct.rateLimitedUntil = null;
+        }
+      }
+    }
+  }
+  if (
+    currentIndex < accounts.length &&
+    accounts[currentIndex]?.authStatus === 'dead_auth'
+  ) {
+    const nextIdx = findNextCodexAvailable(currentIndex);
+    if (nextIdx !== null) currentIndex = nextIdx;
   }
   if (Array.isArray(state.usagePcts)) {
     for (
@@ -239,6 +304,7 @@ function loadCodexState(quiet = false): void {
       'Codex rotation state restored',
     );
   }
+  if (restoredDeadAuth) saveCodexState();
 }
 
 /**
@@ -309,6 +375,265 @@ export function getCodexAuthPath(
   return accounts[accountIndex]?.authPath ?? null;
 }
 
+function codexLockPath(authPath: string): string {
+  return path.join(path.dirname(authPath), '.ejclaw-auth.lock');
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readExistingLease(lockPath: string): {
+  leaseId?: string;
+  pid?: number;
+  expiresAt?: number;
+} | null {
+  const data = readJsonFile<{
+    leaseId?: string;
+    pid?: number;
+    expiresAt?: number;
+  }>(lockPath);
+  return data ?? null;
+}
+
+function tryAcquireDiskLease(
+  acct: CodexAccount,
+  leaseId: string,
+  now: number,
+): boolean {
+  const lockPath = codexLockPath(acct.authPath);
+  const payload = JSON.stringify(
+    {
+      leaseId,
+      pid: process.pid,
+      accountIndex: acct.index,
+      createdAt: now,
+      expiresAt: now + CODEX_AUTH_LEASE_MS,
+    },
+    null,
+    2,
+  );
+
+  try {
+    fs.writeFileSync(lockPath, payload, { flag: 'wx', mode: 0o600 });
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return false;
+  }
+
+  const existing = readExistingLease(lockPath);
+  const expired = Boolean(existing?.expiresAt && existing.expiresAt <= now);
+  const deadPid = Boolean(existing?.pid && !isPidAlive(existing.pid));
+  if (!expired && !deadPid) return false;
+
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    return false;
+  }
+
+  try {
+    fs.writeFileSync(lockPath, payload, { flag: 'wx', mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseDiskLease(authPath: string, leaseId: string): void {
+  const lockPath = codexLockPath(authPath);
+  const existing = readExistingLease(lockPath);
+  if (existing?.leaseId && existing.leaseId !== leaseId) return;
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    // Best effort only. Expired/stale locks are cleared by the next claimant.
+  }
+}
+
+function isCodexAccountUsable(
+  acct: CodexAccount,
+  now = Date.now(),
+  opts?: { ignoreRateLimits?: boolean; ignoreD7?: boolean },
+): boolean {
+  if (restoreDeadAuthIfAuthFileChanged(acct)) saveCodexState();
+  if (acct.authStatus === 'dead_auth') return false;
+  if (
+    !opts?.ignoreRateLimits &&
+    acct.rateLimitedUntil &&
+    acct.rateLimitedUntil > now
+  ) {
+    return false;
+  }
+  if (
+    !opts?.ignoreD7 &&
+    acct.lastUsageD7Pct != null &&
+    acct.lastUsageD7Pct >= 100
+  ) {
+    return false;
+  }
+  if (acct.leasedUntil && acct.leasedUntil > now) return false;
+
+  const existing = readExistingLease(codexLockPath(acct.authPath));
+  if (!existing) return true;
+  if (existing.expiresAt && existing.expiresAt <= now) return true;
+  if (existing.pid && !isPidAlive(existing.pid)) return true;
+  return false;
+}
+
+function restoreDeadAuthIfAuthFileChanged(acct: CodexAccount): boolean {
+  if (acct.authStatus !== 'dead_auth' || !acct.authDeadAt) return false;
+  const currentMtime = readAuthFileMtimeMs(acct.authPath);
+  acct.authFileMtimeMs = currentMtime;
+  if (currentMtime <= acct.authDeadAt) return false;
+
+  const previousDeadAt = acct.authDeadAt;
+  acct.authStatus = 'healthy';
+  acct.authDeadAt = null;
+  acct.authDeadReason = null;
+  acct.rateLimitedUntil = null;
+  logger.info(
+    {
+      transition: 'rotation:auth-file-refreshed',
+      accountIndex: acct.index,
+      previousDeadAt: new Date(previousDeadAt).toISOString(),
+      authFileMtime: new Date(currentMtime).toISOString(),
+    },
+    `Codex account #${acct.index + 1}/${accounts.length} marked healthy after auth.json refresh`,
+  );
+  return true;
+}
+
+function markCodexAccountDeadAuth(acct: CodexAccount, reason?: string): void {
+  acct.authStatus = 'dead_auth';
+  acct.authDeadAt = Date.now();
+  acct.authDeadReason = reason || 'auth-expired';
+  acct.rateLimitedUntil = null;
+  acct.leasedUntil = null;
+  acct.leaseId = null;
+  logger.warn(
+    {
+      transition: 'rotation:dead-auth',
+      accountIndex: acct.index,
+      accountId: acct.accountId,
+      reason: acct.authDeadReason,
+    },
+    `Codex account #${acct.index + 1}/${accounts.length} marked dead; re-auth required`,
+  );
+}
+
+function updateAccountMetadataFromAuthFile(acct: CodexAccount): void {
+  const data = readJsonFile<{
+    tokens?: { account_id?: string; id_token?: string };
+  }>(acct.authPath);
+  if (data?.tokens?.account_id) acct.accountId = data.tokens.account_id;
+  const jwt = parseJwtAuth(data?.tokens?.id_token || '');
+  acct.planType = jwt.planType;
+  acct.subscriptionUntil = jwt.expiresAt;
+  acct.authFileMtimeMs = readAuthFileMtimeMs(acct.authPath);
+}
+
+export function claimCodexAuthLease(): CodexAuthLease | null {
+  if (accounts.length === 0) return null;
+  const now = Date.now();
+  const attempts = accounts.length;
+  for (let offset = 0; offset < attempts; offset += 1) {
+    const idx = (currentIndex + offset) % accounts.length;
+    const acct = accounts[idx];
+    if (!isCodexAccountUsable(acct, now)) continue;
+    const leaseId = `${process.pid}-${now}-${idx}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
+    if (!tryAcquireDiskLease(acct, leaseId, now)) continue;
+    currentIndex = idx;
+    acct.leasedUntil = now + CODEX_AUTH_LEASE_MS;
+    acct.leaseId = leaseId;
+    return {
+      accountIndex: idx,
+      authPath: acct.authPath,
+      release: () => {
+        if (acct.leaseId === leaseId) {
+          acct.leasedUntil = null;
+          acct.leaseId = null;
+        }
+        releaseDiskLease(acct.authPath, leaseId);
+      },
+    };
+  }
+  return null;
+}
+
+export function syncCodexSessionAuthBack(args: {
+  canonicalAuthPath: string;
+  sessionAuthPath: string;
+  accountIndex?: number | null;
+}): boolean {
+  if (!fs.existsSync(args.sessionAuthPath)) return false;
+  if (!fs.existsSync(args.canonicalAuthPath)) return false;
+
+  const canonical = readJsonFile<{
+    auth_mode?: string;
+    tokens?: { account_id?: string };
+  }>(args.canonicalAuthPath);
+  const session = readJsonFile<{
+    auth_mode?: string;
+    tokens?: { account_id?: string };
+  }>(args.sessionAuthPath);
+  if (!canonical || !session?.tokens) return false;
+
+  const canonicalAccount = canonical.tokens?.account_id;
+  const sessionAccount = session.tokens.account_id;
+  if (
+    canonicalAccount &&
+    sessionAccount &&
+    canonicalAccount !== sessionAccount
+  ) {
+    logger.warn(
+      {
+        canonicalAuthPath: args.canonicalAuthPath,
+        sessionAuthPath: args.sessionAuthPath,
+        accountIndex: args.accountIndex ?? null,
+      },
+      'Refusing to sync Codex session auth back: account mismatch',
+    );
+    return false;
+  }
+
+  const sessionRaw = fs.readFileSync(args.sessionAuthPath, 'utf-8');
+  const canonicalRaw = fs.readFileSync(args.canonicalAuthPath, 'utf-8');
+  if (sessionRaw === canonicalRaw) return false;
+
+  const tmpPath = `${args.canonicalAuthPath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmpPath, sessionRaw, { mode: 0o600 });
+  fs.renameSync(tmpPath, args.canonicalAuthPath);
+
+  const idx =
+    args.accountIndex ??
+    findCodexAccountIndexByAuthPath(args.canonicalAuthPath);
+  if (idx != null && accounts[idx]) {
+    const acct = accounts[idx];
+    acct.authStatus = 'healthy';
+    acct.authDeadAt = null;
+    acct.authDeadReason = null;
+    updateAccountMetadataFromAuthFile(acct);
+    saveCodexState();
+  }
+
+  logger.info(
+    {
+      accountIndex: idx,
+      canonicalAuthPath: args.canonicalAuthPath,
+    },
+    'Synced refreshed Codex session auth back to canonical account slot',
+  );
+  return true;
+}
+
 export function detectCodexRotationTrigger(
   error?: string | null,
 ): CodexRotationTriggerResult {
@@ -341,16 +666,23 @@ export function rotateCodexToken(
 
   const previousIndex = currentIndex;
   const acct = accounts[currentIndex];
-  const cooldownUntil = computeCooldownUntil(errorMessage);
-  acct.rateLimitedUntil = cooldownUntil;
-  acct.lastUsagePct = 100;
-  // Extract reset time string from error for display
-  const retryAt = parseRetryAfterFromError(errorMessage);
-  if (retryAt) {
-    acct.resetAt = new Date(retryAt).toISOString();
+  const authFailure = classifyCodexAuthError(errorMessage);
+  let cooldownUntil: number | null = null;
+
+  if (authFailure.category === 'auth-expired') {
+    markCodexAccountDeadAuth(acct, errorMessage || authFailure.reason);
+  } else {
+    cooldownUntil = computeCooldownUntil(errorMessage);
+    acct.rateLimitedUntil = cooldownUntil;
+    acct.lastUsagePct = 100;
+    // Extract reset time string from error for display
+    const retryAt = parseRetryAfterFromError(errorMessage);
+    if (retryAt) {
+      acct.resetAt = new Date(retryAt).toISOString();
+    }
   }
 
-  const nextIdx = findNextAvailable(accounts, currentIndex, opts);
+  const nextIdx = findNextCodexAvailable(currentIndex, opts);
   if (nextIdx !== null) {
     accounts[nextIdx].rateLimitedUntil = null;
     currentIndex = nextIdx;
@@ -364,6 +696,7 @@ export function rotateCodexToken(
         ignoreRL: opts?.ignoreRateLimits ?? false,
         cooldownUntil:
           cooldownUntil != null ? new Date(cooldownUntil).toISOString() : null,
+        authDead: authFailure.category === 'auth-expired',
         reason: errorMessage ?? null,
       },
       `Codex rotated to account #${currentIndex + 1}/${accounts.length}`,
@@ -380,28 +713,40 @@ export function rotateCodexToken(
       ignoreRL: opts?.ignoreRateLimits ?? false,
       cooldownUntil:
         cooldownUntil != null ? new Date(cooldownUntil).toISOString() : null,
+      authDead: authFailure.category === 'auth-expired',
       reason: errorMessage ?? null,
     },
-    'All Codex accounts are rate-limited',
+    authFailure.category === 'auth-expired'
+      ? 'All Codex accounts unavailable after auth failure; re-auth required'
+      : 'All Codex accounts are rate-limited',
   );
+  saveCodexState();
   return false;
 }
 
 /**
  * Find the next Codex account that is neither rate-limited nor 7d-exhausted.
  */
-function findNextCodexAvailable(fromIndex?: number): number | null {
+function findNextCodexAvailable(
+  fromIndex?: number,
+  opts?: { ignoreRateLimits?: boolean },
+): number | null {
   const now = Date.now();
   const start = fromIndex ?? currentIndex;
   for (let i = 1; i < accounts.length; i++) {
     const idx = (start + i) % accounts.length;
     const acct = accounts[idx];
-    const rlOk = !acct.rateLimitedUntil || acct.rateLimitedUntil <= now;
-    const usageOk = acct.lastUsageD7Pct == null || acct.lastUsageD7Pct < 100;
-    if (rlOk && usageOk) return idx;
+    if (isCodexAccountUsable(acct, now, opts)) return idx;
   }
-  // All exhausted — fall back to rate-limit-only check
-  return findNextAvailable(accounts, start);
+  // All d7-exhausted — fall back to rate-limit/dead/lease checks only.
+  for (let i = 1; i < accounts.length; i++) {
+    const idx = (start + i) % accounts.length;
+    const acct = accounts[idx];
+    if (isCodexAccountUsable(acct, now, { ...opts, ignoreD7: true })) {
+      return idx;
+    }
+  }
+  return null;
 }
 
 /**
@@ -469,9 +814,17 @@ export function updateCodexAccountUsage(
 export function markCodexTokenHealthy(): void {
   if (accounts.length === 0) return;
   const acct = accounts[currentIndex];
+  let changed = false;
+  if (acct?.authStatus === 'dead_auth') {
+    acct.authStatus = 'healthy';
+    acct.authDeadAt = null;
+    acct.authDeadReason = null;
+    changed = true;
+  }
   if (acct?.rateLimitedUntil) {
     const previousCooldownUntil = acct.rateLimitedUntil;
     acct.rateLimitedUntil = null;
+    changed = true;
     logger.info(
       {
         transition: 'rotation:clear-rate-limit',
@@ -481,8 +834,8 @@ export function markCodexTokenHealthy(): void {
       },
       'Cleared Codex account rate-limit state after successful response',
     );
-    saveCodexState();
   }
+  if (changed) saveCodexState();
 }
 
 export function getCodexAccountCount(): number {
@@ -495,6 +848,10 @@ export function getAllCodexAccounts(): {
   planType: string;
   isActive: boolean;
   isRateLimited: boolean;
+  isAuthDead?: boolean;
+  authStatus?: 'healthy' | 'dead_auth';
+  authDeadAt?: string;
+  isLeased?: boolean;
   cachedUsagePct?: number;
   cachedUsageD7Pct?: number;
   resetAt?: string;
@@ -507,6 +864,10 @@ export function getAllCodexAccounts(): {
     planType: a.planType,
     isActive: i === currentIndex,
     isRateLimited: Boolean(a.rateLimitedUntil && a.rateLimitedUntil > now),
+    isAuthDead: a.authStatus === 'dead_auth',
+    authStatus: a.authStatus,
+    authDeadAt: a.authDeadAt ? new Date(a.authDeadAt).toISOString() : undefined,
+    isLeased: Boolean(a.leasedUntil && a.leasedUntil > now),
     cachedUsagePct: a.lastUsagePct,
     cachedUsageD7Pct: a.lastUsageD7Pct,
     resetAt: a.resetAt,
