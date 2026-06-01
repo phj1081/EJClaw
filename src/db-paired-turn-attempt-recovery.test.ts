@@ -143,6 +143,43 @@ describe('paired turn attempt restart recovery', () => {
     ]);
   });
 
+  it('clears stale running attempts for already completed tasks without replaying them', () => {
+    const task = makeTask({
+      id: 'completed-stale-running-task',
+      status: 'completed',
+      completion_reason: 'done',
+    });
+    createPairedTask(task);
+    const turnIdentity = buildPairedTurnIdentity({
+      taskId: task.id,
+      taskUpdatedAt: task.updated_at,
+      intentKind: 'owner-turn',
+      role: 'owner',
+    });
+
+    markPairedTurnRunning({
+      turnIdentity,
+      executorServiceId: CODEX_MAIN_SERVICE_ID,
+      executorAgentType: 'codex',
+      runId: 'completed-run-before-restart',
+    });
+
+    expect(
+      recoverInterruptedPairedTurnAttemptsForService({
+        serviceIds: [CODEX_MAIN_SERVICE_ID],
+        now: '2026-05-27T00:11:00.000Z',
+      }),
+    ).toEqual([]);
+    expect(getPairedTurnAttempts(turnIdentity.turnId)).toEqual([
+      expect.objectContaining({
+        state: 'failed',
+        active_run_id: null,
+        completed_at: '2026-05-27T00:11:00.000Z',
+        last_error: 'Interrupted by service restart before completion.',
+      }),
+    ]);
+  });
+
   it('recovers codex executor attempts even when the orchestration lease used the claude service id', () => {
     const task = makeTask({ id: 'cross-service-lease-task' });
     createPairedTask(task);

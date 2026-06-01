@@ -7,6 +7,7 @@ import {
   getPairedWorkspace,
   hasActiveCiWatcherForChat,
 } from './db.js';
+import { isTerminalCodexAccountFailure } from './agent-error-detection.js';
 import { logger } from './logger.js';
 import { markPairedTaskReviewReady } from './paired-workspace-manager.js';
 import { requestArbiterOrEscalate } from './paired-arbiter-request.js';
@@ -30,6 +31,31 @@ export function handleFailedOwnerExecution(args: {
 }): void {
   const { task, taskId, summary } = args;
   const now = new Date().toISOString();
+  if (isTerminalCodexAccountFailure(summary)) {
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus: task.status,
+      nextStatus: 'completed',
+      expectedUpdatedAt: task.updated_at,
+      updatedAt: now,
+      patch: {
+        arbiter_verdict: 'escalate',
+        arbiter_requested_at: null,
+        completion_reason: 'owner_codex_unavailable',
+      },
+    });
+    logger.warn(
+      {
+        taskId,
+        role: 'owner',
+        status: task.status,
+        summary: summary?.slice(0, 200),
+      },
+      'Completed owner task after terminal Codex account failure instead of retrying owner loop',
+    );
+    return;
+  }
+
   const nextFailureCount = (task.owner_failure_count ?? 0) + 1;
 
   if (nextFailureCount >= OWNER_FAILURE_ESCALATION_THRESHOLD) {

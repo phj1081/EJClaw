@@ -224,6 +224,60 @@ describe('paired execution routing loop guards', () => {
     );
   });
 
+  it('completes reviewer task after terminal Codex account failure instead of preserving review_ready loop', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'in_review',
+        updated_at: '2026-03-28T00:00:05.000Z',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'reviewer',
+      status: 'failed',
+      summary:
+        'auth-expired: All Codex rotation accounts unavailable; re-auth required before launching Codex\nExecution completed without a visible terminal verdict.',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'completed',
+        arbiter_verdict: 'escalate',
+        arbiter_requested_at: null,
+        completion_reason: 'reviewer_codex_unavailable',
+      }),
+    );
+  });
+
+  it('completes owner task after terminal Codex account failure instead of retrying owner forever', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        updated_at: '2026-03-28T00:00:05.000Z',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'failed',
+      summary:
+        'auth-expired: All Codex rotation accounts unavailable; re-auth required before launching Codex\nExecution completed without a visible terminal verdict.',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'completed',
+        arbiter_verdict: 'escalate',
+        arbiter_requested_at: null,
+        completion_reason: 'owner_codex_unavailable',
+      }),
+    );
+  });
+
   it('keeps arbiter REVISE on owner flow while clearing stale loop counters', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({

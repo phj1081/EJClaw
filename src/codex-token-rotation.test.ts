@@ -6,6 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./agent-error-detection.js', () => ({
   classifyAgentError: vi.fn(() => ({ category: 'none', reason: '' })),
   classifyCodexAuthError: vi.fn(() => ({ category: 'none', reason: '' })),
+  isCodexPoolUnavailableError: vi.fn(
+    (error: string | null | undefined) =>
+      /all\s+codex(?:\s+rotation)?\s+accounts(?:\s+are)?\s+unavailable/i.test(
+        error ?? '',
+      ) || /codex\s+rotation\s+pool\s+unavailable/i.test(error ?? ''),
+  ),
 }));
 
 vi.mock('./config.js', () => ({
@@ -164,6 +170,34 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
 
     expect(mod.getCodexAccountCount()).toBe(4);
     expect(mod.getActiveCodexAuthPath()).not.toBe(fallbackAuthPath);
+  });
+
+  it('does not mutate account health for the internal all-accounts-unavailable sentinel', async () => {
+    const agentErrors = await import('./agent-error-detection.js');
+    vi.mocked(agentErrors.classifyCodexAuthError).mockReturnValueOnce({
+      category: 'auth-expired',
+      reason: 'auth-expired',
+    });
+
+    const mod = await import('./codex-token-rotation.js');
+    mod.initCodexTokenRotation();
+
+    expect(
+      mod.rotateCodexToken(
+        'auth-expired: All Codex rotation accounts unavailable; re-auth required before launching Codex',
+      ),
+    ).toBe(false);
+
+    const accounts = mod.getAllCodexAccounts();
+    expect(accounts[0]).toEqual(
+      expect.objectContaining({
+        isActive: true,
+        isAuthDead: false,
+        authStatus: 'healthy',
+        isRateLimited: false,
+      }),
+    );
+    expect(accounts[1].isActive).toBe(false);
   });
 
   it('marks refresh-token reuse as dead auth instead of a recoverable cooldown', async () => {

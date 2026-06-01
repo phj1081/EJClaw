@@ -17,6 +17,7 @@ import path from 'path';
 import {
   classifyAgentError,
   classifyCodexAuthError,
+  isCodexPoolUnavailableError,
   type CodexRotationReason,
 } from './agent-error-detection.js';
 import { DATA_DIR } from './config.js';
@@ -638,6 +639,9 @@ export function detectCodexRotationTrigger(
   error?: string | null,
 ): CodexRotationTriggerResult {
   if (!error) return { shouldRotate: false, reason: '' };
+  if (isCodexPoolUnavailableError(error)) {
+    return { shouldRotate: false, reason: '' };
+  }
 
   // Common patterns (429, 503, network) — delegated to SSOT
   const common = classifyAgentError(error);
@@ -663,6 +667,19 @@ export function rotateCodexToken(
   opts?: { ignoreRateLimits?: boolean },
 ): boolean {
   if (accounts.length <= 1) return false;
+
+  if (isCodexPoolUnavailableError(errorMessage)) {
+    logger.warn(
+      {
+        transition: 'rotation:skip-pool-unavailable-sentinel',
+        currentIndex,
+        totalAccounts: accounts.length,
+        reason: errorMessage ?? null,
+      },
+      'Refusing to mark Codex accounts unhealthy from internal pool-unavailable sentinel',
+    );
+    return false;
+  }
 
   const previousIndex = currentIndex;
   const acct = accounts[currentIndex];

@@ -85,6 +85,19 @@ describe('agent-error-detection', () => {
     });
   });
 
+  it('does not classify the internal Codex pool-unavailable sentinel as an auth failure', () => {
+    expect(
+      classifyCodexAuthError(
+        'auth-expired: All Codex rotation accounts unavailable; re-auth required before launching Codex',
+      ),
+    ).toEqual({ category: 'none', reason: '' });
+    expect(
+      classifyCodexAuthError(
+        'Codex rotation pool unavailable: all rotation accounts are currently dead, rate-limited, or locked',
+      ),
+    ).toEqual({ category: 'none', reason: '' });
+  });
+
   it('classifies Codex workspace credit exhaustion as rate-limit', () => {
     expect(classifyAgentError('Workspace out of credits')).toEqual({
       category: 'rate-limit',

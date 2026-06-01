@@ -143,7 +143,12 @@ vi.mock('./service-routing.js', () => ({
   hasReviewerLease: vi.fn(() => false),
 }));
 
-import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import {
+  _initTestDatabase,
+  createPairedTask,
+  createTask,
+  getTaskById,
+} from './db.js';
 import * as codexTokenRotation from './codex-token-rotation.js';
 import { TIMEZONE } from './config.js';
 import * as serviceRouting from './service-routing.js';
@@ -302,6 +307,52 @@ describe('task scheduler', () => {
         'shared@g.us::task:task-codex|task-codex',
       ].sort(),
     );
+  });
+
+  it('requeues an orphaned review_ready paired task once its CI watcher is gone', async () => {
+    createPairedTask({
+      id: 'paired-review-ready-orphan',
+      chat_jid: 'review@g.us',
+      group_folder: 'review-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 1,
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      owner_failure_count: 0,
+      created_at: '2026-02-22T00:00:00.000Z',
+      updated_at: '2026-02-22T00:00:01.000Z',
+    });
+
+    const enqueueMessageCheck = vi.fn();
+    const deps = {
+      serviceAgentType: 'codex' as const,
+      roomBindings: () => ({}),
+      getSessions: () => ({}),
+      queue: { enqueueTask: vi.fn(), enqueueMessageCheck } as any,
+      onProcess: () => {},
+      sendMessage: async () => {},
+    };
+
+    await runSchedulerTickOnce(deps);
+
+    expect(enqueueMessageCheck).toHaveBeenCalledTimes(1);
+    expect(enqueueMessageCheck).toHaveBeenCalledWith(
+      'review@g.us',
+      expect.stringContaining('review-group'),
+    );
+
+    await runSchedulerTickOnce(deps);
+    expect(enqueueMessageCheck).toHaveBeenCalledTimes(1);
   });
 
   it('can execute one scheduler tick without starting the timer loop', async () => {

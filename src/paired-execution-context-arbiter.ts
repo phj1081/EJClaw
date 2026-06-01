@@ -1,20 +1,10 @@
 import { logger } from './logger.js';
-import {
-  classifyAgentError,
-  classifyCodexAuthError,
-} from './agent-error-detection.js';
+import { isTerminalCodexAccountFailure } from './agent-error-detection.js';
 import { transitionPairedTaskStatus } from './paired-task-status.js';
 import { classifyArbiterVerdict } from './paired-verdict.js';
 import type { PairedTask } from './types.js';
 
 const ARBITER_RESOLUTION_ROUND_TRIP_COUNT = 0;
-
-function isTerminalCodexAccountFailure(summary?: string | null): boolean {
-  if (!summary) return false;
-  if (classifyCodexAuthError(summary).category !== 'none') return true;
-  if (classifyAgentError(summary).category === 'rate-limit') return true;
-  return /all\s+codex(?:\s+rotation)?\s+accounts/i.test(summary);
-}
 
 export function handleFailedArbiterExecution(args: {
   task: PairedTask;

@@ -1,5 +1,6 @@
 import { ARBITER_DEADLOCK_THRESHOLD } from './config.js';
 import { getPairedWorkspace } from './db.js';
+import { isTerminalCodexAccountFailure } from './agent-error-detection.js';
 import { logger } from './logger.js';
 import { requestArbiterOrEscalate } from './paired-arbiter-request.js';
 import { transitionPairedTaskStatus } from './paired-task-status.js';
@@ -18,6 +19,31 @@ export function handleFailedReviewerExecution(args: {
 }): void {
   const { task, taskId, summary } = args;
   const now = new Date().toISOString();
+
+  if (isTerminalCodexAccountFailure(summary)) {
+    transitionPairedTaskStatus({
+      taskId,
+      currentStatus: task.status,
+      nextStatus: 'completed',
+      expectedUpdatedAt: task.updated_at,
+      updatedAt: now,
+      patch: {
+        arbiter_verdict: 'escalate',
+        arbiter_requested_at: null,
+        completion_reason: 'reviewer_codex_unavailable',
+      },
+    });
+    logger.warn(
+      {
+        taskId,
+        role: 'reviewer',
+        status: task.status,
+        summary: summary?.slice(0, 200),
+      },
+      'Completed reviewer task after terminal Codex account failure instead of preserving review loop',
+    );
+    return;
+  }
 
   if (summary) {
     const verdict = parseVisibleVerdict(summary);

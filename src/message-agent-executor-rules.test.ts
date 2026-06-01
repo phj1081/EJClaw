@@ -207,6 +207,19 @@ describe('message-agent-executor-rules', () => {
     ).toBe('pending');
   });
 
+  it('does not requeue a silent owner failure caused by Codex pool unavailability', () => {
+    expect(
+      resolvePairedFollowUpQueueAction({
+        completedRole: 'owner',
+        executionStatus: 'failed',
+        sawOutput: false,
+        taskStatus: 'active',
+        outputSummary:
+          'auth-expired: All Codex rotation accounts unavailable; re-auth required before launching Codex\nExecution completed without a visible terminal verdict.',
+      }),
+    ).toBe('none');
+  });
+
   it('does not request an executor-side follow-up after successful owner output moved the task to review_ready', () => {
     expect(
       resolvePairedFollowUpQueueAction({

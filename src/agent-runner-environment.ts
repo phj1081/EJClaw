@@ -193,7 +193,7 @@ function syncHostCodexSessionFiles(
     lease?.release();
     if (hasRotationAccounts) {
       throw new Error(
-        'auth-expired: All Codex rotation accounts unavailable; re-auth required before launching Codex',
+        'Codex rotation pool unavailable: all rotation accounts are currently dead, rate-limited, or locked; re-auth or clear stale state before launching Codex',
       );
     }
     return null;

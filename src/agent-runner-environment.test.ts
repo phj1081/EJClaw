@@ -273,7 +273,7 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     mockReadEnvFile.mockReturnValue({});
 
     expect(() => prepareGroupEnvironment(group, false, 'dc:test')).toThrow(
-      /auth-expired: All Codex rotation accounts unavailable/,
+      /Codex rotation pool unavailable/,
     );
 
     const authPath = path.join(

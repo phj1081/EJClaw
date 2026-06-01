@@ -231,6 +231,35 @@ const NONE: AgentErrorClassification = {
   reason: '',
 };
 
+export function isCodexPoolUnavailableError(
+  error: string | null | undefined,
+): boolean {
+  if (!error) return false;
+  return (
+    /all\s+codex(?:\s+rotation)?\s+accounts(?:\s+are)?\s+unavailable/i.test(
+      error,
+    ) || /codex\s+rotation\s+pool\s+unavailable/i.test(error)
+  );
+}
+
+export function isTerminalCodexAccountFailure(
+  error: string | null | undefined,
+): boolean {
+  if (!error) return false;
+  if (isCodexPoolUnavailableError(error)) return true;
+  if (classifyCodexAuthError(error).category !== 'none') return true;
+  const lower = error.toLowerCase();
+  if (
+    classifyAgentError(error).category === 'rate-limit' &&
+    (lower.includes('workspace out of credits') ||
+      lower.includes('out of credits') ||
+      lower.includes('codex'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Classify an agent error string into a category.
  * Handles patterns common to both Claude and Codex: 429, 503, network.
@@ -334,6 +363,7 @@ export function classifyCodexAuthError(
   error: string | null | undefined,
 ): AgentErrorClassification {
   if (!error) return NONE;
+  if (isCodexPoolUnavailableError(error)) return NONE;
   const lower = error.toLowerCase();
 
   if (

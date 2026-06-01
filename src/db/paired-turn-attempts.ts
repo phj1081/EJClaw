@@ -462,6 +462,24 @@ export function recoverInterruptedPairedTurnAttemptsForServiceInDatabase(
   const error =
     args.error ?? 'Interrupted by service restart before completion.';
   return database.transaction(() => {
+    database
+      .prepare(
+        `
+          UPDATE paired_turn_attempts
+             SET state = 'failed',
+                 active_run_id = NULL,
+                 updated_at = ?,
+                 completed_at = ?,
+                 last_error = COALESCE(last_error, ?)
+           WHERE state = 'running'
+             AND executor_service_id IN (${servicePlaceholders})
+             AND task_id IN (
+               SELECT id FROM paired_tasks WHERE status = 'completed'
+             )
+        `,
+      )
+      .run(now, now, error, ...serviceIds);
+
     const rows = database
       .prepare(
         `

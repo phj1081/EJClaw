@@ -12,8 +12,10 @@ import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AgentOutput, runAgentProcess } from './agent-runner.js';
 import {
   getAllTasks,
+  getAllOpenPairedTasks,
   deleteTask,
   getDueTasks,
+  hasActiveCiWatcherForChat,
   getTaskById,
   logTaskRun,
   updateTask,
@@ -44,6 +46,8 @@ import {
 } from './task-suspension.js';
 import { getTaskQueueJid, isGitHubCiTask } from './task-watch-status.js';
 import { ScheduledTask } from './types.js';
+import { resolveGroupIpcPath } from './group-folder.js';
+import { schedulePairedFollowUpOnce } from './paired-follow-up-scheduler.js';
 import {
   hasTaskExceededMaxDuration,
   resolveTaskExecutionContext,
@@ -506,6 +510,7 @@ export async function runSchedulerTickOnce(
 ): Promise<void> {
   // Unified service: process all agent types, not just the service default.
   const nowMs = Date.now();
+  reconcileOrphanedPairedReviewReadyTasks(deps);
   const activeTasks = getAllTasks().filter((task) => task.status === 'active');
 
   for (const task of activeTasks) {
@@ -546,6 +551,45 @@ export async function runSchedulerTickOnce(
       isGitHubCiTask(currentTask)
         ? runGithubCiTask(currentTask, deps)
         : runTask(currentTask, deps),
+    );
+  }
+}
+
+function reconcileOrphanedPairedReviewReadyTasks(
+  deps: SchedulerDependencies,
+): void {
+  for (const task of getAllOpenPairedTasks()) {
+    if (task.status !== 'review_ready') {
+      continue;
+    }
+    if (hasActiveCiWatcherForChat(task.chat_jid)) {
+      continue;
+    }
+
+    const scheduled = schedulePairedFollowUpOnce({
+      chatJid: task.chat_jid,
+      runId: `scheduler-review-ready-${Date.now().toString(36)}`,
+      task,
+      intentKind: 'reviewer-turn',
+      enqueue: () =>
+        deps.queue.enqueueMessageCheck(
+          task.chat_jid,
+          resolveGroupIpcPath(task.group_folder),
+        ),
+    });
+
+    if (!scheduled) {
+      continue;
+    }
+
+    logger.info(
+      {
+        taskId: task.id,
+        chatJid: task.chat_jid,
+        groupFolder: task.group_folder,
+        status: task.status,
+      },
+      'Re-queued orphaned review_ready paired task without active CI watcher',
     );
   }
 }

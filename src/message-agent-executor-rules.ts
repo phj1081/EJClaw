@@ -3,7 +3,7 @@ import {
   resolveNextTurnAction,
   shouldRetrySilentOwnerExecution,
 } from './message-runtime-rules.js';
-import { classifyCodexAuthError } from './agent-error-detection.js';
+import { isTerminalCodexAccountFailure } from './agent-error-detection.js';
 import { parseVisibleVerdict } from './paired-verdict.js';
 import type { PairedRoomRole, PairedTaskStatus } from './types.js';
 export {
@@ -19,14 +19,7 @@ export {
 export type PairedFollowUpQueueAction = 'pending' | 'none';
 
 function isSilentCodexAccountFailure(summary?: string | null): boolean {
-  if (!summary) return false;
-  if (classifyCodexAuthError(summary).category !== 'none') return true;
-  const lower = summary.toLowerCase();
-  return (
-    lower.includes('workspace out of credits') ||
-    lower.includes('out of credits') ||
-    /all\s+codex(?:\s+rotation)?\s+accounts/i.test(summary)
-  );
+  return isTerminalCodexAccountFailure(summary);
 }
 
 export function resolvePairedFollowUpQueueAction(args: {
@@ -39,7 +32,6 @@ export function resolvePairedFollowUpQueueAction(args: {
   if (
     args.executionStatus === 'failed' &&
     args.sawOutput === false &&
-    (args.completedRole === 'reviewer' || args.completedRole === 'arbiter') &&
     isSilentCodexAccountFailure(args.outputSummary)
   ) {
     return 'none';
