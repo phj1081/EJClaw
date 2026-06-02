@@ -98,13 +98,15 @@ export function resolveReviewerFailureSignal(args: {
     case 'task_done':
     case 'done':
       return { kind: 'request_owner_finalize' };
+    case 'step_done':
+    case 'done_with_concerns':
+      return { kind: 'request_owner_changes' };
     case 'blocked':
     case 'needs_context':
       return {
         kind: 'complete',
         completionReason: 'escalated',
       };
-    case 'done_with_concerns':
     case 'continue':
     default:
       return { kind: 'preserve_review_ready' };

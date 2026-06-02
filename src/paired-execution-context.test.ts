@@ -1445,3 +1445,36 @@ describe('paired execution context', () => {
     });
   });
 });
+
+describe('paired execution context reviewer failures', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('moves failed reviewer STEP_DONE output back to active for owner follow-up', () => {
+    const task = buildPairedTask({
+      status: 'in_review',
+      updated_at: '2026-03-28T00:05:00.000Z',
+    });
+    vi.mocked(db.getPairedTaskById).mockReturnValue(task);
+
+    completePairedExecutionContext({
+      taskId: task.id,
+      role: 'reviewer',
+      status: 'failed',
+      runId: 'run-failed-reviewer-step-done',
+      summary: 'STEP_DONE\n오너 수정이 더 필요합니다.',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({
+        status: 'active',
+      }),
+    );
+    expect(db.releasePairedTaskExecutionLease).toHaveBeenCalledWith({
+      taskId: task.id,
+      runId: 'run-failed-reviewer-step-done',
+    });
+  });
+});

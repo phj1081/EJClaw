@@ -137,6 +137,16 @@ describe('paired completion signals', () => {
     ).toEqual({ kind: 'request_owner_finalize' });
     expect(
       resolveReviewerFailureSignal({
+        visibleVerdict: 'step_done',
+      }),
+    ).toEqual({ kind: 'request_owner_changes' });
+    expect(
+      resolveReviewerFailureSignal({
+        visibleVerdict: 'done_with_concerns',
+      }),
+    ).toEqual({ kind: 'request_owner_changes' });
+    expect(
+      resolveReviewerFailureSignal({
         visibleVerdict: 'needs_context',
       }),
     ).toEqual({ kind: 'complete', completionReason: 'escalated' });
