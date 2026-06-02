@@ -862,7 +862,10 @@ export function prepareReadonlySessionEnvironment(args: {
         });
       }
     } else {
-      fs.rmSync(path.join(sessionDir, '.codex'), { recursive: true, force: true });
+      fs.rmSync(path.join(sessionDir, '.codex'), {
+        recursive: true,
+        force: true,
+      });
     }
     logger.info(
       {

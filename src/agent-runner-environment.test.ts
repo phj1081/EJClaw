@@ -16,7 +16,11 @@ const {
   mockGetActiveCodexAuthPath: vi.fn<() => string | null>(),
   mockGetCodexAccountCount: vi.fn<() => number>(),
   mockClaimCodexAuthLease: vi.fn<
-    () => { authPath: string; accountIndex: number; release: () => void } | null
+    () => {
+      authPath: string;
+      accountIndex: number;
+      release: () => void;
+    } | null
   >(),
   mockFindCodexAccountIndexByAuthPath: vi.fn<() => number | null>(),
 }));
