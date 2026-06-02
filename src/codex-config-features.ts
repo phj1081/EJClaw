@@ -16,6 +16,7 @@ export function readCodexFeatureFromContent(
   feature: CodexConfigFeature,
 ): boolean {
   const lines = content.split('\n');
+  const featureLinePattern = new RegExp(`^${feature}\\s*=\\s*(true|false)$`);
   let inFeatures = false;
 
   for (const line of lines) {
@@ -28,9 +29,7 @@ export function readCodexFeatureFromContent(
       break;
     }
     if (!inFeatures) continue;
-    const match = trimmed.match(
-      new RegExp(`^${feature}\\s*=\\s*(true|false)$`),
-    );
+    const match = trimmed.match(featureLinePattern);
     if (match) return match[1] === 'true';
   }
 
