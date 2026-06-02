@@ -15,7 +15,9 @@ const {
   mockReadEnvFile: vi.fn<() => Record<string, string>>(),
   mockGetActiveCodexAuthPath: vi.fn<() => string | null>(),
   mockGetCodexAccountCount: vi.fn<() => number>(),
-  mockClaimCodexAuthLease: vi.fn<() => null>(),
+  mockClaimCodexAuthLease: vi.fn<
+    () => { authPath: string; accountIndex: number; release: () => void } | null
+  >(),
   mockFindCodexAccountIndexByAuthPath: vi.fn<() => number | null>(),
 }));
 
@@ -833,6 +835,37 @@ describe('prepareReadonlySessionEnvironment codex compatibility', () => {
     delete process.env.EJ_TEST_ROOT;
     delete process.env.EJ_TEST_HOME;
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it('does not claim a Codex auth lease for Claude read-only sessions', () => {
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    mockGetCodexAccountCount.mockReturnValue(1);
+    const rotatedAuthPath = path.join(tempRoot, 'rotated-auth.json');
+    fs.writeFileSync(rotatedAuthPath, '{"auth_mode":"chatgpt"}\n');
+    const release = vi.fn();
+    mockClaimCodexAuthLease.mockReturnValue({
+      authPath: rotatedAuthPath,
+      accountIndex: 0,
+      release,
+    });
+
+    const sessionDir = path.join(tempRoot, 'readonly-claude-session');
+    const prepared = prepareReadonlySessionEnvironment({
+      sessionDir,
+      chatJid: 'dc:test',
+      isMain: false,
+      groupFolder: 'codex-test-group',
+      agentType: 'claude-code',
+      memoryBriefing: 'memory briefing',
+      role: 'reviewer',
+    });
+
+    expect(prepared.codexSessionAuth).toBeNull();
+    expect(mockClaimCodexAuthLease).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(sessionDir, '.codex', 'auth.json'))).toBe(
+      false,
+    );
   });
 
   it('writes matching AGENTS.md and copies host codex auth/config into the role-scoped session', () => {

@@ -832,33 +832,37 @@ export function prepareReadonlySessionEnvironment(args: {
   const sessionClaudeMdPath = path.join(sessionDir, 'CLAUDE.md');
   if (sessionClaudeMd) {
     fs.writeFileSync(sessionClaudeMdPath, sessionClaudeMd + '\n');
-    const sessionCodexDir = path.join(sessionDir, '.codex');
-    codexSessionAuth = syncHostCodexSessionFiles(sessionCodexDir);
-    fs.writeFileSync(
-      path.join(sessionCodexDir, 'AGENTS.md'),
-      sessionClaudeMd + '\n',
-    );
-    const sessionConfigPath = path.join(sessionCodexDir, 'config.toml');
-    const mcpServerPath = path.join(
-      projectRoot,
-      'runners',
-      'agent-runner',
-      'dist',
-      'ipc-mcp-stdio.js',
-    );
-    if (fs.existsSync(mcpServerPath)) {
-      upsertEjclawMcpServerSection({
-        sessionConfigPath,
-        mcpServerPath,
-        ipcDir,
-        hostIpcDir,
-        chatJid,
-        groupFolder,
-        isMain,
-        agentType,
-        roomRole: role,
-        workDir,
-      });
+    if (agentType === 'codex') {
+      const sessionCodexDir = path.join(sessionDir, '.codex');
+      codexSessionAuth = syncHostCodexSessionFiles(sessionCodexDir);
+      fs.writeFileSync(
+        path.join(sessionCodexDir, 'AGENTS.md'),
+        sessionClaudeMd + '\n',
+      );
+      const sessionConfigPath = path.join(sessionCodexDir, 'config.toml');
+      const mcpServerPath = path.join(
+        projectRoot,
+        'runners',
+        'agent-runner',
+        'dist',
+        'ipc-mcp-stdio.js',
+      );
+      if (fs.existsSync(mcpServerPath)) {
+        upsertEjclawMcpServerSection({
+          sessionConfigPath,
+          mcpServerPath,
+          ipcDir,
+          hostIpcDir,
+          chatJid,
+          groupFolder,
+          isMain,
+          agentType,
+          roomRole: role,
+          workDir,
+        });
+      }
+    } else {
+      fs.rmSync(path.join(sessionDir, '.codex'), { recursive: true, force: true });
     }
     logger.info(
       {
