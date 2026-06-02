@@ -1,7 +1,4 @@
-import {
-  DEFAULT_WATCH_CI_CONTEXT_MODE,
-  WATCH_CI_PROMPT_PREFIX,
-} from 'ejclaw-runners-shared';
+import { WATCH_CI_PROMPT_PREFIX } from 'ejclaw-runners-shared';
 
 export const DEFAULT_WATCH_CI_INTERVAL_SECONDS = 60;
 export const MIN_WATCH_CI_INTERVAL_SECONDS = 30;

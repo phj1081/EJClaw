@@ -99,7 +99,9 @@ export function restartStackServices(
       throw error;
     }
     if (managedServiceCaller) {
-      throw new Error(MANAGED_SERVICE_CALLER_FALLBACK_MESSAGE);
+      throw new Error(MANAGED_SERVICE_CALLER_FALLBACK_MESSAGE, {
+        cause: error,
+      });
     }
 
     return restartStackServicesDirect(projectRoot, deps);

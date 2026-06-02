@@ -12,7 +12,6 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 import {
   DEFAULT_SCHEDULE_TASK_CONTEXT_MODE,
-  DEFAULT_TASK_CONTEXT_MODE,
   DEFAULT_WATCH_CI_CONTEXT_MODE,
   EJCLAW_ENV,
   TASK_CONTEXT_MODES,

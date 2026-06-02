@@ -153,6 +153,7 @@ export async function runVerificationRequestDirect(
       `Failed to parse verification response from ${pathToFileURL(helperPath).href}: ${
         error instanceof Error ? error.message : String(error)
       }${detail ? `\n${detail}` : ''}`,
+      { cause: error },
     );
   }
 }

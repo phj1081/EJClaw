@@ -315,7 +315,9 @@ function restartEjclawStackServices(): string[] {
       throw error;
     }
     if (process.env.SERVICE_ID) {
-      throw new Error(MANAGED_SERVICE_CALLER_FALLBACK_MESSAGE);
+      throw new Error(MANAGED_SERVICE_CALLER_FALLBACK_MESSAGE, {
+        cause: error,
+      });
     }
 
     execFileSync('systemctl', [...systemctlArgs, 'restart', ...services], {

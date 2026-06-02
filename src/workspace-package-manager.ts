@@ -507,11 +507,13 @@ export function ensureWorkspaceDependenciesInstalled(
         const retryDetail = getInstallErrorDetail(retryError);
         throw new Error(
           `Failed to install workspace dependencies with "${command.commandText}" in ${repoDir} after cleaning node_modules: ${retryDetail}`,
+          { cause: retryError },
         );
       }
     } else {
       throw new Error(
         `Failed to install workspace dependencies with "${command.commandText}" in ${repoDir}: ${detail}`,
+        { cause: error },
       );
     }
   }
