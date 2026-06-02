@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as config from './config.js';
 
+const NO_VISIBLE_VERDICT_SUMMARY = `검토 중입니다.\nExecution completed without a visible terminal verdict.`;
 vi.mock('./agent-runner.js', () => ({
   runAgentProcess: vi.fn(),
   writeGroupsSnapshot: vi.fn(),
@@ -1190,7 +1191,7 @@ describe('runAgentForGroup room memory', () => {
         taskId: 'paired-task-review-no-verdict',
         role: 'reviewer',
         status: 'failed',
-        summary: 'Execution completed without a visible terminal verdict.',
+        summary: NO_VISIBLE_VERDICT_SUMMARY,
       }),
     );
     expect(db.failPairedTurn).toHaveBeenCalledWith({
@@ -1202,7 +1203,7 @@ describe('runAgentForGroup room memory', () => {
         intentKind: 'reviewer-turn',
         role: 'reviewer',
       },
-      error: 'Execution completed without a visible terminal verdict.',
+      error: NO_VISIBLE_VERDICT_SUMMARY,
     });
     expect(db.completePairedTurn).not.toHaveBeenCalled();
     expect(db.insertPairedTurnOutput).not.toHaveBeenCalled();

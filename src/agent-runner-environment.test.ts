@@ -287,6 +287,54 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     );
     expect(fs.existsSync(authPath)).toBe(false);
   });
+});
+
+describe('prepareGroupEnvironment prompt stacks', () => {
+  let tempRoot: string;
+  let previousCwd: string;
+  let previousOpenAiKey: string | undefined;
+  let previousCodexOpenAiKey: string | undefined;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-agent-env-'));
+    previousCwd = process.cwd();
+    process.chdir(tempRoot);
+
+    process.env.EJ_TEST_ROOT = tempRoot;
+    process.env.EJ_TEST_HOME = path.join(tempRoot, 'home');
+    previousOpenAiKey = process.env.OPENAI_API_KEY;
+    previousCodexOpenAiKey = process.env.CODEX_OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.CODEX_OPENAI_API_KEY;
+
+    fs.mkdirSync(process.env.EJ_TEST_HOME, { recursive: true });
+    fs.mkdirSync(path.join(process.env.EJ_TEST_HOME, '.codex'), {
+      recursive: true,
+    });
+
+    mockReadEnvFile.mockReset();
+    mockGetActiveCodexAuthPath.mockReset();
+    mockGetCodexAccountCount.mockReset();
+    mockGetCodexAccountCount.mockReturnValue(0);
+    mockClaimCodexAuthLease.mockReset();
+    mockClaimCodexAuthLease.mockReturnValue(null);
+    mockFindCodexAccountIndexByAuthPath.mockReset();
+    mockFindCodexAccountIndexByAuthPath.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    process.chdir(previousCwd);
+    delete process.env.EJ_TEST_ROOT;
+    delete process.env.EJ_TEST_HOME;
+    if (previousOpenAiKey) process.env.OPENAI_API_KEY = previousOpenAiKey;
+    else delete process.env.OPENAI_API_KEY;
+    if (previousCodexOpenAiKey) {
+      process.env.CODEX_OPENAI_API_KEY = previousCodexOpenAiKey;
+    } else {
+      delete process.env.CODEX_OPENAI_API_KEY;
+    }
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
 
   it('uses the failover owner prompt pack for codex-review when it owns an explicit failover lease', () => {
     vi.mocked(config.isReviewService).mockReturnValue(true);

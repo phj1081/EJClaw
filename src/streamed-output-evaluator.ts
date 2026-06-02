@@ -52,58 +52,26 @@ export function evaluateStreamedOutput(
   options: EvaluateStreamedOutputOptions,
 ): EvaluateStreamedOutputResult {
   const nextState: StreamedOutputState = { ...state };
-  const isPrimaryClaude =
-    options.agentType === 'claude-code' && options.provider === 'claude';
-  const isPrimaryCodex =
-    options.agentType === 'codex' && options.provider === 'codex';
+  const primaryAgent = primaryAgentFor(options);
   const countsAsFinalOutput =
     output.phase === undefined || output.phase === 'final';
   const outputText = getAgentOutputText(output);
 
-  if (
-    isPrimaryClaude &&
-    !state.sawOutput &&
-    shouldRetryFreshSessionOnAgentFailure(output)
-  ) {
-    nextState.retryableSessionFailureDetected = true;
-    return {
-      state: nextState,
-      shouldForwardOutput: false,
-      suppressedRetryableSessionFailure: true,
-    };
-  }
+  const retryableSessionFailure = suppressRetryableSessionFailure(
+    output,
+    state,
+    nextState,
+    primaryAgent,
+  );
+  if (retryableSessionFailure) return retryableSessionFailure;
 
   if (
-    isPrimaryCodex &&
-    !state.sawOutput &&
-    shouldRetryFreshCodexSessionOnAgentFailure(output)
-  ) {
-    nextState.retryableSessionFailureDetected = true;
-    return {
-      state: nextState,
-      shouldForwardOutput: false,
-      suppressedRetryableSessionFailure: true,
-    };
-  }
-
-  if (
-    isPrimaryClaude &&
+    primaryAgent === 'claude' &&
     output.status === 'success' &&
     !state.sawOutput &&
     typeof outputText === 'string'
   ) {
-    const authClassification = classifyClaudeAuthError(outputText);
-    const triggerReason: AgentTriggerReason | undefined =
-      isClaudeUsageExhaustedMessage(outputText)
-        ? 'usage-exhausted'
-        : isClaudeOrgAccessDeniedMessage(outputText) ||
-            authClassification.category === 'org-access-denied'
-          ? 'org-access-denied'
-          : isClaudeAuthExpiredMessage(outputText) ||
-              authClassification.category === 'auth-expired'
-            ? 'auth-expired'
-            : detectClaudeProviderFailureMessage(outputText) || undefined;
-
+    const triggerReason = classifyClaudeSuccessTrigger(outputText);
     if (triggerReason) {
       const newTrigger = nextState.streamedTriggerReason
         ? undefined
@@ -133,7 +101,7 @@ export function evaluateStreamedOutput(
     nextState.sawOutput = true;
   } else if (
     options.trackSuccessNullResult &&
-    isPrimaryClaude &&
+    primaryAgent === 'claude' &&
     output.status === 'success' &&
     !state.sawOutput
   ) {
@@ -141,7 +109,7 @@ export function evaluateStreamedOutput(
   }
 
   if (
-    isPrimaryCodex &&
+    primaryAgent === 'codex' &&
     typeof output.error === 'string' &&
     output.error.length > 0 &&
     !nextState.sawOutput &&
@@ -169,7 +137,7 @@ export function evaluateStreamedOutput(
   ) {
     let newTrigger: StreamedTriggerReason | undefined;
 
-    if (isPrimaryClaude) {
+    if (primaryAgent === 'claude') {
       const trigger = classifyRotationTrigger(output.error);
       if (trigger.shouldRetry) {
         newTrigger = {
@@ -177,7 +145,7 @@ export function evaluateStreamedOutput(
           retryAfterMs: trigger.retryAfterMs,
         };
       }
-    } else if (isPrimaryCodex) {
+    } else if (primaryAgent === 'codex') {
       const trigger = detectCodexRotationTrigger(output.error);
       if (trigger.shouldRotate) {
         newTrigger = { reason: trigger.reason, message: output.error };
@@ -198,4 +166,61 @@ export function evaluateStreamedOutput(
     state: nextState,
     shouldForwardOutput: true,
   };
+}
+
+type PrimaryAgent = 'claude' | 'codex' | undefined;
+
+function primaryAgentFor(options: EvaluateStreamedOutputOptions): PrimaryAgent {
+  if (options.agentType === 'claude-code' && options.provider === 'claude') {
+    return 'claude';
+  }
+  if (options.agentType === 'codex' && options.provider === 'codex') {
+    return 'codex';
+  }
+  return undefined;
+}
+
+function suppressRetryableSessionFailure(
+  output: AgentOutput,
+  state: StreamedOutputState,
+  nextState: StreamedOutputState,
+  primaryAgent: PrimaryAgent,
+): EvaluateStreamedOutputResult | undefined {
+  if (state.sawOutput) return undefined;
+
+  const shouldSuppress =
+    primaryAgent === 'claude'
+      ? shouldRetryFreshSessionOnAgentFailure(output)
+      : primaryAgent === 'codex'
+        ? shouldRetryFreshCodexSessionOnAgentFailure(output)
+        : false;
+  if (!shouldSuppress) return undefined;
+
+  nextState.retryableSessionFailureDetected = true;
+  return {
+    state: nextState,
+    shouldForwardOutput: false,
+    suppressedRetryableSessionFailure: true,
+  };
+}
+
+function classifyClaudeSuccessTrigger(
+  outputText: string,
+): AgentTriggerReason | undefined {
+  if (isClaudeUsageExhaustedMessage(outputText)) return 'usage-exhausted';
+
+  const authClassification = classifyClaudeAuthError(outputText);
+  if (
+    isClaudeOrgAccessDeniedMessage(outputText) ||
+    authClassification.category === 'org-access-denied'
+  ) {
+    return 'org-access-denied';
+  }
+  if (
+    isClaudeAuthExpiredMessage(outputText) ||
+    authClassification.category === 'auth-expired'
+  ) {
+    return 'auth-expired';
+  }
+  return detectClaudeProviderFailureMessage(outputText) || undefined;
 }
