@@ -197,10 +197,16 @@ describe('paired execution routing loop guards', () => {
     );
   });
 
-  it('does not re-arm arbiter loop after terminal Codex account failure', () => {
+  it('returns arbiter terminal Codex account failures to owner without re-arming arbiter', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({
         status: 'in_arbitration',
+        owner_failure_count: 1,
+        owner_step_done_streak: 3,
+        finalize_step_done_count: 1,
+        empty_step_done_streak: 2,
+        arbiter_verdict: 'revise',
+        arbiter_requested_at: '2026-03-28T00:00:04.000Z',
         updated_at: '2026-03-28T00:00:05.000Z',
       }),
     );
@@ -216,10 +222,13 @@ describe('paired execution routing loop guards', () => {
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({
-        status: 'completed',
-        arbiter_verdict: 'escalate',
+        status: 'active',
+        owner_failure_count: 2,
+        owner_step_done_streak: 0,
+        finalize_step_done_count: 0,
+        empty_step_done_streak: 0,
+        arbiter_verdict: null,
         arbiter_requested_at: null,
-        completion_reason: 'arbiter_codex_unavailable',
       }),
     );
   });

@@ -34,7 +34,9 @@ export function resolvePairedFollowUpQueueAction(args: {
     args.sawOutput === false &&
     isSilentCodexAccountFailure(args.outputSummary)
   ) {
-    return 'none';
+    return args.completedRole === 'arbiter' && args.taskStatus === 'active'
+      ? 'pending'
+      : 'none';
   }
 
   if (
