@@ -60,6 +60,44 @@ function logStreamedOutputDeliveryError(
   );
 }
 
+function logStreamedAgentErrorOutput(
+  output: AgentOutput,
+  group: RegisteredGroup,
+  input: AgentInput,
+): void {
+  if (output.status !== 'error') return;
+  logger.warn(
+    {
+      group: group.name,
+      chatJid: input.chatJid,
+      runId: input.runId,
+      error: output.error,
+      newSessionId: output.newSessionId,
+    },
+    'Streamed agent error output',
+  );
+}
+
+function chainStreamedOutputDelivery(args: {
+  outputChain: Promise<void>;
+  parsed: AgentOutput;
+  onOutput: (output: AgentOutput) => Promise<void>;
+  onTerminalStreamedOutputFlushed?: (output: AgentOutput) => void;
+  group: RegisteredGroup;
+  input: AgentInput;
+}): Promise<void> {
+  return args.outputChain.then(async () => {
+    try {
+      await args.onOutput(args.parsed);
+      if (isTerminalStreamedOutput(args.parsed)) {
+        args.onTerminalStreamedOutputFlushed?.(args.parsed);
+      }
+    } catch (err) {
+      logStreamedOutputDeliveryError(err, args.group, args.input);
+    }
+  });
+}
+
 function writeTimeoutLog(args: {
   logsDir: string;
   input: AgentInput;
@@ -188,27 +226,15 @@ export function runSpawnedAgentProcess(
           }
           hadStreamingOutput = true;
           resetTimeout();
-          if (parsed.status === 'error') {
-            logger.warn(
-              {
-                group: group.name,
-                chatJid: input.chatJid,
-                runId: input.runId,
-                error: parsed.error,
-                newSessionId: parsed.newSessionId,
-              },
-              'Streamed agent error output',
-            );
-          }
-          outputChain = outputChain.then(async () => {
-            try {
-              await onOutput(parsed);
-              if (isTerminalStreamedOutput(parsed)) {
-                args.onTerminalStreamedOutputFlushed?.(parsed);
-              }
-            } catch (err) {
-              logStreamedOutputDeliveryError(err, group, input);
-            }
+          logStreamedAgentErrorOutput(parsed, group, input);
+          outputChain = chainStreamedOutputDelivery({
+            outputChain,
+            parsed,
+            onOutput,
+            onTerminalStreamedOutputFlushed:
+              args.onTerminalStreamedOutputFlushed,
+            group,
+            input,
           });
         } catch (err) {
           logger.warn(
