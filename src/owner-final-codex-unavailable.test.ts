@@ -151,6 +151,34 @@ describe('owner final Codex unavailable handling', () => {
     );
   });
 
+  it('escalates to the user after persistent owner and arbiter Codex account failures', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'active',
+        owner_failure_count: 3,
+        updated_at: '2026-03-28T00:00:05.000Z',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'owner',
+      status: 'failed',
+      summary: CODEX_UNAVAILABLE_SUMMARY,
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'completed',
+        owner_failure_count: 4,
+        arbiter_verdict: 'escalate',
+        arbiter_requested_at: null,
+        completion_reason: 'escalated',
+      }),
+    );
+  });
+
   it('requeues owner finalization once after preserving merge_ready', () => {
     expect(
       resolvePairedFollowUpQueueAction({

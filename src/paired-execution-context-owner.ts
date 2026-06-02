@@ -22,6 +22,7 @@ import type { PairedTask } from './types.js';
 
 type OwnerFinalizeOutcome = 'stop' | 're_review';
 const OWNER_FAILURE_ESCALATION_THRESHOLD = 2;
+const OWNER_CODEX_UNAVAILABLE_USER_ESCALATION_THRESHOLD = 4;
 const EMPTY_STEP_DONE_THRESHOLD = 2;
 
 export function handleFailedOwnerExecution(args: {
@@ -33,6 +34,33 @@ export function handleFailedOwnerExecution(args: {
   const now = new Date().toISOString();
   const nextFailureCount = (task.owner_failure_count ?? 0) + 1;
   if (isTerminalCodexAccountFailure(summary)) {
+    if (nextFailureCount >= OWNER_CODEX_UNAVAILABLE_USER_ESCALATION_THRESHOLD) {
+      transitionPairedTaskStatus({
+        taskId,
+        currentStatus: task.status,
+        nextStatus: 'completed',
+        expectedUpdatedAt: task.updated_at,
+        updatedAt: now,
+        patch: {
+          owner_failure_count: nextFailureCount,
+          arbiter_verdict: 'escalate',
+          arbiter_requested_at: null,
+          completion_reason: 'escalated',
+        },
+      });
+      logger.warn(
+        {
+          taskId,
+          role: 'owner',
+          previousStatus: task.status,
+          ownerFailureCount: nextFailureCount,
+          summary: summary?.slice(0, 160),
+        },
+        'Escalated owner task after persistent Codex account failures',
+      );
+      return;
+    }
+
     if (nextFailureCount >= OWNER_FAILURE_ESCALATION_THRESHOLD) {
       requestArbiterOrEscalate({
         taskId,
