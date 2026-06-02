@@ -14,16 +14,23 @@ export function handleFailedArbiterExecution(args: {
   const { task, taskId, summary } = args;
   if (isTerminalCodexAccountFailure(summary)) {
     const now = new Date().toISOString();
+    const nextOwnerFailureCount = Math.max(
+      (task.owner_failure_count ?? 0) + 1,
+      1,
+    );
     transitionPairedTaskStatus({
       taskId,
       currentStatus: task.status,
-      nextStatus: 'completed',
+      nextStatus: 'active',
       expectedUpdatedAt: task.updated_at,
       updatedAt: now,
       patch: {
-        arbiter_verdict: 'escalate',
+        owner_failure_count: nextOwnerFailureCount,
+        owner_step_done_streak: 0,
+        finalize_step_done_count: 0,
+        empty_step_done_streak: 0,
+        arbiter_verdict: null,
         arbiter_requested_at: null,
-        completion_reason: 'arbiter_codex_unavailable',
       },
     });
     logger.warn(
@@ -31,9 +38,10 @@ export function handleFailedArbiterExecution(args: {
         taskId,
         role: 'arbiter',
         status: task.status,
+        nextOwnerFailureCount,
         summary: summary?.slice(0, 200),
       },
-      'Completed arbiter task after terminal Codex account failure instead of re-arming arbitration loop',
+      'Returned arbiter task to owner after terminal Codex account failure',
     );
     return;
   }
