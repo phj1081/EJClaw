@@ -235,6 +235,68 @@ describe('agent-runner timeout behavior', () => {
     expect(result.newSessionId).toBe('session-456');
   });
 
+  it('releases Codex auth lease after final streamed output flushes even before process close', async () => {
+    const releaseLease = vi.fn();
+    const prepareGroupEnvironmentSpy = vi
+      .spyOn(agentRunnerEnvironment, 'prepareGroupEnvironment')
+      .mockReturnValueOnce({
+        env: {
+          EJCLAW_IPC_DIR: '/tmp/ejclaw-test-data/ipc/test-group',
+        },
+        groupDir: '/tmp/ejclaw-test-groups/test-group',
+        runnerDir: '/tmp/ejclaw-test-runners/codex-runner',
+        codexSessionAuth: {
+          canonicalAuthPath: '/tmp/codex-account/auth.json',
+          sessionAuthPath: '/tmp/codex-session/auth.json',
+          accountIndex: 0,
+          lease: {
+            accountIndex: 0,
+            authPath: '/tmp/codex-account/auth.json',
+            release: releaseLease,
+          },
+        },
+      });
+    const onOutput = vi.fn(async () => {});
+    const codexGroup: RegisteredGroup = {
+      ...testGroup,
+      agentType: 'codex',
+    };
+    let resultPromise: Promise<AgentOutput> | undefined;
+
+    try {
+      resultPromise = runAgentProcess(
+        codexGroup,
+        {
+          ...testInput,
+          runId: 'run-codex-lease-final',
+        },
+        () => {},
+        onOutput,
+      );
+
+      emitOutputMarker(fakeProc, {
+        status: 'success',
+        result: 'TASK_DONE\n작업 완료',
+        phase: 'final',
+        newSessionId: 'codex-session-lease-final',
+      });
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(onOutput).toHaveBeenCalledWith(
+        expect.objectContaining({
+          result: 'TASK_DONE\n작업 완료',
+          phase: 'final',
+        }),
+      );
+      expect(releaseLease).toHaveBeenCalledTimes(1);
+    } finally {
+      fakeProc.emit('close', 0);
+      await vi.advanceTimersByTimeAsync(10);
+      await resultPromise?.catch(() => undefined);
+      prepareGroupEnvironmentSpy.mockRestore();
+    }
+  });
+
   it('preserves streamed progress phase metadata', async () => {
     const onOutput = vi.fn(async () => {});
     const resultPromise = runAgentProcess(

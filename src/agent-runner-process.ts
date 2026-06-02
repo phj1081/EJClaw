@@ -22,6 +22,11 @@ interface RunSpawnedAgentProcessArgs {
   logsDir: string;
   startTime: number;
   onOutput?: (output: AgentOutput) => Promise<void>;
+  onTerminalStreamedOutputFlushed?: (output: AgentOutput) => void;
+}
+
+function isTerminalStreamedOutput(output: AgentOutput): boolean {
+  return (output.phase ?? 'final') !== 'progress';
 }
 
 function parseLegacyAgentOutput(stdout: string): AgentOutput {
@@ -195,9 +200,16 @@ export function runSpawnedAgentProcess(
               'Streamed agent error output',
             );
           }
-          outputChain = outputChain
-            .then(() => onOutput(parsed))
-            .catch((err) => logStreamedOutputDeliveryError(err, group, input));
+          outputChain = outputChain.then(async () => {
+            try {
+              await onOutput(parsed);
+              if (isTerminalStreamedOutput(parsed)) {
+                args.onTerminalStreamedOutputFlushed?.(parsed);
+              }
+            } catch (err) {
+              logStreamedOutputDeliveryError(err, group, input);
+            }
+          });
         } catch (err) {
           logger.warn(
             {

@@ -108,6 +108,17 @@ function finalizeCodexAuthSession(
   }
 }
 
+function createCodexAuthSessionFinalizer(
+  getAuth: () => PreparedCodexSessionAuth | null | undefined,
+): () => void {
+  let finalized = false;
+  return () => {
+    if (finalized) return;
+    finalized = true;
+    finalizeCodexAuthSession(getAuth());
+  };
+}
+
 export async function runAgentProcess(
   group: RegisteredGroup,
   input: AgentInput,
@@ -175,6 +186,9 @@ export async function runAgentProcess(
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const processSuffix = input.runId || `${Date.now()}`;
   const processName = `ejclaw-${safeName}-${processSuffix}`;
+  const finalizeCodexAuthSessionOnce = createCodexAuthSessionFinalizer(
+    () => codexSessionAuth,
+  );
 
   // Check if runner is built
   const distEntry = path.join(runnerDir, 'dist', 'index.js');
@@ -231,13 +245,14 @@ export async function runAgentProcess(
       logsDir,
       startTime,
       onOutput,
+      onTerminalStreamedOutputFlushed: finalizeCodexAuthSessionOnce,
     })
       .then((output) => {
-        finalizeCodexAuthSession(codexSessionAuth);
+        finalizeCodexAuthSessionOnce();
         resolve(output);
       })
       .catch((err: unknown) => {
-        finalizeCodexAuthSession(codexSessionAuth);
+        finalizeCodexAuthSessionOnce();
         logger.error(
           { err, processName, chatJid: input.chatJid, runId: input.runId },
           'Spawned agent process runner failed',
