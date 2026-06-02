@@ -38,6 +38,7 @@ function writeFile(
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
   for (const dir of cleanupDirs.splice(0)) {
     fs.rmSync(dir, { force: true, recursive: true });
   }
@@ -176,7 +177,13 @@ describe('validateOutboundAttachments', () => {
 });
 
 describe('validateOutboundAttachments policy checks', () => {
+  function useIsolatedDefaultTempDir(): void {
+    const tempDir = makeTempDir(os.tmpdir(), 'ejclaw-policy-temp-');
+    vi.spyOn(os, 'tmpdir').mockReturnValue(tempDir);
+  }
+
   it('requires workspace paths to be explicitly allowlisted', () => {
+    useIsolatedDefaultTempDir();
     const dir = makeTempDir(process.cwd(), '.ejclaw-attachment-');
     const imagePath = writeFile(dir, 'workspace-shot.png', ONE_PIXEL_PNG);
 
@@ -223,6 +230,7 @@ describe('validateOutboundAttachments policy checks', () => {
   });
 
   it('rejects symlink attempts that escape the allowed directory', () => {
+    useIsolatedDefaultTempDir();
     const workspaceDir = makeTempDir(process.cwd(), '.ejclaw-attachment-');
     const targetPath = writeFile(
       workspaceDir,
@@ -242,6 +250,7 @@ describe('validateOutboundAttachments policy checks', () => {
   });
 
   it('rejects symlink attempts that escape a user-configured directory', () => {
+    useIsolatedDefaultTempDir();
     const allowedDir = makeTempDir(process.cwd(), '.ejclaw-user-images-');
     const secretDir = makeTempDir(process.cwd(), '.ejclaw-secret-images-');
     const targetPath = writeFile(secretDir, 'secret-shot.png', ONE_PIXEL_PNG);

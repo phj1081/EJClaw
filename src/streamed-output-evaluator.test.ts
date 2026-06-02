@@ -438,7 +438,9 @@ describe('evaluateStreamedOutput', () => {
       expect(result.state.sawSuccessNullResultWithoutOutput).toBe(false);
     });
   });
+});
 
+describe('evaluateStreamedOutput error handling', () => {
   describe('error → Claude rotation trigger', () => {
     it('returns rotation trigger with retryAfterMs', () => {
       vi.mocked(classifyRotationTrigger).mockReturnValue({

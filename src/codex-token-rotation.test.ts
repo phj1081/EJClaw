@@ -222,6 +222,22 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
     expect(accounts[0].isRateLimited).toBe(false);
     expect(accounts[1].isActive).toBe(true);
   });
+});
+
+describe('codex-token-rotation auth synchronization', () => {
+  let tempHome: string;
+
+  beforeEach(() => {
+    vi.resetModules();
+    tempHome = fs.mkdtempSync(path.join('/tmp', 'ejclaw-codex-rot-'));
+    process.env.CODEX_ROT_TEST_HOME = tempHome;
+    createFakeAccounts(tempHome, 4);
+  });
+
+  afterEach(() => {
+    delete process.env.CODEX_ROT_TEST_HOME;
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  });
 
   it('recovers a dead_auth account when canonical auth.json is refreshed before lease claim', async () => {
     vi.useFakeTimers();
