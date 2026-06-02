@@ -52,7 +52,8 @@ export function handleFailedReviewerExecution(args: {
     });
     if (
       signal.kind === 'request_owner_finalize' ||
-      signal.kind === 'complete'
+      signal.kind === 'complete' ||
+      signal.kind === 'request_owner_changes'
     ) {
       const ownerWs =
         signal.kind === 'request_owner_finalize'
@@ -68,7 +69,9 @@ export function handleFailedReviewerExecution(args: {
         nextStatus:
           signal.kind === 'request_owner_finalize'
             ? 'merge_ready'
-            : 'completed',
+            : signal.kind === 'request_owner_changes'
+              ? 'active'
+              : 'completed',
         expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
