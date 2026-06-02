@@ -28,13 +28,19 @@ export function resolvePairedFollowUpQueueAction(args: {
   sawOutput: boolean;
   taskStatus: PairedTaskStatus | null;
   outputSummary?: string | null;
+  ownerFailureCount?: number | null;
 }): PairedFollowUpQueueAction {
   if (
     args.executionStatus === 'failed' &&
     args.sawOutput === false &&
     isSilentCodexAccountFailure(args.outputSummary)
   ) {
-    return 'none';
+    if (args.completedRole === 'arbiter' && args.taskStatus === 'active') {
+      return 'pending';
+    }
+    if (args.completedRole !== 'owner') {
+      return 'none';
+    }
   }
 
   if (

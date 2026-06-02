@@ -137,6 +137,72 @@ function emitOutputMarker(
   proc.stdout.push(`${OUTPUT_START_MARKER}\n${json}\n${OUTPUT_END_MARKER}\n`);
 }
 
+function mockCodexLeaseEnvironment(releaseLease: () => void) {
+  return vi
+    .spyOn(agentRunnerEnvironment, 'prepareGroupEnvironment')
+    .mockReturnValueOnce({
+      env: {
+        EJCLAW_IPC_DIR: '/tmp/ejclaw-test-data/ipc/test-group',
+      },
+      groupDir: '/tmp/ejclaw-test-groups/test-group',
+      runnerDir: '/tmp/ejclaw-test-runners/codex-runner',
+      codexSessionAuth: {
+        canonicalAuthPath: '/tmp/codex-account/auth.json',
+        sessionAuthPath: '/tmp/codex-session/auth.json',
+        accountIndex: 0,
+        lease: {
+          accountIndex: 0,
+          authPath: '/tmp/codex-account/auth.json',
+          release: releaseLease,
+        },
+      },
+    });
+}
+
+async function expectCodexLeaseReleasedAfterFinalOutputFlush() {
+  const releaseLease = vi.fn();
+  const prepareGroupEnvironmentSpy = mockCodexLeaseEnvironment(releaseLease);
+  const onOutput = vi.fn(async () => {});
+  const codexGroup: RegisteredGroup = {
+    ...testGroup,
+    agentType: 'codex',
+  };
+  let resultPromise: Promise<AgentOutput> | undefined;
+
+  try {
+    resultPromise = runAgentProcess(
+      codexGroup,
+      {
+        ...testInput,
+        runId: 'run-codex-lease-final',
+      },
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'TASK_DONE\n작업 완료',
+      phase: 'final',
+      newSessionId: 'codex-session-lease-final',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: 'TASK_DONE\n작업 완료',
+        phase: 'final',
+      }),
+    );
+    expect(releaseLease).toHaveBeenCalledTimes(1);
+  } finally {
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise?.catch(() => undefined);
+    prepareGroupEnvironmentSpy.mockRestore();
+  }
+}
+
 describe('agent-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -157,23 +223,18 @@ describe('agent-runner timeout behavior', () => {
       onOutput,
     );
 
-    // Emit output with a result
     emitOutputMarker(fakeProc, {
       status: 'success',
       result: 'Here is my response',
       newSessionId: 'session-123',
     });
 
-    // Let output processing settle
     await vi.advanceTimersByTimeAsync(10);
 
-    // Fire the hard timeout (IDLE_TIMEOUT + 30s = 1830000ms)
     await vi.advanceTimersByTimeAsync(1830000);
 
-    // Emit close event (as if agent was stopped by the timeout)
     fakeProc.emit('close', 137);
 
-    // Let the promise resolve
     await vi.advanceTimersByTimeAsync(10);
 
     const result = await resultPromise;
@@ -193,10 +254,8 @@ describe('agent-runner timeout behavior', () => {
       onOutput,
     );
 
-    // No output emitted — fire the hard timeout
     await vi.advanceTimersByTimeAsync(1830000);
 
-    // Emit close event
     fakeProc.emit('close', 137);
 
     await vi.advanceTimersByTimeAsync(10);
@@ -216,7 +275,6 @@ describe('agent-runner timeout behavior', () => {
       onOutput,
     );
 
-    // Emit output
     emitOutputMarker(fakeProc, {
       status: 'success',
       result: 'Done',
@@ -225,7 +283,6 @@ describe('agent-runner timeout behavior', () => {
 
     await vi.advanceTimersByTimeAsync(10);
 
-    // Normal exit (no timeout)
     fakeProc.emit('close', 0);
 
     await vi.advanceTimersByTimeAsync(10);
@@ -236,65 +293,7 @@ describe('agent-runner timeout behavior', () => {
   });
 
   it('releases Codex auth lease after final streamed output flushes even before process close', async () => {
-    const releaseLease = vi.fn();
-    const prepareGroupEnvironmentSpy = vi
-      .spyOn(agentRunnerEnvironment, 'prepareGroupEnvironment')
-      .mockReturnValueOnce({
-        env: {
-          EJCLAW_IPC_DIR: '/tmp/ejclaw-test-data/ipc/test-group',
-        },
-        groupDir: '/tmp/ejclaw-test-groups/test-group',
-        runnerDir: '/tmp/ejclaw-test-runners/codex-runner',
-        codexSessionAuth: {
-          canonicalAuthPath: '/tmp/codex-account/auth.json',
-          sessionAuthPath: '/tmp/codex-session/auth.json',
-          accountIndex: 0,
-          lease: {
-            accountIndex: 0,
-            authPath: '/tmp/codex-account/auth.json',
-            release: releaseLease,
-          },
-        },
-      });
-    const onOutput = vi.fn(async () => {});
-    const codexGroup: RegisteredGroup = {
-      ...testGroup,
-      agentType: 'codex',
-    };
-    let resultPromise: Promise<AgentOutput> | undefined;
-
-    try {
-      resultPromise = runAgentProcess(
-        codexGroup,
-        {
-          ...testInput,
-          runId: 'run-codex-lease-final',
-        },
-        () => {},
-        onOutput,
-      );
-
-      emitOutputMarker(fakeProc, {
-        status: 'success',
-        result: 'TASK_DONE\n작업 완료',
-        phase: 'final',
-        newSessionId: 'codex-session-lease-final',
-      });
-      await vi.advanceTimersByTimeAsync(10);
-
-      expect(onOutput).toHaveBeenCalledWith(
-        expect.objectContaining({
-          result: 'TASK_DONE\n작업 완료',
-          phase: 'final',
-        }),
-      );
-      expect(releaseLease).toHaveBeenCalledTimes(1);
-    } finally {
-      fakeProc.emit('close', 0);
-      await vi.advanceTimersByTimeAsync(10);
-      await resultPromise?.catch(() => undefined);
-      prepareGroupEnvironmentSpy.mockRestore();
-    }
+    await expectCodexLeaseReleasedAfterFinalOutputFlush();
   });
 
   it('preserves streamed progress phase metadata', async () => {

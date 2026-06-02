@@ -623,6 +623,7 @@ class PairedExecutionLifecycleController implements PairedExecutionLifecycle {
       sawOutput: state.sawOutputForFollowUp,
       taskStatus: finishedTask?.status ?? null,
       outputSummary: this.pairedExecutionSummary,
+      ownerFailureCount: finishedTask?.owner_failure_count ?? null,
     });
   }
 

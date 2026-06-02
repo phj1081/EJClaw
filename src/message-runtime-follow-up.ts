@@ -21,6 +21,11 @@ export type PairedFollowUpSource = Parameters<
   typeof resolveFollowUpDispatch
 >[0]['source'];
 
+type PairedFollowUpTaskContext = Pick<
+  PairedTask,
+  'id' | 'status' | 'round_trip_count' | 'updated_at' | 'owner_failure_count'
+>;
+
 export interface PairedFollowUpDecision {
   taskId: string | null;
   taskStatus: PairedTaskStatus | null;
@@ -67,7 +72,10 @@ export function resolveLatestPairedTurnOutputContext(args: {
 }
 
 export function resolvePairedFollowUpDecision(args: {
-  task: Pick<PairedTask, 'id' | 'status'> | null | undefined;
+  task:
+    | Pick<PairedFollowUpTaskContext, 'id' | 'status' | 'owner_failure_count'>
+    | null
+    | undefined;
   source: PairedFollowUpSource;
   completedRole?: PairedRoomRole;
   executionStatus?: 'succeeded' | 'failed';
@@ -93,6 +101,7 @@ export function resolvePairedFollowUpDecision(args: {
         taskStatus: args.task?.status ?? null,
         lastTurnOutputRole,
         lastTurnOutputVerdict,
+        ownerFailureCount: args.task?.owner_failure_count ?? null,
       });
   const dispatch = resolveFollowUpDispatch({
     source: args.source,
@@ -115,10 +124,7 @@ export function resolvePairedFollowUpDecision(args: {
 export function schedulePairedFollowUpIntent(args: {
   chatJid: string;
   runId: string;
-  task:
-    | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
-    | null
-    | undefined;
+  task: PairedFollowUpTaskContext | null | undefined;
   intentKind: ScheduledPairedFollowUpIntentKind;
   enqueue: () => void;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
@@ -148,6 +154,7 @@ export function schedulePairedFollowUpIntent(args: {
       taskStatus: args.task.status,
       lastTurnOutputRole: latestOutputContext.role,
       lastTurnOutputVerdict: latestOutputContext.verdict,
+      ownerFailureCount: args.task.owner_failure_count ?? null,
       intentKind: args.intentKind,
     }) &&
     !(
@@ -171,10 +178,7 @@ export function schedulePairedFollowUpIntent(args: {
 export function schedulePairedFollowUpWithMessageCheck(args: {
   chatJid: string;
   runId: string;
-  task:
-    | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
-    | null
-    | undefined;
+  task: PairedFollowUpTaskContext | null | undefined;
   intentKind: ScheduledPairedFollowUpIntentKind;
   enqueueMessageCheck: () => void;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
@@ -198,10 +202,7 @@ export function schedulePairedFollowUpWithMessageCheck(args: {
 export function dispatchPairedFollowUpForEvent(args: {
   chatJid: string;
   runId: string;
-  task:
-    | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
-    | null
-    | undefined;
+  task: PairedFollowUpTaskContext | null | undefined;
   source: PairedFollowUpSource;
   completedRole?: PairedRoomRole;
   executionStatus?: 'succeeded' | 'failed';
@@ -270,10 +271,7 @@ export function dispatchPairedFollowUpForEvent(args: {
 export function enqueuePairedFollowUpAfterEvent(args: {
   chatJid: string;
   runId: string;
-  task:
-    | Pick<PairedTask, 'id' | 'status' | 'round_trip_count' | 'updated_at'>
-    | null
-    | undefined;
+  task: PairedFollowUpTaskContext | null | undefined;
   source: PairedFollowUpSource;
   completedRole?: PairedRoomRole;
   executionStatus?: 'succeeded' | 'failed';

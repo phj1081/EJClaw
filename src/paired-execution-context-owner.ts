@@ -31,32 +31,80 @@ export function handleFailedOwnerExecution(args: {
 }): void {
   const { task, taskId, summary } = args;
   const now = new Date().toISOString();
+  const nextFailureCount = (task.owner_failure_count ?? 0) + 1;
   if (isTerminalCodexAccountFailure(summary)) {
+    if (nextFailureCount >= OWNER_FAILURE_ESCALATION_THRESHOLD) {
+      requestArbiterOrEscalate({
+        taskId,
+        currentStatus: task.status,
+        expectedUpdatedAt: task.updated_at,
+        now,
+        arbiterLogMessage:
+          'Owner Codex unavailable repeatedly — requesting arbiter',
+        escalateLogMessage:
+          'Owner Codex unavailable repeatedly — escalating to user',
+        logContext: {
+          taskId,
+          role: 'owner',
+          previousStatus: task.status,
+          ownerFailureCount: nextFailureCount,
+          summary: summary?.slice(0, 160),
+        },
+        patch: {
+          owner_failure_count: nextFailureCount,
+          arbiter_verdict: null,
+          completion_reason: null,
+        },
+      });
+      return;
+    }
+
+    const patch = {
+      owner_failure_count: nextFailureCount,
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+    };
+    if (task.status === 'active' || task.status === 'merge_ready') {
+      applyPairedTaskPatch({
+        taskId,
+        expectedUpdatedAt: task.updated_at,
+        updatedAt: now,
+        patch,
+      });
+      logger.warn(
+        {
+          taskId,
+          role: 'owner',
+          status: task.status,
+          ownerFailureCount: nextFailureCount,
+          summary: summary?.slice(0, 200),
+        },
+        'Preserved owner task after terminal Codex account failure',
+      );
+      return;
+    }
+
     transitionPairedTaskStatus({
       taskId,
       currentStatus: task.status,
-      nextStatus: 'completed',
+      nextStatus: 'active',
       expectedUpdatedAt: task.updated_at,
       updatedAt: now,
-      patch: {
-        arbiter_verdict: 'escalate',
-        arbiter_requested_at: null,
-        completion_reason: 'owner_codex_unavailable',
-      },
+      patch,
     });
     logger.warn(
       {
         taskId,
         role: 'owner',
         status: task.status,
+        ownerFailureCount: nextFailureCount,
         summary: summary?.slice(0, 200),
       },
-      'Completed owner task after terminal Codex account failure instead of retrying owner loop',
+      'Reset owner task to active after terminal Codex account failure',
     );
     return;
   }
-
-  const nextFailureCount = (task.owner_failure_count ?? 0) + 1;
 
   if (nextFailureCount >= OWNER_FAILURE_ESCALATION_THRESHOLD) {
     requestArbiterOrEscalate({
