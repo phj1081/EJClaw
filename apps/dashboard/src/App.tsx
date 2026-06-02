@@ -204,7 +204,7 @@ function buildRoomOptions(snapshots: StatusSnapshot[]): RoomOption[] {
       }
     }
   }
-  return [...rooms.values()].sort((a, b) =>
+  return Array.from(rooms.values()).sort((a, b) =>
     `${a.name} ${a.folder}`.localeCompare(`${b.name} ${b.folder}`),
   );
 }
@@ -247,7 +247,7 @@ function DashboardErrorCard({
         <strong>{t.error.api}</strong>
         <small>{humanizeError(error, t)}</small>
       </span>
-      <button disabled={refreshing} onClick={onRetry}>
+      <button disabled={refreshing} onClick={onRetry} type="button">
         {t.actions.retry}
       </button>
     </section>

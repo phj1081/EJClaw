@@ -300,7 +300,7 @@ export function RoomBoardV2({
   const filtered = allEntries.filter(
     (entry) => filter === 'all' || entry.status === filter,
   );
-  const sorted = [...filtered].sort((a, b) => {
+  const sorted = Array.from(filtered).sort((a, b) => {
     if (sort === 'name') return a.name.localeCompare(b.name);
     if (sort === 'queue') {
       const aQ = a.pendingTasks + (a.pendingMessages ? 1 : 0);
@@ -321,9 +321,10 @@ export function RoomBoardV2({
     const nextJid = selectedEntry?.jid ?? null;
     if (nextJid !== selectedJid) {
       onSelectedJidChange(nextJid);
-      setMobileDetailOpen(false);
     }
   }, [onSelectedJidChange, selectedEntry?.jid, selectedJid]);
+
+  const detailOpen = mobileDetailOpen && selectedEntry?.jid === selectedJid;
 
   if (allEntries.length === 0) {
     return <EmptyState>{t.rooms.empty}</EmptyState>;
@@ -359,9 +360,7 @@ export function RoomBoardV2({
       {sorted.length === 0 ? (
         <EmptyState>{t.rooms.empty}</EmptyState>
       ) : (
-        <div
-          className={`rooms-twopane${mobileDetailOpen ? ' is-detail-open' : ''}`}
-        >
+        <div className={`rooms-twopane${detailOpen ? ' is-detail-open' : ''}`}>
           <RoomsList
             entries={sorted}
             inbox={inbox}

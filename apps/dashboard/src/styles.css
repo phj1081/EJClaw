@@ -2227,6 +2227,19 @@ dd,
 .usage-matrix {
   display: grid;
   overflow: hidden;
+  border-spacing: 0;
+}
+
+.usage-matrix thead,
+.usage-matrix tbody {
+  display: grid;
+}
+
+.usage-matrix th,
+.usage-matrix td {
+  padding: 0;
+  border: 0;
+  text-align: inherit;
 }
 
 .usage-matrix-head,
@@ -2258,13 +2271,20 @@ dd,
 }
 
 .usage-group-label {
-  padding: 7px 10px;
   color: var(--accent-strong);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   background: rgba(191, 95, 44, 0.07);
+}
+
+.usage-group-label th {
+  padding: 7px 10px;
+  color: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
 }
 
 .usage-row {

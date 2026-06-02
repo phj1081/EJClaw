@@ -169,6 +169,41 @@ function mergeAdjacentBotChunks(entries: RoomThreadEntry[]): RoomThreadEntry[] {
   return merged;
 }
 
+function collectOutputEntries(outputs: RoomOutput[]): RoomThreadEntry[] {
+  const entries: RoomThreadEntry[] = [];
+  for (const output of outputs) {
+    const entry = toOutputEntry(output);
+    if (entry) entries.push(entry);
+  }
+  return entries;
+}
+
+function collectChatEntries(
+  messages: RoomMessage[],
+  outputEntries: RoomThreadEntry[],
+): RoomThreadEntry[] {
+  const entries: RoomThreadEntry[] = [];
+  for (const message of messages) {
+    if (!isThreadChatMessage(message)) continue;
+    const entry = toMessageEntry(message);
+    if (!isDuplicateOutputMessage(entry, outputEntries)) entries.push(entry);
+  }
+  return entries;
+}
+
+function collectOptimisticPending(
+  pendingMessages: RoomMessage[],
+  confirmedSet: Set<string>,
+): RoomThreadEntry[] {
+  const entries: RoomThreadEntry[] = [];
+  for (const message of pendingMessages) {
+    if (confirmedSet.has(messageKey(message))) continue;
+    if (isInternalProtocolPayload(message.content)) continue;
+    entries.push(toMessageEntry(message));
+  }
+  return entries;
+}
+
 export function buildRoomThreadEntries({
   messages,
   outputs,
@@ -179,20 +214,14 @@ export function buildRoomThreadEntries({
   pendingMessages?: RoomMessage[];
 }): RoomThreadEntry[] {
   const confirmedSet = new Set(messages.map(messageKey));
-  const outputEntries = outputs
-    .map(toOutputEntry)
-    .filter((entry): entry is RoomThreadEntry => Boolean(entry));
-  const chatEntries = messages
-    .filter(isThreadChatMessage)
-    .map(toMessageEntry)
-    .filter((entry) => !isDuplicateOutputMessage(entry, outputEntries));
-  const optimisticPending = pendingMessages
-    .filter((message) => !confirmedSet.has(messageKey(message)))
-    .filter((message) => !isInternalProtocolPayload(message.content))
-    .map(toMessageEntry);
-
-  const entries = [...chatEntries, ...optimisticPending, ...outputEntries].sort(
-    (a, b) => a.timestamp.localeCompare(b.timestamp),
+  const outputEntries = collectOutputEntries(outputs);
+  const chatEntries = collectChatEntries(messages, outputEntries);
+  const optimisticPending = collectOptimisticPending(
+    pendingMessages,
+    confirmedSet,
   );
+  const entries = chatEntries
+    .concat(optimisticPending, outputEntries)
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
   return mergeAdjacentBotChunks(entries);
 }

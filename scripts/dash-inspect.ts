@@ -80,9 +80,7 @@ async function measure(page: Page, sel: string) {
 }
 
 async function evalExpr(page: Page, expr: string) {
-  const result = await page.evaluate((e) => {
-    return eval(e);
-  }, expr);
+  const result = await page.evaluate(expr);
   console.log(JSON.stringify(result, null, 2));
 }
 
