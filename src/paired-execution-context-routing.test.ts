@@ -251,7 +251,7 @@ describe('paired execution routing loop guards', () => {
     );
   });
 
-  it('completes owner task after terminal Codex account failure instead of retrying owner forever', () => {
+  it('preserves owner task after terminal Codex account failure instead of completing silently', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({
         status: 'active',
@@ -270,10 +270,10 @@ describe('paired execution routing loop guards', () => {
     expect(db.updatePairedTask).toHaveBeenCalledWith(
       'task-1',
       expect.objectContaining({
-        status: 'completed',
-        arbiter_verdict: 'escalate',
+        owner_failure_count: 1,
+        arbiter_verdict: null,
         arbiter_requested_at: null,
-        completion_reason: 'owner_codex_unavailable',
+        completion_reason: null,
       }),
     );
   });
