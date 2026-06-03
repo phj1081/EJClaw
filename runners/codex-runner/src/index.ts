@@ -1,7 +1,10 @@
 /**
  * EJClaw Codex Runner
  *
- * App-server only runtime.
+ * App-server by default, with optional CODEX_RUNTIME=sdk lane.
+ * SDK mode uses @openai/codex-sdk / codex exec JSON events and leaves
+ * mid-turn IPC follow-ups queued for the next run because SDK steering is
+ * not currently available.
  *
  * Input protocol:
  *   Stdin: Full RunnerInput JSON (read until EOF)
@@ -27,6 +30,8 @@ import {
 
 import { CodexAppServerClient } from './app-server-client.js';
 import { parseAppServerInput } from './app-server-input.js';
+import { CodexSdkClient } from './codex-sdk-client.js';
+import { resolveCodexRuntimeMode } from './runtime-mode.js';
 import {
   prependRoomRoleHeader,
   type RoomRoleContext,
@@ -102,6 +107,15 @@ function normalizeStructuredOutput(result: string | null): {
 
 function log(message: string): void {
   console.error(`[codex-runner] ${message}`);
+}
+
+function toStringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => {
+      const [, value] = entry;
+      return typeof value === 'string';
+    }),
+  );
 }
 
 function isCodexGoalsEnabled(runnerInput: RunnerInput): boolean {
@@ -283,6 +297,117 @@ async function executeAppServerTurn(
   }
 }
 
+function countQueuedIpcInputFiles(): number {
+  try {
+    fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
+    return fs
+      .readdirSync(IPC_INPUT_DIR)
+      .filter((file) => file.endsWith('.json')).length;
+  } catch (err) {
+    log(
+      `IPC queued input count error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 0;
+  }
+}
+
+async function executeSdkTurn(
+  client: CodexSdkClient,
+  threadHandle: string,
+  prompt: string,
+  retryCount = 0,
+): Promise<{
+  result: string | null;
+  error?: string;
+  threadId: string;
+}> {
+  let lastProgressMessage: string | null = null;
+  const activeTurn = await client.startTurn(
+    threadHandle,
+    parseAppServerInput(prompt, log),
+    {
+      cwd: EFFECTIVE_CWD,
+      model: CODEX_MODEL || undefined,
+      effort: CODEX_EFFORT || undefined,
+      onProgress: (message) => {
+        const trimmed = message.trim();
+        if (!trimmed || trimmed === lastProgressMessage) {
+          return;
+        }
+        lastProgressMessage = trimmed;
+        writeOutput({
+          status: 'success',
+          phase: 'progress',
+          ...normalizeStructuredOutput(trimmed),
+          newSessionId: threadHandle,
+        });
+      },
+    },
+  );
+
+  let elapsedMs = 0;
+  let polling = true;
+  let lastQueuedInputCount = 0;
+  const pollDuringTurn = async () => {
+    if (!polling) return;
+
+    if (consumeCloseSentinel()) {
+      log('Close sentinel detected during SDK turn, interrupting');
+      polling = false;
+      try {
+        await activeTurn.interrupt();
+      } catch (err) {
+        log(
+          `Failed to interrupt active SDK turn: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+      return;
+    }
+
+    const queuedInputCount = countQueuedIpcInputFiles();
+    if (queuedInputCount > 0 && queuedInputCount !== lastQueuedInputCount) {
+      lastQueuedInputCount = queuedInputCount;
+      log(
+        `SDK runtime cannot steer active turns; leaving ${queuedInputCount} queued input file(s) for the next run`,
+      );
+    }
+
+    elapsedMs += IPC_POLL_MS;
+    if (elapsedMs > 0 && elapsedMs % 60000 === 0) {
+      log(`SDK turn in progress... (${formatProgressElapsed(elapsedMs)})`);
+    }
+    setTimeout(() => void pollDuringTurn(), IPC_POLL_MS);
+  };
+
+  setTimeout(() => void pollDuringTurn(), IPC_POLL_MS);
+
+  try {
+    const { state, result, threadId } = await activeTurn.wait();
+    const finalThreadId = threadId ?? threadHandle;
+    if (state.status === 'completed') {
+      return { result, threadId: finalThreadId };
+    }
+    if (state.status === 'interrupted' && consumeCloseSentinel()) {
+      return { result, threadId: finalThreadId };
+    }
+    if (state.status === 'interrupted' && retryCount < 1) {
+      log('Codex SDK turn interrupted, retrying once...');
+      return executeSdkTurn(client, finalThreadId, prompt, retryCount + 1);
+    }
+    return {
+      result,
+      error:
+        state.errorMessage ||
+        `Codex SDK turn finished with status ${state.status}`,
+      threadId: finalThreadId,
+    };
+  } finally {
+    polling = false;
+  }
+}
+
 async function runAppServerCompact(
   client: CodexAppServerClient,
   threadId: string | undefined,
@@ -405,6 +530,64 @@ async function runAppServerSession(
   }
 }
 
+async function runSdkSession(
+  runnerInput: RunnerInput,
+  prompt: string,
+): Promise<void> {
+  const reviewerRuntime =
+    isReviewerRuntimeEnvEnabled(process.env) ||
+    isReviewerRuntime(runnerInput.roomRoleContext);
+  const readonlyRuntime =
+    reviewerRuntime || isArbiterRuntimeEnvEnabled(process.env);
+  const clientEnv = buildReviewerGitGuardEnv(process.env, reviewerRuntime);
+  assertReadonlyWorkspaceRepoConnectivity(clientEnv, readonlyRuntime);
+  const client = new CodexSdkClient({
+    env: toStringEnv(clientEnv),
+    log,
+  });
+
+  const threadHandle = await client.startOrResumeThread(runnerInput.sessionId, {
+    cwd: EFFECTIVE_CWD,
+    model: CODEX_MODEL || undefined,
+    effort: CODEX_EFFORT || undefined,
+  });
+  log(
+    runnerInput.sessionId
+      ? `SDK thread resumed (${threadHandle})`
+      : `SDK thread started (${threadHandle})`,
+  );
+
+  log('Starting SDK turn...');
+  const { result, error, threadId } = await executeSdkTurn(
+    client,
+    threadHandle,
+    prompt,
+  );
+
+  if (error) {
+    const normalized = normalizeStructuredOutput(result || null);
+    log(`SDK turn error: ${error}`);
+    writeOutput({
+      status: 'error',
+      ...normalized,
+      newSessionId: threadId,
+      error,
+    });
+  } else {
+    const normalized = normalizeStructuredOutput(result || null);
+    writeOutput({
+      status: 'success',
+      ...normalized,
+      ...(result ? { phase: 'final' as const } : {}),
+      newSessionId: threadId,
+    });
+  }
+
+  if (consumeCloseSentinel()) {
+    log('Close sentinel detected, exiting SDK runtime');
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -455,8 +638,20 @@ async function main(): Promise<void> {
   }
 
   try {
-    log('Runtime selected: app-server');
-    await runAppServerSession(runnerInput, prompt);
+    const runtimeMode = resolveCodexRuntimeMode(
+      process.env,
+      {
+        codexGoals: isCodexGoalsEnabled(runnerInput),
+        roomRole: runnerInput.roomRoleContext?.role,
+      },
+      rawPrompt,
+    );
+    log(`Runtime selected: ${runtimeMode.mode} (${runtimeMode.reason})`);
+    if (runtimeMode.mode === 'sdk') {
+      await runSdkSession(runnerInput, prompt);
+    } else {
+      await runAppServerSession(runnerInput, prompt);
+    }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     log(`Runner error: ${errorMessage}`);
