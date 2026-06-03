@@ -91,6 +91,56 @@ interface TaskEditFormProps {
   t: Messages;
 }
 
+const TASK_TIME_FORMATTERS: Record<Locale, Intl.DateTimeFormat> = {
+  en: new Intl.DateTimeFormat(localeTags.en, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }),
+  ja: new Intl.DateTimeFormat(localeTags.ja, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }),
+  ko: new Intl.DateTimeFormat(localeTags.ko, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }),
+  zh: new Intl.DateTimeFormat(localeTags.zh, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }),
+};
+
+const EN_TASK_DATE_TIME_FORMATTER = new Intl.DateTimeFormat(localeTags.en, {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+const RELATIVE_TIME_FORMATTERS: Record<Locale, Intl.RelativeTimeFormat> = {
+  en: new Intl.RelativeTimeFormat(localeTags.en, {
+    numeric: 'auto',
+    style: 'short',
+  }),
+  ja: new Intl.RelativeTimeFormat(localeTags.ja, {
+    numeric: 'auto',
+    style: 'short',
+  }),
+  ko: new Intl.RelativeTimeFormat(localeTags.ko, {
+    numeric: 'auto',
+    style: 'short',
+  }),
+  zh: new Intl.RelativeTimeFormat(localeTags.zh, {
+    numeric: 'auto',
+    style: 'short',
+  }),
+};
+
 function formatTaskDate(
   value: string | null | undefined,
   locale: Locale,
@@ -98,22 +148,12 @@ function formatTaskDate(
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  const time = new Intl.DateTimeFormat(localeTags[locale], {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
+  const time = TASK_TIME_FORMATTERS[locale].format(date);
   if (locale === 'ko')
     return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
   if (locale === 'ja' || locale === 'zh')
     return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
-  return new Intl.DateTimeFormat(localeTags[locale], {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
+  return EN_TASK_DATE_TIME_FORMATTER.format(date);
 }
 
 function formatRelativeDate(
@@ -135,10 +175,10 @@ function formatRelativeDate(
   ];
   const [unit, unitMs] =
     units.find(([, threshold]) => absMs >= threshold) ?? units.at(-1)!;
-  return new Intl.RelativeTimeFormat(localeTags[locale], {
-    numeric: 'auto',
-    style: 'short',
-  }).format(Math.round(diffMs / unitMs), unit);
+  return RELATIVE_TIME_FORMATTERS[locale].format(
+    Math.round(diffMs / unitMs),
+    unit,
+  );
 }
 
 function safePreview(

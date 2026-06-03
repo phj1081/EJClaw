@@ -1,6 +1,34 @@
 import type { DashboardTask, DashboardTaskAction } from './api';
 import { localeTags, type Locale, type Messages } from './i18n';
 
+const SHORT_TIME_FORMAT_OPTIONS = {
+  hour: '2-digit',
+  hour12: false,
+  minute: '2-digit',
+} as const;
+
+const MONTH_DAY_TIME_FORMAT_OPTIONS = {
+  day: 'numeric',
+  hour: '2-digit',
+  hour12: false,
+  minute: '2-digit',
+  month: 'short',
+} as const;
+
+const SHORT_TIME_FORMATTERS: Record<Locale, Intl.DateTimeFormat> = {
+  en: new Intl.DateTimeFormat(localeTags.en, SHORT_TIME_FORMAT_OPTIONS),
+  ja: new Intl.DateTimeFormat(localeTags.ja, SHORT_TIME_FORMAT_OPTIONS),
+  ko: new Intl.DateTimeFormat(localeTags.ko, SHORT_TIME_FORMAT_OPTIONS),
+  zh: new Intl.DateTimeFormat(localeTags.zh, SHORT_TIME_FORMAT_OPTIONS),
+};
+
+const MONTH_DAY_TIME_FORMATTERS: Record<Locale, Intl.DateTimeFormat> = {
+  en: new Intl.DateTimeFormat(localeTags.en, MONTH_DAY_TIME_FORMAT_OPTIONS),
+  ja: new Intl.DateTimeFormat(localeTags.ja, MONTH_DAY_TIME_FORMAT_OPTIONS),
+  ko: new Intl.DateTimeFormat(localeTags.ko, MONTH_DAY_TIME_FORMAT_OPTIONS),
+  zh: new Intl.DateTimeFormat(localeTags.zh, MONTH_DAY_TIME_FORMAT_OPTIONS),
+};
+
 export function formatDate(
   value: string | null | undefined,
   locale: Locale,
@@ -31,30 +59,16 @@ export function formatDate(
   }
   const sameDay = new Date().toDateString() === date.toDateString();
   if (sameDay) {
-    return new Intl.DateTimeFormat(localeTags[locale], {
-      hour: '2-digit',
-      hour12: false,
-      minute: '2-digit',
-    }).format(date);
+    return SHORT_TIME_FORMATTERS[locale].format(date);
   }
-  const time = new Intl.DateTimeFormat(localeTags[locale], {
-    hour: '2-digit',
-    hour12: false,
-    minute: '2-digit',
-  }).format(date);
+  const time = SHORT_TIME_FORMATTERS[locale].format(date);
   if (locale === 'ko')
     return `${date.getMonth() + 1}월 ${date.getDate()}일 ${time}`;
   if (locale === 'ja')
     return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
   if (locale === 'zh')
     return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
-  return new Intl.DateTimeFormat(localeTags[locale], {
-    day: 'numeric',
-    hour: '2-digit',
-    hour12: false,
-    minute: '2-digit',
-    month: 'short',
-  }).format(date);
+  return MONTH_DAY_TIME_FORMATTERS[locale].format(date);
 }
 
 export function taskActionsFor(task: DashboardTask): DashboardTaskAction[] {

@@ -33,7 +33,6 @@ export function useSelectedRoomActivity({
 
   useEffect(() => {
     if (!active || !selectedRoomJid) {
-      setRoomActivityLoading(false);
       return undefined;
     }
 
@@ -64,5 +63,10 @@ export function useSelectedRoomActivity({
     };
   }, [active, pollMs, refreshRoom, selectedRoomJid]);
 
-  return { refreshRoom, roomActivity, roomActivityLoading };
+  return {
+    refreshRoom,
+    roomActivity,
+    roomActivityLoading:
+      active && selectedRoomJid !== null ? roomActivityLoading : false,
+  };
 }

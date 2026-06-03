@@ -254,7 +254,7 @@ function normalizeStructuredVisibleContent(value: string): {
 function collectUsageRows(snapshots: StatusSnapshot[]): UsageRowSnapshot[] {
   const rows: UsageRowSnapshot[] = [];
   const seen = new Set<string>();
-  const sortedSnapshots = [...snapshots].sort((a, b) =>
+  const sortedSnapshots = Array.from(snapshots).sort((a, b) =>
     (b.usageRowsFetchedAt ?? b.updatedAt).localeCompare(
       a.usageRowsFetchedAt ?? a.updatedAt,
     ),
@@ -343,7 +343,7 @@ function collectInboxItems(args: {
     });
   }
 
-  return [...groupedItems.values()]
+  return Array.from(groupedItems.values())
     .sort((a, b) => {
       const severityDelta = severityRank[a.severity] - severityRank[b.severity];
       if (severityDelta !== 0) return severityDelta;
@@ -567,6 +567,91 @@ function sanitizeRoomTurnOutput(
   };
 }
 
+function getCurrentRoomTurn(
+  turns: PairedTurnRecord[],
+): PairedTurnRecord | null {
+  let currentTurn: PairedTurnRecord | null = null;
+  let currentTimestamp = '';
+  for (const turn of turns) {
+    const timestamp = getRoomTurnActivityTimestamp(turn);
+    if (!currentTurn || timestamp.localeCompare(currentTimestamp) > 0) {
+      currentTurn = turn;
+      currentTimestamp = timestamp;
+    }
+  }
+  return currentTurn;
+}
+
+function collectSanitizedRecentMessages(
+  messages: NewMessage[],
+): WebDashboardRoomMessage[] {
+  const sanitizedMessages: WebDashboardRoomMessage[] = [];
+  for (const message of messages) {
+    if (isTaskStatusMessage(message)) continue;
+    const sanitized = sanitizeRoomMessage(message);
+    if (sanitized) sanitizedMessages.push(sanitized);
+  }
+  return sanitizedMessages;
+}
+
+function collectCanonicalOutboundMessages(
+  outboundItems: WorkItem[] | undefined,
+  sanitizedRecentMessages: WebDashboardRoomMessage[],
+): WebDashboardRoomMessage[] {
+  const messages: WebDashboardRoomMessage[] = [];
+  for (const item of outboundItems ?? []) {
+    const message = sanitizeCanonicalOutboundMessage(item);
+    if (!message) continue;
+    if (
+      item.delivery_message_id ||
+      hasDiscordEchoForCanonicalOutbound(message, sanitizedRecentMessages)
+    ) {
+      messages.push(message);
+    }
+  }
+  return messages;
+}
+
+function collectCanonicalDeliveryMessageIds(
+  outboundItems: WorkItem[] | undefined,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const item of outboundItems ?? []) {
+    if (item.delivery_message_id) ids.add(item.delivery_message_id);
+  }
+  return ids;
+}
+
+function collectRecentMessages(args: {
+  canonicalDeliveryMessageIds: Set<string>;
+  canonicalOutboundMessages: WebDashboardRoomMessage[];
+  sanitizedRecentMessages: WebDashboardRoomMessage[];
+}): WebDashboardRoomMessage[] {
+  const messages: WebDashboardRoomMessage[] = [];
+  for (const message of args.sanitizedRecentMessages) {
+    if (args.canonicalDeliveryMessageIds.has(message.id)) continue;
+    if (
+      isDuplicateOfCanonicalOutbound(message, args.canonicalOutboundMessages)
+    ) {
+      continue;
+    }
+    messages.push(message);
+  }
+  return messages;
+}
+
+function collectRecentOutputs(
+  outputs: PairedTurnOutput[],
+  outputLimit: number,
+): WebDashboardRoomTurnOutput[] {
+  const recentOutputs: WebDashboardRoomTurnOutput[] = [];
+  for (const output of outputs.slice(-outputLimit)) {
+    const sanitized = sanitizeRoomTurnOutput(output);
+    if (sanitized) recentOutputs.push(sanitized);
+  }
+  return recentOutputs;
+}
+
 export function buildWebDashboardRoomActivity(args: {
   serviceId: string;
   entry: StatusSnapshot['entries'][number];
@@ -585,50 +670,24 @@ export function buildWebDashboardRoomActivity(args: {
       latestAttemptByTurnId.set(attempt.turn_id, attempt);
     }
   }
-  const currentTurn =
-    [...args.turns].sort((a, b) =>
-      getRoomTurnActivityTimestamp(b).localeCompare(
-        getRoomTurnActivityTimestamp(a),
-      ),
-    )[0] ?? null;
+  const currentTurn = getCurrentRoomTurn(args.turns);
   const currentAttempt = currentTurn
     ? (latestAttemptByTurnId.get(currentTurn.turn_id) ?? null)
     : null;
   const outputLimit = args.outputLimit ?? 4;
-  const sanitizedRecentMessages = args.messages
-    .filter((message) => !isTaskStatusMessage(message))
-    .map(sanitizeRoomMessage)
-    .filter((message): message is WebDashboardRoomMessage => Boolean(message));
-  const canonicalOutboundMessages = (args.outboundItems ?? [])
-    .map((item) => ({
-      item,
-      message: sanitizeCanonicalOutboundMessage(item),
-    }))
-    .filter(
-      (
-        candidate,
-      ): candidate is {
-        item: WorkItem;
-        message: WebDashboardRoomMessage;
-      } => Boolean(candidate.message),
-    )
-    .filter(
-      ({ item, message }) =>
-        Boolean(item.delivery_message_id) ||
-        hasDiscordEchoForCanonicalOutbound(message, sanitizedRecentMessages),
-    )
-    .map(({ message }) => message);
-  const canonicalDeliveryMessageIds = new Set(
-    (args.outboundItems ?? [])
-      .map((item) => item.delivery_message_id)
-      .filter((id): id is string => Boolean(id)),
+  const sanitizedRecentMessages = collectSanitizedRecentMessages(args.messages);
+  const canonicalOutboundMessages = collectCanonicalOutboundMessages(
+    args.outboundItems,
+    sanitizedRecentMessages,
   );
-  const recentMessages = sanitizedRecentMessages
-    .filter((message) => !canonicalDeliveryMessageIds.has(message.id))
-    .filter(
-      (message) =>
-        !isDuplicateOfCanonicalOutbound(message, canonicalOutboundMessages),
-    );
+  const canonicalDeliveryMessageIds = collectCanonicalDeliveryMessageIds(
+    args.outboundItems,
+  );
+  const recentMessages = collectRecentMessages({
+    canonicalDeliveryMessageIds,
+    canonicalOutboundMessages,
+    sanitizedRecentMessages,
+  });
   const shouldExposeExecutionOutputs = args.outboundItems === undefined;
 
   return {
@@ -641,9 +700,9 @@ export function buildWebDashboardRoomActivity(args: {
     elapsedMs: args.entry.elapsedMs,
     pendingMessages: args.entry.pendingMessages,
     pendingTasks: args.entry.pendingTasks,
-    messages: [...recentMessages, ...canonicalOutboundMessages].sort(
-      compareRoomMessagesByTimestamp,
-    ),
+    messages: recentMessages
+      .concat(canonicalOutboundMessages)
+      .sort(compareRoomMessagesByTimestamp),
     pairedTask: args.pairedTask
       ? {
           id: args.pairedTask.id,
@@ -655,12 +714,7 @@ export function buildWebDashboardRoomActivity(args: {
             ? sanitizeRoomTurn(currentTurn, currentAttempt)
             : null,
           outputs: shouldExposeExecutionOutputs
-            ? args.outputs
-                .slice(-outputLimit)
-                .map(sanitizeRoomTurnOutput)
-                .filter((output): output is WebDashboardRoomTurnOutput =>
-                  Boolean(output),
-                )
+            ? collectRecentOutputs(args.outputs, outputLimit)
             : [],
         }
       : null,

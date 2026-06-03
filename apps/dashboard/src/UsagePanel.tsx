@@ -141,7 +141,7 @@ function UsageSpeed({ row, t }: { row: UsageRow; t: Messages }) {
 export function UsagePanel({ overview, t }: UsagePanelProps) {
   const rows = useMemo(
     () =>
-      [...overview.usage.rows].sort((a, b) => {
+      Array.from(overview.usage.rows).sort((a, b) => {
         if (usageActive(a) !== usageActive(b)) return usageActive(a) ? -1 : 1;
         return usagePeak(b) - usagePeak(a);
       }),
@@ -194,24 +194,28 @@ export function UsagePanel({ overview, t }: UsagePanelProps) {
         </div>
       </div>
 
-      <div className="usage-matrix" role="table" aria-label={t.panels.usage}>
-        <div className="usage-matrix-head" role="row">
-          <span>{t.usage.usage}</span>
-          <span>{t.usage.quota.h5}</span>
-          <span>{t.usage.quota.d7}</span>
-          <span>{t.usage.speed}</span>
-        </div>
+      <table className="usage-matrix" aria-label={t.panels.usage}>
+        <thead>
+          <tr className="usage-matrix-head">
+            <th scope="col">{t.usage.usage}</th>
+            <th scope="col">{t.usage.quota.h5}</th>
+            <th scope="col">{t.usage.quota.d7}</th>
+            <th scope="col">{t.usage.speed}</th>
+          </tr>
+        </thead>
         {groups.map((group) => (
-          <div className="usage-group" key={group.key} role="rowgroup">
-            <div className="usage-group-label" role="row">
-              <span>{group.label}</span>
-            </div>
+          <tbody className="usage-group" key={group.key}>
+            <tr className="usage-group-label">
+              <th colSpan={4} scope="colgroup">
+                {group.label}
+              </th>
+            </tr>
             {group.rows.map((row) => {
               const risk = usageRiskLevel(row);
               const { account, plan } = usageNameParts(row);
               return (
-                <section className={`usage-row usage-${risk}`} key={row.name}>
-                  <div className="usage-account">
+                <tr className={`usage-row usage-${risk}`} key={row.name}>
+                  <th className="usage-account" scope="row">
                     <strong>{account}</strong>
                     <div>
                       {usageActive(row) ? (
@@ -224,26 +228,32 @@ export function UsagePanel({ overview, t }: UsagePanelProps) {
                         </span>
                       ) : null}
                     </div>
-                  </div>
-                  <UsageQuotaMeter
-                    row={row}
-                    rowName={account}
-                    window="h5"
-                    t={t}
-                  />
-                  <UsageQuotaMeter
-                    row={row}
-                    rowName={account}
-                    window="d7"
-                    t={t}
-                  />
-                  <UsageSpeed row={row} t={t} />
-                </section>
+                  </th>
+                  <td>
+                    <UsageQuotaMeter
+                      row={row}
+                      rowName={account}
+                      window="h5"
+                      t={t}
+                    />
+                  </td>
+                  <td>
+                    <UsageQuotaMeter
+                      row={row}
+                      rowName={account}
+                      window="d7"
+                      t={t}
+                    />
+                  </td>
+                  <td>
+                    <UsageSpeed row={row} t={t} />
+                  </td>
+                </tr>
               );
             })}
-          </div>
+          </tbody>
         ))}
-      </div>
+      </table>
     </div>
   );
 }
