@@ -37,6 +37,7 @@ export interface GroupState {
   pendingTasks: QueuedTask[];
   process: ChildProcess | null;
   processName: string | null;
+  drainFollowUpsAfterRun: boolean;
   ipcDir: string | null;
   retryCount: number;
   retryTimer: ReturnType<typeof setTimeout> | null;
@@ -60,6 +61,7 @@ export function createGroupState(): GroupState {
     pendingTasks: [],
     process: null,
     processName: null,
+    drainFollowUpsAfterRun: false,
     ipcDir: null,
     retryCount: 0,
     retryTimer: null,
@@ -145,6 +147,7 @@ export function resetRunState(state: GroupState, groupJid: string): void {
   state.startedAt = null;
   state.process = null;
   state.processName = null;
+  state.drainFollowUpsAfterRun = false;
   state.ipcDir = null;
   state.directTerminalDeliveries.clear();
   transitionRunPhase(state, groupJid, 'idle');
@@ -160,7 +163,8 @@ export function assertRunPhaseInvariants(
         state.currentRunId != null ||
         state.runningTaskId != null ||
         state.process != null ||
-        state.processName != null
+        state.processName != null ||
+        state.drainFollowUpsAfterRun
       ) {
         logger.error(
           {
@@ -170,6 +174,7 @@ export function assertRunPhaseInvariants(
             runningTaskId: state.runningTaskId,
             hasProcess: state.process != null,
             processName: state.processName,
+            drainFollowUpsAfterRun: state.drainFollowUpsAfterRun,
           },
           'Invariant violation: idle phase has stale run/task ID or process',
         );

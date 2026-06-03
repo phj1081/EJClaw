@@ -61,6 +61,30 @@ export interface AgentOutput {
   };
 }
 
+interface ActiveProcessOptions {
+  drainFollowUpsAfterRun?: boolean;
+}
+
+function isCodexSdkRuntimeMode(
+  env: Record<string, string>,
+  input: AgentInput,
+): boolean {
+  const runtime = env.CODEX_RUNTIME?.trim().toLowerCase();
+  if (runtime !== 'sdk') return false;
+  if (input.prompt.trim() === '/compact') return false;
+  if (input.codexGoals === true || env.CODEX_GOALS === 'true') return false;
+
+  const rawRoles = env.CODEX_RUNTIME_SDK_ROLES?.trim();
+  if (!rawRoles) return true;
+  const role = input.roomRoleContext?.role?.trim().toLowerCase();
+  if (!role) return false;
+  return rawRoles
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(role);
+}
+
 function readRoomSkillOverridesForRunner(
   chatJid: string,
 ): StoredRoomSkillOverride[] {
@@ -126,6 +150,7 @@ export async function runAgentProcess(
     proc: ChildProcess,
     processName: string,
     runtimeIpcDir: string,
+    options?: ActiveProcessOptions,
   ) => void,
   onOutput?: (output: AgentOutput) => Promise<void>,
   envOverrides?: Record<string, string>,
@@ -186,6 +211,11 @@ export async function runAgentProcess(
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const processSuffix = input.runId || `${Date.now()}`;
   const processName = `ejclaw-${safeName}-${processSuffix}`;
+  const activeProcessOptions: ActiveProcessOptions = {
+    drainFollowUpsAfterRun:
+      (group.agentType || 'claude-code') === 'codex' &&
+      isCodexSdkRuntimeMode(env, input),
+  };
   const finalizeCodexAuthSessionOnce = createCodexAuthSessionFinalizer(
     () => codexSessionAuth,
   );
@@ -228,7 +258,7 @@ export async function runAgentProcess(
       env,
     });
 
-    onProcess(proc, processName, env[EJCLAW_ENV.ipcDir]);
+    onProcess(proc, processName, env[EJCLAW_ENV.ipcDir], activeProcessOptions);
 
     const runnerInput: AgentInput = {
       ...input,
