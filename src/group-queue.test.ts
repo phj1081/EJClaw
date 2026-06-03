@@ -40,8 +40,6 @@ describe('GroupQueue', () => {
     vi.useRealTimers();
   });
 
-  // --- Single group at a time ---
-
   it('only runs one agent per group at a time', async () => {
     let concurrentCount = 0;
     let maxConcurrent = 0;
@@ -90,6 +88,7 @@ describe('GroupQueue', () => {
 
     releaseRun(true);
     await vi.advanceTimersByTimeAsync(10);
+    expect(processMessages).toHaveBeenCalledTimes(1);
   });
 
   it('does not pipe follow-up messages after stdin close was requested', async () => {
@@ -789,5 +788,48 @@ describe('GroupQueue close reason tracking', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     expect(queue.getCloseReasonForRun('group1@g.us', activeRunId)).toBeNull();
+  });
+});
+
+describe('GroupQueue SDK follow-up draining', () => {
+  let queue: GroupQueue;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    queue = new GroupQueue();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('drains follow-up messages after active processes that cannot consume queued IPC', async () => {
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+    let releaseRun!: (value: boolean) => void;
+    let activeRun = true;
+    const blocker = new Promise<boolean>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    const processMessages = vi.fn(async () => {
+      if (!activeRun) return true;
+      activeRun = false;
+      return await blocker;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
+    await vi.advanceTimersByTimeAsync(10);
+
+    queue.registerProcess('group1@g.us', {} as any, 'sdk-agent', ipcDir, {
+      drainFollowUpsAfterRun: true,
+    });
+    expect(queue.sendMessage('group1@g.us', '후속 메시지')).toBe(true);
+
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(processMessages).toHaveBeenCalledTimes(2);
   });
 });
