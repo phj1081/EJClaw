@@ -211,6 +211,7 @@ function parseLastAgentSeqState(
       `Invalid last_agent_seq JSON for ${serviceId}: ${
         err instanceof Error ? err.message : String(err)
       }`,
+      { cause: err },
     );
   }
 
