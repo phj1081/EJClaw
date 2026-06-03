@@ -7,9 +7,12 @@ Given EJClaw currently wraps `codex app-server` JSON-RPC directly, when we switc
 ## Approach
 
 - Added `@openai/codex-sdk@0.136.0` beside `@openai/codex@0.136.0` in the codex runner workspace.
-- Built a throwaway `CodexSdkClient` adapter that maps EJClaw's existing app-server input shape into SDK input.
-- Wrote unit tests around SDK event reduction and thread-id propagation.
-- Ran a real smoke turn through the SDK against a temporary git repo.
+- Built a `CodexSdkClient` adapter that maps EJClaw's existing app-server input shape into SDK input.
+- Added `CODEX_RUNTIME=sdk` runtime selection while keeping app-server as the default.
+- Added `CODEX_RUNTIME_SDK_ROLES=owner,arbiter` canary limiting so production can try SDK only on selected paired roles.
+- Fallbacks: `/compact` and `codexGoals` stay on app-server because SDK lacks those APIs.
+- Wrote unit tests around SDK event reduction, thread-id propagation, runtime selection, and unsupported steering.
+- Ran real smoke turns through both the SDK adapter and the integrated codex-runner entrypoint against temporary git repos.
 
 ## Evidence
 
@@ -17,16 +20,19 @@ Commands run:
 
 ```bash
 bunx vitest run runners/codex-runner/test/sdk-client.test.ts
+bunx vitest run runners/codex-runner/test/runtime-mode.test.ts
 bunx tsc --noEmit -p runners/codex-runner/tsconfig.json
 bun run --cwd runners/codex-runner build
 bunx vitest run \
   runners/codex-runner/test/app-server-client.test.ts \
   runners/codex-runner/test/app-server-state.test.ts \
+  runners/codex-runner/test/runtime-mode.test.ts \
   runners/codex-runner/test/sdk-client.test.ts
-node /tmp/codex-sdk-smoke-*/smoke.mjs
+bun run check
+CODEX_RUNTIME=sdk CODEX_EFFORT=minimal node runners/codex-runner/dist/index.js < /tmp/input.json
 ```
 
-Observed smoke result:
+Observed adapter smoke result:
 
 ```json
 {
@@ -36,13 +42,25 @@ Observed smoke result:
 }
 ```
 
+Observed integrated runner smoke result:
+
+```json
+{
+  "status": "success",
+  "result": "SDK_RUNNER_OK",
+  "phase": "final",
+  "newSessionId": "019e..."
+}
+```
+
 ## What worked
 
 - SDK import and runner workspace build work on Node/Bun in this repo.
 - SDK streaming events can be reduced into EJClaw-style `status`, `threadId`, `result`, `error`, and `usage`.
 - `thread.started` gives the real thread id during the first streamed turn, so a pending local handle can be replaced with the real session id.
 - `AbortController` gives a clean replacement for close-sentinel cancellation.
-- Real SDK smoke completed successfully.
+- Real SDK smoke and integrated runner smoke completed successfully.
+- Runtime flag selection works: default app-server; `CODEX_RUNTIME=sdk` selects SDK; `CODEX_RUNTIME_SDK_ROLES` canaries SDK to chosen paired roles; `/compact` and goals fall back to app-server.
 
 ## What did not work / gaps
 
@@ -51,14 +69,13 @@ Observed smoke result:
 - Passing `modelReasoningEffort: "minimal"` failed in live smoke because Codex exec still enabled tools that are incompatible with minimal reasoning. The spike adapter coerces `minimal` to `low`.
 - Existing Codex app-server-only features (`thread/goal/*`, `thread/compact/start`) are not available through the current SDK API.
 
-## Verdict: PARTIAL
+## Verdict: FEATURE-FLAGGED
 
-SDK is viable for a **new Codex exec-backed runner lane** and likely gives cleaner event semantics than our raw app-server JSON-RPC wrapper. It is not a drop-in replacement for all current app-server features because steering, goals, and compaction are missing.
+SDK is now viable as an optional **exec-backed Codex runner lane** behind `CODEX_RUNTIME=sdk`. The default remains app-server, and `CODEX_RUNTIME_SDK_ROLES=owner,arbiter` can limit SDK to safer paired roles while reviewer/non-paired turns keep the old path.
 
-## Recommendation for real build
+## Recommended rollout
 
-1. Add SDK mode behind an env flag, e.g. `CODEX_RUNTIME=sdk`, not as an immediate hard replacement.
-2. Use SDK mode first for owner/arbiter turns where mid-turn steering is less important.
+1. Merge as a draft/feature-flagged implementation without changing production env.
+2. Enable `CODEX_RUNTIME=sdk` for one low-risk owner/arbiter lane first.
 3. Keep app-server mode for rooms/tasks that require live steering, goals, or compaction.
-4. Add raw SDK event logging around `turn.failed`, `error`, `item.completed:error`, and empty `finalResponse` before promoting SDK mode broadly.
-5. Measure one real EJClaw long task with SDK mode before merging it into the service default.
+4. Watch `turn.failed`, `error`, `item.completed:error`, empty final output, and process-per-turn latency before promoting SDK broadly.
