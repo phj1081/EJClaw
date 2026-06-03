@@ -274,8 +274,8 @@ export async function runAgentForGroup(
         deps.persistSession(sessionFolder, sessionId);
         currentSessionId = sessionId;
       },
-      registerProcess: (proc, processName, ipcDir, options) =>
-        deps.queue.registerProcess(chatJid, proc, processName, ipcDir, options),
+      registerProcess: (proc, processName, ipcDir) =>
+        deps.queue.registerProcess(chatJid, proc, processName, ipcDir),
       onOutput,
       pairedExecutionLifecycle,
       log,
