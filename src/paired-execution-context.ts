@@ -619,15 +619,18 @@ export function preparePairedExecutionContext(args: {
   };
 }
 
-export function completePairedExecutionContext(args: {
+type CompletePairedExecutionContextArgs = {
   taskId: string;
   role: PairedRoomRole;
   status: 'succeeded' | 'failed';
   runId?: string;
   summary?: string | null;
-}): void {
+};
+
+export function completePairedExecutionContext(
+  args: CompletePairedExecutionContextArgs,
+): void {
   const { taskId, role, status } = args;
-  let completionError: unknown;
   logger.info(
     {
       taskId,
@@ -639,100 +642,126 @@ export function completePairedExecutionContext(args: {
   );
 
   try {
-    const task = getPairedTaskById(taskId);
-    if (!task) {
-      return;
-    }
-    if (task.status === 'completed') {
-      logger.info(
-        {
-          taskId,
-          role,
-          status,
-          completionReason: task.completion_reason ?? null,
-        },
-        'Ignoring late paired execution completion for an already completed task',
-      );
-      return;
-    }
-
-    if (status !== 'succeeded') {
-      if (role === 'reviewer') {
-        handleFailedReviewerExecution({
-          task,
-          taskId,
-          summary: args.summary,
-        });
-        return;
-      }
-      if (role === 'arbiter') {
-        handleFailedArbiterExecution({
-          task,
-          taskId,
-          summary: args.summary,
-        });
-        return;
-      }
-      handleFailedOwnerExecution({ task, taskId, summary: args.summary });
-      return;
-    }
-
-    if (role === 'owner') {
-      try {
-        provisionOwnerWorkspaceForPairedTask(taskId);
-      } catch (error) {
-        if (isOwnerWorkspaceRepairNeededError(error)) {
-          logger.warn(
-            {
-              taskId,
-              role,
-              repairMessage: error.blockMessage || error.message,
-            },
-            'Owner workspace post-run guard blocked completion handling',
-          );
-          handleFailedOwnerExecution({
-            task,
-            taskId,
-            summary: error.blockMessage || error.message,
-          });
-          return;
-        }
-        throw error;
-      }
-      handleOwnerCompletion({ task, taskId, summary: args.summary });
-      return;
-    }
-
-    if (role === 'reviewer') {
-      handleReviewerCompletion({ task, taskId, summary: args.summary });
-      return;
-    }
-
-    if (role === 'arbiter') {
-      handleArbiterCompletion({ task, taskId, summary: args.summary });
-    }
+    completePairedExecutionContextBody(args);
   } catch (error) {
-    completionError = error;
+    releaseExecutionLeaseAfterCompletion({
+      taskId,
+      role,
+      runId: args.runId,
+      completionError: error,
+    });
     throw error;
-  } finally {
-    if (!args.runId) {
+  }
+
+  releaseExecutionLeaseAfterCompletion({
+    taskId,
+    role,
+    runId: args.runId,
+  });
+}
+
+function completePairedExecutionContextBody(
+  args: CompletePairedExecutionContextArgs,
+): void {
+  const { taskId, role, status } = args;
+  const task = getPairedTaskById(taskId);
+  if (!task) {
+    return;
+  }
+  if (task.status === 'completed') {
+    logger.info(
+      {
+        taskId,
+        role,
+        status,
+        completionReason: task.completion_reason ?? null,
+      },
+      'Ignoring late paired execution completion for an already completed task',
+    );
+    return;
+  }
+
+  if (status !== 'succeeded') {
+    if (role === 'reviewer') {
+      handleFailedReviewerExecution({
+        task,
+        taskId,
+        summary: args.summary,
+      });
       return;
     }
+    if (role === 'arbiter') {
+      handleFailedArbiterExecution({
+        task,
+        taskId,
+        summary: args.summary,
+      });
+      return;
+    }
+    handleFailedOwnerExecution({ task, taskId, summary: args.summary });
+    return;
+  }
+
+  if (role === 'owner') {
     try {
-      releasePairedTaskExecutionLease({ taskId, runId: args.runId });
-    } catch (releaseError) {
-      logger.error(
-        {
+      provisionOwnerWorkspaceForPairedTask(taskId);
+    } catch (error) {
+      if (isOwnerWorkspaceRepairNeededError(error)) {
+        logger.warn(
+          {
+            taskId,
+            role,
+            repairMessage: error.blockMessage || error.message,
+          },
+          'Owner workspace post-run guard blocked completion handling',
+        );
+        handleFailedOwnerExecution({
+          task,
           taskId,
-          role,
-          runId: args.runId,
-          releaseError,
-        },
-        'Failed to release paired task execution lease after completion',
-      );
-      if (!completionError) {
-        throw releaseError;
+          summary: error.blockMessage || error.message,
+        });
+        return;
       }
+      throw error;
+    }
+    handleOwnerCompletion({ task, taskId, summary: args.summary });
+    return;
+  }
+
+  if (role === 'reviewer') {
+    handleReviewerCompletion({ task, taskId, summary: args.summary });
+    return;
+  }
+
+  if (role === 'arbiter') {
+    handleArbiterCompletion({ task, taskId, summary: args.summary });
+  }
+}
+
+function releaseExecutionLeaseAfterCompletion(args: {
+  taskId: string;
+  role: PairedRoomRole;
+  runId?: string;
+  completionError?: unknown;
+}): void {
+  if (!args.runId) {
+    return;
+  }
+
+  try {
+    releasePairedTaskExecutionLease({ taskId: args.taskId, runId: args.runId });
+  } catch (releaseError) {
+    logger.error(
+      {
+        taskId: args.taskId,
+        role: args.role,
+        runId: args.runId,
+        releaseError,
+      },
+      'Failed to release paired task execution lease after completion',
+    );
+    if (!args.completionError) {
+      throw releaseError;
     }
   }
 }
