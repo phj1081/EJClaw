@@ -415,12 +415,7 @@ export class DiscordChannel implements Channel {
         .trim();
 
       // Convert @username mentions to Discord mention format
-      const mentionMap: Record<string, string> = {
-        눈쟁이: '216851709744513024',
-      };
-      for (const [name, id] of Object.entries(mentionMap)) {
-        cleaned = cleaned.replace(new RegExp(`@${name}`, 'g'), `<@${id}>`);
-      }
+      cleaned = cleaned.replaceAll('@눈쟁이', '<@216851709744513024>');
       cleaned = formatOutbound(cleaned);
 
       // Discord has a 2000 character limit per message and 10 attachments per message

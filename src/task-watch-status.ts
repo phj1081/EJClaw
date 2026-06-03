@@ -13,6 +13,18 @@ export type WatcherStatusPhase =
 export const WATCH_CI_PREFIX = WATCH_CI_PROMPT_PREFIX;
 export const TASK_STATUS_MESSAGE_PREFIX = '\u2063\u2063\u2063';
 export const DEFAULT_WATCH_CI_MAX_DURATION_MS = 24 * 60 * 60 * 1000;
+let watchTimeFormatter: Intl.DateTimeFormat | null = null;
+
+function getWatchTimeFormatter(): Intl.DateTimeFormat {
+  watchTimeFormatter ??= new Intl.DateTimeFormat('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZone: TIMEZONE,
+  });
+  return watchTimeFormatter;
+}
 
 export function isWatchCiTask(task: Pick<ScheduledTask, 'prompt'>): boolean {
   return task.prompt.startsWith(WATCH_CI_PREFIX);
@@ -36,13 +48,7 @@ export function extractWatchCiTarget(prompt: string): string | null {
 }
 
 function formatTimeLabel(timestampIso: string): string {
-  return new Intl.DateTimeFormat('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-    timeZone: TIMEZONE,
-  })
+  return getWatchTimeFormatter()
     .format(new Date(timestampIso))
     .replace(/:/g, '시 ')
     .replace(/시 (\d{2})$/, '분 $1초');

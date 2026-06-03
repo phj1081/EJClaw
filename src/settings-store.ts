@@ -227,13 +227,7 @@ export function listClaudeAccounts(): ClaudeAccountSummary[] {
   if (def) out.push(def);
   const dir = path.join(settingsHomeDir(), '.claude-accounts');
   if (fs.existsSync(dir)) {
-    const entries = fs.readdirSync(dir);
-    const indices = entries
-      .filter((e) => /^\d+$/.test(e))
-      .map((e) => Number.parseInt(e, 10))
-      .filter((n) => Number.isFinite(n) && n >= 1)
-      .sort((a, b) => a - b);
-    for (const i of indices) {
+    for (const i of readAccountIndices(dir)) {
       const acc = readClaudeAccount(i);
       if (acc) out.push(acc);
     }
@@ -247,18 +241,22 @@ export function listCodexAccounts(): CodexAccountSummary[] {
   if (def) out.push(def);
   const dir = path.join(settingsHomeDir(), '.codex-accounts');
   if (fs.existsSync(dir)) {
-    const entries = fs.readdirSync(dir);
-    const indices = entries
-      .filter((e) => /^\d+$/.test(e))
-      .map((e) => Number.parseInt(e, 10))
-      .filter((n) => Number.isFinite(n) && n >= 1)
-      .sort((a, b) => a - b);
-    for (const i of indices) {
+    for (const i of readAccountIndices(dir)) {
       const acc = readCodexAccount(i);
       if (acc) out.push(acc);
     }
   }
   return out;
+}
+
+function readAccountIndices(dir: string): number[] {
+  const indices: number[] = [];
+  for (const entry of fs.readdirSync(dir)) {
+    if (!/^\d+$/.test(entry)) continue;
+    const index = Number.parseInt(entry, 10);
+    if (Number.isFinite(index) && index >= 1) indices.push(index);
+  }
+  return indices.sort((a, b) => a - b);
 }
 
 function pickEnvValue(content: string, key: string): string | undefined {
@@ -526,13 +524,7 @@ export function getActiveCodexSettingsIndex(): number | null {
   }
   const dir = path.join(settingsHomeDir(), '.codex-accounts');
   if (fs.existsSync(dir)) {
-    const indices = fs
-      .readdirSync(dir)
-      .filter((e) => /^\d+$/.test(e))
-      .map((e) => Number.parseInt(e, 10))
-      .filter((n) => Number.isFinite(n) && n >= 1)
-      .sort((a, b) => a - b);
-    for (const i of indices) {
+    for (const i of readAccountIndices(dir)) {
       if (codexAuthPath(i) === activePath) return i;
     }
   }

@@ -116,19 +116,23 @@ export function suspendTask(taskId: string, suspendedUntil: string): void {
 /**
  * Format the suspension notification for Discord.
  */
+const SUSPENSION_RESUME_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
+  month: 'numeric',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+  timeZone: TIMEZONE,
+});
+
 export function formatSuspensionNotice(
   task: ScheduledTask,
   suspendedUntil: string,
   reason: string,
 ): string {
-  const resumeLabel = new Intl.DateTimeFormat('ko-KR', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    timeZone: TIMEZONE,
-  }).format(new Date(suspendedUntil));
+  const resumeLabel = SUSPENSION_RESUME_FORMATTER.format(
+    new Date(suspendedUntil),
+  );
 
   const lines = [
     `⏸ 태스크 일시 중단`,
