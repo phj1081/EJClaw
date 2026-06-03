@@ -65,6 +65,7 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
+  /** Limit concurrency after restart to avoid API rate-limit storms. */
   enterRecoveryMode(): void {
     this.recoveryMode = true;
     logger.info(
@@ -100,6 +101,7 @@ export class GroupQueue {
 
     const state = this.getGroup(groupJid);
 
+    // Pre-set IPC dir so sendMessage can pipe follow-ups while agent process starts
     if (ipcDir && !state.ipcDir) {
       state.ipcDir = ipcDir;
     }
@@ -155,6 +157,7 @@ export class GroupQueue {
 
     const state = this.getGroup(groupJid);
 
+    // Prevent double-queuing: check both pending and currently-running task
     if (state.runningTaskId === taskId) {
       logger.debug({ groupJid, taskId }, 'Task already running, skipping');
       return;
@@ -193,6 +196,7 @@ export class GroupQueue {
       return;
     }
 
+    // Run immediately
     this.runTask(groupJid, { id: taskId, groupJid, fn }).catch((err) =>
       logger.error({ groupJid, taskId, err }, 'Unhandled error in runTask'),
     );
@@ -203,12 +207,10 @@ export class GroupQueue {
     proc: ChildProcess,
     processName: string,
     ipcDir?: string,
-    options?: { drainFollowUpsAfterRun?: boolean },
   ): void {
     const state = this.getGroup(groupJid);
     state.process = proc;
     state.processName = processName;
-    state.drainFollowUpsAfterRun = options?.drainFollowUpsAfterRun === true;
     if (ipcDir) state.ipcDir = ipcDir;
     logger.info(
       {
@@ -239,7 +241,6 @@ export class GroupQueue {
 
     try {
       const filename = queueFollowUpMessage(state.ipcDir, text);
-      state.pendingMessages ||= state.drainFollowUpsAfterRun;
       logger.info(
         {
           groupJid,
@@ -247,7 +248,6 @@ export class GroupQueue {
           ipcDir: state.ipcDir,
           textLength: text.length,
           filename,
-          pendingMessages: state.pendingMessages,
         },
         'Queued follow-up message for active agent',
       );

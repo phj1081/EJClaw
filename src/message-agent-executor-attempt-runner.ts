@@ -100,7 +100,6 @@ interface RunMessageAgentAttemptArgs {
       : never,
     processName: string,
     ipcDir?: string,
-    options?: { drainFollowUpsAfterRun?: boolean },
   ) => void;
   onOutput?: (output: AgentOutput) => Promise<void>;
   pairedExecutionLifecycle: {
