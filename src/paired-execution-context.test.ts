@@ -1446,6 +1446,34 @@ describe('paired execution context', () => {
   });
 });
 
+describe('paired execution context completion lease cleanup', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('propagates completion handler errors when no execution lease was reserved', () => {
+    const transitionError = new Error('transition failed without lease');
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'merge_ready',
+      }),
+    );
+    vi.mocked(db.updatePairedTaskIfUnchanged).mockImplementationOnce(() => {
+      throw transitionError;
+    });
+
+    expect(() =>
+      completePairedExecutionContext({
+        taskId: 'task-1',
+        role: 'owner',
+        status: 'failed',
+        summary: 'push failed',
+      }),
+    ).toThrow('transition failed without lease');
+    expect(db.releasePairedTaskExecutionLease).not.toHaveBeenCalled();
+  });
+});
+
 describe('paired execution context reviewer failures', () => {
   beforeEach(() => {
     vi.resetAllMocks();
