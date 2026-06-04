@@ -412,6 +412,24 @@ export interface PairedExecutionRecoveryPlan {
   prompt: string;
 }
 
+function isOwnerContinuationTurn(
+  turnIdentity: PairedTurnIdentity | undefined,
+): boolean {
+  return (
+    turnIdentity?.role === 'owner' && turnIdentity.intentKind !== 'owner-turn'
+  );
+}
+
+function shouldResetOwnerLoopCounters(args: {
+  hasHumanMessage?: boolean;
+  pairedTurnIdentity?: PairedTurnIdentity;
+}): boolean {
+  if (args.hasHumanMessage !== true) {
+    return false;
+  }
+  return !isOwnerContinuationTurn(args.pairedTurnIdentity);
+}
+
 export function preparePairedExecutionContext(args: {
   group: RegisteredGroup;
   chatJid: string;
@@ -458,7 +476,7 @@ export function preparePairedExecutionContext(args: {
     // merge_ready is split into a fresh task before this function runs.
     // Only reset round_trip_count when a human message is present —
     // bot-only ping-pong must accumulate the counter for loop detection.
-    const hasHuman = args.hasHumanMessage === true;
+    const hasHuman = shouldResetOwnerLoopCounters(args);
     const needsStatusReset =
       latestTask.status === 'review_ready' || latestTask.status === 'in_review';
     if (hasHuman || needsStatusReset) {
