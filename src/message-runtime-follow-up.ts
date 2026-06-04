@@ -21,10 +21,49 @@ export type PairedFollowUpSource = Parameters<
   typeof resolveFollowUpDispatch
 >[0]['source'];
 
+type PairedTurnOutputContext = ReturnType<typeof getPairedTurnOutputs>[number];
+
 type PairedFollowUpTaskContext = Pick<
   PairedTask,
   'id' | 'status' | 'round_trip_count' | 'updated_at' | 'owner_failure_count'
 >;
+
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isPersistedOutputOlderThanTaskRevision(args: {
+  output: PairedTurnOutputContext;
+  task: Partial<Pick<PairedTask, 'updated_at'>> | null | undefined;
+}): boolean {
+  const outputCreatedAt = timestampMs(args.output.created_at);
+  const taskUpdatedAt = timestampMs(args.task?.updated_at);
+  if (outputCreatedAt == null || taskUpdatedAt == null) {
+    return false;
+  }
+  return outputCreatedAt < taskUpdatedAt;
+}
+
+function shouldPreferFallbackTurnOutputContext(args: {
+  output: PairedTurnOutputContext | null | undefined;
+  task: Partial<Pick<PairedTask, 'updated_at'>> | null | undefined;
+  fallbackRole: PairedRoomRole | null | undefined;
+}): boolean {
+  if (!args.output || !args.fallbackRole) {
+    return false;
+  }
+  if (args.output.role === args.fallbackRole) {
+    return false;
+  }
+  return isPersistedOutputOlderThanTaskRevision({
+    output: args.output,
+    task: args.task,
+  });
+}
 
 export interface PairedFollowUpDecision {
   taskId: string | null;
@@ -49,7 +88,10 @@ export type PairedFollowUpDispatchResult =
     });
 
 export function resolveLatestPairedTurnOutputContext(args: {
-  task: Pick<PairedTask, 'id'> | null | undefined;
+  task:
+    | (Pick<PairedTask, 'id'> & Partial<Pick<PairedTask, 'updated_at'>>)
+    | null
+    | undefined;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
   fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
 }): {
@@ -59,12 +101,19 @@ export function resolveLatestPairedTurnOutputContext(args: {
   const latestOutput = args.task
     ? getPairedTurnOutputs(args.task.id).at(-1)
     : null;
+  const output = shouldPreferFallbackTurnOutputContext({
+    output: latestOutput,
+    task: args.task,
+    fallbackRole: args.fallbackLastTurnOutputRole,
+  })
+    ? null
+    : latestOutput;
   return {
-    role: latestOutput?.role ?? args.fallbackLastTurnOutputRole ?? null,
+    role: output?.role ?? args.fallbackLastTurnOutputRole ?? null,
     verdict:
       resolveStoredVisibleVerdict({
-        verdict: latestOutput?.verdict ?? null,
-        outputText: latestOutput?.output_text ?? null,
+        verdict: output?.verdict ?? null,
+        outputText: output?.output_text ?? null,
       }) ??
       args.fallbackLastTurnOutputVerdict ??
       null,
@@ -73,7 +122,10 @@ export function resolveLatestPairedTurnOutputContext(args: {
 
 export function resolvePairedFollowUpDecision(args: {
   task:
-    | Pick<PairedFollowUpTaskContext, 'id' | 'status' | 'owner_failure_count'>
+    | Pick<
+        PairedFollowUpTaskContext,
+        'id' | 'status' | 'updated_at' | 'owner_failure_count'
+      >
     | null
     | undefined;
   source: PairedFollowUpSource;
