@@ -56,6 +56,33 @@ function resolveQueuedTurnReservationIntent(args: {
   return 'owner-follow-up';
 }
 
+function timestampMs(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isHumanMessageFreshForTask(
+  task: PairedTask | null | undefined,
+  message: NewMessage,
+): boolean {
+  if (!isExternalHumanMessage(message)) {
+    return false;
+  }
+  if (!task) {
+    return true;
+  }
+  if (task.status !== 'active' || (task.owner_failure_count ?? 0) <= 0) {
+    return true;
+  }
+  const messageTime = timestampMs(message.timestamp);
+  const taskUpdatedAt = timestampMs(task.updated_at);
+  if (messageTime == null || taskUpdatedAt == null) {
+    return true;
+  }
+  return messageTime > taskUpdatedAt;
+}
+
 function buildQueuedGroupTurnPrompt(args: {
   turnRole: 'owner' | 'reviewer' | 'arbiter';
   currentTask: PairedTask | null | undefined;
@@ -248,7 +275,9 @@ export async function runQueuedGroupTurn(args: {
     args;
   let currentTask = task;
   const hasHumanMsg = task
-    ? missedMessages.some(isExternalHumanMessage)
+    ? missedMessages.some((message) =>
+        isHumanMessageFreshForTask(task, message),
+      )
     : !isBotOnlyPairedRoomTurn(chatJid, missedMessages);
   let fallbackMessages = missedMessages;
   if (currentTask !== undefined && hasHumanMsg) {
