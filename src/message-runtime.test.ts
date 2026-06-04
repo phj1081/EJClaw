@@ -2727,9 +2727,20 @@ describe('createMessageRuntime', () => {
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockImplementation(
       () => pairedTask,
     );
+    vi.mocked(db.getPairedTurnOutputs).mockReturnValue([
+      {
+        id: 1,
+        task_id: pairedTask.id,
+        turn_number: 1,
+        role: 'owner',
+        output_text: 'STEP_DONE\nowner work ready for review',
+        created_at: '2026-03-30T00:00:00.500Z',
+      },
+    ] as any);
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
         pairedTask.status = 'active';
+        pairedTask.updated_at = '2026-03-30T00:00:01.000Z';
         await onOutput?.({
           status: 'success',
           phase: 'final',
