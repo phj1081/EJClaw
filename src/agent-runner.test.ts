@@ -474,6 +474,55 @@ describe('agent-runner timeout behavior', () => {
     expect(spawnEnv?.CODEX_HOME).toBe('/tmp/host-reviewer-session/.codex');
   });
 
+  it('releases the initial Codex auth lease when read-only session preparation fails', async () => {
+    vi.useRealTimers();
+    fakeProc = createFakeProcess();
+
+    const releaseLease = vi.fn();
+    const prepareGroupEnvironmentSpy = mockCodexLeaseEnvironment(releaseLease);
+    const readonlyError = new Error('Codex rotation pool unavailable');
+    const prepareReadonlySessionEnvironmentSpy = vi
+      .spyOn(agentRunnerEnvironment, 'prepareReadonlySessionEnvironment')
+      .mockImplementationOnce(() => {
+        throw readonlyError;
+      });
+    const codexGroup: RegisteredGroup = {
+      ...testGroup,
+      agentType: 'codex',
+    };
+
+    try {
+      await expect(
+        runAgentProcess(
+          codexGroup,
+          {
+            ...testInput,
+            roomRoleContext: {
+              serviceId: 'codex-review',
+              role: 'reviewer',
+              ownerServiceId: 'codex-main',
+              reviewerServiceId: 'codex-review',
+              failoverOwner: false,
+            },
+          },
+          () => {},
+          async () => {},
+          {
+            EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+            CLAUDE_CONFIG_DIR: '/tmp/host-reviewer-session',
+            EJCLAW_WORK_DIR: '/tmp/paired/task-1/reviewer',
+          },
+        ),
+      ).rejects.toThrow(readonlyError);
+
+      expect(prepareReadonlySessionEnvironmentSpy).toHaveBeenCalledTimes(1);
+      expect(releaseLease).toHaveBeenCalledTimes(1);
+    } finally {
+      prepareReadonlySessionEnvironmentSpy.mockRestore();
+      prepareGroupEnvironmentSpy.mockRestore();
+    }
+  });
+
   it('serializes roomRoleContext into the runner stdin payload', async () => {
     vi.useRealTimers();
     fakeProc = createFakeProcess();

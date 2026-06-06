@@ -39,6 +39,7 @@ tmp/
 backups/
 dist-backups/
 .deploy-backups/
+recovery/
 cache/
 runners/*/node_modules/
 runners/codex-runner-backups/

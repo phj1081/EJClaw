@@ -157,21 +157,31 @@ export async function runAgentProcess(
     (input.roomRoleContext?.role === 'reviewer' ||
       input.roomRoleContext?.role === 'arbiter')
   ) {
-    const readonlySession = prepareReadonlySessionEnvironment({
-      sessionDir: envOverrides.CLAUDE_CONFIG_DIR,
-      chatJid: input.chatJid,
-      isMain: input.isMain,
-      groupFolder: group.folder,
-      agentType: group.agentType || 'claude-code',
-      memoryBriefing: input.memoryBriefing,
-      role: input.roomRoleContext.role,
-      ipcDir: env[EJCLAW_ENV.ipcDir],
-      hostIpcDir: env[EJCLAW_ENV.hostIpcDir],
-      workDir: envOverrides[EJCLAW_ENV.workDir] || env[EJCLAW_ENV.workDir],
-      skillOverrides,
-    });
-    if ((group.agentType || 'claude-code') === 'codex') {
-      releaseCodexAuthSession(codexSessionAuth);
+    const isCodexGroup = (group.agentType || 'claude-code') === 'codex';
+    const previousCodexSessionAuth = codexSessionAuth;
+    let readonlySession: ReturnType<typeof prepareReadonlySessionEnvironment>;
+    try {
+      readonlySession = prepareReadonlySessionEnvironment({
+        sessionDir: envOverrides.CLAUDE_CONFIG_DIR,
+        chatJid: input.chatJid,
+        isMain: input.isMain,
+        groupFolder: group.folder,
+        agentType: group.agentType || 'claude-code',
+        memoryBriefing: input.memoryBriefing,
+        role: input.roomRoleContext.role,
+        ipcDir: env[EJCLAW_ENV.ipcDir],
+        hostIpcDir: env[EJCLAW_ENV.hostIpcDir],
+        workDir: envOverrides[EJCLAW_ENV.workDir] || env[EJCLAW_ENV.workDir],
+        skillOverrides,
+      });
+    } catch (err) {
+      if (isCodexGroup) {
+        releaseCodexAuthSession(previousCodexSessionAuth);
+      }
+      throw err;
+    }
+    if (isCodexGroup) {
+      releaseCodexAuthSession(previousCodexSessionAuth);
       codexSessionAuth = readonlySession.codexSessionAuth;
       env.CODEX_HOME = path.join(envOverrides.CLAUDE_CONFIG_DIR, '.codex');
       if (readonlySession.codexHomeDir) {
