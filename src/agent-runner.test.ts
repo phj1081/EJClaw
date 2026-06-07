@@ -337,6 +337,18 @@ describe('agent-runner timeout behavior', () => {
       }),
     );
   });
+});
+
+describe('agent-runner environment wiring', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('passes the actual chat JID into codex runner MCP env', async () => {
     vi.useRealTimers();
@@ -743,6 +755,18 @@ OUROBOROS_LLM_BACKEND = "codex"
     expect(toml).toContain('[mcp_servers.ouroboros]');
     expect(toml).toContain('OUROBOROS_AGENT_RUNTIME = "codex"');
     expect(toml).toContain('[mcp_servers.ejclaw]');
+  });
+});
+
+describe('agent-runner output flushing', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('waits for queued streamed output before resolving an error exit', async () => {
