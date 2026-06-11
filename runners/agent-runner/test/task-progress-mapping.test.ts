@@ -125,4 +125,77 @@ describe('task progress mapping', () => {
     expect(notification?.agentId).toBeUndefined();
     expect(notification?.agentDone).toBeUndefined();
   });
+
+  it('keeps a top-level subagent failure visible while flattening nested helper events', () => {
+    const tracker = new TopLevelAgentTaskTracker();
+
+    tracker.rememberAssistantMessage({
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_parent',
+            name: 'Agent',
+            caller: { type: 'direct' },
+            input: { description: 'Audit subagent runtime guards' },
+          },
+        ],
+      },
+    });
+
+    const parentStarted = buildTaskStartedOutput(tracker, {
+      task_id: 'task-parent',
+      tool_use_id: 'toolu_parent',
+      description: 'Audit subagent runtime guards',
+    });
+
+    tracker.rememberAssistantMessage({
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'toolu_nested',
+            name: 'Agent',
+            caller: { type: 'subagent' },
+            input: { description: 'Nested helper should stay untracked' },
+          },
+        ],
+      },
+    });
+
+    const nestedStarted = buildTaskStartedOutput(tracker, {
+      task_id: 'task-nested',
+      tool_use_id: 'toolu_nested',
+      description: 'Nested helper should stay untracked',
+    });
+
+    const nestedFailed = buildTaskNotificationOutput(tracker, {
+      task_id: 'task-nested',
+      tool_use_id: 'toolu_nested',
+      status: 'failed',
+      summary: 'Nested helper failed',
+    });
+
+    const parentFailed = buildTaskNotificationOutput(tracker, {
+      task_id: 'task-parent',
+      status: 'failed',
+      summary: 'Subagent runtime guard failed',
+    });
+
+    expect(parentStarted).toMatchObject({
+      agentId: 'task-parent',
+      agentLabel: 'Audit subagent runtime guards',
+    });
+    expect(nestedStarted?.agentId).toBeUndefined();
+    expect(nestedFailed).toMatchObject({
+      result: 'Nested helper failed',
+    });
+    expect(nestedFailed?.agentId).toBeUndefined();
+    expect(nestedFailed?.agentDone).toBeUndefined();
+    expect(parentFailed).toMatchObject({
+      agentId: 'task-parent',
+      agentDone: true,
+      result: 'Subagent runtime guard failed',
+    });
+  });
 });

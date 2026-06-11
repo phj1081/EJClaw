@@ -30,4 +30,31 @@ describe('ejclaw MCP config', () => {
       },
     });
   });
+
+  it('keeps EJClaw MCP always loaded for Codex fallback subagent sessions', () => {
+    expect(
+      buildEjclawMcpServerConfig('/runner/dist/ipc-mcp-stdio.js', {
+        chatJid: 'dc:room',
+        groupFolder: 'ejclaw',
+        isMain: false,
+        agentType: 'codex',
+        roomRole: 'owner',
+        ipcDir: '/tmp/ipc/task',
+        hostIpcDir: '/tmp/ipc/host',
+      }),
+    ).toMatchObject({
+      command: 'node',
+      args: ['/runner/dist/ipc-mcp-stdio.js'],
+      alwaysLoad: true,
+      env: {
+        [EJCLAW_ENV.chatJid]: 'dc:room',
+        [EJCLAW_ENV.groupFolder]: 'ejclaw',
+        [EJCLAW_ENV.isMain]: '0',
+        [EJCLAW_ENV.agentType]: 'codex',
+        [EJCLAW_ENV.roomRole]: 'owner',
+        [EJCLAW_ENV.ipcDir]: '/tmp/ipc/task',
+        [EJCLAW_ENV.hostIpcDir]: '/tmp/ipc/host',
+      },
+    });
+  });
 });
