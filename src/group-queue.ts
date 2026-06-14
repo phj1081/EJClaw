@@ -19,6 +19,14 @@ import type {
   GroupState,
   QueuedTask,
 } from './group-queue-state.js';
+import type { NewMessage } from './types.js';
+
+export type ActiveMessageRunInputClaim = {
+  runId: string;
+  startSeq: number | null;
+  endSeq: number | null;
+  messageIds?: readonly string[];
+};
 
 export type { GroupRunContext } from './group-queue-state.js';
 
@@ -264,6 +272,73 @@ export class GroupQueue {
       );
       return false;
     }
+  }
+
+  recordActiveMessageRunInput(
+    groupJid: string,
+    claim: ActiveMessageRunInputClaim,
+  ): boolean {
+    const state = this.getGroup(groupJid);
+    if (
+      state.currentRunId !== claim.runId ||
+      state.runPhase !== 'running_messages'
+    ) {
+      logger.debug(
+        {
+          groupJid,
+          claimRunId: claim.runId,
+          currentRunId: state.currentRunId,
+          runPhase: state.runPhase,
+        },
+        'Ignoring active message input claim because it does not match the current run',
+      );
+      return false;
+    }
+
+    const startSeq = claim.startSeq;
+    const endSeq = claim.endSeq;
+    state.activeMessageRunInput = {
+      runId: claim.runId,
+      startSeq:
+        startSeq != null && endSeq != null
+          ? Math.min(startSeq, endSeq)
+          : startSeq,
+      endSeq:
+        startSeq != null && endSeq != null
+          ? Math.max(startSeq, endSeq)
+          : endSeq,
+      messageIds: new Set((claim.messageIds ?? []).filter(Boolean)),
+    };
+    logger.debug(
+      {
+        groupJid,
+        runId: claim.runId,
+        startSeq: state.activeMessageRunInput.startSeq,
+        endSeq: state.activeMessageRunInput.endSeq,
+        messageCount: state.activeMessageRunInput.messageIds.size,
+      },
+      'Recorded message input claimed by active run',
+    );
+    return true;
+  }
+
+  isActiveMessageRunInput(groupJid: string, message: NewMessage): boolean {
+    const state = this.getGroup(groupJid);
+    const claim = state.activeMessageRunInput;
+    if (
+      !claim ||
+      state.currentRunId !== claim.runId ||
+      (state.runPhase !== 'running_messages' &&
+        state.runPhase !== 'closing_messages')
+    ) {
+      return false;
+    }
+
+    if (message.seq != null && claim.startSeq != null && claim.endSeq != null) {
+      return message.seq >= claim.startSeq && message.seq <= claim.endSeq;
+    }
+
+    return claim.messageIds.has(message.id);
   }
 
   noteDirectTerminalDelivery(

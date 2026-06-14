@@ -26,11 +26,19 @@ const VALID_TRANSITIONS: Record<RunPhase, readonly RunPhase[]> = {
   running_task: ['idle'],
 };
 
+export interface ActiveMessageRunInput {
+  runId: string;
+  startSeq: number | null;
+  endSeq: number | null;
+  messageIds: Set<string>;
+}
+
 export interface GroupState {
   runPhase: RunPhase;
   runningTaskId: string | null;
   currentRunId: string | null;
   lastCloseRequest: { runId: string | null; reason: string | null } | null;
+  activeMessageRunInput: ActiveMessageRunInput | null;
   directTerminalDeliveries: Map<string, string>;
   recentDirectTerminalDeliveries: Map<string, Map<string, string>>;
   pendingMessages: boolean;
@@ -54,6 +62,7 @@ export function createGroupState(): GroupState {
     runningTaskId: null,
     currentRunId: null,
     lastCloseRequest: null,
+    activeMessageRunInput: null,
     directTerminalDeliveries: new Map(),
     recentDirectTerminalDeliveries: new Map(),
     pendingMessages: false,
@@ -142,6 +151,7 @@ export function resetRunState(state: GroupState, groupJid: string): void {
   state.currentRunId = null;
   state.runningTaskId = null;
   state.lastCloseRequest = null;
+  state.activeMessageRunInput = null;
   state.startedAt = null;
   state.process = null;
   state.processName = null;

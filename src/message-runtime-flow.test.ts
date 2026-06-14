@@ -4,6 +4,7 @@ import { _initTestDatabase, createPairedTask } from './db.js';
 import {
   executeBotOnlyPairedFollowUpAction,
   executePendingPairedTurn,
+  resolveBotOnlyPairedFollowUpAction,
 } from './message-runtime-flow.js';
 import {
   claimPairedTurnExecution,
@@ -123,6 +124,62 @@ describe('executeBotOnlyPairedFollowUpAction', () => {
       }),
       'Skipped duplicate paired pending turn requeue while task state was unchanged',
     );
+  });
+
+  it('requeues an active owner task with no output when a trusted CI watcher completion wakes the room', () => {
+    const task: PairedTask = {
+      id: 'task-ci-watcher-no-output',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      round_trip_count: 1,
+      status: 'active',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      owner_failure_count: 0,
+      created_at: '2026-03-30T00:00:00.000Z',
+      updated_at: '2026-03-30T00:00:00.000Z',
+    };
+    createPairedTask(task as any);
+
+    expect(
+      resolveBotOnlyPairedFollowUpAction({
+        chatJid: 'group@test',
+        task,
+        isBotOnlyPairedFollowUp: true,
+        pendingCursorSource: { seq: 65018 },
+        pendingMessages: [
+          {
+            id: 'watch-ci-completed:task-ci-watcher-no-output',
+            chat_jid: 'group@test',
+            sender: 'ci-watcher',
+            sender_name: 'CI watcher',
+            content: '[CI watcher completed]\nCI succeeded',
+            timestamp: '2026-03-30T00:10:00.000Z',
+            seq: 65018,
+            message_source_kind: 'trusted_external_bot',
+            is_bot_message: false,
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: 'requeue-pending-turn',
+      task,
+      cursor: 65018,
+      cursorKey: 'group@test',
+      intentKind: 'owner-follow-up',
+      nextRole: 'owner',
+      allowActiveOwnerFollowUp: true,
+    });
   });
 
   it('skips inline finalize when the same finalize-owner turn revision was already claimed elsewhere', async () => {

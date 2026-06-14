@@ -41,6 +41,7 @@ export async function processMessageLoopTick(args: {
   sendQueuedMessage: (chatJid: string, text: string) => boolean;
   closeStdin: (chatJid: string, reason: string) => void;
   isRunningMessageTurn: (chatJid: string) => boolean;
+  isActiveRunInputMessage?: (chatJid: string, message: NewMessage) => boolean;
   labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
 }): Promise<void> {
   args.enqueuePendingHandoffs();
@@ -93,7 +94,7 @@ export async function processMessageLoopTick(args: {
       saveState: args.saveState,
       timezone: args.timezone,
       executeTurn: args.executeTurn,
-      schedulePairedFollowUp: (task, intentKind, followUpRunId) =>
+      schedulePairedFollowUp: (task, intentKind, followUpRunId, options) =>
         args.schedulePairedFollowUpWithMessageCheck({
           chatJid,
           runId: followUpRunId,
@@ -101,12 +102,14 @@ export async function processMessageLoopTick(args: {
           intentKind,
           enqueueMessageCheck: () =>
             args.enqueueScopedGroupMessageCheck(chatJid, group.folder),
+          allowActiveOwnerFollowUp: options?.allowActiveOwnerFollowUp,
         }),
       enqueueMessageCheck: () =>
         args.enqueueScopedGroupMessageCheck(chatJid, group.folder),
       sendQueuedMessage: args.sendQueuedMessage,
       closeStdin: (reason) => args.closeStdin(chatJid, reason),
       isRunningMessageTurn: args.isRunningMessageTurn,
+      isActiveRunInputMessage: args.isActiveRunInputMessage,
       labelPairedSenders: args.labelPairedSenders,
       formatMessages,
     });

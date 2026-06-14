@@ -65,7 +65,11 @@ interface ProcessGroupMessagesDeps {
   timezone: string;
   triggerPattern: RegExp;
   channels: Channel[];
-  queue: Pick<GroupQueue, 'enqueueMessageCheck' | 'closeStdin' | 'killProcess'>;
+  queue: Pick<
+    GroupQueue,
+    'enqueueMessageCheck' | 'closeStdin' | 'killProcess'
+  > &
+    Partial<Pick<GroupQueue, 'recordActiveMessageRunInput'>>;
   getRoomBindings: () => Record<string, RegisteredGroup>;
   getLastAgentTimestamps: () => Record<string, string>;
   saveState: () => void;
@@ -323,6 +327,8 @@ async function processMissedMessages(
       lastAgentTimestamps: args.getLastAgentTimestamps(),
       saveState: args.saveState,
       executeTurn: args.executeTurn,
+      claimMessageRunInput: (claim) =>
+        args.queue.recordActiveMessageRunInput?.(runtime.chatJid, claim),
       getFixedRoleChannelName,
       labelPairedSenders: args.labelPairedSenders,
       formatMessages,

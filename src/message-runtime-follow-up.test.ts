@@ -204,6 +204,26 @@ describe('message-runtime-follow-up', () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it('can explicitly schedule active owner follow-up recovery even without persisted output', () => {
+    const enqueueMessageCheck = vi.fn();
+    const scheduled = schedulePairedFollowUpWithMessageCheck({
+      chatJid: 'group@test',
+      runId: 'run-ci-watcher-owner-recovery',
+      task: {
+        id: 'task-ci-watcher-owner-recovery',
+        status: 'active',
+        round_trip_count: 1,
+        updated_at: '2026-03-30T00:00:00.000Z',
+      },
+      intentKind: 'owner-follow-up',
+      enqueueMessageCheck,
+      allowActiveOwnerFollowUp: true,
+    });
+
+    expect(scheduled).toBe(true);
+    expect(enqueueMessageCheck).toHaveBeenCalledTimes(1);
+  });
+
   it('uses the scoped message-check enqueuer when scheduling a paired follow-up intent', () => {
     const enqueueMessageCheck = vi.fn();
     const scheduled = schedulePairedFollowUpWithMessageCheck({

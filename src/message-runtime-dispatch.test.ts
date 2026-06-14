@@ -120,6 +120,38 @@ describe('processLoopGroupMessages', () => {
     expect(args.sendQueuedMessage).not.toHaveBeenCalled();
   });
 
+  it('ignores human messages already claimed by the active run instead of self-interrupting it', async () => {
+    const args = defaultArgs({
+      isActiveRunInputMessage: vi.fn((_chatJid, msg) => msg.seq === 10),
+    });
+
+    await processLoopGroupMessages(args);
+
+    expect(args.isActiveRunInputMessage).toHaveBeenCalledWith(
+      chatJid,
+      expect.objectContaining({ seq: 10 }),
+    );
+    expect(args.closeStdin).not.toHaveBeenCalled();
+    expect(args.enqueueMessageCheck).not.toHaveBeenCalled();
+    expect(args.sendQueuedMessage).not.toHaveBeenCalled();
+    expect(args.saveState).not.toHaveBeenCalled();
+  });
+
+  it('still interrupts when any external human message is not part of the active run input', async () => {
+    const args = defaultArgs({
+      groupMessages: [
+        message({ id: 'claimed-msg', seq: 10 }),
+        message({ id: 'new-msg', seq: 11, content: '새 요청' }),
+      ],
+      isActiveRunInputMessage: vi.fn((_chatJid, msg) => msg.seq === 10),
+    });
+
+    await processLoopGroupMessages(args);
+
+    expect(args.closeStdin).toHaveBeenCalledWith('human-message-detected');
+    expect(args.enqueueMessageCheck).toHaveBeenCalledTimes(1);
+  });
+
   it('still pipes bot-only messages when active stdin accepts them', async () => {
     hasReviewerLeaseMock.mockReturnValue(true);
     getLastHumanMessageTimestampMock.mockReturnValue(timestamp);

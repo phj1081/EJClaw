@@ -134,6 +134,7 @@ export function resolvePairedFollowUpDecision(args: {
   sawOutput?: boolean;
   fallbackLastTurnOutputRole?: PairedRoomRole | null;
   fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
+  allowActiveOwnerFollowUp?: boolean;
 }): PairedFollowUpDecision {
   const { role: lastTurnOutputRole, verdict: lastTurnOutputVerdict } =
     resolveLatestPairedTurnOutputContext({
@@ -147,14 +148,20 @@ export function resolvePairedFollowUpDecision(args: {
     sawOutput: args.sawOutput,
     taskStatus: args.task?.status ?? null,
   });
-  const nextTurnAction = silentOwnerRetry
-    ? ({ kind: 'owner-follow-up' } as const)
-    : resolveNextTurnAction({
-        taskStatus: args.task?.status ?? null,
-        lastTurnOutputRole,
-        lastTurnOutputVerdict,
-        ownerFailureCount: args.task?.owner_failure_count ?? null,
-      });
+  const activeOwnerFollowUp =
+    args.allowActiveOwnerFollowUp === true &&
+    args.task?.status === 'active' &&
+    lastTurnOutputRole == null &&
+    lastTurnOutputVerdict == null;
+  const nextTurnAction =
+    silentOwnerRetry || activeOwnerFollowUp
+      ? ({ kind: 'owner-follow-up' } as const)
+      : resolveNextTurnAction({
+          taskStatus: args.task?.status ?? null,
+          lastTurnOutputRole,
+          lastTurnOutputVerdict,
+          ownerFailureCount: args.task?.owner_failure_count ?? null,
+        });
   const dispatch = resolveFollowUpDispatch({
     source: args.source,
     nextTurnAction,
@@ -183,7 +190,7 @@ export function schedulePairedFollowUpIntent(args: {
   fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
   lastTurnOutputRole?: PairedRoomRole | null;
   lastTurnOutputVerdict?: VisibleVerdict | null;
-  allowSilentOwnerRetry?: boolean;
+  allowActiveOwnerFollowUp?: boolean;
 }): boolean {
   if (!args.task) {
     return false;
@@ -210,7 +217,7 @@ export function schedulePairedFollowUpIntent(args: {
       intentKind: args.intentKind,
     }) &&
     !(
-      args.allowSilentOwnerRetry === true &&
+      args.allowActiveOwnerFollowUp === true &&
       args.task.status === 'active' &&
       args.intentKind === 'owner-follow-up'
     )
@@ -237,6 +244,7 @@ export function schedulePairedFollowUpWithMessageCheck(args: {
   fallbackLastTurnOutputVerdict?: VisibleVerdict | null;
   lastTurnOutputRole?: PairedRoomRole | null;
   lastTurnOutputVerdict?: VisibleVerdict | null;
+  allowActiveOwnerFollowUp?: boolean;
 }): boolean {
   return schedulePairedFollowUpIntent({
     chatJid: args.chatJid,
@@ -248,6 +256,7 @@ export function schedulePairedFollowUpWithMessageCheck(args: {
     fallbackLastTurnOutputVerdict: args.fallbackLastTurnOutputVerdict,
     lastTurnOutputRole: args.lastTurnOutputRole,
     lastTurnOutputVerdict: args.lastTurnOutputVerdict,
+    allowActiveOwnerFollowUp: args.allowActiveOwnerFollowUp,
   });
 }
 
@@ -298,7 +307,7 @@ export function dispatchPairedFollowUpForEvent(args: {
       enqueue: args.enqueue,
       lastTurnOutputRole: decision.lastTurnOutputRole,
       lastTurnOutputVerdict: decision.lastTurnOutputVerdict,
-      allowSilentOwnerRetry: shouldRetrySilentOwnerExecution({
+      allowActiveOwnerFollowUp: shouldRetrySilentOwnerExecution({
         completedRole: args.completedRole,
         executionStatus: args.executionStatus,
         sawOutput: args.sawOutput,

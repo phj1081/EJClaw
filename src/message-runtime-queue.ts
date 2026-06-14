@@ -267,6 +267,12 @@ export async function runQueuedGroupTurn(args: {
   lastAgentTimestamps: Record<string, string>;
   saveState: () => void;
   executeTurn: ExecuteTurnFn;
+  claimMessageRunInput?: (claim: {
+    runId: string;
+    startSeq: number | null;
+    endSeq: number | null;
+    messageIds: readonly string[];
+  }) => void;
   getFixedRoleChannelName: (role: 'reviewer' | 'arbiter') => string;
   labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
   formatMessages: (messages: NewMessage[], timezone: string) => string;
@@ -414,6 +420,12 @@ export async function runQueuedGroupTurn(args: {
   }
 
   const cursorAdvanced = endSeq !== null;
+  args.claimMessageRunInput?.({
+    runId,
+    startSeq,
+    endSeq,
+    messageIds: missedMessages.map((message) => message.id),
+  });
 
   const { outputStatus, deliverySucceeded, visiblePhase } =
     await args.executeTurn({

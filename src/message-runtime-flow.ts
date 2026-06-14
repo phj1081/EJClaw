@@ -14,6 +14,7 @@ import {
 import {
   advanceLastAgentCursor,
   isBotOrTrustedSystemMessage,
+  isTrustedExternalBotMessage,
   resolveCursorKey,
   resolveNextTurnAction,
 } from './message-runtime-rules.js';
@@ -66,7 +67,26 @@ export type BotOnlyPairedFollowUpAction =
       cursorKey: string;
       intentKind: ScheduledPairedFollowUpIntentKind;
       nextRole: 'owner' | 'reviewer' | 'arbiter';
+      allowActiveOwnerFollowUp?: boolean;
     };
+
+function hasTrustedExternalSystemMessage(messages: NewMessage[]): boolean {
+  return messages.some(isTrustedExternalBotMessage);
+}
+
+function resolveRoleForFollowUpIntent(
+  intentKind: ScheduledPairedFollowUpIntentKind,
+): 'owner' | 'reviewer' | 'arbiter' {
+  switch (intentKind) {
+    case 'owner-follow-up':
+    case 'finalize-owner-turn':
+      return 'owner';
+    case 'arbiter-turn':
+      return 'arbiter';
+    case 'reviewer-turn':
+      return 'reviewer';
+  }
+}
 
 export type QueuedTurnDispatch = {
   formatted: string;
@@ -284,17 +304,28 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
   pendingCursorSource:
     | { seq?: number | null; timestamp?: string | null }
     | undefined;
+  pendingMessages?: NewMessage[];
 }): BotOnlyPairedFollowUpAction {
-  const { chatJid, task, isBotOnlyPairedFollowUp, pendingCursorSource } = args;
+  const {
+    chatJid,
+    task,
+    isBotOnlyPairedFollowUp,
+    pendingCursorSource,
+    pendingMessages = [],
+  } = args;
   if (!task || !isBotOnlyPairedFollowUp) {
     return { kind: 'none' };
   }
 
   const cursor =
     pendingCursorSource?.seq ?? pendingCursorSource?.timestamp ?? null;
+  const allowActiveOwnerFollowUp =
+    task.status === 'active' &&
+    hasTrustedExternalSystemMessage(pendingMessages);
   const { nextTurnAction, dispatch } = resolvePairedFollowUpDecision({
     task,
     source: 'bot-only-follow-up',
+    allowActiveOwnerFollowUp,
   });
 
   if (dispatch.kind === 'none') {
@@ -325,12 +356,8 @@ export function resolveBotOnlyPairedFollowUpAction(args: {
       cursor,
       cursorKey: resolveCursorKey(chatJid, task.status),
       intentKind: nextTurnAction.kind,
-      nextRole:
-        nextTurnAction.kind === 'owner-follow-up'
-          ? 'owner'
-          : nextTurnAction.kind === 'arbiter-turn'
-            ? 'arbiter'
-            : 'reviewer',
+      nextRole: resolveRoleForFollowUpIntent(nextTurnAction.kind),
+      ...(allowActiveOwnerFollowUp ? { allowActiveOwnerFollowUp: true } : {}),
     };
   }
 
@@ -360,6 +387,7 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
   schedulePairedFollowUp: (
     task: PairedTask,
     intentKind: ScheduledPairedFollowUpIntentKind,
+    options?: { allowActiveOwnerFollowUp?: boolean },
   ) => boolean;
   closeStdin: () => void;
 }): Promise<boolean> {
@@ -469,7 +497,9 @@ export async function executeBotOnlyPairedFollowUpAction(args: {
 
   const scheduled = requeuePendingPairedTurn({
     schedulePairedFollowUp: () =>
-      schedulePairedFollowUp(action.task, action.intentKind),
+      schedulePairedFollowUp(action.task, action.intentKind, {
+        allowActiveOwnerFollowUp: action.allowActiveOwnerFollowUp,
+      }),
     closeStdin,
   });
   log.info(
@@ -529,6 +559,7 @@ export function buildQueuedTurnDispatch(args: {
     task: args.loopPendingTask,
     isBotOnlyPairedFollowUp,
     pendingCursorSource,
+    pendingMessages: args.messagesToSend,
   });
 
   return {

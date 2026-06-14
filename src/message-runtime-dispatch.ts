@@ -32,8 +32,23 @@ import type {
 
 type RuntimeLog = Pick<typeof logger, 'info' | 'debug'>;
 
-function hasExternalHumanMessage(messages: NewMessage[]): boolean {
-  return messages.some(isExternalHumanMessage);
+type ActiveRunInputPredicate = (
+  chatJid: string,
+  message: NewMessage,
+) => boolean;
+
+function getExternalHumanMessages(messages: NewMessage[]): NewMessage[] {
+  return messages.filter(isExternalHumanMessage);
+}
+
+function getUnclaimedExternalHumanMessages(
+  chatJid: string,
+  externalHumanMessages: NewMessage[],
+  isActiveRunInputMessage?: ActiveRunInputPredicate,
+): NewMessage[] {
+  return externalHumanMessages.filter(
+    (message) => !isActiveRunInputMessage?.(chatJid, message),
+  );
 }
 
 export function enqueueGenericFollowUpAfterDeliveryRetry(args: {
@@ -118,6 +133,7 @@ export async function processQueuedGroupDispatch(args: {
     task: PairedTask | null | undefined,
     intentKind: ScheduledPairedFollowUpIntentKind,
     runId: string,
+    options?: { allowActiveOwnerFollowUp?: boolean },
   ) => boolean;
   enqueueMessageCheck: () => void;
   sendQueuedMessage: (chatJid: string, text: string) => boolean;
@@ -174,8 +190,13 @@ export async function processQueuedGroupDispatch(args: {
       saveState: args.saveState,
       lastAgentTimestamps: args.lastAgentTimestamps,
       executeTurn: args.executeTurn,
-      schedulePairedFollowUp: (task, intentKind) =>
-        args.schedulePairedFollowUp(task, intentKind, botOnlyFollowUpRunId),
+      schedulePairedFollowUp: (task, intentKind, options) =>
+        args.schedulePairedFollowUp(
+          task,
+          intentKind,
+          botOnlyFollowUpRunId,
+          options,
+        ),
       closeStdin: () => args.closeStdin('paired-pending-turn-follow-up'),
     })
   ) {
@@ -237,11 +258,13 @@ export async function processLoopGroupMessages(args: {
     task: PairedTask | null | undefined,
     intentKind: ScheduledPairedFollowUpIntentKind,
     runId: string,
+    options?: { allowActiveOwnerFollowUp?: boolean },
   ) => boolean;
   enqueueMessageCheck: () => void;
   sendQueuedMessage: (chatJid: string, text: string) => boolean;
   closeStdin: (reason: string) => void;
   isRunningMessageTurn: (chatJid: string) => boolean;
+  isActiveRunInputMessage?: ActiveRunInputPredicate;
   labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
   formatMessages: (messages: NewMessage[], timezone: string) => string;
 }): Promise<void> {
@@ -302,7 +325,29 @@ export async function processLoopGroupMessages(args: {
     return;
   }
 
-  if (hasExternalHumanMessage(processableGroupMessages)) {
+  const externalHumanMessages = getExternalHumanMessages(
+    processableGroupMessages,
+  );
+  if (externalHumanMessages.length > 0) {
+    const unclaimedExternalHumanMessages = getUnclaimedExternalHumanMessages(
+      chatJid,
+      externalHumanMessages,
+      args.isActiveRunInputMessage,
+    );
+    if (unclaimedExternalHumanMessages.length === 0) {
+      logger.debug(
+        {
+          chatJid,
+          group: group.name,
+          groupFolder: group.folder,
+          messageCount: processableGroupMessages.length,
+          claimedHumanMessageCount: externalHumanMessages.length,
+        },
+        'Ignored active run input messages observed by the message loop',
+      );
+      return;
+    }
+
     const interruptedActiveRun = args.isRunningMessageTurn(chatJid);
     if (interruptedActiveRun) {
       args.closeStdin(HUMAN_MESSAGE_DETECTED_CLOSE_REASON);
@@ -313,7 +358,9 @@ export async function processLoopGroupMessages(args: {
         chatJid,
         group: group.name,
         groupFolder: group.folder,
-        messageCount: processableGroupMessages.length,
+        messageCount: unclaimedExternalHumanMessages.length,
+        claimedHumanMessageCount:
+          externalHumanMessages.length - unclaimedExternalHumanMessages.length,
         interruptedActiveRun,
       },
       'Queued human message for a fresh turn instead of piping into active agent',

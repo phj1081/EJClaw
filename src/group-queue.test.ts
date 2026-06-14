@@ -790,4 +790,68 @@ describe('GroupQueue close reason tracking', () => {
 
     expect(queue.getCloseReasonForRun('group1@g.us', activeRunId)).toBeNull();
   });
+
+  it('tracks the human message range claimed by the active run only until that run finishes', async () => {
+    const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
+    let releaseRun!: (value: boolean) => void;
+    let activeRunId = '';
+    const blocker = new Promise<boolean>((resolve) => {
+      releaseRun = resolve;
+    });
+
+    queue.setProcessMessagesFn(
+      vi.fn(async (_groupJid: string, context: GroupRunContext) => {
+        activeRunId = context.runId;
+        return await blocker;
+      }),
+    );
+    queue.enqueueMessageCheck('group1@g.us', ipcDir);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(
+      queue.recordActiveMessageRunInput('group1@g.us', {
+        runId: activeRunId,
+        startSeq: 10,
+        endSeq: 12,
+        messageIds: ['human-10', 'human-11', 'human-12'],
+      }),
+    ).toBe(true);
+    expect(
+      queue.isActiveMessageRunInput('group1@g.us', {
+        id: 'human-11',
+        chat_jid: 'group1@g.us',
+        sender: 'user',
+        sender_name: 'User',
+        content: '진행해줘',
+        timestamp: '2026-03-30T00:00:00.000Z',
+        seq: 11,
+      }),
+    ).toBe(true);
+    expect(
+      queue.isActiveMessageRunInput('group1@g.us', {
+        id: 'human-13',
+        chat_jid: 'group1@g.us',
+        sender: 'user',
+        sender_name: 'User',
+        content: '새 요청',
+        timestamp: '2026-03-30T00:00:01.000Z',
+        seq: 13,
+      }),
+    ).toBe(false);
+
+    releaseRun(true);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(
+      queue.isActiveMessageRunInput('group1@g.us', {
+        id: 'human-11',
+        chat_jid: 'group1@g.us',
+        sender: 'user',
+        sender_name: 'User',
+        content: '진행해줘',
+        timestamp: '2026-03-30T00:00:00.000Z',
+        seq: 11,
+      }),
+    ).toBe(false);
+  });
 });

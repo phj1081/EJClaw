@@ -222,6 +222,8 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
           }),
         isRunningMessageTurn: (chatJid) =>
           deps.queue.getStatuses([chatJid])[0]?.runPhase === 'running_messages',
+        isActiveRunInputMessage: (chatJid, message) =>
+          deps.queue.isActiveMessageRunInput(chatJid, message),
         labelPairedSenders: labelPairedRuntimeSenders,
       });
     },
