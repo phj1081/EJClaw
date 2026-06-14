@@ -183,9 +183,11 @@ export async function runAgentProcess(
     if (isCodexGroup) {
       releaseCodexAuthSession(previousCodexSessionAuth);
       codexSessionAuth = readonlySession.codexSessionAuth;
-      env.CODEX_HOME = path.join(envOverrides.CLAUDE_CONFIG_DIR, '.codex');
-      if (readonlySession.codexHomeDir) {
-        env.HOME = readonlySession.codexHomeDir;
+      env.CODEX_HOME =
+        readonlySession.codexHomeDir ??
+        path.join(envOverrides.CLAUDE_CONFIG_DIR, '.codex');
+      if (readonlySession.homeDir) {
+        env.HOME = readonlySession.homeDir;
       }
     }
   }

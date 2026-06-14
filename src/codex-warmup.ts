@@ -124,6 +124,7 @@ function selectWarmupCandidate(
   if (accounts.length === 0) return { reason: 'no_accounts' };
 
   for (const account of accounts) {
+    if (account.isAuthDead || account.authStatus === 'dead_auth') continue;
     if (account.isRateLimited) continue;
     if (typeof account.cachedUsagePct !== 'number') continue;
     if (typeof account.cachedUsageD7Pct !== 'number') continue;

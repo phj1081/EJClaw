@@ -168,6 +168,65 @@ describe('Codex warm-up scheduler', () => {
     expect(state.consecutiveFailures).toBe(0);
   });
 
+  it('skips auth-dead accounts instead of warming stale refresh tokens', async () => {
+    const childProcess = await import('child_process');
+    const rotation = await import('./codex-token-rotation.js');
+    const { runCodexWarmupCycle } = await import('./codex-warmup.js');
+    const now = new Date('2026-06-14T13:00:00Z').getTime();
+
+    vi.mocked(rotation.getAllCodexAccounts).mockReturnValue([
+      {
+        index: 0,
+        accountId: 'dead-zero-usage-account',
+        planType: 'pro',
+        isActive: false,
+        isRateLimited: false,
+        isAuthDead: true,
+        authStatus: 'dead_auth',
+        cachedUsagePct: 0,
+        cachedUsageD7Pct: 0,
+      },
+      {
+        index: 1,
+        accountId: 'healthy-used-account',
+        planType: 'pro',
+        isActive: true,
+        isRateLimited: false,
+        cachedUsagePct: 7,
+        cachedUsageD7Pct: 33,
+      },
+    ]);
+    vi.mocked(rotation.getCodexAuthPath).mockImplementation(
+      (accountIndex = 0) => authPathFor(tempHome, accountIndex),
+    );
+    vi.mocked(childProcess.spawn).mockImplementation(
+      () => createFakeCodexProcess(0) as never,
+    );
+
+    const result = await runCodexWarmupCycle(
+      {
+        enabled: true,
+        prompt: 'Reply exactly OK. Do not run tools.',
+        model: 'gpt-5.5',
+        intervalMs: 300_000,
+        minIntervalMs: 18_300_000,
+        staggerMs: 0,
+        maxUsagePct: 0,
+        maxD7UsagePct: 0,
+        commandTimeoutMs: 120_000,
+        failureCooldownMs: 21_600_000,
+        maxConsecutiveFailures: 2,
+      },
+      { nowMs: now, statePath },
+    );
+
+    expect(result).toEqual({
+      status: 'skipped',
+      reason: 'no_eligible_accounts',
+    });
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+  });
+
   it('does not repeat warm-up while the same zero-usage quota window is already marked warmed', async () => {
     const childProcess = await import('child_process');
     const rotation = await import('./codex-token-rotation.js');

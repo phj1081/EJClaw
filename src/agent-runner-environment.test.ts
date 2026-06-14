@@ -293,6 +293,90 @@ describe('prepareGroupEnvironment codex auth handling', () => {
     );
     expect(fs.existsSync(authPath)).toBe(false);
   });
+
+  it('uses the leased canonical Codex home directly instead of copying pooled auth into a session home', () => {
+    const canonicalCodexDir = path.join(tempRoot, 'codex-account-0');
+    const canonicalAuthPath = path.join(canonicalCodexDir, 'auth.json');
+    fs.mkdirSync(canonicalCodexDir, { recursive: true });
+    fs.writeFileSync(
+      canonicalAuthPath,
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: {
+          account_id: 'acct-0',
+          access_token: 'canonical-access',
+          refresh_token: 'canonical-refresh',
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(process.env.EJ_TEST_HOME!, '.codex', 'config.toml'),
+      'model = "gpt-5.4"\n',
+    );
+    const release = vi.fn();
+    mockGetCodexAccountCount.mockReturnValue(1);
+    mockClaimCodexAuthLease.mockReturnValue({
+      authPath: canonicalAuthPath,
+      accountIndex: 0,
+      release,
+    });
+    mockReadEnvFile.mockReturnValue({});
+
+    const prepared = prepareGroupEnvironment(group, false, 'dc:test');
+
+    const staleSessionAuthPath = path.join(
+      tempRoot,
+      'sessions',
+      group.folder,
+      'services',
+      'codex-main',
+      '.codex',
+      'auth.json',
+    );
+    expect(prepared.env.CODEX_HOME).toBe(canonicalCodexDir);
+    expect(prepared.codexSessionAuth).toEqual(
+      expect.objectContaining({
+        canonicalAuthPath,
+        sessionAuthPath: canonicalAuthPath,
+        accountIndex: 0,
+      }),
+    );
+    expect(fs.existsSync(staleSessionAuthPath)).toBe(false);
+    expect(
+      fs.readFileSync(path.join(canonicalCodexDir, 'config.toml'), 'utf-8'),
+    ).toContain('model = "gpt-5.4"');
+    expect(fs.existsSync(path.join(canonicalCodexDir, 'AGENTS.md'))).toBe(true);
+    expect(release).not.toHaveBeenCalled();
+  });
+
+  it('releases a leased Codex slot when canonical CODEX_HOME preparation fails', () => {
+    const canonicalCodexDir = path.join(tempRoot, 'codex-account-0');
+    const canonicalAuthPath = path.join(canonicalCodexDir, 'auth.json');
+    fs.mkdirSync(canonicalCodexDir, { recursive: true });
+    fs.writeFileSync(
+      canonicalAuthPath,
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: { account_id: 'acct-0', access_token: 'canonical-access' },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(process.env.EJ_TEST_HOME!, '.codex', 'config.toml'),
+      'model = "gpt-5.4"\n',
+    );
+    fs.mkdirSync(path.join(canonicalCodexDir, 'config.toml'));
+    const release = vi.fn();
+    mockGetCodexAccountCount.mockReturnValue(1);
+    mockClaimCodexAuthLease.mockReturnValue({
+      authPath: canonicalAuthPath,
+      accountIndex: 0,
+      release,
+    });
+    mockReadEnvFile.mockReturnValue({});
+
+    expect(() => prepareGroupEnvironment(group, false, 'dc:test')).toThrow();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('prepareGroupEnvironment prompt stacks', () => {

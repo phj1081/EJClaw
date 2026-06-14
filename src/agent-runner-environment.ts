@@ -148,9 +148,50 @@ function ensureClaudeGlobalSettingsFile(sessionDir: string): void {
 
 export interface PreparedCodexSessionAuth {
   canonicalAuthPath: string;
+  /**
+   * Path Codex will mutate during the run. For leased accounts this is the
+   * canonical auth file itself, not a persistent session copy.
+   */
   sessionAuthPath: string;
+  /** Directory passed to CODEX_HOME for this run. */
+  codexHomeDir?: string;
   accountIndex: number | null;
   lease?: CodexAuthLease;
+}
+
+function comparablePath(value: string): string {
+  try {
+    return fs.realpathSync.native(value);
+  } catch {
+    return path.resolve(value);
+  }
+}
+
+function isSamePath(a: string, b: string): boolean {
+  return comparablePath(a) === comparablePath(b);
+}
+
+function syncHostCodexConfigFiles(
+  destinationCodexDir: string,
+  opts?: { resetMissing?: boolean },
+): void {
+  const hostCodexDir = path.join(os.homedir(), '.codex');
+  fs.mkdirSync(destinationCodexDir, { recursive: true });
+  for (const file of ['config.toml', 'config.json']) {
+    const src = path.join(hostCodexDir, file);
+    const dst = path.join(destinationCodexDir, file);
+    if (isSamePath(src, dst)) continue;
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, dst);
+    } else if (opts?.resetMissing && fs.existsSync(dst)) {
+      fs.unlinkSync(dst);
+    }
+  }
+}
+
+function removeStaleSessionCodexAuth(sessionCodexDir: string): void {
+  const authDst = path.join(sessionCodexDir, 'auth.json');
+  if (fs.existsSync(authDst)) fs.unlinkSync(authDst);
 }
 
 function syncHostCodexSessionFiles(
@@ -162,8 +203,27 @@ function syncHostCodexSessionFiles(
   const authDst = path.join(sessionCodexDir, 'auth.json');
   const hasRotationAccounts = getCodexAccountCount() > 0;
   const lease = claimCodexAuthLease();
-  const rotatedAuthSrc =
-    lease?.authPath ?? (!hasRotationAccounts ? getActiveCodexAuthPath() : null);
+
+  if (lease?.authPath && fs.existsSync(lease.authPath)) {
+    try {
+      const codexHomeDir = path.dirname(lease.authPath);
+      removeStaleSessionCodexAuth(sessionCodexDir);
+      syncHostCodexConfigFiles(codexHomeDir, { resetMissing: true });
+      return {
+        canonicalAuthPath: lease.authPath,
+        sessionAuthPath: lease.authPath,
+        codexHomeDir,
+        accountIndex: lease.accountIndex,
+        lease,
+      };
+    } catch (err) {
+      lease.release();
+      throw err;
+    }
+  }
+  lease?.release();
+
+  const rotatedAuthSrc = !hasRotationAccounts ? getActiveCodexAuthPath() : null;
   const fallbackAuthSrc = path.join(hostCodexDir, 'auth.json');
   const authSrc =
     rotatedAuthSrc && fs.existsSync(rotatedAuthSrc)
@@ -177,20 +237,13 @@ function syncHostCodexSessionFiles(
     fs.unlinkSync(authDst);
   }
 
-  for (const file of ['config.toml', 'config.json']) {
-    const src = path.join(hostCodexDir, file);
-    const dst = path.join(sessionCodexDir, file);
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, dst);
-    }
-  }
+  syncHostCodexConfigFiles(sessionCodexDir);
 
   if (
     !rotatedAuthSrc ||
     authSrc !== rotatedAuthSrc ||
     !fs.existsSync(authDst)
   ) {
-    lease?.release();
     if (hasRotationAccounts) {
       throw new Error(
         'Codex rotation pool unavailable: all rotation accounts are currently dead, rate-limited, or locked; re-auth or clear stale state before launching Codex',
@@ -202,9 +255,7 @@ function syncHostCodexSessionFiles(
   return {
     canonicalAuthPath: rotatedAuthSrc,
     sessionAuthPath: authDst,
-    accountIndex:
-      lease?.accountIndex ?? findCodexAccountIndexByAuthPath(rotatedAuthSrc),
-    ...(lease ? { lease } : {}),
+    accountIndex: findCodexAccountIndexByAuthPath(rotatedAuthSrc),
   };
 }
 
@@ -420,136 +471,150 @@ function prepareCodexSessionEnvironment(args: {
 
   const sessionCodexDir = path.join(args.sessionRootDir, '.codex');
   const codexSessionAuth = syncHostCodexSessionFiles(sessionCodexDir);
+  const runtimeCodexDir = codexSessionAuth?.codexHomeDir ?? sessionCodexDir;
+  let configured = false;
+  try {
+    const overlayPath = path.join(args.groupDir, '.codex', 'config.toml');
+    const sessionConfigPath = path.join(runtimeCodexDir, 'config.toml');
+    if (fs.existsSync(overlayPath)) {
+      const overlayToml = fs.readFileSync(overlayPath, 'utf-8').trim();
+      if (overlayToml) {
+        const baseToml = fs.existsSync(sessionConfigPath)
+          ? fs.readFileSync(sessionConfigPath, 'utf-8').trimEnd()
+          : '';
+        fs.writeFileSync(
+          sessionConfigPath,
+          [baseToml, overlayToml].filter(Boolean).join('\n\n') + '\n',
+        );
+      }
+    }
 
-  const overlayPath = path.join(args.groupDir, '.codex', 'config.toml');
-  const sessionConfigPath = path.join(sessionCodexDir, 'config.toml');
-  if (fs.existsSync(overlayPath)) {
-    const overlayToml = fs.readFileSync(overlayPath, 'utf-8').trim();
-    if (overlayToml) {
-      const baseToml = fs.existsSync(sessionConfigPath)
-        ? fs.readFileSync(sessionConfigPath, 'utf-8').trimEnd()
-        : '';
-      fs.writeFileSync(
-        sessionConfigPath,
-        [baseToml, overlayToml].filter(Boolean).join('\n\n') + '\n',
+    const goalsFromConfig = readCodexFeatureFromFile(
+      sessionConfigPath,
+      'goals',
+    );
+    const codexGoals =
+      args.group.agentConfig?.codexGoals ??
+      (goalsFromConfig ||
+        args.envVars.CODEX_GOALS === 'true' ||
+        process.env.CODEX_GOALS === 'true');
+    if (codexGoals) {
+      args.env.CODEX_GOALS = 'true';
+    } else {
+      delete args.env.CODEX_GOALS;
+    }
+
+    const sessionAgentsPath = path.join(runtimeCodexDir, 'AGENTS.md');
+    const sessionAgents = (
+      args.useFailoverPromptPack
+        ? [
+            readOptionalPromptFile(
+              args.projectRoot,
+              'owner-common-platform.md',
+            ),
+            readOptionalPromptFile(
+              args.projectRoot,
+              'codex-review-failover-platform.md',
+            ),
+            args.isPairedRoom
+              ? readOptionalPromptFile(
+                  args.projectRoot,
+                  'owner-common-paired-room.md',
+                )
+              : undefined,
+            args.memoryBriefing,
+          ]
+        : [
+            readPlatformPrompt('codex', args.projectRoot),
+            args.isPairedRoom
+              ? readOptionalPromptFile(
+                  args.projectRoot,
+                  'owner-common-paired-room.md',
+                )
+              : undefined,
+            args.memoryBriefing,
+          ]
+    )
+      .filter((value): value is string => Boolean(value))
+      .join('\n\n---\n\n')
+      .trim();
+    if (sessionAgents) {
+      fs.writeFileSync(sessionAgentsPath, sessionAgents + '\n');
+    } else if (fs.existsSync(sessionAgentsPath)) {
+      fs.unlinkSync(sessionAgentsPath);
+    }
+
+    // Codex reads skills from ~/.agents/skills/ (user-level) and
+    // {workDir}/.agents/skills/ (project-level), NOT from .codex/skills/.
+    if (hasDisabledSkillOverrides(args.skillOverrides, 'codex')) {
+      const sessionHomeDir = path.join(args.sessionRootDir, 'home');
+      args.env.HOME = sessionHomeDir;
+      syncRoomSkillDirectories({
+        sources: [
+          {
+            dir: path.join(os.homedir(), '.claude', 'skills'),
+            scope: 'codex-user',
+          },
+          {
+            dir: path.join(os.homedir(), '.agents', 'skills'),
+            scope: 'codex-user',
+          },
+          {
+            dir: path.join(args.projectRoot, 'runners', 'skills'),
+            scope: 'runner',
+          },
+        ],
+        destination: path.join(sessionHomeDir, '.agents', 'skills'),
+        agentType: 'codex',
+        overrides: args.skillOverrides,
+      });
+    } else {
+      // Preserve the historical global sync path when no room override exists.
+      const codexSkillsDir = path.join(os.homedir(), '.agents', 'skills');
+      syncDirectoryEntries(
+        [
+          path.join(os.homedir(), '.claude', 'skills'),
+          path.join(args.projectRoot, 'runners', 'skills'),
+        ],
+        codexSkillsDir,
       );
     }
-  }
 
-  const goalsFromConfig = readCodexFeatureFromFile(sessionConfigPath, 'goals');
-  const codexGoals =
-    args.group.agentConfig?.codexGoals ??
-    (goalsFromConfig ||
-      args.envVars.CODEX_GOALS === 'true' ||
-      process.env.CODEX_GOALS === 'true');
-  if (codexGoals) {
-    args.env.CODEX_GOALS = 'true';
-  } else {
-    delete args.env.CODEX_GOALS;
-  }
-
-  const sessionAgentsPath = path.join(sessionCodexDir, 'AGENTS.md');
-  const sessionAgents = (
-    args.useFailoverPromptPack
-      ? [
-          readOptionalPromptFile(args.projectRoot, 'owner-common-platform.md'),
-          readOptionalPromptFile(
-            args.projectRoot,
-            'codex-review-failover-platform.md',
-          ),
-          args.isPairedRoom
-            ? readOptionalPromptFile(
-                args.projectRoot,
-                'owner-common-paired-room.md',
-              )
-            : undefined,
-          args.memoryBriefing,
-        ]
-      : [
-          readPlatformPrompt('codex', args.projectRoot),
-          args.isPairedRoom
-            ? readOptionalPromptFile(
-                args.projectRoot,
-                'owner-common-paired-room.md',
-              )
-            : undefined,
-          args.memoryBriefing,
-        ]
-  )
-    .filter((value): value is string => Boolean(value))
-    .join('\n\n---\n\n')
-    .trim();
-  if (sessionAgents) {
-    fs.writeFileSync(sessionAgentsPath, sessionAgents + '\n');
-  } else if (fs.existsSync(sessionAgentsPath)) {
-    fs.unlinkSync(sessionAgentsPath);
-  }
-
-  // Codex reads skills from ~/.agents/skills/ (user-level) and
-  // {workDir}/.agents/skills/ (project-level), NOT from .codex/skills/.
-  if (hasDisabledSkillOverrides(args.skillOverrides, 'codex')) {
-    const sessionHomeDir = path.join(args.sessionRootDir, 'home');
-    args.env.HOME = sessionHomeDir;
-    syncRoomSkillDirectories({
-      sources: [
-        {
-          dir: path.join(os.homedir(), '.claude', 'skills'),
-          scope: 'codex-user',
-        },
-        {
-          dir: path.join(os.homedir(), '.agents', 'skills'),
-          scope: 'codex-user',
-        },
-        {
-          dir: path.join(args.projectRoot, 'runners', 'skills'),
-          scope: 'runner',
-        },
-      ],
-      destination: path.join(sessionHomeDir, '.agents', 'skills'),
-      agentType: 'codex',
-      overrides: args.skillOverrides,
-    });
-  } else {
-    // Preserve the historical global sync path when no room override exists.
-    const codexSkillsDir = path.join(os.homedir(), '.agents', 'skills');
-    syncDirectoryEntries(
-      [
-        path.join(os.homedir(), '.claude', 'skills'),
-        path.join(args.projectRoot, 'runners', 'skills'),
-      ],
-      codexSkillsDir,
+    const mcpServerPath = path.join(
+      args.projectRoot,
+      'runners',
+      'agent-runner',
+      'dist',
+      'ipc-mcp-stdio.js',
     );
-  }
+    if (fs.existsSync(mcpServerPath)) {
+      upsertEjclawMcpServerSection({
+        sessionConfigPath,
+        mcpServerPath,
+        ipcDir: args.env[EJCLAW_ENV.ipcDir],
+        hostIpcDir: args.env[EJCLAW_ENV.hostIpcDir],
+        chatJid: args.chatJid,
+        groupFolder: args.group.folder,
+        isMain: args.isMain,
+        agentType: 'codex',
+        roomRole: args.roomRole,
+        workDir:
+          args.env[EJCLAW_ENV.workDir] ||
+          args.group.workDir ||
+          args.projectRoot,
+      });
+    }
 
-  const mcpServerPath = path.join(
-    args.projectRoot,
-    'runners',
-    'agent-runner',
-    'dist',
-    'ipc-mcp-stdio.js',
-  );
-  if (fs.existsSync(mcpServerPath)) {
-    upsertEjclawMcpServerSection({
-      sessionConfigPath,
-      mcpServerPath,
-      ipcDir: args.env[EJCLAW_ENV.ipcDir],
-      hostIpcDir: args.env[EJCLAW_ENV.hostIpcDir],
-      chatJid: args.chatJid,
-      groupFolder: args.group.folder,
-      isMain: args.isMain,
-      agentType: 'codex',
-      roomRole: args.roomRole,
-      workDir:
-        args.env[EJCLAW_ENV.workDir] || args.group.workDir || args.projectRoot,
-    });
+    delete args.env.ANTHROPIC_API_KEY;
+    delete args.env.ANTHROPIC_AUTH_TOKEN;
+    delete args.env.ANTHROPIC_BASE_URL;
+    delete args.env.CLAUDE_CODE_OAUTH_TOKEN;
+    args.env.CODEX_HOME = runtimeCodexDir;
+    configured = true;
+    return codexSessionAuth;
+  } finally {
+    if (!configured) codexSessionAuth?.lease?.release();
   }
-
-  delete args.env.ANTHROPIC_API_KEY;
-  delete args.env.ANTHROPIC_AUTH_TOKEN;
-  delete args.env.ANTHROPIC_BASE_URL;
-  delete args.env.CLAUDE_CODE_OAUTH_TOKEN;
-  args.env.CODEX_HOME = sessionCodexDir;
-  return codexSessionAuth;
 }
 
 export interface PreparedGroupEnvironment {
@@ -560,7 +625,10 @@ export interface PreparedGroupEnvironment {
 }
 
 export interface PreparedReadonlySessionEnvironment {
+  /** Directory passed to CODEX_HOME for this read-only Codex role run. */
   codexHomeDir?: string;
+  /** Optional HOME override used only for session-scoped Codex skill overrides. */
+  homeDir?: string;
   codexSessionAuth?: PreparedCodexSessionAuth | null;
 }
 
@@ -764,6 +832,7 @@ export function prepareReadonlySessionEnvironment(args: {
   } = args;
   const projectRoot = process.cwd();
   let codexSessionAuth: PreparedCodexSessionAuth | null = null;
+  let runtimeCodexHomeDir: string | undefined;
 
   fs.mkdirSync(sessionDir, { recursive: true });
   ensureClaudeSessionSettings(sessionDir);
@@ -782,11 +851,11 @@ export function prepareReadonlySessionEnvironment(args: {
     agentType,
     overrides: skillOverrides,
   });
-  const codexHomeDir =
+  const skillHomeDir =
     agentType === 'codex' && hasDisabledSkillOverrides(skillOverrides, 'codex')
       ? sessionDir
       : undefined;
-  if (codexHomeDir) {
+  if (skillHomeDir) {
     syncRoomSkillDirectories({
       sources: [
         {
@@ -799,7 +868,7 @@ export function prepareReadonlySessionEnvironment(args: {
         },
         { dir: path.join(projectRoot, 'runners', 'skills'), scope: 'runner' },
       ],
-      destination: path.join(codexHomeDir, '.agents', 'skills'),
+      destination: path.join(skillHomeDir, '.agents', 'skills'),
       agentType,
       overrides: skillOverrides,
     });
@@ -835,11 +904,13 @@ export function prepareReadonlySessionEnvironment(args: {
     if (agentType === 'codex') {
       const sessionCodexDir = path.join(sessionDir, '.codex');
       codexSessionAuth = syncHostCodexSessionFiles(sessionCodexDir);
+      const runtimeCodexDir = codexSessionAuth?.codexHomeDir ?? sessionCodexDir;
+      runtimeCodexHomeDir = runtimeCodexDir;
       fs.writeFileSync(
-        path.join(sessionCodexDir, 'AGENTS.md'),
+        path.join(runtimeCodexDir, 'AGENTS.md'),
         sessionClaudeMd + '\n',
       );
-      const sessionConfigPath = path.join(sessionCodexDir, 'config.toml');
+      const sessionConfigPath = path.join(runtimeCodexDir, 'config.toml');
       const mcpServerPath = path.join(
         projectRoot,
         'runners',
@@ -881,5 +952,9 @@ export function prepareReadonlySessionEnvironment(args: {
   } else if (fs.existsSync(sessionClaudeMdPath)) {
     fs.unlinkSync(sessionClaudeMdPath);
   }
-  return { codexHomeDir, codexSessionAuth };
+  return {
+    codexHomeDir: runtimeCodexHomeDir,
+    homeDir: skillHomeDir,
+    codexSessionAuth,
+  };
 }

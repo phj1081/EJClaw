@@ -148,7 +148,8 @@ function mockCodexLeaseEnvironment(releaseLease: () => void) {
       runnerDir: '/tmp/ejclaw-test-runners/codex-runner',
       codexSessionAuth: {
         canonicalAuthPath: '/tmp/codex-account/auth.json',
-        sessionAuthPath: '/tmp/codex-session/auth.json',
+        sessionAuthPath: '/tmp/codex-account/auth.json',
+        codexHomeDir: '/tmp/codex-account',
         accountIndex: 0,
         lease: {
           accountIndex: 0,

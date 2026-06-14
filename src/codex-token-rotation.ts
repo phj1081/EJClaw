@@ -2,12 +2,13 @@
  * Codex OAuth Token Rotation
  *
  * Rotates between multiple Codex (ChatGPT) OAuth accounts when
- * rate-limited. Each account is stored as a separate auth.json in
- * ~/.codex-accounts/{n}/auth.json.
+ * rate-limited. Each account is stored as an isolated CODEX_HOME under
+ * ~/.codex-accounts/{n}/, with auth.json/config.toml in that directory.
  *
- * The active account's auth.json is copied to the session directory
- * before each agent spawn (existing behavior in agent-runner-environment).
- * On rate-limit, we rotate to the next account.
+ * For pooled accounts EJClaw leases the account directory directly and passes
+ * it as CODEX_HOME. Do not copy auth.json into session directories: Codex
+ * OAuth refresh tokens are rotating credentials, so stale copies can consume
+ * or overwrite each other and permanently poison a slot.
  */
 
 import fs from 'fs';
@@ -577,6 +578,18 @@ export function syncCodexSessionAuthBack(args: {
   if (!fs.existsSync(args.sessionAuthPath)) return false;
   if (!fs.existsSync(args.canonicalAuthPath)) return false;
 
+  const idx =
+    args.accountIndex ??
+    findCodexAccountIndexByAuthPath(args.canonicalAuthPath);
+  if (
+    path.resolve(args.sessionAuthPath) === path.resolve(args.canonicalAuthPath)
+  ) {
+    if (idx != null && accounts[idx]) {
+      updateAccountMetadataFromAuthFile(accounts[idx]);
+    }
+    return false;
+  }
+
   const canonical = readJsonFile<{
     auth_mode?: string;
     tokens?: { account_id?: string };
@@ -613,9 +626,6 @@ export function syncCodexSessionAuthBack(args: {
   fs.writeFileSync(tmpPath, sessionRaw, { mode: 0o600 });
   fs.renameSync(tmpPath, args.canonicalAuthPath);
 
-  const idx =
-    args.accountIndex ??
-    findCodexAccountIndexByAuthPath(args.canonicalAuthPath);
   if (idx != null && accounts[idx]) {
     const acct = accounts[idx];
     acct.authStatus = 'healthy';
