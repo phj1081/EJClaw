@@ -16,11 +16,16 @@
  * Override: set `EJCLAW_CLAUDE_CLI_PATH` to a custom absolute binary path.
  */
 
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import { createRequire } from 'module';
+import os from 'os';
 import path from 'path';
 
 const ENV_OVERRIDE = 'EJCLAW_CLAUDE_CLI_PATH';
+const GLM_CODE_ENV_OVERRIDE = 'EJCLAW_GLM_CODE_CLI_PATH';
+
+export type ClaudeCompatibleAgentType = 'claude-code' | 'glm-code';
 
 interface PlatformCandidate {
   pkg: string;
@@ -123,6 +128,85 @@ export function resolveBundledClaudeCodeExecutable(options?: {
   );
 }
 
+export function resolveClaudeCompatibleExecutable(options?: {
+  agentType?: ClaudeCompatibleAgentType;
+  /** Override platform (tests only). */
+  platform?: NodeJS.Platform;
+  /** Override arch (tests only). */
+  arch?: string;
+  /** Override env source (tests only). */
+  env?: NodeJS.ProcessEnv;
+  /** Override fs.existsSync (tests only). */
+  existsSync?: (p: string) => boolean;
+  /** Override how candidate dirs are resolved (tests only). */
+  resolvePackageDir?: (pkg: string) => string | null;
+  /** Override command lookup (tests only). */
+  resolveCommand?: (command: string) => string | null;
+  /** Override known glm-code paths (tests only). */
+  knownGlmCodePaths?: string[];
+}): string {
+  if (options?.agentType === 'glm-code') {
+    return resolveGlmCodeExecutable(options);
+  }
+  return resolveBundledClaudeCodeExecutable(options);
+}
+
+function resolveGlmCodeExecutable(options?: {
+  env?: NodeJS.ProcessEnv;
+  existsSync?: (p: string) => boolean;
+  resolveCommand?: (command: string) => string | null;
+  knownGlmCodePaths?: string[];
+}): string {
+  const env = options?.env ?? process.env;
+  const existsSync = options?.existsSync ?? fs.existsSync;
+  const resolveCommand = options?.resolveCommand ?? defaultResolveCommand;
+  const knownPaths = options?.knownGlmCodePaths ?? defaultGlmCodePaths();
+
+  const override = env[GLM_CODE_ENV_OVERRIDE];
+  if (override && override.trim().length > 0) {
+    const resolved = path.resolve(override);
+    if (!existsSync(resolved)) {
+      throw new Error(
+        `${GLM_CODE_ENV_OVERRIDE} is set to "${override}" but no file exists at that path.`,
+      );
+    }
+    return resolved;
+  }
+
+  const fromPath = resolveCommand('glm-code');
+  if (fromPath && existsSync(fromPath)) return fromPath;
+
+  for (const candidate of knownPaths) {
+    if (existsSync(candidate)) return candidate;
+  }
+
+  throw new Error(
+    `Unable to locate a glm-code CLI launcher. Tried PATH command glm-code and: ${knownPaths.join(', ') || '(no known paths)'}. ` +
+      `Set ${GLM_CODE_ENV_OVERRIDE} to an absolute path to the glm-code launcher.`,
+  );
+}
+
+function defaultResolveCommand(command: string): string | null {
+  try {
+    return execFileSync('bash', ['-lc', `command -v ${command}`], {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function defaultGlmCodePaths(): string[] {
+  const home = os.homedir();
+  return [
+    path.join(home, '.local', 'bin', 'glm-code'),
+    path.join(home, '.npm-global', 'bin', 'glm-code'),
+    '/usr/local/bin/glm-code',
+    '/opt/homebrew/bin/glm-code',
+  ];
+}
+
 /**
  * Default package directory resolver. Uses `require.resolve` against this
  * module's location so it works regardless of whether agent-runner is invoked
@@ -153,5 +237,7 @@ function defaultResolvePackageDir(pkg: string): string | null {
 export const __test__ = {
   platformCandidates,
   defaultResolvePackageDir,
+  defaultGlmCodePaths,
   ENV_OVERRIDE,
+  GLM_CODE_ENV_OVERRIDE,
 };

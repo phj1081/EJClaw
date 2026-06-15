@@ -1,4 +1,4 @@
-export type SettingsAgentType = 'claude-code' | 'codex';
+export type SettingsAgentType = 'claude-code' | 'codex' | 'glm-code';
 
 export const CODEX_EFFORT_VALUES = [
   '',
@@ -22,7 +22,7 @@ export type EffortValue = (typeof CODEX_EFFORT_VALUES)[number];
 export function effortValuesForAgent(
   agentType: SettingsAgentType,
 ): readonly EffortValue[] {
-  return agentType === 'claude-code'
+  return agentType === 'claude-code' || agentType === 'glm-code'
     ? CLAUDE_EFFORT_VALUES
     : CODEX_EFFORT_VALUES;
 }
@@ -39,7 +39,9 @@ export function isEffortSupported(
 export function readSettingsAgentType(
   value: string | undefined,
 ): SettingsAgentType | null {
-  if (value === 'claude-code' || value === 'codex') return value;
+  if (value === 'claude-code' || value === 'codex' || value === 'glm-code') {
+    return value;
+  }
   return null;
 }
 

@@ -3,6 +3,7 @@ import { EJCLAW_ENV, IPC_POLL_MS } from 'ejclaw-runners-shared';
 
 import { compactBoundaryFromMessage } from './compaction-boundary.js';
 import { getClaudeCliPath } from './claude-cli.js';
+import type { ClaudeCompatibleAgentType } from './bundled-cli-path.js';
 import { drainIpcInput, shouldClose } from './ipc-input.js';
 import { buildEjclawMcpServerConfig } from './mcp-config.js';
 import {
@@ -182,7 +183,10 @@ class ClaudeQueryRunner {
         : undefined;
 
     return {
-      pathToClaudeCodeExecutable: getClaudeCliPath(this.args.log),
+      pathToClaudeCodeExecutable: getClaudeCliPath(
+        this.args.log,
+        this.resolveAgentType(),
+      ),
       cwd: this.effectiveCwd,
       model: this.resolveModel(),
       thinking: this.resolveThinking(),
@@ -262,6 +266,12 @@ class ClaudeQueryRunner {
 
   private resolveModel(): string | undefined {
     return process.env.CLAUDE_MODEL || undefined;
+  }
+
+  private resolveAgentType(): ClaudeCompatibleAgentType {
+    return process.env[EJCLAW_ENV.agentType] === 'glm-code'
+      ? 'glm-code'
+      : 'claude-code';
   }
 
   private resolveThinking():

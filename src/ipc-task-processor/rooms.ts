@@ -131,5 +131,5 @@ function isRoomMode(value: string): value is RoomMode {
 }
 
 function isAssignableAgentType(value: string): value is AgentType {
-  return value === 'claude-code' || value === 'codex';
+  return value === 'claude-code' || value === 'codex' || value === 'glm-code';
 }

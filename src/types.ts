@@ -28,7 +28,17 @@ export interface AgentConfig {
   claudeThinkingBudget?: number;
 }
 
-export type AgentType = 'claude-code' | 'codex';
+export type AgentType = 'claude-code' | 'codex' | 'glm-code';
+
+export function isClaudeCompatibleAgentType(
+  agentType: AgentType | null | undefined,
+): agentType is 'claude-code' | 'glm-code' {
+  return agentType === 'claude-code' || agentType === 'glm-code';
+}
+
+export function isKnownAgentType(value: string): value is AgentType {
+  return value === 'claude-code' || value === 'codex' || value === 'glm-code';
+}
 export type RoomMode = 'single' | 'tribunal';
 
 /** Phase of agent output as emitted by the runner. */

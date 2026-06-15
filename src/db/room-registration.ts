@@ -84,7 +84,9 @@ export function normalizeRoomModeSource(
 export function normalizeStoredAgentType(
   agentType: string | null | undefined,
 ): AgentType | undefined {
-  return agentType === 'claude-code' || agentType === 'codex'
+  return agentType === 'claude-code' ||
+    agentType === 'codex' ||
+    agentType === 'glm-code'
     ? agentType
     : undefined;
 }
@@ -93,7 +95,9 @@ export function inferRoomModeFromRegisteredAgentTypes(
   agentTypes: readonly AgentType[],
 ): RoomMode {
   const types = new Set(agentTypes);
-  return types.has('claude-code') && types.has('codex') ? 'tribunal' : 'single';
+  const hasClaudeCompatible =
+    types.has('claude-code') || types.has('glm-code');
+  return hasClaudeCompatible && types.has('codex') ? 'tribunal' : 'single';
 }
 
 export function inferOwnerAgentTypeFromRegisteredAgentTypes(
@@ -102,6 +106,7 @@ export function inferOwnerAgentTypeFromRegisteredAgentTypes(
   const types = new Set(agentTypes);
   if (types.has(OWNER_AGENT_TYPE)) return OWNER_AGENT_TYPE;
   if (types.has('codex')) return 'codex';
+  if (types.has('glm-code')) return 'glm-code';
   return 'claude-code';
 }
 

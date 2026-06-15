@@ -25,7 +25,7 @@ export {
   writeTasksSnapshot,
 } from './agent-runner-snapshot.js';
 import { logger } from './logger.js';
-import { RegisteredGroup, RoomRoleContext } from './types.js';
+import { type AgentType, RegisteredGroup, RoomRoleContext } from './types.js';
 import type { StoredRoomSkillOverride } from './db/rooms.js';
 
 export interface AgentInput {
@@ -40,7 +40,7 @@ export interface AgentInput {
   runtimeTaskId?: string;
   useTaskScopedSession?: boolean;
   assistantName?: string;
-  agentType?: 'claude-code' | 'codex';
+  agentType?: AgentType;
   codexGoals?: boolean;
   roomRoleContext?: RoomRoleContext;
 }

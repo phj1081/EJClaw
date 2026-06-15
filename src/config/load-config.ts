@@ -63,7 +63,9 @@ function readAgentType(
   fallback?: AgentType,
 ): AgentType | undefined {
   const value = readText(key);
-  if (value === 'codex' || value === 'claude-code') return value;
+  if (value === 'codex' || value === 'claude-code' || value === 'glm-code') {
+    return value;
+  }
   return fallback;
 }
 
@@ -227,9 +229,7 @@ export function loadConfig(): AppConfig {
       ownerAgentType,
       reviewerAgentType,
       reviewerServiceIdForType:
-        reviewerAgentType === 'claude-code'
-          ? claudeServiceId
-          : codexReviewServiceId,
+        reviewerAgentType === 'codex' ? codexReviewServiceId : claudeServiceId,
       arbiterAgentType,
       arbiterServiceId: arbiterAgentType
         ? (readText('ARBITER_SERVICE_ID') ?? codexReviewServiceId)

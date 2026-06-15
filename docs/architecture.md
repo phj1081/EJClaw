@@ -67,7 +67,7 @@ Discord ──► SQLite (WAL) ──► GroupQueue ──┬──► Owner (ho
 | reviewer | 전역 `REVIEWER_AGENT_TYPE` (기본 Claude Code) | owner 결과 검토, 회귀 검증 |
 | arbiter | 전역 `ARBITER_AGENT_TYPE` (옵션) | owner / reviewer 교착 시 판정 |
 
-역할별 model / effort는 전역 env(`OWNER_*`, `REVIEWER_*`, `ARBITER_*`)로 정하고, room-level `agentConfig`는 provider별(`claudeModel`, `codexModel`) override만 제공합니다.
+역할별 model / effort는 전역 env(`OWNER_*`, `REVIEWER_*`, `ARBITER_*`)로 정하고, room-level `agentConfig`는 provider별(`claudeModel`, `codexModel`) override만 제공합니다. `glm-code`는 Claude Agent SDK 호환 runner로 취급하되 전용 launcher(`EJCLAW_GLM_CODE_CLI_PATH` 또는 PATH의 `glm-code`)를 사용하므로, 기존 Claude Code reviewer와 분리해 owner/arbiter만 GLM으로 전환할 수 있습니다.
 
 ## Reviewer / Arbiter runtime
 

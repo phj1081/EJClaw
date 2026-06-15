@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   __test__,
   resolveBundledClaudeCodeExecutable,
+  resolveClaudeCompatibleExecutable,
 } from '../src/bundled-cli-path.js';
 
 describe('resolveBundledClaudeCodeExecutable', () => {
@@ -140,6 +141,40 @@ describe('resolveBundledClaudeCodeExecutable', () => {
         resolvePackageDir: () => null,
       }),
     ).toThrow(/Unable to locate a bundled Claude Code CLI binary/);
+  });
+
+  it('uses a dedicated glm-code launcher for glm-code agents', () => {
+    const fake = '/opt/glm-code/bin/glm-code';
+    const result = resolveClaudeCompatibleExecutable({
+      agentType: 'glm-code',
+      env: { EJCLAW_GLM_CODE_CLI_PATH: fake },
+      existsSync: (p) => p === fake,
+      resolveCommand: () => null,
+      knownGlmCodePaths: [],
+      platform: 'linux',
+      arch: 'x64',
+      resolvePackageDir: () => null,
+    });
+
+    expect(result).toBe(fake);
+  });
+
+  it('keeps Claude Code agents on the bundled Claude binary even when glm-code is configured', () => {
+    const glibcDir =
+      '/fake/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64';
+    const result = resolveClaudeCompatibleExecutable({
+      agentType: 'claude-code',
+      env: { EJCLAW_GLM_CODE_CLI_PATH: '/opt/glm-code/bin/glm-code' },
+      existsSync: (p) => p === path.join(glibcDir, 'claude'),
+      resolveCommand: () => '/opt/glm-code/bin/glm-code',
+      knownGlmCodePaths: ['/opt/glm-code/bin/glm-code'],
+      platform: 'linux',
+      arch: 'x64',
+      resolvePackageDir: (pkg) =>
+        pkg === '@anthropic-ai/claude-agent-sdk-linux-x64' ? glibcDir : null,
+    });
+
+    expect(result).toBe(path.join(glibcDir, 'claude'));
   });
 
   it('resolves the linux x64 optional package even when it has no JS entrypoint', () => {

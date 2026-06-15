@@ -27,11 +27,12 @@ import { buildRoomRoleContext } from './room-role-context.js';
 import { getEffectiveChannelLease } from './service-routing.js';
 import { buildRoomMemoryBriefing } from './sqlite-memory-store.js';
 import { getTokenCount } from './token-rotation.js';
-import type {
-  AgentType,
-  PairedRoomRole,
-  RegisteredGroup,
-  RoomRoleContext,
+import {
+  isClaudeCompatibleAgentType,
+  type AgentType,
+  type PairedRoomRole,
+  type RegisteredGroup,
+  type RoomRoleContext,
 } from './types.js';
 import { writeGroupsSnapshot, writeTasksSnapshot } from './agent-runner.js';
 
@@ -223,8 +224,9 @@ class MessageAgentExecutionTargetPreparer {
             agentType: executionTarget.effectiveAgentType,
           }
         : this.args.group;
-    const isClaudeCodeAgent =
-      executionTarget.effectiveAgentType === 'claude-code';
+    const isClaudeCodeAgent = isClaudeCompatibleAgentType(
+      executionTarget.effectiveAgentType,
+    );
     const forceFreshClaudeReviewerSession =
       reviewerMode &&
       isClaudeCodeAgent &&

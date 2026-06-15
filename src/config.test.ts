@@ -21,6 +21,10 @@ describe('config/env loading', () => {
     delete process.env.LOG_LEVEL;
     delete process.env.CLAUDE_MODEL;
     delete process.env.CODEX_MODEL;
+    delete process.env.OWNER_AGENT_TYPE;
+    delete process.env.REVIEWER_AGENT_TYPE;
+    delete process.env.ARBITER_AGENT_TYPE;
+    delete process.env.ARBITER_SERVICE_ID;
     delete process.env.STATUS_CHANNEL_ID;
     delete process.env.TZ;
     delete process.env.DISCORD_BOT_TOKEN;
@@ -138,6 +142,20 @@ describe('config/env loading', () => {
     process.env.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION = 'true';
     config = await import('./config.js');
     expect(config.PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION).toBe(true);
+  });
+
+  it('accepts glm-code as a Claude-compatible paired role agent type', async () => {
+    process.env.OWNER_AGENT_TYPE = 'glm-code';
+    process.env.REVIEWER_AGENT_TYPE = 'glm-code';
+    process.env.ARBITER_AGENT_TYPE = 'glm-code';
+
+    const { loadConfig } = await import('./config/load-config.js');
+    const config = loadConfig();
+
+    expect(config.paired.ownerAgentType).toBe('glm-code');
+    expect(config.paired.reviewerAgentType).toBe('glm-code');
+    expect(config.paired.reviewerServiceIdForType).toBe('claude');
+    expect(config.paired.arbiterAgentType).toBe('glm-code');
   });
 
   it('keeps Codex warm-up disabled by default and exposes conservative opt-in env config', async () => {

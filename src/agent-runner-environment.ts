@@ -664,6 +664,7 @@ export function prepareGroupEnvironment(
   fs.mkdirSync(groupSessionsDir, { recursive: true });
   ensureClaudeSessionSettings(groupSessionsDir);
 
+  const agentType = group.agentType || 'claude-code';
   const workDirClaude = group.workDir
     ? path.join(group.workDir, '.claude')
     : null;
@@ -684,7 +685,7 @@ export function prepareGroupEnvironment(
       { dir: path.join(projectRoot, 'runners', 'skills'), scope: 'runner' },
     ],
     destination: path.join(groupSessionsDir, 'skills'),
-    agentType: 'claude-code',
+    agentType: agentType === 'glm-code' ? 'glm-code' : 'claude-code',
     overrides: options?.skillOverrides,
   });
 
@@ -738,7 +739,6 @@ export function prepareGroupEnvironment(
     fs.unlinkSync(sessionClaudeMdPath);
   }
 
-  const agentType = group.agentType || 'claude-code';
   const runnerDirName = agentType === 'codex' ? 'codex-runner' : 'agent-runner';
   const runnerDir = path.join(projectRoot, 'runners', runnerDirName);
 

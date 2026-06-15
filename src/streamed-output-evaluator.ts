@@ -31,7 +31,7 @@ export interface StreamedOutputState {
 }
 
 export interface EvaluateStreamedOutputOptions {
-  agentType: 'claude-code' | 'codex';
+  agentType: 'claude-code' | 'codex' | 'glm-code';
   provider: string;
   suppressClaudeAuthErrorOutput?: boolean;
   trackSuccessNullResult?: boolean;
@@ -171,7 +171,10 @@ export function evaluateStreamedOutput(
 type PrimaryAgent = 'claude' | 'codex' | undefined;
 
 function primaryAgentFor(options: EvaluateStreamedOutputOptions): PrimaryAgent {
-  if (options.agentType === 'claude-code' && options.provider === 'claude') {
+  if (
+    (options.agentType === 'claude-code' || options.agentType === 'glm-code') &&
+    options.provider === 'claude'
+  ) {
     return 'claude';
   }
   if (options.agentType === 'codex' && options.provider === 'codex') {

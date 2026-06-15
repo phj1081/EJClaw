@@ -28,6 +28,7 @@ DISCORD_ARBITER_BOT_TOKEN=
 OWNER_AGENT_TYPE=codex
 REVIEWER_AGENT_TYPE=claude-code
 ARBITER_AGENT_TYPE=codex
+# 사용 가능: codex | claude-code | glm-code
 
 # provider 기본 모델
 # 공식 Claude API 모델 ID입니다.
@@ -36,6 +37,12 @@ CLAUDE_EFFORT=high
 CLAUDE_THINKING=adaptive
 CODEX_MODEL=gpt-5.5
 CODEX_EFFORT=xhigh
+
+# glm-code는 Claude Agent SDK 호환 runner로 실행됩니다.
+# agent type만 glm-code로 바꾸고, 모델은 역할별 *_MODEL에 GLM 모델명을 넣습니다.
+# OWNER_AGENT_TYPE=glm-code
+# OWNER_MODEL=glm-5.2
+# EJCLAW_GLM_CODE_CLI_PATH=/home/ejclaw/.local/bin/glm-code
 
 # 역할별 override
 OWNER_MODEL=gpt-5.5
@@ -54,8 +61,9 @@ ARBITER_FALLBACK_ENABLED=true
 설명:
 
 - reviewer / arbiter provider 선택은 **전역 설정**
-- 역할별 `*_MODEL`은 해당 역할의 provider에 맞춰 주입됩니다. `codex` 역할에는 Codex 모델을, `claude-code` 역할에는 Claude 모델을 넣어야 합니다.
-- 예를 들어 `ARBITER_AGENT_TYPE=claude-code`로 바꾸면 그때 `ARBITER_MODEL=claude-opus-4-8`을 사용할 수 있습니다.
+- 역할별 `*_MODEL`은 해당 역할의 provider에 맞춰 주입됩니다. `codex` 역할에는 Codex 모델을, `claude-code` 역할에는 Claude 모델을, `glm-code` 역할에는 GLM 모델명을 넣어야 합니다.
+- 예를 들어 `ARBITER_AGENT_TYPE=claude-code`로 바꾸면 그때 `ARBITER_MODEL=claude-opus-4-8`을 사용할 수 있고, `ARBITER_AGENT_TYPE=glm-code`면 `ARBITER_MODEL=glm-5.2`를 사용할 수 있습니다.
+- `glm-code`는 전역 `EJCLAW_CLAUDE_CLI_PATH`를 건드리지 않고 `EJCLAW_GLM_CODE_CLI_PATH` 또는 PATH의 `glm-code` launcher를 별도로 찾습니다. 그래서 기존 Claude reviewer를 Opus로 유지하면서 owner/arbiter만 GLM으로 바꿀 수 있습니다.
 - 특정 방에서만 reviewer를 Codex로 고르는 기능은 없음
 - room-level `agentConfig`의 `claudeModel`, `codexModel`은 역할별이 아니라 provider별 override
 - `ARBITER_AGENT_TYPE`은 옵션이며, 설정하지 않으면 arbiter는 비활성 상태입니다

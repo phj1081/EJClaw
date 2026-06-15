@@ -220,11 +220,9 @@ async function refreshChannelMeta(
   }
 }
 
-function getAgentDisplayName(
-  agentType: 'claude-code' | 'codex',
-  serviceId: string,
-): string {
+function getAgentDisplayName(agentType: AgentType, serviceId: string): string {
   if (agentType === 'claude-code') return '클코';
+  if (agentType === 'glm-code') return 'GLM';
   return serviceId === 'codex-review' ? '코리뷰' : '코덱스';
 }
 
@@ -301,9 +299,7 @@ function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
           jid: status.jid,
           name: group.name,
           folder: group.folder,
-          agentType: (group.agentType || opts.serviceAgentType) as
-            | 'claude-code'
-            | 'codex',
+          agentType: (group.agentType || opts.serviceAgentType) as AgentType,
           status: status.status,
           elapsedMs: status.elapsedMs,
           pendingMessages: status.pendingMessages,
@@ -314,7 +310,7 @@ function writeLocalStatusSnapshot(opts: UnifiedDashboardOptions): void {
       jid: string;
       name: string;
       folder: string;
-      agentType: 'claude-code' | 'codex';
+      agentType: AgentType;
       status: 'processing' | 'waiting' | 'inactive';
       elapsedMs: number | null;
       pendingMessages: boolean;
@@ -338,7 +334,7 @@ function buildStatusContent(): string {
 
   interface RoomEntry {
     serviceId: string;
-    agentType: 'claude-code' | 'codex';
+    agentType: AgentType;
     status: 'processing' | 'waiting' | 'inactive';
     elapsedMs: number | null;
     pendingMessages: boolean;
@@ -350,7 +346,7 @@ function buildStatusContent(): string {
   const byJid = new Map<string, RoomEntry[]>();
 
   for (const snapshot of snapshots) {
-    const agentType = snapshot.agentType as 'claude-code' | 'codex';
+    const agentType = snapshot.agentType as AgentType;
     for (const entry of snapshot.entries) {
       const existing = byJid.get(entry.jid) || [];
       existing.push({

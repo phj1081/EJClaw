@@ -125,7 +125,7 @@ class MessageAgentAttemptRunner {
   constructor(private readonly args: RunMessageAgentAttemptArgs) {
     this.attemptSessionId = args.currentSessionId;
     this.streamedOutputHandler = createEvaluatedOutputHandler({
-      agentType: args.isClaudeCodeAgent ? 'claude-code' : 'codex',
+      agentType: args.effectiveAgentType,
       provider: args.provider,
       evaluationOptions: {
         suppressClaudeAuthErrorOutput: args.provider === 'claude',

@@ -51,8 +51,12 @@ const roomRole = process.env[EJCLAW_ENV.roomRole];
 const runtimeTaskId = process.env[EJCLAW_ENV.runtimeTaskId];
 const allowGenericScheduling = agentType !== 'codex';
 
-function currentAgentType(): 'claude-code' | 'codex' {
-  return agentType === 'codex' ? 'codex' : 'claude-code';
+function currentAgentType(): 'claude-code' | 'codex' | 'glm-code' {
+  return agentType === 'codex'
+    ? 'codex'
+    : agentType === 'glm-code'
+      ? 'glm-code'
+      : 'claude-code';
 }
 
 function currentRoomRole(): 'owner' | 'reviewer' | 'arbiter' | undefined {
@@ -768,15 +772,15 @@ If folder is omitted, the host generates one automatically.`,
       .default('single')
       .describe('single=owner only, tribunal=owner/reviewer roles enabled'),
     owner_agent_type: z
-      .enum(['claude-code', 'codex'])
+      .enum(['claude-code', 'codex', 'glm-code'])
       .optional()
       .describe('Preferred owner agent type for the room'),
     reviewer_agent_type: z
-      .enum(['claude-code', 'codex'])
+      .enum(['claude-code', 'codex', 'glm-code'])
       .optional()
       .describe('Optional reviewer agent type override for tribunal rooms'),
     arbiter_agent_type: z
-      .enum(['claude-code', 'codex'])
+      .enum(['claude-code', 'codex', 'glm-code'])
       .optional()
       .describe('Optional arbiter agent type override for tribunal rooms'),
     folder: z
@@ -806,9 +810,9 @@ If folder is omitted, the host generates one automatically.`,
     jid: string;
     name: string;
     room_mode?: 'single' | 'tribunal';
-    owner_agent_type?: 'claude-code' | 'codex';
-    reviewer_agent_type?: 'claude-code' | 'codex';
-    arbiter_agent_type?: 'claude-code' | 'codex';
+    owner_agent_type?: 'claude-code' | 'codex' | 'glm-code';
+    reviewer_agent_type?: 'claude-code' | 'codex' | 'glm-code';
+    arbiter_agent_type?: 'claude-code' | 'codex' | 'glm-code';
     folder?: string;
     trigger?: string;
     requires_trigger?: boolean;

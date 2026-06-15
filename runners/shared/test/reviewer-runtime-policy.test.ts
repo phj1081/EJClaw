@@ -26,6 +26,16 @@ describe('shared reviewer runtime policy', () => {
     });
   });
 
+  it('encodes glm-code as Claude-compatible reviewer runtime', () => {
+    expect(getReviewerRuntimeCapabilities('glm-code')).toEqual({
+      agentType: 'glm-code',
+      supportsShellPreflightHook: true,
+      supportsReadonlySandboxing: true,
+      supportsGitWriteGuard: true,
+      supportsHardMutationBlocking: true,
+    });
+  });
+
   it('builds reviewer runtime env for normal isolated runs', () => {
     expect(
       buildPairedReadonlyRuntimeEnvOverrides({
@@ -43,6 +53,19 @@ describe('shared reviewer runtime policy', () => {
       buildPairedReadonlyRuntimeEnvOverrides({
         role: 'reviewer',
         agentType: 'claude-code',
+        unsafeHostPairedMode: true,
+      }),
+    ).toEqual({
+      EJCLAW_UNSAFE_HOST_PAIRED_MODE: '1',
+      EJCLAW_CLAUDE_REVIEWER_READONLY: '1',
+    });
+  });
+
+  it('builds glm-code host reviewer env with the same readonly guard as Claude Code', () => {
+    expect(
+      buildPairedReadonlyRuntimeEnvOverrides({
+        role: 'reviewer',
+        agentType: 'glm-code',
         unsafeHostPairedMode: true,
       }),
     ).toEqual({

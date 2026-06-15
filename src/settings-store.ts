@@ -69,9 +69,9 @@ export interface ModelRoleConfig {
 }
 
 export interface ModelAgentTypes {
-  owner: 'claude-code' | 'codex';
-  reviewer: 'claude-code' | 'codex';
-  arbiter: 'claude-code' | 'codex' | null;
+  owner: 'claude-code' | 'codex' | 'glm-code';
+  reviewer: 'claude-code' | 'codex' | 'glm-code';
+  arbiter: 'claude-code' | 'codex' | 'glm-code' | null;
 }
 
 export interface ModelConfigSnapshot {

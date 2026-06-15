@@ -11,6 +11,7 @@ function appendLanguageInstruction(prompt: string): string {
 
 const PLATFORM_PROMPT_FILES: Record<AgentType, string> = {
   'claude-code': 'claude-platform.md',
+  'glm-code': 'claude-platform.md',
   codex: 'codex-platform.md',
 };
 
@@ -18,6 +19,7 @@ const PLATFORM_PROMPT_FILES: Record<AgentType, string> = {
 // Role-specific rules (owner vs reviewer) are selected by the caller.
 const PAIRED_ROOM_PROMPT_FILES: Record<AgentType, string> = {
   'claude-code': 'claude-paired-room.md',
+  'glm-code': 'claude-paired-room.md',
   codex: 'claude-paired-room.md',
 };
 

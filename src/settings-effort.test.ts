@@ -10,10 +10,14 @@ describe('settings-effort', () => {
     expect(agentTypeForRole('owner', { OWNER_AGENT_TYPE: 'claude-code' })).toBe(
       'claude-code',
     );
+    expect(agentTypeForRole('owner', { OWNER_AGENT_TYPE: 'glm-code' })).toBe(
+      'glm-code',
+    );
   });
 
-  it('rejects xhigh for Claude agents', () => {
+  it('rejects xhigh for Claude-compatible agents', () => {
     expect(isEffortSupported('claude-code', 'xhigh')).toBe(false);
+    expect(isEffortSupported('glm-code', 'xhigh')).toBe(false);
     expect(isEffortSupported('codex', 'xhigh')).toBe(true);
     expect(isEffortSupported('claude-code', '')).toBe(true);
   });

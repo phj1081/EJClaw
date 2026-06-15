@@ -14,7 +14,7 @@ export function resolveRoleServiceShadow(
   if (!agentType) {
     return null;
   }
-  if (agentType === 'claude-code') {
+  if (agentType === 'claude-code' || agentType === 'glm-code') {
     return CLAUDE_SERVICE_ID;
   }
   if (role === 'owner') {

@@ -422,9 +422,9 @@ export interface ModelRoleConfig {
 }
 
 export interface ModelAgentTypes {
-  owner: 'claude-code' | 'codex';
-  reviewer: 'claude-code' | 'codex';
-  arbiter: 'claude-code' | 'codex' | null;
+  owner: 'claude-code' | 'codex' | 'glm-code';
+  reviewer: 'claude-code' | 'codex' | 'glm-code';
+  arbiter: 'claude-code' | 'codex' | 'glm-code' | null;
 }
 
 export interface ModelConfigSnapshot {
@@ -498,11 +498,11 @@ export interface RoomSkillCatalogItem {
   displayName: string;
   description: string | null;
   path: string;
-  agentTypes: Array<'claude-code' | 'codex'>;
+  agentTypes: Array<'claude-code' | 'codex' | 'glm-code'>;
 }
 
 export interface RoomSkillAgentPolicy {
-  agentType: 'claude-code' | 'codex';
+  agentType: 'claude-code' | 'codex' | 'glm-code';
   mode: 'all-enabled' | 'custom';
   availableSkillIds: string[];
   disabledSkillIds: string[];
@@ -526,7 +526,7 @@ export interface RoomSkillSettingsSnapshot {
 
 export interface RoomSkillSettingUpdateInput {
   roomJid: string;
-  agentType: 'claude-code' | 'codex';
+  agentType: 'claude-code' | 'codex' | 'glm-code';
   skillId: string;
   enabled: boolean;
 }
