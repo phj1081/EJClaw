@@ -96,12 +96,12 @@ GROQ_API_KEY=
 MOA_ENABLED=true
 MOA_REF_MODELS=kimi,glm
 
-MOA_KIMI_MODEL=kimi-k2.6
+MOA_KIMI_MODEL=kimi-k2.7
 MOA_KIMI_BASE_URL=https://api.kimi.com/coding
 MOA_KIMI_API_KEY=sk-kimi-xxx
 MOA_KIMI_API_FORMAT=anthropic
 
-MOA_GLM_MODEL=glm-5.1
+MOA_GLM_MODEL=glm-5.2
 MOA_GLM_BASE_URL=https://open.bigmodel.cn/api/anthropic
 MOA_GLM_API_KEY=xxx
 MOA_GLM_API_FORMAT=anthropic
