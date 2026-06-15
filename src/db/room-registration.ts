@@ -95,8 +95,7 @@ export function inferRoomModeFromRegisteredAgentTypes(
   agentTypes: readonly AgentType[],
 ): RoomMode {
   const types = new Set(agentTypes);
-  const hasClaudeCompatible =
-    types.has('claude-code') || types.has('glm-code');
+  const hasClaudeCompatible = types.has('claude-code') || types.has('glm-code');
   return hasClaudeCompatible && types.has('codex') ? 'tribunal' : 'single';
 }
 
