@@ -12,7 +12,7 @@
 
 ## Next Critical Slices
 
-1. Tune and expand Phase 0 combat: add 2 more enemy variants, balance boss pacing, and fill out all 6 fusion outcomes.
+1. Done: tune and expand Phase 0 combat with 2 more enemy variants, adjusted boss pacing, and 6+ distinct fusion outcomes.
 2. Done: add real mobile touch input: virtual stick drag, dash cooldown, skill cooldown, switch feedback, pause/resume.
 3. Done: split monolithic `main.gd` into screen/gameplay modules before feature count grows.
 4. Done: add save data for party, currencies, hero levels, equipment, and first-session onboarding state.

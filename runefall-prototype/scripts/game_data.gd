@@ -195,7 +195,8 @@ static func synergy_for_party(indices: Array) -> Array[String]:
 	return chips
 
 static func fusion_name(tag_a: String, tag_b: String) -> String:
-	var parts := [tag_a, tag_b]
-	parts.sort()
-	var key := "%s+%s" % [parts[0], parts[1]]
-	return FUSIONS.get(key, "")
+	var direct_key := "%s+%s" % [tag_a, tag_b]
+	if FUSIONS.has(direct_key):
+		return FUSIONS[direct_key]
+	var reverse_key := "%s+%s" % [tag_b, tag_a]
+	return FUSIONS.get(reverse_key, "")
