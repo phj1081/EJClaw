@@ -123,7 +123,13 @@ const UI_ASSETS := {
 	"cross_red": "res://assets/kenney-ui-pack/Red/Default/icon_cross.png",
 	"star_yellow": "res://assets/kenney-ui-pack/Yellow/Default/star.png",
 	"arrow_blue_e": "res://assets/kenney-ui-pack/Blue/Default/arrow_basic_e.png",
-	"arrow_blue_w": "res://assets/kenney-ui-pack/Blue/Default/arrow_basic_w.png"
+	"arrow_blue_w": "res://assets/kenney-ui-pack/Blue/Default/arrow_basic_w.png",
+	"fantasy_panel": "res://assets/kenney-fantasy-ui-borders/border/border-ornate.png",
+	"fantasy_panel_banner": "res://assets/kenney-fantasy-ui-borders/border/border-banner.png",
+	"fantasy_border": "res://assets/kenney-fantasy-ui-borders/border/border-ornate.png",
+	"fantasy_border_banner": "res://assets/kenney-fantasy-ui-borders/border/border-banner.png",
+	"fantasy_divider": "res://assets/kenney-fantasy-ui-borders/divider/divider-ornate.png",
+	"fantasy_divider_fade": "res://assets/kenney-fantasy-ui-borders/divider/divider-fade.png"
 }
 
 const LEVEL_CHOICES := [

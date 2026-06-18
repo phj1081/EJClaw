@@ -13,8 +13,9 @@ static func show(main, victory: bool) -> void:
 	main.label(root, "RESULT - %s" % ("클리어" if victory else "전멸"), Vector2(0, 52), Vector2(1600, 58), 42, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.label(root, "도달 웨이브 %d / 생존 시간 %d초" % [main.wave, int(main.battle_time)], Vector2(0, 112), Vector2(1600, 36), 22, Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
 
-	main.panel(root, Vector2(170, 190), Vector2(900, 420), Color("#172033"))
-	main.label(root, "4인 개별 성장", Vector2(206, 220), Vector2(300, 40), 30)
+	var growth: Control = main.framed_panel(root, Vector2(170, 190), Vector2(900, 420), Color("#16243add"), "fantasy_panel", Color("#d2bc82"), 16)
+	main.label(growth, "4인 개별 성장", Vector2(36, 30), Vector2(300, 40), 30)
+	main.divider(growth, Vector2(34, 78), Vector2(420, 26), Color("#d2bc82"))
 	for i in range(4):
 		var h := GameData.hero(main.party_indices[i])
 		var share := 40 if i == main.active_slot else 20
@@ -27,8 +28,9 @@ static func show(main, victory: bool) -> void:
 		bar.value = xp_percent
 		root.add_child(bar)
 
-	main.panel(root, Vector2(1110, 190), Vector2(330, 420), Color("#172033"))
-	main.label(root, "획득 보상", Vector2(1144, 220), Vector2(200, 40), 30)
-	main.label(root, "골드 +%d\n소재 +%d\n메타 Lv +%d\n저장 완료" % [main.last_run_rewards.gold, main.last_run_rewards.material, main.last_run_rewards.meta_xp], Vector2(1144, 294), Vector2(220, 160), 24, Color("#f6d66d"))
+	var rewards: Control = main.framed_panel(root, Vector2(1110, 190), Vector2(330, 420), Color("#16243add"), "fantasy_panel_banner", Color("#d2bc82"), 16)
+	main.label(rewards, "획득 보상", Vector2(34, 30), Vector2(200, 40), 30)
+	main.divider(rewards, Vector2(32, 78), Vector2(230, 24), Color("#d2bc82"))
+	main.label(rewards, "골드 +%d\n소재 +%d\n메타 Lv +%d\n저장 완료" % [main.last_run_rewards.gold, main.last_run_rewards.material, main.last_run_rewards.meta_xp], Vector2(34, 104), Vector2(220, 160), 24, Color("#f6d66d"))
 	main.button(root, "한 번 더", Vector2(940, 708), Vector2(220, 72), func(): main.start_battle(), 26, Color("#f05a28"), "button_red")
 	main.button(root, "메인으로", Vector2(1190, 708), Vector2(220, 72), func(): main.show_home(), 26, Color("#33415c"), "button_blue")

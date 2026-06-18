@@ -166,6 +166,48 @@ func pixel_art(parent: Control, texture_path: String, pos: Vector2, size: Vector
 	parent.add_child(fallback)
 	return fallback
 
+func texture_from_path(texture_path: String) -> Texture2D:
+	var image := Image.new()
+	var load_error := image.load(ProjectSettings.globalize_path(texture_path))
+	if load_error != OK:
+		return null
+	return ImageTexture.create_from_image(image)
+
+func framed_panel(parent: Control, pos: Vector2, size: Vector2, fill := Color("#101827dd"), frame := "fantasy_panel", tint := Color("#f3d38a"), margin: int = 16) -> Control:
+	var c := Control.new()
+	c.position = pos
+	c.size = size
+	parent.add_child(c)
+	var bg := ColorRect.new()
+	bg.position = Vector2(9, 9)
+	bg.size = size - Vector2(18, 18)
+	bg.color = fill
+	c.add_child(bg)
+	var border := NinePatchRect.new()
+	border.texture = texture_from_path(GameData.ui_asset(frame))
+	border.position = Vector2.ZERO
+	border.size = size
+	border.draw_center = false
+	border.patch_margin_left = margin
+	border.patch_margin_top = margin
+	border.patch_margin_right = margin
+	border.patch_margin_bottom = margin
+	border.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	border.modulate = tint
+	c.add_child(border)
+	return c
+
+func divider(parent: Control, pos: Vector2, size: Vector2, tint := Color("#f3d38a")) -> TextureRect:
+	var d := TextureRect.new()
+	d.texture = texture_from_path(GameData.ui_asset("fantasy_divider_fade"))
+	d.position = pos
+	d.size = size
+	d.stretch_mode = TextureRect.STRETCH_SCALE
+	d.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	d.modulate = tint
+	parent.add_child(d)
+	return d
+
 func label(parent: Control, text: String, pos: Vector2, size: Vector2, font_size: int = 22, color: Color = Color("#f4f7ff"), align := HORIZONTAL_ALIGNMENT_LEFT) -> Label:
 	var l := Label.new()
 	l.text = text

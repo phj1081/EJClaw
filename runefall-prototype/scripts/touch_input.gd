@@ -9,8 +9,10 @@ const INVULN_DURATION := 0.4
 const SWITCH_FLASH_DURATION := 0.4
 
 static func build_controls(main, root: Control) -> void:
-	main.joystick_base = main.panel(root, Vector2(72, 688), Vector2(164, 164), Color("#26334d99"), 82)
+	main.joystick_base = main.panel(root, Vector2(72, 688), Vector2(164, 164), Color("#26334d88"), 82)
+	main.joystick_base.add_theme_stylebox_override("panel", main.style(Color("#26334d88"), 82, Color("#c4d7ff66"), 2))
 	main.joystick_knob = main.panel(main.joystick_base, Vector2(58, 58), Vector2(48, 48), Color("#cde3ffcc"), 24)
+	main.joystick_knob.add_theme_stylebox_override("panel", main.style(Color("#cde3ffcc"), 24, Color("#ffffffaa"), 2))
 	main.label(root, "터치/드래그 이동", Vector2(58, 850), Vector2(210, 28), 16, Color("#8392b2"), HORIZONTAL_ALIGNMENT_CENTER)
 
 	main.skill_button = main.button(root, "스킬", Vector2(1308, 704), Vector2(104, 104), func(): main.use_skill(), 24, Color("#7b5cff"), "square_blue")
@@ -146,8 +148,9 @@ static func _show_pause_overlay(main) -> void:
 	overlay.size = main.VIEW_SIZE
 	overlay.color = Color("#050812aa")
 	main.battle_root.add_child(overlay)
-	var box: Panel = main.panel(overlay, Vector2(560, 310), Vector2(480, 260), Color("#111827ee"))
+	var box: Control = main.framed_panel(overlay, Vector2(560, 310), Vector2(480, 260), Color("#111827ee"), "fantasy_panel", Color("#d2bc82"), 16)
 	main.label(box, "일시정지", Vector2(0, 32), Vector2(480, 54), 36, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
+	main.divider(box, Vector2(120, 86), Vector2(240, 24), Color("#d2bc82"))
 	main.label(box, "전투가 멈췄습니다.", Vector2(0, 96), Vector2(480, 34), 20, Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.button(box, "계속", Vector2(140, 158), Vector2(200, 64), func(): main.toggle_pause(), 26, Color("#2f8cff"), "button_blue")
 	main.pause_overlay = overlay

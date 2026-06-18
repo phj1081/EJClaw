@@ -70,7 +70,7 @@ static func start(main) -> void:
 
 	draw_dungeon_map(main)
 
-	var top: Panel = main.panel(root, Vector2(520, 18), Vector2(560, 54), Color("#111827d8"))
+	var top: Control = main.framed_panel(root, Vector2(520, 18), Vector2(560, 54), Color("#101827dd"), "fantasy_border_banner", Color("#c4d7ff"), 12)
 	main.timer_label = main.label(top, "05:32", Vector2(16, 8), Vector2(110, 34), 20)
 	main.wave_label = main.label(top, "웨이브 1/5", Vector2(134, 8), Vector2(142, 34), 20)
 	main.xp_bar = ProgressBar.new()
@@ -80,10 +80,11 @@ static func start(main) -> void:
 	main.xp_bar.value = main.hero_xp[main.active_slot]
 	top.add_child(main.xp_bar)
 
-	var party_panel: Panel = main.panel(root, Vector2(22, 112), Vector2(222, 282), Color("#111827e8"))
+	var party_panel: Control = main.framed_panel(root, Vector2(22, 112), Vector2(222, 282), Color("#101827e8"), "fantasy_panel_banner", Color("#c4d7ff"), 14)
 	main.label(party_panel, "파티", Vector2(16, 8), Vector2(80, 28), 20)
+	main.divider(party_panel, Vector2(16, 34), Vector2(132, 18), Color("#c4d7ff"))
 	for i in range(4):
-		var b: Button = main.button(party_panel, "", Vector2(14, 46 + i * 56), Vector2(194, 46), Callable(main, "try_switch").bind(i), 16, Color("#24314a"))
+		var b: Button = main.button(party_panel, "", Vector2(14, 54 + i * 52), Vector2(194, 42), Callable(main, "try_switch").bind(i), 15, Color("#24314a"))
 		main.party_buttons.append(b)
 
 	TouchInput.build_controls(main, root)
@@ -451,9 +452,10 @@ static func show_level_up(main, slot: int) -> void:
 	overlay.color = Color("#050812cc")
 	main.battle_root.add_child(overlay)
 
-	var box: Panel = main.panel(overlay, Vector2(190, 110), Vector2(1220, 650), Color("#111827"))
+	var box: Control = main.framed_panel(overlay, Vector2(190, 110), Vector2(1220, 650), Color("#111827ee"), "fantasy_panel", Color("#d2bc82"), 16)
 	var h := GameData.hero(main.party_indices[slot])
 	main.label(box, "LEVEL UP - %s 선택 중" % h.name, Vector2(0, 26), Vector2(1220, 54), 34, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
+	main.divider(box, Vector2(410, 82), Vector2(400, 26), Color("#d2bc82"))
 	var choices := pick_level_choices()
 	for i in range(3):
 		var c: Dictionary = choices[i]

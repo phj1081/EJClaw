@@ -21,3 +21,14 @@ Credit is still kept here for traceability even though attribution is not requir
 - Usage in this prototype: temporary UI button skins, square action buttons, check/star/arrow icons, and packaged UI font files.
 
 Credit is still kept here for traceability even though attribution is not required by the license.
+
+## Fantasy UI Borders
+
+- Author: Kenney (Assets)
+- Source: https://kenney-assets.itch.io/fantasy-ui-borders and https://kenney.nl/assets/fantasy-ui-borders
+- Downloaded: 2026-06-19
+- Asset license: Creative Commons Zero v1.0 Universal (CC0)
+- Page note: The Kenney page lists the asset as Creative Commons CC0 and the itch.io page states commercial use is allowed with no attribution required.
+- Usage in this prototype: fantasy panel borders, transparent frames, and divider decorations for main, party, battle HUD, level-up, pause, and result UI.
+
+Credit is still kept here for traceability even though attribution is not required by the license.
