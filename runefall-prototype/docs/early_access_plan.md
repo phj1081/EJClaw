@@ -10,7 +10,7 @@
 
 1. Replace dummy combat with tuned Phase 0 content: 1 stage, 4 launch heroes, 5 enemy types, 1 boss, 6 fusion outcomes.
 2. Add real mobile touch input: virtual stick drag, dash cooldown, skill cooldown, switch feedback, pause/settings.
-3. Split monolithic `main.gd` into screen/gameplay modules before feature count grows.
+3. Done: split monolithic `main.gd` into screen/gameplay modules before feature count grows.
 4. Add save data for party, currencies, hero levels, equipment, and first-session onboarding state.
 5. Add audio pass: hit, level-up, button, dash, low HP, victory/defeat.
 6. Add packaging checks for Android landscape build and basic performance budget.
