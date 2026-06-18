@@ -84,8 +84,8 @@ func style(color: Color, radius: int = 8, border_color: Color = Color.TRANSPAREN
 	box.border_width_bottom = border_width
 	return box
 
-func panel(parent: Control, pos: Vector2, size: Vector2, color: Color = Color("#172033d8"), radius: int = 8) -> PanelContainer:
-	var p := PanelContainer.new()
+func panel(parent: Control, pos: Vector2, size: Vector2, color: Color = Color("#172033d8"), radius: int = 8) -> Panel:
+	var p := Panel.new()
 	p.position = pos
 	p.size = size
 	p.add_theme_stylebox_override("panel", style(color, radius, Color("#35415e"), 1))
