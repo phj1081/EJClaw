@@ -22,6 +22,11 @@ func _run() -> void:
 	await process_frame
 	main.start_battle()
 	await process_frame
+	main.distribute_xp(100.0)
+	if main.hero_xp[0] != 40.0 or main.hero_xp[1] != 20.0 or main.hero_xp[2] != 20.0 or main.hero_xp[3] != 20.0:
+		push_error("XP distribution failed: %s" % [main.hero_xp])
+		quit(1)
+		return
 
 	for i in range(12):
 		await process_frame

@@ -18,11 +18,11 @@ var hero_nodes: Array[Control] = []
 var hero_labels: Array[Label] = []
 var hero_hp: Array[float] = []
 var hero_levels := [1, 1, 1, 1]
+var hero_xp: Array[float] = [0.0, 0.0, 0.0, 0.0]
+var hero_next_xp: Array[float] = [80.0, 80.0, 80.0, 80.0]
 var hero_tags := ["", "", "", ""]
 var hero_pos: Array[Vector2] = []
 var enemies: Array[Dictionary] = []
-var xp := 0.0
-var next_xp := 80.0
 var battle_time := 0.0
 var wave := 1
 var spawn_timer := 0.0
@@ -318,8 +318,8 @@ func start_battle() -> void:
 	xp_bar = ProgressBar.new()
 	xp_bar.position = Vector2(292, 13)
 	xp_bar.size = Vector2(210, 24)
-	xp_bar.max_value = next_xp
-	xp_bar.value = xp
+	xp_bar.max_value = hero_next_xp[active_slot]
+	xp_bar.value = hero_xp[active_slot]
 	top.add_child(xp_bar)
 	button(root, "정산", Vector2(1466, 22), Vector2(94, 44), func(): show_result(true), 18, Color("#26334d"))
 
@@ -337,13 +337,14 @@ func start_battle() -> void:
 
 	battle_time = 0.0
 	wave = 1
-	xp = 0.0
-	next_xp = 80.0
 	spawn_timer = 0.0
 	attack_timer = 0.0
 	switch_cd = [0.0, 0.0, 0.0, 0.0]
 	hero_pos = [Vector2(760, 430), Vector2(700, 488), Vector2(824, 490), Vector2(760, 552)]
 	hero_hp.clear()
+	hero_levels = [1, 1, 1, 1]
+	hero_xp = [0.0, 0.0, 0.0, 0.0]
+	hero_next_xp = [80.0, 80.0, 80.0, 80.0]
 	hero_tags = ["", "", "", ""]
 	for i in range(4):
 		var h := GameData.hero(party_indices[i])
@@ -407,11 +408,7 @@ func _update_battle(delta: float) -> void:
 	if Input.is_action_just_pressed("skill"):
 		use_skill()
 
-	if xp >= next_xp:
-		xp -= next_xp
-		next_xp += 45.0
-		hero_levels[active_slot] += 1
-		show_level_up()
+	if process_level_ups():
 		return
 
 	if hero_hp.max() <= 0.0:
@@ -471,7 +468,28 @@ func hit_nearest_enemy(slot: int) -> void:
 	if enemies[best_index].hp <= 0.0:
 		enemies[best_index].node.queue_free()
 		enemies.remove_at(best_index)
-		xp += 8.0 if slot == active_slot else 4.0
+		distribute_xp(22.0)
+
+func distribute_xp(amount: float) -> void:
+	for i in range(4):
+		var ratio := 0.4 if i == active_slot else 0.2
+		hero_xp[i] += amount * ratio
+
+func process_level_ups() -> bool:
+	for i in range(4):
+		while hero_xp[i] >= hero_next_xp[i]:
+			hero_xp[i] -= hero_next_xp[i]
+			hero_next_xp[i] += 45.0
+			hero_levels[i] += 1
+			if i == active_slot:
+				show_level_up(i)
+				return true
+			auto_choose_level(i)
+	return false
+
+func auto_choose_level(slot: int) -> void:
+	var choices := pick_level_choices()
+	apply_level_choice(slot, choices[0])
 
 func try_switch(slot: int) -> void:
 	if slot == active_slot or switch_cd[slot] > 0.0:
@@ -497,7 +515,7 @@ func use_skill() -> void:
 		if enemies[i].pos.distance_to(origin) < 190.0:
 			enemies[i].node.queue_free()
 			enemies.remove_at(i)
-			xp += 5.0
+			distribute_xp(14.0)
 
 func update_battle_ui() -> void:
 	if timer_label:
@@ -506,8 +524,8 @@ func update_battle_ui() -> void:
 	if wave_label:
 		wave_label.text = "웨이브 %d/5" % wave
 	if xp_bar:
-		xp_bar.max_value = next_xp
-		xp_bar.value = xp
+		xp_bar.max_value = hero_next_xp[active_slot]
+		xp_bar.value = hero_xp[active_slot]
 	for i in range(party_buttons.size()):
 		var h := GameData.hero(party_indices[i])
 		var hp_ratio := hero_hp[i] / float(h.hp)
@@ -516,7 +534,7 @@ func update_battle_ui() -> void:
 		party_buttons[i].text = "%s%d %s  HP %d%%%s" % [marker, i + 1, h.name, int(hp_ratio * 100.0), cd]
 		party_buttons[i].disabled = i != active_slot and switch_cd[i] > 0.0
 
-func show_level_up() -> void:
+func show_level_up(slot: int) -> void:
 	battle_running = false
 	var overlay := ColorRect.new()
 	overlay.name = "LevelOverlay"
@@ -526,12 +544,12 @@ func show_level_up() -> void:
 	battle_root.add_child(overlay)
 
 	var box := panel(overlay, Vector2(190, 110), Vector2(1220, 650), Color("#111827"))
-	var h := GameData.hero(party_indices[active_slot])
+	var h := GameData.hero(party_indices[slot])
 	label(box, "LEVEL UP - %s 선택 중" % h.name, Vector2(0, 26), Vector2(1220, 54), 34, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	var choices := pick_level_choices()
 	for i in range(3):
 		var c: Dictionary = choices[i]
-		var card := button(box, "", Vector2(95 + i * 360, 130), Vector2(310, 360), Callable(self, "choose_level").bind(c, overlay), 18, Color("#1c2940"))
+		var card := button(box, "", Vector2(95 + i * 360, 130), Vector2(310, 360), Callable(self, "choose_level").bind(c, overlay, slot), 18, Color("#1c2940"))
 		var icon := ColorRect.new()
 		icon.position = Vector2(105, 52)
 		icon.size = Vector2(100, 100)
@@ -541,21 +559,24 @@ func show_level_up() -> void:
 		tag_chip(card, c.kind + " / " + c.tag, Vector2(80, 232), GameData.color_for_tag(c.tag))
 		label(card, c.desc, Vector2(26, 286), Vector2(258, 40), 18, Color("#c8d4ee"), HORIZONTAL_ALIGNMENT_CENTER)
 
-	var fusion := GameData.fusion_name(hero_tags[active_slot], choices[0].tag)
-	var fusion_text := "융합 가능: %s + %s → %s" % [hero_tags[active_slot], choices[0].tag, fusion] if fusion != "" else "융합 후보를 더 모으면 태그 조합이 열립니다."
+	var fusion := GameData.fusion_name(hero_tags[slot], choices[0].tag)
+	var fusion_text := "융합 가능: %s + %s → %s" % [hero_tags[slot], choices[0].tag, fusion] if fusion != "" else "융합 후보를 더 모으면 태그 조합이 열립니다."
 	label(box, fusion_text, Vector2(110, 532), Vector2(800, 42), 24, Color("#ffd24a"))
-	button(box, "추천 자동 선택", Vector2(960, 526), Vector2(200, 54), Callable(self, "choose_level").bind(choices[0], overlay), 20, Color("#f05a28"))
+	button(box, "추천 자동 선택", Vector2(960, 526), Vector2(200, 54), Callable(self, "choose_level").bind(choices[0], overlay, slot), 20, Color("#f05a28"))
 
 func pick_level_choices() -> Array:
 	var pool := GameData.LEVEL_CHOICES.duplicate()
 	pool.shuffle()
 	return [pool[0], pool[1], pool[2]]
 
-func choose_level(choice: Dictionary, overlay_node: Control) -> void:
-	var fusion := GameData.fusion_name(hero_tags[active_slot], choice.tag)
-	hero_tags[active_slot] = choice.tag if fusion == "" else fusion
+func choose_level(choice: Dictionary, overlay_node: Control, slot: int) -> void:
+	apply_level_choice(slot, choice)
 	overlay_node.queue_free()
 	battle_running = true
+
+func apply_level_choice(slot: int, choice: Dictionary) -> void:
+	var fusion := GameData.fusion_name(hero_tags[slot], choice.tag)
+	hero_tags[slot] = choice.tag if fusion == "" else fusion
 
 func show_result(victory: bool) -> void:
 	battle_running = false
@@ -572,12 +593,13 @@ func show_result(victory: bool) -> void:
 	for i in range(4):
 		var h := GameData.hero(party_indices[i])
 		var share := 40 if i == active_slot else 20
-		label(root, "%d %s  Lv.%d → Lv.%d  EXP +%d%%" % [i + 1, h.name, hero_levels[i], hero_levels[i] + (1 if victory else 0), share], Vector2(220, 292 + i * 62), Vector2(620, 34), 24, Color("#ffffff"))
+		var xp_percent := int((hero_xp[i] / hero_next_xp[i]) * 100.0)
+		label(root, "%d %s  Lv.%d  EXP %d%%  분배 +%d%%" % [i + 1, h.name, hero_levels[i], xp_percent, share], Vector2(220, 292 + i * 62), Vector2(620, 34), 24, Color("#ffffff"))
 		var bar := ProgressBar.new()
 		bar.position = Vector2(720, 298 + i * 62)
 		bar.size = Vector2(260, 22)
 		bar.max_value = 100
-		bar.value = share
+		bar.value = xp_percent
 		root.add_child(bar)
 
 	panel(root, Vector2(1110, 190), Vector2(330, 420), Color("#172033"))
