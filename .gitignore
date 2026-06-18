@@ -9,6 +9,7 @@ apps/android/build/
 apps/android/app/build/
 apps/android/local.properties
 runefall-prototype/.godot/
+runefall-prototype/android/
 runefall-prototype/builds/
 runefall-prototype/**/*.import
 runefall-prototype/**/*.uid

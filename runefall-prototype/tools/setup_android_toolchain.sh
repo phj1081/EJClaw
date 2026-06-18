@@ -2,10 +2,11 @@
 set -euo pipefail
 
 WORK_DIR="${RUNEFALL_TOOLCHAIN_WORK_DIR:-/tmp/runefall-android-toolchain}"
-GODOT_BIN="$HOME/.local/bin/godot-4.6.1"
-STANDARD_TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/4.6.1.stable"
+GODOT_VERSION="${RUNEFALL_GODOT_VERSION:-4.6.3}"
+GODOT_BIN="$HOME/.local/bin/godot-$GODOT_VERSION"
+STANDARD_TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/$GODOT_VERSION.stable"
 JAVA_DIR="$HOME/snap/godot-4/common/Java"
-JDK_DIR="$JAVA_DIR/jdk-21.0.11+10"
+JDK_DIR="${RUNEFALL_JDK_DIR:-}"
 ANDROID_SDK="$HOME/snap/godot-4/common/Android/Sdk"
 
 mkdir -p "$WORK_DIR" "$HOME/.local/bin" "$STANDARD_TEMPLATE_DIR" "$JAVA_DIR" "$ANDROID_SDK"
@@ -13,17 +14,21 @@ mkdir -p "$WORK_DIR" "$HOME/.local/bin" "$STANDARD_TEMPLATE_DIR" "$JAVA_DIR" "$A
 cd "$WORK_DIR"
 
 if [[ ! -x "$GODOT_BIN" ]]; then
-  curl -L --fail --retry 3 -o Godot_v4.6.1-stable_linux.x86_64.zip \
-    'https://downloads.godotengine.org/?version=4.6.1&flavor=stable&slug=linux.x86_64.zip&platform=linux'
+  curl -L --fail --retry 3 -o "Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" \
+    "https://downloads.godotengine.org/?version=${GODOT_VERSION}&flavor=stable&slug=linux.x86_64.zip&platform=linux"
   rm -rf godot-standard
-  unzip -q Godot_v4.6.1-stable_linux.x86_64.zip -d godot-standard
-  install -m 755 godot-standard/Godot_v4.6.1-stable_linux.x86_64 "$GODOT_BIN"
+  unzip -q "Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -d godot-standard
+  install -m 755 "godot-standard/Godot_v${GODOT_VERSION}-stable_linux.x86_64" "$GODOT_BIN"
 fi
 
+if [[ -z "$JDK_DIR" ]]; then
+  JDK_DIR="$(find "$JAVA_DIR" -maxdepth 1 -type d -name 'jdk-17*' | sort -V | tail -n 1 || true)"
+fi
 if [[ ! -d "$JDK_DIR" ]]; then
-  curl -L --fail --retry 3 -o jdk21.tar.gz \
-    'https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse?project=jdk'
-  tar -xzf jdk21.tar.gz -C "$JAVA_DIR"
+  curl -L --fail --retry 3 -o jdk17.tar.gz \
+    'https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse?project=jdk'
+  tar -xzf jdk17.tar.gz -C "$JAVA_DIR"
+  JDK_DIR="$(find "$JAVA_DIR" -maxdepth 1 -type d -name 'jdk-17*' | sort -V | tail -n 1)"
 fi
 
 if [[ ! -x "$ANDROID_SDK/cmdline-tools/latest/bin/sdkmanager" ]]; then
@@ -40,13 +45,13 @@ export ANDROID_SDK_ROOT="$ANDROID_SDK"
 export PATH="$JAVA_HOME/bin:$ANDROID_SDK/cmdline-tools/latest/bin:$PATH"
 
 yes | sdkmanager --sdk_root="$ANDROID_SDK" --licenses >/tmp/runefall-sdk-licenses.log || true
-sdkmanager --sdk_root="$ANDROID_SDK" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+sdkmanager --sdk_root="$ANDROID_SDK" 'platform-tools' 'platforms;android-35' 'build-tools;35.0.1'
 
-if [[ ! -s "$STANDARD_TEMPLATE_DIR/android_debug.apk" ]]; then
-  curl -L --fail --retry 3 -o Godot_v4.6.1-stable_export_templates.tpz \
-    'https://downloads.godotengine.org/?version=4.6.1&flavor=stable&slug=export_templates.tpz&platform=templates'
-  unzip -o -j Godot_v4.6.1-stable_export_templates.tpz \
-    'templates/android_debug.apk' 'templates/android_release.apk' 'templates/version.txt' \
+if [[ ! -s "$STANDARD_TEMPLATE_DIR/android_source.zip" ]]; then
+  curl -L --fail --retry 3 -o "Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
+    "https://downloads.godotengine.org/?version=${GODOT_VERSION}&flavor=stable&slug=export_templates.tpz&platform=templates"
+  unzip -o -j "Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
+    'templates/android_debug.apk' 'templates/android_release.apk' 'templates/android_source.zip' 'templates/version.txt' \
     -d "$STANDARD_TEMPLATE_DIR"
 fi
 

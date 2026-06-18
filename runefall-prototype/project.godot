@@ -8,7 +8,7 @@ config_version=5
 config/name="RUNEFALL Prototype"
 run/main_scene="res://scenes/Main.tscn"
 config/features=PackedStringArray("4.6", "Mobile")
-config/icon=""
+config/icon="res://assets/kenney-ui-pack/Yellow/Default/star.png"
 
 [display]
 
@@ -34,3 +34,4 @@ skill={
 [rendering]
 
 textures/canvas_textures/default_texture_filter=0
+textures/vram_compression/import_etc2_astc=true

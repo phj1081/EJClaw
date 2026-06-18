@@ -12,13 +12,14 @@ cd runefall-prototype
 
 The debug artifact is written to `builds/runefall-debug.apk`.
 
-As of this packaging pass, project data export is verified with:
+As of this packaging pass, Android export is verified with:
 
 ```bash
-/home/hyeon/.local/bin/godot-4.6.1 --headless --path runefall-prototype --export-pack "Android Debug" builds/runefall-debug.pck
+cd runefall-prototype
+./tools/package_android.sh
 ```
 
-APK export reaches Godot's Android platform validation but fails with an empty configuration error from Godot 4.6.1 after the SDK/JDK/templates are present. This is recorded in `builds/android-export.log` when `tools/package_android.sh` is run.
+The script installs the Godot Android build template when needed, then writes `builds/runefall-debug.apk`.
 
 ## Project Settings
 
@@ -28,28 +29,29 @@ APK export reaches Godot's Android platform validation but fails with an empty c
 - Architecture: `arm64-v8a`
 - Orientation: `sensor_landscape` from `project.godot`
 - Immersive mode: enabled
-- Signing: disabled in the committed preset so no keystore secrets are stored in git
+- Signing: debug signed through local Godot editor settings. No keystore secrets are stored in git.
+- Texture import: Android ETC2/ASTC import is enabled in `project.godot`; without this, Godot can fail Android validation with an empty configuration error.
 
 ## Local Toolchain Required
 
 The local machine must have:
 
-- Godot 4.6.1 export templates matching the installed editor.
-- Android SDK command-line tools if Gradle/custom builds are enabled later.
-- JDK with `keytool`/`jarsigner` if signed APK/AAB output is required.
+- Godot 4.6.3 export templates matching the installed editor.
+- Android SDK command-line tools with platform 35 and build-tools 35.0.1.
+- JDK 17 with `keytool` for the local debug keystore.
 
 Godot's official archive page provides version-matched export templates:
-https://godotengine.org/download/archive/4.6.1-stable/
+https://godotengine.org/download/archive/4.6.3-stable/
 
 Android's Godot export guide describes the Android build template/export flow:
 https://developer.android.com/games/engines/godot/godot-export
 
 This workspace was prepared with:
 
-- Standard Godot 4.6.1: `/home/hyeon/.local/bin/godot-4.6.1`
-- JDK 21: `/home/hyeon/snap/godot-4/common/Java/jdk-21.0.11+10`
+- Standard Godot 4.6.3: `/home/hyeon/.local/bin/godot-4.6.3`
+- JDK 17: `/home/hyeon/snap/godot-4/common/Java/jdk-17.0.19+10`
 - Android SDK: `/home/hyeon/snap/godot-4/common/Android/Sdk`
-- Standard export templates: `/home/hyeon/.local/share/godot/export_templates/4.6.1.stable`
+- Standard export templates: `/home/hyeon/.local/share/godot/export_templates/4.6.3.stable`
 
 ## Release Build Notes
 

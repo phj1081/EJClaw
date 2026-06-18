@@ -2,10 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-if [[ -z "${GODOT_BIN:-}" && -x "$HOME/.local/bin/godot-4.6.1" ]]; then
-  GODOT_BIN="$HOME/.local/bin/godot-4.6.1"
-else
-  GODOT_BIN="${GODOT_BIN:-/snap/bin/godot-4}"
+if [[ -z "${GODOT_BIN:-}" ]]; then
+  if [[ -x "$HOME/.local/bin/godot-4.6.3" ]]; then
+    GODOT_BIN="$HOME/.local/bin/godot-4.6.3"
+  elif [[ -x "$HOME/.local/bin/godot-4.6.1" ]]; then
+    GODOT_BIN="$HOME/.local/bin/godot-4.6.1"
+  else
+    GODOT_BIN="/snap/bin/godot-4"
+  fi
 fi
 PRESET="${RUNEFALL_ANDROID_PRESET:-Android Debug}"
 OUT_DIR="$ROOT_DIR/builds"
@@ -19,7 +23,7 @@ echo "[runefall] Preset: $PRESET"
 "$GODOT_BIN" --headless --path "$ROOT_DIR" --quit >/tmp/runefall-android-import.log 2>&1
 
 set +e
-"$GODOT_BIN" --headless --path "$ROOT_DIR" --export-debug "$PRESET" "$OUT_APK" \
+"$GODOT_BIN" --headless --path "$ROOT_DIR" --install-android-build-template --export-debug "$PRESET" "$OUT_APK" \
   >"$OUT_DIR/android-export.log" 2>&1
 status=$?
 set -e
