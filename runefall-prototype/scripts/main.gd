@@ -125,16 +125,21 @@ func label(parent: Control, text: String, pos: Vector2, size: Vector2, font_size
 	parent.add_child(l)
 	return l
 
-func button(parent: Control, text: String, pos: Vector2, size: Vector2, pressed: Callable, font_size: int = 24, bg := Color("#2f8cff")) -> Button:
+func button(parent: Control, text: String, pos: Vector2, size: Vector2, pressed: Callable, font_size: int = 24, bg := Color("#2f8cff"), skin: String = "") -> Button:
+	if skin != "":
+		var skin_node := pixel_art(parent, GameData.ui_asset(skin), pos, size, bg)
+		if skin_node is TextureRect:
+			(skin_node as TextureRect).stretch_mode = TextureRect.STRETCH_SCALE
 	var b := Button.new()
 	b.text = text
 	b.position = pos
 	b.size = size
 	b.focus_mode = Control.FOCUS_NONE
 	b.add_theme_font_size_override("font_size", font_size)
-	b.add_theme_stylebox_override("normal", style(bg, 8))
-	b.add_theme_stylebox_override("hover", style(bg.lightened(0.08), 8))
-	b.add_theme_stylebox_override("pressed", style(bg.darkened(0.12), 8))
+	var normal_bg := Color.TRANSPARENT if skin != "" else bg
+	b.add_theme_stylebox_override("normal", style(normal_bg, 8))
+	b.add_theme_stylebox_override("hover", style(normal_bg, 8))
+	b.add_theme_stylebox_override("pressed", style(normal_bg, 8))
 	b.add_theme_stylebox_override("disabled", style(Color("#566070"), 8))
 	b.pressed.connect(pressed)
 	parent.add_child(b)
@@ -168,7 +173,7 @@ func show_home() -> void:
 	label(root, "RUNEFALL", Vector2(40, 28), Vector2(240, 44), 34, Color("#ffffff"))
 	label(root, "Lv.12 암석 거점", Vector2(40, 74), Vector2(260, 36), 20, Color("#a7b7d5"))
 	label(root, "골드 %d   젬 %d   소재 %d" % [currencies.gold, currencies.gem, currencies.material], Vector2(1030, 28), Vector2(420, 44), 22, Color("#f6d66d"), HORIZONTAL_ALIGNMENT_RIGHT)
-	button(root, "우편", Vector2(1470, 28), Vector2(96, 44), func(): show_message("우편함은 후속 구현 영역입니다."), 18, Color("#24314a"))
+	button(root, "우편", Vector2(1470, 28), Vector2(96, 44), func(): show_message("우편함은 후속 구현 영역입니다."), 18, Color("#24314a"), "button_blue")
 
 	var base := panel(root, Vector2(56, 138), Vector2(1040, 610), Color("#18253c"))
 	label(root, "현재 파티", Vector2(88, 162), Vector2(260, 36), 28)
@@ -185,16 +190,18 @@ func show_home() -> void:
 
 	for i in range(5):
 		var tab_text: String = ["홈", "캐릭터", "장비/제작", "상점", "도감·시련"][i]
-		button(root, tab_text, Vector2(56 + i * 142, 794), Vector2(132, 58), Callable(self, "show_meta_tab").bind(tab_text), 18, Color("#202b43"))
+		button(root, tab_text, Vector2(56 + i * 142, 794), Vector2(132, 58), Callable(self, "show_meta_tab").bind(tab_text), 18, Color("#202b43"), "button_blue")
 
 	panel(root, Vector2(1140, 140), Vector2(370, 186), Color("#172033"))
+	pixel_art(root, GameData.ui_asset("check_green"), Vector2(1458, 168), Vector2(30, 30), Color("#21a67a"))
 	label(root, "일일 미션", Vector2(1172, 164), Vector2(180, 34), 26)
 	label(root, "런 1회 완료\n화염 태그 무기 3회 선택\n보상 2배 광고 준비", Vector2(1172, 210), Vector2(292, 88), 19, Color("#c9d5ee"))
 	panel(root, Vector2(1140, 352), Vector2(370, 160), Color("#172033"))
+	pixel_art(root, GameData.ui_asset("star_yellow"), Vector2(1452, 382), Vector2(34, 34), Color("#ffd24a"))
 	label(root, "시즌 패스", Vector2(1172, 376), Vector2(180, 34), 26)
 	label(root, "서리 균열 시즌 12일 남음", Vector2(1172, 424), Vector2(290, 32), 19, Color("#c9d5ee"))
-	button(root, "파티 편성", Vector2(1138, 574), Vector2(178, 74), func(): show_party(), 24, Color("#45536f"))
-	button(root, "출격", Vector2(1332, 574), Vector2(178, 74), func(): show_launch_confirm(), 28, Color("#f05a28"))
+	button(root, "파티 편성", Vector2(1138, 574), Vector2(178, 74), func(): show_party(), 24, Color("#45536f"), "button_blue")
+	button(root, "출격", Vector2(1332, 574), Vector2(178, 74), func(): show_launch_confirm(), 28, Color("#f05a28"), "button_red")
 
 func show_meta_tab(tab_name: String) -> void:
 	var root := screen_root()
@@ -203,7 +210,7 @@ func show_meta_tab(tab_name: String) -> void:
 	bg.size = VIEW_SIZE
 	bg.color = Color("#0f1726")
 	root.add_child(bg)
-	button(root, "← 홈", Vector2(36, 28), Vector2(120, 50), func(): show_home(), 20, Color("#26334d"))
+	button(root, "← 홈", Vector2(36, 28), Vector2(120, 50), func(): show_home(), 20, Color("#26334d"), "button_blue")
 	label(root, tab_name, Vector2(190, 30), Vector2(360, 50), 34)
 
 	if tab_name == "캐릭터":
@@ -231,7 +238,7 @@ func show_party() -> void:
 	bg.color = Color("#0d1424")
 	root.add_child(bg)
 
-	button(root, "← 홈", Vector2(32, 26), Vector2(112, 48), func(): show_home(), 20, Color("#26334d"))
+	button(root, "← 홈", Vector2(32, 26), Vector2(112, 48), func(): show_home(), 20, Color("#26334d"), "button_blue")
 	label(root, "파티 편성", Vector2(174, 28), Vector2(250, 48), 34)
 	var chips := GameData.synergy_for_party(party_indices)
 	for i in range(chips.size()):
@@ -246,13 +253,13 @@ func show_party() -> void:
 		label(card, "%d" % (i + 1), Vector2(8, 8), Vector2(36, 26), 18, Color("#9fb0d0"))
 		label(card, h.name, Vector2(16, 154), Vector2(134, 30), 24, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		label(card, "조작" if i == active_slot else "AI", Vector2(16, 188), Vector2(134, 24), 18, Color("#ffd24a") if i == active_slot else Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
-		button(card, "지정", Vector2(22, 216), Vector2(122, 34), Callable(self, "set_active_slot").bind(i), 16, Color("#364764"))
+		button(card, "지정", Vector2(22, 216), Vector2(122, 34), Callable(self, "set_active_slot").bind(i), 16, Color("#364764"), "button_blue")
 
 	label(root, "선택 슬롯 AI 프리셋", Vector2(108, 530), Vector2(230, 30), 22)
 	for i in range(3):
 		var preset: String = ["공격", "균형", "방어"][i]
-		button(root, preset, Vector2(340 + i * 120, 526), Vector2(102, 42), Callable(self, "set_ai_preset").bind(preset), 18, Color("#f05a28") if ai_presets[active_slot] == preset else Color("#33415c"))
-	button(root, "전용 장비 보기", Vector2(706, 526), Vector2(160, 42), func(): show_message("전용 장비 슬롯은 다음 구현 단계에서 연결합니다."), 18, Color("#33415c"))
+		button(root, preset, Vector2(340 + i * 120, 526), Vector2(102, 42), Callable(self, "set_ai_preset").bind(preset), 18, Color("#f05a28") if ai_presets[active_slot] == preset else Color("#33415c"), "button_red" if ai_presets[active_slot] == preset else "button_blue")
+	button(root, "전용 장비 보기", Vector2(706, 526), Vector2(160, 42), func(): show_message("전용 장비 슬롯은 다음 구현 단계에서 연결합니다."), 18, Color("#33415c"), "button_blue")
 
 	panel(root, Vector2(980, 130), Vector2(540, 520), Color("#172033"))
 	label(root, "보유 캐릭터", Vector2(1014, 156), Vector2(220, 34), 28)
@@ -265,7 +272,7 @@ func show_party() -> void:
 		label(b, h.name, Vector2(8, 86), Vector2(116, 24), 18, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		label(b, h.tag, Vector2(8, 108), Vector2(116, 20), 14, Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
 
-	button(root, "출격 확인으로", Vector2(1190, 718), Vector2(290, 72), func(): show_launch_confirm(), 26, Color("#f05a28"))
+	button(root, "출격 확인으로", Vector2(1190, 718), Vector2(290, 72), func(): show_launch_confirm(), 26, Color("#f05a28"), "button_red")
 
 func show_launch_confirm() -> void:
 	var root := screen_root()
@@ -273,7 +280,7 @@ func show_launch_confirm() -> void:
 	bg.size = VIEW_SIZE
 	bg.color = Color("#0d1424")
 	root.add_child(bg)
-	button(root, "← 편성", Vector2(32, 26), Vector2(124, 48), func(): show_party(), 20, Color("#26334d"))
+	button(root, "← 편성", Vector2(32, 26), Vector2(124, 48), func(): show_party(), 20, Color("#26334d"), "button_blue")
 	label(root, "출격 직전 확인", Vector2(190, 28), Vector2(320, 48), 34)
 	label(root, "싱글 플레이: 1명 직접 조작 + 3명 AI. 전투 중 파티 패널 탭으로 전환합니다.", Vector2(96, 104), Vector2(900, 34), 22, Color("#b7c6e4"))
 
@@ -286,7 +293,7 @@ func show_launch_confirm() -> void:
 		tag_chip(card, h.tag, Vector2(74, 288), GameData.color_for_tag(h.tag))
 		label(card, "AI: %s" % ai_presets[i], Vector2(24, 338), Vector2(252, 28), 18, Color("#ffd24a") if i != active_slot else Color("#8ee6ff"), HORIZONTAL_ALIGNMENT_CENTER)
 
-	button(root, "전투 시작", Vector2(1196, 720), Vector2(300, 76), func(): start_battle(), 30, Color("#f05a28"))
+	button(root, "전투 시작", Vector2(1196, 720), Vector2(300, 76), func(): start_battle(), 30, Color("#f05a28"), "button_red")
 
 func start_battle() -> void:
 	var root := screen_root()
@@ -301,10 +308,7 @@ func start_battle() -> void:
 	arena.size = VIEW_SIZE
 	root.add_child(arena)
 
-	for i in range(24):
-		pixel_art(arena, GameData.floor_tile(i), Vector2((i * 137) % 1560, 110 + ((i * 71) % 650)), Vector2(54, 54), Color("#16243a"))
-	for i in range(10):
-		pixel_art(arena, GameData.prop_tile(i), Vector2(280 + (i * 113) % 980, 190 + ((i * 83) % 520)), Vector2(44, 44), Color("#24314a"))
+	draw_dungeon_map()
 
 	var top := panel(root, Vector2(520, 18), Vector2(560, 54), Color("#111827d8"))
 	timer_label = label(top, "05:32", Vector2(16, 8), Vector2(110, 34), 20)
@@ -315,7 +319,7 @@ func start_battle() -> void:
 	xp_bar.max_value = hero_next_xp[active_slot]
 	xp_bar.value = hero_xp[active_slot]
 	top.add_child(xp_bar)
-	button(root, "정산", Vector2(1466, 22), Vector2(94, 44), func(): show_result(true), 18, Color("#26334d"))
+	button(root, "정산", Vector2(1466, 22), Vector2(94, 44), func(): show_result(true), 18, Color("#26334d"), "button_blue")
 
 	var party_panel := panel(root, Vector2(22, 112), Vector2(222, 282), Color("#111827e8"))
 	label(party_panel, "파티", Vector2(16, 8), Vector2(80, 28), 20)
@@ -326,8 +330,8 @@ func start_battle() -> void:
 	var stick := panel(root, Vector2(72, 688), Vector2(164, 164), Color("#26334d99"), 82)
 	label(stick, "◉", Vector2(44, 34), Vector2(76, 76), 54, Color("#cde3ff"), HORIZONTAL_ALIGNMENT_CENTER)
 	label(root, "WASD/방향키 이동", Vector2(58, 850), Vector2(210, 28), 16, Color("#8392b2"), HORIZONTAL_ALIGNMENT_CENTER)
-	button(root, "스킬", Vector2(1308, 704), Vector2(104, 104), func(): use_skill(), 24, Color("#7b5cff"))
-	button(root, "대시", Vector2(1434, 704), Vector2(104, 104), func(): dash_active(), 24, Color("#2f8cff"))
+	button(root, "스킬", Vector2(1308, 704), Vector2(104, 104), func(): use_skill(), 24, Color("#7b5cff"), "square_blue")
+	button(root, "대시", Vector2(1434, 704), Vector2(104, 104), func(): dash_active(), 24, Color("#2f8cff"), "square_blue")
 
 	battle_time = 0.0
 	wave = 1
@@ -352,6 +356,27 @@ func start_battle() -> void:
 
 	battle_running = true
 	update_battle_ui()
+
+func draw_dungeon_map() -> void:
+	for y in range(96, 850, 48):
+		for x in range(264, 1536, 48):
+			var tile_index := int((x / 48 + y / 48) % GameData.FLOOR_TILES.size())
+			pixel_art(arena, GameData.floor_tile(tile_index), Vector2(x, y), Vector2(48, 48), Color("#16243a"))
+
+	for x in range(264, 1536, 48):
+		pixel_art(arena, GameData.prop_tile(1), Vector2(x, 96), Vector2(48, 48), Color("#24314a"))
+		pixel_art(arena, GameData.prop_tile(0), Vector2(x, 816), Vector2(48, 48), Color("#24314a"))
+	for y in range(144, 816, 48):
+		pixel_art(arena, GameData.prop_tile(0), Vector2(264, y), Vector2(48, 48), Color("#24314a"))
+		pixel_art(arena, GameData.prop_tile(0), Vector2(1488, y), Vector2(48, 48), Color("#24314a"))
+
+	var props := [
+		Vector2(410, 324), Vector2(552, 396), Vector2(684, 500), Vector2(848, 612),
+		Vector2(984, 312), Vector2(1120, 456), Vector2(1248, 660), Vector2(1360, 300),
+		Vector2(720, 218), Vector2(1040, 728), Vector2(1280, 200), Vector2(500, 710)
+	]
+	for i in range(props.size()):
+		pixel_art(arena, GameData.prop_tile(2 + i), props[i], Vector2(48, 48), Color("#24314a"))
 
 func _update_battle(delta: float) -> void:
 	battle_time += delta
@@ -546,7 +571,7 @@ func show_level_up(slot: int) -> void:
 	var fusion := GameData.fusion_name(hero_tags[slot], choices[0].tag)
 	var fusion_text := "융합 가능: %s + %s → %s" % [hero_tags[slot], choices[0].tag, fusion] if fusion != "" else "융합 후보를 더 모으면 태그 조합이 열립니다."
 	label(box, fusion_text, Vector2(110, 532), Vector2(800, 42), 24, Color("#ffd24a"))
-	button(box, "추천 자동 선택", Vector2(960, 526), Vector2(200, 54), Callable(self, "choose_level").bind(choices[0], overlay, slot), 20, Color("#f05a28"))
+	button(box, "추천 자동 선택", Vector2(960, 526), Vector2(200, 54), Callable(self, "choose_level").bind(choices[0], overlay, slot), 20, Color("#f05a28"), "button_red")
 
 func pick_level_choices() -> Array:
 	var pool := GameData.LEVEL_CHOICES.duplicate()
@@ -589,8 +614,8 @@ func show_result(victory: bool) -> void:
 	panel(root, Vector2(1110, 190), Vector2(330, 420), Color("#172033"))
 	label(root, "획득 보상", Vector2(1144, 220), Vector2(200, 40), 30)
 	label(root, "골드 +820\n소재 +34\n장비 드롭 1\n도감 갱신 2", Vector2(1144, 294), Vector2(220, 160), 24, Color("#f6d66d"))
-	button(root, "한 번 더", Vector2(940, 708), Vector2(220, 72), func(): start_battle(), 26, Color("#f05a28"))
-	button(root, "메인으로", Vector2(1190, 708), Vector2(220, 72), func(): show_home(), 26, Color("#33415c"))
+	button(root, "한 번 더", Vector2(940, 708), Vector2(220, 72), func(): start_battle(), 26, Color("#f05a28"), "button_red")
+	button(root, "메인으로", Vector2(1190, 708), Vector2(220, 72), func(): show_home(), 26, Color("#33415c"), "button_blue")
 
 func show_message(message: String) -> void:
 	var root := get_child(0) as Control

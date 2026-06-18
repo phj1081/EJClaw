@@ -110,6 +110,22 @@ const TAG_ICONS := {
 	"수호": "res://assets/0x72-dungeon-tileset-ii/frames/weapon_big_hammer.png"
 }
 
+const UI_ASSETS := {
+	"button_blue": "res://assets/kenney-ui-pack/Blue/Default/button_rectangle_depth_gradient.png",
+	"button_green": "res://assets/kenney-ui-pack/Green/Default/button_rectangle_depth_gradient.png",
+	"button_red": "res://assets/kenney-ui-pack/Red/Default/button_rectangle_depth_gradient.png",
+	"button_yellow": "res://assets/kenney-ui-pack/Yellow/Default/button_rectangle_depth_gradient.png",
+	"square_blue": "res://assets/kenney-ui-pack/Blue/Default/button_square_depth_gradient.png",
+	"square_red": "res://assets/kenney-ui-pack/Red/Default/button_square_depth_gradient.png",
+	"round_blue": "res://assets/kenney-ui-pack/Blue/Default/button_round_depth_gradient.png",
+	"round_green": "res://assets/kenney-ui-pack/Green/Default/button_round_depth_gradient.png",
+	"check_green": "res://assets/kenney-ui-pack/Green/Default/icon_checkmark.png",
+	"cross_red": "res://assets/kenney-ui-pack/Red/Default/icon_cross.png",
+	"star_yellow": "res://assets/kenney-ui-pack/Yellow/Default/star.png",
+	"arrow_blue_e": "res://assets/kenney-ui-pack/Blue/Default/arrow_basic_e.png",
+	"arrow_blue_w": "res://assets/kenney-ui-pack/Blue/Default/arrow_basic_w.png"
+}
+
 const LEVEL_CHOICES := [
 	{"name": "화염 궤도", "kind": "무기", "tag": "화염", "desc": "주위를 도는 불꽃 고리"},
 	{"name": "중력 파동", "kind": "스킬", "tag": "중력", "desc": "근처 적을 느리게 함"},
@@ -146,6 +162,9 @@ static func prop_tile(index: int) -> String:
 
 static func icon_for_tag(tag: String) -> String:
 	return TAG_ICONS.get(tag, "res://assets/0x72-dungeon-tileset-ii/frames/weapon_regular_sword.png")
+
+static func ui_asset(name: String) -> String:
+	return UI_ASSETS.get(name, "")
 
 static func synergy_for_party(indices: Array) -> Array[String]:
 	var counts := {}
