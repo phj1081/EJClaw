@@ -92,6 +92,26 @@ func panel(parent: Control, pos: Vector2, size: Vector2, color: Color = Color("#
 	parent.add_child(p)
 	return p
 
+func pixel_art(parent: Control, texture_path: String, pos: Vector2, size: Vector2, fallback_color: Color = Color("#f4f7ff")) -> Control:
+	var image := Image.new()
+	var load_error := image.load(ProjectSettings.globalize_path(texture_path))
+	if load_error == OK:
+		var sprite := TextureRect.new()
+		sprite.texture = ImageTexture.create_from_image(image)
+		sprite.position = pos
+		sprite.size = size
+		sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		parent.add_child(sprite)
+		return sprite
+
+	var fallback := ColorRect.new()
+	fallback.position = pos
+	fallback.size = size
+	fallback.color = fallback_color
+	parent.add_child(fallback)
+	return fallback
+
 func label(parent: Control, text: String, pos: Vector2, size: Vector2, font_size: int = 22, color: Color = Color("#f4f7ff"), align := HORIZONTAL_ALIGNMENT_LEFT) -> Label:
 	var l := Label.new()
 	l.text = text
@@ -143,11 +163,7 @@ func show_home() -> void:
 	root.add_child(bg)
 
 	for i in range(12):
-		var tile := ColorRect.new()
-		tile.position = Vector2(70 + i * 135, 160 + (i % 3) * 58)
-		tile.size = Vector2(82, 34)
-		tile.color = Color("#1f3751")
-		root.add_child(tile)
+		pixel_art(root, GameData.prop_tile(i), Vector2(70 + i * 135, 160 + (i % 3) * 58), Vector2(54, 54), Color("#1f3751"))
 
 	label(root, "RUNEFALL", Vector2(40, 28), Vector2(240, 44), 34, Color("#ffffff"))
 	label(root, "Lv.12 암석 거점", Vector2(40, 74), Vector2(260, 36), 20, Color("#a7b7d5"))
@@ -161,11 +177,7 @@ func show_home() -> void:
 	for i in range(4):
 		var h := GameData.hero(party_indices[i])
 		var card := panel(root, Vector2(120 + i * 232, 310 + (i % 2) * 76), Vector2(168, 220), Color("#111827"))
-		var sprite := ColorRect.new()
-		sprite.position = Vector2(45, 30)
-		sprite.size = Vector2(78, 98)
-		sprite.color = Color(h.color)
-		card.add_child(sprite)
+		pixel_art(card, h.sprite, Vector2(36, 26), Vector2(96, 106), Color(h.color))
 		label(card, h.name, Vector2(18, 140), Vector2(132, 28), 24, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		label(card, h.role, Vector2(10, 170), Vector2(148, 24), 16, Color("#b9c7e3"), HORIZONTAL_ALIGNMENT_CENTER)
 		if i == active_slot:
@@ -200,11 +212,7 @@ func show_meta_tab(tab_name: String) -> void:
 			var x := 78 + (i % 3) * 480
 			var y := 150 + int(i / 3) * 250
 			var card := panel(root, Vector2(x, y), Vector2(390, 200), Color("#172033"))
-			var swatch := ColorRect.new()
-			swatch.position = Vector2(22, 28)
-			swatch.size = Vector2(92, 116)
-			swatch.color = Color(h.color)
-			card.add_child(swatch)
+			pixel_art(card, h.sprite, Vector2(24, 20), Vector2(92, 118), Color(h.color))
 			label(card, h.name, Vector2(136, 24), Vector2(200, 34), 28)
 			label(card, "%s / %s" % [h.role, h.weapon], Vector2(136, 64), Vector2(220, 32), 18, Color("#b7c6e4"))
 			tag_chip(card, h.tag, Vector2(136, 110), GameData.color_for_tag(h.tag))
@@ -234,11 +242,7 @@ func show_party() -> void:
 	for i in range(4):
 		var h := GameData.hero(party_indices[i])
 		var card := panel(root, Vector2(108 + i * 196, 236), Vector2(166, 260), Color("#111827"))
-		var sprite := ColorRect.new()
-		sprite.position = Vector2(43, 36)
-		sprite.size = Vector2(80, 106)
-		sprite.color = Color(h.color)
-		card.add_child(sprite)
+		pixel_art(card, h.sprite, Vector2(35, 32), Vector2(96, 110), Color(h.color))
 		label(card, "%d" % (i + 1), Vector2(8, 8), Vector2(36, 26), 18, Color("#9fb0d0"))
 		label(card, h.name, Vector2(16, 154), Vector2(134, 30), 24, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		label(card, "조작" if i == active_slot else "AI", Vector2(16, 188), Vector2(134, 24), 18, Color("#ffd24a") if i == active_slot else Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
@@ -257,11 +261,7 @@ func show_party() -> void:
 		var x := 1016 + (i % 3) * 160
 		var y := 220 + int(i / 3) * 168
 		var b := button(root, "", Vector2(x, y), Vector2(132, 132), Callable(self, "set_party_member").bind(i), 18, Color("#111827"))
-		var swatch := ColorRect.new()
-		swatch.position = Vector2(36, 16)
-		swatch.size = Vector2(60, 66)
-		swatch.color = Color(h.color)
-		b.add_child(swatch)
+		pixel_art(b, h.sprite, Vector2(30, 10), Vector2(72, 72), Color(h.color))
 		label(b, h.name, Vector2(8, 86), Vector2(116, 24), 18, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		label(b, h.tag, Vector2(8, 108), Vector2(116, 20), 14, Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
 
@@ -280,11 +280,7 @@ func show_launch_confirm() -> void:
 	for i in range(4):
 		var h := GameData.hero(party_indices[i])
 		var card := panel(root, Vector2(96 + i * 350, 190), Vector2(300, 400), Color("#172033"))
-		var sprite := ColorRect.new()
-		sprite.position = Vector2(100, 42)
-		sprite.size = Vector2(100, 132)
-		sprite.color = Color(h.color)
-		card.add_child(sprite)
+		pixel_art(card, h.sprite, Vector2(78, 36), Vector2(144, 148), Color(h.color))
 		label(card, h.name, Vector2(24, 202), Vector2(252, 34), 28, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		label(card, h.role, Vector2(24, 242), Vector2(252, 28), 18, Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
 		tag_chip(card, h.tag, Vector2(74, 288), GameData.color_for_tag(h.tag))
@@ -306,11 +302,9 @@ func start_battle() -> void:
 	root.add_child(arena)
 
 	for i in range(24):
-		var tile := ColorRect.new()
-		tile.position = Vector2((i * 137) % 1560, 110 + ((i * 71) % 650))
-		tile.size = Vector2(60, 18)
-		tile.color = Color("#16243a")
-		arena.add_child(tile)
+		pixel_art(arena, GameData.floor_tile(i), Vector2((i * 137) % 1560, 110 + ((i * 71) % 650)), Vector2(54, 54), Color("#16243a"))
+	for i in range(10):
+		pixel_art(arena, GameData.prop_tile(i), Vector2(280 + (i * 113) % 980, 190 + ((i * 83) % 520)), Vector2(44, 44), Color("#24314a"))
 
 	var top := panel(root, Vector2(520, 18), Vector2(560, 54), Color("#111827d8"))
 	timer_label = label(top, "05:32", Vector2(16, 8), Vector2(110, 34), 20)
@@ -350,11 +344,8 @@ func start_battle() -> void:
 		var h := GameData.hero(party_indices[i])
 		hero_hp.append(float(h.hp))
 		hero_tags[i] = h.tag
-		var body := ColorRect.new()
+		var body := pixel_art(arena, h.sprite, hero_pos[i], Vector2(48, 56), Color(h.color))
 		body.position = hero_pos[i]
-		body.size = Vector2(38, 48)
-		body.color = Color(h.color)
-		arena.add_child(body)
 		hero_nodes.append(body)
 		var name_label := label(arena, h.name, hero_pos[i] + Vector2(-18, -28), Vector2(80, 22), 14, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		hero_labels.append(name_label)
@@ -432,11 +423,8 @@ func spawn_enemy() -> void:
 			pos = Vector2(randf_range(270, 1480), 830)
 		_:
 			pos = Vector2(270, randf_range(120, 790))
-	var node := ColorRect.new()
+	var node := pixel_art(arena, GameData.enemy_sprite(randi()), pos, Vector2(38, 38), Color("#d74848"))
 	node.position = pos
-	node.size = Vector2(28, 28)
-	node.color = Color("#d74848")
-	arena.add_child(node)
 	enemies.append({"node": node, "pos": pos, "hp": 18.0 + wave * 5.0})
 
 func closest_hero(pos: Vector2) -> int:
@@ -550,11 +538,7 @@ func show_level_up(slot: int) -> void:
 	for i in range(3):
 		var c: Dictionary = choices[i]
 		var card := button(box, "", Vector2(95 + i * 360, 130), Vector2(310, 360), Callable(self, "choose_level").bind(c, overlay, slot), 18, Color("#1c2940"))
-		var icon := ColorRect.new()
-		icon.position = Vector2(105, 52)
-		icon.size = Vector2(100, 100)
-		icon.color = GameData.color_for_tag(c.tag)
-		card.add_child(icon)
+		pixel_art(card, GameData.icon_for_tag(c.tag), Vector2(100, 46), Vector2(110, 110), GameData.color_for_tag(c.tag))
 		label(card, c.name, Vector2(18, 184), Vector2(274, 36), 26, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		tag_chip(card, c.kind + " / " + c.tag, Vector2(80, 232), GameData.color_for_tag(c.tag))
 		label(card, c.desc, Vector2(26, 286), Vector2(258, 40), 18, Color("#c8d4ee"), HORIZONTAL_ALIGNMENT_CENTER)
