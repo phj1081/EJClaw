@@ -5,10 +5,11 @@
 - Mobile landscape Godot prototype with Home, Party, Launch Confirm, Battle HUD, Level Up, and Result flows.
 - CC0 placeholder art is integrated for heroes, enemies, dungeon tiles, props, weapon icons, and UI buttons.
 - Single-player 4-party loop exists: switchable active hero, AI followers, enemy spawn, auto attacks, XP split, level-up choices, result screen.
+- Phase 0 combat has distinct melee/ranged/tank enemies, a wave 5 boss gate, and visible fusion attack patterns.
 
 ## Next Critical Slices
 
-1. Replace dummy combat with tuned Phase 0 content: 1 stage, 4 launch heroes, 5 enemy types, 1 boss, 6 fusion outcomes.
+1. Tune and expand Phase 0 combat: add 2 more enemy variants, balance boss pacing, and fill out all 6 fusion outcomes.
 2. Add real mobile touch input: virtual stick drag, dash cooldown, skill cooldown, switch feedback, pause/settings.
 3. Done: split monolithic `main.gd` into screen/gameplay modules before feature count grows.
 4. Add save data for party, currencies, hero levels, equipment, and first-session onboarding state.

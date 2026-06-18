@@ -1,6 +1,58 @@
 extends RefCounted
 
 const GameData := preload("res://scripts/game_data.gd")
+const BATTLE_DURATION := 150.0
+const ARENA_MIN := Vector2(270, 112)
+const ARENA_MAX := Vector2(1470, 806)
+
+const ENEMY_TYPES := {
+	"zombie": {
+		"name": "좀비 돌격병",
+		"sprite": 1,
+		"color": Color("#d74848"),
+		"size": Vector2(38, 38),
+		"hp": 24.0,
+		"speed": 106.0,
+		"damage": 15.0,
+		"range": 36.0,
+		"xp": 18.0,
+		"attack_interval": 0.25
+	},
+	"orc_shaman": {
+		"name": "오크 주술사",
+		"sprite": 4,
+		"color": Color("#b56cff"),
+		"size": Vector2(42, 44),
+		"hp": 34.0,
+		"speed": 82.0,
+		"damage": 11.0,
+		"range": 305.0,
+		"xp": 26.0,
+		"attack_interval": 1.35
+	},
+	"muddy": {
+		"name": "진흙 탱커",
+		"sprite": 5,
+		"color": Color("#8f6a4c"),
+		"size": Vector2(50, 48),
+		"hp": 78.0,
+		"speed": 50.0,
+		"damage": 20.0,
+		"range": 44.0,
+		"xp": 36.0,
+		"attack_interval": 0.42
+	}
+}
+
+const FUSION_ATTACKS := {
+	"작열 중력장": {"mode": "gravity", "color": Color("#ff7a45"), "damage": 11.0, "radius": 122.0},
+	"번지는 화염": {"mode": "splash", "color": Color("#ff4d2e"), "damage": 28.0, "radius": 82.0},
+	"용암 레일": {"mode": "rail", "color": Color("#ffb238"), "damage": 34.0, "radius": 30.0},
+	"별핵 창": {"mode": "rail", "color": Color("#8fc7ff"), "damage": 32.0, "radius": 26.0},
+	"반사 레일건": {"mode": "chain", "color": Color("#ffe65c"), "damage": 27.0, "radius": 170.0},
+	"궤도 정령": {"mode": "summon", "color": Color("#42d787"), "damage": 24.0, "radius": 132.0},
+	"수호 토템": {"mode": "guard", "color": Color("#4bd0d9"), "damage": 20.0, "radius": 118.0}
+}
 
 static func start(main) -> void:
 	var root: Control = main.screen_root()
@@ -44,6 +96,8 @@ static func start(main) -> void:
 	main.wave = 1
 	main.spawn_timer = 0.0
 	main.attack_timer = 0.0
+	main.boss_spawned = false
+	main.boss_alive = false
 	main.switch_cd.clear()
 	main.switch_cd.append_array([0.0, 0.0, 0.0, 0.0])
 	main.hero_pos.clear()
@@ -99,7 +153,7 @@ static func update(main, delta: float) -> void:
 	if input_dir.length() > 0.05:
 		var h := GameData.hero(main.party_indices[main.active_slot])
 		main.hero_pos[main.active_slot] += input_dir.normalized() * float(h.speed) * delta
-	main.hero_pos[main.active_slot] = main.hero_pos[main.active_slot].clamp(Vector2(270, 112), Vector2(1470, 806))
+	main.hero_pos[main.active_slot] = main.hero_pos[main.active_slot].clamp(ARENA_MIN, ARENA_MAX)
 
 	for i in range(4):
 		if i == main.active_slot:
@@ -107,18 +161,17 @@ static func update(main, delta: float) -> void:
 		var desired: Vector2 = main.hero_pos[main.active_slot] + Vector2(cos(float(i) * 2.1), sin(float(i) * 2.1)) * 110.0
 		main.hero_pos[i] = main.hero_pos[i].lerp(desired, delta * 2.2)
 
+	if main.wave >= 5 and not main.boss_spawned:
+		spawn_boss(main)
 	main.spawn_timer -= delta
 	if main.spawn_timer <= 0.0:
-		spawn_enemy(main)
-		main.spawn_timer = maxf(0.25, 1.2 - main.wave * 0.12)
+		if main.wave < 5 or main.enemies.size() < 10:
+			spawn_enemy(main)
+		main.spawn_timer = maxf(0.35, 1.35 - main.wave * 0.12)
 
-	for enemy in main.enemies:
-		var target: int = closest_hero(main, enemy.pos)
-		var dir: Vector2 = (main.hero_pos[target] - enemy.pos).normalized()
-		enemy.pos += dir * (70.0 + main.wave * 20.0) * delta
-		enemy.node.position = enemy.pos
-		if enemy.pos.distance_to(main.hero_pos[target]) < 38.0:
-			main.hero_hp[target] = maxf(0.0, main.hero_hp[target] - 12.0 * delta)
+	update_enemies(main, delta)
+	update_projectiles(main, delta)
+	update_effects(main, delta)
 
 	main.attack_timer -= delta
 	if main.attack_timer <= 0.0:
@@ -141,13 +194,76 @@ static func update(main, delta: float) -> void:
 	if main.hero_hp.max() <= 0.0:
 		main.show_result(false)
 		return
-	if main.battle_time >= 150.0:
+	if main.boss_spawned and not main.boss_alive:
 		main.show_result(true)
 		return
 
 	update_ui(main)
 
 static func spawn_enemy(main) -> void:
+	var kind := choose_enemy_kind(main.wave)
+	var spec: Dictionary = ENEMY_TYPES[kind]
+	var pos := spawn_position()
+	var hp: float = float(spec.hp) + main.wave * 5.0
+	var node: Control = main.pixel_art(main.arena, GameData.enemy_sprite(spec.sprite), pos, spec.size, spec.color)
+	node.position = pos
+	main.enemies.append({
+		"kind": kind,
+		"node": node,
+		"pos": pos,
+		"hp": hp,
+		"max_hp": hp,
+		"speed": float(spec.speed) + main.wave * 4.0,
+		"damage": float(spec.damage),
+		"range": float(spec.range),
+		"xp": float(spec.xp),
+		"attack_cd": randf_range(0.25, 0.9),
+		"attack_interval": float(spec.attack_interval),
+		"is_boss": false
+	})
+
+static func spawn_boss(main) -> void:
+	main.boss_spawned = true
+	main.boss_alive = true
+	var pos := Vector2(1250, 210)
+	var node: Control = main.pixel_art(main.arena, GameData.enemy_sprite(3), pos, Vector2(96, 104), Color("#ff395d"))
+	node.position = pos
+	var title: Label = main.label(main.arena, "균열 장군", pos + Vector2(-18, -30), Vector2(132, 24), 16, Color("#ffd24a"), HORIZONTAL_ALIGNMENT_CENTER)
+	main.enemies.append({
+		"kind": "boss",
+		"name": "균열 장군",
+		"node": node,
+		"label": title,
+		"pos": pos,
+		"hp": 780.0,
+		"max_hp": 780.0,
+		"speed": 58.0,
+		"damage": 28.0,
+		"range": 58.0,
+		"xp": 180.0,
+		"attack_cd": 1.2,
+		"attack_interval": 1.6,
+		"pattern_cd": 2.0,
+		"phase": 1,
+		"is_boss": true
+	})
+	main.show_message("보스 출현: 균열 장군")
+
+static func choose_enemy_kind(wave: int) -> String:
+	var roll := randf()
+	if wave <= 1:
+		return "zombie"
+	if wave == 2:
+		return "orc_shaman" if roll < 0.28 else "zombie"
+	if wave == 3:
+		if roll < 0.22:
+			return "muddy"
+		return "orc_shaman" if roll < 0.52 else "zombie"
+	if roll < 0.30:
+		return "muddy"
+	return "orc_shaman" if roll < 0.62 else "zombie"
+
+static func spawn_position() -> Vector2:
 	var side := randi() % 4
 	var pos := Vector2.ZERO
 	match side:
@@ -159,9 +275,64 @@ static func spawn_enemy(main) -> void:
 			pos = Vector2(randf_range(270, 1480), 830)
 		_:
 			pos = Vector2(270, randf_range(120, 790))
-	var node: Control = main.pixel_art(main.arena, GameData.enemy_sprite(randi()), pos, Vector2(38, 38), Color("#d74848"))
-	node.position = pos
-	main.enemies.append({"node": node, "pos": pos, "hp": 18.0 + main.wave * 5.0})
+	return pos
+
+static func update_enemies(main, delta: float) -> void:
+	for enemy in main.enemies:
+		if enemy.is_boss:
+			update_boss(main, enemy, delta)
+		elif enemy.kind == "orc_shaman":
+			update_ranged_enemy(main, enemy, delta)
+		else:
+			update_melee_enemy(main, enemy, delta)
+		enemy.node.position = enemy.pos
+		if enemy.has("label") and is_instance_valid(enemy.label):
+			enemy.label.position = enemy.pos + Vector2(-18, -30)
+
+static func update_melee_enemy(main, enemy: Dictionary, delta: float) -> void:
+	var target: int = closest_hero(main, enemy.pos)
+	var dir: Vector2 = (main.hero_pos[target] - enemy.pos).normalized()
+	enemy.pos = (enemy.pos + dir * float(enemy.speed) * delta).clamp(ARENA_MIN, ARENA_MAX)
+	if enemy.pos.distance_to(main.hero_pos[target]) < float(enemy.range):
+		main.hero_hp[target] = maxf(0.0, main.hero_hp[target] - float(enemy.damage) * delta)
+
+static func update_ranged_enemy(main, enemy: Dictionary, delta: float) -> void:
+	var target: int = closest_hero(main, enemy.pos)
+	var to_target: Vector2 = main.hero_pos[target] - enemy.pos
+	var distance := to_target.length()
+	var dir := to_target.normalized()
+	if distance < 220.0:
+		enemy.pos = (enemy.pos - dir * float(enemy.speed) * delta).clamp(ARENA_MIN, ARENA_MAX)
+	elif distance > 330.0:
+		enemy.pos = (enemy.pos + dir * float(enemy.speed) * delta).clamp(ARENA_MIN, ARENA_MAX)
+	enemy.attack_cd = maxf(0.0, float(enemy.attack_cd) - delta)
+	if enemy.attack_cd <= 0.0 and distance <= float(enemy.range):
+		fire_projectile(main, enemy.pos + Vector2(20, 20), main.hero_pos[target], 205.0, float(enemy.damage), Color("#b56cff"), true, 8.0)
+		enemy.attack_cd = float(enemy.attack_interval)
+
+static func update_boss(main, enemy: Dictionary, delta: float) -> void:
+	var target: int = closest_hero(main, enemy.pos)
+	var hp_ratio: float = float(enemy.hp) / float(enemy.max_hp)
+	enemy.phase = 3 if hp_ratio < 0.34 else 2 if hp_ratio < 0.67 else 1
+	var dir: Vector2 = (main.hero_pos[target] - enemy.pos).normalized()
+	enemy.pos = (enemy.pos + dir * (float(enemy.speed) + enemy.phase * 10.0) * delta).clamp(ARENA_MIN, ARENA_MAX)
+	if enemy.pos.distance_to(main.hero_pos[target]) < float(enemy.range):
+		main.hero_hp[target] = maxf(0.0, main.hero_hp[target] - float(enemy.damage) * delta)
+	enemy.pattern_cd = maxf(0.0, float(enemy.pattern_cd) - delta)
+	if enemy.pattern_cd <= 0.0:
+		boss_pattern(main, enemy)
+		enemy.pattern_cd = 2.4 - enemy.phase * 0.35
+
+static func boss_pattern(main, enemy: Dictionary) -> void:
+	if int(enemy.phase) == 1:
+		for slot in range(4):
+			fire_projectile(main, enemy.pos + Vector2(48, 52), main.hero_pos[slot], 230.0, 18.0, Color("#ff395d"), true, 10.0)
+	elif int(enemy.phase) == 2:
+		for angle in range(0, 360, 45):
+			var target: Vector2 = enemy.pos + Vector2.RIGHT.rotated(deg_to_rad(angle)) * 180.0
+			fire_projectile(main, enemy.pos + Vector2(48, 52), target, 255.0, 16.0, Color("#ff9b3d"), true, 9.0)
+	else:
+		create_area_effect(main, enemy.pos + Vector2(48, 52), 154.0, 32.0, Color("#8d5cff"), 0.65, true)
 
 static func closest_hero(main, pos: Vector2) -> int:
 	var best := 0
@@ -185,14 +356,17 @@ static func hit_nearest_enemy(main, slot: int) -> void:
 			best_dist = dist
 	if best_index == -1 or best_dist > 420.0 * 420.0:
 		return
-	var damage: float = 12.0 + main.hero_levels[slot] * 3.0
-	if slot == main.active_slot:
-		damage *= 1.35
-	main.enemies[best_index].hp -= damage
-	if main.enemies[best_index].hp <= 0.0:
-		main.enemies[best_index].node.queue_free()
-		main.enemies.remove_at(best_index)
-		distribute_xp(main, 22.0)
+	var origin: Vector2 = main.hero_pos[slot] + Vector2(20, 20)
+	var target_pos: Vector2 = main.enemies[best_index].pos + Vector2(20, 20)
+	var tag: String = main.hero_tags[slot]
+	var fusion: Dictionary = FUSION_ATTACKS.get(tag, {})
+	if fusion.is_empty():
+		var damage: float = 12.0 + main.hero_levels[slot] * 3.0
+		if slot == main.active_slot:
+			damage *= 1.35
+		fire_projectile(main, origin, target_pos, 540.0, damage, GameData.color_for_tag(tag), false, 7.0)
+	else:
+		fire_fusion_attack(main, slot, origin, target_pos, fusion)
 
 static func distribute_xp(main, amount: float) -> void:
 	for i in range(4):
@@ -235,18 +409,14 @@ static func use_skill(main) -> void:
 	if not main.battle_running:
 		return
 	var origin: Vector2 = main.hero_pos[main.active_slot]
-	for i in range(main.enemies.size() - 1, -1, -1):
-		if main.enemies[i].pos.distance_to(origin) < 190.0:
-			main.enemies[i].node.queue_free()
-			main.enemies.remove_at(i)
-			distribute_xp(main, 14.0)
+	create_area_effect(main, origin + Vector2(22, 22), 190.0, 42.0, GameData.color_for_tag(main.hero_tags[main.active_slot]), 0.28, false)
 
 static func update_ui(main) -> void:
 	if main.timer_label:
-		var remain := maxi(0, int(150.0 - main.battle_time))
+		var remain := maxi(0, int(BATTLE_DURATION - main.battle_time))
 		main.timer_label.text = "%02d:%02d" % [remain / 60, remain % 60]
 	if main.wave_label:
-		main.wave_label.text = "웨이브 %d/5" % main.wave
+		main.wave_label.text = "보스전" if main.boss_alive else "웨이브 %d/5" % main.wave
 	if main.xp_bar:
 		main.xp_bar.max_value = main.hero_next_xp[main.active_slot]
 		main.xp_bar.value = main.hero_xp[main.active_slot]
@@ -297,3 +467,146 @@ static func choose_level(main, choice: Dictionary, overlay_node: Control, slot: 
 static func apply_level_choice(main, slot: int, choice: Dictionary) -> void:
 	var fusion := GameData.fusion_name(main.hero_tags[slot], choice.tag)
 	main.hero_tags[slot] = choice.tag if fusion == "" else fusion
+
+static func fire_fusion_attack(main, slot: int, origin: Vector2, target_pos: Vector2, fusion: Dictionary) -> void:
+	var mode: String = fusion.mode
+	if mode == "gravity":
+		create_area_effect(main, target_pos, float(fusion.radius), float(fusion.damage) + main.hero_levels[slot] * 2.0, fusion.color, 0.75, false)
+	elif mode == "splash":
+		fire_projectile(main, origin, target_pos, 500.0, float(fusion.damage), fusion.color, false, 10.0, float(fusion.radius))
+	elif mode == "rail":
+		create_rail_attack(main, origin, target_pos, float(fusion.damage) + main.hero_levels[slot] * 2.0, fusion.color)
+	elif mode == "chain":
+		create_chain_attack(main, origin, target_pos, float(fusion.damage), fusion.color, float(fusion.radius))
+	elif mode == "summon":
+		fire_projectile(main, origin + Vector2(randf_range(-42, 42), randf_range(-36, 36)), target_pos, 430.0, float(fusion.damage), fusion.color, false, 9.0)
+	else:
+		create_area_effect(main, origin, float(fusion.radius), float(fusion.damage), fusion.color, 0.32, false)
+
+static func fire_projectile(main, origin: Vector2, target: Vector2, speed: float, damage: float, color: Color, hostile: bool, radius: float, splash_radius: float = 0.0) -> void:
+	var node := ColorRect.new()
+	node.position = origin
+	node.size = Vector2(radius * 2.0, radius * 2.0)
+	node.color = color
+	main.arena.add_child(node)
+	var dir := (target - origin).normalized()
+	main.projectiles.append({
+		"node": node,
+		"pos": origin,
+		"velocity": dir * speed,
+		"damage": damage,
+		"hostile": hostile,
+		"radius": radius,
+		"splash_radius": splash_radius,
+		"life": 1.8
+	})
+
+static func update_projectiles(main, delta: float) -> void:
+	for i in range(main.projectiles.size() - 1, -1, -1):
+		var projectile: Dictionary = main.projectiles[i]
+		projectile.life = float(projectile.life) - delta
+		projectile.pos += projectile.velocity * delta
+		projectile.node.position = projectile.pos
+		var consumed: bool = projectile.life <= 0.0 or not Rect2(ARENA_MIN - Vector2(40, 40), ARENA_MAX - ARENA_MIN + Vector2(80, 80)).has_point(projectile.pos)
+		if not consumed:
+			if projectile.hostile:
+				consumed = hit_hero_with_projectile(main, projectile)
+			else:
+				consumed = hit_enemy_with_projectile(main, projectile)
+		if consumed:
+			if is_instance_valid(projectile.node):
+				projectile.node.queue_free()
+			main.projectiles.remove_at(i)
+
+static func hit_hero_with_projectile(main, projectile: Dictionary) -> bool:
+	for slot in range(main.hero_pos.size()):
+		if projectile.pos.distance_to(main.hero_pos[slot] + Vector2(22, 22)) <= float(projectile.radius) + 22.0:
+			main.hero_hp[slot] = maxf(0.0, main.hero_hp[slot] - float(projectile.damage))
+			return true
+	return false
+
+static func hit_enemy_with_projectile(main, projectile: Dictionary) -> bool:
+	for i in range(main.enemies.size() - 1, -1, -1):
+		if projectile.pos.distance_to(main.enemies[i].pos + Vector2(20, 20)) <= float(projectile.radius) + 24.0:
+			damage_enemy(main, i, float(projectile.damage))
+			if float(projectile.splash_radius) > 0.0:
+				create_area_effect(main, projectile.pos, float(projectile.splash_radius), float(projectile.damage) * 0.55, projectile.node.color, 0.24, false)
+			return true
+	return false
+
+static func create_area_effect(main, pos: Vector2, radius: float, damage: float, color: Color, life: float, hostile: bool) -> void:
+	var node := ColorRect.new()
+	node.position = pos - Vector2(radius, radius)
+	node.size = Vector2(radius * 2.0, radius * 2.0)
+	node.color = Color(color.r, color.g, color.b, 0.34)
+	main.arena.add_child(node)
+	if hostile:
+		for slot in range(main.hero_pos.size()):
+			if pos.distance_to(main.hero_pos[slot] + Vector2(22, 22)) <= radius:
+				main.hero_hp[slot] = maxf(0.0, main.hero_hp[slot] - damage)
+	else:
+		for i in range(main.enemies.size() - 1, -1, -1):
+			if pos.distance_to(main.enemies[i].pos + Vector2(20, 20)) <= radius:
+				damage_enemy(main, i, damage)
+	main.effects.append({"node": node, "life": life})
+
+static func update_effects(main, delta: float) -> void:
+	for i in range(main.effects.size() - 1, -1, -1):
+		main.effects[i].life = float(main.effects[i].life) - delta
+		if main.effects[i].life <= 0.0:
+			if is_instance_valid(main.effects[i].node):
+				main.effects[i].node.queue_free()
+			main.effects.remove_at(i)
+
+static func create_rail_attack(main, origin: Vector2, target: Vector2, damage: float, color: Color) -> void:
+	var dir := (target - origin).normalized()
+	var center := origin + dir * 210.0
+	var node := ColorRect.new()
+	node.position = center - Vector2(200, 6)
+	node.size = Vector2(400, 12)
+	node.rotation = dir.angle()
+	node.color = Color(color.r, color.g, color.b, 0.72)
+	main.arena.add_child(node)
+	for i in range(main.enemies.size() - 1, -1, -1):
+		var to_enemy: Vector2 = main.enemies[i].pos + Vector2(20, 20) - origin
+		var along := to_enemy.dot(dir)
+		var lateral := absf(to_enemy.cross(dir))
+		if along > 0.0 and along < 430.0 and lateral < 34.0:
+			damage_enemy(main, i, damage)
+	main.effects.append({"node": node, "life": 0.18})
+
+static func create_chain_attack(main, origin: Vector2, target: Vector2, damage: float, color: Color, radius: float) -> void:
+	var hits := 0
+	var chain_origin := target
+	while hits < 3:
+		var best_index := -1
+		var best_dist := INF
+		for i in range(main.enemies.size()):
+			var dist: float = main.enemies[i].pos.distance_squared_to(chain_origin)
+			if dist < best_dist and dist <= radius * radius:
+				best_index = i
+				best_dist = dist
+		if best_index == -1:
+			break
+		chain_origin = main.enemies[best_index].pos
+		damage_enemy(main, best_index, damage * (1.0 - hits * 0.18))
+		create_area_effect(main, chain_origin + Vector2(20, 20), 34.0, 0.0, color, 0.12, false)
+		hits += 1
+	if hits == 0:
+		fire_projectile(main, origin, target, 560.0, damage, color, false, 7.0)
+
+static func damage_enemy(main, index: int, damage: float) -> void:
+	if index < 0 or index >= main.enemies.size():
+		return
+	main.enemies[index].hp -= damage
+	if main.enemies[index].hp > 0.0:
+		return
+	var defeated: Dictionary = main.enemies[index]
+	if defeated.has("label") and is_instance_valid(defeated.label):
+		defeated.label.queue_free()
+	if is_instance_valid(defeated.node):
+		defeated.node.queue_free()
+	if defeated.is_boss:
+		main.boss_alive = false
+	distribute_xp(main, float(defeated.xp))
+	main.enemies.remove_at(index)

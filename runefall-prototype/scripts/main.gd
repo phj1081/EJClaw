@@ -27,10 +27,14 @@ var hero_next_xp: Array[float] = [80.0, 80.0, 80.0, 80.0]
 var hero_tags := ["", "", "", ""]
 var hero_pos: Array[Vector2] = []
 var enemies: Array[Dictionary] = []
+var projectiles: Array[Dictionary] = []
+var effects: Array[Dictionary] = []
 var battle_time := 0.0
 var wave := 1
 var spawn_timer := 0.0
 var attack_timer := 0.0
+var boss_spawned := false
+var boss_alive := false
 var switch_cd: Array[float] = [0.0, 0.0, 0.0, 0.0]
 var timer_label: Label
 var wave_label: Label
@@ -65,6 +69,8 @@ func clear_screen() -> void:
 	hero_nodes.clear()
 	hero_labels.clear()
 	enemies.clear()
+	projectiles.clear()
+	effects.clear()
 
 func screen_root() -> Control:
 	clear_screen()
