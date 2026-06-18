@@ -17,7 +17,7 @@
 3. Done: split monolithic `main.gd` into screen/gameplay modules before feature count grows.
 4. Done: add save data for party, currencies, hero levels, equipment, and first-session onboarding state.
 5. Done: add audio pass: hit, level-up, button, dash, skill, fusion, low HP, victory/defeat, main BGM, battle BGM.
-6. Add packaging checks for Android landscape build and basic performance budget.
+6. Partial: add packaging checks for Android landscape build and basic performance budget. Android toolchain setup and PCK export are verified; APK export is still blocked by Godot 4.6.1 Android preset validation returning an empty configuration error.
 
 ## Early Access Bar
 
