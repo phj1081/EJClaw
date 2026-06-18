@@ -1,6 +1,7 @@
 extends RefCounted
 
 const GameData := preload("res://scripts/game_data.gd")
+const TouchInput := preload("res://scripts/touch_input.gd")
 const BATTLE_DURATION := 150.0
 const ARENA_MIN := Vector2(270, 112)
 const ARENA_MAX := Vector2(1470, 806)
@@ -78,7 +79,6 @@ static func start(main) -> void:
 	main.xp_bar.max_value = main.hero_next_xp[main.active_slot]
 	main.xp_bar.value = main.hero_xp[main.active_slot]
 	top.add_child(main.xp_bar)
-	main.button(root, "정산", Vector2(1466, 22), Vector2(94, 44), func(): main.show_result(true), 18, Color("#26334d"), "button_blue")
 
 	var party_panel: Panel = main.panel(root, Vector2(22, 112), Vector2(222, 282), Color("#111827e8"))
 	main.label(party_panel, "파티", Vector2(16, 8), Vector2(80, 28), 20)
@@ -86,11 +86,7 @@ static func start(main) -> void:
 		var b: Button = main.button(party_panel, "", Vector2(14, 46 + i * 56), Vector2(194, 46), Callable(main, "try_switch").bind(i), 16, Color("#24314a"))
 		main.party_buttons.append(b)
 
-	var stick: Panel = main.panel(root, Vector2(72, 688), Vector2(164, 164), Color("#26334d99"), 82)
-	main.label(stick, "◉", Vector2(44, 34), Vector2(76, 76), 54, Color("#cde3ff"), HORIZONTAL_ALIGNMENT_CENTER)
-	main.label(root, "WASD/방향키 이동", Vector2(58, 850), Vector2(210, 28), 16, Color("#8392b2"), HORIZONTAL_ALIGNMENT_CENTER)
-	main.button(root, "스킬", Vector2(1308, 704), Vector2(104, 104), func(): main.use_skill(), 24, Color("#7b5cff"), "square_blue")
-	main.button(root, "대시", Vector2(1434, 704), Vector2(104, 104), func(): main.dash_active(), 24, Color("#2f8cff"), "square_blue")
+	TouchInput.build_controls(main, root)
 
 	main.battle_time = 0.0
 	main.wave = 1
@@ -98,6 +94,11 @@ static func start(main) -> void:
 	main.attack_timer = 0.0
 	main.boss_spawned = false
 	main.boss_alive = false
+	main.paused = false
+	main.dash_cooldown = 0.0
+	main.skill_cooldown = 0.0
+	main.invuln_timer = 0.0
+	main.switch_flash_timer = 0.0
 	main.switch_cd.clear()
 	main.switch_cd.append_array([0.0, 0.0, 0.0, 0.0])
 	main.hero_pos.clear()
@@ -144,12 +145,18 @@ static func draw_dungeon_map(main) -> void:
 		main.pixel_art(main.arena, GameData.prop_tile(2 + i), props[i], Vector2(48, 48), Color("#24314a"))
 
 static func update(main, delta: float) -> void:
+	if main.paused:
+		update_ui(main)
+		return
+	TouchInput.update(main, delta)
 	main.battle_time += delta
 	main.wave = clampi(1 + int(main.battle_time / 28.0), 1, 5)
 	for i in range(4):
 		main.switch_cd[i] = maxf(0.0, main.switch_cd[i] - delta)
 
 	var input_dir := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	if input_dir.length() < 0.05 and main.touch_move_dir.length() > 0.05:
+		input_dir = main.touch_move_dir
 	if input_dir.length() > 0.05:
 		var h := GameData.hero(main.party_indices[main.active_slot])
 		main.hero_pos[main.active_slot] += input_dir.normalized() * float(h.speed) * delta
@@ -294,7 +301,7 @@ static func update_melee_enemy(main, enemy: Dictionary, delta: float) -> void:
 	var dir: Vector2 = (main.hero_pos[target] - enemy.pos).normalized()
 	enemy.pos = (enemy.pos + dir * float(enemy.speed) * delta).clamp(ARENA_MIN, ARENA_MAX)
 	if enemy.pos.distance_to(main.hero_pos[target]) < float(enemy.range):
-		main.hero_hp[target] = maxf(0.0, main.hero_hp[target] - float(enemy.damage) * delta)
+		damage_hero(main, target, float(enemy.damage) * delta)
 
 static func update_ranged_enemy(main, enemy: Dictionary, delta: float) -> void:
 	var target: int = closest_hero(main, enemy.pos)
@@ -317,7 +324,7 @@ static func update_boss(main, enemy: Dictionary, delta: float) -> void:
 	var dir: Vector2 = (main.hero_pos[target] - enemy.pos).normalized()
 	enemy.pos = (enemy.pos + dir * (float(enemy.speed) + enemy.phase * 10.0) * delta).clamp(ARENA_MIN, ARENA_MAX)
 	if enemy.pos.distance_to(main.hero_pos[target]) < float(enemy.range):
-		main.hero_hp[target] = maxf(0.0, main.hero_hp[target] - float(enemy.damage) * delta)
+		damage_hero(main, target, float(enemy.damage) * delta)
 	enemy.pattern_cd = maxf(0.0, float(enemy.pattern_cd) - delta)
 	if enemy.pattern_cd <= 0.0:
 		boss_pattern(main, enemy)
@@ -395,21 +402,26 @@ static func try_switch(main, slot: int) -> void:
 	main.switch_cd[main.active_slot] = 12.0
 	main.active_slot = slot
 	main.hero_hp[main.active_slot] = minf(main.hero_hp[main.active_slot] + 12.0, float(GameData.hero(main.party_indices[main.active_slot]).hp))
+	TouchInput.did_switch(main)
 	update_ui(main)
 
 static func dash_active(main) -> void:
-	if not main.battle_running:
+	if not main.battle_running or main.paused or not TouchInput.can_dash(main):
 		return
 	var dir := Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
+	if dir.length() < 0.05 and main.touch_move_dir.length() > 0.05:
+		dir = main.touch_move_dir
 	if dir.length() < 0.05:
 		dir = Vector2.RIGHT
-	main.hero_pos[main.active_slot] = (main.hero_pos[main.active_slot] + dir.normalized() * 150.0).clamp(Vector2(270, 112), Vector2(1470, 806))
+	main.hero_pos[main.active_slot] = (main.hero_pos[main.active_slot] + dir.normalized() * 150.0).clamp(ARENA_MIN, ARENA_MAX)
+	TouchInput.did_dash(main)
 
 static func use_skill(main) -> void:
-	if not main.battle_running:
+	if not main.battle_running or main.paused or not TouchInput.can_skill(main):
 		return
 	var origin: Vector2 = main.hero_pos[main.active_slot]
 	create_area_effect(main, origin + Vector2(22, 22), 190.0, 42.0, GameData.color_for_tag(main.hero_tags[main.active_slot]), 0.28, false)
+	TouchInput.did_skill(main)
 
 static func update_ui(main) -> void:
 	if main.timer_label:
@@ -521,7 +533,7 @@ static func update_projectiles(main, delta: float) -> void:
 static func hit_hero_with_projectile(main, projectile: Dictionary) -> bool:
 	for slot in range(main.hero_pos.size()):
 		if projectile.pos.distance_to(main.hero_pos[slot] + Vector2(22, 22)) <= float(projectile.radius) + 22.0:
-			main.hero_hp[slot] = maxf(0.0, main.hero_hp[slot] - float(projectile.damage))
+			damage_hero(main, slot, float(projectile.damage))
 			return true
 	return false
 
@@ -543,7 +555,7 @@ static func create_area_effect(main, pos: Vector2, radius: float, damage: float,
 	if hostile:
 		for slot in range(main.hero_pos.size()):
 			if pos.distance_to(main.hero_pos[slot] + Vector2(22, 22)) <= radius:
-				main.hero_hp[slot] = maxf(0.0, main.hero_hp[slot] - damage)
+				damage_hero(main, slot, damage)
 	else:
 		for i in range(main.enemies.size() - 1, -1, -1):
 			if pos.distance_to(main.enemies[i].pos + Vector2(20, 20)) <= radius:
@@ -610,3 +622,8 @@ static func damage_enemy(main, index: int, damage: float) -> void:
 		main.boss_alive = false
 	distribute_xp(main, float(defeated.xp))
 	main.enemies.remove_at(index)
+
+static func damage_hero(main, slot: int, damage: float) -> void:
+	if main.invuln_timer > 0.0 and slot == main.active_slot:
+		return
+	main.hero_hp[slot] = maxf(0.0, main.hero_hp[slot] - damage)

@@ -2,6 +2,7 @@ extends Node
 
 const GameData := preload("res://scripts/game_data.gd")
 const BattleController := preload("res://scripts/battle_controller.gd")
+const TouchInput := preload("res://scripts/touch_input.gd")
 const HomeScreen := preload("res://scripts/screens/home_screen.gd")
 const PartyScreen := preload("res://scripts/screens/party_screen.gd")
 const ResultScreen := preload("res://scripts/screens/result_screen.gd")
@@ -15,6 +16,7 @@ var ai_presets := ["균형", "균형", "방어", "공격"]
 var currencies := {"gold": 12840, "gem": 760, "material": 324}
 
 var battle_running := false
+var paused := false
 var battle_root: Control
 var arena: Control
 var party_buttons: Array[Button] = []
@@ -35,6 +37,21 @@ var spawn_timer := 0.0
 var attack_timer := 0.0
 var boss_spawned := false
 var boss_alive := false
+var touch_move_dir := Vector2.ZERO
+var touch_active_id := -1
+var touch_mouse_active := false
+var joystick_base: Panel
+var joystick_knob: Panel
+var dash_button: Button
+var skill_button: Button
+var pause_button: Button
+var dash_cd_label: Label
+var skill_cd_label: Label
+var dash_cooldown := 0.0
+var skill_cooldown := 0.0
+var invuln_timer := 0.0
+var switch_flash_timer := 0.0
+var pause_overlay: Control
 var switch_cd: Array[float] = [0.0, 0.0, 0.0, 0.0]
 var timer_label: Label
 var wave_label: Label
@@ -48,6 +65,11 @@ func _process(delta: float) -> void:
 	if not battle_running:
 		return
 	BattleController.update(self, delta)
+
+func _input(event: InputEvent) -> void:
+	if battle_root == null:
+		return
+	TouchInput.handle_input(self, event)
 
 func set_active_slot(slot: int) -> void:
 	active_slot = slot
@@ -63,6 +85,7 @@ func set_party_member(hero_index: int) -> void:
 
 func clear_screen() -> void:
 	battle_running = false
+	paused = false
 	for child in get_children():
 		child.free()
 	party_buttons.clear()
@@ -71,6 +94,17 @@ func clear_screen() -> void:
 	enemies.clear()
 	projectiles.clear()
 	effects.clear()
+	touch_move_dir = Vector2.ZERO
+	touch_active_id = -1
+	touch_mouse_active = false
+	joystick_base = null
+	joystick_knob = null
+	dash_button = null
+	skill_button = null
+	pause_button = null
+	dash_cd_label = null
+	skill_cd_label = null
+	pause_overlay = null
 
 func screen_root() -> Control:
 	clear_screen()
@@ -215,6 +249,9 @@ func dash_active() -> void:
 
 func use_skill() -> void:
 	BattleController.use_skill(self)
+
+func toggle_pause() -> void:
+	TouchInput.toggle_pause(self)
 
 func update_battle_ui() -> void:
 	BattleController.update_ui(self)

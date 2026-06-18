@@ -35,16 +35,22 @@ func _run() -> void:
 	await _settle()
 	await _capture("04_battle")
 
+	main.toggle_pause()
+	await _settle()
+	await _capture("05_pause")
+	main.toggle_pause()
+	await _settle()
+
 	main.battle_time = 112.1
 	main.hero_tags[0] = "작열 중력장"
 	main._update_battle(0.016)
 	main.hit_nearest_enemy(0)
 	await _settle()
-	await _capture("05_boss_fusion")
+	await _capture("06_boss_fusion")
 
 	main.show_level_up(0)
 	await _settle()
-	await _capture("06_level_up")
+	await _capture("07_level_up")
 
 	var overlays := root.find_children("LevelOverlay", "", true, false)
 	for overlay in overlays:
@@ -52,7 +58,7 @@ func _run() -> void:
 	main.battle_running = false
 	main.show_result(true)
 	await _settle()
-	await _capture("07_result")
+	await _capture("08_result")
 
 	print("RUNEFALL_VISUAL_CAPTURE_OK %s" % out_dir)
 	quit(0)
