@@ -4,6 +4,7 @@ const GameData := preload("res://scripts/game_data.gd")
 const BattleController := preload("res://scripts/battle_controller.gd")
 const SaveData := preload("res://scripts/save_data.gd")
 const TouchInput := preload("res://scripts/touch_input.gd")
+const AudioManager := preload("res://scripts/audio_manager.gd")
 const HomeScreen := preload("res://scripts/screens/home_screen.gd")
 const PartyScreen := preload("res://scripts/screens/party_screen.gd")
 const ResultScreen := preload("res://scripts/screens/result_screen.gd")
@@ -58,6 +59,9 @@ var skill_cooldown := 0.0
 var invuln_timer := 0.0
 var switch_flash_timer := 0.0
 var pause_overlay: Control
+var bgm_player: AudioStreamPlayer
+var sfx_players: Array[AudioStreamPlayer] = []
+var low_hp_warned := false
 var switch_cd: Array[float] = [0.0, 0.0, 0.0, 0.0]
 var timer_label: Label
 var wave_label: Label
@@ -65,6 +69,7 @@ var xp_bar: ProgressBar
 
 func _ready() -> void:
 	get_viewport().size = Vector2i(VIEW_SIZE)
+	AudioManager.setup(self)
 	load_game()
 	show_home()
 
@@ -97,6 +102,13 @@ func clear_screen() -> void:
 	battle_running = false
 	paused = false
 	for child in get_children():
+		var is_audio_child := child == bgm_player
+		for player: AudioStreamPlayer in sfx_players:
+			if child == player:
+				is_audio_child = true
+				break
+		if is_audio_child:
+			continue
 		child.free()
 	party_buttons.clear()
 	hero_nodes.clear()
@@ -237,7 +249,10 @@ func button(parent: Control, text: String, pos: Vector2, size: Vector2, pressed:
 	b.add_theme_stylebox_override("hover", style(normal_bg, 8))
 	b.add_theme_stylebox_override("pressed", style(normal_bg, 8))
 	b.add_theme_stylebox_override("disabled", style(Color("#566070"), 8))
-	b.pressed.connect(pressed)
+	b.pressed.connect(func():
+		play_sfx("ui_click", -12.0, 0.04)
+		pressed.call()
+	)
 	parent.add_child(b)
 	return b
 
@@ -255,6 +270,7 @@ func tag_chip(parent: Control, text: String, pos: Vector2, color: Color) -> Labe
 	return chip
 
 func show_home() -> void:
+	play_music("main")
 	HomeScreen.show(self)
 
 func show_meta_tab(tab_name: String) -> void:
@@ -267,6 +283,7 @@ func show_launch_confirm() -> void:
 	PartyScreen.show_launch_confirm(self)
 
 func start_battle() -> void:
+	play_music("battle")
 	BattleController.start(self)
 
 func draw_dungeon_map() -> void:
@@ -323,6 +340,12 @@ func apply_level_choice(slot: int, choice: Dictionary) -> void:
 func show_result(victory: bool) -> void:
 	ResultScreen.show(self, victory)
 
+func play_music(key: String) -> void:
+	AudioManager.play_music(self, key)
+
+func play_sfx(key: String, volume_db: float = -8.0, pitch_jitter: float = 0.0) -> void:
+	AudioManager.play_sfx(self, key, volume_db, pitch_jitter)
+
 func load_game() -> void:
 	SaveData.load_into(self)
 
@@ -336,7 +359,14 @@ func apply_run_result(victory: bool) -> void:
 	SaveData.apply_run_result(self, victory)
 
 func show_message(message: String) -> void:
-	var root := get_child(0) as Control
+	var root: Control = battle_root if battle_root != null and is_instance_valid(battle_root) else null
+	if root == null:
+		for child in get_children():
+			if child is Control:
+				root = child
+				break
+	if root == null:
+		return
 	var toast := panel(root, Vector2(500, 396), Vector2(600, 108), Color("#111827ee"))
 	label(toast, message, Vector2(24, 24), Vector2(552, 54), 22, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	var timer := get_tree().create_timer(1.4)

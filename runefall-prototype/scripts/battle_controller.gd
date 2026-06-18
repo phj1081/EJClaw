@@ -101,6 +101,7 @@ static func start(main) -> void:
 	main.dash_cooldown = 0.0
 	main.skill_cooldown = 0.0
 	main.invuln_timer = 0.0
+	main.low_hp_warned = false
 	main.switch_flash_timer = 0.0
 	main.switch_cd.clear()
 	main.switch_cd.append_array([0.0, 0.0, 0.0, 0.0])
@@ -257,6 +258,7 @@ static func spawn_boss(main) -> void:
 		"phase": 1,
 		"is_boss": true
 	})
+	main.play_sfx("impact", -13.0, 0.06)
 	main.show_message("보스 출현: 균열 장군")
 
 static func choose_enemy_kind(wave: int) -> String:
@@ -374,8 +376,11 @@ static func hit_nearest_enemy(main, slot: int) -> void:
 		var damage: float = 12.0 + main.hero_levels[slot] * 3.0
 		if slot == main.active_slot:
 			damage *= 1.35
+			main.play_sfx("attack", -18.0, 0.05)
 		fire_projectile(main, origin, target_pos, 540.0, damage, GameData.color_for_tag(tag), false, 7.0)
 	else:
+		if slot == main.active_slot:
+			main.play_sfx("fusion", -12.0, 0.02)
 		fire_fusion_attack(main, slot, origin, target_pos, fusion)
 
 static func distribute_xp(main, amount: float) -> void:
@@ -406,6 +411,7 @@ static func try_switch(main, slot: int) -> void:
 	main.active_slot = slot
 	main.hero_hp[main.active_slot] = minf(main.hero_hp[main.active_slot] + 12.0, float(GameData.hero(main.party_indices[main.active_slot]).hp))
 	TouchInput.did_switch(main)
+	main.play_sfx("ui_confirm", -10.0, 0.02)
 	update_ui(main)
 
 static func dash_active(main) -> void:
@@ -418,6 +424,7 @@ static func dash_active(main) -> void:
 		dir = Vector2.RIGHT
 	main.hero_pos[main.active_slot] = (main.hero_pos[main.active_slot] + dir.normalized() * 150.0).clamp(ARENA_MIN, ARENA_MAX)
 	TouchInput.did_dash(main)
+	main.play_sfx("dash", -12.0, 0.08)
 
 static func use_skill(main) -> void:
 	if not main.battle_running or main.paused or not TouchInput.can_skill(main):
@@ -425,6 +432,7 @@ static func use_skill(main) -> void:
 	var origin: Vector2 = main.hero_pos[main.active_slot]
 	create_area_effect(main, origin + Vector2(22, 22), 190.0, 42.0, GameData.color_for_tag(main.hero_tags[main.active_slot]), 0.28, false)
 	TouchInput.did_skill(main)
+	main.play_sfx("skill", -10.0, 0.04)
 
 static func update_ui(main) -> void:
 	if main.timer_label:
@@ -445,6 +453,7 @@ static func update_ui(main) -> void:
 
 static func show_level_up(main, slot: int) -> void:
 	main.battle_running = false
+	main.play_sfx("level_up", -8.0, 0.0)
 	var overlay := ColorRect.new()
 	overlay.name = "LevelOverlay"
 	overlay.position = Vector2.ZERO
@@ -482,6 +491,10 @@ static func choose_level(main, choice: Dictionary, overlay_node: Control, slot: 
 
 static func apply_level_choice(main, slot: int, choice: Dictionary) -> void:
 	var fusion := GameData.fusion_name(main.hero_tags[slot], choice.tag)
+	if fusion != "":
+		main.play_sfx("fusion", -8.0, 0.0)
+	else:
+		main.play_sfx("ui_confirm", -10.0, 0.02)
 	main.hero_tags[slot] = choice.tag if fusion == "" else fusion
 
 static func fire_fusion_attack(main, slot: int, origin: Vector2, target_pos: Vector2, fusion: Dictionary) -> void:
@@ -615,6 +628,8 @@ static func damage_enemy(main, index: int, damage: float) -> void:
 	if index < 0 or index >= main.enemies.size():
 		return
 	main.enemies[index].hp -= damage
+	if damage > 0.0:
+		main.play_sfx("hit", -20.0, 0.08)
 	if main.enemies[index].hp > 0.0:
 		return
 	var defeated: Dictionary = main.enemies[index]
@@ -624,6 +639,7 @@ static func damage_enemy(main, index: int, damage: float) -> void:
 		defeated.node.queue_free()
 	if defeated.is_boss:
 		main.boss_alive = false
+		main.play_sfx("victory", -6.0, 0.0)
 	distribute_xp(main, float(defeated.xp))
 	main.enemies.remove_at(index)
 
@@ -631,3 +647,9 @@ static func damage_hero(main, slot: int, damage: float) -> void:
 	if main.invuln_timer > 0.0 and slot == main.active_slot:
 		return
 	main.hero_hp[slot] = maxf(0.0, main.hero_hp[slot] - damage)
+	if slot == main.active_slot:
+		var hero: Dictionary = GameData.hero(main.party_indices[slot])
+		var hp_ratio: float = main.hero_hp[slot] / float(hero.hp)
+		if hp_ratio < 0.25 and not main.low_hp_warned:
+			main.low_hp_warned = true
+			main.play_sfx("low_hp", -9.0, 0.0)

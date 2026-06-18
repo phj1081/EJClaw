@@ -11,6 +11,50 @@
 
 Credit is still kept here for traceability even though attribution is not required by the license.
 
+## Interface Sounds
+
+- Author: Kenney (Assets)
+- Source: https://kenney.nl/assets/interface-sounds
+- Downloaded: 2026-06-19
+- Asset license: Creative Commons Zero v1.0 Universal (CC0)
+- Page note: The Kenney page lists this audio pack as Creative Commons CC0.
+- Usage in this prototype: button clicks, confirmation sounds, and low-HP warning placeholder.
+
+Credit is still kept here for traceability even though attribution is not required by the license.
+
+## RPG Audio
+
+- Author: Kenney (Assets)
+- Source: https://kenney.nl/assets/rpg-audio
+- Downloaded: 2026-06-19
+- Asset license: Creative Commons Zero v1.0 Universal (CC0)
+- Page note: The Kenney page lists this audio pack as Creative Commons CC0.
+- Usage in this prototype: attack, hit, dash, skill, impact, and combat feedback sounds.
+
+Credit is still kept here for traceability even though attribution is not required by the license.
+
+## Music Jingles
+
+- Author: Kenney (Assets)
+- Source: https://kenney.nl/assets/music-jingles
+- Downloaded: 2026-06-19
+- Asset license: Creative Commons Zero v1.0 Universal (CC0)
+- Page note: The Kenney page lists this audio pack as Creative Commons CC0.
+- Usage in this prototype: level-up, fusion, victory, and defeat stingers.
+
+Credit is still kept here for traceability even though attribution is not required by the license.
+
+## Music Loops
+
+- Author: Kenney (Assets)
+- Source: https://www.gamesounds.xyz/?dir=Kenney%27s+Sound+Pack%2FMusic+Loops
+- Downloaded: 2026-06-19
+- Asset license: Creative Commons Zero v1.0 Universal (CC0)
+- Page note: The source readme lists Music Loops as CC0 and free for personal, educational, and commercial projects.
+- Usage in this prototype: main menu background music and battle background music.
+
+Credit is still kept here for traceability even though attribution is not required by the license.
+
 ## UI Pack
 
 - Author: Kenney (Assets)

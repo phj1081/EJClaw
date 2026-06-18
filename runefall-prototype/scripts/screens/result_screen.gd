@@ -4,6 +4,8 @@ const GameData := preload("res://scripts/game_data.gd")
 
 static func show(main, victory: bool) -> void:
 	main.apply_run_result(victory)
+	main.play_sfx("victory" if victory else "defeat", -7.0, 0.0)
+	main.play_music("main")
 	main.battle_running = false
 	var root: Control = main.screen_root()
 	var bg := ColorRect.new()
