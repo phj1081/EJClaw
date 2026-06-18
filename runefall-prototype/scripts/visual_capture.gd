@@ -5,6 +5,7 @@ const DEFAULT_OUT_DIR := "/tmp/runefall-visual-captures"
 var out_dir := DEFAULT_OUT_DIR
 
 func _initialize() -> void:
+	OS.set_environment("RUNEFALL_SAVE_PATH", "user://runefall_visual_capture_save.json")
 	call_deferred("_run")
 
 func _run() -> void:
@@ -61,6 +62,9 @@ func _run() -> void:
 	await _capture("08_result")
 
 	print("RUNEFALL_VISUAL_CAPTURE_OK %s" % out_dir)
+	var save_path := "user://runefall_visual_capture_save.json"
+	if FileAccess.file_exists(save_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 	quit(0)
 
 func _settle() -> void:

@@ -7,13 +7,14 @@
 - Single-player 4-party loop exists: switchable active hero, AI followers, enemy spawn, auto attacks, XP split, level-up choices, result screen.
 - Phase 0 combat has distinct melee/ranged/tank enemies, a wave 5 boss gate, and visible fusion attack patterns.
 - Mobile battle input now supports virtual stick drag, dash/skill cooldowns, switch invulnerability feedback, and pause/resume.
+- Save data persists party setup, currencies, meta hero levels, equipment placeholder data, and first-session onboarding state.
 
 ## Next Critical Slices
 
 1. Tune and expand Phase 0 combat: add 2 more enemy variants, balance boss pacing, and fill out all 6 fusion outcomes.
 2. Done: add real mobile touch input: virtual stick drag, dash cooldown, skill cooldown, switch feedback, pause/resume.
 3. Done: split monolithic `main.gd` into screen/gameplay modules before feature count grows.
-4. Add save data for party, currencies, hero levels, equipment, and first-session onboarding state.
+4. Done: add save data for party, currencies, hero levels, equipment, and first-session onboarding state.
 5. Add audio pass: hit, level-up, button, dash, low HP, victory/defeat.
 6. Add packaging checks for Android landscape build and basic performance budget.
 

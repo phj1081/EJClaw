@@ -3,6 +3,7 @@ extends SceneTree
 const TouchInput := preload("res://scripts/touch_input.gd")
 
 func _initialize() -> void:
+	OS.set_environment("RUNEFALL_SAVE_PATH", "user://runefall_touch_save.json")
 	call_deferred("_run")
 
 func _run() -> void:
@@ -76,4 +77,10 @@ func _run() -> void:
 		return
 
 	print("RUNEFALL_TOUCH_OK")
+	_cleanup_save()
 	quit(0)
+
+func _cleanup_save() -> void:
+	var save_path := OS.get_environment("RUNEFALL_SAVE_PATH")
+	if FileAccess.file_exists(save_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))

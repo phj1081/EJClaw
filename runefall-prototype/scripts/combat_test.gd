@@ -1,6 +1,7 @@
 extends SceneTree
 
 func _initialize() -> void:
+	OS.set_environment("RUNEFALL_SAVE_PATH", "user://runefall_combat_save.json")
 	call_deferred("_run")
 
 func _run() -> void:
@@ -63,4 +64,10 @@ func _run() -> void:
 		return
 
 	print("RUNEFALL_COMBAT_OK")
+	_cleanup_save()
 	quit(0)
+
+func _cleanup_save() -> void:
+	var save_path := OS.get_environment("RUNEFALL_SAVE_PATH")
+	if FileAccess.file_exists(save_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))

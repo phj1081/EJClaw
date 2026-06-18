@@ -28,7 +28,8 @@ static func show(main) -> void:
 		var card: Panel = main.panel(root, Vector2(120 + i * 232, 310 + (i % 2) * 76), Vector2(168, 220), Color("#111827"))
 		main.pixel_art(card, h.sprite, Vector2(36, 26), Vector2(96, 106), Color(h.color))
 		main.label(card, h.name, Vector2(18, 140), Vector2(132, 28), 24, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
-		main.label(card, h.role, Vector2(10, 170), Vector2(148, 24), 16, Color("#b9c7e3"), HORIZONTAL_ALIGNMENT_CENTER)
+		var meta_level := int(main.meta_hero_levels[main.party_indices[i]]) if main.party_indices[i] < main.meta_hero_levels.size() else 1
+		main.label(card, "Lv.%d  %s" % [meta_level, h.role], Vector2(10, 170), Vector2(148, 24), 16, Color("#b9c7e3"), HORIZONTAL_ALIGNMENT_CENTER)
 		if i == main.active_slot:
 			main.tag_chip(card, "조작", Vector2(48, 6), Color("#ffd24a"))
 
@@ -64,7 +65,8 @@ static func show_meta_tab(main, tab_name: String) -> void:
 			var card: Panel = main.panel(root, Vector2(x, y), Vector2(390, 200), Color("#172033"))
 			main.pixel_art(card, h.sprite, Vector2(24, 20), Vector2(92, 118), Color(h.color))
 			main.label(card, h.name, Vector2(136, 24), Vector2(200, 34), 28)
-			main.label(card, "%s / %s" % [h.role, h.weapon], Vector2(136, 64), Vector2(220, 32), 18, Color("#b7c6e4"))
+			var meta_level := int(main.meta_hero_levels[i]) if i < main.meta_hero_levels.size() else 1
+			main.label(card, "Lv.%d  %s / %s" % [meta_level, h.role, h.weapon], Vector2(136, 64), Vector2(220, 32), 18, Color("#b7c6e4"))
 			main.tag_chip(card, h.tag, Vector2(136, 110), GameData.color_for_tag(h.tag))
 			main.label(card, "승급, 전용 슬롯, 코스튬은 다음 단계에서 실제 수치 연결", Vector2(22, 154), Vector2(340, 32), 16, Color("#93a4c6"))
 	else:

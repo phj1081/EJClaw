@@ -2,6 +2,7 @@ extends Node
 
 const GameData := preload("res://scripts/game_data.gd")
 const BattleController := preload("res://scripts/battle_controller.gd")
+const SaveData := preload("res://scripts/save_data.gd")
 const TouchInput := preload("res://scripts/touch_input.gd")
 const HomeScreen := preload("res://scripts/screens/home_screen.gd")
 const PartyScreen := preload("res://scripts/screens/party_screen.gd")
@@ -14,6 +15,11 @@ var party_indices := [0, 1, 2, 3]
 var active_slot := 0
 var ai_presets := ["균형", "균형", "방어", "공격"]
 var currencies := {"gold": 12840, "gem": 760, "material": 324}
+var meta_hero_levels := [1, 1, 1, 1, 1, 1]
+var equipment := {"common_slots": [], "hero_slots": {}}
+var onboarding_state := {"first_session_complete": false, "fusion_seen": false, "switch_seen": false}
+var last_run_rewards := {"gold": 0, "material": 0, "meta_xp": 0}
+var result_applied := false
 
 var battle_running := false
 var paused := false
@@ -59,6 +65,7 @@ var xp_bar: ProgressBar
 
 func _ready() -> void:
 	get_viewport().size = Vector2i(VIEW_SIZE)
+	load_game()
 	show_home()
 
 func _process(delta: float) -> void:
@@ -73,14 +80,17 @@ func _input(event: InputEvent) -> void:
 
 func set_active_slot(slot: int) -> void:
 	active_slot = slot
+	save_game()
 	show_party()
 
 func set_ai_preset(preset: String) -> void:
 	ai_presets[active_slot] = preset
+	save_game()
 	show_party()
 
 func set_party_member(hero_index: int) -> void:
 	party_indices[active_slot] = hero_index
+	save_game()
 	show_party()
 
 func clear_screen() -> void:
@@ -270,6 +280,18 @@ func apply_level_choice(slot: int, choice: Dictionary) -> void:
 
 func show_result(victory: bool) -> void:
 	ResultScreen.show(self, victory)
+
+func load_game() -> void:
+	SaveData.load_into(self)
+
+func save_game() -> void:
+	SaveData.save_from(self)
+
+func reset_save() -> void:
+	SaveData.reset(self)
+
+func apply_run_result(victory: bool) -> void:
+	SaveData.apply_run_result(self, victory)
 
 func show_message(message: String) -> void:
 	var root := get_child(0) as Control

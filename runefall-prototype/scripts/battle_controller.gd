@@ -90,6 +90,8 @@ static func start(main) -> void:
 
 	main.battle_time = 0.0
 	main.wave = 1
+	main.result_applied = false
+	main.last_run_rewards = {"gold": 0, "material": 0, "meta_xp": 0}
 	main.spawn_timer = 0.0
 	main.attack_timer = 0.0
 	main.boss_spawned = false

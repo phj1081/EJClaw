@@ -3,6 +3,7 @@ extends RefCounted
 const GameData := preload("res://scripts/game_data.gd")
 
 static func show(main, victory: bool) -> void:
+	main.apply_run_result(victory)
 	main.battle_running = false
 	var root: Control = main.screen_root()
 	var bg := ColorRect.new()
@@ -28,6 +29,6 @@ static func show(main, victory: bool) -> void:
 
 	main.panel(root, Vector2(1110, 190), Vector2(330, 420), Color("#172033"))
 	main.label(root, "획득 보상", Vector2(1144, 220), Vector2(200, 40), 30)
-	main.label(root, "골드 +820\n소재 +34\n장비 드롭 1\n도감 갱신 2", Vector2(1144, 294), Vector2(220, 160), 24, Color("#f6d66d"))
+	main.label(root, "골드 +%d\n소재 +%d\n메타 Lv +%d\n저장 완료" % [main.last_run_rewards.gold, main.last_run_rewards.material, main.last_run_rewards.meta_xp], Vector2(1144, 294), Vector2(220, 160), 24, Color("#f6d66d"))
 	main.button(root, "한 번 더", Vector2(940, 708), Vector2(220, 72), func(): main.start_battle(), 26, Color("#f05a28"), "button_red")
 	main.button(root, "메인으로", Vector2(1190, 708), Vector2(220, 72), func(): main.show_home(), 26, Color("#33415c"), "button_blue")
