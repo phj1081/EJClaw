@@ -183,6 +183,17 @@ static func hero(index: int) -> Dictionary:
 static func enemy_sprite(index: int) -> String:
 	return ENEMY_SPRITES[index % ENEMY_SPRITES.size()]
 
+static func topdown_monster_frame(monster_id: String, frame_index: int = 0) -> String:
+	return "res://assets/topdown-monsters-free/%s_run_%d.png" % [monster_id, frame_index % 8]
+
+static func topdown_monster_frames(monster_id: String) -> Array[String]:
+	var frames: Array[String] = []
+	if monster_id.is_empty():
+		return frames
+	for i in range(8):
+		frames.append(topdown_monster_frame(monster_id, i))
+	return frames
+
 static func floor_tile(index: int) -> String:
 	return FLOOR_TILES[index % FLOOR_TILES.size()]
 

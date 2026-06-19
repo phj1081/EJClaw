@@ -11,9 +11,9 @@ const ENEMY_TYPES := BalanceTable.ENEMY_TYPES
 const FUSION_ATTACKS := BalanceTable.FUSION_ATTACKS
 const DUNGEON_ROOMS := [
 	{"name": "먼지 낀 입구", "quota": 7, "kinds": ["zombie", "scarab_swarm"], "tint": Color("#16243a")},
-	{"name": "해골 초소", "quota": 9, "kinds": ["zombie", "bone_guard", "orc_shaman"], "tint": Color("#1b263d")},
+	{"name": "해골 초소", "quota": 9, "kinds": ["shade_runner", "bone_guard", "orc_shaman"], "tint": Color("#1b263d")},
 	{"name": "포자 저장고", "quota": 10, "kinds": ["spore_bomber", "crystal_slug", "muddy"], "tint": Color("#1b2d2a")},
-	{"name": "균열 감시실", "quota": 12, "kinds": ["rift_eye", "shade_runner", "bone_guard", "orc_shaman"], "tint": Color("#211d3d")},
+	{"name": "균열 감시실", "quota": 12, "kinds": ["rift_eye", "ember_guard", "rift_commander", "orc_shaman"], "tint": Color("#211d3d")},
 	{"name": "균열 제단", "quota": 0, "kinds": [], "tint": Color("#2c1728")}
 ]
 
@@ -285,11 +285,14 @@ static func spawn_enemy(main) -> void:
 	var spec: Dictionary = ENEMY_TYPES[kind]
 	var pos := spawn_position(main)
 	var hp: float = float(spec.hp) + main.wave * 5.0
-	var node: Control = main.pixel_art(main.arena, GameData.enemy_sprite(spec.sprite), pos, spec.size, spec.color)
+	var frames := GameData.topdown_monster_frames(str(spec.get("asset", "")))
+	var sprite_path := str(frames[0]) if not frames.is_empty() else GameData.enemy_sprite(spec.sprite)
+	var node: Control = main.pixel_art(main.arena, sprite_path, pos, spec.size, spec.color)
 	node.position = pos
 	main.room_spawned += 1
 	main.enemies.append({
 		"kind": kind,
+		"name": str(spec.name),
 		"node": node,
 		"pos": pos,
 		"hp": hp,
@@ -300,6 +303,10 @@ static func spawn_enemy(main) -> void:
 		"xp": float(spec.xp),
 		"attack_cd": randf_range(0.25, 0.9),
 		"attack_interval": float(spec.attack_interval),
+		"frames": frames,
+		"frame_index": 0,
+		"anim_time": randf_range(0.0, 0.25),
+		"anim_fps": randf_range(7.0, 9.0),
 		"is_boss": false
 	})
 
@@ -307,7 +314,8 @@ static func spawn_boss(main) -> void:
 	main.boss_spawned = true
 	main.boss_alive = true
 	var pos := Vector2(1188, 338)
-	var node: Control = main.pixel_art(main.arena, GameData.enemy_sprite(3), pos, Vector2(96, 104), Color("#ff395d"))
+	var frames := GameData.topdown_monster_frames(str(BalanceTable.BOSS.asset))
+	var node: Control = main.pixel_art(main.arena, str(frames[0]), pos, Vector2(104, 104), Color("#ff395d"))
 	node.position = pos
 	var title: Label = main.label(main.arena, "균열 장군", pos + Vector2(-18, -30), Vector2(132, 24), 16, Color("#ffd24a"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.enemies.append({
@@ -326,6 +334,10 @@ static func spawn_boss(main) -> void:
 		"attack_interval": float(BalanceTable.BOSS.attack_interval),
 		"pattern_cd": float(BalanceTable.BOSS.pattern_cd),
 		"phase": 1,
+		"frames": frames,
+		"frame_index": 0,
+		"anim_time": 0.0,
+		"anim_fps": 8.0,
 		"is_boss": true
 	})
 	main.play_sfx("impact", -13.0, 0.06)
@@ -394,8 +406,20 @@ static func update_enemies(main, delta: float) -> void:
 		else:
 			update_melee_enemy(main, enemy, delta)
 		enemy.node.position = enemy.pos
+		update_enemy_animation(main, enemy, delta)
 		if enemy.has("label") and is_instance_valid(enemy.label):
 			enemy.label.position = enemy.pos + Vector2(-18, -30)
+
+static func update_enemy_animation(main, enemy: Dictionary, delta: float) -> void:
+	var frames: Array = enemy.get("frames", [])
+	if frames.size() < 2 or not is_instance_valid(enemy.node) or not (enemy.node is TextureRect):
+		return
+	enemy.anim_time = float(enemy.get("anim_time", 0.0)) + delta
+	var frame_index: int = int(float(enemy.anim_time) * float(enemy.get("anim_fps", 8.0))) % frames.size()
+	if frame_index == int(enemy.get("frame_index", 0)):
+		return
+	enemy.frame_index = frame_index
+	(enemy.node as TextureRect).texture = main.texture_from_path(str(frames[frame_index]))
 
 static func update_melee_enemy(main, enemy: Dictionary, delta: float) -> void:
 	var target: int = closest_hero(main, enemy.pos)

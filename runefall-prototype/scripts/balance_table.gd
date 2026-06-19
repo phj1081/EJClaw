@@ -17,10 +17,11 @@ const EQUIPMENT_CRAFT := {"gold": 420, "material": 18, "max_common_slots": 6}
 
 const ENEMY_TYPES := {
 	"zombie": {
-		"name": "좀비 돌격병",
+		"name": "뿔투구 돌격병",
+		"asset": "00",
 		"sprite": 1,
 		"color": Color("#d74848"),
-		"size": Vector2(38, 38),
+		"size": Vector2(58, 58),
 		"hp": 24.0,
 		"speed": 106.0,
 		"damage": 15.0,
@@ -29,10 +30,11 @@ const ENEMY_TYPES := {
 		"attack_interval": 0.25
 	},
 	"orc_shaman": {
-		"name": "오크 주술사",
+		"name": "붉은 갑주 주술사",
+		"asset": "01",
 		"sprite": 4,
 		"color": Color("#b56cff"),
-		"size": Vector2(42, 44),
+		"size": Vector2(62, 62),
 		"hp": 34.0,
 		"speed": 82.0,
 		"damage": 11.0,
@@ -41,10 +43,11 @@ const ENEMY_TYPES := {
 		"attack_interval": 1.35
 	},
 	"muddy": {
-		"name": "진흙 탱커",
+		"name": "독포자 탱커",
+		"asset": "02",
 		"sprite": 5,
 		"color": Color("#8f6a4c"),
-		"size": Vector2(50, 48),
+		"size": Vector2(62, 62),
 		"hp": 78.0,
 		"speed": 50.0,
 		"damage": 20.0,
@@ -53,10 +56,11 @@ const ENEMY_TYPES := {
 		"attack_interval": 0.42
 	},
 	"shade_runner": {
-		"name": "그림자 추격자",
+		"name": "해골 추격자",
+		"asset": "03",
 		"sprite": 0,
 		"color": Color("#54c8ff"),
-		"size": Vector2(34, 34),
+		"size": Vector2(54, 54),
 		"hp": 28.0,
 		"speed": 154.0,
 		"damage": 12.0,
@@ -65,10 +69,11 @@ const ENEMY_TYPES := {
 		"attack_interval": 0.55
 	},
 	"spore_bomber": {
-		"name": "포자 폭탄병",
+		"name": "염각 폭탄병",
+		"asset": "04",
 		"sprite": 2,
 		"color": Color("#d9f06a"),
-		"size": Vector2(44, 40),
+		"size": Vector2(62, 62),
 		"hp": 42.0,
 		"speed": 68.0,
 		"damage": 22.0,
@@ -77,10 +82,11 @@ const ENEMY_TYPES := {
 		"attack_interval": 1.2
 	},
 	"bone_guard": {
-		"name": "뼈 방패병",
+		"name": "호박 방패병",
+		"asset": "05",
 		"sprite": 3,
 		"color": Color("#c9d5ee"),
-		"size": Vector2(48, 46),
+		"size": Vector2(58, 58),
 		"hp": 96.0,
 		"speed": 46.0,
 		"damage": 18.0,
@@ -89,10 +95,11 @@ const ENEMY_TYPES := {
 		"attack_interval": 0.55
 	},
 	"scarab_swarm": {
-		"name": "균열 벌레떼",
+		"name": "잿불 난동꾼",
+		"asset": "06",
 		"sprite": 0,
 		"color": Color("#f6b84a"),
-		"size": Vector2(30, 30),
+		"size": Vector2(52, 52),
 		"hp": 18.0,
 		"speed": 176.0,
 		"damage": 8.0,
@@ -101,10 +108,11 @@ const ENEMY_TYPES := {
 		"attack_interval": 0.35
 	},
 	"rift_eye": {
-		"name": "균열 감시자",
+		"name": "서리 감시자",
+		"asset": "07",
 		"sprite": 4,
 		"color": Color("#ff7bd5"),
-		"size": Vector2(44, 44),
+		"size": Vector2(58, 58),
 		"hp": 46.0,
 		"speed": 76.0,
 		"damage": 15.0,
@@ -113,21 +121,49 @@ const ENEMY_TYPES := {
 		"attack_interval": 1.05
 	},
 	"crystal_slug": {
-		"name": "수정 포자괴",
+		"name": "불씨 포자괴",
+		"asset": "08",
 		"sprite": 2,
 		"color": Color("#70f0ff"),
-		"size": Vector2(54, 44),
+		"size": Vector2(58, 58),
 		"hp": 58.0,
 		"speed": 54.0,
 		"damage": 24.0,
 		"range": 86.0,
 		"xp": 34.0,
 		"attack_interval": 1.35
+	},
+	"ember_guard": {
+		"name": "용암 근위병",
+		"asset": "09",
+		"sprite": 3,
+		"color": Color("#ff8738"),
+		"size": Vector2(66, 66),
+		"hp": 120.0,
+		"speed": 58.0,
+		"damage": 26.0,
+		"range": 52.0,
+		"xp": 46.0,
+		"attack_interval": 0.65
+	},
+	"rift_commander": {
+		"name": "균열 지휘관",
+		"asset": "10",
+		"sprite": 3,
+		"color": Color("#ff395d"),
+		"size": Vector2(68, 68),
+		"hp": 135.0,
+		"speed": 64.0,
+		"damage": 24.0,
+		"range": 58.0,
+		"xp": 52.0,
+		"attack_interval": 0.78
 	}
 }
 
 const BOSS := {
 	"name": "균열 장군",
+	"asset": "10",
 	"hp": 780.0,
 	"speed": 58.0,
 	"damage": 28.0,

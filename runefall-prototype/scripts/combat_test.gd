@@ -1,5 +1,6 @@
 extends SceneTree
 
+const GameData := preload("res://scripts/game_data.gd")
 const BattleController := preload("res://scripts/battle_controller.gd")
 
 func _initialize() -> void:
@@ -22,9 +23,27 @@ func _run() -> void:
 	main.enemies.clear()
 	main.room_spawned = 0
 	main.wave = 1
+	var attached_frame := GameData.topdown_monster_frame("00", 0)
+	if not FileAccess.file_exists(attached_frame):
+		push_error("Attached RAR monster frame was not imported into the project: %s" % attached_frame)
+		quit(1)
+		return
 	main.spawn_enemy()
 	if main.enemies.is_empty() or main.enemies[0].kind != "zombie":
 		push_error("Wave 1 should spawn melee zombie, got: %s" % [main.enemies])
+		quit(1)
+		return
+	var spawned_frames: Array = main.enemies[0].get("frames", [])
+	if spawned_frames.size() != 8 or not str(spawned_frames[0]).contains("topdown-monsters-free"):
+		push_error("Spawned enemy is not using attached RAR monster animation frames: %s" % [spawned_frames])
+		quit(1)
+		return
+	main.enemies[0].anim_time = 0.0
+	main.enemies[0].frame_index = 0
+	var frame_before: int = int(main.enemies[0].frame_index)
+	BattleController.update_enemy_animation(main, main.enemies[0], 0.2)
+	if int(main.enemies[0].frame_index) == frame_before:
+		push_error("Attached monster animation did not advance frames.")
 		quit(1)
 		return
 
