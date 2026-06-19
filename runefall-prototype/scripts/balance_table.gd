@@ -75,6 +75,54 @@ const ENEMY_TYPES := {
 		"range": 74.0,
 		"xp": 30.0,
 		"attack_interval": 1.2
+	},
+	"bone_guard": {
+		"name": "뼈 방패병",
+		"sprite": 3,
+		"color": Color("#c9d5ee"),
+		"size": Vector2(48, 46),
+		"hp": 96.0,
+		"speed": 46.0,
+		"damage": 18.0,
+		"range": 48.0,
+		"xp": 38.0,
+		"attack_interval": 0.55
+	},
+	"scarab_swarm": {
+		"name": "균열 벌레떼",
+		"sprite": 0,
+		"color": Color("#f6b84a"),
+		"size": Vector2(30, 30),
+		"hp": 18.0,
+		"speed": 176.0,
+		"damage": 8.0,
+		"range": 32.0,
+		"xp": 14.0,
+		"attack_interval": 0.35
+	},
+	"rift_eye": {
+		"name": "균열 감시자",
+		"sprite": 4,
+		"color": Color("#ff7bd5"),
+		"size": Vector2(44, 44),
+		"hp": 46.0,
+		"speed": 76.0,
+		"damage": 15.0,
+		"range": 340.0,
+		"xp": 32.0,
+		"attack_interval": 1.05
+	},
+	"crystal_slug": {
+		"name": "수정 포자괴",
+		"sprite": 2,
+		"color": Color("#70f0ff"),
+		"size": Vector2(54, 44),
+		"hp": 58.0,
+		"speed": 54.0,
+		"damage": 24.0,
+		"range": 86.0,
+		"xp": 34.0,
+		"attack_interval": 1.35
 	}
 }
 

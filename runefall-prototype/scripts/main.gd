@@ -44,6 +44,16 @@ var projectiles: Array[Dictionary] = []
 var effects: Array[Dictionary] = []
 var battle_time := 0.0
 var wave := 1
+var dungeon_room_index := 0
+var dungeon_room_count := 5
+var room_spawned := 0
+var room_quota := 0
+var room_clear := false
+var door_open := false
+var door_rect := Rect2()
+var door_node: Control
+var room_label: Label
+var room_goal_label: Label
 var spawn_timer := 0.0
 var attack_timer := 0.0
 var boss_spawned := false
@@ -124,6 +134,15 @@ func clear_screen() -> void:
 	enemies.clear()
 	projectiles.clear()
 	effects.clear()
+	dungeon_room_index = 0
+	room_spawned = 0
+	room_quota = 0
+	room_clear = false
+	door_open = false
+	door_rect = Rect2()
+	door_node = null
+	room_label = null
+	room_goal_label = null
 	touch_move_dir = Vector2.ZERO
 	touch_active_id = -1
 	touch_mouse_active = false

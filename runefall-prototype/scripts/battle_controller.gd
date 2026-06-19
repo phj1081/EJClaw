@@ -9,6 +9,13 @@ const ARENA_MIN := BalanceTable.ARENA_MIN
 const ARENA_MAX := BalanceTable.ARENA_MAX
 const ENEMY_TYPES := BalanceTable.ENEMY_TYPES
 const FUSION_ATTACKS := BalanceTable.FUSION_ATTACKS
+const DUNGEON_ROOMS := [
+	{"name": "먼지 낀 입구", "quota": 7, "kinds": ["zombie", "scarab_swarm"], "tint": Color("#16243a")},
+	{"name": "해골 초소", "quota": 9, "kinds": ["zombie", "bone_guard", "orc_shaman"], "tint": Color("#1b263d")},
+	{"name": "포자 저장고", "quota": 10, "kinds": ["spore_bomber", "crystal_slug", "muddy"], "tint": Color("#1b2d2a")},
+	{"name": "균열 감시실", "quota": 12, "kinds": ["rift_eye", "shade_runner", "bone_guard", "orc_shaman"], "tint": Color("#211d3d")},
+	{"name": "균열 제단", "quota": 0, "kinds": [], "tint": Color("#2c1728")}
+]
 
 static func start(main) -> void:
 	var root: Control = main.screen_root()
@@ -23,14 +30,12 @@ static func start(main) -> void:
 	main.arena.size = main.VIEW_SIZE
 	root.add_child(main.arena)
 
-	draw_dungeon_map(main)
-
 	var top: Control = main.framed_panel(root, Vector2(520, 18), Vector2(560, 54), Color("#101827dd"), "fantasy_border_banner", Color("#c4d7ff"), 12)
-	main.timer_label = main.label(top, "05:32", Vector2(16, 8), Vector2(110, 34), 20)
-	main.wave_label = main.label(top, "웨이브 1/5", Vector2(134, 8), Vector2(142, 34), 20)
+	main.timer_label = main.label(top, "방 1/5", Vector2(16, 8), Vector2(110, 34), 20)
+	main.wave_label = main.label(top, "먼지 낀 입구", Vector2(134, 8), Vector2(190, 34), 20)
 	main.xp_bar = ProgressBar.new()
-	main.xp_bar.position = Vector2(292, 13)
-	main.xp_bar.size = Vector2(210, 24)
+	main.xp_bar.position = Vector2(342, 13)
+	main.xp_bar.size = Vector2(160, 24)
 	main.xp_bar.max_value = main.hero_next_xp[main.active_slot]
 	main.xp_bar.value = main.hero_xp[main.active_slot]
 	top.add_child(main.xp_bar)
@@ -46,6 +51,16 @@ static func start(main) -> void:
 
 	main.battle_time = 0.0
 	main.wave = 1
+	main.dungeon_room_index = 0
+	main.dungeon_room_count = DUNGEON_ROOMS.size()
+	main.room_spawned = 0
+	main.room_quota = int(DUNGEON_ROOMS[0].quota)
+	main.room_clear = false
+	main.door_open = false
+	main.door_rect = Rect2(1438, 382, 54, 132)
+	main.door_node = null
+	main.room_label = null
+	main.room_goal_label = null
 	main.result_applied = false
 	main.last_run_rewards = {"gold": 0, "material": 0, "meta_xp": 0}
 	main.spawn_timer = 0.0
@@ -78,21 +93,32 @@ static func start(main) -> void:
 		var h := GameData.hero(main.party_indices[i])
 		main.hero_hp.append(float(h.hp))
 		main.hero_tags[i] = h.tag
+	draw_dungeon_map(main)
+	build_hero_nodes(main)
+
+	main.battle_running = true
+	update_ui(main)
+	TutorialFlow.start_battle(main)
+
+static func build_hero_nodes(main) -> void:
+	main.hero_nodes.clear()
+	main.hero_labels.clear()
+	for i in range(4):
+		var h := GameData.hero(main.party_indices[i])
 		var body: Control = main.pixel_art(main.arena, h.sprite, main.hero_pos[i], Vector2(48, 56), Color(h.color))
 		body.position = main.hero_pos[i]
 		main.hero_nodes.append(body)
 		var name_label: Label = main.label(main.arena, h.name, main.hero_pos[i] + Vector2(-18, -28), Vector2(80, 22), 14, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		main.hero_labels.append(name_label)
 
-	main.battle_running = true
-	update_ui(main)
-	TutorialFlow.start_battle(main)
-
 static func draw_dungeon_map(main) -> void:
+	var room: Dictionary = DUNGEON_ROOMS[main.dungeon_room_index]
+	var tint: Color = room.tint
 	for y in range(96, 850, 48):
 		for x in range(264, 1536, 48):
-			var tile_index := int((x / 48 + y / 48) % GameData.FLOOR_TILES.size())
-			main.pixel_art(main.arena, GameData.floor_tile(tile_index), Vector2(x, y), Vector2(48, 48), Color("#16243a"))
+			var tile_index := int((x / 48 + y / 48 + main.dungeon_room_index) % GameData.FLOOR_TILES.size())
+			var tile: Control = main.pixel_art(main.arena, GameData.floor_tile(tile_index), Vector2(x, y), Vector2(48, 48), tint)
+			tile.modulate = Color(0.75 + main.dungeon_room_index * 0.05, 0.78, 0.86, 1.0)
 
 	for x in range(264, 1536, 48):
 		main.pixel_art(main.arena, GameData.prop_tile(1), Vector2(x, 96), Vector2(48, 48), Color("#24314a"))
@@ -109,13 +135,43 @@ static func draw_dungeon_map(main) -> void:
 	for i in range(props.size()):
 		main.pixel_art(main.arena, GameData.prop_tile(2 + i), props[i], Vector2(48, 48), Color("#24314a"))
 
+	main.room_label = main.label(main.arena, str(room.name), Vector2(650, 118), Vector2(300, 34), 26, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
+	main.room_goal_label = main.label(main.arena, "", Vector2(604, 154), Vector2(392, 28), 18, Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
+	var entry := ColorRect.new()
+	entry.position = Vector2(266, 382)
+	entry.size = Vector2(22, 132)
+	entry.color = Color("#20304ddd")
+	main.arena.add_child(entry)
+	main.door_node = ColorRect.new()
+	main.door_node.position = main.door_rect.position
+	main.door_node.size = main.door_rect.size
+	main.door_node.color = Color("#54302c") if not main.door_open else Color("#35d07f")
+	main.arena.add_child(main.door_node)
+	main.label(main.arena, "문", main.door_rect.position + Vector2(-8, 132), Vector2(72, 24), 16, Color("#c9d5ee"), HORIZONTAL_ALIGNMENT_CENTER)
+	draw_room_minimap(main)
+
+static func draw_room_minimap(main) -> void:
+	var start := Vector2(620, 826)
+	for i in range(DUNGEON_ROOMS.size()):
+		var chip := ColorRect.new()
+		chip.position = start + Vector2(i * 76, 0)
+		chip.size = Vector2(54, 30)
+		if i < main.dungeon_room_index:
+			chip.color = Color("#2bb673cc")
+		elif i == main.dungeon_room_index:
+			chip.color = Color("#f0d25ccc")
+		else:
+			chip.color = Color("#33415ccc")
+		main.arena.add_child(chip)
+		main.label(main.arena, "%d" % (i + 1), chip.position, chip.size, 16, Color("#101725"), HORIZONTAL_ALIGNMENT_CENTER)
+
 static func update(main, delta: float) -> void:
 	if main.paused:
 		update_ui(main)
 		return
 	TouchInput.update(main, delta)
 	main.battle_time += delta
-	main.wave = clampi(1 + int(main.battle_time / float(BalanceTable.WAVE.seconds_per_wave)), 1, 5)
+	main.wave = main.dungeon_room_index + 1
 	for i in range(4):
 		main.switch_cd[i] = maxf(0.0, main.switch_cd[i] - delta)
 
@@ -134,17 +190,15 @@ static func update(main, delta: float) -> void:
 		var desired: Vector2 = main.hero_pos[main.active_slot] + Vector2(cos(float(i) * 2.1), sin(float(i) * 2.1)) * 110.0
 		main.hero_pos[i] = main.hero_pos[i].lerp(desired, delta * 2.2)
 
-	if main.wave >= 5 and not main.boss_spawned:
-		spawn_boss(main)
 	main.spawn_timer -= delta
 	if main.spawn_timer <= 0.0:
-		if main.wave < 5 or main.enemies.size() < 10:
-			spawn_enemy(main)
+		process_room_spawns(main)
 		main.spawn_timer = maxf(float(BalanceTable.WAVE.spawn_min), float(BalanceTable.WAVE.spawn_base) - main.wave * float(BalanceTable.WAVE.spawn_per_wave))
 
 	update_enemies(main, delta)
 	update_projectiles(main, delta)
 	update_effects(main, delta)
+	process_room_clear(main)
 
 	main.attack_timer -= delta
 	if main.attack_timer <= 0.0:
@@ -167,19 +221,73 @@ static func update(main, delta: float) -> void:
 	if main.hero_hp.max() <= 0.0:
 		main.show_result(false)
 		return
-	if main.boss_spawned and not main.boss_alive:
+	if is_final_room(main) and main.boss_spawned and not main.boss_alive:
 		main.show_result(true)
 		return
 
 	update_ui(main)
 
+static func process_room_spawns(main) -> void:
+	if main.room_clear:
+		return
+	if is_final_room(main):
+		if not main.boss_spawned:
+			spawn_boss(main)
+		return
+	if main.room_spawned < main.room_quota and main.enemies.size() < 7:
+		spawn_enemy(main)
+
+static func process_room_clear(main) -> void:
+	if main.room_clear:
+		if main.door_open and main.door_rect.has_point(main.hero_pos[main.active_slot] + Vector2(24, 28)):
+			advance_room(main)
+		return
+	if is_final_room(main):
+		return
+	if main.room_spawned >= main.room_quota and main.enemies.is_empty():
+		open_room_door(main)
+
+static func is_final_room(main) -> bool:
+	return main.dungeon_room_index >= DUNGEON_ROOMS.size() - 1
+
+static func open_room_door(main) -> void:
+	main.room_clear = true
+	main.door_open = true
+	if main.door_node and is_instance_valid(main.door_node):
+		(main.door_node as ColorRect).color = Color("#35d07f")
+	main.play_sfx("ui_confirm", -8.0, 0.0)
+	main.show_message("방 클리어 - 오른쪽 문으로 이동")
+
+static func advance_room(main) -> void:
+	main.dungeon_room_index = mini(main.dungeon_room_index + 1, DUNGEON_ROOMS.size() - 1)
+	main.wave = main.dungeon_room_index + 1
+	main.room_spawned = 0
+	main.room_quota = int(DUNGEON_ROOMS[main.dungeon_room_index].quota)
+	main.room_clear = false
+	main.door_open = false
+	main.boss_spawned = false
+	main.boss_alive = false
+	main.spawn_timer = 0.0
+	main.enemies.clear()
+	main.projectiles.clear()
+	main.effects.clear()
+	for child in main.arena.get_children():
+		child.queue_free()
+	main.hero_pos.clear()
+	main.hero_pos.append_array([Vector2(340, 430), Vector2(390, 494), Vector2(442, 430), Vector2(390, 366)])
+	draw_dungeon_map(main)
+	build_hero_nodes(main)
+	main.play_sfx("ui_confirm", -8.0, 0.0)
+	main.show_message("%s 진입" % str(DUNGEON_ROOMS[main.dungeon_room_index].name))
+
 static func spawn_enemy(main) -> void:
-	var kind := choose_enemy_kind(main.wave)
+	var kind := choose_enemy_kind(main)
 	var spec: Dictionary = ENEMY_TYPES[kind]
-	var pos := spawn_position()
+	var pos := spawn_position(main)
 	var hp: float = float(spec.hp) + main.wave * 5.0
 	var node: Control = main.pixel_art(main.arena, GameData.enemy_sprite(spec.sprite), pos, spec.size, spec.color)
 	node.position = pos
+	main.room_spawned += 1
 	main.enemies.append({
 		"kind": kind,
 		"node": node,
@@ -198,7 +306,7 @@ static func spawn_enemy(main) -> void:
 static func spawn_boss(main) -> void:
 	main.boss_spawned = true
 	main.boss_alive = true
-	var pos := Vector2(1250, 210)
+	var pos := Vector2(1188, 338)
 	var node: Control = main.pixel_art(main.arena, GameData.enemy_sprite(3), pos, Vector2(96, 104), Color("#ff395d"))
 	node.position = pos
 	var title: Label = main.label(main.arena, "균열 장군", pos + Vector2(-18, -30), Vector2(132, 24), 16, Color("#ffd24a"), HORIZONTAL_ALIGNMENT_CENTER)
@@ -223,7 +331,16 @@ static func spawn_boss(main) -> void:
 	main.play_sfx("impact", -13.0, 0.06)
 	main.show_message("보스 출현: 균열 장군")
 
-static func choose_enemy_kind(wave: int) -> String:
+static func choose_enemy_kind(main) -> String:
+	if main.dungeon_room_index == 0 and main.room_spawned == 0:
+		return "zombie"
+	var room: Dictionary = DUNGEON_ROOMS[main.dungeon_room_index]
+	var kinds: Array = room.kinds
+	if kinds.is_empty():
+		return "zombie"
+	return str(kinds[randi() % kinds.size()])
+
+static func choose_enemy_kind_legacy(wave: int) -> String:
 	var roll := randf()
 	if wave <= 1:
 		return "zombie"
@@ -245,18 +362,20 @@ static func choose_enemy_kind(wave: int) -> String:
 		return "muddy"
 	return "orc_shaman" if roll < 0.78 else "zombie"
 
-static func spawn_position() -> Vector2:
+static func spawn_position(main) -> Vector2:
 	var side := randi() % 4
 	var pos := Vector2.ZERO
 	match side:
 		0:
-			pos = Vector2(randf_range(270, 1480), 90)
+			pos = Vector2(randf_range(340, 1390), 168)
 		1:
-			pos = Vector2(1520, randf_range(120, 790))
+			pos = Vector2(1390, randf_range(190, 740))
 		2:
-			pos = Vector2(randf_range(270, 1480), 830)
+			pos = Vector2(randf_range(340, 1390), 748)
 		_:
-			pos = Vector2(270, randf_range(120, 790))
+			pos = Vector2(340, randf_range(190, 740))
+	if pos.distance_to(main.hero_pos[main.active_slot]) < 260.0:
+		pos.x = clampf(pos.x + 280.0, 340.0, 1390.0)
 	return pos
 
 static func update_enemies(main, delta: float) -> void:
@@ -266,11 +385,11 @@ static func update_enemies(main, delta: float) -> void:
 		var enemy: Dictionary = main.enemies[enemy_index]
 		if enemy.is_boss:
 			update_boss(main, enemy, delta)
-		elif enemy.kind == "orc_shaman":
+		elif enemy.kind == "orc_shaman" or enemy.kind == "rift_eye":
 			update_ranged_enemy(main, enemy, delta)
-		elif enemy.kind == "shade_runner":
+		elif enemy.kind == "shade_runner" or enemy.kind == "scarab_swarm":
 			update_shade_runner(main, enemy, delta)
-		elif enemy.kind == "spore_bomber":
+		elif enemy.kind == "spore_bomber" or enemy.kind == "crystal_slug":
 			update_spore_bomber(main, enemy, delta)
 		else:
 			update_melee_enemy(main, enemy, delta)
@@ -439,16 +558,23 @@ static func use_skill(main) -> void:
 	if not main.battle_running or main.paused or not TouchInput.can_skill(main):
 		return
 	var origin: Vector2 = main.hero_pos[main.active_slot]
-	create_area_effect(main, origin + Vector2(22, 22), 190.0, 42.0, GameData.color_for_tag(main.hero_tags[main.active_slot]), 0.28, false)
+	var tag: String = main.hero_tags[main.active_slot]
+	create_area_effect(main, origin + Vector2(22, 22), 190.0, 42.0, GameData.color_for_tag(tag), 0.42, false, {"effect": GameData.effect_for_tag(tag)})
 	TouchInput.did_skill(main)
 	main.play_sfx("skill", -10.0, 0.04)
 
 static func update_ui(main) -> void:
 	if main.timer_label:
-		var remain := maxi(0, int(BATTLE_DURATION - main.battle_time))
-		main.timer_label.text = "%02d:%02d" % [remain / 60, remain % 60]
+		main.timer_label.text = "방 %d/%d" % [main.dungeon_room_index + 1, main.dungeon_room_count]
 	if main.wave_label:
-		main.wave_label.text = "보스전" if main.boss_alive else "웨이브 %d/5" % main.wave
+		main.wave_label.text = "보스전" if main.boss_alive else str(DUNGEON_ROOMS[main.dungeon_room_index].name)
+	if main.room_goal_label:
+		if is_final_room(main):
+			main.room_goal_label.text = "균열 장군 처치" if main.boss_alive else "제단 진입 중"
+		elif main.room_clear:
+			main.room_goal_label.text = "문 열림 - 오른쪽으로 이동"
+		else:
+			main.room_goal_label.text = "남은 적 %d / 처치 %d" % [maxi(0, main.room_quota - main.room_spawned + main.enemies.size()), main.room_spawned]
 	if main.xp_bar:
 		main.xp_bar.max_value = main.hero_next_xp[main.active_slot]
 		main.xp_bar.value = main.hero_xp[main.active_slot]
@@ -511,8 +637,9 @@ static func apply_level_choice(main, slot: int, choice: Dictionary) -> void:
 
 static func fire_fusion_attack(main, slot: int, origin: Vector2, target_pos: Vector2, fusion: Dictionary) -> void:
 	var mode: String = fusion.mode
+	var effect_name := GameData.effect_for_tag(main.hero_tags[slot])
 	if mode == "gravity":
-		create_area_effect(main, target_pos, float(fusion.radius), float(fusion.damage) + main.hero_levels[slot] * 2.0, fusion.color, 0.75, false, {"slow": 0.42})
+		create_area_effect(main, target_pos, float(fusion.radius), float(fusion.damage) + main.hero_levels[slot] * 2.0, fusion.color, 0.75, false, {"slow": 0.42, "effect": effect_name})
 	elif mode == "splash":
 		fire_projectile(main, origin, target_pos, 500.0, float(fusion.damage), fusion.color, false, 10.0, float(fusion.radius))
 	elif mode == "rail":
@@ -524,7 +651,7 @@ static func fire_fusion_attack(main, slot: int, origin: Vector2, target_pos: Vec
 	elif mode == "guard":
 		create_guard_attack(main, slot, origin, float(fusion.radius), float(fusion.damage), fusion.color)
 	else:
-		create_area_effect(main, origin, float(fusion.radius), float(fusion.damage), fusion.color, 0.32, false)
+		create_area_effect(main, origin, float(fusion.radius), float(fusion.damage), fusion.color, 0.32, false, {"effect": effect_name})
 
 static func fire_projectile(main, origin: Vector2, target: Vector2, speed: float, damage: float, color: Color, hostile: bool, radius: float, splash_radius: float = 0.0) -> void:
 	var node := ColorRect.new()
@@ -578,10 +705,21 @@ static func hit_enemy_with_projectile(main, projectile: Dictionary) -> bool:
 	return false
 
 static func create_area_effect(main, pos: Vector2, radius: float, damage: float, color: Color, life: float, hostile: bool, meta: Dictionary = {}) -> void:
-	var node := ColorRect.new()
+	var frames: Array = GameData.effect_frames(str(meta.get("effect", "")))
+	var node: Control
+	if frames.is_empty():
+		var color_node := ColorRect.new()
+		color_node.color = Color(color.r, color.g, color.b, 0.34)
+		node = color_node
+	else:
+		var texture_node := TextureRect.new()
+		texture_node.texture = main.texture_from_path(str(frames[0]))
+		texture_node.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		texture_node.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		texture_node.modulate = Color(color.r, color.g, color.b, 0.82)
+		node = texture_node
 	node.position = pos - Vector2(radius, radius)
 	node.size = Vector2(radius * 2.0, radius * 2.0)
-	node.color = Color(color.r, color.g, color.b, 0.34)
 	main.arena.add_child(node)
 	if hostile:
 		for slot in range(main.hero_pos.size()):
@@ -593,11 +731,19 @@ static func create_area_effect(main, pos: Vector2, radius: float, damage: float,
 				if meta.has("slow"):
 					main.enemies[i].speed = maxf(18.0, float(main.enemies[i].speed) * float(meta["slow"]))
 				damage_enemy(main, i, damage)
-	main.effects.append({"node": node, "life": life})
+	main.effects.append({"node": node, "life": life, "duration": life, "frames": frames, "frame_index": 0})
 
 static func update_effects(main, delta: float) -> void:
 	for i in range(main.effects.size() - 1, -1, -1):
 		main.effects[i].life = float(main.effects[i].life) - delta
+		var frames: Array = main.effects[i].get("frames", [])
+		if not frames.is_empty() and is_instance_valid(main.effects[i].node):
+			var duration: float = maxf(0.01, float(main.effects[i].duration))
+			var progress: float = clampf(1.0 - float(main.effects[i].life) / duration, 0.0, 0.999)
+			var frame_index: int = mini(int(progress * frames.size()), frames.size() - 1)
+			if frame_index != int(main.effects[i].frame_index):
+				main.effects[i].frame_index = frame_index
+				(main.effects[i].node as TextureRect).texture = main.texture_from_path(str(frames[frame_index]))
 		if main.effects[i].life <= 0.0:
 			if is_instance_valid(main.effects[i].node):
 				main.effects[i].node.queue_free()
@@ -635,7 +781,7 @@ static func create_chain_attack(main, origin: Vector2, target: Vector2, damage: 
 			break
 		chain_origin = main.enemies[best_index].pos
 		damage_enemy(main, best_index, damage * (1.0 - hits * 0.18))
-		create_area_effect(main, chain_origin + Vector2(20, 20), 34.0, 0.0, color, 0.12, false)
+		create_area_effect(main, chain_origin + Vector2(20, 20), 34.0, 0.0, color, 0.12, false, {"effect": "arcane"})
 		hits += 1
 	if hits == 0:
 		fire_projectile(main, origin, target, 560.0, damage, color, false, 7.0)
@@ -644,12 +790,12 @@ static func create_summon_attack(main, origin: Vector2, target: Vector2, damage:
 	for angle in [0.0, 120.0, 240.0]:
 		var offset := Vector2.RIGHT.rotated(deg_to_rad(angle)) * 46.0
 		fire_projectile(main, origin + offset, target + offset * 0.25, 450.0, damage * 0.72, color, false, 8.0)
-	create_area_effect(main, origin, 62.0, damage * 0.35, color, 0.24, false)
+	create_area_effect(main, origin, 62.0, damage * 0.35, color, 0.24, false, {"effect": "arcane"})
 
 static func create_guard_attack(main, slot: int, origin: Vector2, radius: float, damage: float, color: Color) -> void:
 	main.invuln_timer = maxf(main.invuln_timer, 0.45)
 	main.hero_hp[slot] = minf(main.hero_hp[slot] + 5.0, float(GameData.hero(main.party_indices[slot]).hp))
-	create_area_effect(main, origin + Vector2(22, 22), radius, damage, color, 0.32, false)
+	create_area_effect(main, origin + Vector2(22, 22), radius, damage, color, 0.32, false, {"effect": "arcane"})
 
 static func damage_enemy(main, index: int, damage: float) -> void:
 	if index < 0 or index >= main.enemies.size():
@@ -660,8 +806,8 @@ static func damage_enemy(main, index: int, damage: float) -> void:
 	if main.enemies[index].hp > 0.0:
 		return
 	var defeated: Dictionary = main.enemies[index]
-	if defeated.kind == "spore_bomber" and damage > 0.0:
-		create_area_effect(main, defeated.pos + Vector2(22, 20), 74.0, 0.0, Color("#d9f06a"), 0.20, false)
+	if (defeated.kind == "spore_bomber" or defeated.kind == "crystal_slug") and damage > 0.0:
+		create_area_effect(main, defeated.pos + Vector2(22, 20), 74.0, 0.0, Color("#d9f06a"), 0.20, false, {"effect": "arcane"})
 	if defeated.has("label") and is_instance_valid(defeated.label):
 		defeated.label.queue_free()
 	if is_instance_valid(defeated.node):

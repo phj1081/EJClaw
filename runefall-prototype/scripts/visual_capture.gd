@@ -1,5 +1,6 @@
 extends SceneTree
 
+const BattleController := preload("res://scripts/battle_controller.gd")
 const DEFAULT_OUT_DIR := "/tmp/runefall-visual-captures"
 
 var out_dir := DEFAULT_OUT_DIR
@@ -42,8 +43,21 @@ func _run() -> void:
 	main.toggle_pause()
 	await _settle()
 
-	main.battle_time = 112.1
+	main.dungeon_room_index = 4
+	main.wave = 5
+	main.room_quota = 0
+	main.room_spawned = 0
+	main.room_clear = false
+	main.door_open = false
+	main.enemies.clear()
+	main.projectiles.clear()
+	main.effects.clear()
+	for child in main.arena.get_children():
+		child.queue_free()
+	BattleController.draw_dungeon_map(main)
+	BattleController.build_hero_nodes(main)
 	main.hero_tags[0] = "작열 중력장"
+	main.spawn_timer = 0.0
 	main._update_battle(0.016)
 	main.hit_nearest_enemy(0)
 	await _settle()

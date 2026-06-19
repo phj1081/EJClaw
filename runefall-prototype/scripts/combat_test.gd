@@ -20,6 +20,7 @@ func _run() -> void:
 	await process_frame
 
 	main.enemies.clear()
+	main.room_spawned = 0
 	main.wave = 1
 	main.spawn_enemy()
 	if main.enemies.is_empty() or main.enemies[0].kind != "zombie":
@@ -28,12 +29,31 @@ func _run() -> void:
 		return
 
 	main.enemies.clear()
-	main.battle_time = 112.1
+	main.room_spawned = main.room_quota
+	main.room_clear = false
+	BattleController.process_room_clear(main)
+	if not main.door_open:
+		push_error("Room clear did not open the dungeon door.")
+		quit(1)
+		return
+
+	main.hero_pos[main.active_slot] = main.door_rect.position + Vector2(18, 42)
+	BattleController.process_room_clear(main)
+	if main.dungeon_room_index != 1 or main.room_spawned != 0:
+		push_error("Door transition did not advance to room 2.")
+		quit(1)
+		return
+
+	main.dungeon_room_index = 4
+	main.wave = 5
+	main.room_quota = 0
+	main.room_clear = false
+	main.door_open = false
 	main.boss_spawned = false
 	main.boss_alive = false
-	main._update_battle(0.016)
+	BattleController.process_room_spawns(main)
 	if not main.boss_spawned or not main.boss_alive:
-		push_error("Boss did not spawn at wave 5.")
+		push_error("Boss did not spawn in the final dungeon room.")
 		quit(1)
 		return
 

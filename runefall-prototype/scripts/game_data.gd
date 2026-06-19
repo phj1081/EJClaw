@@ -110,6 +110,29 @@ const TAG_ICONS := {
 	"수호": "res://assets/0x72-dungeon-tileset-ii/frames/weapon_big_hammer.png"
 }
 
+const SKILL_EFFECTS := {
+	"fire": [
+		"res://assets/skill-effects/fire-frames/fire_0.png",
+		"res://assets/skill-effects/fire-frames/fire_1.png",
+		"res://assets/skill-effects/fire-frames/fire_2.png",
+		"res://assets/skill-effects/fire-frames/fire_3.png",
+		"res://assets/skill-effects/fire-frames/fire_b_0.png",
+		"res://assets/skill-effects/fire-frames/fire_b_1.png",
+		"res://assets/skill-effects/fire-frames/fire_b_2.png",
+		"res://assets/skill-effects/fire-frames/fire_b_3.png"
+	],
+	"arcane": [
+		"res://assets/skill-effects/arcane-frames/arcane_0.png",
+		"res://assets/skill-effects/arcane-frames/arcane_1.png",
+		"res://assets/skill-effects/arcane-frames/arcane_2.png",
+		"res://assets/skill-effects/arcane-frames/arcane_3.png",
+		"res://assets/skill-effects/arcane-frames/arcane_b_0.png",
+		"res://assets/skill-effects/arcane-frames/arcane_b_1.png",
+		"res://assets/skill-effects/arcane-frames/arcane_b_2.png",
+		"res://assets/skill-effects/arcane-frames/arcane_b_3.png"
+	]
+}
+
 const UI_ASSETS := {
 	"button_blue": "res://assets/kenney-ui-pack/Blue/Default/button_rectangle_depth_gradient.png",
 	"button_green": "res://assets/kenney-ui-pack/Green/Default/button_rectangle_depth_gradient.png",
@@ -168,6 +191,12 @@ static func prop_tile(index: int) -> String:
 
 static func icon_for_tag(tag: String) -> String:
 	return TAG_ICONS.get(tag, "res://assets/0x72-dungeon-tileset-ii/frames/weapon_regular_sword.png")
+
+static func effect_frames(effect_name: String) -> Array:
+	return SKILL_EFFECTS.get(effect_name, [])
+
+static func effect_for_tag(tag: String) -> String:
+	return "fire" if tag.contains("화염") or tag.contains("작열") or tag.contains("용암") else "arcane"
 
 static func ui_asset(name: String) -> String:
 	return UI_ASSETS.get(name, "")
