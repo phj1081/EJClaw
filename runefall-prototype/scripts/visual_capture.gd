@@ -77,6 +77,10 @@ func _run() -> void:
 	await _settle()
 	await _capture("12_shop")
 
+	main.show_meta_tab("시즌패스")
+	await _settle()
+	await _capture("13_season_pass")
+
 	print("RUNEFALL_VISUAL_CAPTURE_OK %s" % out_dir)
 	var save_path := "user://runefall_visual_capture_save.json"
 	if FileAccess.file_exists(save_path):

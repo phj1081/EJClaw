@@ -1,6 +1,7 @@
 extends RefCounted
 
 const GameData = preload("res://scripts/game_data.gd")
+const BalanceTable = preload("res://scripts/balance_table.gd")
 
 static func show(main) -> void:
 	var root: Control = main.screen_root()
@@ -53,7 +54,8 @@ static func show(main) -> void:
 	var season_panel: Control = main.framed_panel(root, Vector2(1140, 354), Vector2(370, 162), Color("#121c31e8"), "fantasy_panel_banner", Color("#c4d7ff"), 14)
 	main.pixel_art(root, GameData.ui_asset("star_yellow"), Vector2(1452, 382), Vector2(34, 34), Color("#ffd24a"))
 	main.label(season_panel, "시즌 패스", Vector2(32, 24), Vector2(180, 34), 26)
-	main.label(season_panel, "서리 균열 시즌 12일 남음", Vector2(32, 72), Vector2(290, 32), 19, Color("#c9d5ee"))
+	main.label(season_panel, "%s %d일 남음\nLv.%d / XP %d" % [BalanceTable.SEASON.name, int(BalanceTable.SEASON.days_left), int(main.season_pass.get("level", 1)), int(main.season_pass.get("xp", 0))], Vector2(32, 68), Vector2(290, 64), 18, Color("#c9d5ee"))
+	main.button(season_panel, "보기", Vector2(250, 92), Vector2(86, 42), Callable(main, "show_meta_tab").bind("시즌패스"), 17, Color("#2f8cff"))
 	main.button(root, "파티 편성", Vector2(1138, 574), Vector2(178, 74), func(): main.show_party(), 24, Color("#45536f"), "button_blue")
 	main.button(root, "출격", Vector2(1332, 574), Vector2(178, 74), func(): main.show_launch_confirm(), 28, Color("#f05a28"), "button_red")
 
@@ -73,6 +75,8 @@ static func show_meta_tab(main, tab_name: String) -> void:
 		_show_equipment_crafting(main, root)
 	elif tab_name == "상점":
 		_show_shop(main, root)
+	elif tab_name == "시즌패스":
+		_show_season_pass(main, root)
 	else:
 		_show_codex_trials(main, root)
 
@@ -87,8 +91,8 @@ static func show_character_detail(main, hero_index: int) -> void:
 
 	var h := GameData.hero(hero_index)
 	var level: int = int(main.meta_hero_levels[hero_index]) if hero_index < main.meta_hero_levels.size() else 1
-	var gold_cost := 220 + level * 80
-	var material_cost := 12 + level * 4
+	var gold_cost: int = int(BalanceTable.HERO_UPGRADE.gold_base) + level * int(BalanceTable.HERO_UPGRADE.gold_per_level)
+	var material_cost: int = int(BalanceTable.HERO_UPGRADE.material_base) + level * int(BalanceTable.HERO_UPGRADE.material_per_level)
 	var hero_panel: Control = main.framed_panel(root, Vector2(80, 126), Vector2(560, 650), Color("#16243add"), "fantasy_panel", Color("#d2bc82"), 16)
 	main.label(hero_panel, h.name, Vector2(38, 28), Vector2(260, 42), 34)
 	main.divider(hero_panel, Vector2(36, 74), Vector2(330, 26), Color("#d2bc82"))
@@ -163,26 +167,33 @@ static func _show_equipment_crafting(main, root: Control) -> void:
 		var tag: String = tags[i]
 		var row_y := 112 + i * 62
 		main.tag_chip(craft_panel, tag, Vector2(42, row_y + 8), GameData.color_for_tag(tag))
-		main.label(craft_panel, "골드 420 / 소재 18", Vector2(214, row_y + 10), Vector2(190, 28), 17, Color("#c9d5ee"))
+		main.label(craft_panel, "골드 %d / 소재 %d" % [int(BalanceTable.EQUIPMENT_CRAFT.gold), int(BalanceTable.EQUIPMENT_CRAFT.material)], Vector2(214, row_y + 10), Vector2(190, 28), 17, Color("#c9d5ee"))
 		main.button(craft_panel, "제작", Vector2(430, row_y), Vector2(110, 42), Callable(main, "craft_equipment").bind(tag), 18, Color("#2f8cff"))
 
 static func _show_shop(main, root: Control) -> void:
 	main.label(root, "상점", Vector2(80, 106), Vector2(320, 44), 30)
-	main.label(root, "가챠 없이 가격이 보이는 확정 구매만 배치합니다.", Vector2(80, 148), Vector2(680, 30), 20, Color("#b7c6e4"))
-	var offers := [
-		{"id": "starter_material", "title": "성장 소재 보급", "desc": "소재 +120", "price": "젬 40", "skin": "button_blue"},
-		{"id": "hero_unlock", "title": "캐릭터 준비 패키지", "desc": "골드 +1200", "price": "젬 120", "skin": "button_red"},
-		{"id": "season_skin", "title": "서리 균열 루나", "desc": "외형 보유 등록", "price": "젬 180", "skin": "button_yellow"}
-	]
-	for i in range(offers.size()):
-		var offer: Dictionary = offers[i]
-		var card: Control = main.framed_panel(root, Vector2(96 + i * 482, 230), Vector2(410, 390), Color("#16243add"), "fantasy_panel", Color("#d2bc82"), 16)
+	main.label(root, "확정형 인게임 상품과 실제 결제 연동 전 더미 IAP 상품 구조입니다.", Vector2(80, 148), Vector2(760, 30), 20, Color("#b7c6e4"))
+	var offer_keys := BalanceTable.SHOP_OFFERS.keys()
+	for i in range(offer_keys.size()):
+		var offer_id: String = str(offer_keys[i])
+		var offer: Dictionary = BalanceTable.SHOP_OFFERS[offer_id]
+		var card: Control = main.framed_panel(root, Vector2(70 + i * 328, 214), Vector2(294, 300), Color("#16243add"), "fantasy_panel", Color("#d2bc82"), 16)
 		main.label(card, str(offer.title), Vector2(34, 34), Vector2(320, 42), 28)
-		main.divider(card, Vector2(34, 84), Vector2(270, 24), Color("#d2bc82"))
+		main.divider(card, Vector2(34, 84), Vector2(210, 24), Color("#d2bc82"))
 		main.label(card, str(offer.desc), Vector2(34, 126), Vector2(310, 34), 22, Color("#ffffff"))
 		main.label(card, str(offer.price), Vector2(34, 182), Vector2(220, 34), 24, Color("#ffd24a"))
-		main.label(card, "구매 즉시 저장됩니다.", Vector2(34, 226), Vector2(270, 28), 18, Color("#b7c6e4"))
-		main.button(card, "구매", Vector2(110, 300), Vector2(190, 58), Callable(main, "buy_shop_offer").bind(str(offer.id)), 24, Color("#2f8cff"), str(offer.skin))
+		main.button(card, "구매", Vector2(66, 230), Vector2(164, 48), Callable(main, "buy_shop_offer").bind(offer_id), 20, Color("#2f8cff"), str(offer.skin))
+
+	var product_keys := BalanceTable.IAP_PRODUCTS.keys()
+	for i in range(product_keys.size()):
+		var product_id: String = str(product_keys[i])
+		var product: Dictionary = BalanceTable.IAP_PRODUCTS[product_id]
+		var card: Control = main.framed_panel(root, Vector2(70 + i * 328, 542), Vector2(294, 244), Color("#16243add"), "fantasy_panel_banner", Color("#c4d7ff"), 14)
+		main.label(card, str(product.title), Vector2(28, 24), Vector2(226, 34), 24)
+		main.label(card, str(product.price), Vector2(28, 72), Vector2(168, 28), 20, Color("#ffd24a"))
+		main.label(card, BalanceTable.reward_text(product.reward), Vector2(28, 110), Vector2(226, 46), 16, Color("#c9d5ee"))
+		main.label(card, "영수증 자리표시", Vector2(28, 154), Vector2(180, 24), 15, Color("#8fa2c8"))
+		main.button(card, "더미 구매", Vector2(68, 188), Vector2(160, 40), Callable(main, "buy_iap_product").bind(product_id), 18, Color("#2f8cff"), "button_blue")
 	var skins: Array = main.equipment.get("owned_skins", [])
 	var skin_text := "없음"
 	if not skins.is_empty():
@@ -190,7 +201,53 @@ static func _show_shop(main, root: Control) -> void:
 		for skin in skins:
 			skin_names.append(str(skin))
 		skin_text = ", ".join(skin_names)
-	main.label(root, "보유 외형: %s" % skin_text, Vector2(100, 682), Vector2(840, 34), 20, Color("#c9d5ee"))
+	main.label(root, "보유 외형: %s / 더미 영수증 %d건" % [skin_text, main.iap_receipts.size()], Vector2(1038, 714), Vector2(460, 34), 18, Color("#c9d5ee"))
+
+static func _show_season_pass(main, root: Control) -> void:
+	main.label(root, "시즌패스", Vector2(80, 106), Vector2(320, 44), 30)
+	main.label(root, "%s · %d일 남음 · Lv.%d / XP %d" % [BalanceTable.SEASON.name, int(BalanceTable.SEASON.days_left), int(main.season_pass.get("level", 1)), int(main.season_pass.get("xp", 0))], Vector2(80, 148), Vector2(720, 30), 20, Color("#b7c6e4"))
+	if bool(main.season_pass.get("premium_unlocked", false)):
+		main.tag_chip(root, "프리미엄 활성", Vector2(780, 148), Color("#ffd24a"))
+	else:
+		main.button(root, "프리미엄 더미 구매", Vector2(780, 140), Vector2(220, 46), Callable(main, "buy_iap_product").bind("premium_pass"), 18, Color("#f05a28"), "button_red")
+
+	var mission_panel: Control = main.framed_panel(root, Vector2(76, 204), Vector2(420, 526), Color("#16243add"), "fantasy_panel", Color("#d2bc82"), 16)
+	main.label(mission_panel, "시즌 미션", Vector2(30, 24), Vector2(220, 36), 28)
+	main.divider(mission_panel, Vector2(30, 66), Vector2(250, 22), Color("#d2bc82"))
+	var missions: Dictionary = main.season_pass.get("missions", {})
+	for i in range(BalanceTable.SEASON_MISSIONS.size()):
+		var mission: Dictionary = BalanceTable.SEASON_MISSIONS[i]
+		var y := 108 + i * 92
+		var done := bool(missions.get(str(mission.id), false))
+		main.label(mission_panel, str(mission.title), Vector2(30, y), Vector2(230, 28), 19, Color("#ffffff"))
+		main.label(mission_panel, "시즌 XP +%d" % int(mission.xp), Vector2(30, y + 30), Vector2(150, 24), 16, Color("#ffd24a"))
+		if done:
+			main.tag_chip(mission_panel, "완료", Vector2(262, y + 12), Color("#21a67a"))
+		else:
+			main.button(mission_panel, "완료 처리", Vector2(248, y + 10), Vector2(126, 42), Callable(main, "complete_season_mission").bind(str(mission.id)), 16, Color("#2f8cff"))
+
+	var reward_panel: Control = main.framed_panel(root, Vector2(540, 204), Vector2(920, 526), Color("#16243add"), "fantasy_panel", Color("#d2bc82"), 16)
+	main.label(reward_panel, "무료 / 프리미엄 보상 트랙", Vector2(30, 24), Vector2(420, 36), 28)
+	main.divider(reward_panel, Vector2(30, 66), Vector2(350, 22), Color("#d2bc82"))
+	var claimed_free: Array = main.season_pass.get("claimed_free", [])
+	var claimed_premium: Array = main.season_pass.get("claimed_premium", [])
+	var season_level := int(main.season_pass.get("level", 1))
+	for i in range(BalanceTable.SEASON_REWARDS.size()):
+		var row: Dictionary = BalanceTable.SEASON_REWARDS[i]
+		var level := int(row.level)
+		var y := 106 + i * 78
+		var unlocked := season_level >= level
+		main.label(reward_panel, "Lv.%d" % level, Vector2(30, y), Vector2(70, 34), 22, Color("#ffd24a"))
+		main.label(reward_panel, "무료: %s" % BalanceTable.reward_text(row.free), Vector2(104, y), Vector2(270, 30), 17, Color("#ffffff"))
+		main.label(reward_panel, "프리미엄: %s" % BalanceTable.reward_text(row.premium), Vector2(104, y + 32), Vector2(320, 30), 17, Color("#c9d5ee"))
+		if claimed_free.has(level):
+			main.tag_chip(reward_panel, "무료 수령", Vector2(470, y), Color("#21a67a"))
+		else:
+			main.button(reward_panel, "무료 받기", Vector2(470, y), Vector2(128, 40), Callable(main, "claim_season_reward").bind(level, false), 16, Color("#2f8cff") if unlocked else Color("#566070"))
+		if claimed_premium.has(level):
+			main.tag_chip(reward_panel, "유료 수령", Vector2(628, y), Color("#21a67a"))
+		else:
+			main.button(reward_panel, "프리미엄", Vector2(628, y), Vector2(128, 40), Callable(main, "claim_season_reward").bind(level, true), 16, Color("#f05a28") if unlocked else Color("#566070"))
 
 static func _show_codex_trials(main, root: Control) -> void:
 	main.label(root, "도감·시련", Vector2(80, 106), Vector2(320, 44), 30)

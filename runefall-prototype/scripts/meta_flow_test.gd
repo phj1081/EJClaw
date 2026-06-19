@@ -55,13 +55,20 @@ func _run() -> void:
 		quit(1)
 		return
 
+	main.buy_iap_product("gem_120")
+	await process_frame
+	if int(main.currencies.gem) != 660 or main.iap_receipts.size() != 1:
+		push_error("Dummy IAP gem product did not apply: %s / %s" % [main.currencies, main.iap_receipts])
+		quit(1)
+		return
+
 	var loaded: Node = packed.instantiate()
 	root.add_child(loaded)
 	await process_frame
 	loaded.load_game()
 	var loaded_slots: Array = loaded.equipment.get("common_slots", [])
 	var loaded_skins: Array = loaded.equipment.get("owned_skins", [])
-	if int(loaded.meta_hero_levels[0]) != 2 or loaded_slots.size() != 1 or not loaded_skins.has("서리 균열 루나"):
+	if int(loaded.meta_hero_levels[0]) != 2 or loaded_slots.size() != 1 or not loaded_skins.has("서리 균열 루나") or loaded.iap_receipts.size() != 1:
 		push_error("Meta flow did not persist after reload: %s / %s" % [loaded.meta_hero_levels, loaded.equipment])
 		quit(1)
 		return

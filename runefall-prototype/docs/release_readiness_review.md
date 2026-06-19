@@ -11,8 +11,9 @@ The current build is a playable single-player vertical prototype and a reasonabl
 - Mobile landscape Godot prototype with full Home -> Party -> Battle -> Result loop.
 - Four-hero single-player party combat with switching, AI allies, XP split, level-up choices, fusion attacks, boss, and win/loss states.
 - Interactive prototype meta screens for character growth, equipment/crafting, shop offers, and codex/trials.
+- Prototype season pass free/premium tracks, mission XP, reward claiming, and dummy premium purchase state.
 - First-run FTUE prompts for movement, dash, switching, level-up, and fusion.
-- Persistent save data for party, currencies, meta levels, equipment, shop outcomes, and FTUE state.
+- Persistent save data for party, currencies, meta levels, equipment, shop outcomes, season pass, dummy IAP receipts, and FTUE state.
 - CC0 placeholder art/audio documented in `docs/asset_credits.md`.
 - Android debug APK export and signing verification.
 - Automated smoke, combat, touch, save, audio, FTUE, meta, APK, and visual capture checks.
@@ -22,7 +23,7 @@ The current build is a playable single-player vertical prototype and a reasonabl
 - Android APK has not been smoke-tested on a real device or emulator in this workspace.
 - Release signing, store-ready export profile, package metadata, privacy policy, and storefront materials are not complete.
 - The playable loop is not yet proven for 15-20 minute pacing through real playtesting.
-- Shop and purchases are prototype-only; no real IAP, backend validation, ads, analytics, or account recovery exists.
+- Shop and purchases are prototype-only; dummy product IDs/receipts exist, but no real Google Play Billing, backend validation, ads, analytics, or account recovery exists.
 - GDD multiplayer/co-op is not implemented. Early access must be scoped as single-player unless networking is added later.
 - Final art replacement still needs a style pass across heroes, enemies, maps, VFX, icons, UI, and store screenshots.
 

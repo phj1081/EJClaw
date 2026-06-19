@@ -1,84 +1,14 @@
 extends RefCounted
 
 const GameData := preload("res://scripts/game_data.gd")
+const BalanceTable := preload("res://scripts/balance_table.gd")
 const TouchInput := preload("res://scripts/touch_input.gd")
 const TutorialFlow := preload("res://scripts/tutorial_flow.gd")
-const BATTLE_DURATION := 150.0
-const ARENA_MIN := Vector2(270, 112)
-const ARENA_MAX := Vector2(1470, 806)
-
-const ENEMY_TYPES := {
-	"zombie": {
-		"name": "좀비 돌격병",
-		"sprite": 1,
-		"color": Color("#d74848"),
-		"size": Vector2(38, 38),
-		"hp": 24.0,
-		"speed": 106.0,
-		"damage": 15.0,
-		"range": 36.0,
-		"xp": 18.0,
-		"attack_interval": 0.25
-	},
-	"orc_shaman": {
-		"name": "오크 주술사",
-		"sprite": 4,
-		"color": Color("#b56cff"),
-		"size": Vector2(42, 44),
-		"hp": 34.0,
-		"speed": 82.0,
-		"damage": 11.0,
-		"range": 305.0,
-		"xp": 26.0,
-		"attack_interval": 1.35
-	},
-	"muddy": {
-		"name": "진흙 탱커",
-		"sprite": 5,
-		"color": Color("#8f6a4c"),
-		"size": Vector2(50, 48),
-		"hp": 78.0,
-		"speed": 50.0,
-		"damage": 20.0,
-		"range": 44.0,
-		"xp": 36.0,
-		"attack_interval": 0.42
-	},
-	"shade_runner": {
-		"name": "그림자 추격자",
-		"sprite": 0,
-		"color": Color("#54c8ff"),
-		"size": Vector2(34, 34),
-		"hp": 28.0,
-		"speed": 154.0,
-		"damage": 12.0,
-		"range": 38.0,
-		"xp": 24.0,
-		"attack_interval": 0.55
-	},
-	"spore_bomber": {
-		"name": "포자 폭탄병",
-		"sprite": 2,
-		"color": Color("#d9f06a"),
-		"size": Vector2(44, 40),
-		"hp": 42.0,
-		"speed": 68.0,
-		"damage": 22.0,
-		"range": 74.0,
-		"xp": 30.0,
-		"attack_interval": 1.2
-	}
-}
-
-const FUSION_ATTACKS := {
-	"작열 중력장": {"mode": "gravity", "color": Color("#ff7a45"), "damage": 11.0, "radius": 122.0},
-	"번지는 화염": {"mode": "splash", "color": Color("#ff4d2e"), "damage": 28.0, "radius": 82.0},
-	"용암 레일": {"mode": "rail", "color": Color("#ffb238"), "damage": 34.0, "radius": 30.0},
-	"별핵 창": {"mode": "rail", "color": Color("#8fc7ff"), "damage": 32.0, "radius": 26.0},
-	"반사 레일건": {"mode": "chain", "color": Color("#ffe65c"), "damage": 27.0, "radius": 170.0},
-	"궤도 정령": {"mode": "summon", "color": Color("#42d787"), "damage": 24.0, "radius": 132.0},
-	"수호 토템": {"mode": "guard", "color": Color("#4bd0d9"), "damage": 20.0, "radius": 118.0}
-}
+const BATTLE_DURATION := BalanceTable.BATTLE_DURATION
+const ARENA_MIN := BalanceTable.ARENA_MIN
+const ARENA_MAX := BalanceTable.ARENA_MAX
+const ENEMY_TYPES := BalanceTable.ENEMY_TYPES
+const FUSION_ATTACKS := BalanceTable.FUSION_ATTACKS
 
 static func start(main) -> void:
 	var root: Control = main.screen_root()
@@ -137,7 +67,12 @@ static func start(main) -> void:
 	main.hero_xp.clear()
 	main.hero_xp.append_array([0.0, 0.0, 0.0, 0.0])
 	main.hero_next_xp.clear()
-	main.hero_next_xp.append_array([80.0, 80.0, 80.0, 80.0])
+	main.hero_next_xp.append_array([
+		float(BalanceTable.LEVEL_XP.start),
+		float(BalanceTable.LEVEL_XP.start),
+		float(BalanceTable.LEVEL_XP.start),
+		float(BalanceTable.LEVEL_XP.start)
+	])
 	main.hero_tags = ["", "", "", ""]
 	for i in range(4):
 		var h := GameData.hero(main.party_indices[i])
@@ -180,7 +115,7 @@ static func update(main, delta: float) -> void:
 		return
 	TouchInput.update(main, delta)
 	main.battle_time += delta
-	main.wave = clampi(1 + int(main.battle_time / 28.0), 1, 5)
+	main.wave = clampi(1 + int(main.battle_time / float(BalanceTable.WAVE.seconds_per_wave)), 1, 5)
 	for i in range(4):
 		main.switch_cd[i] = maxf(0.0, main.switch_cd[i] - delta)
 
@@ -205,7 +140,7 @@ static func update(main, delta: float) -> void:
 	if main.spawn_timer <= 0.0:
 		if main.wave < 5 or main.enemies.size() < 10:
 			spawn_enemy(main)
-		main.spawn_timer = maxf(0.35, 1.35 - main.wave * 0.12)
+		main.spawn_timer = maxf(float(BalanceTable.WAVE.spawn_min), float(BalanceTable.WAVE.spawn_base) - main.wave * float(BalanceTable.WAVE.spawn_per_wave))
 
 	update_enemies(main, delta)
 	update_projectiles(main, delta)
@@ -273,15 +208,15 @@ static func spawn_boss(main) -> void:
 		"node": node,
 		"label": title,
 		"pos": pos,
-		"hp": 780.0,
-		"max_hp": 780.0,
-		"speed": 58.0,
-		"damage": 28.0,
-		"range": 58.0,
-		"xp": 180.0,
+		"hp": float(BalanceTable.BOSS.hp),
+		"max_hp": float(BalanceTable.BOSS.hp),
+		"speed": float(BalanceTable.BOSS.speed),
+		"damage": float(BalanceTable.BOSS.damage),
+		"range": float(BalanceTable.BOSS.range),
+		"xp": float(BalanceTable.BOSS.xp),
 		"attack_cd": 1.2,
-		"attack_interval": 1.6,
-		"pattern_cd": 2.0,
+		"attack_interval": float(BalanceTable.BOSS.attack_interval),
+		"pattern_cd": float(BalanceTable.BOSS.pattern_cd),
 		"phase": 1,
 		"is_boss": true
 	})
@@ -457,14 +392,14 @@ static func hit_nearest_enemy(main, slot: int) -> void:
 
 static func distribute_xp(main, amount: float) -> void:
 	for i in range(4):
-		var ratio := 0.4 if i == main.active_slot else 0.2
+		var ratio: float = float(BalanceTable.XP_SPLIT.active) if i == main.active_slot else float(BalanceTable.XP_SPLIT.ally)
 		main.hero_xp[i] += amount * ratio
 
 static func process_level_ups(main) -> bool:
 	for i in range(4):
 		while main.hero_xp[i] >= main.hero_next_xp[i]:
 			main.hero_xp[i] -= main.hero_next_xp[i]
-			main.hero_next_xp[i] += 45.0
+			main.hero_next_xp[i] += float(BalanceTable.LEVEL_XP.step)
 			main.hero_levels[i] += 1
 			if i == main.active_slot:
 				show_level_up(main, i)

@@ -11,6 +11,9 @@
 - Audio pass covers button, attack, hit, dash, skill, level-up, fusion, low-HP warning, victory/defeat stingers, main BGM, and battle BGM.
 - First-run FTUE prompts now guide movement, dash, party switching, level-up choices, and first fusion.
 - Character detail, equipment/crafting, shop, and codex/trials tabs are now interactive prototype flows instead of static placeholders.
+- Season pass now has free/premium reward tracks, mission XP, claim state, and dummy premium purchase state.
+- IAP has prototype product IDs, price labels, reward mapping, and dummy receipt records for later Google Play Billing replacement.
+- Combat, reward, economy, season pass, shop, and IAP tuning values are centralized in `scripts/balance_table.gd`.
 
 ## Next Critical Slices
 
@@ -36,3 +39,4 @@
 1. Device or emulator APK smoke test.
 2. Balance pass for 15-20 minute pacing and rewards.
 3. Final art replacement plan for temporary CC0 placeholders.
+4. Replace dummy IAP with Google Play Billing and server-side receipt validation before real-money release.

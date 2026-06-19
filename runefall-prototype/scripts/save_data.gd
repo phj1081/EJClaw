@@ -1,6 +1,7 @@
 extends RefCounted
 
 const GameData := preload("res://scripts/game_data.gd")
+const BalanceTable := preload("res://scripts/balance_table.gd")
 const DEFAULT_SAVE_PATH := "user://runefall_save.json"
 const VERSION := 1
 
@@ -37,6 +38,8 @@ static func load_into(main) -> void:
 	main.meta_hero_levels = _int_array(data.get("meta_hero_levels", main.meta_hero_levels), GameData.HEROES.size(), main.meta_hero_levels)
 	main.equipment = _dictionary(data.get("equipment", main.equipment), main.equipment)
 	main.onboarding_state = _dictionary(data.get("onboarding_state", DEFAULT_ONBOARDING), DEFAULT_ONBOARDING)
+	main.season_pass = _dictionary(data.get("season_pass", BalanceTable.default_season_pass()), BalanceTable.default_season_pass())
+	main.iap_receipts = _array(data.get("iap_receipts", []), [])
 
 static func save_from(main) -> void:
 	var data := {
@@ -47,7 +50,9 @@ static func save_from(main) -> void:
 		"currencies": main.currencies,
 		"meta_hero_levels": main.meta_hero_levels,
 		"equipment": main.equipment,
-		"onboarding_state": main.onboarding_state
+		"onboarding_state": main.onboarding_state,
+		"season_pass": main.season_pass,
+		"iap_receipts": main.iap_receipts
 	}
 	var file := FileAccess.open(save_path(), FileAccess.WRITE)
 	if file == null:
@@ -58,11 +63,13 @@ static func save_from(main) -> void:
 static func apply_run_result(main, victory: bool) -> void:
 	if main.result_applied:
 		return
-	var gold := 820 if victory else 360
-	var material := 34 if victory else 14
-	var meta_xp := 1 if victory else 0
+	var reward: Dictionary = BalanceTable.RUN_REWARDS.victory if victory else BalanceTable.RUN_REWARDS.defeat
+	var gold := int(reward.gold)
+	var material := int(reward.material)
+	var meta_xp := int(reward.meta_xp)
 	main.currencies.gold = int(main.currencies.get("gold", 0)) + gold
 	main.currencies.material = int(main.currencies.get("material", 0)) + material
+	main.add_season_xp(int(reward.season_xp))
 	main.onboarding_state.first_session_complete = true
 	main.last_run_rewards = {"gold": gold, "material": material, "meta_xp": meta_xp}
 	for hero_index in main.party_indices:
@@ -91,6 +98,8 @@ static func _apply_defaults(main) -> void:
 		main.meta_hero_levels.append(1)
 	main.equipment = {"common_slots": [], "hero_slots": {}, "owned_skins": []}
 	main.onboarding_state = DEFAULT_ONBOARDING.duplicate(true)
+	main.season_pass = BalanceTable.default_season_pass()
+	main.iap_receipts = []
 	main.last_run_rewards = {"gold": 0, "material": 0, "meta_xp": 0}
 	main.result_applied = false
 
@@ -119,3 +128,8 @@ static func _dictionary(value, fallback: Dictionary) -> Dictionary:
 	for key in value:
 		merged[key] = value[key]
 	return merged
+
+static func _array(value, fallback: Array) -> Array:
+	if typeof(value) != TYPE_ARRAY:
+		return fallback.duplicate(true)
+	return value.duplicate(true)

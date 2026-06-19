@@ -9,7 +9,10 @@
 - Mobile touch controls, cooldown feedback, pause/resume, save data, audio, and Android debug APK packaging are implemented.
 - First-run FTUE now walks the player through movement, dash, character switching, level-up selection, and first fusion.
 - Character detail, equipment/crafting, shop, and codex/trials meta screens now have interactive prototype flows backed by save data.
-- Headed visual capture now produces 12 QA screenshots under `/tmp/runefall-visual-captures`.
+- Season pass has free/premium tracks, mission XP, claim state, and dummy premium purchase flow.
+- Shop and IAP now share prototype product tables with product IDs, price labels, reward mapping, and dummy receipt records.
+- Core balance/economy numbers are centralized in `scripts/balance_table.gd` for tuning.
+- Headed visual capture now produces 13 QA screenshots under `/tmp/runefall-visual-captures`.
 - Release readiness review is documented in `docs/release_readiness_review.md`: current state is a playable vertical prototype, not an asset-only public release candidate yet.
 
 ## Verified Commands
@@ -22,6 +25,7 @@
 /home/hyeon/.local/bin/godot-4.6.3 --headless --path runefall-prototype --script res://scripts/audio_test.gd
 /home/hyeon/.local/bin/godot-4.6.3 --headless --path runefall-prototype --script res://scripts/ftue_test.gd
 /home/hyeon/.local/bin/godot-4.6.3 --headless --path runefall-prototype --script res://scripts/meta_flow_test.gd
+/home/hyeon/.local/bin/godot-4.6.3 --headless --path runefall-prototype --script res://scripts/economy_test.gd
 cd runefall-prototype && ./tools/package_android.sh
 cd runefall-prototype && ./tools/capture_visuals.sh
 ```

@@ -53,6 +53,10 @@ func _run() -> void:
 		push_error("Run rewards were not saved into currencies: %s" % [loaded.currencies])
 		quit(1)
 		return
+	if int(loaded.season_pass.xp) != 40:
+		push_error("Run rewards were not saved into season pass XP: %s" % [loaded.season_pass])
+		quit(1)
+		return
 	if int(loaded.meta_hero_levels[2]) != 4 or not bool(loaded.onboarding_state.first_session_complete):
 		push_error("Run rewards were not saved into meta levels/onboarding.")
 		quit(1)

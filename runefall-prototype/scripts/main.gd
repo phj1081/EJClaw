@@ -1,6 +1,7 @@
 extends Node
 
 const GameData := preload("res://scripts/game_data.gd")
+const BalanceTable := preload("res://scripts/balance_table.gd")
 const BattleController := preload("res://scripts/battle_controller.gd")
 const SaveData := preload("res://scripts/save_data.gd")
 const TouchInput := preload("res://scripts/touch_input.gd")
@@ -19,6 +20,8 @@ var ai_presets := ["균형", "균형", "방어", "공격"]
 var currencies := {"gold": 12840, "gem": 760, "material": 324}
 var meta_hero_levels := [1, 1, 1, 1, 1, 1]
 var equipment := {"common_slots": [], "hero_slots": {}, "owned_skins": []}
+var season_pass := BalanceTable.default_season_pass()
+var iap_receipts: Array = []
 var onboarding_state := {"first_session_complete": false, "move_seen": false, "dash_seen": false, "switch_seen": false, "level_up_seen": false, "fusion_seen": false}
 var last_run_rewards := {"gold": 0, "material": 0, "meta_xp": 0}
 var result_applied := false
@@ -290,8 +293,8 @@ func upgrade_hero(hero_index: int) -> void:
 	if hero_index < 0 or hero_index >= meta_hero_levels.size():
 		return
 	var level: int = int(meta_hero_levels[hero_index])
-	var gold_cost := 220 + level * 80
-	var material_cost := 12 + level * 4
+	var gold_cost: int = int(BalanceTable.HERO_UPGRADE.gold_base) + level * int(BalanceTable.HERO_UPGRADE.gold_per_level)
+	var material_cost: int = int(BalanceTable.HERO_UPGRADE.material_base) + level * int(BalanceTable.HERO_UPGRADE.material_per_level)
 	if int(currencies.gold) < gold_cost or int(currencies.material) < material_cost:
 		show_message("승급 재화가 부족합니다.")
 		return
@@ -302,15 +305,15 @@ func upgrade_hero(hero_index: int) -> void:
 	show_character_detail(hero_index)
 
 func craft_equipment(tag: String) -> void:
-	var gold_cost := 420
-	var material_cost := 18
+	var gold_cost := int(BalanceTable.EQUIPMENT_CRAFT.gold)
+	var material_cost := int(BalanceTable.EQUIPMENT_CRAFT.material)
 	if int(currencies.gold) < gold_cost or int(currencies.material) < material_cost:
 		show_message("제작 재료가 부족합니다.")
 		return
 	currencies.gold = int(currencies.gold) - gold_cost
 	currencies.material = int(currencies.material) - material_cost
 	var slots: Array = equipment.get("common_slots", [])
-	if slots.size() >= 6:
+	if slots.size() >= int(BalanceTable.EQUIPMENT_CRAFT.max_common_slots):
 		slots.pop_front()
 	slots.append({
 		"name": "%s 룬 장비" % tag,
@@ -323,32 +326,90 @@ func craft_equipment(tag: String) -> void:
 	show_meta_tab("장비/제작")
 
 func buy_shop_offer(offer_id: String) -> void:
-	if offer_id == "starter_material":
-		var gem_cost := 40
-		if int(currencies.gem) < gem_cost:
-			show_message("젬이 부족합니다.")
-			return
-		currencies.gem = int(currencies.gem) - gem_cost
-		currencies.material = int(currencies.material) + 120
-	elif offer_id == "hero_unlock":
-		var gem_cost := 120
-		if int(currencies.gem) < gem_cost:
-			show_message("젬이 부족합니다.")
-			return
-		currencies.gem = int(currencies.gem) - gem_cost
-		currencies.gold = int(currencies.gold) + 1200
-	elif offer_id == "season_skin":
-		var gem_cost := 180
-		if int(currencies.gem) < gem_cost:
-			show_message("젬이 부족합니다.")
-			return
-		currencies.gem = int(currencies.gem) - gem_cost
-		var owned_skins: Array = equipment.get("owned_skins", [])
-		if not owned_skins.has("서리 균열 루나"):
-			owned_skins.append("서리 균열 루나")
-		equipment["owned_skins"] = owned_skins
+	if not BalanceTable.SHOP_OFFERS.has(offer_id):
+		show_message("상품 정보를 찾을 수 없습니다.")
+		return
+	var offer: Dictionary = BalanceTable.SHOP_OFFERS[offer_id]
+	var gem_cost := int(offer.gem_cost)
+	if int(currencies.gem) < gem_cost:
+		show_message("젬이 부족합니다.")
+		return
+	currencies.gem = int(currencies.gem) - gem_cost
+	apply_reward(offer.reward)
 	save_game()
 	show_meta_tab("상점")
+
+func buy_iap_product(product_id: String) -> void:
+	if not BalanceTable.IAP_PRODUCTS.has(product_id):
+		show_message("결제 상품 정보를 찾을 수 없습니다.")
+		return
+	var product: Dictionary = BalanceTable.IAP_PRODUCTS[product_id]
+	var receipt := {
+		"product_id": product_id,
+		"store_id": str(product.store_id),
+		"status": "dummy_verified",
+		"timestamp": Time.get_unix_time_from_system()
+	}
+	iap_receipts.append(receipt)
+	apply_reward(product.reward)
+	save_game()
+	show_meta_tab("상점")
+
+func add_season_xp(amount: int) -> void:
+	season_pass["xp"] = int(season_pass.get("xp", 0)) + amount
+	season_pass["level"] = BalanceTable.season_level_for_xp(int(season_pass.xp))
+
+func complete_season_mission(mission_id: String) -> void:
+	var missions: Dictionary = season_pass.get("missions", {})
+	if bool(missions.get(mission_id, false)):
+		show_message("이미 완료한 시즌 미션입니다.")
+		return
+	for mission in BalanceTable.SEASON_MISSIONS:
+		if str(mission.id) == mission_id:
+			missions[mission_id] = true
+			season_pass["missions"] = missions
+			add_season_xp(int(mission.xp))
+			save_game()
+			show_meta_tab("시즌패스")
+			return
+	show_message("시즌 미션 정보를 찾을 수 없습니다.")
+
+func claim_season_reward(level: int, premium: bool) -> void:
+	if int(season_pass.get("level", 1)) < level:
+		show_message("시즌 레벨이 부족합니다.")
+		return
+	if premium and not bool(season_pass.get("premium_unlocked", false)):
+		show_message("프리미엄 패스가 필요합니다.")
+		return
+	var key := "claimed_premium" if premium else "claimed_free"
+	var claimed: Array = season_pass.get(key, [])
+	if claimed.has(level):
+		show_message("이미 받은 보상입니다.")
+		return
+	for row in BalanceTable.SEASON_REWARDS:
+		if int(row.level) == level:
+			apply_reward(row.premium if premium else row.free)
+			claimed.append(level)
+			season_pass[key] = claimed
+			save_game()
+			show_meta_tab("시즌패스")
+			return
+	show_message("시즌 보상 정보를 찾을 수 없습니다.")
+
+func apply_reward(reward: Dictionary) -> void:
+	if reward.has("gold"):
+		currencies.gold = int(currencies.gold) + int(reward.gold)
+	if reward.has("gem"):
+		currencies.gem = int(currencies.gem) + int(reward.gem)
+	if reward.has("material"):
+		currencies.material = int(currencies.material) + int(reward.material)
+	if reward.has("skin"):
+		var owned_skins: Array = equipment.get("owned_skins", [])
+		if not owned_skins.has(str(reward.skin)):
+			owned_skins.append(str(reward.skin))
+		equipment["owned_skins"] = owned_skins
+	if reward.has("premium_pass"):
+		season_pass["premium_unlocked"] = true
 
 func show_party() -> void:
 	PartyScreen.show(self)
