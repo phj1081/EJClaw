@@ -34,5 +34,5 @@ static func show(main, victory: bool) -> void:
 	main.label(rewards, "획득 보상", Vector2(34, 30), Vector2(200, 40), 30)
 	main.divider(rewards, Vector2(32, 78), Vector2(230, 24), Color("#d2bc82"))
 	main.label(rewards, "골드 +%d\n소재 +%d\n메타 Lv +%d\n저장 완료" % [main.last_run_rewards.gold, main.last_run_rewards.material, main.last_run_rewards.meta_xp], Vector2(34, 104), Vector2(220, 160), 24, Color("#f6d66d"))
-	main.button(root, "한 번 더", Vector2(940, 708), Vector2(220, 72), func(): main.start_battle(), 26, Color("#f05a28"), "button_red")
-	main.button(root, "메인으로", Vector2(1190, 708), Vector2(220, 72), func(): main.show_home(), 26, Color("#33415c"), "button_blue")
+	main.button(root, "한 번 더", Vector2(940, 708), Vector2(220, 72), Callable(main, "start_battle"), 26, Color("#f05a28"), "button_red")
+	main.button(root, "메인으로", Vector2(1190, 708), Vector2(220, 72), Callable(main, "show_home"), 26, Color("#33415c"), "button_blue")

@@ -25,7 +25,7 @@ static func show(main) -> void:
 		var text: String = resource_labels[i]
 		var chip: Control = main.framed_panel(root, Vector2(1012 + i * 138, 26), Vector2(126, 42), Color("#111827e8"), "fantasy_border_banner", Color("#c4d7ff"), 12)
 		main.label(chip, "%s %d" % [text, int(main.currencies[key])], Vector2(10, 4), Vector2(106, 32), 17, Color("#ffe28a"), HORIZONTAL_ALIGNMENT_CENTER)
-	main.button(root, "우편", Vector2(1454, 26), Vector2(104, 48), func(): main.show_message("우편함은 후속 구현 영역입니다."), 18, Color("#24314a"), "button_blue")
+	main.button(root, "우편", Vector2(1454, 26), Vector2(104, 48), Callable(main, "show_message").bind("우편함은 후속 구현 영역입니다."), 18, Color("#24314a"), "button_blue")
 
 	var party_frame: Control = main.framed_panel(root, Vector2(56, 126), Vector2(1044, 626), Color("#16243add"), "fantasy_panel", Color("#d2bc82"), 16)
 	main.label(party_frame, "현재 파티", Vector2(34, 28), Vector2(260, 36), 28)
@@ -56,8 +56,8 @@ static func show(main) -> void:
 	main.label(season_panel, "시즌 패스", Vector2(32, 24), Vector2(180, 34), 26)
 	main.label(season_panel, "%s %d일 남음\nLv.%d / XP %d" % [BalanceTable.SEASON.name, int(BalanceTable.SEASON.days_left), int(main.season_pass.get("level", 1)), int(main.season_pass.get("xp", 0))], Vector2(32, 68), Vector2(290, 64), 18, Color("#c9d5ee"))
 	main.button(season_panel, "보기", Vector2(250, 92), Vector2(86, 42), Callable(main, "show_meta_tab").bind("시즌패스"), 17, Color("#2f8cff"))
-	main.button(root, "파티 편성", Vector2(1138, 574), Vector2(178, 74), func(): main.show_party(), 24, Color("#45536f"), "button_blue")
-	main.button(root, "출격", Vector2(1332, 574), Vector2(178, 74), func(): main.show_launch_confirm(), 28, Color("#f05a28"), "button_red")
+	main.button(root, "파티 편성", Vector2(1138, 574), Vector2(178, 74), Callable(main, "show_party"), 24, Color("#45536f"), "button_blue")
+	main.button(root, "출격", Vector2(1332, 574), Vector2(178, 74), Callable(main, "show_launch_confirm"), 28, Color("#f05a28"), "button_red")
 
 static func show_meta_tab(main, tab_name: String) -> void:
 	var root: Control = main.screen_root()
@@ -65,7 +65,7 @@ static func show_meta_tab(main, tab_name: String) -> void:
 	bg.size = main.VIEW_SIZE
 	bg.color = Color("#0f1726")
 	root.add_child(bg)
-	main.button(root, "← 홈", Vector2(36, 28), Vector2(120, 50), func(): main.show_home(), 20, Color("#26334d"), "button_blue")
+	main.button(root, "← 홈", Vector2(36, 28), Vector2(120, 50), Callable(main, "show_home"), 20, Color("#26334d"), "button_blue")
 	main.label(root, tab_name, Vector2(190, 30), Vector2(360, 50), 34)
 	_draw_resource_bar(main, root)
 
@@ -86,7 +86,7 @@ static func show_character_detail(main, hero_index: int) -> void:
 	bg.size = main.VIEW_SIZE
 	bg.color = Color("#0f1726")
 	root.add_child(bg)
-	main.button(root, "← 목록", Vector2(36, 28), Vector2(132, 50), func(): main.show_meta_tab("캐릭터"), 20, Color("#26334d"), "button_blue")
+	main.button(root, "← 목록", Vector2(36, 28), Vector2(132, 50), Callable(main, "show_meta_tab").bind("캐릭터"), 20, Color("#26334d"), "button_blue")
 	_draw_resource_bar(main, root)
 
 	var h := GameData.hero(hero_index)
@@ -103,10 +103,7 @@ static func show_character_detail(main, hero_index: int) -> void:
 	main.label(hero_panel, "다음 승급 비용", Vector2(58, 388), Vector2(240, 30), 24, Color("#ffd24a"))
 	main.label(hero_panel, "골드 %d / 소재 %d" % [gold_cost, material_cost], Vector2(58, 426), Vector2(260, 30), 20, Color("#c9d5ee"))
 	main.button(hero_panel, "승급", Vector2(330, 398), Vector2(150, 64), Callable(main, "upgrade_hero").bind(hero_index), 24, Color("#f05a28"), "button_red")
-	main.button(hero_panel, "파티에 지정", Vector2(58, 520), Vector2(190, 56), func():
-		main.set_party_member(hero_index)
-		main.show_party()
-	, 20, Color("#2f8cff"))
+	main.button(hero_panel, "파티에 지정", Vector2(58, 520), Vector2(190, 56), Callable(main, "set_party_member").bind(hero_index), 20, Color("#2f8cff"))
 
 	var equip_panel: Control = main.framed_panel(root, Vector2(700, 126), Vector2(760, 650), Color("#16243add"), "fantasy_panel", Color("#d2bc82"), 16)
 	main.label(equip_panel, "전용 성장", Vector2(38, 28), Vector2(260, 42), 30)

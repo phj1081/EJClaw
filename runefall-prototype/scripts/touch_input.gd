@@ -15,14 +15,14 @@ static func build_controls(main, root: Control) -> void:
 	main.joystick_knob.add_theme_stylebox_override("panel", main.style(Color("#cde3ffcc"), 24, Color("#ffffffaa"), 2))
 	main.label(root, "터치/드래그 이동", Vector2(58, 850), Vector2(210, 28), 16, Color("#8392b2"), HORIZONTAL_ALIGNMENT_CENTER)
 
-	main.skill_button = main.button(root, "스킬", Vector2(1308, 704), Vector2(104, 104), func(): main.use_skill(), 24, Color("#7b5cff"), "square_blue")
-	main.dash_button = main.button(root, "대시", Vector2(1434, 704), Vector2(104, 104), func(): main.dash_active(), 24, Color("#2f8cff"), "square_blue")
+	main.skill_button = main.button(root, "스킬", Vector2(1308, 704), Vector2(104, 104), Callable(main, "use_skill"), 24, Color("#7b5cff"), "square_blue")
+	main.dash_button = main.button(root, "대시", Vector2(1434, 704), Vector2(104, 104), Callable(main, "dash_active"), 24, Color("#2f8cff"), "square_blue")
 	main.skill_cd_label = main.label(root, "", Vector2(1308, 704), Vector2(104, 104), 20, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.dash_cd_label = main.label(root, "", Vector2(1434, 704), Vector2(104, 104), 20, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.skill_cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	main.dash_cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	main.pause_button = main.button(root, "⏸", Vector2(1466, 22), Vector2(94, 44), func(): main.toggle_pause(), 24, Color("#26334d"), "button_blue")
+	main.pause_button = main.button(root, "⏸", Vector2(1466, 22), Vector2(94, 44), Callable(main, "toggle_pause"), 24, Color("#26334d"), "button_blue")
 	update_cooldown_ui(main)
 
 static func handle_input(main, event: InputEvent) -> void:
@@ -152,5 +152,5 @@ static func _show_pause_overlay(main) -> void:
 	main.label(box, "일시정지", Vector2(0, 32), Vector2(480, 54), 36, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.divider(box, Vector2(120, 86), Vector2(240, 24), Color("#d2bc82"))
 	main.label(box, "전투가 멈췄습니다.", Vector2(0, 96), Vector2(480, 34), 20, Color("#b7c6e4"), HORIZONTAL_ALIGNMENT_CENTER)
-	main.button(box, "계속", Vector2(140, 158), Vector2(200, 64), func(): main.toggle_pause(), 26, Color("#2f8cff"), "button_blue")
+	main.button(box, "계속", Vector2(140, 158), Vector2(200, 64), Callable(main, "toggle_pause"), 26, Color("#2f8cff"), "button_blue")
 	main.pause_overlay = overlay

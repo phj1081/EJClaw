@@ -116,7 +116,8 @@ func clear_screen() -> void:
 				break
 		if is_audio_child:
 			continue
-		child.free()
+		_disconnect_button_callbacks(child)
+		child.queue_free()
 	party_buttons.clear()
 	hero_nodes.clear()
 	hero_labels.clear()
@@ -137,6 +138,16 @@ func clear_screen() -> void:
 	tutorial_panel = null
 	tutorial_title_label = null
 	tutorial_body_label = null
+
+func _disconnect_button_callbacks(node: Node) -> void:
+	if node is Button:
+		var button_node := node as Button
+		for connection in button_node.pressed.get_connections():
+			var callback: Callable = connection.callable
+			if button_node.pressed.is_connected(callback):
+				button_node.pressed.disconnect(callback)
+	for child in node.get_children():
+		_disconnect_button_callbacks(child)
 
 func screen_root() -> Control:
 	clear_screen()
@@ -259,10 +270,8 @@ func button(parent: Control, text: String, pos: Vector2, size: Vector2, pressed:
 	b.add_theme_stylebox_override("hover", style(normal_bg, 8))
 	b.add_theme_stylebox_override("pressed", style(normal_bg, 8))
 	b.add_theme_stylebox_override("disabled", style(Color("#566070"), 8))
-	b.pressed.connect(func():
-		play_sfx("ui_click", -12.0, 0.04)
-		pressed.call()
-	)
+	b.pressed.connect(Callable(self, "play_sfx").bind("ui_click", -12.0, 0.04))
+	b.pressed.connect(pressed)
 	parent.add_child(b)
 	return b
 
@@ -508,4 +517,9 @@ func show_message(message: String) -> void:
 	var toast := panel(root, Vector2(500, 396), Vector2(600, 108), Color("#111827ee"))
 	label(toast, message, Vector2(24, 24), Vector2(552, 54), 22, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	var timer := get_tree().create_timer(1.4)
-	timer.timeout.connect(func(): if is_instance_valid(toast): toast.queue_free())
+	timer.timeout.connect(Callable(self, "_dismiss_toast").bind(weakref(toast)))
+
+func _dismiss_toast(toast_ref: WeakRef) -> void:
+	var toast: Node = toast_ref.get_ref() as Node
+	if is_instance_valid(toast):
+		toast.queue_free()
