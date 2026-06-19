@@ -10,6 +10,7 @@
 - First-run FTUE now walks the player through movement, dash, character switching, level-up selection, and first fusion.
 - Character detail, equipment/crafting, shop, and codex/trials meta screens now have interactive prototype flows backed by save data.
 - Headed visual capture now produces 12 QA screenshots under `/tmp/runefall-visual-captures`.
+- Release readiness review is documented in `docs/release_readiness_review.md`: current state is a playable vertical prototype, not an asset-only public release candidate yet.
 
 ## Verified Commands
 
@@ -30,3 +31,4 @@ cd runefall-prototype && ./tools/capture_visuals.sh
 1. Run an actual device or emulator smoke test for the generated APK.
 2. Tune the 15-20 minute loop: stage pacing, reward amounts, boss difficulty, and fusion balance.
 3. Replace remaining placeholder icons/sprites with final or higher-quality licensed pixel assets.
+4. Prepare release signing, store metadata, privacy/compliance, and public-scope messaging before external launch.

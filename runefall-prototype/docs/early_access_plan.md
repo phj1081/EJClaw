@@ -28,6 +28,8 @@
 - Persistent progression across app restart.
 - No missing-license assets; all temporary assets documented.
 - Headed visual capture and smoke test pass before each review handoff.
+- Device or emulator APK install/run test passes before any public handoff.
+- Release readiness follows `docs/release_readiness_review.md`; the build is not considered asset-only ready until release signing, device validation, balance, and store/legal basics are complete.
 
 ## Current Follow-Up Priorities
 
