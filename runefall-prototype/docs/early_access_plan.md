@@ -26,3 +26,11 @@
 - Persistent progression across app restart.
 - No missing-license assets; all temporary assets documented.
 - Headed visual capture and smoke test pass before each review handoff.
+
+## Current Follow-Up Priorities
+
+1. Device or emulator APK smoke test.
+2. FTUE/tutorial prompts for the first run.
+3. Character detail, equipment/crafting, and shop mock flows.
+4. Balance pass for 15-20 minute pacing and rewards.
+5. Final art replacement plan for temporary CC0 placeholders.

@@ -74,10 +74,14 @@ func _settle() -> void:
 func _capture(name: String) -> void:
 	DirAccess.make_dir_recursive_absolute(out_dir)
 	print("RUNEFALL_CAPTURE_START %s" % name)
-	await RenderingServer.frame_post_draw
+	await _settle()
 	var image := root.get_texture().get_image()
 	if image == null:
 		push_error("Failed to read viewport image for %s." % name)
+		quit(1)
+		return
+	if _is_blank(image):
+		push_error("Screenshot is blank for %s." % name)
 		quit(1)
 		return
 	var path := "%s/%s.png" % [out_dir, name]
@@ -87,3 +91,11 @@ func _capture(name: String) -> void:
 		quit(1)
 		return
 	print("RUNEFALL_CAPTURE_SAVED %s" % path)
+
+func _is_blank(image: Image) -> bool:
+	var first := image.get_pixel(0, 0)
+	for y in range(0, image.get_height(), max(1, image.get_height() / 12)):
+		for x in range(0, image.get_width(), max(1, image.get_width() / 12)):
+			if image.get_pixel(x, y) != first:
+				return false
+	return true
