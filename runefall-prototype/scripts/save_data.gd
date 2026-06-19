@@ -5,7 +5,14 @@ const DEFAULT_SAVE_PATH := "user://runefall_save.json"
 const VERSION := 1
 
 const DEFAULT_CURRENCIES := {"gold": 12840, "gem": 760, "material": 324}
-const DEFAULT_ONBOARDING := {"first_session_complete": false, "fusion_seen": false, "switch_seen": false}
+const DEFAULT_ONBOARDING := {
+	"first_session_complete": false,
+	"move_seen": false,
+	"dash_seen": false,
+	"switch_seen": false,
+	"level_up_seen": false,
+	"fusion_seen": false
+}
 
 static func load_into(main) -> void:
 	_apply_defaults(main)

@@ -2,6 +2,7 @@ extends RefCounted
 
 const GameData := preload("res://scripts/game_data.gd")
 const TouchInput := preload("res://scripts/touch_input.gd")
+const TutorialFlow := preload("res://scripts/tutorial_flow.gd")
 const BATTLE_DURATION := 150.0
 const ARENA_MIN := Vector2(270, 112)
 const ARENA_MAX := Vector2(1470, 806)
@@ -150,6 +151,7 @@ static func start(main) -> void:
 
 	main.battle_running = true
 	update_ui(main)
+	TutorialFlow.start_battle(main)
 
 static func draw_dungeon_map(main) -> void:
 	for y in range(96, 850, 48):
@@ -188,6 +190,7 @@ static func update(main, delta: float) -> void:
 	if input_dir.length() > 0.05:
 		var h := GameData.hero(main.party_indices[main.active_slot])
 		main.hero_pos[main.active_slot] += input_dir.normalized() * float(h.speed) * delta
+		TutorialFlow.mark(main, "move_seen")
 	main.hero_pos[main.active_slot] = main.hero_pos[main.active_slot].clamp(ARENA_MIN, ARENA_MAX)
 
 	for i in range(4):
@@ -481,6 +484,7 @@ static func try_switch(main, slot: int) -> void:
 	main.hero_hp[main.active_slot] = minf(main.hero_hp[main.active_slot] + 12.0, float(GameData.hero(main.party_indices[main.active_slot]).hp))
 	TouchInput.did_switch(main)
 	main.play_sfx("ui_confirm", -10.0, 0.02)
+	TutorialFlow.mark(main, "switch_seen")
 	update_ui(main)
 
 static func dash_active(main) -> void:
@@ -494,6 +498,7 @@ static func dash_active(main) -> void:
 	main.hero_pos[main.active_slot] = (main.hero_pos[main.active_slot] + dir.normalized() * 150.0).clamp(ARENA_MIN, ARENA_MAX)
 	TouchInput.did_dash(main)
 	main.play_sfx("dash", -12.0, 0.08)
+	TutorialFlow.mark(main, "dash_seen")
 
 static func use_skill(main) -> void:
 	if not main.battle_running or main.paused or not TouchInput.can_skill(main):
@@ -534,7 +539,7 @@ static func show_level_up(main, slot: int) -> void:
 	var h := GameData.hero(main.party_indices[slot])
 	main.label(box, "LEVEL UP - %s 선택 중" % h.name, Vector2(0, 26), Vector2(1220, 54), 34, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.divider(box, Vector2(410, 82), Vector2(400, 26), Color("#d2bc82"))
-	var choices := pick_level_choices()
+	var choices := TutorialFlow.maybe_force_fusion_choice(main, slot, pick_level_choices())
 	for i in range(3):
 		var c: Dictionary = choices[i]
 		var card: Button = main.button(box, "", Vector2(95 + i * 360, 130), Vector2(310, 360), Callable(main, "choose_level").bind(c, overlay, slot), 18, Color("#1c2940"))
@@ -547,6 +552,7 @@ static func show_level_up(main, slot: int) -> void:
 	var fusion_text := "융합 가능: %s + %s → %s" % [main.hero_tags[slot], choices[0].tag, fusion] if fusion != "" else "융합 후보를 더 모으면 태그 조합이 열립니다."
 	main.label(box, fusion_text, Vector2(110, 532), Vector2(800, 42), 24, Color("#ffd24a"))
 	main.button(box, "추천 자동 선택", Vector2(960, 526), Vector2(200, 54), Callable(main, "choose_level").bind(choices[0], overlay, slot), 20, Color("#f05a28"), "button_red")
+	TutorialFlow.on_level_up_shown(main)
 
 static func pick_level_choices() -> Array:
 	var pool := GameData.LEVEL_CHOICES.duplicate()
@@ -562,6 +568,8 @@ static func apply_level_choice(main, slot: int, choice: Dictionary) -> void:
 	var fusion := GameData.fusion_name(main.hero_tags[slot], choice.tag)
 	if fusion != "":
 		main.play_sfx("fusion", -8.0, 0.0)
+		if slot == main.active_slot:
+			TutorialFlow.on_fusion(main, fusion)
 	else:
 		main.play_sfx("ui_confirm", -10.0, 0.02)
 	main.hero_tags[slot] = choice.tag if fusion == "" else fusion

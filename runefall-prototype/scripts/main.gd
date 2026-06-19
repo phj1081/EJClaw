@@ -5,6 +5,7 @@ const BattleController := preload("res://scripts/battle_controller.gd")
 const SaveData := preload("res://scripts/save_data.gd")
 const TouchInput := preload("res://scripts/touch_input.gd")
 const AudioManager := preload("res://scripts/audio_manager.gd")
+const TutorialFlow := preload("res://scripts/tutorial_flow.gd")
 const HomeScreen := preload("res://scripts/screens/home_screen.gd")
 const PartyScreen := preload("res://scripts/screens/party_screen.gd")
 const ResultScreen := preload("res://scripts/screens/result_screen.gd")
@@ -18,7 +19,7 @@ var ai_presets := ["균형", "균형", "방어", "공격"]
 var currencies := {"gold": 12840, "gem": 760, "material": 324}
 var meta_hero_levels := [1, 1, 1, 1, 1, 1]
 var equipment := {"common_slots": [], "hero_slots": {}}
-var onboarding_state := {"first_session_complete": false, "fusion_seen": false, "switch_seen": false}
+var onboarding_state := {"first_session_complete": false, "move_seen": false, "dash_seen": false, "switch_seen": false, "level_up_seen": false, "fusion_seen": false}
 var last_run_rewards := {"gold": 0, "material": 0, "meta_xp": 0}
 var result_applied := false
 
@@ -59,6 +60,9 @@ var skill_cooldown := 0.0
 var invuln_timer := 0.0
 var switch_flash_timer := 0.0
 var pause_overlay: Control
+var tutorial_panel: Control
+var tutorial_title_label: Label
+var tutorial_body_label: Label
 var bgm_player: AudioStreamPlayer
 var sfx_players: Array[AudioStreamPlayer] = []
 var low_hp_warned := false
@@ -127,6 +131,9 @@ func clear_screen() -> void:
 	dash_cd_label = null
 	skill_cd_label = null
 	pause_overlay = null
+	tutorial_panel = null
+	tutorial_title_label = null
+	tutorial_body_label = null
 
 func screen_root() -> Control:
 	clear_screen()
@@ -336,6 +343,9 @@ func choose_level(choice: Dictionary, overlay_node: Control, slot: int) -> void:
 
 func apply_level_choice(slot: int, choice: Dictionary) -> void:
 	BattleController.apply_level_choice(self, slot, choice)
+
+func tutorial_mark(key: String) -> void:
+	TutorialFlow.mark(self, key)
 
 func show_result(victory: bool) -> void:
 	ResultScreen.show(self, victory)

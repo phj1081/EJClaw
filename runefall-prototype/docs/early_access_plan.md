@@ -9,6 +9,7 @@
 - Mobile battle input now supports virtual stick drag, dash/skill cooldowns, switch invulnerability feedback, and pause/resume.
 - Save data persists party setup, currencies, meta hero levels, equipment placeholder data, and first-session onboarding state.
 - Audio pass covers button, attack, hit, dash, skill, level-up, fusion, low-HP warning, victory/defeat stingers, main BGM, and battle BGM.
+- First-run FTUE prompts now guide movement, dash, party switching, level-up choices, and first fusion.
 
 ## Next Critical Slices
 
@@ -30,7 +31,6 @@
 ## Current Follow-Up Priorities
 
 1. Device or emulator APK smoke test.
-2. FTUE/tutorial prompts for the first run.
-3. Character detail, equipment/crafting, and shop mock flows.
-4. Balance pass for 15-20 minute pacing and rewards.
-5. Final art replacement plan for temporary CC0 placeholders.
+2. Character detail, equipment/crafting, and shop mock flows.
+3. Balance pass for 15-20 minute pacing and rewards.
+4. Final art replacement plan for temporary CC0 placeholders.
