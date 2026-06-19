@@ -89,7 +89,7 @@ static func _apply_defaults(main) -> void:
 	main.meta_hero_levels = []
 	for i in range(GameData.HEROES.size()):
 		main.meta_hero_levels.append(1)
-	main.equipment = {"common_slots": [], "hero_slots": {}}
+	main.equipment = {"common_slots": [], "hero_slots": {}, "owned_skins": []}
 	main.onboarding_state = DEFAULT_ONBOARDING.duplicate(true)
 	main.last_run_rewards = {"gold": 0, "material": 0, "meta_xp": 0}
 	main.result_applied = false

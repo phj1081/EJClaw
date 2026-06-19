@@ -61,6 +61,22 @@ func _run() -> void:
 	await _settle()
 	await _capture("08_result")
 
+	main.show_meta_tab("캐릭터")
+	await _settle()
+	await _capture("09_characters")
+
+	main.show_character_detail(0)
+	await _settle()
+	await _capture("10_character_detail")
+
+	main.show_meta_tab("장비/제작")
+	await _settle()
+	await _capture("11_equipment")
+
+	main.show_meta_tab("상점")
+	await _settle()
+	await _capture("12_shop")
+
 	print("RUNEFALL_VISUAL_CAPTURE_OK %s" % out_dir)
 	var save_path := "user://runefall_visual_capture_save.json"
 	if FileAccess.file_exists(save_path):

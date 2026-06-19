@@ -18,7 +18,7 @@ var active_slot := 0
 var ai_presets := ["균형", "균형", "방어", "공격"]
 var currencies := {"gold": 12840, "gem": 760, "material": 324}
 var meta_hero_levels := [1, 1, 1, 1, 1, 1]
-var equipment := {"common_slots": [], "hero_slots": {}}
+var equipment := {"common_slots": [], "hero_slots": {}, "owned_skins": []}
 var onboarding_state := {"first_session_complete": false, "move_seen": false, "dash_seen": false, "switch_seen": false, "level_up_seen": false, "fusion_seen": false}
 var last_run_rewards := {"gold": 0, "material": 0, "meta_xp": 0}
 var result_applied := false
@@ -282,6 +282,73 @@ func show_home() -> void:
 
 func show_meta_tab(tab_name: String) -> void:
 	HomeScreen.show_meta_tab(self, tab_name)
+
+func show_character_detail(hero_index: int) -> void:
+	HomeScreen.show_character_detail(self, hero_index)
+
+func upgrade_hero(hero_index: int) -> void:
+	if hero_index < 0 or hero_index >= meta_hero_levels.size():
+		return
+	var level: int = int(meta_hero_levels[hero_index])
+	var gold_cost := 220 + level * 80
+	var material_cost := 12 + level * 4
+	if int(currencies.gold) < gold_cost or int(currencies.material) < material_cost:
+		show_message("승급 재화가 부족합니다.")
+		return
+	currencies.gold = int(currencies.gold) - gold_cost
+	currencies.material = int(currencies.material) - material_cost
+	meta_hero_levels[hero_index] = level + 1
+	save_game()
+	show_character_detail(hero_index)
+
+func craft_equipment(tag: String) -> void:
+	var gold_cost := 420
+	var material_cost := 18
+	if int(currencies.gold) < gold_cost or int(currencies.material) < material_cost:
+		show_message("제작 재료가 부족합니다.")
+		return
+	currencies.gold = int(currencies.gold) - gold_cost
+	currencies.material = int(currencies.material) - material_cost
+	var slots: Array = equipment.get("common_slots", [])
+	if slots.size() >= 6:
+		slots.pop_front()
+	slots.append({
+		"name": "%s 룬 장비" % tag,
+		"tag": tag,
+		"rarity": "희귀",
+		"level": 1
+	})
+	equipment["common_slots"] = slots
+	save_game()
+	show_meta_tab("장비/제작")
+
+func buy_shop_offer(offer_id: String) -> void:
+	if offer_id == "starter_material":
+		var gem_cost := 40
+		if int(currencies.gem) < gem_cost:
+			show_message("젬이 부족합니다.")
+			return
+		currencies.gem = int(currencies.gem) - gem_cost
+		currencies.material = int(currencies.material) + 120
+	elif offer_id == "hero_unlock":
+		var gem_cost := 120
+		if int(currencies.gem) < gem_cost:
+			show_message("젬이 부족합니다.")
+			return
+		currencies.gem = int(currencies.gem) - gem_cost
+		currencies.gold = int(currencies.gold) + 1200
+	elif offer_id == "season_skin":
+		var gem_cost := 180
+		if int(currencies.gem) < gem_cost:
+			show_message("젬이 부족합니다.")
+			return
+		currencies.gem = int(currencies.gem) - gem_cost
+		var owned_skins: Array = equipment.get("owned_skins", [])
+		if not owned_skins.has("서리 균열 루나"):
+			owned_skins.append("서리 균열 루나")
+		equipment["owned_skins"] = owned_skins
+	save_game()
+	show_meta_tab("상점")
 
 func show_party() -> void:
 	PartyScreen.show(self)

@@ -7,6 +7,8 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
+	_cleanup_save()
+
 	var packed: PackedScene = load("res://scenes/Main.tscn")
 	if packed == null:
 		push_error("Main scene failed to load.")
