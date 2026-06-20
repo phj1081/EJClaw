@@ -1,0 +1,7 @@
+Hero character sprite variants
+
+Derived from "Hero character sprite sheet" on OpenGameArt.
+Source: https://opengameart.org/content/hero-character-sprite-sheet
+License: CC0
+
+The Runefall variants recolor the source character into six party-role palettes and split the sheet into directional animation frames.

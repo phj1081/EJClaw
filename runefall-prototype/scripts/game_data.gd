@@ -16,7 +16,8 @@ const HEROES := [
 		"tag": "화염",
 		"weapon": "룬블레이드",
 		"color": "#f05a28",
-		"sprite": "res://assets/0x72-dungeon-tileset-ii/frames/knight_m_run_anim_f0.png",
+		"asset": "luna",
+		"sprite": "res://assets/cc0-hero-characters/luna_down_0.png",
 		"hp": 120,
 		"speed": 280
 	},
@@ -26,7 +27,8 @@ const HEROES := [
 		"tag": "수호",
 		"weapon": "성벽 망치",
 		"color": "#4bd0d9",
-		"sprite": "res://assets/0x72-dungeon-tileset-ii/frames/dwarf_m_run_anim_f0.png",
+		"asset": "bram",
+		"sprite": "res://assets/cc0-hero-characters/bram_down_0.png",
 		"hp": 170,
 		"speed": 220
 	},
@@ -36,7 +38,8 @@ const HEROES := [
 		"tag": "중력",
 		"weapon": "별핵 지팡이",
 		"color": "#7b5cff",
-		"sprite": "res://assets/0x72-dungeon-tileset-ii/frames/wizzard_f_run_anim_f0.png",
+		"asset": "sera",
+		"sprite": "res://assets/cc0-hero-characters/sera_down_0.png",
 		"hp": 100,
 		"speed": 250
 	},
@@ -46,7 +49,8 @@ const HEROES := [
 		"tag": "연쇄",
 		"weapon": "전류 석궁",
 		"color": "#ffd24a",
-		"sprite": "res://assets/0x72-dungeon-tileset-ii/frames/elf_f_run_anim_f0.png",
+		"asset": "ion",
+		"sprite": "res://assets/cc0-hero-characters/ion_down_0.png",
 		"hp": 105,
 		"speed": 300
 	},
@@ -56,7 +60,8 @@ const HEROES := [
 		"tag": "소환",
 		"weapon": "정령 토템",
 		"color": "#21a67a",
-		"sprite": "res://assets/0x72-dungeon-tileset-ii/frames/elf_m_run_anim_f0.png",
+		"asset": "maro",
+		"sprite": "res://assets/cc0-hero-characters/maro_down_0.png",
 		"hp": 115,
 		"speed": 240
 	},
@@ -66,7 +71,8 @@ const HEROES := [
 		"tag": "관통",
 		"weapon": "룬 레일건",
 		"color": "#56a7ff",
-		"sprite": "res://assets/0x72-dungeon-tileset-ii/frames/knight_f_run_anim_f0.png",
+		"asset": "kain",
+		"sprite": "res://assets/cc0-hero-characters/kain_down_0.png",
 		"hp": 95,
 		"speed": 270
 	}
@@ -179,6 +185,23 @@ static func color_for_tag(tag: String) -> Color:
 
 static func hero(index: int) -> Dictionary:
 	return HEROES[index % HEROES.size()]
+
+static func hero_asset_id(index: int) -> String:
+	return str(hero(index).get("asset", "luna"))
+
+static func hero_frame(asset_id: String, direction: String = "down", frame_index: int = 0) -> String:
+	var safe_direction := direction if ["down", "side", "up"].has(direction) else "down"
+	return "res://assets/cc0-hero-characters/%s_%s_%d.png" % [asset_id, safe_direction, frame_index % 6]
+
+static func hero_frames(asset_id: String, direction: String = "down") -> Array[String]:
+	var frames: Array[String] = []
+	for i in range(6):
+		frames.append(hero_frame(asset_id, direction, i))
+	return frames
+
+static func hero_idle(asset_id: String, direction: String = "down") -> String:
+	var idle_name := "%s_idle" % direction if ["down", "side", "up"].has(direction) else "down_idle"
+	return "res://assets/cc0-hero-characters/%s_%s.png" % [asset_id, idle_name]
 
 static func enemy_sprite(index: int) -> String:
 	return ENEMY_SPRITES[index % ENEMY_SPRITES.size()]

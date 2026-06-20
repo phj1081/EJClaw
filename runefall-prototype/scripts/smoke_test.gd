@@ -18,6 +18,8 @@ func _run() -> void:
 	await process_frame
 	for texture_path in [
 		str(GameData.hero(0).sprite),
+		GameData.hero_frame(GameData.hero_asset_id(0), "side", 3),
+		GameData.hero_idle(GameData.hero_asset_id(0), "up"),
 		GameData.topdown_monster_frame("00", 0),
 		str(GameData.effect_frames("fire")[0])
 	]:
@@ -25,6 +27,11 @@ func _run() -> void:
 			push_error("Texture failed to load through ResourceLoader path: %s" % texture_path)
 			quit(1)
 			return
+	var hero_frames := GameData.hero_frames(GameData.hero_asset_id(0), "down")
+	if hero_frames.size() != 6:
+		push_error("Hero animation frame list should expose 6 frames, got: %s" % [hero_frames])
+		quit(1)
+		return
 
 	main.show_home()
 	await process_frame

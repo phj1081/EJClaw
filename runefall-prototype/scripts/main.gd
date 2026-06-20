@@ -33,6 +33,7 @@ var arena: Control
 var party_buttons: Array[Button] = []
 var hero_nodes: Array[Control] = []
 var hero_labels: Array[Label] = []
+var hero_anim: Array[Dictionary] = []
 var hero_hp: Array[float] = []
 var hero_levels := [1, 1, 1, 1]
 var hero_xp: Array[float] = [0.0, 0.0, 0.0, 0.0]
@@ -131,6 +132,7 @@ func clear_screen() -> void:
 	party_buttons.clear()
 	hero_nodes.clear()
 	hero_labels.clear()
+	hero_anim.clear()
 	enemies.clear()
 	projectiles.clear()
 	effects.clear()

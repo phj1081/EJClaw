@@ -103,11 +103,23 @@ static func start(main) -> void:
 static func build_hero_nodes(main) -> void:
 	main.hero_nodes.clear()
 	main.hero_labels.clear()
+	main.hero_anim.clear()
 	for i in range(4):
 		var h := GameData.hero(main.party_indices[i])
-		var body: Control = main.pixel_art(main.arena, h.sprite, main.hero_pos[i], Vector2(48, 56), Color(h.color))
+		var asset_id := str(h.get("asset", GameData.hero_asset_id(main.party_indices[i])))
+		var body: Control = main.pixel_art(main.arena, GameData.hero_frame(asset_id, "down", 0), main.hero_pos[i], Vector2(64, 78), Color(h.color))
 		body.position = main.hero_pos[i]
+		body.pivot_offset = Vector2(32, 39)
 		main.hero_nodes.append(body)
+		main.hero_anim.append({
+			"asset_id": asset_id,
+			"direction": "down",
+			"frame_index": 0,
+			"anim_time": randf_range(0.0, 0.2),
+			"attack_time": 0.0,
+			"flip_h": false,
+			"last_pos": main.hero_pos[i]
+		})
 		var name_label: Label = main.label(main.arena, h.name, main.hero_pos[i] + Vector2(-18, -28), Vector2(80, 22), 14, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		main.hero_labels.append(name_label)
 
@@ -206,9 +218,7 @@ static func update(main, delta: float) -> void:
 			hit_nearest_enemy(main, i)
 		main.attack_timer = 0.38
 
-	for i in range(main.hero_nodes.size()):
-		main.hero_nodes[i].position = main.hero_pos[i]
-		main.hero_labels[i].position = main.hero_pos[i] + Vector2(-20, -28)
+	update_hero_animations(main, delta, input_dir)
 
 	if Input.is_action_just_pressed("dash"):
 		dash_active(main)
@@ -421,6 +431,68 @@ static func update_enemy_animation(main, enemy: Dictionary, delta: float) -> voi
 	enemy.frame_index = frame_index
 	(enemy.node as TextureRect).texture = main.texture_from_path(str(frames[frame_index]))
 
+static func update_hero_animations(main, delta: float, active_move_dir: Vector2 = Vector2.ZERO) -> void:
+	if main.hero_anim.size() != main.hero_nodes.size():
+		return
+	for i in range(main.hero_nodes.size()):
+		if not is_instance_valid(main.hero_nodes[i]):
+			continue
+		var state: Dictionary = main.hero_anim[i]
+		var previous_pos: Vector2 = state.get("last_pos", main.hero_pos[i])
+		var move_dir: Vector2 = main.hero_pos[i] - previous_pos
+		if i == main.active_slot and active_move_dir.length() > 0.05:
+			move_dir = active_move_dir
+
+		var direction := str(state.get("direction", "down"))
+		var flip_h := bool(state.get("flip_h", false))
+		var moving: bool = move_dir.length() > 0.35
+		if moving:
+			if absf(move_dir.x) > absf(move_dir.y):
+				direction = "side"
+				flip_h = move_dir.x < 0.0
+			elif move_dir.y < 0.0:
+				direction = "up"
+				flip_h = false
+			else:
+				direction = "down"
+				flip_h = false
+			state.anim_time = float(state.get("anim_time", 0.0)) + delta
+		else:
+			state.anim_time = 0.0
+
+		state.attack_time = maxf(0.0, float(state.get("attack_time", 0.0)) - delta)
+		var frames := GameData.hero_frames(str(state.get("asset_id", "luna")), direction)
+		var frame_index := 0
+		if moving and frames.size() > 1:
+			frame_index = int(float(state.anim_time) * 9.0) % frames.size()
+		var needs_texture := frame_index != int(state.get("frame_index", -1)) or direction != str(state.get("direction", ""))
+		if needs_texture and main.hero_nodes[i] is TextureRect:
+			(main.hero_nodes[i] as TextureRect).texture = main.texture_from_path(str(frames[frame_index]))
+			(main.hero_nodes[i] as TextureRect).flip_h = flip_h
+
+		var attack_strength: float = float(state.attack_time) / 0.22
+		if attack_strength > 0.0:
+			main.hero_nodes[i].scale = Vector2(1.0 + attack_strength * 0.12, 1.0 + attack_strength * 0.12)
+			main.hero_nodes[i].modulate = Color(1.0 + attack_strength * 0.45, 1.0 + attack_strength * 0.34, 1.0 + attack_strength * 0.18, 1.0)
+		else:
+			main.hero_nodes[i].scale = Vector2.ONE
+			main.hero_nodes[i].modulate = Color.WHITE
+
+		main.hero_nodes[i].position = main.hero_pos[i]
+		main.hero_labels[i].position = main.hero_pos[i] + Vector2(-8, -28)
+		state.direction = direction
+		state.flip_h = flip_h
+		state.frame_index = frame_index
+		state.last_pos = main.hero_pos[i]
+		main.hero_anim[i] = state
+
+static func trigger_hero_attack(main, slot: int) -> void:
+	if slot < 0 or slot >= main.hero_anim.size():
+		return
+	var state: Dictionary = main.hero_anim[slot]
+	state.attack_time = 0.22
+	main.hero_anim[slot] = state
+
 static func update_melee_enemy(main, enemy: Dictionary, delta: float) -> void:
 	var target: int = closest_hero(main, enemy.pos)
 	var dir: Vector2 = (main.hero_pos[target] - enemy.pos).normalized()
@@ -518,6 +590,7 @@ static func hit_nearest_enemy(main, slot: int) -> void:
 			best_dist = dist
 	if best_index == -1 or best_dist > 420.0 * 420.0:
 		return
+	trigger_hero_attack(main, slot)
 	var origin: Vector2 = main.hero_pos[slot] + Vector2(20, 20)
 	var target_pos: Vector2 = main.enemies[best_index].pos + Vector2(20, 20)
 	var tag: String = main.hero_tags[slot]

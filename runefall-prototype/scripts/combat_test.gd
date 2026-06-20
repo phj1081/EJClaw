@@ -19,6 +19,24 @@ func _run() -> void:
 	await process_frame
 	main.start_battle()
 	await process_frame
+	if main.hero_anim.size() != 4 or not str(main.hero_anim[0].get("asset_id", "")).contains("luna"):
+		push_error("Hero animation state did not initialize: %s" % [main.hero_anim])
+		quit(1)
+		return
+	main.hero_anim[0].frame_index = 0
+	main.hero_anim[0].anim_time = 0.0
+	main.hero_pos[0] += Vector2(24, 0)
+	BattleController.update_hero_animations(main, 0.2, Vector2.RIGHT)
+	if int(main.hero_anim[0].frame_index) == 0 or bool(main.hero_anim[0].flip_h):
+		push_error("Hero walk animation did not advance to right-facing side frames: %s" % [main.hero_anim[0]])
+		quit(1)
+		return
+	main.hero_pos[0] -= Vector2(24, 0)
+	BattleController.update_hero_animations(main, 0.2, Vector2.LEFT)
+	if not bool(main.hero_anim[0].flip_h):
+		push_error("Hero side animation did not flip when moving left: %s" % [main.hero_anim[0]])
+		quit(1)
+		return
 
 	main.enemies.clear()
 	main.room_spawned = 0
@@ -76,6 +94,16 @@ func _run() -> void:
 		quit(1)
 		return
 
+	main.enemies.clear()
+	main.projectiles.clear()
+	main.effects.clear()
+	_add_enemy(main, "zombie", main.hero_pos[0] + Vector2(120, 0), 200.0)
+	main.hero_tags[0] = "화염"
+	main.hit_nearest_enemy(0)
+	if float(main.hero_anim[0].get("attack_time", 0.0)) <= 0.0:
+		push_error("Hero attack animation did not trigger on a valid attack.")
+		quit(1)
+		return
 	main.enemies.clear()
 	main.projectiles.clear()
 	main.effects.clear()
