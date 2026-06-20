@@ -37,6 +37,28 @@ func _run() -> void:
 		push_error("Hero side animation did not flip when moving left: %s" % [main.hero_anim[0]])
 		quit(1)
 		return
+	main.enemies.clear()
+	main.ai_presets = ["균형", "공격", "방어", "균형"]
+	var ai_target := _add_enemy(main, "zombie", main.hero_pos[0] + Vector2(260, 0), 120.0)
+	var target_center: Vector2 = ai_target.pos + Vector2(22, 22)
+	var attack_desired: Vector2 = BattleController.ai_desired_position(main, 1, "공격")
+	var balanced_desired: Vector2 = BattleController.ai_desired_position(main, 1, "균형")
+	if attack_desired.distance_to(target_center) >= balanced_desired.distance_to(target_center):
+		push_error("Attack AI preset did not push ally toward enemy: %s vs %s" % [attack_desired, balanced_desired])
+		quit(1)
+		return
+	var guard_desired: Vector2 = BattleController.ai_desired_position(main, 2, "방어")
+	var threat_dir: Vector2 = (target_center - main.hero_pos[0]).normalized()
+	if guard_desired.distance_to(main.hero_pos[0]) > 120.0 or (guard_desired - main.hero_pos[0]).dot(threat_dir) <= 0.0:
+		push_error("Defense AI preset did not guard between active hero and threat: %s" % [guard_desired])
+		quit(1)
+		return
+	var before_ai_move: Vector2 = main.hero_pos[1]
+	BattleController.update_party_ai_positions(main, 0.25)
+	if main.hero_pos[1].distance_to(attack_desired) >= before_ai_move.distance_to(attack_desired):
+		push_error("Attack AI ally did not move toward its desired position.")
+		quit(1)
+		return
 
 	main.enemies.clear()
 	main.room_spawned = 0

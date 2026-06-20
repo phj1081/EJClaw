@@ -196,11 +196,7 @@ static func update(main, delta: float) -> void:
 		TutorialFlow.mark(main, "move_seen")
 	main.hero_pos[main.active_slot] = main.hero_pos[main.active_slot].clamp(ARENA_MIN, ARENA_MAX)
 
-	for i in range(4):
-		if i == main.active_slot:
-			continue
-		var desired: Vector2 = main.hero_pos[main.active_slot] + Vector2(cos(float(i) * 2.1), sin(float(i) * 2.1)) * 110.0
-		main.hero_pos[i] = main.hero_pos[i].lerp(desired, delta * 2.2)
+	update_party_ai_positions(main, delta)
 
 	main.spawn_timer -= delta
 	if main.spawn_timer <= 0.0:
@@ -430,6 +426,56 @@ static func update_enemy_animation(main, enemy: Dictionary, delta: float) -> voi
 		return
 	enemy.frame_index = frame_index
 	(enemy.node as TextureRect).texture = main.texture_from_path(str(frames[frame_index]))
+
+static func update_party_ai_positions(main, delta: float) -> void:
+	for i in range(4):
+		if i == main.active_slot:
+			continue
+		var preset := str(main.ai_presets[i]) if i < main.ai_presets.size() else "균형"
+		var desired: Vector2 = ai_desired_position(main, i, preset)
+		var follow_rate := 2.2
+		if preset == "공격":
+			follow_rate = 3.0 if not main.enemies.is_empty() else 2.4
+		elif preset == "방어":
+			follow_rate = 3.2
+		main.hero_pos[i] = main.hero_pos[i].lerp(desired, delta * follow_rate).clamp(ARENA_MIN, ARENA_MAX)
+
+static func ai_desired_position(main, slot: int, preset: String) -> Vector2:
+	var active_pos: Vector2 = main.hero_pos[main.active_slot]
+	var formation_offset := Vector2(cos(float(slot) * 2.1), sin(float(slot) * 2.1))
+	if preset == "공격":
+		var target_index := closest_enemy_index(main, main.hero_pos[slot])
+		if target_index != -1:
+			var target_pos: Vector2 = main.enemies[target_index].pos + Vector2(22, 22)
+			var away_from_target := active_pos - target_pos
+			if away_from_target.length() < 0.01:
+				away_from_target = Vector2.RIGHT.rotated(float(slot))
+			var flank := Vector2(-away_from_target.y, away_from_target.x).normalized() * (float(slot) - 1.5) * 22.0
+			return target_pos + away_from_target.normalized() * 128.0 + flank
+		return active_pos + formation_offset * 130.0
+	if preset == "방어":
+		var threat_index := closest_enemy_index(main, active_pos, 340.0)
+		if threat_index != -1:
+			var threat_pos: Vector2 = main.enemies[threat_index].pos + Vector2(22, 22)
+			var threat_dir := threat_pos - active_pos
+			if threat_dir.length() < 0.01:
+				threat_dir = formation_offset
+			var guard_line := threat_dir.normalized() * 72.0
+			var guard_spread := Vector2(-threat_dir.y, threat_dir.x).normalized() * (float(slot) - 1.5) * 18.0
+			return active_pos + guard_line + guard_spread
+		return active_pos + formation_offset * 74.0
+	return active_pos + formation_offset * 110.0
+
+static func closest_enemy_index(main, pos: Vector2, max_distance: float = INF) -> int:
+	var best := -1
+	var best_dist := max_distance * max_distance
+	for i in range(main.enemies.size()):
+		var enemy_pos: Vector2 = main.enemies[i].pos
+		var dist: float = enemy_pos.distance_squared_to(pos)
+		if dist < best_dist:
+			best = i
+			best_dist = dist
+	return best
 
 static func update_hero_animations(main, delta: float, active_move_dir: Vector2 = Vector2.ZERO) -> void:
 	if main.hero_anim.size() != main.hero_nodes.size():
