@@ -199,11 +199,10 @@ func panel(parent: Control, pos: Vector2, size: Vector2, color: Color = Color("#
 	return p
 
 func pixel_art(parent: Control, texture_path: String, pos: Vector2, size: Vector2, fallback_color: Color = Color("#f4f7ff")) -> Control:
-	var image := Image.new()
-	var load_error := image.load(ProjectSettings.globalize_path(texture_path))
-	if load_error == OK:
+	var texture := texture_from_path(texture_path)
+	if texture:
 		var sprite := TextureRect.new()
-		sprite.texture = ImageTexture.create_from_image(image)
+		sprite.texture = texture
 		sprite.position = pos
 		sprite.size = size
 		sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -219,6 +218,12 @@ func pixel_art(parent: Control, texture_path: String, pos: Vector2, size: Vector
 	return fallback
 
 func texture_from_path(texture_path: String) -> Texture2D:
+	if texture_path.is_empty():
+		return null
+	var resource := ResourceLoader.load(texture_path)
+	if resource is Texture2D:
+		return resource
+
 	var image := Image.new()
 	var load_error := image.load(ProjectSettings.globalize_path(texture_path))
 	if load_error != OK:

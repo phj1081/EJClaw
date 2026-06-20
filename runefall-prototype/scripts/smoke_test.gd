@@ -1,5 +1,7 @@
 extends SceneTree
 
+const GameData := preload("res://scripts/game_data.gd")
+
 func _initialize() -> void:
 	OS.set_environment("RUNEFALL_SAVE_PATH", "user://runefall_smoke_save.json")
 	call_deferred("_run")
@@ -14,6 +16,15 @@ func _run() -> void:
 	var main: Node = packed.instantiate()
 	root.add_child(main)
 	await process_frame
+	for texture_path in [
+		str(GameData.hero(0).sprite),
+		GameData.topdown_monster_frame("00", 0),
+		str(GameData.effect_frames("fire")[0])
+	]:
+		if main.texture_from_path(texture_path) == null:
+			push_error("Texture failed to load through ResourceLoader path: %s" % texture_path)
+			quit(1)
+			return
 
 	main.show_home()
 	await process_frame
