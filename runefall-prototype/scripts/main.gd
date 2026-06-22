@@ -66,11 +66,15 @@ var joystick_base: Panel
 var joystick_knob: Panel
 var dash_button: Button
 var skill_button: Button
+var skill_buttons: Array[Button] = []
 var pause_button: Button
 var dash_cd_label: Label
 var skill_cd_label: Label
+var skill_cd_labels: Array[Label] = []
 var dash_cooldown := 0.0
 var skill_cooldown := 0.0
+var hero_skill_tags: Array = []
+var hero_skill_cooldowns: Array = []
 var invuln_timer := 0.0
 var switch_flash_timer := 0.0
 var pause_overlay: Control
@@ -152,9 +156,11 @@ func clear_screen() -> void:
 	joystick_knob = null
 	dash_button = null
 	skill_button = null
+	skill_buttons.clear()
 	pause_button = null
 	dash_cd_label = null
 	skill_cd_label = null
+	skill_cd_labels.clear()
 	pause_overlay = null
 	tutorial_panel = null
 	tutorial_title_label = null
@@ -486,8 +492,8 @@ func try_switch(slot: int) -> void:
 func dash_active() -> void:
 	BattleController.dash_active(self)
 
-func use_skill() -> void:
-	BattleController.use_skill(self)
+func use_skill(skill_index: int = 0) -> void:
+	BattleController.use_skill(self, skill_index)
 
 func toggle_pause() -> void:
 	TouchInput.toggle_pause(self)

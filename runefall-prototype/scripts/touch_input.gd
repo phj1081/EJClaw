@@ -1,5 +1,6 @@
 extends RefCounted
 
+const GameData := preload("res://scripts/game_data.gd")
 const STICK_CENTER := Vector2(154, 770)
 const STICK_RADIUS := 82.0
 const STICK_DEADZONE := 12.0
@@ -15,12 +16,10 @@ static func build_controls(main, root: Control) -> void:
 	main.joystick_knob.add_theme_stylebox_override("panel", main.style(Color("#cde3ffcc"), 24, Color("#ffffffaa"), 2))
 	main.label(root, "터치/드래그 이동", Vector2(58, 850), Vector2(210, 28), 16, Color("#8392b2"), HORIZONTAL_ALIGNMENT_CENTER)
 
-	main.skill_button = main.button(root, "스킬", Vector2(1308, 704), Vector2(104, 104), Callable(main, "use_skill"), 24, Color("#7b5cff"), "square_blue")
-	main.dash_button = main.button(root, "대시", Vector2(1434, 704), Vector2(104, 104), Callable(main, "dash_active"), 24, Color("#2f8cff"), "square_blue")
-	main.skill_cd_label = main.label(root, "", Vector2(1308, 704), Vector2(104, 104), 20, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
-	main.dash_cd_label = main.label(root, "", Vector2(1434, 704), Vector2(104, 104), 20, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
-	main.skill_cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	main.dash_button = main.button(root, "대시", Vector2(1418, 710), Vector2(130, 130), Callable(main, "dash_active"), 26, Color("#2f8cff"), "square_blue")
+	main.dash_cd_label = main.label(root, "", Vector2(1418, 710), Vector2(130, 130), 22, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.dash_cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	refresh_skill_buttons(main)
 
 	main.pause_button = main.button(root, "⏸", Vector2(1466, 22), Vector2(94, 44), Callable(main, "toggle_pause"), 24, Color("#26334d"), "button_blue")
 	update_cooldown_ui(main)
@@ -57,6 +56,12 @@ static func update(main, delta: float) -> void:
 		main.dash_cooldown = maxf(0.0, main.dash_cooldown - delta)
 	if main.skill_cooldown > 0.0:
 		main.skill_cooldown = maxf(0.0, main.skill_cooldown - delta)
+	for hero_index in range(main.hero_skill_cooldowns.size()):
+		var cooldowns: Array = main.hero_skill_cooldowns[hero_index]
+		for skill_index in range(cooldowns.size()):
+			cooldowns[skill_index] = maxf(0.0, float(cooldowns[skill_index]) - delta)
+		main.hero_skill_cooldowns[hero_index] = cooldowns
+	main.skill_cooldown = _active_skill_cooldown(main, 0)
 	if main.invuln_timer > 0.0:
 		main.invuln_timer = maxf(0.0, main.invuln_timer - delta)
 	if main.switch_flash_timer > 0.0:
@@ -84,27 +89,103 @@ static func did_dash(main) -> void:
 	main.invuln_timer = INVULN_DURATION
 	update_cooldown_ui(main)
 
-static func can_skill(main) -> bool:
-	return main.skill_cooldown <= 0.0
+static func can_skill(main, skill_index: int = 0) -> bool:
+	return skill_index >= 0 and skill_index < _active_skill_tags(main).size() and _active_skill_cooldown(main, skill_index) <= 0.0
 
-static func did_skill(main) -> void:
-	main.skill_cooldown = SKILL_COOLDOWN
+static func did_skill(main, skill_index: int = 0) -> void:
+	_ensure_active_skill_cooldowns(main)
+	var cooldowns: Array = main.hero_skill_cooldowns[main.active_slot]
+	if skill_index >= 0 and skill_index < cooldowns.size():
+		cooldowns[skill_index] = SKILL_COOLDOWN
+	main.hero_skill_cooldowns[main.active_slot] = cooldowns
+	main.skill_cooldown = _active_skill_cooldown(main, 0)
 	update_cooldown_ui(main)
 
 static func did_switch(main) -> void:
 	main.invuln_timer = INVULN_DURATION
 	main.switch_flash_timer = SWITCH_FLASH_DURATION
+	refresh_skill_buttons(main)
 	_update_switch_flash(main)
 
 static func update_cooldown_ui(main) -> void:
 	if main.dash_button:
 		main.dash_button.disabled = main.dash_cooldown > 0.0
-	if main.skill_button:
-		main.skill_button.disabled = main.skill_cooldown > 0.0
 	if main.dash_cd_label:
 		main.dash_cd_label.text = "%.1f" % main.dash_cooldown if main.dash_cooldown > 0.0 else ""
-	if main.skill_cd_label:
-		main.skill_cd_label.text = "%.1f" % main.skill_cooldown if main.skill_cooldown > 0.0 else ""
+	for i in range(main.skill_buttons.size()):
+		var cooldown := _active_skill_cooldown(main, i)
+		main.skill_buttons[i].disabled = cooldown > 0.0
+		if i < main.skill_cd_labels.size():
+			main.skill_cd_labels[i].text = "%.1f" % cooldown if cooldown > 0.0 else ""
+
+static func refresh_skill_buttons(main) -> void:
+	for button: Button in main.skill_buttons:
+		if button and is_instance_valid(button):
+			button.queue_free()
+	for label: Label in main.skill_cd_labels:
+		if label and is_instance_valid(label):
+			label.queue_free()
+	main.skill_buttons.clear()
+	main.skill_cd_labels.clear()
+	main.skill_button = null
+	main.skill_cd_label = null
+	if main.battle_root == null or not is_instance_valid(main.battle_root):
+		return
+	_ensure_active_skill_cooldowns(main)
+	var tags := _active_skill_tags(main)
+	var positions := [
+		Vector2(1300, 748),
+		Vector2(1336, 642),
+		Vector2(1432, 602),
+		Vector2(1238, 666),
+		Vector2(1218, 770)
+	]
+	var size := Vector2(88, 88)
+	for i in range(mini(tags.size(), positions.size())):
+		var tag := str(tags[i])
+		var label_text := _skill_label(tag)
+		var button: Button = main.button(main.battle_root, label_text, positions[i], size, Callable(main, "use_skill").bind(i), 16, GameData.color_for_tag(tag), "square_blue")
+		var cd_label: Label = main.label(main.battle_root, "", positions[i], size, 18, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
+		cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		main.skill_buttons.append(button)
+		main.skill_cd_labels.append(cd_label)
+	if not main.skill_buttons.is_empty():
+		main.skill_button = main.skill_buttons[0]
+	if not main.skill_cd_labels.is_empty():
+		main.skill_cd_label = main.skill_cd_labels[0]
+	update_cooldown_ui(main)
+
+static func _skill_label(tag: String) -> String:
+	if tag.length() <= 2:
+		return tag
+	if tag.contains(" "):
+		var parts := tag.split(" ")
+		return "%s\n%s" % [str(parts[0]), str(parts[1])]
+	return tag.substr(0, 2)
+
+static func _active_skill_tags(main) -> Array:
+	if main.active_slot >= 0 and main.active_slot < main.hero_skill_tags.size():
+		return main.hero_skill_tags[main.active_slot]
+	if main.active_slot >= 0 and main.active_slot < main.hero_tags.size():
+		return [main.hero_tags[main.active_slot]]
+	return []
+
+static func _ensure_active_skill_cooldowns(main) -> void:
+	while main.hero_skill_cooldowns.size() <= main.active_slot:
+		main.hero_skill_cooldowns.append([])
+	var tags := _active_skill_tags(main)
+	var cooldowns: Array = main.hero_skill_cooldowns[main.active_slot]
+	while cooldowns.size() < tags.size():
+		cooldowns.append(0.0)
+	main.hero_skill_cooldowns[main.active_slot] = cooldowns
+
+static func _active_skill_cooldown(main, skill_index: int) -> float:
+	if main.active_slot < 0 or main.active_slot >= main.hero_skill_cooldowns.size():
+		return main.skill_cooldown if skill_index == 0 else 0.0
+	var cooldowns: Array = main.hero_skill_cooldowns[main.active_slot]
+	if skill_index < 0 or skill_index >= cooldowns.size():
+		return 0.0
+	return float(cooldowns[skill_index])
 
 static func _in_stick_area(pos: Vector2) -> bool:
 	return pos.distance_to(STICK_CENTER) <= STICK_RADIUS * 1.25

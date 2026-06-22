@@ -89,12 +89,17 @@ static func start(main) -> void:
 		float(BalanceTable.LEVEL_XP.start)
 	])
 	main.hero_tags = ["", "", "", ""]
+	main.hero_skill_tags.clear()
+	main.hero_skill_cooldowns.clear()
 	for i in range(4):
 		var h := GameData.hero(main.party_indices[i])
 		main.hero_hp.append(float(h.hp))
 		main.hero_tags[i] = h.tag
+		main.hero_skill_tags.append([h.tag])
+		main.hero_skill_cooldowns.append([0.0])
 	draw_dungeon_map(main)
 	build_hero_nodes(main)
+	TouchInput.refresh_skill_buttons(main)
 
 	main.battle_running = true
 	update_ui(main)
@@ -697,14 +702,25 @@ static func dash_active(main) -> void:
 	main.play_sfx("dash", -12.0, 0.08)
 	TutorialFlow.mark(main, "dash_seen")
 
-static func use_skill(main) -> void:
-	if not main.battle_running or main.paused or not TouchInput.can_skill(main):
+static func use_skill(main, skill_index: int = 0) -> void:
+	if not main.battle_running or main.paused or not TouchInput.can_skill(main, skill_index):
 		return
 	var origin: Vector2 = main.hero_pos[main.active_slot]
-	var tag: String = main.hero_tags[main.active_slot]
-	create_area_effect(main, origin + Vector2(22, 22), 190.0, 42.0, GameData.color_for_tag(tag), 0.42, false, {"effect": GameData.effect_for_tag(tag)})
-	TouchInput.did_skill(main)
+	var tag: String = active_skill_tag(main, skill_index)
+	var radius: float = 172.0 + skill_index * 18.0
+	var damage: float = 34.0 + main.hero_levels[main.active_slot] * 3.0 + skill_index * 4.0
+	create_area_effect(main, origin + Vector2(22, 22), radius, damage, GameData.color_for_tag(tag), 0.42, false, {"effect": GameData.effect_for_tag(tag)})
+	TouchInput.did_skill(main, skill_index)
 	main.play_sfx("skill", -10.0, 0.04)
+
+static func active_skill_tag(main, skill_index: int) -> String:
+	if main.active_slot >= 0 and main.active_slot < main.hero_skill_tags.size():
+		var tags: Array = main.hero_skill_tags[main.active_slot]
+		if skill_index >= 0 and skill_index < tags.size():
+			return str(tags[skill_index])
+	if main.active_slot >= 0 and main.active_slot < main.hero_tags.size():
+		return str(main.hero_tags[main.active_slot])
+	return "화염"
 
 static func update_ui(main) -> void:
 	if main.timer_label:
@@ -777,6 +793,23 @@ static func apply_level_choice(main, slot: int, choice: Dictionary) -> void:
 	else:
 		main.play_sfx("ui_confirm", -10.0, 0.02)
 	main.hero_tags[slot] = choice.tag if fusion == "" else fusion
+	add_skill_tag(main, slot, main.hero_tags[slot])
+	if slot == main.active_slot:
+		TouchInput.refresh_skill_buttons(main)
+
+static func add_skill_tag(main, slot: int, tag: String) -> void:
+	while main.hero_skill_tags.size() <= slot:
+		main.hero_skill_tags.append([])
+	while main.hero_skill_cooldowns.size() <= slot:
+		main.hero_skill_cooldowns.append([])
+	var tags: Array = main.hero_skill_tags[slot]
+	if not tags.has(tag):
+		tags.append(tag)
+	var cooldowns: Array = main.hero_skill_cooldowns[slot]
+	while cooldowns.size() < tags.size():
+		cooldowns.append(0.0)
+	main.hero_skill_tags[slot] = tags
+	main.hero_skill_cooldowns[slot] = cooldowns
 
 static func fire_fusion_attack(main, slot: int, origin: Vector2, target_pos: Vector2, fusion: Dictionary) -> void:
 	var mode: String = fusion.mode

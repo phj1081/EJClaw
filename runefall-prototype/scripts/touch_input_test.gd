@@ -20,6 +20,14 @@ func _run() -> void:
 	await process_frame
 	main.start_battle()
 	await process_frame
+	if main.skill_buttons.size() != 1 or main.hero_skill_tags[main.active_slot].size() != 1:
+		push_error("Initial dynamic skill buttons did not match base skill count.")
+		quit(1)
+		return
+	if main.dash_button.size.x < 120.0 or main.dash_button.size.y < 120.0:
+		push_error("Dash button should be the large anchor control.")
+		quit(1)
+		return
 
 	var touch := InputEventScreenTouch.new()
 	touch.index = 1
@@ -58,6 +66,20 @@ func _run() -> void:
 	main.use_skill()
 	if main.skill_cooldown <= 0.0:
 		push_error("Skill cooldown was not set.")
+		quit(1)
+		return
+	main.skill_cooldown = 0.0
+	main.hero_skill_cooldowns[main.active_slot][0] = 0.0
+	main.apply_level_choice(main.active_slot, {"name": "중력 파동", "kind": "스킬", "tag": "중력", "desc": "근처 적을 느리게 함"})
+	await process_frame
+	if main.skill_buttons.size() != 2 or main.hero_skill_tags[main.active_slot].size() != 2:
+		push_error("Skill button did not grow after gaining a skill: %s" % [main.hero_skill_tags])
+		quit(1)
+		return
+	var effects_before: int = main.effects.size()
+	main.use_skill(1)
+	if main.effects.size() <= effects_before or float(main.hero_skill_cooldowns[main.active_slot][1]) <= 0.0:
+		push_error("Second skill button did not trigger effect and cooldown.")
 		quit(1)
 		return
 
