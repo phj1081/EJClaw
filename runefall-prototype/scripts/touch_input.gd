@@ -16,7 +16,8 @@ static func build_controls(main, root: Control) -> void:
 	main.joystick_knob.add_theme_stylebox_override("panel", main.style(Color("#cde3ffcc"), 24, Color("#ffffffaa"), 2))
 	main.label(root, "터치/드래그 이동", Vector2(58, 850), Vector2(210, 28), 16, Color("#8392b2"), HORIZONTAL_ALIGNMENT_CENTER)
 
-	main.dash_button = main.button(root, "대시", Vector2(1418, 710), Vector2(130, 130), Callable(main, "dash_active"), 26, Color("#2f8cff"), "square_blue")
+	main.dash_button = main.button(root, "", Vector2(1418, 710), Vector2(130, 130), Callable(main, "dash_active"), 26, Color("#2f8cff"), "square_blue")
+	_decorate_action_button(main, main.dash_button, "대시", GameData.ui_asset("arrow_blue_e"), Vector2(66, 66), 24)
 	main.dash_cd_label = main.label(root, "", Vector2(1418, 710), Vector2(130, 130), 22, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 	main.dash_cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	refresh_skill_buttons(main)
@@ -143,8 +144,8 @@ static func refresh_skill_buttons(main) -> void:
 	var size := Vector2(88, 88)
 	for i in range(mini(tags.size(), positions.size())):
 		var tag := str(tags[i])
-		var label_text := _skill_label(tag)
-		var button: Button = main.button(main.battle_root, label_text, positions[i], size, Callable(main, "use_skill").bind(i), 16, GameData.color_for_tag(tag), "square_blue")
+		var button: Button = main.button(main.battle_root, "", positions[i], size, Callable(main, "use_skill").bind(i), 16, GameData.color_for_tag(tag), "square_blue")
+		_decorate_action_button(main, button, _skill_label(tag), _skill_icon_for_tag(tag), Vector2(46, 46), 15)
 		var cd_label: Label = main.label(main.battle_root, "", positions[i], size, 18, Color("#ffffff"), HORIZONTAL_ALIGNMENT_CENTER)
 		cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		main.skill_buttons.append(button)
@@ -162,6 +163,36 @@ static func _skill_label(tag: String) -> String:
 		var parts := tag.split(" ")
 		return "%s\n%s" % [str(parts[0]), str(parts[1])]
 	return tag.substr(0, 2)
+
+static func _decorate_action_button(main, button: Button, title: String, texture_path: String, icon_size: Vector2, font_size: int) -> void:
+	var icon := TextureRect.new()
+	icon.texture = main.texture_from_path(texture_path)
+	icon.position = Vector2((button.size.x - icon_size.x) * 0.5, 12.0)
+	icon.size = icon_size
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(icon)
+
+	var title_label := Label.new()
+	title_label.text = title
+	title_label.position = Vector2(6.0, button.size.y - 38.0)
+	title_label.size = Vector2(button.size.x - 12.0, 30.0)
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	title_label.add_theme_font_size_override("font_size", font_size)
+	title_label.add_theme_color_override("font_color", Color("#ffffff"))
+	title_label.add_theme_color_override("font_shadow_color", Color("#101725cc"))
+	title_label.add_theme_constant_override("shadow_offset_x", 2)
+	title_label.add_theme_constant_override("shadow_offset_y", 2)
+	title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(title_label)
+
+static func _skill_icon_for_tag(tag: String) -> String:
+	var frames := GameData.effect_frames(GameData.effect_for_tag(tag))
+	if not frames.is_empty():
+		return str(frames[0])
+	return GameData.icon_for_tag(tag)
 
 static func _active_skill_tags(main) -> Array:
 	if main.active_slot >= 0 and main.active_slot < main.hero_skill_tags.size():

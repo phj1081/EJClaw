@@ -28,6 +28,10 @@ func _run() -> void:
 		push_error("Dash button should be the large anchor control.")
 		quit(1)
 		return
+	if not _button_has_icon(main.dash_button) or not _button_has_icon(main.skill_buttons[0]):
+		push_error("Dash and skill buttons should include temporary icon UI.")
+		quit(1)
+		return
 
 	var touch := InputEventScreenTouch.new()
 	touch.index = 1
@@ -76,6 +80,10 @@ func _run() -> void:
 		push_error("Skill button did not grow after gaining a skill: %s" % [main.hero_skill_tags])
 		quit(1)
 		return
+	if not _button_has_icon(main.skill_buttons[1]):
+		push_error("New skill button should include temporary icon UI.")
+		quit(1)
+		return
 	var effects_before: int = main.effects.size()
 	main.use_skill(1)
 	if main.effects.size() <= effects_before or float(main.hero_skill_cooldowns[main.active_slot][1]) <= 0.0:
@@ -108,3 +116,9 @@ func _cleanup_save() -> void:
 	var save_path := OS.get_environment("RUNEFALL_SAVE_PATH")
 	if FileAccess.file_exists(save_path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+
+func _button_has_icon(button: Button) -> bool:
+	for child in button.get_children():
+		if child is TextureRect and (child as TextureRect).texture != null:
+			return true
+	return false
