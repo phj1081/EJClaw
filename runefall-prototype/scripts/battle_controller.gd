@@ -303,11 +303,15 @@ static func spawn_enemy(main) -> void:
 	var sprite_path := str(frames[0]) if not frames.is_empty() else GameData.enemy_sprite(spec.sprite)
 	var node: Control = main.pixel_art(main.arena, sprite_path, pos, spec.size, spec.color)
 	node.position = pos
+	var hp_bar := create_enemy_hp_bar(main, pos, spec.size, false)
 	main.room_spawned += 1
 	main.enemies.append({
 		"kind": kind,
 		"name": str(spec.name),
 		"node": node,
+		"hp_bar": hp_bar.bar,
+		"hp_fill": hp_bar.fill,
+		"hp_bar_width": hp_bar.width,
 		"pos": pos,
 		"hp": hp,
 		"max_hp": hp,
@@ -332,11 +336,15 @@ static func spawn_boss(main) -> void:
 	var node: Control = main.pixel_art(main.arena, str(frames[0]), pos, Vector2(104, 104), Color("#ff395d"))
 	node.position = pos
 	var title: Label = main.label(main.arena, "균열 장군", pos + Vector2(-18, -30), Vector2(132, 24), 16, Color("#ffd24a"), HORIZONTAL_ALIGNMENT_CENTER)
+	var hp_bar := create_enemy_hp_bar(main, pos, Vector2(104, 104), true)
 	main.enemies.append({
 		"kind": "boss",
 		"name": "균열 장군",
 		"node": node,
 		"label": title,
+		"hp_bar": hp_bar.bar,
+		"hp_fill": hp_bar.fill,
+		"hp_bar_width": hp_bar.width,
 		"pos": pos,
 		"hp": float(BalanceTable.BOSS.hp),
 		"max_hp": float(BalanceTable.BOSS.hp),
@@ -423,6 +431,7 @@ static func update_enemies(main, delta: float) -> void:
 		update_enemy_animation(main, enemy, delta)
 		if enemy.has("label") and is_instance_valid(enemy.label):
 			enemy.label.position = enemy.pos + Vector2(-18, -30)
+		update_enemy_hp_bar(enemy)
 
 static func update_enemy_animation(main, enemy: Dictionary, delta: float) -> void:
 	var frames: Array = enemy.get("frames", [])
@@ -434,6 +443,33 @@ static func update_enemy_animation(main, enemy: Dictionary, delta: float) -> voi
 		return
 	enemy.frame_index = frame_index
 	(enemy.node as TextureRect).texture = main.texture_from_path(str(frames[frame_index]))
+
+static func create_enemy_hp_bar(main, pos: Vector2, body_size: Vector2, is_boss: bool) -> Dictionary:
+	var bar_width := 112.0 if is_boss else clampf(body_size.x + 10.0, 52.0, 84.0)
+	var bar_height := 8.0 if is_boss else 6.0
+	var bar := ColorRect.new()
+	bar.size = Vector2(bar_width, bar_height)
+	bar.color = Color("#101725dd")
+	main.arena.add_child(bar)
+	var fill := ColorRect.new()
+	fill.position = Vector2(1, 1)
+	fill.size = Vector2(bar_width - 2.0, bar_height - 2.0)
+	fill.color = Color("#ff395d") if is_boss else Color("#72f0a8")
+	bar.add_child(fill)
+	var enemy := {"pos": pos, "hp": 1.0, "max_hp": 1.0, "hp_bar": bar, "hp_fill": fill, "hp_bar_width": bar_width}
+	update_enemy_hp_bar(enemy)
+	return {"bar": bar, "fill": fill, "width": bar_width}
+
+static func update_enemy_hp_bar(enemy: Dictionary) -> void:
+	if not enemy.has("hp_bar") or not is_instance_valid(enemy.hp_bar):
+		return
+	var width: float = float(enemy.get("hp_bar_width", 58.0))
+	var bar: ColorRect = enemy.hp_bar
+	bar.position = Vector2(enemy.pos.x + 20.0 - width * 0.5, enemy.pos.y - 12.0)
+	if not enemy.has("hp_fill") or not is_instance_valid(enemy.hp_fill):
+		return
+	var ratio := clampf(float(enemy.hp) / maxf(1.0, float(enemy.max_hp)), 0.0, 1.0)
+	(enemy.hp_fill as ColorRect).size.x = maxf(0.0, (width - 2.0) * ratio)
 
 static func update_party_ai_positions(main, delta: float) -> void:
 	for i in range(4):
@@ -1012,6 +1048,7 @@ static func damage_enemy(main, index: int, damage: float) -> void:
 	if index < 0 or index >= main.enemies.size():
 		return
 	main.enemies[index].hp -= damage
+	update_enemy_hp_bar(main.enemies[index])
 	if damage > 0.0:
 		main.play_sfx("hit", -20.0, 0.08)
 		create_floating_text(main, "-%d" % maxi(1, roundi(damage)), main.enemies[index].pos + Vector2(-54, -34), Color("#ffe082"), 21)
@@ -1022,6 +1059,8 @@ static func damage_enemy(main, index: int, damage: float) -> void:
 		create_area_effect(main, defeated.pos + Vector2(22, 20), 74.0, 0.0, Color("#d9f06a"), 0.20, false, {"effect": "arcane"})
 	if defeated.has("label") and is_instance_valid(defeated.label):
 		defeated.label.queue_free()
+	if defeated.has("hp_bar") and is_instance_valid(defeated.hp_bar):
+		defeated.hp_bar.queue_free()
 	if is_instance_valid(defeated.node):
 		defeated.node.queue_free()
 	if defeated.is_boss:

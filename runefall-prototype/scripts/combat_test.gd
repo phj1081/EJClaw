@@ -73,6 +73,11 @@ func _run() -> void:
 		push_error("Wave 1 should spawn melee zombie, got: %s" % [main.enemies])
 		quit(1)
 		return
+	if not main.enemies[0].has("hp_bar") or not is_instance_valid(main.enemies[0].hp_bar) or not is_instance_valid(main.enemies[0].hp_fill):
+		push_error("Spawned enemy should include an HP bar.")
+		quit(1)
+		return
+	var fill_before: float = main.enemies[0].hp_fill.size.x
 	var spawned_frames: Array = main.enemies[0].get("frames", [])
 	if spawned_frames.size() != 8 or not str(spawned_frames[0]).contains("topdown-monsters-free"):
 		push_error("Spawned enemy is not using attached RAR monster animation frames: %s" % [spawned_frames])
@@ -90,6 +95,10 @@ func _run() -> void:
 	BattleController.damage_enemy(main, 0, 15.0)
 	if main.floating_texts.is_empty():
 		push_error("Enemy damage should create floating combat text.")
+		quit(1)
+		return
+	if main.enemies[0].hp_fill.size.x >= fill_before:
+		push_error("Enemy HP bar fill did not shrink after damage.")
 		quit(1)
 		return
 	BattleController.update_floating_texts(main, 1.0)
@@ -128,6 +137,10 @@ func _run() -> void:
 	BattleController.process_room_spawns(main)
 	if not main.boss_spawned or not main.boss_alive:
 		push_error("Boss did not spawn in the final dungeon room.")
+		quit(1)
+		return
+	if not main.enemies[0].has("hp_bar") or not is_instance_valid(main.enemies[0].hp_bar):
+		push_error("Boss should include an HP bar.")
 		quit(1)
 		return
 
