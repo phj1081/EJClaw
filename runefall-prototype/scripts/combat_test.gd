@@ -86,6 +86,17 @@ func _run() -> void:
 		push_error("Attached monster animation did not advance frames.")
 		quit(1)
 		return
+	main.floating_texts.clear()
+	BattleController.damage_enemy(main, 0, 15.0)
+	if main.floating_texts.is_empty():
+		push_error("Enemy damage should create floating combat text.")
+		quit(1)
+		return
+	BattleController.update_floating_texts(main, 1.0)
+	if not main.floating_texts.is_empty():
+		push_error("Floating combat text did not expire.")
+		quit(1)
+		return
 
 	main.enemies.clear()
 	main.room_spawned = main.room_quota
@@ -93,6 +104,10 @@ func _run() -> void:
 	BattleController.process_room_clear(main)
 	if not main.door_open:
 		push_error("Room clear did not open the dungeon door.")
+		quit(1)
+		return
+	if main.floating_texts.is_empty():
+		push_error("Room clear should create a floating status banner.")
 		quit(1)
 		return
 

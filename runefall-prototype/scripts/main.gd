@@ -43,6 +43,7 @@ var hero_pos: Array[Vector2] = []
 var enemies: Array[Dictionary] = []
 var projectiles: Array[Dictionary] = []
 var effects: Array[Dictionary] = []
+var floating_texts: Array[Dictionary] = []
 var battle_time := 0.0
 var wave := 1
 var dungeon_room_index := 0
@@ -140,6 +141,7 @@ func clear_screen() -> void:
 	enemies.clear()
 	projectiles.clear()
 	effects.clear()
+	floating_texts.clear()
 	dungeon_room_index = 0
 	room_spawned = 0
 	room_quota = 0

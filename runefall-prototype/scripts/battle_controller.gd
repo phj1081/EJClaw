@@ -211,6 +211,7 @@ static func update(main, delta: float) -> void:
 	update_enemies(main, delta)
 	update_projectiles(main, delta)
 	update_effects(main, delta)
+	update_floating_texts(main, delta)
 	process_room_clear(main)
 
 	main.attack_timer -= delta
@@ -267,6 +268,7 @@ static func open_room_door(main) -> void:
 	if main.door_node and is_instance_valid(main.door_node):
 		(main.door_node as ColorRect).color = Color("#35d07f")
 	main.play_sfx("ui_confirm", -8.0, 0.0)
+	create_floating_text(main, "방 클리어", Vector2(760, 238), Color("#ffd24a"), 34, Vector2(0, -18), 1.25)
 	main.show_message("방 클리어 - 오른쪽 문으로 이동")
 
 static func advance_room(main) -> void:
@@ -282,6 +284,7 @@ static func advance_room(main) -> void:
 	main.enemies.clear()
 	main.projectiles.clear()
 	main.effects.clear()
+	main.floating_texts.clear()
 	for child in main.arena.get_children():
 		child.queue_free()
 	main.hero_pos.clear()
@@ -925,6 +928,38 @@ static func update_effects(main, delta: float) -> void:
 				main.effects[i].node.queue_free()
 			main.effects.remove_at(i)
 
+static func create_floating_text(main, text: String, pos: Vector2, color: Color, font_size: int = 22, velocity: Vector2 = Vector2(0, -34), life: float = 0.72) -> void:
+	if main.arena == null or not is_instance_valid(main.arena):
+		return
+	var label := Label.new()
+	label.text = text
+	label.position = pos
+	label.size = Vector2(180, 42)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_color_override("font_color", color)
+	label.add_theme_color_override("font_shadow_color", Color("#101725dd"))
+	label.add_theme_constant_override("shadow_offset_x", 2)
+	label.add_theme_constant_override("shadow_offset_y", 2)
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	main.arena.add_child(label)
+	main.floating_texts.append({"node": label, "life": life, "duration": life, "velocity": velocity})
+
+static func update_floating_texts(main, delta: float) -> void:
+	for i in range(main.floating_texts.size() - 1, -1, -1):
+		var item: Dictionary = main.floating_texts[i]
+		item.life = float(item.life) - delta
+		if is_instance_valid(item.node):
+			item.node.position += item.velocity * delta
+			var duration: float = maxf(0.01, float(item.duration))
+			var alpha := clampf(float(item.life) / duration, 0.0, 1.0)
+			item.node.modulate = Color(1.0, 1.0, 1.0, alpha)
+		if float(item.life) <= 0.0:
+			if is_instance_valid(item.node):
+				item.node.queue_free()
+			main.floating_texts.remove_at(i)
+
 static func create_rail_attack(main, origin: Vector2, target: Vector2, damage: float, color: Color) -> void:
 	var dir := (target - origin).normalized()
 	var center := origin + dir * 210.0
@@ -979,6 +1014,7 @@ static func damage_enemy(main, index: int, damage: float) -> void:
 	main.enemies[index].hp -= damage
 	if damage > 0.0:
 		main.play_sfx("hit", -20.0, 0.08)
+		create_floating_text(main, "-%d" % maxi(1, roundi(damage)), main.enemies[index].pos + Vector2(-54, -34), Color("#ffe082"), 21)
 	if main.enemies[index].hp > 0.0:
 		return
 	var defeated: Dictionary = main.enemies[index]
@@ -991,6 +1027,7 @@ static func damage_enemy(main, index: int, damage: float) -> void:
 	if defeated.is_boss:
 		main.boss_alive = false
 		main.play_sfx("victory", -6.0, 0.0)
+	create_floating_text(main, "+%d XP" % roundi(float(defeated.xp)), defeated.pos + Vector2(-58, -64), Color("#72f0a8"), 18, Vector2(0, -26), 0.82)
 	distribute_xp(main, float(defeated.xp))
 	main.enemies.remove_at(index)
 
@@ -998,6 +1035,8 @@ static func damage_hero(main, slot: int, damage: float) -> void:
 	if main.invuln_timer > 0.0 and slot == main.active_slot:
 		return
 	main.hero_hp[slot] = maxf(0.0, main.hero_hp[slot] - damage)
+	if damage >= 4.0:
+		create_floating_text(main, "-%d" % maxi(1, roundi(damage)), main.hero_pos[slot] + Vector2(-48, -42), Color("#ff6b6b"), 20)
 	if slot == main.active_slot:
 		var hero: Dictionary = GameData.hero(main.party_indices[slot])
 		var hp_ratio: float = main.hero_hp[slot] / float(hero.hp)
