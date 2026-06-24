@@ -10,6 +10,7 @@ import {
   resolveLeaseServiceId,
   type EffectiveChannelLease,
 } from './service-routing.js';
+import { resolveRoleServiceShadow } from './role-service-shadow.js';
 import {
   resolveAgentTypeForRole,
   resolveRoleAgentPlan,
@@ -412,8 +413,8 @@ export function resolveExecutionTarget(args: {
     (args.forcedRole === 'arbiter' && args.lease.arbiter_agent_type),
   );
   const activeRole = canHonorForcedRole ? args.forcedRole! : inferredRole;
-  const effectiveServiceId = resolveLeaseServiceId(args.lease, activeRole);
-  if (!effectiveServiceId) {
+  const configuredServiceId = resolveLeaseServiceId(args.lease, activeRole);
+  if (!configuredServiceId) {
     throw new Error(`Missing runtime service id for ${activeRole} lease`);
   }
 
@@ -431,6 +432,11 @@ export function resolveExecutionTarget(args: {
     activeRole,
   );
   const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
+  const effectiveServiceId =
+    args.forcedAgentType
+      ? (resolveRoleServiceShadow(activeRole, effectiveAgentType) ??
+        configuredServiceId)
+      : configuredServiceId;
 
   return {
     inferredRole,

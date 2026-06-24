@@ -372,6 +372,31 @@ describe('message-runtime-rules', () => {
     expect(resolution.effectiveServiceId).toBe('codex-review');
   });
 
+  it('routes a forced codex reviewer fallback through the codex-review service shadow', () => {
+    const resolution = resolveExecutionTarget({
+      lease: {
+        ...baseLease,
+        owner_agent_type: 'codex',
+        owner_service_id: 'codex-main',
+        reviewer_agent_type: 'claude-code',
+        reviewer_service_id: 'claude',
+      },
+      pairedTaskStatus: 'in_review',
+      groupFolder: 'group-1',
+      groupAgentType: 'codex',
+      forcedRole: 'reviewer',
+      forcedAgentType: 'codex',
+    });
+
+    expect(resolution).toMatchObject({
+      activeRole: 'reviewer',
+      configuredAgentType: 'claude-code',
+      effectiveAgentType: 'codex',
+      reviewerServiceId: 'claude',
+      effectiveServiceId: 'codex-review',
+    });
+  });
+
   it('resolves merge_ready execution target back to the owner/finalize path', () => {
     const resolution = resolveExecutionTarget({
       lease: baseLease,
@@ -459,7 +484,7 @@ describe('message-runtime-rules', () => {
     );
   });
 
-  it('applies forced agent type overrides without changing the configured role target', () => {
+  it('applies forced agent type overrides to the matching service shadow', () => {
     const resolution = resolveExecutionTarget({
       lease: baseLease,
       pairedTaskStatus: 'review_ready',
@@ -472,8 +497,9 @@ describe('message-runtime-rules', () => {
       activeRole: 'reviewer',
       configuredAgentType: 'claude-code',
       effectiveAgentType: 'codex',
+      effectiveServiceId: 'codex-review',
     });
-    expect(resolution.effectiveServiceId).toBe(resolution.reviewerServiceId);
+    expect(resolution.reviewerServiceId).toBe('svc-reviewer');
   });
 
   it('always gives arbiter a dedicated session folder', () => {
