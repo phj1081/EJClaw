@@ -432,11 +432,10 @@ export function resolveExecutionTarget(args: {
     activeRole,
   );
   const effectiveAgentType = args.forcedAgentType ?? configuredAgentType;
-  const effectiveServiceId =
-    args.forcedAgentType
-      ? (resolveRoleServiceShadow(activeRole, effectiveAgentType) ??
-        configuredServiceId)
-      : configuredServiceId;
+  const effectiveServiceId = args.forcedAgentType
+    ? (resolveRoleServiceShadow(activeRole, effectiveAgentType) ??
+      configuredServiceId)
+    : configuredServiceId;
 
   return {
     inferredRole,
