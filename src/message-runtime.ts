@@ -24,6 +24,7 @@ export { isDuplicateOfLastBotFinal };
 
 export interface MessageRuntimeDeps {
   assistantName: string;
+  handoffOnly?: boolean;
   idleTimeout: number;
   pollInterval: number;
   timezone: string;
@@ -199,6 +200,10 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
   const startMessageLoop = createStartMessageLoop({
     pollInterval: deps.pollInterval,
     processTick: async () => {
+      if (deps.handoffOnly) {
+        enqueuePendingHandoffs();
+        return;
+      }
       await processMessageLoopTick({
         assistantName: deps.assistantName,
         failureFinalText: FAILURE_FINAL_TEXT,

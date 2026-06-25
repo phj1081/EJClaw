@@ -122,8 +122,12 @@ export async function editFormattedTrackedChannelMessage(
 const channels: Channel[] = [];
 const queue = new GroupQueue();
 const runtimeState = createRuntimeState();
+const HANDOFF_ONLY =
+  process.env.EJCLAW_HANDOFF_ONLY === '1' ||
+  process.env.EJCLAW_HANDOFF_ONLY === 'true';
 const runtime = createMessageRuntime({
   assistantName: ASSISTANT_NAME,
+  handoffOnly: HANDOFF_ONLY,
   idleTimeout: IDLE_TIMEOUT,
   pollInterval: POLL_INTERVAL,
   timezone: TIMEZONE,
@@ -313,6 +317,9 @@ async function main(): Promise<void> {
   const processStartedAtMs = Date.now();
   initDatabase();
   logger.info('Database initialized');
+  if (HANDOFF_ONLY) {
+    logger.info({ serviceId: SERVICE_ID }, 'Starting in handoff-only mode');
+  }
   initTokenRotation();
   initCodexTokenRotation();
   startTokenRefreshLoop();
@@ -376,6 +383,7 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
+      if (HANDOFF_ONLY) return;
       // Sender allowlist drop mode: discard messages from denied senders before storing
       const roomBindings = runtimeState.getRoomBindings();
       if (!msg.is_from_me && !msg.is_bot_message && roomBindings[chatJid]) {
@@ -401,7 +409,10 @@ async function main(): Promise<void> {
       name?: string,
       channel?: string,
       isGroup?: boolean,
-    ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    ) => {
+      if (HANDOFF_ONLY) return;
+      storeChatMetadata(chatJid, timestamp, name, channel, isGroup);
+    },
     roomBindings: runtimeState.getRoomBindings,
   };
 
@@ -440,21 +451,23 @@ async function main(): Promise<void> {
   }
 
   // Start subsystems (independently of connection handler)
-  startSchedulerLoop({
-    roomBindings: runtimeState.getRoomBindings,
-    getSessions: runtimeState.getSessions,
-    queue,
-    onProcess: (groupJid, proc, processName, ipcDir) =>
-      queue.registerProcess(groupJid, proc, processName, ipcDir),
-    sendMessage: (jid, rawText) =>
-      deliverFormattedCanonicalMessage(jid, rawText),
-    sendMessageViaReviewerBot: (jid, rawText) =>
-      deliverFormattedCanonicalMessage(jid, rawText, 'reviewer'),
-    sendTrackedMessage: (jid, rawText) =>
-      sendFormattedTrackedChannelMessage(channels, jid, rawText),
-    editTrackedMessage: (jid, messageId, rawText) =>
-      editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
-  });
+  if (!HANDOFF_ONLY) {
+    startSchedulerLoop({
+      roomBindings: runtimeState.getRoomBindings,
+      getSessions: runtimeState.getSessions,
+      queue,
+      onProcess: (groupJid, proc, processName, ipcDir) =>
+        queue.registerProcess(groupJid, proc, processName, ipcDir),
+      sendMessage: (jid, rawText) =>
+        deliverFormattedCanonicalMessage(jid, rawText),
+      sendMessageViaReviewerBot: (jid, rawText) =>
+        deliverFormattedCanonicalMessage(jid, rawText, 'reviewer'),
+      sendTrackedMessage: (jid, rawText) =>
+        sendFormattedTrackedChannelMessage(channels, jid, rawText),
+      editTrackedMessage: (jid, messageId, rawText) =>
+        editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
+    });
+  }
   startIpcWatcher({
     sendMessage: async (jid, text, senderRole, runId, attachments) => {
       await deliverIpcOutboundMessage(
@@ -526,72 +539,74 @@ async function main(): Promise<void> {
     writeGroupsSnapshot,
   });
   queue.setProcessMessagesFn(runtime.processGroupMessages);
-  queue.enterRecoveryMode();
-  queueInterruptedPairedTurnAttemptRecovery();
-  runtime.recoverPendingMessages();
-  const restartContext = await announceRestartRecovery(processStartedAtMs);
-  const roomBindings = runtimeState.getRoomBindings();
-  for (const candidate of getInterruptedRecoveryCandidates(
-    restartContext,
-    roomBindings,
-  )) {
-    queue.enqueueMessageCheck(
-      candidate.chatJid,
-      resolveGroupIpcPath(candidate.groupFolder),
-    );
-    logger.info(
-      {
-        chatJid: candidate.chatJid,
-        groupFolder: candidate.groupFolder,
-        status: candidate.status,
-        pendingMessages: candidate.pendingMessages,
-        pendingTasks: candidate.pendingTasks,
+  if (!HANDOFF_ONLY) {
+    queue.enterRecoveryMode();
+    queueInterruptedPairedTurnAttemptRecovery();
+    runtime.recoverPendingMessages();
+    const restartContext = await announceRestartRecovery(processStartedAtMs);
+    const roomBindings = runtimeState.getRoomBindings();
+    for (const candidate of getInterruptedRecoveryCandidates(
+      restartContext,
+      roomBindings,
+    )) {
+      queue.enqueueMessageCheck(
+        candidate.chatJid,
+        resolveGroupIpcPath(candidate.groupFolder),
+      );
+      logger.info(
+        {
+          chatJid: candidate.chatJid,
+          groupFolder: candidate.groupFolder,
+          status: candidate.status,
+          pendingMessages: candidate.pendingMessages,
+          pendingTasks: candidate.pendingTasks,
+        },
+        'Queued interrupted group for restart recovery',
+      );
+    }
+    await startUnifiedDashboard({
+      assistantName: ASSISTANT_NAME,
+      serviceId: SERVICE_ID,
+      serviceAgentType: 'claude-code',
+      statusChannelId: STATUS_CHANNEL_ID,
+      statusUpdateInterval: STATUS_UPDATE_INTERVAL,
+      usageUpdateInterval: USAGE_UPDATE_INTERVAL,
+      channels,
+      queue,
+      roomBindings: runtimeState.getRoomBindings,
+      onGroupNameSynced: (jid, name) => {
+        const group = runtimeState.getRoomBindings()[jid];
+        if (group) {
+          group.name = name;
+        }
       },
-      'Queued interrupted group for restart recovery',
-    );
-  }
-  await startUnifiedDashboard({
-    assistantName: ASSISTANT_NAME,
-    serviceId: SERVICE_ID,
-    serviceAgentType: 'claude-code',
-    statusChannelId: STATUS_CHANNEL_ID,
-    statusUpdateInterval: STATUS_UPDATE_INTERVAL,
-    usageUpdateInterval: USAGE_UPDATE_INTERVAL,
-    channels,
-    queue,
-    roomBindings: runtimeState.getRoomBindings,
-    onGroupNameSynced: (jid, name) => {
-      const group = runtimeState.getRoomBindings()[jid];
-      if (group) {
-        group.name = name;
-      }
-    },
-    purgeOnStart: true,
-  });
-  webDashboardServer = startWebDashboardServer({
-    ...WEB_DASHBOARD,
-    getRoomBindings: runtimeState.getRoomBindings,
-    enqueueMessageCheck: (chatJid, groupFolder) =>
-      queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder)),
-    nudgeScheduler: nudgeSchedulerLoop,
-  });
+      purgeOnStart: true,
+    });
+    webDashboardServer = startWebDashboardServer({
+      ...WEB_DASHBOARD,
+      getRoomBindings: runtimeState.getRoomBindings,
+      enqueueMessageCheck: (chatJid, groupFolder) =>
+        queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder)),
+      nudgeScheduler: nudgeSchedulerLoop,
+    });
 
-  leaseRecoveryTimer = setInterval(() => {
-    const failover = getGlobalFailoverInfo();
-    if (!failover.active) return;
-    if (!hasAvailableClaudeToken()) return;
-    const activatedMs = failover.activatedAt
-      ? new Date(failover.activatedAt).getTime()
-      : NaN;
-    if (Number.isNaN(activatedMs)) return;
-    const elapsed = Date.now() - activatedMs;
-    if (elapsed < FAILOVER_MIN_DURATION_MS) return;
-    clearGlobalFailover();
-    logger.info(
-      { elapsedMin: Math.round(elapsed / 60_000) },
-      'Claude token available and hold period elapsed, global failover cleared',
-    );
-  }, 5_000);
+    leaseRecoveryTimer = setInterval(() => {
+      const failover = getGlobalFailoverInfo();
+      if (!failover.active) return;
+      if (!hasAvailableClaudeToken()) return;
+      const activatedMs = failover.activatedAt
+        ? new Date(failover.activatedAt).getTime()
+        : NaN;
+      if (Number.isNaN(activatedMs)) return;
+      const elapsed = Date.now() - activatedMs;
+      if (elapsed < FAILOVER_MIN_DURATION_MS) return;
+      clearGlobalFailover();
+      logger.info(
+        { elapsedMin: Math.round(elapsed / 60_000) },
+        'Claude token available and hold period elapsed, global failover cleared',
+      );
+    }, 5_000);
+  }
   runtime.startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
