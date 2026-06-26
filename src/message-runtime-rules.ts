@@ -207,6 +207,13 @@ export function resolveNextTurnAction(args: {
         ? { kind: 'none' }
         : { kind: 'finalize-owner-turn' };
     case 'active':
+      if (
+        args.lastTurnOutputRole === 'arbiter' &&
+        (args.lastTurnOutputVerdict === 'escalate' ||
+          args.lastTurnOutputVerdict === 'needs_context')
+      ) {
+        return { kind: 'none' };
+      }
       if ((args.ownerFailureCount ?? 0) > 0) {
         return { kind: 'owner-follow-up' };
       }

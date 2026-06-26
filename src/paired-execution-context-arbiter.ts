@@ -134,15 +134,24 @@ export function handleArbiterCompletion(args: {
       transitionPairedTaskStatus({
         taskId,
         currentStatus: 'in_arbitration',
-        nextStatus: 'completed',
+        nextStatus: 'active',
         expectedUpdatedAt: task.updated_at,
         updatedAt: now,
         patch: {
+          round_trip_count: ARBITER_RESOLUTION_ROUND_TRIP_COUNT,
+          owner_failure_count: 0,
+          owner_step_done_streak: 0,
+          finalize_step_done_count: 0,
+          empty_step_done_streak: 0,
           arbiter_verdict: 'escalate',
-          completion_reason: 'arbiter_escalated',
+          arbiter_requested_at: null,
+          completion_reason: null,
         },
       });
-      logger.info({ taskId }, 'Arbiter escalated to user — task completed');
+      logger.info(
+        { taskId },
+        'Arbiter escalated to user — task left active awaiting human input',
+      );
       return;
     default:
       transitionPairedTaskStatus({

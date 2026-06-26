@@ -116,6 +116,21 @@ describe('message-runtime-rules', () => {
     expect(
       matchesExpectedPairedFollowUpIntent({
         taskStatus: 'active',
+        lastTurnOutputRole: 'arbiter',
+        lastTurnOutputVerdict: 'escalate',
+        intentKind: 'owner-follow-up',
+      }),
+    ).toBe(false);
+    expect(
+      resolveNextTurnAction({
+        taskStatus: 'active',
+        lastTurnOutputRole: 'arbiter',
+        lastTurnOutputVerdict: 'escalate',
+      }),
+    ).toEqual({ kind: 'none' });
+    expect(
+      matchesExpectedPairedFollowUpIntent({
+        taskStatus: 'active',
         lastTurnOutputRole: 'owner',
         lastTurnOutputVerdict: 'step_done',
         intentKind: 'owner-follow-up',

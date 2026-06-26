@@ -15,6 +15,9 @@ describe('paired verdict parser', () => {
       ),
     ).toBe('done_with_concerns');
     expect(parseVisibleVerdict('BLOCKED\nextra detail')).toBe('blocked');
+    expect(parseVisibleVerdict('ESCALATE\nuser decision needed')).toBe(
+      'escalate',
+    );
     expect(parseVisibleVerdict('random prose')).toBe('continue');
   });
 

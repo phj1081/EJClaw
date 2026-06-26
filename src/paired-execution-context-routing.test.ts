@@ -169,6 +169,42 @@ describe('paired execution routing loop guards', () => {
     );
   });
 
+  it('keeps arbiter ESCALATE open so the next human approval keeps task context', () => {
+    vi.mocked(db.getPairedTaskById).mockReturnValue(
+      buildPairedTask({
+        status: 'in_arbitration',
+        round_trip_count: config.ARBITER_DEADLOCK_THRESHOLD,
+        owner_failure_count: 1,
+        owner_step_done_streak: 3,
+        finalize_step_done_count: 1,
+        empty_step_done_streak: 4,
+        arbiter_requested_at: '2026-03-28T00:00:01.000Z',
+      }),
+    );
+
+    completePairedExecutionContext({
+      taskId: 'task-1',
+      role: 'arbiter',
+      status: 'succeeded',
+      summary: 'ESCALATE\nUser should approve the prod release.',
+    });
+
+    expect(db.updatePairedTask).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        status: 'active',
+        round_trip_count: 0,
+        owner_failure_count: 0,
+        owner_step_done_streak: 0,
+        finalize_step_done_count: 0,
+        empty_step_done_streak: 0,
+        arbiter_verdict: 'escalate',
+        arbiter_requested_at: null,
+        completion_reason: null,
+      }),
+    );
+  });
+
   it('escalates unknown arbiter verdicts instead of treating them as approval', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
       buildPairedTask({

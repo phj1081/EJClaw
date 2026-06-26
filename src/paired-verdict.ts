@@ -7,6 +7,7 @@ export type VisibleVerdict =
   | 'done_with_concerns'
   | 'blocked'
   | 'needs_context'
+  | 'escalate'
   | 'continue';
 
 export type ArbiterVerdictResult = ArbiterVerdict | 'unknown';
@@ -43,6 +44,7 @@ function stripInternalBlocks(text: string): string {
 function parseVisibleVerdictLine(line: string): VisibleVerdict | null {
   if (/^\*{0,2}BLOCKED(?:\*{0,2})?\b/i.test(line)) return 'blocked';
   if (/^\*{0,2}NEEDS_CONTEXT(?:\*{0,2})?\b/i.test(line)) return 'needs_context';
+  if (/^\*{0,2}ESCALATE(?:\*{0,2})?\b/i.test(line)) return 'escalate';
   if (/^\*{0,2}STEP_DONE(?:\*{0,2})?\b/i.test(line)) return 'step_done';
   if (/^\*{0,2}TASK_DONE(?:\*{0,2})?\b/i.test(line)) return 'task_done';
   if (/^\*{0,2}DONE_WITH_CONCERNS(?:\*{0,2})?\b/i.test(line))
