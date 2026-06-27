@@ -42,6 +42,21 @@ describe('GroupQueue', () => {
 
   // --- Single group at a time ---
 
+  it('holds message checks until the process handler is configured', async () => {
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+
+    const processMessages = vi.fn(async () => true);
+    queue.setProcessMessagesFn(processMessages);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(processMessages).toHaveBeenCalledTimes(1);
+    expect(processMessages).toHaveBeenCalledWith(
+      'group1@g.us',
+      expect.objectContaining({ reason: 'drain' }),
+    );
+  });
+
   it('only runs one agent per group at a time', async () => {
     let concurrentCount = 0;
     let maxConcurrent = 0;

@@ -10,12 +10,15 @@ import {
   markPairedTurnRunning,
   updatePairedTaskIfUnchanged,
 } from './db.js';
-import { claimPairedTurnExecution } from './paired-follow-up-scheduler.js';
+import {
+  claimPairedTurnExecution,
+  resetPairedFollowUpScheduleState,
+  schedulePairedFollowUpOnce,
+} from './paired-follow-up-scheduler.js';
 import {
   runPendingPairedTurnIfNeeded,
   runQueuedGroupTurn,
 } from './message-runtime-queue.js';
-import { resetPairedFollowUpScheduleState } from './paired-follow-up-scheduler.js';
 import { buildPairedTurnIdentity } from './paired-turn-identity.js';
 import type { Channel, PairedTask, RegisteredGroup } from './types.js';
 
@@ -122,6 +125,76 @@ describe('message-runtime-queue', () => {
 
     expect(outcome).toBe(true);
     expect(executeTurn).not.toHaveBeenCalled();
+  });
+
+  it('runs a reserved owner follow-up after a silent owner failure even when the previous arbiter escalated', async () => {
+    const task = makeTask({
+      id: 'task-owner-follow-up-after-escalate',
+      status: 'active',
+      updated_at: '2026-03-30T00:01:00.000Z',
+      owner_failure_count: 1,
+      arbiter_agent_type: 'codex',
+      arbiter_verdict: 'escalate',
+    });
+    createPairedTask(task);
+    insertPairedTurnOutput(
+      task.id,
+      1,
+      'arbiter',
+      'ESCALATE\n사용자 결정 대기',
+      '2026-03-30T00:00:30.000Z',
+    );
+    expect(
+      schedulePairedFollowUpOnce({
+        chatJid: task.chat_jid,
+        runId: 'run-owner-failed-before-recovery',
+        task,
+        intentKind: 'owner-follow-up',
+        enqueue: vi.fn(),
+      }),
+    ).toBe(true);
+
+    const executeTurn = vi.fn(async () => ({
+      outputStatus: 'success' as const,
+      deliverySucceeded: true,
+      visiblePhase: null,
+    }));
+    const freshTask = getPairedTaskById(task.id);
+    expect(freshTask).toBeDefined();
+    const outcome = await runPendingPairedTurnIfNeeded({
+      chatJid: task.chat_jid,
+      group: makeGroup(),
+      runId: 'run-owner-recovery-claim',
+      log: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
+      timezone: 'UTC',
+      task: freshTask,
+      rawMissedMessages: [],
+      saveState: vi.fn(),
+      lastAgentTimestamps: {},
+      executeTurn,
+      getFixedRoleChannelName: () => 'discord-review',
+      roleToChannel: {
+        owner: makeChannel(),
+        reviewer: makeChannel(),
+        arbiter: makeChannel(),
+      },
+      labelPairedSenders: (_chatJid, messages) => messages,
+      mode: 'idle',
+    });
+
+    expect(outcome).toBe(true);
+    expect(executeTurn).toHaveBeenCalledTimes(1);
+    expect(executeTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryRole: 'owner',
+        forcedRole: 'owner',
+        pairedTurnIdentity: expect.objectContaining({
+          taskId: task.id,
+          intentKind: 'owner-follow-up',
+          role: 'owner',
+        }),
+      }),
+    );
   });
 
   it('skips a queued owner turn while a reviewer execution lease is still active after a fresh refetch', async () => {

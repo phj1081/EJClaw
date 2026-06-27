@@ -131,19 +131,26 @@ export function buildPendingPairedTurn(args: {
   const taskStatus = task.status;
   const turnOutputs = getPairedTurnOutputs(task.id);
   const lastTurnOutput = turnOutputs[turnOutputs.length - 1];
+  const storedLastTurnOutputVerdict = resolveStoredVisibleVerdict({
+    verdict: lastTurnOutput?.verdict ?? null,
+    outputText: lastTurnOutput?.output_text ?? null,
+  });
   const nextTurnAction = resolveNextTurnAction({
     taskStatus,
     lastTurnOutputRole: lastTurnOutput?.role ?? null,
-    lastTurnOutputVerdict: resolveStoredVisibleVerdict({
-      verdict: lastTurnOutput?.verdict ?? null,
-      outputText: lastTurnOutput?.output_text ?? null,
-    }),
+    lastTurnOutputVerdict: storedLastTurnOutputVerdict,
     ownerFailureCount: task.owner_failure_count,
   });
+  const effectiveNextTurnAction =
+    nextTurnAction.kind === 'none' &&
+    taskStatus === 'active' &&
+    (task.owner_failure_count ?? 0) > 0
+      ? ({ kind: 'owner-follow-up' } as const)
+      : nextTurnAction;
   const taskContextMessages = getTaskContextMessages(chatJid, task);
   const lastHumanMessage = getLastHumanMessageContent(chatJid);
 
-  if (nextTurnAction.kind === 'reviewer-turn') {
+  if (effectiveNextTurnAction.kind === 'reviewer-turn') {
     return {
       prompt: buildReviewerPendingPrompt({
         chatJid,
@@ -165,7 +172,7 @@ export function buildPendingPairedTurn(args: {
     };
   }
 
-  if (nextTurnAction.kind === 'arbiter-turn') {
+  if (effectiveNextTurnAction.kind === 'arbiter-turn') {
     return {
       prompt: buildArbiterPromptForTask({
         task,
@@ -185,7 +192,7 @@ export function buildPendingPairedTurn(args: {
     };
   }
 
-  if (nextTurnAction.kind === 'finalize-owner-turn') {
+  if (effectiveNextTurnAction.kind === 'finalize-owner-turn') {
     return {
       prompt: buildFinalizePendingPrompt({ turnOutputs }),
       channel: resolveChannel(taskStatus),
@@ -197,7 +204,7 @@ export function buildPendingPairedTurn(args: {
     };
   }
 
-  if (nextTurnAction.kind === 'owner-follow-up') {
+  if (effectiveNextTurnAction.kind === 'owner-follow-up') {
     return {
       prompt: buildOwnerPendingPrompt({
         chatJid,

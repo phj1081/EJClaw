@@ -65,6 +65,20 @@ export type PairedTaskUpdates = Partial<
 export const PAIRED_TASK_EXECUTION_LEASE_TTL_MS = 10 * 60_000;
 const CURRENT_SERVICE_ID = normalizeServiceId(SERVICE_ID);
 
+export interface RecoverablePendingPairedTurnReservation {
+  chat_jid: string;
+  task_id: string;
+  group_folder: string;
+  task_status: PairedTaskStatus;
+  live_task_status: PairedTaskStatus;
+  round_trip_count: number;
+  task_updated_at: string;
+  intent_kind: PairedTurnReservationIntentKind;
+  turn_role: 'owner' | 'reviewer' | 'arbiter';
+  scheduled_run_id: string;
+  updated_at: string;
+}
+
 function computeExecutionLeaseExpiry(now: string): string {
   return new Date(
     new Date(now).getTime() + PAIRED_TASK_EXECUTION_LEASE_TTL_MS,
@@ -554,6 +568,73 @@ export function reservePairedTurnReservationInDatabase(
   }
 
   return false;
+}
+
+export function clearStalePendingPairedTurnReservationsInDatabase(
+  database: Database,
+): number {
+  return database
+    .prepare(
+      `
+        DELETE FROM paired_turn_reservations
+         WHERE status = 'pending'
+           AND task_id IN (
+             SELECT r.task_id
+               FROM paired_turn_reservations r
+               LEFT JOIN paired_tasks t ON t.id = r.task_id
+              WHERE r.status = 'pending'
+                AND (
+                  t.id IS NULL
+                  OR t.status IN ('completed', 'cancelled', 'failed')
+                )
+           )
+      `,
+    )
+    .run().changes;
+}
+
+export function getRecoverablePendingPairedTurnReservationsFromDatabase(
+  database: Database,
+): RecoverablePendingPairedTurnReservation[] {
+  return database
+    .prepare(
+      `
+        SELECT
+          r.chat_jid,
+          r.task_id,
+          t.group_folder,
+          r.task_status,
+          t.status AS live_task_status,
+          r.round_trip_count,
+          r.task_updated_at,
+          r.intent_kind,
+          r.turn_role,
+          r.scheduled_run_id,
+          r.updated_at
+        FROM paired_turn_reservations r
+        JOIN paired_tasks t ON t.id = r.task_id
+        LEFT JOIN paired_task_execution_leases l ON l.task_id = r.task_id
+       WHERE r.status = 'pending'
+         AND l.task_id IS NULL
+         AND t.status NOT IN ('completed', 'cancelled', 'failed')
+         AND r.task_status = t.status
+         AND r.task_updated_at = t.updated_at
+         AND (
+           (t.status = 'active' AND r.intent_kind = 'owner-follow-up')
+           OR (t.status IN ('review_ready', 'in_review') AND r.intent_kind = 'reviewer-turn')
+           OR (t.status IN ('arbiter_requested', 'in_arbitration') AND r.intent_kind = 'arbiter-turn')
+           OR (t.status = 'merge_ready' AND r.intent_kind = 'finalize-owner-turn')
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM paired_turn_attempts a
+            WHERE a.turn_id = r.turn_id
+              AND a.state IN ('running', 'delegated')
+         )
+       ORDER BY r.updated_at ASC
+      `,
+    )
+    .all() as RecoverablePendingPairedTurnReservation[];
 }
 
 class PairedTurnReservationClaimError extends Error {}

@@ -22,6 +22,7 @@ import {
   claimPairedTurnReservationInDatabase,
   clearPairedTaskExecutionLeasesInDatabase,
   clearPairedTurnReservationsInDatabase,
+  clearStalePendingPairedTurnReservationsInDatabase,
   type PairedTaskUpdates,
   createPairedTaskInDatabase,
   getAllOpenPairedTasksFromDatabase,
@@ -32,6 +33,7 @@ import {
   getPairedProjectFromDatabase,
   getPairedTaskByIdFromDatabase,
   getPairedWorkspaceFromDatabase,
+  getRecoverablePendingPairedTurnReservationsFromDatabase,
   listPairedWorkspacesForTaskFromDatabase,
   refreshPairedTaskExecutionLeaseInDatabase,
   releasePairedTaskExecutionLeaseInDatabase,
@@ -152,6 +154,16 @@ export function reservePairedTurnReservation(args: {
   runId: string;
 }): boolean {
   return reservePairedTurnReservationInDatabase(requireDatabase(), args);
+}
+
+export function clearStalePendingPairedTurnReservations(): number {
+  return clearStalePendingPairedTurnReservationsInDatabase(requireDatabase());
+}
+
+export function getRecoverablePendingPairedTurnReservations() {
+  return getRecoverablePendingPairedTurnReservationsFromDatabase(
+    requireDatabase(),
+  );
 }
 
 export function claimPairedTurnReservation(args: {

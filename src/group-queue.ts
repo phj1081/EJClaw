@@ -71,6 +71,7 @@ export class GroupQueue {
     fn: (groupJid: string, context: GroupRunContext) => Promise<boolean>,
   ): void {
     this.processMessagesFn = fn;
+    this.drainWaiting();
   }
 
   /** Limit concurrency after restart to avoid API rate-limit storms. */
@@ -119,6 +120,18 @@ export class GroupQueue {
       logger.debug(
         { groupJid, runPhase: state.runPhase },
         'Agent active, message queued',
+      );
+      return;
+    }
+
+    if (!this.processMessagesFn) {
+      state.pendingMessages = true;
+      if (!this.waitingGroups.includes(groupJid)) {
+        this.waitingGroups.push(groupJid);
+      }
+      logger.debug(
+        { groupJid },
+        'Message queued until process message handler is configured',
       );
       return;
     }

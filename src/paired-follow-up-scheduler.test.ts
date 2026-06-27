@@ -22,10 +22,14 @@ import {
   getPairedTurnAttempts,
   getPairedTurnById,
   releasePairedTaskExecutionLease,
+  reservePairedTurnReservation,
+  updatePairedTask,
 } from './db.js';
 import {
   buildPairedFollowUpKey,
   claimPairedTurnExecution,
+  clearStalePendingPairedFollowUpReservations,
+  requeueRecoverablePendingPairedFollowUps,
   resetPairedFollowUpScheduleState,
   schedulePairedFollowUpOnce,
 } from './paired-follow-up-scheduler.js';
@@ -457,6 +461,111 @@ describe('paired follow-up scheduler', () => {
     expect(first).toBe(true);
     expect(second).toBe(true);
     expect(enqueue).toHaveBeenCalledTimes(2);
+  });
+
+  it('requeues an existing pending owner follow-up reservation after queue loss', () => {
+    const recoveryEnqueue = vi.fn();
+    const onRequeued = vi.fn();
+    const task = {
+      id: 'task-owner-pending-requeue',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: CURRENT_SERVICE_ID,
+      reviewer_service_id: OTHER_SERVICE_ID,
+      owner_agent_type: CURRENT_AGENT_TYPE,
+      reviewer_agent_type: OTHER_AGENT_TYPE,
+      arbiter_agent_type: null,
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-11T00:00:00.000Z',
+      status: 'active',
+      round_trip_count: 1,
+      updated_at: '2026-04-11T00:00:00.000Z',
+    } as const;
+    createPairedTask(task as any);
+
+    expect(
+      reservePairedTurnReservation({
+        chatJid: task.chat_jid,
+        taskId: task.id,
+        taskStatus: task.status,
+        roundTripCount: task.round_trip_count,
+        taskUpdatedAt: task.updated_at,
+        intentKind: 'owner-follow-up',
+        runId: 'run-owner-reserved-before-restart',
+      }),
+    ).toBe(true);
+
+    expect(
+      requeueRecoverablePendingPairedFollowUps({
+        enqueue: recoveryEnqueue,
+        onRequeued,
+      }),
+    ).toBe(1);
+    expect(recoveryEnqueue).toHaveBeenCalledWith(
+      task.chat_jid,
+      task.group_folder,
+    );
+    expect(onRequeued).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_id: task.id,
+        chat_jid: task.chat_jid,
+        group_folder: task.group_folder,
+        task_status: 'active',
+        intent_kind: 'owner-follow-up',
+      }),
+    );
+  });
+
+  it('clears stale pending reservations for completed tasks without requeueing them', () => {
+    const enqueue = vi.fn();
+    const task = {
+      id: 'task-completed-stale-reservation',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: CURRENT_SERVICE_ID,
+      reviewer_service_id: OTHER_SERVICE_ID,
+      owner_agent_type: CURRENT_AGENT_TYPE,
+      reviewer_agent_type: OTHER_AGENT_TYPE,
+      arbiter_agent_type: null,
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      review_requested_at: null,
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-04-11T00:00:00.000Z',
+      status: 'active',
+      round_trip_count: 1,
+      updated_at: '2026-04-11T00:00:00.000Z',
+    } as const;
+    createPairedTask(task as any);
+
+    expect(
+      schedulePairedFollowUpOnce({
+        chatJid: task.chat_jid,
+        runId: 'run-owner-stale-before-complete',
+        task,
+        intentKind: 'owner-follow-up',
+        enqueue,
+      }),
+    ).toBe(true);
+    updatePairedTask(task.id, {
+      status: 'completed',
+      completion_reason: 'test-completed',
+      updated_at: '2026-04-11T00:01:00.000Z',
+    });
+
+    expect(clearStalePendingPairedFollowUpReservations()).toBe(1);
+    expect(requeueRecoverablePendingPairedFollowUps({ enqueue: vi.fn() })).toBe(
+      0,
+    );
   });
 
   it('does not create a fresh reviewer handoff identity after a pure claim leaves the semantic task revision unchanged', () => {

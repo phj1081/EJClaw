@@ -47,7 +47,11 @@ import {
 import { getTaskQueueJid, isGitHubCiTask } from './task-watch-status.js';
 import { ScheduledTask } from './types.js';
 import { resolveGroupIpcPath } from './group-folder.js';
-import { schedulePairedFollowUpOnce } from './paired-follow-up-scheduler.js';
+import {
+  clearStalePendingPairedFollowUpReservations,
+  requeueRecoverablePendingPairedFollowUps,
+  schedulePairedFollowUpOnce,
+} from './paired-follow-up-scheduler.js';
 import {
   hasTaskExceededMaxDuration,
   resolveTaskExecutionContext,
@@ -510,6 +514,7 @@ export async function runSchedulerTickOnce(
 ): Promise<void> {
   // Unified service: process all agent types, not just the service default.
   const nowMs = Date.now();
+  reconcileRecoverablePendingPairedTurnReservations(deps);
   reconcileOrphanedPairedReviewReadyTasks(deps);
   const activeTasks = getAllTasks().filter((task) => task.status === 'active');
 
@@ -551,6 +556,44 @@ export async function runSchedulerTickOnce(
       isGitHubCiTask(currentTask)
         ? runGithubCiTask(currentTask, deps)
         : runTask(currentTask, deps),
+    );
+  }
+}
+
+function reconcileRecoverablePendingPairedTurnReservations(
+  deps: SchedulerDependencies,
+): void {
+  const clearedStaleCount = clearStalePendingPairedFollowUpReservations();
+  if (clearedStaleCount > 0) {
+    logger.info(
+      { count: clearedStaleCount },
+      'Cleared stale pending paired turn reservations for closed tasks',
+    );
+  }
+
+  const requeuedCount = requeueRecoverablePendingPairedFollowUps({
+    enqueue: (chatJid, groupFolder) =>
+      deps.queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder)),
+    onRequeued: (reservation) => {
+      logger.info(
+        {
+          taskId: reservation.task_id,
+          chatJid: reservation.chat_jid,
+          groupFolder: reservation.group_folder,
+          status: reservation.task_status,
+          intentKind: reservation.intent_kind,
+          scheduledRunId: reservation.scheduled_run_id,
+          reservationUpdatedAt: reservation.updated_at,
+        },
+        'Re-queued recoverable pending paired turn reservation',
+      );
+    },
+  });
+
+  if (requeuedCount > 0) {
+    logger.info(
+      { count: requeuedCount },
+      'Re-queued recoverable pending paired turn reservations',
     );
   }
 }
