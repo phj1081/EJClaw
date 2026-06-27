@@ -89,9 +89,21 @@ export function evaluateStreamedOutput(
       options.suppressClaudeAuthErrorOutput &&
       isClaudeAuthError(outputText)
     ) {
+      const trigger = classifyRotationTrigger(outputText);
+      const newTrigger =
+        trigger.shouldRetry && !nextState.streamedTriggerReason
+          ? {
+              reason: trigger.reason,
+              retryAfterMs: trigger.retryAfterMs,
+              message: outputText,
+            }
+          : undefined;
+      nextState.streamedTriggerReason =
+        nextState.streamedTriggerReason ?? newTrigger;
       return {
         state: nextState,
         shouldForwardOutput: false,
+        newTrigger,
         suppressedAuthError: true,
       };
     }

@@ -291,6 +291,35 @@ describe('evaluateStreamedOutput', () => {
       expect(result.shouldForwardOutput).toBe(false);
       expect(result.newTrigger).toEqual({ reason: 'auth-expired' });
     });
+    it('keeps suppressed Claude 401 socket failures retryable instead of treating them as output', () => {
+      const message =
+        'Failed to authenticate. API Error: 401 The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()';
+      vi.mocked(isClaudeAuthError).mockReturnValue(true);
+      vi.mocked(classifyRotationTrigger).mockReturnValue({
+        shouldRetry: true,
+        reason: 'network-error',
+      });
+
+      const result = evaluateStreamedOutput(
+        successOutput(message),
+        freshState(),
+        { ...claudeOpts, suppressClaudeAuthErrorOutput: true },
+      );
+
+      expect(result.shouldForwardOutput).toBe(false);
+      expect(result.suppressedAuthError).toBe(true);
+      expect(result.newTrigger).toEqual({
+        reason: 'network-error',
+        retryAfterMs: undefined,
+        message,
+      });
+      expect(result.state.streamedTriggerReason).toEqual({
+        reason: 'network-error',
+        retryAfterMs: undefined,
+        message,
+      });
+      expect(result.state.sawOutput).toBe(false);
+    });
   });
 
   describe('Claude provider failure banner', () => {

@@ -78,6 +78,15 @@ type CodexAttemptOutcome =
       rotationMessage?: string;
     };
 
+const CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRY_REASONS = new Set<AgentTriggerReason>(
+  ['overloaded', 'network-error'],
+);
+const MAX_CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRIES = 2;
+
+function shouldRetryClaudeSameAccount(reason: AgentTriggerReason): boolean {
+  return CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRY_REASONS.has(reason);
+}
+
 function evaluateClaudeAttempt(
   attempt: RotationAttemptResult,
   logContext: Record<string, unknown>,
@@ -304,9 +313,45 @@ export async function runClaudeRotationLoop(
 ): Promise<RotationOutcome> {
   let trigger = initialTrigger;
   let lastRotationMessage = rotationMessage;
+  let sameAccountTransientRetries = 0;
   const attemptedForcedRefreshIndexes = new Set<number>();
 
-  while (shouldRotateClaudeToken(trigger.reason)) {
+  while (true) {
+    if (
+      shouldRetryClaudeSameAccount(trigger.reason) &&
+      sameAccountTransientRetries < MAX_CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRIES
+    ) {
+      sameAccountTransientRetries += 1;
+      logger.info(
+        {
+          ...logContext,
+          reason: trigger.reason,
+          attempt: sameAccountTransientRetries,
+          maxAttempts: MAX_CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRIES,
+        },
+        'Claude transient provider failure, retrying same account before fallback',
+      );
+
+      const retryAttemptOutcome = evaluateClaudeAttempt(
+        await runAttempt(),
+        logContext,
+      );
+      if (retryAttemptOutcome.type === 'success') {
+        return retryAttemptOutcome;
+      }
+      if (retryAttemptOutcome.type === 'error') {
+        return retryAttemptOutcome;
+      }
+
+      trigger = retryAttemptOutcome.trigger;
+      lastRotationMessage = retryAttemptOutcome.rotationMessage;
+      continue;
+    }
+
+    if (!shouldRotateClaudeToken(trigger.reason)) {
+      break;
+    }
+
     if (trigger.reason === 'auth-expired') {
       const tokenIndex = getCurrentTokenIndex();
       if (

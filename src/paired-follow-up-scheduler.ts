@@ -23,6 +23,8 @@ type ScheduledPairedFollowUpTask = Pick<
 >;
 
 const enqueuedPendingReservationKeys = new Set<string>();
+const enqueuedPendingReservationAtMs = new Map<string, number>();
+const PENDING_RESERVATION_REQUEUE_SUPPRESSION_MS = 30_000;
 
 export function buildPairedFollowUpKey(args: {
   taskId: string;
@@ -69,6 +71,7 @@ export function schedulePairedFollowUpOnce(args: {
   }
 
   enqueuedPendingReservationKeys.add(reservationKey);
+  enqueuedPendingReservationAtMs.set(reservationKey, Date.now());
   args.enqueue();
   return true;
 }
@@ -116,10 +119,15 @@ export function requeueRecoverablePendingPairedFollowUps(args: {
       taskUpdatedAt: reservation.task_updated_at,
       intentKind: reservation.intent_kind as ScheduledPairedFollowUpIntentKind,
     });
-    if (enqueuedPendingReservationKeys.has(reservationKey)) {
+    const lastEnqueuedAt = enqueuedPendingReservationAtMs.get(reservationKey);
+    if (
+      lastEnqueuedAt != null &&
+      Date.now() - lastEnqueuedAt < PENDING_RESERVATION_REQUEUE_SUPPRESSION_MS
+    ) {
       continue;
     }
     enqueuedPendingReservationKeys.add(reservationKey);
+    enqueuedPendingReservationAtMs.set(reservationKey, Date.now());
     args.enqueue(reservation.chat_jid, reservation.group_folder);
     args.onRequeued?.(reservation);
     requeuedCount += 1;
@@ -129,5 +137,6 @@ export function requeueRecoverablePendingPairedFollowUps(args: {
 
 export function resetPairedFollowUpScheduleState(): void {
   enqueuedPendingReservationKeys.clear();
+  enqueuedPendingReservationAtMs.clear();
   _clearPairedTurnReservationsForTests();
 }

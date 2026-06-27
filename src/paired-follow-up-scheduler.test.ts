@@ -522,6 +522,66 @@ describe('paired follow-up scheduler', () => {
     );
   });
 
+  it('requeues a pending arbiter reservation after the in-memory enqueue guard ages out', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-11T00:00:00.000Z'));
+    try {
+      const firstEnqueue = vi.fn();
+      const recoveryEnqueue = vi.fn();
+      const task = {
+        id: 'task-arbiter-pending-requeue',
+        chat_jid: 'group@test',
+        group_folder: 'test-group',
+        owner_service_id: CURRENT_SERVICE_ID,
+        reviewer_service_id: OTHER_SERVICE_ID,
+        owner_agent_type: CURRENT_AGENT_TYPE,
+        reviewer_agent_type: OTHER_AGENT_TYPE,
+        arbiter_agent_type: CURRENT_AGENT_TYPE,
+        title: null,
+        source_ref: 'HEAD',
+        plan_notes: null,
+        review_requested_at: null,
+        arbiter_verdict: null,
+        arbiter_requested_at: '2026-04-11T00:00:00.000Z',
+        completion_reason: null,
+        created_at: '2026-04-11T00:00:00.000Z',
+        status: 'arbiter_requested',
+        round_trip_count: 1,
+        updated_at: '2026-04-11T00:00:00.000Z',
+      } as const;
+      createPairedTask(task as any);
+
+      expect(
+        schedulePairedFollowUpOnce({
+          chatJid: task.chat_jid,
+          runId: 'run-arbiter-before-queue-loss',
+          task,
+          intentKind: 'arbiter-turn',
+          enqueue: firstEnqueue,
+        }),
+      ).toBe(true);
+      expect(firstEnqueue).toHaveBeenCalledTimes(1);
+      expect(
+        requeueRecoverablePendingPairedFollowUps({
+          enqueue: recoveryEnqueue,
+        }),
+      ).toBe(0);
+
+      vi.setSystemTime(new Date('2026-04-11T00:00:31.000Z'));
+      expect(
+        requeueRecoverablePendingPairedFollowUps({
+          enqueue: recoveryEnqueue,
+        }),
+      ).toBe(1);
+      expect(recoveryEnqueue).toHaveBeenCalledWith(
+        task.chat_jid,
+        task.group_folder,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('clears stale pending reservations for completed tasks without requeueing them', () => {
     const enqueue = vi.fn();
     const task = {

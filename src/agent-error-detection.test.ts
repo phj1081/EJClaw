@@ -67,6 +67,17 @@ describe('agent-error-detection', () => {
     });
   });
 
+  it('classifies Claude socket-close 401 text as a network error', () => {
+    expect(
+      classifyAgentError(
+        'Failed to authenticate. API Error: 401 The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()',
+      ),
+    ).toEqual({
+      category: 'network-error',
+      reason: 'network-error',
+    });
+  });
+
   it('classifies Codex reused refresh-token errors as auth-expired', () => {
     expect(
       classifyCodexAuthError(

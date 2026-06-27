@@ -311,6 +311,8 @@ export function classifyAgentError(
     lower.includes('econnreset') ||
     lower.includes('etimedout') ||
     lower.includes('enotfound') ||
+    lower.includes('socket connection was closed') ||
+    lower.includes('connection was closed unexpectedly') ||
     lower.includes('fetch failed') ||
     lower.includes('network error')
   ) {

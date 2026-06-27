@@ -200,6 +200,37 @@ describe('runClaudeRotationLoop', () => {
     });
     expect(rotateToken).toHaveBeenNthCalledWith(2, 'retry with next token');
   });
+
+  it('retries transient Claude network failures on the same account before giving up', async () => {
+    let attempts = 0;
+    const outcome = await runClaudeRotationLoop(
+      { reason: 'network-error' },
+      async () => {
+        attempts += 1;
+        if (attempts < 2) {
+          return {
+            output: {
+              status: 'success',
+              result:
+                'Failed to authenticate. API Error: 401 The socket connection was closed unexpectedly.',
+            },
+            sawOutput: false,
+            streamedTriggerReason: { reason: 'network-error' },
+          };
+        }
+
+        return {
+          output: { status: 'success', result: 'OK' },
+          sawOutput: true,
+        };
+      },
+      { runId: 'same-account-network-retry' },
+    );
+
+    expect(outcome).toEqual({ type: 'success', sawOutput: true });
+    expect(attempts).toBe(2);
+    expect(rotateToken).not.toHaveBeenCalled();
+  });
 });
 
 describe('runCodexRotationLoop', () => {
