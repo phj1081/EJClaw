@@ -144,6 +144,19 @@ class MessageAgentAttemptLifecycleRunner {
       runAttempt: () => this.runTrackedAttempt('claude'),
       logContext: this.args.rotationLogContext,
       rotationMessage,
+      beforeTransientSameAccountRetry: ({ trigger, attempt, maxAttempts }) => {
+        this.args.clearStoredSession();
+        this.args.clearRoleSdkSessions();
+        this.args.log.warn(
+          {
+            sessionFolder: this.args.sessionFolder,
+            reason: trigger.reason,
+            attempt,
+            maxAttempts,
+          },
+          'Cleared Claude session before transient retry so poisoned resume is not reused',
+        );
+      },
       onSuccess: ({ sawOutput }) => {
         this.args.pairedExecutionLifecycle.markSawOutput(sawOutput);
       },

@@ -83,6 +83,18 @@ const CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRY_REASONS = new Set<AgentTriggerReason>(
 );
 const MAX_CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRIES = 2;
 
+export interface ClaudeTransientRetryContext {
+  trigger: TriggerInfo;
+  attempt: number;
+  maxAttempts: number;
+}
+
+export interface ClaudeRotationLoopOptions {
+  beforeTransientSameAccountRetry?: (
+    context: ClaudeTransientRetryContext,
+  ) => Promise<void> | void;
+}
+
 function shouldRetryClaudeSameAccount(reason: AgentTriggerReason): boolean {
   return CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRY_REASONS.has(reason);
 }
@@ -310,6 +322,7 @@ export async function runClaudeRotationLoop(
   runAttempt: () => Promise<RotationAttemptResult>,
   logContext: Record<string, unknown>,
   rotationMessage?: string,
+  options: ClaudeRotationLoopOptions = {},
 ): Promise<RotationOutcome> {
   let trigger = initialTrigger;
   let lastRotationMessage = rotationMessage;
@@ -331,6 +344,12 @@ export async function runClaudeRotationLoop(
         },
         'Claude transient provider failure, retrying same account before fallback',
       );
+
+      await options.beforeTransientSameAccountRetry?.({
+        trigger,
+        attempt: sameAccountTransientRetries,
+        maxAttempts: MAX_CLAUDE_TRANSIENT_SAME_ACCOUNT_RETRIES,
+      });
 
       const retryAttemptOutcome = evaluateClaudeAttempt(
         await runAttempt(),

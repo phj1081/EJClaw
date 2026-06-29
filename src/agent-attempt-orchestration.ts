@@ -9,6 +9,7 @@ import type {
   CodexRotationReason,
 } from './agent-error-detection.js';
 import {
+  type ClaudeTransientRetryContext,
   runClaudeRotationLoop,
   runCodexRotationLoop,
 } from './provider-retry.js';
@@ -58,6 +59,9 @@ export async function runClaudeAttemptWithRotation<
   logContext: RotationLogContext;
   rotationMessage?: string;
   afterAttempt?: (attempt: TAttempt) => Promise<void> | void;
+  beforeTransientSameAccountRetry?: (
+    context: ClaudeTransientRetryContext,
+  ) => Promise<void> | void;
   onSuccess?: (outcome: { sawOutput: boolean }) => Promise<void> | void;
 }): Promise<'success' | 'error'> {
   const outcome = await runClaudeRotationLoop(
@@ -75,6 +79,9 @@ export async function runClaudeAttemptWithRotation<
     },
     args.logContext,
     args.rotationMessage,
+    {
+      beforeTransientSameAccountRetry: args.beforeTransientSameAccountRetry,
+    },
   );
 
   if (outcome.type === 'success') {
