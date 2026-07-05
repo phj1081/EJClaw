@@ -23,6 +23,3 @@ export function applyLegacySchemaMigrations(
     `ALTER TABLE work_items ADD COLUMN service_id TEXT`,
   );
 }
-
-/** @deprecated New schema changes should be added under src/db/migrations/*. */
-export const applySchemaMigrations = applyLegacySchemaMigrations;
