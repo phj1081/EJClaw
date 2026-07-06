@@ -137,6 +137,296 @@ function writeCurrentTaskSnapshot(
   );
 }
 
+type TaskLogger = ReturnType<typeof createScopedLogger>;
+
+interface TaskAttemptOutcome {
+  output: AgentOutput;
+  sawOutput: boolean;
+  streamedTriggerReason?: {
+    reason: AgentTriggerReason;
+    retryAfterMs?: number;
+  };
+  attemptResult: string | null;
+  attemptError: string | null;
+}
+
+async function runTaskAttempt(args: {
+  task: ScheduledTask;
+  deps: SchedulerDependencies;
+  context: TaskExecutionContext;
+  log: TaskLogger;
+  provider: string;
+}): Promise<TaskAttemptOutcome> {
+  const { task, deps, context, log, provider } = args;
+  const isClaudeAgent = context.taskAgentType === 'claude-code';
+  let attemptResult: string | null = null;
+  let attemptError: string | null = null;
+  const streamedOutputHandler = createEvaluatedOutputHandler({
+    agentType: isClaudeAgent ? 'claude-code' : 'codex',
+    provider,
+    evaluationOptions: {
+      shortCircuitTriggeredErrors: true,
+    },
+    onEvaluatedOutput: async ({
+      output: streamedOutput,
+      outputText,
+      evaluation,
+    }) => {
+      if (streamedOutput.phase === 'progress') {
+        return;
+      }
+      if (
+        evaluation.newTrigger &&
+        outputText &&
+        streamedOutput.status === 'success'
+      ) {
+        log.warn(
+          {
+            reason: evaluation.newTrigger.reason,
+            resultPreview: outputText.slice(0, 120),
+          },
+          'Detected Claude rotation trigger during scheduled task output',
+        );
+      } else if (
+        evaluation.newTrigger &&
+        typeof streamedOutput.error === 'string'
+      ) {
+        log.warn(
+          {
+            reason: evaluation.newTrigger.reason,
+            errorPreview: streamedOutput.error.slice(0, 120),
+          },
+          provider === 'claude'
+            ? 'Detected Claude rotation trigger during scheduled task error output'
+            : 'Detected Codex rotation trigger during scheduled task error output',
+        );
+      }
+
+      if (!evaluation.shouldForwardOutput) {
+        if (streamedOutput.status === 'error') {
+          attemptError = streamedOutput.error || 'Unknown error';
+        }
+        return;
+      }
+
+      if (outputText) {
+        attemptResult = outputText;
+        await forwardScheduledOutput(deps, task, outputText, task.room_role);
+      }
+
+      if (streamedOutput.status === 'error') {
+        attemptError = streamedOutput.error || 'Unknown error';
+      }
+    },
+  });
+
+  const output = await runAgentProcess(
+    context.group,
+    {
+      prompt: task.prompt,
+      sessionId: context.sessionId,
+      groupFolder: task.group_folder,
+      chatJid: task.chat_jid,
+      isMain: context.isMain,
+      isScheduledTask: true,
+      runtimeTaskId: context.runtimeTaskId,
+      useTaskScopedSession: context.useTaskScopedSession,
+      assistantName: ASSISTANT_NAME,
+    },
+    (proc, processName) =>
+      deps.onProcess(
+        context.queueJid,
+        proc,
+        processName,
+        context.runtimeIpcDir,
+      ),
+    streamedOutputHandler.handleOutput,
+    undefined,
+  );
+
+  if (output.status === 'error' && !attemptError) {
+    attemptError = output.error || 'Unknown error';
+  } else {
+    const outputText = getAgentOutputText(output);
+    if (outputText && !attemptResult) {
+      attemptResult = outputText;
+    }
+  }
+
+  const streamedState = streamedOutputHandler.getState();
+  return {
+    output,
+    sawOutput: streamedState.sawOutput,
+    streamedTriggerReason: streamedState.streamedTriggerReason,
+    attemptResult,
+    attemptError,
+  };
+}
+
+async function executeTaskAttempts(args: {
+  task: ScheduledTask;
+  deps: SchedulerDependencies;
+  context: TaskExecutionContext;
+  log: TaskLogger;
+}): Promise<{ result: string | null; error: string | null }> {
+  const { task, deps, context, log } = args;
+  let result: string | null = null;
+  let error: string | null = null;
+
+  const runAttempt = (provider: string) =>
+    runTaskAttempt({ task, deps, context, log, provider });
+
+  const retryClaudeTaskWithRotation = async (
+    initialTrigger: {
+      reason: AgentTriggerReason;
+      retryAfterMs?: number;
+    },
+    rotationMessage?: string,
+  ): Promise<'success' | 'error'> => {
+    const logContext = {
+      taskId: task.id,
+      group: context.group.name,
+      groupFolder: task.group_folder,
+    };
+
+    const outcome = await runClaudeAttemptWithRotation({
+      initialTrigger,
+      runAttempt: () => runAttempt('claude'),
+      logContext,
+      rotationMessage,
+      afterAttempt: (attempt) => {
+        result = attempt.attemptResult;
+        error = attempt.attemptError;
+      },
+    });
+
+    if (outcome === 'success') {
+      error = null;
+    }
+    return outcome;
+  };
+
+  const retryCodexTaskWithRotation = async (
+    initialTrigger: { reason: CodexRotationReason },
+    rotationMessage?: string,
+  ): Promise<'success' | 'error'> => {
+    const outcome = await runCodexAttemptWithRotation({
+      initialTrigger,
+      runAttempt: () => runAttempt('codex'),
+      logContext: {
+        taskId: task.id,
+        group: context.group.name,
+        groupFolder: task.group_folder,
+      },
+      rotationMessage,
+      afterAttempt: (attempt) => {
+        result = attempt.attemptResult;
+        error = attempt.attemptError;
+      },
+    });
+
+    if (outcome === 'success') {
+      error = null;
+    }
+    return outcome;
+  };
+
+  const provider = context.taskAgentType === 'codex' ? 'codex' : 'claude';
+
+  const attempt = await runAttempt(provider);
+  result = attempt.attemptResult;
+  error = attempt.attemptError;
+
+  const retryAction = await executeAttemptRetryAction({
+    provider,
+    canRetryClaudeCredentials: provider === 'claude' && getTokenCount() > 0,
+    canRetryCodex: provider === 'codex' && getCodexAccountCount() > 1,
+    attempt,
+    rotationMessage: error,
+    runClaude: retryClaudeTaskWithRotation,
+    runCodex: retryCodexTaskWithRotation,
+  });
+
+  if (retryAction.kind === 'none' && attempt.output.status === 'error') {
+    error = attempt.attemptError || 'Unknown error';
+  }
+
+  return { result, error };
+}
+
+function resolveErrorAfterTokenRotation(
+  error: string,
+  effectiveAgentType: TaskExecutionContext['taskAgentType'],
+  log: TaskLogger,
+): string | null {
+  const isCodex = effectiveAgentType === 'codex';
+  if (isCodex) {
+    const trigger = detectCodexRotationTrigger(error);
+    if (trigger.shouldRotate) {
+      const rotated = getCodexAccountCount() > 1 && rotateCodexToken(error);
+      if (rotated) {
+        log.info(
+          {
+            agent: effectiveAgentType,
+            reason: trigger.reason,
+          },
+          'Task rate-limited, rotated token — will retry on next schedule',
+        );
+        markCodexTokenHealthy();
+        // Clear the error so suspension doesn't trigger
+        return null;
+      }
+    }
+  } else {
+    const trigger = classifyRotationTrigger(error);
+    if (trigger.shouldRetry) {
+      const rotated = getTokenCount() > 1 && rotateToken(error);
+      if (rotated) {
+        log.info(
+          {
+            agent: effectiveAgentType,
+            reason: trigger.reason,
+          },
+          'Task rate-limited, rotated token — will retry on next schedule',
+        );
+        markTokenHealthy();
+        // Clear the error so suspension doesn't trigger
+        return null;
+      }
+    }
+  }
+  return error;
+}
+
+function handleTaskContextResolutionFailure(
+  task: ScheduledTask,
+  err: unknown,
+  startTime: number,
+): void {
+  const error = getErrorMessage(err);
+  if (error.startsWith('Group not found:')) {
+    logger.error(
+      { taskId: task.id, groupFolder: task.group_folder, error },
+      'Group not found for task',
+    );
+  } else {
+    // Stop retry churn for malformed legacy rows.
+    updateTask(task.id, { status: 'paused' });
+    logger.error(
+      { taskId: task.id, groupFolder: task.group_folder, error },
+      'Task has invalid group folder',
+    );
+  }
+  logTaskRun({
+    task_id: task.id,
+    run_at: new Date().toISOString(),
+    duration_ms: Date.now() - startTime,
+    status: 'error',
+    result: null,
+    error,
+  });
+}
+
 async function runTask(
   task: ScheduledTask,
   deps: SchedulerDependencies,
@@ -146,28 +436,7 @@ async function runTask(
   try {
     context = resolveTaskExecutionContext(task, deps);
   } catch (err) {
-    const error = getErrorMessage(err);
-    if (error.startsWith('Group not found:')) {
-      logger.error(
-        { taskId: task.id, groupFolder: task.group_folder, error },
-        'Group not found for task',
-      );
-    } else {
-      // Stop retry churn for malformed legacy rows.
-      updateTask(task.id, { status: 'paused' });
-      logger.error(
-        { taskId: task.id, groupFolder: task.group_folder, error },
-        'Task has invalid group folder',
-      );
-    }
-    logTaskRun({
-      task_id: task.id,
-      run_at: new Date().toISOString(),
-      duration_ms: Date.now() - startTime,
-      status: 'error',
-      result: null,
-      error,
-    });
+    handleTaskContextResolutionFailure(task, err, startTime);
     return;
   }
   const log = createScopedLogger({
@@ -185,213 +454,18 @@ async function runTask(
   writeCurrentTaskSnapshot(context, task, taskAgentType);
 
   let result: string | null = null;
-  let error: string | null;
+  let error: string | null = null;
   const statusTracker = createTaskStatusTracker(task, {
     sendTrackedMessage: deps.sendTrackedMessage,
     editTrackedMessage: deps.editTrackedMessage,
   });
-  const isClaudeAgent = taskAgentType === 'claude-code';
 
   try {
     await statusTracker.update('checking');
 
-    const runTaskAttempt = async (
-      provider: string,
-    ): Promise<{
-      output: AgentOutput;
-      sawOutput: boolean;
-      streamedTriggerReason?: {
-        reason: AgentTriggerReason;
-        retryAfterMs?: number;
-      };
-      attemptResult: string | null;
-      attemptError: string | null;
-    }> => {
-      let attemptResult: string | null = null;
-      let attemptError: string | null = null;
-      const streamedOutputHandler = createEvaluatedOutputHandler({
-        agentType: isClaudeAgent ? 'claude-code' : 'codex',
-        provider,
-        evaluationOptions: {
-          shortCircuitTriggeredErrors: true,
-        },
-        onEvaluatedOutput: async ({
-          output: streamedOutput,
-          outputText,
-          evaluation,
-        }) => {
-          if (streamedOutput.phase === 'progress') {
-            return;
-          }
-          if (
-            evaluation.newTrigger &&
-            outputText &&
-            streamedOutput.status === 'success'
-          ) {
-            log.warn(
-              {
-                reason: evaluation.newTrigger.reason,
-                resultPreview: outputText.slice(0, 120),
-              },
-              'Detected Claude rotation trigger during scheduled task output',
-            );
-          } else if (
-            evaluation.newTrigger &&
-            typeof streamedOutput.error === 'string'
-          ) {
-            log.warn(
-              {
-                reason: evaluation.newTrigger.reason,
-                errorPreview: streamedOutput.error.slice(0, 120),
-              },
-              provider === 'claude'
-                ? 'Detected Claude rotation trigger during scheduled task error output'
-                : 'Detected Codex rotation trigger during scheduled task error output',
-            );
-          }
-
-          if (!evaluation.shouldForwardOutput) {
-            if (streamedOutput.status === 'error') {
-              attemptError = streamedOutput.error || 'Unknown error';
-            }
-            return;
-          }
-
-          if (outputText) {
-            attemptResult = outputText;
-            await forwardScheduledOutput(
-              deps,
-              task,
-              outputText,
-              task.room_role,
-            );
-          }
-
-          if (streamedOutput.status === 'error') {
-            attemptError = streamedOutput.error || 'Unknown error';
-          }
-        },
-      });
-
-      const output = await runAgentProcess(
-        context.group,
-        {
-          prompt: task.prompt,
-          sessionId: context.sessionId,
-          groupFolder: task.group_folder,
-          chatJid: task.chat_jid,
-          isMain: context.isMain,
-          isScheduledTask: true,
-          runtimeTaskId: context.runtimeTaskId,
-          useTaskScopedSession: context.useTaskScopedSession,
-          assistantName: ASSISTANT_NAME,
-        },
-        (proc, processName) =>
-          deps.onProcess(
-            context.queueJid,
-            proc,
-            processName,
-            context.runtimeIpcDir,
-          ),
-        streamedOutputHandler.handleOutput,
-        undefined,
-      );
-
-      if (output.status === 'error' && !attemptError) {
-        attemptError = output.error || 'Unknown error';
-      } else {
-        const outputText = getAgentOutputText(output);
-        if (outputText && !attemptResult) {
-          attemptResult = outputText;
-        }
-      }
-
-      const streamedState = streamedOutputHandler.getState();
-      return {
-        output,
-        sawOutput: streamedState.sawOutput,
-        streamedTriggerReason: streamedState.streamedTriggerReason,
-        attemptResult,
-        attemptError,
-      };
-    };
-
-    const retryClaudeTaskWithRotation = async (
-      initialTrigger: {
-        reason: AgentTriggerReason;
-        retryAfterMs?: number;
-      },
-      rotationMessage?: string,
-    ): Promise<'success' | 'error'> => {
-      const logContext = {
-        taskId: task.id,
-        group: context.group.name,
-        groupFolder: task.group_folder,
-      };
-
-      const outcome = await runClaudeAttemptWithRotation({
-        initialTrigger,
-        runAttempt: () => runTaskAttempt('claude'),
-        logContext,
-        rotationMessage,
-        afterAttempt: (attempt) => {
-          result = attempt.attemptResult;
-          error = attempt.attemptError;
-        },
-      });
-
-      if (outcome === 'success') {
-        error = null;
-      }
-      return outcome;
-    };
-
-    const retryCodexTaskWithRotation = async (
-      initialTrigger: { reason: CodexRotationReason },
-      rotationMessage?: string,
-    ): Promise<'success' | 'error'> => {
-      const outcome = await runCodexAttemptWithRotation({
-        initialTrigger,
-        runAttempt: () => runTaskAttempt('codex'),
-        logContext: {
-          taskId: task.id,
-          group: context.group.name,
-          groupFolder: task.group_folder,
-        },
-        rotationMessage,
-        afterAttempt: (attempt) => {
-          result = attempt.attemptResult;
-          error = attempt.attemptError;
-        },
-      });
-
-      if (outcome === 'success') {
-        error = null;
-      }
-      return outcome;
-    };
-
-    const provider = context.taskAgentType === 'codex' ? 'codex' : 'claude';
-
-    {
-      const attempt = await runTaskAttempt(provider);
-      result = attempt.attemptResult;
-      error = attempt.attemptError;
-
-      const retryAction = await executeAttemptRetryAction({
-        provider,
-        canRetryClaudeCredentials: provider === 'claude' && getTokenCount() > 0,
-        canRetryCodex: provider === 'codex' && getCodexAccountCount() > 1,
-        attempt,
-        rotationMessage: error,
-        runClaude: retryClaudeTaskWithRotation,
-        runCodex: retryCodexTaskWithRotation,
-      });
-
-      if (retryAction.kind === 'none' && attempt.output.status === 'error') {
-        error = attempt.attemptError || 'Unknown error';
-      }
-    } // end else (non-exhausted path)
+    const outcome = await executeTaskAttempts({ task, deps, context, log });
+    result = outcome.result;
+    error = outcome.error;
 
     log.info(
       {
@@ -422,43 +496,7 @@ async function runTask(
 
   // Try token rotation before suspending
   if (error) {
-    const effectiveAgentType = context.taskAgentType;
-    const isCodex = effectiveAgentType === 'codex';
-    if (isCodex) {
-      const trigger = detectCodexRotationTrigger(error);
-      if (trigger.shouldRotate) {
-        const rotated = getCodexAccountCount() > 1 && rotateCodexToken(error);
-        if (rotated) {
-          log.info(
-            {
-              agent: effectiveAgentType,
-              reason: trigger.reason,
-            },
-            'Task rate-limited, rotated token — will retry on next schedule',
-          );
-          markCodexTokenHealthy();
-          // Clear the error so suspension doesn't trigger
-          error = null;
-        }
-      }
-    } else {
-      const trigger = classifyRotationTrigger(error);
-      if (trigger.shouldRetry) {
-        const rotated = getTokenCount() > 1 && rotateToken(error);
-        if (rotated) {
-          log.info(
-            {
-              agent: effectiveAgentType,
-              reason: trigger.reason,
-            },
-            'Task rate-limited, rotated token — will retry on next schedule',
-          );
-          markTokenHealthy();
-          // Clear the error so suspension doesn't trigger
-          error = null;
-        }
-      }
-    }
+    error = resolveErrorAfterTokenRotation(error, context.taskAgentType, log);
   }
 
   // Check for repeated quota/auth errors → auto-suspend
