@@ -271,7 +271,9 @@ describe('claude reviewer runtime guard', () => {
     ).not.toThrow();
     expect(fs.existsSync(path.join(cwd, '.gitconfig'))).toBe(false);
   });
+});
 
+describe('claude reviewer workspace origin connectivity', () => {
   it('accepts a mounted local origin path that resolves as a git repo', () => {
     const originDir = createTempRepo('ejclaw-reviewer-origin-');
     const cwd = createTempRepo('ejclaw-reviewer-workspace-');

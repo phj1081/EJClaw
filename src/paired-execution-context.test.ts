@@ -177,58 +177,65 @@ function buildWorkspace(
   };
 }
 
-describe('paired execution context', () => {
-  beforeEach(() => {
+function resetPairedContextTestState(): void {
+  delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+  delete process.env[REVIEWER_RUNTIME_ENV];
+  delete process.env[CLAUDE_REVIEWER_READONLY_ENV];
+  vi.resetAllMocks();
+  vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
+  vi.mocked(db.getPairedTaskById).mockReturnValue(undefined);
+  vi.mocked(db.getPairedWorkspace).mockReturnValue(undefined);
+  vi.mocked(
+    pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
+  ).mockReturnValue({
+    id: 'task-1:owner',
+    task_id: 'task-1',
+    role: 'owner',
+    workspace_dir: '/tmp/paired/task-1/owner',
+    snapshot_source_dir: null,
+    snapshot_ref: null,
+    status: 'ready',
+    snapshot_refreshed_at: null,
+    created_at: '2026-03-28T00:00:00.000Z',
+    updated_at: '2026-03-28T00:00:00.000Z',
+  });
+  vi.mocked(
+    pairedWorkspaceManager.prepareReviewerWorkspaceForExecution,
+  ).mockReturnValue({
+    workspace: null,
+    autoRefreshed: false,
+  });
+}
+
+function restorePairedContextEnv(): void {
+  if (ORIGINAL_UNSAFE_HOST_PAIRED_MODE == null) {
     delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
+  } else {
+    process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE =
+      ORIGINAL_UNSAFE_HOST_PAIRED_MODE;
+  }
+
+  if (ORIGINAL_REVIEWER_RUNTIME == null) {
     delete process.env[REVIEWER_RUNTIME_ENV];
+  } else {
+    process.env[REVIEWER_RUNTIME_ENV] = ORIGINAL_REVIEWER_RUNTIME;
+  }
+
+  if (ORIGINAL_CLAUDE_REVIEWER_READONLY == null) {
     delete process.env[CLAUDE_REVIEWER_READONLY_ENV];
-    vi.resetAllMocks();
-    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue(undefined);
-    vi.mocked(db.getPairedTaskById).mockReturnValue(undefined);
-    vi.mocked(db.getPairedWorkspace).mockReturnValue(undefined);
-    vi.mocked(
-      pairedWorkspaceManager.provisionOwnerWorkspaceForPairedTask,
-    ).mockReturnValue({
-      id: 'task-1:owner',
-      task_id: 'task-1',
-      role: 'owner',
-      workspace_dir: '/tmp/paired/task-1/owner',
-      snapshot_source_dir: null,
-      snapshot_ref: null,
-      status: 'ready',
-      snapshot_refreshed_at: null,
-      created_at: '2026-03-28T00:00:00.000Z',
-      updated_at: '2026-03-28T00:00:00.000Z',
-    });
-    vi.mocked(
-      pairedWorkspaceManager.prepareReviewerWorkspaceForExecution,
-    ).mockReturnValue({
-      workspace: null,
-      autoRefreshed: false,
-    });
-  });
+  } else {
+    process.env[CLAUDE_REVIEWER_READONLY_ENV] =
+      ORIGINAL_CLAUDE_REVIEWER_READONLY;
+  }
+}
 
-  afterAll(() => {
-    if (ORIGINAL_UNSAFE_HOST_PAIRED_MODE == null) {
-      delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
-    } else {
-      process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE =
-        ORIGINAL_UNSAFE_HOST_PAIRED_MODE;
-    }
+function registerPairedContextHooks(): void {
+  beforeEach(resetPairedContextTestState);
+  afterAll(restorePairedContextEnv);
+}
 
-    if (ORIGINAL_REVIEWER_RUNTIME == null) {
-      delete process.env[REVIEWER_RUNTIME_ENV];
-    } else {
-      process.env[REVIEWER_RUNTIME_ENV] = ORIGINAL_REVIEWER_RUNTIME;
-    }
-
-    if (ORIGINAL_CLAUDE_REVIEWER_READONLY == null) {
-      delete process.env[CLAUDE_REVIEWER_READONLY_ENV];
-    } else {
-      process.env[CLAUDE_REVIEWER_READONLY_ENV] =
-        ORIGINAL_CLAUDE_REVIEWER_READONLY;
-    }
-  });
+describe('paired execution context owner task preparation', () => {
+  registerPairedContextHooks();
 
   it('creates an owner execution with a worktree override', () => {
     const result = preparePairedExecutionContext({
@@ -397,6 +404,10 @@ describe('paired execution context', () => {
       }),
     );
   });
+});
+
+describe('paired execution context reviewer preparation', () => {
+  registerPairedContextHooks();
 
   it('uses the reviewer snapshot after lazy auto-refresh and marks the task in_review', () => {
     vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
@@ -649,6 +660,10 @@ describe('paired execution context', () => {
     );
     expect(result?.envOverrides.EJCLAW_WORK_DIR).toBeUndefined();
   });
+});
+
+describe('paired execution context unsafe host reviewer runtime', () => {
+  registerPairedContextHooks();
 
   it('routes reviewer to host mode when unsafe host paired mode is enabled', () => {
     process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE = '1';
@@ -735,6 +750,10 @@ describe('paired execution context', () => {
     expect(result?.envOverrides.EJCLAW_REVIEWER_RUNTIME).toBeUndefined();
     delete process.env.EJCLAW_UNSAFE_HOST_PAIRED_MODE;
   });
+});
+
+describe('paired execution context owner completion handling', () => {
+  registerPairedContextHooks();
 
   it('completePairedExecutionContext logs without error', () => {
     completePairedExecutionContext({
@@ -874,6 +893,10 @@ describe('paired execution context', () => {
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).toHaveBeenCalledWith('task-1');
   });
+});
+
+describe('paired execution context STEP_DONE deadlock handling', () => {
+  registerPairedContextHooks();
 
   it('requests arbiter when active STEP_DONE repeats without code changes', () => {
     vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
@@ -1010,6 +1033,10 @@ describe('paired execution context', () => {
       pairedWorkspaceManager.markPairedTaskReviewReady,
     ).not.toHaveBeenCalled();
   });
+});
+
+describe('paired execution context finalize re-review handling', () => {
+  registerPairedContextHooks();
 
   it('re-triggers review once when owner reports DONE_WITH_CONCERNS during finalize', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
@@ -1178,6 +1205,10 @@ describe('paired execution context', () => {
       }),
     );
   });
+});
+
+describe('paired execution context finalize escalation handling', () => {
+  registerPairedContextHooks();
 
   it('requests arbiter instead of re-reviewing when repeated DONE finalize loops exceed the threshold', () => {
     vi.spyOn(config, 'isArbiterEnabled').mockReturnValue(true);
@@ -1287,6 +1318,10 @@ describe('paired execution context', () => {
       ).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('paired execution context failed execution handling', () => {
+  registerPairedContextHooks();
 
   it('records source_ref when reviewer verdict DONE arrives via failed fallback', () => {
     const repoDir = createCanonicalRepoWithCommit('reviewed');

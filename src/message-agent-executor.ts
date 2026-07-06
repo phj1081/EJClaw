@@ -3,12 +3,18 @@ import { GroupQueue } from './group-queue.js';
 import type { Logger } from 'pino';
 import type { AgentTriggerReason } from './agent-error-detection.js';
 import { getMoaConfig } from './config.js';
-import { createPairedExecutionLifecycle } from './message-agent-executor-paired.js';
+import {
+  createPairedExecutionLifecycle,
+  type PairedExecutionLifecycle,
+} from './message-agent-executor-paired.js';
 import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import { executeMessageAgentAttemptLifecycle } from './message-agent-executor-lifecycle.js';
 import { runMessageAgentAttempt } from './message-agent-executor-attempt-runner.js';
 import { handoffMessageAgentExecutionToCodex } from './message-agent-executor-handoff.js';
-import { prepareMessageAgentExecutionTarget } from './message-agent-executor-target.js';
+import {
+  prepareMessageAgentExecutionTarget,
+  type PreparedMessageAgentExecution,
+} from './message-agent-executor-target.js';
 import { collectMoaReferences, formatMoaReferencesForPrompt } from './moa.js';
 import { readArbiterPrompt } from './platform-prompts.js';
 import { shouldRetryFreshSessionOnAgentFailure } from './session-recovery.js';
@@ -104,6 +110,99 @@ export interface MessageAgentExecutorDeps {
   clearSession: (groupFolder: string) => void;
 }
 
+async function resolveEffectivePromptForRun(args: {
+  prompt: string;
+  moaEnabled: boolean;
+  sessionFolder: string;
+  sessionId?: string;
+  role: PairedRoomRole;
+  log: Pick<Logger, 'info' | 'warn'>;
+}): Promise<{
+  effectivePrompt: string;
+  compactRefresh: AppliedCompactRefresh | null;
+}> {
+  const moaEnrichedPrompt = await enrichArbiterPromptWithMoa({
+    prompt: args.prompt,
+    enabled: args.moaEnabled,
+    log: args.log,
+  });
+  return buildPromptWithCompactRefresh({
+    prompt: moaEnrichedPrompt,
+    sessionFolder: args.sessionFolder,
+    sessionId: args.sessionId,
+    role: args.role,
+  });
+}
+
+function createPairedLifecycleForRun(args: {
+  deps: MessageAgentExecutorDeps;
+  preparedExecution: PreparedMessageAgentExecution;
+  chatJid: string;
+  runId: string;
+  onOutput?: (output: AgentOutput) => Promise<void>;
+}): {
+  pairedExecutionLifecycle: PairedExecutionLifecycle;
+  hasDirectTerminalDelivery: () => boolean;
+} {
+  const { deps, preparedExecution, chatJid, runId, onOutput } = args;
+  const { pairedExecutionContext, runtimePairedTurnIdentity, activeRole, log } =
+    preparedExecution;
+  const pairedExecutionLifecycle = createPairedExecutionLifecycle({
+    pairedExecutionContext,
+    pairedTurnIdentity: runtimePairedTurnIdentity,
+    completedRole: runtimePairedTurnIdentity?.role ?? activeRole,
+    chatJid,
+    runId,
+    enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
+    getDirectTerminalDeliveryText: () =>
+      deps.queue.getDirectTerminalDeliveryForRun?.(
+        chatJid,
+        runId,
+        runtimePairedTurnIdentity?.role ?? activeRole,
+      ) ?? null,
+    getCloseReason: () =>
+      deps.queue.getCloseReasonForRun?.(chatJid, runId) ?? null,
+    onOutput,
+    log,
+  });
+  const hasDirectTerminalDelivery = (): boolean =>
+    !!deps.queue.getDirectTerminalDeliveryForRun?.(
+      chatJid,
+      runId,
+      runtimePairedTurnIdentity?.role ?? activeRole,
+    );
+  return { pairedExecutionLifecycle, hasDirectTerminalDelivery };
+}
+
+async function emitBlockedPairedExecution(args: {
+  blockMessage: string;
+  roomRoleContext: PreparedMessageAgentExecution['roomRoleContext'];
+  pairedExecutionLifecycle: PairedExecutionLifecycle;
+  log: Pick<Logger, 'warn'>;
+  onOutput?: (output: AgentOutput) => Promise<void>;
+}): Promise<void> {
+  args.pairedExecutionLifecycle.updateSummary({
+    outputText: args.blockMessage,
+  });
+  args.log.warn(
+    {
+      roomRoleServiceId: args.roomRoleContext?.serviceId,
+      roomRole: args.roomRoleContext?.role,
+    },
+    'Blocked paired execution before runner start',
+  );
+  await args.onOutput?.({
+    status: 'success',
+    result: null,
+    output: {
+      visibility: 'public',
+      text: args.blockMessage,
+    },
+    phase: 'final',
+  });
+  args.pairedExecutionLifecycle.completeImmediately({ status: 'failed' });
+}
+
 export async function runAgentForGroup(
   deps: MessageAgentExecutorDeps,
   args: {
@@ -160,42 +259,23 @@ export async function runAgentForGroup(
     clearRoleSdkSessions();
   }
 
-  const moaEnrichedPrompt = await enrichArbiterPromptWithMoa({
-    prompt,
-    enabled: arbiterMode && Boolean(pairedExecutionContext),
-    log,
-  });
-
-  const { effectivePrompt, compactRefresh } = buildPromptWithCompactRefresh({
-    prompt: moaEnrichedPrompt,
-    sessionFolder,
-    sessionId: currentSessionId,
-    role: activeRole,
-  });
-  const pairedExecutionLifecycle = createPairedExecutionLifecycle({
-    pairedExecutionContext,
-    pairedTurnIdentity: runtimePairedTurnIdentity,
-    completedRole: runtimePairedTurnIdentity?.role ?? activeRole,
-    chatJid,
-    runId,
-    enqueueMessageCheck: () => deps.queue.enqueueMessageCheck(chatJid),
-    getDirectTerminalDeliveryText: () =>
-      deps.queue.getDirectTerminalDeliveryForRun?.(
-        chatJid,
-        runId,
-        runtimePairedTurnIdentity?.role ?? activeRole,
-      ) ?? null,
-    getCloseReason: () =>
-      deps.queue.getCloseReasonForRun?.(chatJid, runId) ?? null,
-    onOutput,
-    log,
-  });
-  const hasDirectTerminalDelivery = (): boolean =>
-    !!deps.queue.getDirectTerminalDeliveryForRun?.(
+  const { effectivePrompt, compactRefresh } =
+    await resolveEffectivePromptForRun({
+      prompt,
+      moaEnabled: arbiterMode && Boolean(pairedExecutionContext),
+      sessionFolder,
+      sessionId: currentSessionId,
+      role: activeRole,
+      log,
+    });
+  const { pairedExecutionLifecycle, hasDirectTerminalDelivery } =
+    createPairedLifecycleForRun({
+      deps,
+      preparedExecution,
       chatJid,
       runId,
-      runtimePairedTurnIdentity?.role ?? activeRole,
-    );
+      onOutput,
+    });
 
   const maybeHandoffToCodex = (
     reason: AgentTriggerReason,
@@ -231,26 +311,13 @@ export async function runAgentForGroup(
   };
 
   if (pairedExecutionContext?.blockMessage) {
-    pairedExecutionLifecycle.updateSummary({
-      outputText: pairedExecutionContext.blockMessage,
+    await emitBlockedPairedExecution({
+      blockMessage: pairedExecutionContext.blockMessage,
+      roomRoleContext,
+      pairedExecutionLifecycle,
+      log,
+      onOutput,
     });
-    log.warn(
-      {
-        roomRoleServiceId: roomRoleContext?.serviceId,
-        roomRole: roomRoleContext?.role,
-      },
-      'Blocked paired execution before runner start',
-    );
-    await onOutput?.({
-      status: 'success',
-      result: null,
-      output: {
-        visibility: 'public',
-        text: pairedExecutionContext.blockMessage,
-      },
-      phase: 'final',
-    });
-    pairedExecutionLifecycle.completeImmediately({ status: 'failed' });
     return 'success';
   }
 

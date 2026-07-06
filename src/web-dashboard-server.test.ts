@@ -169,7 +169,9 @@ describe('web dashboard server handler', () => {
       },
     });
   });
+});
 
+describe('web dashboard server room and static routes', () => {
   it('wires room message injection dependencies', async () => {
     const messages: NewMessage[] = [];
     const metadata: Array<{

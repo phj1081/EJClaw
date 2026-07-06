@@ -441,7 +441,9 @@ describe('web dashboard room activity data', () => {
       }),
     ]);
   });
+});
 
+describe('web dashboard room activity legacy outbound handling', () => {
   it('hides legacy delivered work items without discord delivery evidence', () => {
     const activity = buildWebDashboardRoomActivity({
       serviceId: 'codex-main',
@@ -564,7 +566,9 @@ describe('web dashboard room activity data', () => {
       'human-after',
     ]);
   });
+});
 
+describe('web dashboard room activity turn progress', () => {
   it('uses canonical turn progress without exposing status messages as recent chat', () => {
     const task = makePairedTask({
       id: 'paired-room-progress',

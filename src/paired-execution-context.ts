@@ -430,152 +430,133 @@ function shouldResetOwnerLoopCounters(args: {
   return !isOwnerContinuationTurn(args.pairedTurnIdentity);
 }
 
-export function preparePairedExecutionContext(args: {
-  group: RegisteredGroup;
-  chatJid: string;
-  runId: string;
-  roomRoleContext?: RoomRoleContext;
-  hasHumanMessage?: boolean;
-  pairedTurnIdentity?: PairedTurnIdentity;
-}): PreparedPairedExecutionContext | undefined {
-  const { group, chatJid, roomRoleContext } = args;
-  if (!roomRoleContext || !group.workDir) {
-    return undefined;
-  }
-
-  const task = ensureActiveTask(
-    group,
-    chatJid,
-    roomRoleContext,
-    args.hasHumanMessage,
-  );
-  if (!task) {
-    return undefined;
-  }
-
-  const latestTask = getPairedTaskById(task.id) ?? task;
-  const continuationTurnIdentity = args.pairedTurnIdentity;
-  const claimedTaskUpdatedAt =
-    continuationTurnIdentity &&
+function resolveClaimedTaskUpdatedAt(args: {
+  latestTask: PairedTask;
+  role: RoomRoleContext['role'];
+  continuationTurnIdentity?: PairedTurnIdentity;
+}): string {
+  const { latestTask, role, continuationTurnIdentity } = args;
+  return continuationTurnIdentity &&
     continuationTurnIdentity.taskId === latestTask.id &&
-    continuationTurnIdentity.role === roomRoleContext.role &&
-    ((roomRoleContext.role === 'reviewer' &&
+    continuationTurnIdentity.role === role &&
+    ((role === 'reviewer' &&
       continuationTurnIdentity.intentKind === 'reviewer-turn' &&
       latestTask.status === 'in_review') ||
-      (roomRoleContext.role === 'arbiter' &&
+      (role === 'arbiter' &&
         continuationTurnIdentity.intentKind === 'arbiter-turn' &&
         latestTask.status === 'in_arbitration'))
-      ? continuationTurnIdentity.taskUpdatedAt
-      : latestTask.updated_at;
+    ? continuationTurnIdentity.taskUpdatedAt
+    : latestTask.updated_at;
+}
+
+function prepareOwnerRoleExecution(args: {
+  latestTask: PairedTask;
+  now: string;
+  hasHuman: boolean;
+}): { workspace: PairedWorkspace | null; blockMessage?: string } {
+  const { latestTask, now, hasHuman } = args;
   let workspace: PairedWorkspace | null = null;
   let blockMessage: string | undefined;
-  const now = new Date().toISOString();
-
-  if (roomRoleContext.role === 'owner') {
-    // New human message keeps the same task only for active review loops.
-    // merge_ready is split into a fresh task before this function runs.
-    // Only reset round_trip_count when a human message is present —
-    // bot-only ping-pong must accumulate the counter for loop detection.
-    const hasHuman = shouldResetOwnerLoopCounters(args);
-    const needsStatusReset =
-      latestTask.status === 'review_ready' || latestTask.status === 'in_review';
-    if (hasHuman || needsStatusReset) {
-      if (needsStatusReset) {
-        transitionPairedTaskStatus({
-          taskId: latestTask.id,
-          currentStatus: latestTask.status,
-          nextStatus: 'active',
-          expectedUpdatedAt: latestTask.updated_at,
-          updatedAt: now,
-          patch: {
-            ...(hasHuman
-              ? {
-                  round_trip_count: 0,
-                  owner_failure_count: 0,
-                  owner_step_done_streak: 0,
-                  empty_step_done_streak: 0,
-                }
-              : {}),
-          },
-        });
-      } else {
-        applyPairedTaskPatch({
-          taskId: latestTask.id,
-          expectedUpdatedAt: latestTask.updated_at,
-          updatedAt: now,
-          patch: {
-            ...(hasHuman
-              ? {
-                  round_trip_count: 0,
-                  owner_failure_count: 0,
-                  owner_step_done_streak: 0,
-                  empty_step_done_streak: 0,
-                }
-              : {}),
-          },
-        });
-      }
-    }
-    // Use a stable per-channel worktree (not per-task) so the Claude SDK
-    // session persists across tasks. Different channels still get isolation.
-    try {
-      workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
-    } catch (error) {
-      if (isOwnerWorkspaceRepairNeededError(error)) {
-        blockMessage = error.blockMessage || error.message;
-      } else {
-        throw error;
-      }
-    }
-    // Update source_ref from workspace HEAD so change detection compares
-    // against the correct repo. At task creation, source_ref is from the
-    // canonical workDir which may differ from the workspace clone.
-    if (workspace?.workspace_dir && latestTask.status === 'active') {
-      const wsRef = resolveCanonicalSourceRef(workspace.workspace_dir);
-      if (wsRef !== latestTask.source_ref) {
-        applyPairedTaskPatch({
-          taskId: latestTask.id,
-          expectedUpdatedAt: latestTask.updated_at,
-          updatedAt: now,
-          patch: {
-            source_ref: wsRef,
-          },
-        });
-      }
-    }
-  } else if (roomRoleContext.role === 'reviewer') {
-    const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
-    workspace = reviewerWorkspace.workspace;
-    blockMessage = reviewerWorkspace.blockMessage;
-    const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
-    if (workspace && refreshedTask.status === 'review_ready') {
+  const needsStatusReset =
+    latestTask.status === 'review_ready' || latestTask.status === 'in_review';
+  if (hasHuman || needsStatusReset) {
+    if (needsStatusReset) {
       transitionPairedTaskStatus({
         taskId: latestTask.id,
-        currentStatus: refreshedTask.status,
-        nextStatus: 'in_review',
-        expectedUpdatedAt: refreshedTask.updated_at,
+        currentStatus: latestTask.status,
+        nextStatus: 'active',
+        expectedUpdatedAt: latestTask.updated_at,
         updatedAt: now,
+        patch: {
+          ...(hasHuman
+            ? {
+                round_trip_count: 0,
+                owner_failure_count: 0,
+                owner_step_done_streak: 0,
+                empty_step_done_streak: 0,
+              }
+            : {}),
+        },
       });
-    }
-  } else if (roomRoleContext.role === 'arbiter') {
-    // Arbiter uses same read-only workspace as reviewer
-    const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
-    workspace = reviewerWorkspace.workspace;
-    blockMessage = reviewerWorkspace.blockMessage;
-    const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
-    if (workspace && refreshedTask.status === 'arbiter_requested') {
-      transitionPairedTaskStatus({
+    } else {
+      applyPairedTaskPatch({
         taskId: latestTask.id,
-        currentStatus: refreshedTask.status,
-        nextStatus: 'in_arbitration',
-        expectedUpdatedAt: refreshedTask.updated_at,
+        expectedUpdatedAt: latestTask.updated_at,
         updatedAt: now,
+        patch: {
+          ...(hasHuman
+            ? {
+                round_trip_count: 0,
+                owner_failure_count: 0,
+                owner_step_done_streak: 0,
+                empty_step_done_streak: 0,
+              }
+            : {}),
+        },
       });
     }
   }
+  // Use a stable per-channel worktree (not per-task) so the Claude SDK
+  // session persists across tasks. Different channels still get isolation.
+  try {
+    workspace = provisionOwnerWorkspaceForPairedTask(latestTask.id);
+  } catch (error) {
+    if (isOwnerWorkspaceRepairNeededError(error)) {
+      blockMessage = error.blockMessage || error.message;
+    } else {
+      throw error;
+    }
+  }
+  // Update source_ref from workspace HEAD so change detection compares
+  // against the correct repo. At task creation, source_ref is from the
+  // canonical workDir which may differ from the workspace clone.
+  if (workspace?.workspace_dir && latestTask.status === 'active') {
+    const wsRef = resolveCanonicalSourceRef(workspace.workspace_dir);
+    if (wsRef !== latestTask.source_ref) {
+      applyPairedTaskPatch({
+        taskId: latestTask.id,
+        expectedUpdatedAt: latestTask.updated_at,
+        updatedAt: now,
+        patch: {
+          source_ref: wsRef,
+        },
+      });
+    }
+  }
+  return { workspace, blockMessage };
+}
 
+function prepareReadonlyRoleExecution(args: {
+  latestTask: PairedTask;
+  now: string;
+  pendingStatus: 'review_ready' | 'arbiter_requested';
+  activeStatus: 'in_review' | 'in_arbitration';
+}): { workspace: PairedWorkspace | null; blockMessage?: string } {
+  const { latestTask, now } = args;
+  const reviewerWorkspace = prepareReviewerWorkspaceForExecution(latestTask);
+  const workspace = reviewerWorkspace.workspace;
+  const refreshedTask = getPairedTaskById(latestTask.id) ?? latestTask;
+  if (workspace && refreshedTask.status === args.pendingStatus) {
+    transitionPairedTaskStatus({
+      taskId: latestTask.id,
+      currentStatus: refreshedTask.status,
+      nextStatus: args.activeStatus,
+      expectedUpdatedAt: refreshedTask.updated_at,
+      updatedAt: now,
+    });
+  }
+  return { workspace, blockMessage: reviewerWorkspace.blockMessage };
+}
+
+function buildRoleEnvOverrides(args: {
+  taskId: string;
+  group: RegisteredGroup;
+  roomRoleContext: RoomRoleContext;
+  workspace: PairedWorkspace | null;
+}): Record<string, string> {
+  const { group, roomRoleContext, workspace } = args;
   const envOverrides: Record<string, string> = {
-    EJCLAW_PAIRED_TASK_ID: task.id,
+    EJCLAW_PAIRED_TASK_ID: args.taskId,
     EJCLAW_PAIRED_ROLE: roomRoleContext.role,
   };
   const unsafeHostPairedMode = isUnsafeHostPairedModeEnabled();
@@ -625,6 +606,81 @@ export function preparePairedExecutionContext(args: {
       }),
     );
   }
+  return envOverrides;
+}
+
+export function preparePairedExecutionContext(args: {
+  group: RegisteredGroup;
+  chatJid: string;
+  runId: string;
+  roomRoleContext?: RoomRoleContext;
+  hasHumanMessage?: boolean;
+  pairedTurnIdentity?: PairedTurnIdentity;
+}): PreparedPairedExecutionContext | undefined {
+  const { group, chatJid, roomRoleContext } = args;
+  if (!roomRoleContext || !group.workDir) {
+    return undefined;
+  }
+
+  const task = ensureActiveTask(
+    group,
+    chatJid,
+    roomRoleContext,
+    args.hasHumanMessage,
+  );
+  if (!task) {
+    return undefined;
+  }
+
+  const latestTask = getPairedTaskById(task.id) ?? task;
+  const claimedTaskUpdatedAt = resolveClaimedTaskUpdatedAt({
+    latestTask,
+    role: roomRoleContext.role,
+    continuationTurnIdentity: args.pairedTurnIdentity,
+  });
+  let workspace: PairedWorkspace | null = null;
+  let blockMessage: string | undefined;
+  const now = new Date().toISOString();
+
+  if (roomRoleContext.role === 'owner') {
+    // New human message keeps the same task only for active review loops.
+    // merge_ready is split into a fresh task before this function runs.
+    // Only reset round_trip_count when a human message is present —
+    // bot-only ping-pong must accumulate the counter for loop detection.
+    const ownerPreparation = prepareOwnerRoleExecution({
+      latestTask,
+      now,
+      hasHuman: shouldResetOwnerLoopCounters(args),
+    });
+    workspace = ownerPreparation.workspace;
+    blockMessage = ownerPreparation.blockMessage;
+  } else if (roomRoleContext.role === 'reviewer') {
+    const reviewerPreparation = prepareReadonlyRoleExecution({
+      latestTask,
+      now,
+      pendingStatus: 'review_ready',
+      activeStatus: 'in_review',
+    });
+    workspace = reviewerPreparation.workspace;
+    blockMessage = reviewerPreparation.blockMessage;
+  } else if (roomRoleContext.role === 'arbiter') {
+    // Arbiter uses same read-only workspace as reviewer
+    const arbiterPreparation = prepareReadonlyRoleExecution({
+      latestTask,
+      now,
+      pendingStatus: 'arbiter_requested',
+      activeStatus: 'in_arbitration',
+    });
+    workspace = arbiterPreparation.workspace;
+    blockMessage = arbiterPreparation.blockMessage;
+  }
+
+  const envOverrides = buildRoleEnvOverrides({
+    taskId: task.id,
+    group,
+    roomRoleContext,
+    workspace,
+  });
 
   return {
     task: getPairedTaskById(task.id) ?? task,

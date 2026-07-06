@@ -1,108 +1,24 @@
-import { useEffect, useState } from 'react';
-
-import {
-  type CreateScheduledTaskInput,
-  type DashboardRoomActivity,
-  type DashboardTaskAction,
-  type DashboardOverview,
-  type DashboardTask,
-  type UpdateScheduledTaskInput,
-  type StatusSnapshot,
-  createScheduledTask,
-  fetchDashboardData,
-  runServiceAction,
-  runScheduledTaskAction,
-  sendRoomMessage,
-  updateScheduledTask,
-} from './api';
-import {
-  isLocale,
-  localeTags,
-  matchLocale,
-  messages,
-  type Locale,
-  type Messages,
-} from './i18n';
-import { useSelectedRoomActivity } from './useRoomActivity';
-import {
-  SectionNav,
-  SideRail,
-  type DashboardFreshness,
-  type DashboardView,
-} from './DashboardNav';
+import { type StatusSnapshot } from './api';
+import { messages, type Messages } from './i18n';
+import { SectionNav, SideRail, type DashboardFreshness } from './DashboardNav';
 import { formatDate, statusLabel } from './dashboardHelpers';
 import { RoomBoardV2 } from './RoomBoardV2';
 import { SettingsPanel } from './SettingsPanel';
 import { SystemStatusStrip } from './SystemStatusStrip';
-import { TaskPanel, type RoomOption, type TaskActionKey } from './TaskPanel';
+import { TaskPanel, type RoomOption } from './TaskPanel';
 import { UsagePanel } from './UsagePanel';
+import {
+  makeClientRequestId,
+  useDashboardActions,
+} from './useDashboardActions';
+import { useDashboardChrome } from './useDashboardChrome';
+import { useDashboardData } from './useDashboardData';
+import { useRoomMessaging } from './useRoomMessaging';
 import './styles.css';
-
-interface DashboardState {
-  overview: DashboardOverview;
-  snapshots: StatusSnapshot[];
-  tasks: DashboardTask[];
-}
 
 type FreshnessLevel = DashboardFreshness;
 
-const REFRESH_INTERVAL_MS = 15_000;
-const LOCALE_STORAGE_KEY = 'ejclaw.dashboard.locale.v2';
-const DEFAULT_VIEW: DashboardView = 'rooms';
 const DASHBOARD_STALE_MS = 75_000;
-
-function makeClientRequestId(): string {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function isDashboardView(
-  value: string | null | undefined,
-): value is DashboardView {
-  return (
-    value === 'usage' ||
-    value === 'rooms' ||
-    value === 'scheduled' ||
-    value === 'settings'
-  );
-}
-
-function readViewFromHash(): DashboardView {
-  if (typeof window === 'undefined') return DEFAULT_VIEW;
-  const raw = window.location.hash.replace(/^#\/?/, '');
-  return isDashboardView(raw) ? raw : DEFAULT_VIEW;
-}
-
-function normalizeDashboardHash(view: DashboardView): void {
-  if (typeof window === 'undefined') return;
-  const raw = window.location.hash.replace(/^#\/?/, '');
-  if (!raw || isDashboardView(raw)) return;
-  window.history.replaceState(null, '', `#/${view}`);
-}
-
-function readInitialLocale(): Locale {
-  const stored =
-    typeof window === 'undefined'
-      ? null
-      : window.localStorage.getItem(LOCALE_STORAGE_KEY);
-  if (isLocale(stored)) return stored;
-
-  const languages =
-    typeof navigator === 'undefined'
-      ? []
-      : [...(navigator.languages || []), navigator.language];
-  for (const language of languages) {
-    const matched = matchLocale(language);
-    if (matched) return matched;
-  }
-
-  return 'en';
-}
-
-function persistNickname(trimmed: string): void {
-  if (typeof window === 'undefined') return;
-  if (trimmed) window.localStorage.setItem('ejclaw-nickname', trimmed);
-  else window.localStorage.removeItem('ejclaw-nickname');
-}
 
 function humanizeError(raw: string, t: Messages): string {
   const lower = raw.toLowerCase();
@@ -151,14 +67,6 @@ function freshnessLabel(level: FreshnessLevel, t: Messages): string {
   if (level === 'offline') return t.pwa.offline;
   if (level === 'stale') return t.pwa.stale;
   return t.pwa.fresh;
-}
-
-function canUsePwaCore(): boolean {
-  return (
-    typeof window !== 'undefined' &&
-    window.isSecureContext &&
-    'serviceWorker' in navigator
-  );
 }
 
 function formatDuration(value: number | null, t: Messages): string {
@@ -255,308 +163,42 @@ function DashboardErrorCard({
 }
 
 function App() {
-  const [data, setData] = useState<DashboardState | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeView, setActiveView] = useState<DashboardView>(readViewFromHash);
-  const [locale, setLocale] = useState<Locale>(readInitialLocale);
-  const [online, setOnline] = useState(() =>
-    typeof navigator === 'undefined' ? true : navigator.onLine,
-  );
-  const [taskActionKey, setTaskActionKey] = useState<TaskActionKey | null>(
-    null,
-  );
-  const [serviceRestarting, setServiceRestarting] = useState(false);
-  const [roomMessageKey, setRoomMessageKey] = useState<string | null>(null);
-  const [selectedRoomJid, setSelectedRoomJid] = useState<string | null>(null);
+  const { data, error, loading, refresh, refreshing, setError } =
+    useDashboardData();
   const {
-    refreshRoom: refreshRoomActivity,
+    activeView,
+    drawerOpen,
+    locale,
+    navigateToView,
+    nickname,
+    online,
+    setDashboardLocale,
+    setDrawerOpen,
+    setNickname,
+  } = useDashboardChrome();
+  const t = messages[locale];
+  const {
+    handleServiceRestart,
+    handleTaskAction,
+    handleTaskCreate,
+    handleTaskUpdate,
+    serviceRestarting,
+    taskActionKey,
+  } = useDashboardActions({ refresh, setError, t });
+  const {
+    handleRoomMessage,
+    pendingMessages,
     roomActivity,
     roomActivityLoading,
-  } = useSelectedRoomActivity({
+    roomMessageKey,
+    selectedRoomJid,
+    setSelectedRoomJid,
+  } = useRoomMessaging({
     active: activeView === 'rooms',
-    selectedRoomJid: selectedRoomJid,
+    nickname,
+    refresh,
+    setError,
   });
-  const [pendingMessages, setPendingMessages] = useState<
-    Record<string, Array<DashboardRoomActivity['messages'][number]>>
-  >({});
-  const [nickname, setNicknameState] = useState<string>(() => {
-    if (typeof window === 'undefined') return '';
-    return window.localStorage.getItem('ejclaw-nickname') ?? '';
-  });
-  function setNickname(next: string) {
-    const trimmed = next.trim().slice(0, 32);
-    setNicknameState(trimmed);
-    persistNickname(trimmed);
-  }
-  const t = messages[locale];
-
-  function setDashboardLocale(nextLocale: Locale) {
-    setLocale(nextLocale);
-    window.localStorage.setItem(LOCALE_STORAGE_KEY, nextLocale);
-  }
-
-  function navigateToView(view: DashboardView) {
-    setActiveView(view);
-    if (window.location.hash !== `#/${view}`) {
-      window.location.hash = `/${view}`;
-    }
-  }
-
-  async function refresh(showSpinner = false) {
-    if (showSpinner) setRefreshing(true);
-    try {
-      const nextData = await fetchDashboardData();
-      setData(nextData);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }
-
-  async function handleTaskAction(
-    task: DashboardTask,
-    action: DashboardTaskAction,
-  ) {
-    if (action === 'cancel' && !window.confirm(t.tasks.actions.confirmCancel)) {
-      return;
-    }
-
-    const actionKey: TaskActionKey = `${task.id}:${action}`;
-    setTaskActionKey(actionKey);
-    try {
-      await runScheduledTaskAction(task.id, action);
-      await refresh(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTaskActionKey(null);
-    }
-  }
-
-  async function handleTaskCreate(input: CreateScheduledTaskInput) {
-    setTaskActionKey('create');
-    try {
-      await createScheduledTask({ ...input, requestId: makeClientRequestId() });
-      await refresh(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTaskActionKey(null);
-    }
-  }
-
-  async function handleTaskUpdate(
-    task: DashboardTask,
-    input: UpdateScheduledTaskInput,
-  ) {
-    const actionKey: TaskActionKey = `${task.id}:edit`;
-    setTaskActionKey(actionKey);
-    try {
-      await updateScheduledTask(task.id, input);
-      await refresh(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTaskActionKey(null);
-    }
-  }
-
-  async function handleServiceRestart() {
-    if (
-      typeof window !== 'undefined' &&
-      !window.confirm(t.health.confirmRestart)
-    ) {
-      return;
-    }
-
-    setServiceRestarting(true);
-    try {
-      await runServiceAction('stack', 'restart', {
-        requestId: makeClientRequestId(),
-      });
-      await refresh(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setServiceRestarting(false);
-    }
-  }
-
-  async function handleRoomMessage(
-    roomJid: string,
-    text: string,
-    requestId: string,
-  ) {
-    setRoomMessageKey(roomJid);
-    const optimisticId = `opt:${requestId}`;
-    const displayName = nickname || 'Web Dashboard';
-    const optimisticMsg = {
-      id: optimisticId,
-      sender: 'me',
-      senderName: displayName,
-      content: text,
-      timestamp: new Date().toISOString(),
-      isFromMe: true,
-      isBotMessage: false,
-      sourceKind: 'human' as const,
-    };
-    setPendingMessages((prev) => ({
-      ...prev,
-      [roomJid]: [...(prev[roomJid] ?? []), optimisticMsg],
-    }));
-    try {
-      await sendRoomMessage(roomJid, text, requestId, nickname || null);
-      try {
-        await refreshRoomActivity(roomJid);
-      } catch {
-        /* refresh will retry on next poll */
-      }
-      void refresh(false);
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setPendingMessages((prev) => {
-        const list = prev[roomJid];
-        if (!list) return prev;
-        const next = list.filter((m) => m.id !== optimisticId);
-        if (next.length === 0) {
-          const { [roomJid]: _drop, ...rest } = prev;
-          void _drop;
-          return rest;
-        }
-        return { ...prev, [roomJid]: next };
-      });
-      return false;
-    } finally {
-      setRoomMessageKey(null);
-    }
-  }
-
-  useEffect(() => {
-    document.documentElement.lang = localeTags[locale];
-  }, [locale]);
-
-  useEffect(() => {
-    const debug =
-      typeof window !== 'undefined' &&
-      /[?&]debug=1/.test(window.location.search);
-    document.body.classList.toggle('debug-outlines', debug);
-    if (
-      typeof window !== 'undefined' &&
-      /[?&]measure=1/.test(window.location.search)
-    ) {
-      const tick = () => {
-        const sels = [
-          '.rooms-detail .room-card-v2',
-          '.room-card-head',
-          '.room-thread-section',
-          '.room-section.room-compose-section',
-        ];
-        const out = sels
-          .map((s) => {
-            const el = document.querySelector(s);
-            if (!el) return `${s}: NOT FOUND`;
-            const r = el.getBoundingClientRect();
-            const cs = getComputedStyle(el);
-            return `${s}:\n  x=${Math.round(r.x)} w=${Math.round(r.width)}\n  display=${cs.display} pl=${cs.paddingLeft} ml=${cs.marginLeft}`;
-          })
-          .join('\n');
-        let pre = document.getElementById('__measure');
-        if (!pre) {
-          pre = document.createElement('pre');
-          pre.id = '__measure';
-          pre.style.cssText =
-            'position:fixed;top:0;left:0;background:#fff;color:#000;font:11px monospace;padding:8px;z-index:99999;max-width:520px;white-space:pre;line-height:1.4;';
-          document.body.appendChild(pre);
-        }
-        pre.textContent = out;
-      };
-      const id = window.setTimeout(tick, 1500);
-      return () => window.clearTimeout(id);
-    }
-    return undefined;
-  });
-
-  useEffect(() => {
-    function handleOnline() {
-      setOnline(true);
-    }
-
-    function handleOffline() {
-      setOnline(false);
-    }
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!import.meta.env.PROD || !canUsePwaCore()) return;
-
-    void navigator.serviceWorker.register('/sw.js').catch(() => {
-      /* ignore registration failures */
-    });
-  }, []);
-
-  useEffect(() => {
-    function handleHashChange() {
-      const nextView = readViewFromHash();
-      setActiveView(nextView);
-      normalizeDashboardHash(nextView);
-    }
-
-    handleHashChange();
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const id = window.setInterval(() => {
-      void refresh();
-    }, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    setPendingMessages((prev) => {
-      const next: typeof prev = {};
-      let changed = false;
-      for (const [jid, list] of Object.entries(prev)) {
-        const fetched = roomActivity[jid]?.messages ?? [];
-        const confirmedKeys = new Set(
-          fetched.map((m) => `${m.senderName}${m.content}`),
-        );
-        const remaining = list.filter(
-          (m) => !confirmedKeys.has(`${m.senderName}${m.content}`),
-        );
-        if (remaining.length !== list.length) changed = true;
-        if (remaining.length > 0) next[jid] = remaining;
-      }
-      return changed ? next : prev;
-    });
-  }, [roomActivity]);
-
-  useEffect(() => {
-    if (!drawerOpen) return;
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setDrawerOpen(false);
-    }
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [drawerOpen]);
 
   if (loading && !data) {
     return <LoadingSkeleton t={t} />;
