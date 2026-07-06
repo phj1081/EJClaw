@@ -60,6 +60,27 @@ describe('shouldResetSessionOnAgentFailure', () => {
       }),
     ).toBe(true);
   });
+
+  it('does not match long visible output that merely quotes a session error', () => {
+    const filler =
+      'The prod log shows repeated failures we should fix. '.repeat(20);
+    expect(
+      shouldResetSessionOnAgentFailure({
+        result: `${filler}I found this in the logs: "No conversation found with session ID: 335c800c" — that is why the room lost context. ${filler}`,
+        error: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it('still matches session errors quoted in the error field regardless of length', () => {
+    const filler = 'x'.repeat(2000);
+    expect(
+      shouldResetSessionOnAgentFailure({
+        result: null,
+        error: `${filler} No conversation found with session ID: stale`,
+      }),
+    ).toBe(true);
+  });
 });
 
 describe('shouldRetryFreshSessionOnAgentFailure', () => {
@@ -97,6 +118,17 @@ describe('shouldRetryFreshSessionOnAgentFailure', () => {
       shouldRetryFreshSessionOnAgentFailure({
         result: null,
         output: { visibility: 'silent' },
+        error: undefined,
+      }),
+    ).toBe(false);
+  });
+
+  it('does not retry when a long visible output quotes a session error', () => {
+    const filler =
+      'Here is my analysis of the EJClaw session recovery code. '.repeat(20);
+    expect(
+      shouldRetryFreshSessionOnAgentFailure({
+        result: `${filler}The runner surfaced "No conversation found with session ID" before clearing. ${filler}`,
         error: undefined,
       }),
     ).toBe(false);

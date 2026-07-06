@@ -1120,7 +1120,7 @@ describe('runAgentForGroup Claude org access and Codex session recovery', () => 
 
     expect(result).toBe('success');
     expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
-    expect(deps.clearSession).toHaveBeenCalledWith('test-codex');
+    expect(deps.clearSession).toHaveBeenCalledWith('test-codex:codex');
   });
 
   it('rotates to another Claude account when Claude streams an org access denied banner', async () => {

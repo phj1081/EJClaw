@@ -303,7 +303,8 @@ Check the run.
           agentType: 'codex',
         },
       }),
-      getSessions: () => ({ 'shared-group': 'session-123' }),
+      // Codex sessions live under the provider-scoped key.
+      getSessions: () => ({ 'shared-group:codex': 'session-123' }),
       queue: { enqueueTask } as any,
       onProcess: () => {},
       sendMessage: async () => {},

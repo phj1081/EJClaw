@@ -49,12 +49,12 @@ export function createRuntimeState(): RuntimeState {
     opts?: { allRoles?: boolean },
   ): void => {
     if (opts?.allRoles) {
-      for (const key of [
-        groupFolder,
-        `${groupFolder}:reviewer`,
-        `${groupFolder}:arbiter`,
-      ]) {
-        delete sessions[key];
+      // Covers all role/provider scoped keys: folder, folder:reviewer,
+      // folder:arbiter, folder:codex, folder:reviewer:codex, ...
+      for (const key of Object.keys(sessions)) {
+        if (key === groupFolder || key.startsWith(`${groupFolder}:`)) {
+          delete sessions[key];
+        }
       }
       deleteAllSessionsForGroup(groupFolder);
     } else {

@@ -119,6 +119,7 @@ type StreamedOutputHandler = ReturnType<typeof createEvaluatedOutputHandler>;
 
 class MessageAgentAttemptRunner {
   private resetSessionRequested = false;
+  private warnedCodexThreadReplacement = false;
   private readonly attemptSessionId: string | undefined;
   private readonly streamedOutputHandler: StreamedOutputHandler;
 
@@ -266,14 +267,42 @@ class MessageAgentAttemptRunner {
       !this.resetSessionRequested &&
       this.args.shouldPersistSession
     ) {
+      this.warnOnCodexThreadReplacement(output.newSessionId);
       this.args.onPersistSession(output.newSessionId);
     }
   }
 
   private persistReturnedSession(output: AgentOutput): void {
     if (output.newSessionId && this.args.shouldPersistSession) {
+      this.warnOnCodexThreadReplacement(output.newSessionId);
       this.args.onPersistSession(output.newSessionId);
     }
+  }
+
+  /**
+   * Codex thread ids are stable across turns, so a different id after a
+   * resume attempt means the runner silently fell back to a new thread and
+   * the previous thread's context is gone. Claude session ids legitimately
+   * change on every resumed turn, so this only applies to codex.
+   */
+  private warnOnCodexThreadReplacement(newSessionId: string): void {
+    if (
+      this.warnedCodexThreadReplacement ||
+      this.args.provider !== 'codex' ||
+      !this.attemptSessionId ||
+      newSessionId === this.attemptSessionId
+    ) {
+      return;
+    }
+    this.warnedCodexThreadReplacement = true;
+    this.args.log.warn(
+      {
+        sessionFolder: this.args.sessionFolder,
+        previousSessionId: this.attemptSessionId,
+        newSessionId,
+      },
+      'Codex resume silently replaced the thread — previous thread context lost',
+    );
   }
 
   private updatePairedSummary(event: EvaluatedAgentOutput): void {

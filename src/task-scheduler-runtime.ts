@@ -8,6 +8,7 @@ import {
   resolveTaskRuntimeIpcPath,
 } from './group-folder.js';
 import { logger } from './logger.js';
+import { resolveSessionFolder } from './message-runtime-rules.js';
 import { hasReviewerLease } from './service-routing.js';
 import {
   getTaskQueueJid,
@@ -98,7 +99,13 @@ export function resolveTaskExecutionContext(
     runtimeIpcDir,
     runtimeTaskId,
     sessionId:
-      task.context_mode === 'group' ? sessions[task.group_folder] : undefined,
+      task.context_mode === 'group'
+        ? // Group-context tasks resume the owner session for the task's
+          // provider — codex thread ids live under the :codex scoped key.
+          sessions[
+            resolveSessionFolder(task.group_folder, 'owner', taskAgentType)
+          ]
+        : undefined,
     useTaskScopedSession,
     taskAgentType,
   };

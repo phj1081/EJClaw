@@ -167,8 +167,9 @@ describe('createMessageRuntime tracked progress lifecycle', () => {
         'CI 상태 확인 중입니다.',
       );
       expect(notifyIdle).not.toHaveBeenCalled();
+      // Codex sessions persist under the provider-scoped key.
       expect(persistSession).toHaveBeenCalledWith(
-        group.folder,
+        `${group.folder}:codex`,
         'session-progress',
       );
     } finally {
