@@ -2,6 +2,14 @@
 
 이 문서는 EJClaw의 주요 변경 사항을 기록합니다.
 
+## [Unreleased]
+
+### Added
+
+- 방별(role별) 모델·effort override 지원: `room_role_overrides.agent_config_json`에 저장된 방별 값이 전역 `OWNER_/REVIEWER_/ARBITER_MODEL`보다 우선 적용
+- `assign_room`에 `owner_model`/`owner_effort`/`reviewer_model`/`reviewer_effort`/`arbiter_model`/`arbiter_effort` 파라미터 추가 (빈 문자열로 삭제)
+- 웹 대시보드 설정 → 모델에 "방별 모델" 카드와 `/api/settings/room-models` API 추가
+
 ## [0.2.3] - 2026-04-22
 
 ### Added

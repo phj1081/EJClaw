@@ -70,6 +70,7 @@ vi.mock('./db.js', () => {
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
     getLatestTurnNumber: vi.fn(() => 0),
     getPairedTaskById: vi.fn(() => undefined),
+    getRoomRoleAgentConfig: vi.fn(() => undefined),
     getPairedTurnAttempts: vi.fn(() => []),
     getPairedTurnOutputs: vi.fn(() => []),
     insertPairedTurnOutput: vi.fn(),

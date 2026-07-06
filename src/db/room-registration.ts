@@ -11,7 +11,12 @@ import {
   type RoleAgentPlan,
   resolveRoleAgentPlan,
 } from '../role-agent-plan.js';
-import type { AgentType, RegisteredGroup, RoomMode } from '../types.js';
+import {
+  isClaudeCompatibleAgentType,
+  type AgentType,
+  type RegisteredGroup,
+  type RoomMode,
+} from '../types.js';
 
 export type RoomModeSource = 'explicit' | 'inferred';
 
@@ -66,13 +71,53 @@ export interface LegacyRoomMigrationPlan {
 export interface SyncRoomRoleOverridesOptions {
   ownerAgentConfig?: RegisteredGroup['agentConfig'];
   ownerCreatedAt?: string;
+  ownerModelSelection?: RoleModelSelection;
   reviewerAgentType?: AgentType;
   reviewerAgentConfig?: RegisteredGroup['agentConfig'];
   reviewerCreatedAt?: string;
+  reviewerModelSelection?: RoleModelSelection;
   arbiterAgentType?: AgentType | null;
   arbiterAgentConfig?: RegisteredGroup['agentConfig'];
   arbiterCreatedAt?: string;
+  arbiterModelSelection?: RoleModelSelection;
   updatedAt?: string;
+}
+
+/**
+ * Per-role room model override request. `undefined` keeps the stored value,
+ * `null` (or an empty string) clears it.
+ */
+export interface RoleModelSelection {
+  model?: string | null;
+  effort?: string | null;
+}
+
+/**
+ * Merge a model/effort selection into a role's stored agent config, mapping
+ * the provider-agnostic selection onto the claude* or codex* keys that match
+ * the role's agent type.
+ */
+export function applyRoleModelSelectionToAgentConfig(
+  agentType: AgentType,
+  base: RegisteredGroup['agentConfig'],
+  selection: RoleModelSelection | undefined,
+): RegisteredGroup['agentConfig'] {
+  if (!selection) return base;
+  const claudeFamily = isClaudeCompatibleAgentType(agentType);
+  const modelKey = claudeFamily ? 'claudeModel' : 'codexModel';
+  const effortKey = claudeFamily ? 'claudeEffort' : 'codexEffort';
+  const next: Record<string, unknown> = { ...(base ?? {}) };
+  if (selection.model !== undefined) {
+    if (selection.model) next[modelKey] = selection.model;
+    else delete next[modelKey];
+  }
+  if (selection.effort !== undefined) {
+    if (selection.effort) next[effortKey] = selection.effort;
+    else delete next[effortKey];
+  }
+  return Object.keys(next).length > 0
+    ? (next as RegisteredGroup['agentConfig'])
+    : undefined;
 }
 
 export function normalizeRoomModeSource(
@@ -107,6 +152,40 @@ export function inferOwnerAgentTypeFromRegisteredAgentTypes(
   if (types.has('codex')) return 'codex';
   if (types.has('glm-code')) return 'glm-code';
   return 'claude-code';
+}
+
+export function getStoredRoomRoleOverrideRowsFromDatabase(
+  database: Database,
+  jid: string,
+): Map<'owner' | 'reviewer' | 'arbiter', StoredRoomRoleOverrideRow> {
+  return getStoredRoomRoleOverrideRows(database, jid);
+}
+
+export function getRoomRoleAgentConfigFromDatabase(
+  database: Database,
+  chatJid: string,
+  role: 'owner' | 'reviewer' | 'arbiter',
+): RegisteredGroup['agentConfig'] {
+  return getStoredRoomRoleOverrideRows(database, chatJid).get(role)
+    ?.agentConfig;
+}
+
+export function updateRoomRoleAgentConfigInDatabase(
+  database: Database,
+  chatJid: string,
+  role: 'owner' | 'reviewer' | 'arbiter',
+  agentConfig: RegisteredGroup['agentConfig'],
+): boolean {
+  const existing = getStoredRoomRoleOverrideRows(database, chatJid).get(role);
+  if (!existing) return false;
+  upsertRoomRoleOverride(database, chatJid, {
+    role,
+    agentType: existing.agentType,
+    agentConfig,
+    createdAt: existing.createdAt,
+    updatedAt: new Date().toISOString(),
+  });
+  return true;
 }
 
 function getStoredRoomRoleOverrideRows(
@@ -545,11 +624,14 @@ export function syncRoomRoleOverridesForRoom(
   upsertRoomRoleOverride(database, chatJid, {
     role: 'owner',
     agentType: ownerAgentType,
-    agentConfig:
+    agentConfig: applyRoleModelSelectionToAgentConfig(
+      ownerAgentType,
       options.ownerAgentConfig ??
-      (existingOwnerOverride?.agentType === ownerAgentType
-        ? existingOwnerOverride.agentConfig
-        : undefined),
+        (existingOwnerOverride?.agentType === ownerAgentType
+          ? existingOwnerOverride.agentConfig
+          : undefined),
+      options.ownerModelSelection,
+    ),
     createdAt:
       (existingOwnerOverride?.agentType === ownerAgentType
         ? existingOwnerOverride.createdAt
@@ -578,11 +660,14 @@ export function syncRoomRoleOverridesForRoom(
     upsertRoomRoleOverride(database, chatJid, {
       role: 'reviewer',
       agentType: reviewerAgentType,
-      agentConfig:
+      agentConfig: applyRoleModelSelectionToAgentConfig(
+        reviewerAgentType,
         options.reviewerAgentConfig ??
-        (existingReviewerOverride?.agentType === reviewerAgentType
-          ? existingReviewerOverride.agentConfig
-          : undefined),
+          (existingReviewerOverride?.agentType === reviewerAgentType
+            ? existingReviewerOverride.agentConfig
+            : undefined),
+        options.reviewerModelSelection,
+      ),
       createdAt:
         (existingReviewerOverride?.agentType === reviewerAgentType
           ? existingReviewerOverride.createdAt
@@ -603,11 +688,14 @@ export function syncRoomRoleOverridesForRoom(
       upsertRoomRoleOverride(database, chatJid, {
         role: 'arbiter',
         agentType: arbiterAgentType,
-        agentConfig:
+        agentConfig: applyRoleModelSelectionToAgentConfig(
+          arbiterAgentType,
           options.arbiterAgentConfig ??
-          (existingArbiterOverride?.agentType === arbiterAgentType
-            ? existingArbiterOverride.agentConfig
-            : undefined),
+            (existingArbiterOverride?.agentType === arbiterAgentType
+              ? existingArbiterOverride.agentConfig
+              : undefined),
+          options.arbiterModelSelection,
+        ),
         createdAt:
           (existingArbiterOverride?.agentType === arbiterAgentType
             ? existingArbiterOverride.createdAt

@@ -12,6 +12,7 @@ import type {
   ModelConfigSnapshot,
 } from './settings-store.js';
 import type { RuntimeInventorySnapshot } from './runtime-inventory.js';
+import type { RoomModelSettingsSnapshot } from './room-model-settings.js';
 import type { RoomSkillSettingsSnapshot } from './room-skill-settings.js';
 import type { MoaSettingsSnapshot } from './settings-store-moa.js';
 
@@ -196,6 +197,36 @@ const roomSkillSettings: RoomSkillSettingsSnapshot = {
   ],
 };
 
+const roomModelSettings: RoomModelSettingsSnapshot = {
+  generatedAt: '2026-05-04T00:00:00.000Z',
+  rooms: [
+    {
+      jid: 'room@example',
+      name: 'EJClaw',
+      folder: 'ejclaw',
+      roomMode: 'tribunal',
+      roles: [
+        {
+          role: 'owner',
+          agentType: 'codex',
+          model: '',
+          effort: '',
+          globalModel: 'gpt-5.4',
+          globalEffort: 'medium',
+        },
+        {
+          role: 'reviewer',
+          agentType: 'claude-code',
+          model: '',
+          effort: '',
+          globalModel: 'claude-sonnet',
+          globalEffort: 'high',
+        },
+      ],
+    },
+  ],
+};
+
 function makeClaudeAccount(): ClaudeAccountSummary {
   return {
     index: 0,
@@ -257,6 +288,7 @@ function makeDeps(
     getModelConfig: () => modelConfig,
     getMoaSettings: () => moaSettings,
     getRuntimeInventory: () => runtimeInventory,
+    getRoomModelSettings: () => roomModelSettings,
     getRoomSkillSettings: () => roomSkillSettings,
     listClaudeAccounts: () => [makeClaudeAccount()],
     listCodexAccounts: () => [makeCodexAccount()],
@@ -268,6 +300,7 @@ function makeDeps(
     updateFastMode: () => fastMode,
     updateModelConfig: () => modelConfig,
     updateMoaSettings: () => moaSettings,
+    updateRoomModelSetting: () => roomModelSettings,
     updateRoomSkillSetting: () => roomSkillSettings,
     ...overrides,
   };
@@ -520,5 +553,63 @@ describe('web dashboard settings routes', () => {
       }),
     );
     expect(invalid?.status).toBe(500);
+  });
+});
+
+describe('web dashboard room model settings routes', () => {
+  it('serves the room model snapshot', async () => {
+    const roomModels = await route('/api/settings/room-models');
+    expect(roomModels?.status).toBe(200);
+    await expect(roomModels?.json()).resolves.toMatchObject({
+      rooms: [
+        {
+          jid: 'room@example',
+          roomMode: 'tribunal',
+          roles: [{ role: 'owner', agentType: 'codex' }, { role: 'reviewer' }],
+        },
+      ],
+    });
+  });
+
+  it('handles room model mutations through injected dependencies', async () => {
+    const calls: string[] = [];
+    const deps = makeDeps({
+      updateRoomModelSetting: (input) => {
+        calls.push(`room-model:${JSON.stringify(input)}`);
+        return {
+          ...roomModelSettings,
+          rooms: [
+            {
+              ...roomModelSettings.rooms[0]!,
+              roles: [
+                {
+                  ...roomModelSettings.rooms[0]!.roles[0]!,
+                  model: input.model ?? '',
+                },
+                roomModelSettings.rooms[0]!.roles[1]!,
+              ],
+            },
+          ],
+        };
+      },
+    });
+
+    const roomModel = await route(
+      '/api/settings/room-models',
+      'PATCH',
+      {
+        roomJid: 'room@example',
+        role: 'owner',
+        model: 'gpt-5.5-pro',
+      },
+      deps,
+    );
+    expect(roomModel?.status).toBe(200);
+    await expect(roomModel?.json()).resolves.toMatchObject({
+      rooms: [{ roles: [{ role: 'owner', model: 'gpt-5.5-pro' }, {}] }],
+    });
+    expect(calls).toEqual([
+      'room-model:{"roomJid":"room@example","role":"owner","model":"gpt-5.5-pro"}',
+    ]);
   });
 });

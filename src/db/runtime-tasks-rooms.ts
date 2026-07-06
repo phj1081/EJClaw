@@ -46,7 +46,11 @@ import {
   updateRegisteredGroupNameInDatabase,
   upsertStoredRoomSkillOverrideInDatabase,
 } from './rooms.js';
-import { type StoredRoomSettings } from './room-registration.js';
+import {
+  getRoomRoleAgentConfigFromDatabase,
+  updateRoomRoleAgentConfigInDatabase,
+  type StoredRoomSettings,
+} from './room-registration.js';
 import {
   deleteAllSessionsForGroupFromDatabase,
   deleteSessionFromDatabase,
@@ -366,6 +370,28 @@ export function getStoredRoomRoleAgentPlan(
   const db = getDatabaseIfInitialized();
   if (!db) return undefined;
   return getStoredRoomRoleAgentPlanFromDatabase(db, chatJid);
+}
+
+export function getRoomRoleAgentConfig(
+  chatJid: string,
+  role: 'owner' | 'reviewer' | 'arbiter',
+): RegisteredGroup['agentConfig'] {
+  const db = getDatabaseIfInitialized();
+  if (!db) return undefined;
+  return getRoomRoleAgentConfigFromDatabase(db, chatJid, role);
+}
+
+export function updateRoomRoleAgentConfig(
+  chatJid: string,
+  role: 'owner' | 'reviewer' | 'arbiter',
+  agentConfig: RegisteredGroup['agentConfig'],
+): boolean {
+  return updateRoomRoleAgentConfigInDatabase(
+    requireDatabase(),
+    chatJid,
+    role,
+    agentConfig,
+  );
 }
 
 export function getStoredRoomSkillOverrides(

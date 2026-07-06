@@ -28,6 +28,7 @@ import {
 } from './codexAccountBadges';
 import { type Locale, type Messages } from './i18n';
 import { MoaSettingsPanel } from './MoaSettingsPanel';
+import { RoomModelSettings } from './RoomModelSettings';
 import { RuntimeInventorySettings } from './RuntimeInventorySettings';
 import {
   ModelRoleFields,
@@ -95,7 +96,7 @@ export function SettingsPanel({
           </div>
 
           <div hidden={activeSection !== 'settings-models'}>
-            <ModelSettings t={t} />
+            <ModelSettings locale={locale} t={t} />
           </div>
 
           <div hidden={activeSection !== 'settings-runtime'}>
@@ -119,7 +120,7 @@ export function SettingsPanel({
   );
 }
 
-function ModelSettings({ t }: { t: Messages }) {
+function ModelSettings({ locale, t }: { locale: Locale; t: Messages }) {
   const [config, setConfig] = useState<ModelConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<ModelConfigSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -226,6 +227,7 @@ function ModelSettings({ t }: { t: Messages }) {
           />
         </>
       )}
+      <RoomModelSettings locale={locale} t={t} />
     </section>
   );
 }

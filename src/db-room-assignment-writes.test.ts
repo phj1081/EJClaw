@@ -17,8 +17,10 @@ import {
   getExplicitRoomMode,
   getRegisteredGroup,
   getRegisteredAgentTypesForJid,
+  getRoomRoleAgentConfig,
   getStoredRoomSettings,
   updateRegisteredGroupName,
+  updateRoomRoleAgentConfig,
 } from './db.js';
 import { initializeDatabaseSchema } from './db/bootstrap.js';
 import {
@@ -231,6 +233,107 @@ describe('room assignment writes', () => {
       getAllRoomBindings('claude-code')['dc:legacy-rename'],
     ).toBeUndefined();
     expect(getAllRoomBindings('codex')['dc:legacy-rename']).toBeUndefined();
+  });
+});
+
+describe('room role model overrides', () => {
+  it('stores per-role model selections in role override agent configs', () => {
+    assignRoom('dc:role-models', {
+      name: 'Role Models',
+      roomMode: 'tribunal',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'codex',
+      arbiterAgentType: 'codex',
+      folder: 'role-models',
+      ownerModelSelection: { model: 'claude-opus-4-8', effort: 'max' },
+      reviewerModelSelection: { model: 'gpt-5.5', effort: 'xhigh' },
+      arbiterModelSelection: { model: 'gpt-5.5-pro' },
+    });
+
+    expect(getRoomRoleAgentConfig('dc:role-models', 'owner')).toEqual({
+      claudeModel: 'claude-opus-4-8',
+      claudeEffort: 'max',
+    });
+    expect(getRoomRoleAgentConfig('dc:role-models', 'reviewer')).toEqual({
+      codexModel: 'gpt-5.5',
+      codexEffort: 'xhigh',
+    });
+    expect(getRoomRoleAgentConfig('dc:role-models', 'arbiter')).toEqual({
+      codexModel: 'gpt-5.5-pro',
+    });
+  });
+
+  it('keeps stored role models on re-assign and clears them via empty selections', () => {
+    assignRoom('dc:role-model-clear', {
+      name: 'Role Model Clear',
+      roomMode: 'tribunal',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'codex',
+      folder: 'role-model-clear',
+      ownerModelSelection: { model: 'claude-opus-4-8', effort: 'high' },
+    });
+
+    // Re-assign without selections keeps stored values.
+    assignRoom('dc:role-model-clear', {
+      name: 'Role Model Clear',
+      roomMode: 'tribunal',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'codex',
+    });
+    expect(getRoomRoleAgentConfig('dc:role-model-clear', 'owner')).toEqual({
+      claudeModel: 'claude-opus-4-8',
+      claudeEffort: 'high',
+    });
+
+    // A null model clears just the model and keeps the effort.
+    assignRoom('dc:role-model-clear', {
+      name: 'Role Model Clear',
+      roomMode: 'tribunal',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'codex',
+      ownerModelSelection: { model: null },
+    });
+    expect(getRoomRoleAgentConfig('dc:role-model-clear', 'owner')).toEqual({
+      claudeEffort: 'high',
+    });
+
+    // Clearing the last key removes the config entirely.
+    assignRoom('dc:role-model-clear', {
+      name: 'Role Model Clear',
+      roomMode: 'tribunal',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'codex',
+      ownerModelSelection: { effort: null },
+    });
+    expect(
+      getRoomRoleAgentConfig('dc:role-model-clear', 'owner'),
+    ).toBeUndefined();
+  });
+
+  it('updates a single role agent config in place', () => {
+    assignRoom('dc:role-model-update', {
+      name: 'Role Model Update',
+      roomMode: 'tribunal',
+      ownerAgentType: 'claude-code',
+      reviewerAgentType: 'codex',
+      folder: 'role-model-update',
+    });
+
+    expect(
+      updateRoomRoleAgentConfig('dc:role-model-update', 'reviewer', {
+        codexModel: 'gpt-5.4',
+      }),
+    ).toBe(true);
+    expect(getRoomRoleAgentConfig('dc:role-model-update', 'reviewer')).toEqual({
+      codexModel: 'gpt-5.4',
+    });
+
+    // Unknown role rows are reported as not updated.
+    expect(
+      updateRoomRoleAgentConfig('dc:missing-room', 'owner', {
+        claudeModel: 'claude-opus-4-8',
+      }),
+    ).toBe(false);
   });
 });
 

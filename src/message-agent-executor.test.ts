@@ -71,6 +71,7 @@ vi.mock('./db.js', () => {
     getLatestOpenPairedTaskForChat: vi.fn(() => undefined),
     getLatestTurnNumber: vi.fn(() => 0),
     getPairedTaskById: vi.fn(() => undefined),
+    getRoomRoleAgentConfig: vi.fn(() => undefined),
     getPairedTurnAttempts: vi.fn(() => []),
     getPairedTurnOutputs: vi.fn(() => []),
     insertPairedTurnOutput: vi.fn(),
@@ -675,6 +676,87 @@ describe('runAgentForGroup forced roles and agent overrides', () => {
           'paired-task-reviewer-failover-model:2026-03-31T00:00:00.000Z:reviewer-turn',
         EJCLAW_PAIRED_TURN_ROLE: 'reviewer',
         EJCLAW_PAIRED_TURN_INTENT: 'reviewer-turn',
+      }),
+    );
+  });
+});
+
+describe('runAgentForGroup room model overrides', () => {
+  it('prefers the room-level reviewer model override over the global role config', async () => {
+    const group: RegisteredGroup = {
+      ...makeGroup(),
+      agentType: 'codex',
+      folder: 'test-group',
+    };
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: 'group@test',
+      owner_agent_type: 'codex',
+      reviewer_agent_type: 'claude-code',
+      arbiter_agent_type: null,
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      arbiter_service_id: null,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+    vi.mocked(db.getLatestOpenPairedTaskForChat).mockReturnValue({
+      id: 'paired-task-room-model',
+      chat_jid: 'group@test',
+      group_folder: 'test-group',
+      owner_service_id: 'codex-main',
+      reviewer_service_id: 'claude',
+      title: null,
+      source_ref: 'HEAD',
+      plan_notes: null,
+      round_trip_count: 0,
+      review_requested_at: '2026-03-31T00:00:00.000Z',
+      status: 'review_ready',
+      arbiter_verdict: null,
+      arbiter_requested_at: null,
+      completion_reason: null,
+      created_at: '2026-03-31T00:00:00.000Z',
+      updated_at: '2026-03-31T00:00:00.000Z',
+    });
+    vi.mocked(
+      pairedExecutionContext.preparePairedExecutionContext,
+    ).mockImplementation((args) => ({
+      task: db.getLatestOpenPairedTaskForChat(args.chatJid)!,
+      workspace: null,
+      envOverrides: {},
+    }));
+    const config = await import('./config.js');
+    vi.mocked(config.getRoleModelConfig).mockReturnValue({
+      model: 'claude-global',
+      effort: 'low',
+      fallbackEnabled: true,
+    });
+    vi.mocked(db.getRoomRoleAgentConfig).mockReturnValue({
+      claudeModel: 'claude-room',
+      claudeEffort: 'max',
+    });
+
+    await runAgentForGroup(makeDeps(), {
+      group,
+      prompt: 'please review',
+      chatJid: 'group@test',
+      runId: 'run-room-model-override',
+    });
+
+    expect(db.getRoomRoleAgentConfig).toHaveBeenCalledWith(
+      'group@test',
+      'reviewer',
+    );
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentType: 'claude-code',
+      }),
+      expect.any(Object),
+      expect.any(Function),
+      expect.any(Function),
+      expect.objectContaining({
+        CLAUDE_MODEL: 'claude-room',
+        CLAUDE_EFFORT: 'max',
       }),
     );
   });
