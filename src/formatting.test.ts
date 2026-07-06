@@ -318,4 +318,14 @@ describe('formatOutbound with tool-call leaks', () => {
       'Key: sk-ant-XXXXXXXXXXXXXXXXXXXXXXXX\nto=functions.exec_command code {"cmd":"ls"}';
     expect(formatOutbound(input)).toBe('Key: [REDACTED]');
   });
+
+  it('redacts a leaked Discord bot token', () => {
+    // Built from parts so the literal never appears in source (push protection).
+    const fakeToken = [
+      'MTA5ODc2NTQzMjEwOTg3NjU0',
+      'GaBcDe',
+      'abcdefghijklmnopqrstuvwxyz0123',
+    ].join('.');
+    expect(formatOutbound(`token=${fakeToken}`)).toBe('token=[REDACTED]');
+  });
 });

@@ -42,6 +42,8 @@ const SECRET_PATTERNS: RegExp[] = [
   /glpat-[A-Za-z0-9_-]{20,}/g, // GitLab PAT
   /AKIA[A-Z0-9]{16}/g, // AWS Access Key
   /Bearer\s+eyJ[A-Za-z0-9_-]{40,}/g, // Bearer JWT
+  // Discord bot token: base64 id "." 6-char ts "." 27+ char hmac
+  /\b[MN][A-Za-z0-9_-]{23,}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/g,
 ];
 
 function redactSecrets(text: string): string {

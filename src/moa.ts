@@ -44,6 +44,63 @@ function normalizeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Reject MoA base URLs that point at loopback / private / link-local hosts.
+ *
+ * MoA reference models are external SaaS endpoints (Kimi, GLM, ...). Allowing
+ * an internal host lets a compromised or misconfigured settings write turn the
+ * server-side MoA fetch into an SSRF probe (e.g. cloud metadata at
+ * 169.254.169.254). Only http(s) to a non-private host is permitted.
+ */
+export function assertSafeMoaBaseUrl(baseUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw new Error(`Invalid MoA base URL: ${baseUrl}`);
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error(`MoA base URL must use http(s): ${baseUrl}`);
+  }
+  if (isPrivateOrLocalHost(parsed.hostname)) {
+    throw new Error(
+      `MoA base URL host is not allowed (loopback/private/link-local): ${parsed.hostname}`,
+    );
+  }
+  return parsed;
+}
+
+function isPrivateOrLocalHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.internal') ||
+    host.endsWith('.local')
+  ) {
+    return true;
+  }
+  // IPv6 loopback / link-local / unique-local
+  if (host === '::1' || host === '::') return true;
+  if (
+    host.startsWith('fe80:') ||
+    host.startsWith('fc') ||
+    host.startsWith('fd')
+  ) {
+    return true;
+  }
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    if (a === 127 || a === 0 || a === 10) return true; // loopback / this-host / private
+    if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true; // private
+    if (a === 192 && b === 168) return true; // private
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT / tailnet
+  }
+  return false;
+}
+
 function recordReferenceStatus(
   status: Omit<MoaReferenceStatus, 'checkedAt'>,
 ): MoaReferenceStatus {
@@ -69,6 +126,7 @@ async function queryModel(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    assertSafeMoaBaseUrl(model.baseUrl);
     const base = model.baseUrl.replace(/\/+$/, '');
     const isAnthropic = model.apiFormat === 'anthropic';
 
