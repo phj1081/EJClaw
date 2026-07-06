@@ -51,10 +51,10 @@ function authPathFor(tempHome: string, accountIndex: number): string {
   );
 }
 
-describe('Codex warm-up scheduler', () => {
-  let tempHome: string;
-  let statePath: string;
+let tempHome: string;
+let statePath: string;
 
+function useWarmupTempHome(): void {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -70,6 +70,10 @@ describe('Codex warm-up scheduler', () => {
   afterEach(() => {
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
+}
+
+describe('Codex warm-up scheduler', () => {
+  useWarmupTempHome();
 
   it('warms one eligible zero-usage account with a real codex exec and persists account cooldown state', async () => {
     const childProcess = await import('child_process');
@@ -226,6 +230,10 @@ describe('Codex warm-up scheduler', () => {
     });
     expect(childProcess.spawn).not.toHaveBeenCalled();
   });
+});
+
+describe('Codex warm-up scheduler cooldown and stagger', () => {
+  useWarmupTempHome();
 
   it('does not repeat warm-up while the same zero-usage quota window is already marked warmed', async () => {
     const childProcess = await import('child_process');

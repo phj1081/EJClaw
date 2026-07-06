@@ -17,12 +17,14 @@ import {
 } from './message-runtime-follow-up.js';
 import { resetPairedFollowUpScheduleState } from './paired-follow-up-scheduler.js';
 
+function resetFollowUpTestState(): void {
+  vi.resetAllMocks();
+  resetPairedFollowUpScheduleState();
+  vi.mocked(getPairedTurnOutputs).mockReturnValue([]);
+}
+
 describe('message-runtime-follow-up', () => {
-  beforeEach(() => {
-    vi.resetAllMocks();
-    resetPairedFollowUpScheduleState();
-    vi.mocked(getPairedTurnOutputs).mockReturnValue([]);
-  });
+  beforeEach(resetFollowUpTestState);
 
   it('suppresses stale reviewer follow-ups when the latest persisted turn already belongs to the reviewer', () => {
     const enqueue = vi.fn();
@@ -203,6 +205,10 @@ describe('message-runtime-follow-up', () => {
     });
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('message-runtime-follow-up message-check scheduling', () => {
+  beforeEach(resetFollowUpTestState);
 
   it('can explicitly schedule active owner follow-up recovery even without persisted output', () => {
     const enqueueMessageCheck = vi.fn();

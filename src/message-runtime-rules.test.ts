@@ -38,7 +38,7 @@ const baseLease: EffectiveChannelLease = {
   explicit: true,
 };
 
-describe('message-runtime-rules', () => {
+describe('message-runtime-rules next turn actions', () => {
   it('maps review_ready to a reviewer turn', () => {
     expect(
       resolveNextTurnAction({
@@ -165,7 +165,9 @@ describe('message-runtime-rules', () => {
       }),
     ).toEqual({ kind: 'none' });
   });
+});
 
+describe('message-runtime-rules follow-up dispatch', () => {
   it('dispatches owner delivery success through a paired follow-up enqueue for reviewer or arbiter turns', () => {
     expect(
       resolveFollowUpDispatch({
@@ -300,7 +302,9 @@ describe('message-runtime-rules', () => {
       queueKind: 'paired-follow-up',
     });
   });
+});
 
+describe('message-runtime-rules queued turn roles', () => {
   it('routes fresh human input to owner while review is pending or running', () => {
     expect(
       resolveQueuedTurnRole({
@@ -346,7 +350,9 @@ describe('message-runtime-rules', () => {
       }),
     ).toBeNull();
   });
+});
 
+describe('message-runtime-rules execution targets', () => {
   it('resolves reviewer execution target from review_ready task status', () => {
     const resolution = resolveExecutionTarget({
       lease: baseLease,

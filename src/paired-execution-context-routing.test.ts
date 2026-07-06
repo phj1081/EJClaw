@@ -62,11 +62,13 @@ function buildPairedTask(overrides: Partial<PairedTask> = {}): PairedTask {
   };
 }
 
-describe('paired execution routing loop guards', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(db.getPairedWorkspace).mockReturnValue(undefined);
-  });
+function resetRoutingMocks(): void {
+  vi.clearAllMocks();
+  vi.mocked(db.getPairedWorkspace).mockReturnValue(undefined);
+}
+
+describe('paired execution routing loop guards: reviewer approvals', () => {
+  beforeEach(resetRoutingMocks);
 
   it('clears stale owner loop state when reviewer approves normally', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
@@ -134,6 +136,10 @@ describe('paired execution routing loop guards', () => {
       }),
     );
   });
+});
+
+describe('paired execution routing loop guards: arbiter verdicts', () => {
+  beforeEach(resetRoutingMocks);
 
   it('routes arbiter PROCEED back to reviewer instead of owner ping-pong', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
@@ -232,6 +238,10 @@ describe('paired execution routing loop guards', () => {
       }),
     );
   });
+});
+
+describe('paired execution routing loop guards: terminal failures and owner revise', () => {
+  beforeEach(resetRoutingMocks);
 
   it('returns arbiter terminal Codex account failures to owner without re-arming arbiter', () => {
     vi.mocked(db.getPairedTaskById).mockReturnValue(
