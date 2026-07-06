@@ -315,6 +315,11 @@ function setOrInsertEnvLine(
   key: string,
   value: string,
 ): string {
+  if (/[\r\n]/.test(value)) {
+    // Guard against env-line injection: a newline in a value would let a
+    // caller append arbitrary extra keys (e.g. a MoA base URL for SSRF).
+    throw new Error('env values must not contain newlines');
+  }
   const re = new RegExp(`^${key}=.*$`, 'm');
   if (re.test(content)) {
     return content.replace(re, `${key}=${value}`);
