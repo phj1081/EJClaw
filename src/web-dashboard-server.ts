@@ -504,6 +504,54 @@ export function createWebDashboardHandler(
   };
 }
 
+function isLoopbackHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  return h === 'localhost' || h === '::1' || /^127\./.test(h);
+}
+
+function isPrivateBindHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) {
+    return true;
+  }
+  const ipv4 = h.match(/^(\d{1,3})\.(\d{1,3})\./);
+  if (!ipv4) return false;
+  const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+  if (a === 10) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT / tailnet
+  return false;
+}
+
+/**
+ * Refuse to expose an unauthenticated dashboard on a public interface.
+ *
+ * With no token the API auth gate passes for everyone (see
+ * isDashboardApiAuthorized). Binding that to a public interface / all
+ * interfaces (0.0.0.0) would let any reachable client drive agents and restart
+ * the service, so we fail fast. Loopback is fine; private / tailnet binds warn
+ * loudly but still start so existing deployments keep running.
+ */
+export function assertDashboardAuthPosture(host: string, token: string): void {
+  if (token) return;
+  if (isLoopbackHost(host)) return;
+  if (isPrivateBindHost(host)) {
+    logger.warn(
+      { host },
+      'Web dashboard is bound to a non-loopback host without WEB_DASHBOARD_TOKEN; ' +
+        'anyone who can reach this host can drive agents and restart the service. ' +
+        'Set WEB_DASHBOARD_TOKEN to require authentication.',
+    );
+    return;
+  }
+  throw new Error(
+    `Refusing to start web dashboard on public host "${host}" without WEB_DASHBOARD_TOKEN. ` +
+      'Set WEB_DASHBOARD_TOKEN or bind to 127.0.0.1.',
+  );
+}
+
 export function startWebDashboardServer(
   opts: {
     enabled?: boolean;
@@ -521,6 +569,7 @@ export function startWebDashboardServer(
   const host = opts.host ?? WEB_DASHBOARD.host;
   const port = opts.port ?? WEB_DASHBOARD.port;
   const staticDir = opts.staticDir ?? WEB_DASHBOARD.staticDir;
+  assertDashboardAuthPosture(host, WEB_DASHBOARD.token);
   const server = Bun.serve({
     hostname: host,
     port,

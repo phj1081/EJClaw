@@ -5,7 +5,10 @@ import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { NewMessage, PairedTask, RegisteredGroup } from './types.js';
-import { createWebDashboardHandler } from './web-dashboard-server.js';
+import {
+  assertDashboardAuthPosture,
+  createWebDashboardHandler,
+} from './web-dashboard-server.js';
 
 const tempDirs: string[] = [];
 
@@ -43,6 +46,36 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+describe('assertDashboardAuthPosture', () => {
+  it('allows loopback binding without a token', () => {
+    expect(() => assertDashboardAuthPosture('127.0.0.1', '')).not.toThrow();
+    expect(() => assertDashboardAuthPosture('localhost', '')).not.toThrow();
+  });
+
+  it('allows any host when a token is set', () => {
+    expect(() => assertDashboardAuthPosture('0.0.0.0', 'secret')).not.toThrow();
+    expect(() =>
+      assertDashboardAuthPosture('203.0.113.5', 'secret'),
+    ).not.toThrow();
+  });
+
+  it('warns but starts on a private / tailnet host without a token', () => {
+    expect(() =>
+      assertDashboardAuthPosture('100.101.210.95', ''),
+    ).not.toThrow();
+    expect(() => assertDashboardAuthPosture('192.168.1.10', '')).not.toThrow();
+  });
+
+  it('refuses a public / all-interface bind without a token', () => {
+    expect(() => assertDashboardAuthPosture('0.0.0.0', '')).toThrow(
+      /WEB_DASHBOARD_TOKEN/,
+    );
+    expect(() => assertDashboardAuthPosture('203.0.113.5', '')).toThrow(
+      /WEB_DASHBOARD_TOKEN/,
+    );
+  });
 });
 
 describe('web dashboard server handler', () => {
