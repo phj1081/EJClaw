@@ -21,6 +21,10 @@ import {
   isCodexPoolUnavailableError,
   type CodexRotationReason,
 } from './agent-error-detection.js';
+import {
+  parseJwtAuth,
+  readAuthFileMtimeMs,
+} from './codex-token-rotation-auth-file.js';
 import { DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 import {
@@ -66,26 +70,6 @@ export type CodexRotationTriggerResult =
       reason: CodexRotationReason;
     };
 
-function parseJwtAuth(idToken: string): {
-  planType: string;
-  expiresAt: string | null;
-} {
-  try {
-    const parts = idToken.split('.');
-    if (parts.length < 2) return { planType: '?', expiresAt: null };
-    const payload = JSON.parse(
-      Buffer.from(parts[1], 'base64url').toString('utf-8'),
-    );
-    const auth = payload?.['https://api.openai.com/auth'] || {};
-    return {
-      planType: auth.chatgpt_plan_type || '?',
-      expiresAt: auth.chatgpt_subscription_active_until || null,
-    };
-  } catch {
-    return { planType: '?', expiresAt: null };
-  }
-}
-
 const accounts: CodexAccount[] = [];
 let currentIndex = 0;
 let initialized = false;
@@ -95,14 +79,6 @@ const CODEX_AUTH_LEASE_MS = 2 * 60 * 60_000;
 const ACCOUNTS_DIR = path.join(os.homedir(), '.codex-accounts');
 const DEFAULT_CODEX_DIR = path.join(os.homedir(), '.codex');
 const DEFAULT_AUTH_PATH = path.join(DEFAULT_CODEX_DIR, 'auth.json');
-
-function readAuthFileMtimeMs(authPath: string): number {
-  try {
-    return fs.statSync(authPath).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
 
 function loadCodexAccount(
   authPath: string,
