@@ -31,6 +31,13 @@ import {
   type RoomSkillSettingUpdateInput,
 } from './room-skill-settings.js';
 import {
+  getRoomModelSettings,
+  RoomModelSettingsError,
+  updateRoomModelSetting,
+  type RoomModelSettingsSnapshot,
+  type RoomModelSettingUpdateInput,
+} from './room-model-settings.js';
+import {
   checkMoaModel,
   getMoaSettings,
   updateMoaSettings,
@@ -52,6 +59,7 @@ export interface SettingsRouteDependencies {
   getModelConfig: typeof getModelConfig;
   getMoaSettings: typeof getMoaSettings;
   getRuntimeInventory: typeof getRuntimeInventory;
+  getRoomModelSettings: typeof getRoomModelSettings;
   getRoomSkillSettings: typeof getRoomSkillSettings;
   listClaudeAccounts: typeof listClaudeAccounts;
   listCodexAccounts: typeof listCodexAccounts;
@@ -63,6 +71,7 @@ export interface SettingsRouteDependencies {
   updateFastMode: typeof updateFastMode;
   updateModelConfig: typeof updateModelConfig;
   updateMoaSettings: typeof updateMoaSettings;
+  updateRoomModelSetting: typeof updateRoomModelSetting;
   updateRoomSkillSetting: typeof updateRoomSkillSetting;
 }
 
@@ -82,6 +91,7 @@ const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   getModelConfig,
   getMoaSettings,
   getRuntimeInventory,
+  getRoomModelSettings,
   getRoomSkillSettings,
   listClaudeAccounts,
   listCodexAccounts,
@@ -93,6 +103,7 @@ const defaultSettingsRouteDependencies: SettingsRouteDependencies = {
   updateFastMode,
   updateModelConfig,
   updateMoaSettings,
+  updateRoomModelSetting,
   updateRoomSkillSetting,
 };
 
@@ -286,6 +297,38 @@ async function handleRoomSkillsRoute(
   }
 }
 
+async function handleRoomModelsRoute(
+  request: Request,
+  jsonResponse: JsonResponse,
+  deps: SettingsRouteDependencies,
+): Promise<Response> {
+  if (readMethod(request.method)) {
+    return jsonResponse(deps.getRoomModelSettings());
+  }
+  if (request.method !== 'PATCH' && request.method !== 'PUT') {
+    return methodNotAllowed(jsonResponse, ['GET', 'HEAD', 'PATCH', 'PUT']);
+  }
+
+  const body = await readJsonObject(request, jsonResponse);
+  if (body instanceof Response) return body;
+
+  const input: RoomModelSettingUpdateInput = {
+    roomJid: typeof body.roomJid === 'string' ? body.roomJid : '',
+    role: typeof body.role === 'string' ? body.role : '',
+    ...(typeof body.model === 'string' ? { model: body.model } : {}),
+    ...(typeof body.effort === 'string' ? { effort: body.effort } : {}),
+  };
+
+  try {
+    return jsonResponse(deps.updateRoomModelSetting(input));
+  } catch (err) {
+    if (err instanceof RoomModelSettingsError) {
+      return jsonResponse({ error: err.message }, { status: err.status });
+    }
+    return jsonResponse({ error: errorMessage(err) }, { status: 500 });
+  }
+}
+
 async function handleClaudeAccountAddRoute(
   request: Request,
   jsonResponse: JsonResponse,
@@ -405,6 +448,9 @@ export async function handleSettingsRoute({
   if (url.pathname === '/api/settings/room-skills') {
     return handleRoomSkillsRoute(request, jsonResponse, deps);
   }
+  if (url.pathname === '/api/settings/room-models') {
+    return handleRoomModelsRoute(request, jsonResponse, deps);
+  }
   if (url.pathname === '/api/settings/fast-mode') {
     return handleFastModeRoute(request, jsonResponse, deps);
   }
@@ -452,5 +498,6 @@ export type {
   ModelConfigSnapshot,
   MoaSettingsSnapshot,
   RuntimeInventorySnapshot,
+  RoomModelSettingsSnapshot,
   RoomSkillSettingsSnapshot,
 };

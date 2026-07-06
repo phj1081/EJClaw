@@ -57,6 +57,7 @@ export {
   getRecentConsecutiveErrors,
   getRegisteredAgentTypesForJid,
   getRegisteredGroup,
+  getRoomRoleAgentConfig,
   getRouterState,
   getRouterStateForService,
   getSession,
@@ -75,6 +76,7 @@ export {
   setSessionForAgentType,
   upsertStoredRoomSkillOverride,
   updateRegisteredGroupName,
+  updateRoomRoleAgentConfig,
   updateTask,
   updateTaskAfterRun,
   updateTaskStatusTracking,
@@ -130,6 +132,7 @@ export {
 } from './db/runtime-paired.js';
 
 export type { AssignRoomInput } from './db/rooms.js';
+export type { RoleModelSelection } from './db/room-registration.js';
 export type {
   MemoryRecord,
   MemoryScopeKind,

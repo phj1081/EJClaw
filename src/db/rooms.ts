@@ -4,6 +4,7 @@ import { OWNER_AGENT_TYPE } from '../config.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import type { AgentType, RegisteredGroup, RoomMode } from '../types.js';
 import {
+  type RoleModelSelection,
   type RoomModeSource,
   type RoomRegistrationSnapshot,
   type StoredRoomSettings,
@@ -59,6 +60,9 @@ export interface AssignRoomInput {
   workDir?: string;
   addedAt?: string;
   ownerAgentConfig?: RegisteredGroup['agentConfig'];
+  ownerModelSelection?: RoleModelSelection;
+  reviewerModelSelection?: RoleModelSelection;
+  arbiterModelSelection?: RoleModelSelection;
 }
 
 export function setStoredRoomOwnerAgentTypeForTestsInDatabase(
@@ -257,8 +261,11 @@ export function assignRoomInDatabase(
     syncRoomRoleOverridesForRoom(database, chatJid, roomMode, ownerAgentType, {
       ownerAgentConfig: input.ownerAgentConfig,
       ownerCreatedAt: input.addedAt ?? now,
+      ownerModelSelection: input.ownerModelSelection,
       reviewerAgentType: input.reviewerAgentType,
       arbiterAgentType: input.arbiterAgentType,
+      reviewerModelSelection: input.reviewerModelSelection,
+      arbiterModelSelection: input.arbiterModelSelection,
       updatedAt: input.addedAt ?? now,
     });
   })();

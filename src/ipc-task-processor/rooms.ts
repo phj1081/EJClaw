@@ -1,6 +1,7 @@
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
 import type { IpcDeps, TaskIpcPayload } from '../ipc-types.js';
+import type { RoleModelSelection } from '../db.js';
 import type { AgentType, RoomMode } from '../types.js';
 
 export async function handleRefreshGroups(
@@ -39,7 +40,31 @@ export function handleAssignRoom(
     requiresTrigger: data.requiresTrigger,
     isMain: data.isMain,
     workDir: data.workDir,
+    ownerModelSelection: buildRoleModelSelection(
+      data.owner_model,
+      data.owner_effort,
+    ),
+    reviewerModelSelection: buildRoleModelSelection(
+      data.reviewer_model,
+      data.reviewer_effort,
+    ),
+    arbiterModelSelection: buildRoleModelSelection(
+      data.arbiter_model,
+      data.arbiter_effort,
+    ),
   });
+}
+
+/** Empty string clears the stored override; undefined keeps it. */
+function buildRoleModelSelection(
+  model: string | undefined,
+  effort: string | undefined,
+): RoleModelSelection | undefined {
+  if (model === undefined && effort === undefined) return undefined;
+  return {
+    ...(model !== undefined ? { model: model.trim() || null } : {}),
+    ...(effort !== undefined ? { effort: effort.trim() || null } : {}),
+  };
 }
 
 function validateAssignRoomRequest(
@@ -122,6 +147,23 @@ function validateAssignRoomRequest(
       'Invalid assign_room request - unknown arbiter_agent_type',
     );
     return { ok: false };
+  }
+  for (const key of [
+    'owner_model',
+    'owner_effort',
+    'reviewer_model',
+    'reviewer_effort',
+    'arbiter_model',
+    'arbiter_effort',
+  ] as const) {
+    const value = data[key];
+    if (value !== undefined && typeof value !== 'string') {
+      logger.warn(
+        { sourceGroup, key, value },
+        `Invalid assign_room request - ${key} must be a string`,
+      );
+      return { ok: false };
+    }
   }
   return { ok: true };
 }

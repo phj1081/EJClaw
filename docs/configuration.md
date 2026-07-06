@@ -64,9 +64,18 @@ ARBITER_FALLBACK_ENABLED=true
 - 역할별 `*_MODEL`은 해당 역할의 provider에 맞춰 주입됩니다. `codex` 역할에는 Codex 모델을, `claude-code` 역할에는 Claude 모델을, `glm-code` 역할에는 GLM 모델명을 넣어야 합니다.
 - 예를 들어 `ARBITER_AGENT_TYPE=claude-code`로 바꾸면 그때 `ARBITER_MODEL=claude-opus-4-8`을 사용할 수 있고, `ARBITER_AGENT_TYPE=glm-code`면 `ARBITER_MODEL=glm-5.2`를 사용할 수 있습니다.
 - `glm-code`는 전역 `EJCLAW_CLAUDE_CLI_PATH`를 건드리지 않고 `EJCLAW_GLM_CODE_CLI_PATH` 또는 PATH의 `glm-code` launcher를 별도로 찾습니다. 그래서 기존 Claude reviewer를 Opus로 유지하면서 owner/arbiter만 GLM으로 바꿀 수 있습니다.
-- 특정 방에서만 reviewer를 Codex로 고르는 기능은 없음
-- room-level `agentConfig`의 `claudeModel`, `codexModel`은 역할별이 아니라 provider별 override
 - `ARBITER_AGENT_TYPE`은 옵션이며, 설정하지 않으면 arbiter는 비활성 상태입니다
+
+### 방별(role별) 모델 override
+
+역할별 `*_MODEL`/`*_EFFORT`는 전역 기본값이고, 방마다 role별로 덮어쓸 수 있습니다.
+저장 위치는 `room_role_overrides.agent_config_json`이며 입력 경로는 두 가지입니다.
+
+- 웹 대시보드 → 설정 → 모델 → "방별 모델" 카드
+- `assign_room` 도구의 `owner_model` / `owner_effort` / `reviewer_model` / `reviewer_effort` / `arbiter_model` / `arbiter_effort` 파라미터 (빈 문자열이면 해당 override 삭제)
+
+우선순위는 `방 role override > 전역 *_MODEL/*_EFFORT > provider 기본값`입니다.
+tribunal 방은 다음 턴부터 즉시 적용되고, single 방의 owner override는 재시작(또는 `assign_room` 재실행) 후 적용됩니다.
 
 ## 인증
 

@@ -137,6 +137,12 @@ export interface TaskIpcPayload {
   owner_agent_type?: AgentType;
   reviewer_agent_type?: AgentType;
   arbiter_agent_type?: AgentType | null;
+  owner_model?: string;
+  owner_effort?: string;
+  reviewer_model?: string;
+  reviewer_effort?: string;
+  arbiter_model?: string;
+  arbiter_effort?: string;
   isMain?: boolean;
   workDir?: string;
   scopeKind?: string;

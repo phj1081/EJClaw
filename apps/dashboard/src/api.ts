@@ -531,6 +531,37 @@ export interface RoomSkillSettingUpdateInput {
   enabled: boolean;
 }
 
+export type RoomModelRole = 'owner' | 'reviewer' | 'arbiter';
+
+export interface RoomModelRoleSetting {
+  role: RoomModelRole;
+  agentType: 'claude-code' | 'codex' | 'glm-code';
+  model: string;
+  effort: string;
+  globalModel: string;
+  globalEffort: string;
+}
+
+export interface RoomModelSettingsRoom {
+  jid: string;
+  name: string;
+  folder: string;
+  roomMode: 'single' | 'tribunal';
+  roles: RoomModelRoleSetting[];
+}
+
+export interface RoomModelSettingsSnapshot {
+  generatedAt: string;
+  rooms: RoomModelSettingsRoom[];
+}
+
+export interface RoomModelSettingUpdateInput {
+  roomJid: string;
+  role: RoomModelRole;
+  model?: string;
+  effort?: string;
+}
+
 export interface MoaReferenceStatus {
   model: string;
   checkedAt: string;
@@ -715,6 +746,34 @@ export async function updateRoomSkillSetting(
     throw new Error(msg);
   }
   return (await response.json()) as RoomSkillSettingsSnapshot;
+}
+
+export async function fetchRoomModelSettings(): Promise<RoomModelSettingsSnapshot> {
+  return fetchJson('/api/settings/room-models');
+}
+
+export async function updateRoomModelSetting(
+  input: RoomModelSettingUpdateInput,
+): Promise<RoomModelSettingsSnapshot> {
+  const response = await fetch('/api/settings/room-models', {
+    method: 'PATCH',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    let msg = `update room model failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) msg = payload.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg);
+  }
+  return (await response.json()) as RoomModelSettingsSnapshot;
 }
 
 export async function updateCodexFeatures(

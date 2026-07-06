@@ -13,8 +13,10 @@ import {
 import {
   getAllTasks,
   getLatestOpenPairedTaskForChat,
+  getRoomRoleAgentConfig,
   markPairedTurnRunning,
 } from './db.js';
+import { resolveRoleModelEnv } from './role-model-resolution.js';
 import { createScopedLogger } from './logger.js';
 import { resolveExecutionTarget } from './message-runtime-rules.js';
 import type { PreparedPairedExecutionContext } from './paired-execution-context.js';
@@ -467,16 +469,26 @@ class MessageAgentExecutionTargetPreparer {
     if (!args.pairedExecutionContext || this.args.forcedAgentType) {
       return;
     }
-    const roleConfig = getRoleModelConfig(args.activeRole);
-    if (roleConfig.model) {
+    // Room-level per-role override beats the global OWNER_/REVIEWER_/ARBITER_
+    // env configuration. Read fresh from the DB so dashboard edits apply on
+    // the next turn without a restart.
+    const resolved = resolveRoleModelEnv({
+      isClaudeCompatible: args.isClaudeCodeAgent,
+      roomAgentConfig: getRoomRoleAgentConfig(
+        this.args.chatJid,
+        args.activeRole,
+      ),
+      globalRoleConfig: getRoleModelConfig(args.activeRole),
+    });
+    if (resolved.model) {
       const modelKey = args.isClaudeCodeAgent ? 'CLAUDE_MODEL' : 'CODEX_MODEL';
-      args.pairedExecutionContext.envOverrides[modelKey] = roleConfig.model;
+      args.pairedExecutionContext.envOverrides[modelKey] = resolved.model;
     }
-    if (roleConfig.effort) {
+    if (resolved.effort) {
       const effortKey = args.isClaudeCodeAgent
         ? 'CLAUDE_EFFORT'
         : 'CODEX_EFFORT';
-      args.pairedExecutionContext.envOverrides[effortKey] = roleConfig.effort;
+      args.pairedExecutionContext.envOverrides[effortKey] = resolved.effort;
     }
   }
 
