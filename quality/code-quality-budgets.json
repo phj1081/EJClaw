@@ -63,16 +63,11 @@
       "maxFunctionLines": 548,
       "owner": "agent runner test hotspot"
     },
-    "src/codex-warmup.test.ts": {
-      "maxFunctionLines": 277,
-      "owner": "codex warmup test hotspot"
-    },
     "src/db/base-schema.ts": {
       "maxFunctionLines": 436,
       "owner": "db schema hotspot"
     },
     "src/db/paired-state.ts": {
-      "maxLines": 951,
       "maxFunctionLines": 217,
       "owner": "paired db state hotspot"
     },
@@ -92,38 +87,18 @@
       "maxFunctionLines": 310,
       "owner": "duplicate suppression test hotspot"
     },
-    "src/group-queue.test.ts": {
-      "maxFunctionLines": 720,
-      "owner": "group queue test hotspot"
-    },
-    "src/group-queue.ts": {
-      "maxLines": 929,
-      "owner": "group queue hotspot"
-    },
     "src/index.ts": {
       "maxFunctionLines": 314,
       "owner": "main service entrypoint hotspot"
     },
     "src/message-agent-executor.test.ts": {
-      "maxLines": 3847,
+      "maxLines": 3850,
       "maxFunctionLines": 2500,
       "owner": "message executor test hotspot"
     },
     "src/message-agent-executor.ts": {
       "maxFunctionLines": 239,
       "owner": "message executor hotspot"
-    },
-    "src/message-runtime-queue.test.ts": {
-      "maxFunctionLines": 366,
-      "owner": "message runtime queue test hotspot"
-    },
-    "src/message-runtime-queue.ts": {
-      "maxFunctionLines": 228,
-      "owner": "message runtime queue hotspot"
-    },
-    "src/message-runtime-rules.test.ts": {
-      "maxFunctionLines": 447,
-      "owner": "message runtime rules test hotspot"
     },
     "src/message-runtime.test.ts": {
       "maxLines": 5840,
@@ -149,10 +124,6 @@
       "maxFunctionLines": 206,
       "maxComplexity": 43,
       "owner": "paired execution context hotspot"
-    },
-    "src/paired-follow-up-scheduler.test.ts": {
-      "maxFunctionLines": 830,
-      "owner": "paired follow-up scheduler test hotspot"
     },
     "src/paired-workspace-manager.test.ts": {
       "maxFunctionLines": 1199,
