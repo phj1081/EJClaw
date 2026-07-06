@@ -46,6 +46,7 @@ import * as db from './db.js';
 import { createMessageRuntime } from './message-runtime.js';
 import { resetPairedFollowUpScheduleState } from './paired-follow-up-scheduler.js';
 import * as serviceRouting from './service-routing.js';
+import type { RegisteredGroup } from './types.js';
 import {
   makeChannel,
   makeGroup,
@@ -61,106 +62,62 @@ beforeEach(() => {
   vi.mocked(config.isReviewService).mockReturnValue(false);
 });
 
-describe('createMessageRuntime paired-room bot message filtering', () => {
-  it('ignores generic failure bot messages in paired rooms', async () => {
+describe('createMessageRuntime trigger-free group processing', () => {
+  it('processes first and follow-up messages without trigger mentions in non-main groups', async () => {
     const chatJid = 'group@test';
-    const group = makeGroup('codex');
+    const group: RegisteredGroup = {
+      ...makeGroup('codex'),
+      requiresTrigger: true,
+    };
     const channel = makeChannel(chatJid);
     const saveState = vi.fn();
     const lastAgentTimestamps: Record<string, string> = {};
 
-    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'other-bot@test',
-        sender_name: 'Other Bot',
-        content: '요청을 완료하지 못했습니다. 다시 시도해 주세요.',
-        timestamp: '2026-03-18T09:00:00.000Z',
-        is_bot_message: true,
-      },
-    ]);
+    vi.mocked(db.getMessagesSince)
+      .mockReturnValueOnce([
+        {
+          id: 'msg-1',
+          chat_jid: chatJid,
+          sender: 'user@test',
+          sender_name: 'User',
+          content: '첫 요청도 멘션 없이 보냄',
+          timestamp: '2026-03-18T09:00:00.000Z',
+        },
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'msg-2',
+          chat_jid: chatJid,
+          sender: 'user@test',
+          sender_name: 'User',
+          content: '두 번째 말은 멘션 없이 이어서',
+          timestamp: '2026-03-18T09:00:10.000Z',
+        },
+      ]);
 
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        enqueueMessageCheck: vi.fn(),
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
-      } as any,
-      getRoomBindings: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
-    });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-ignore-bot-failure-loop',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
-    expect(lastAgentTimestamps[chatJid]).toBe('0');
-    expect(saveState).toHaveBeenCalled();
-  });
-
-  it('keeps mentionless substantive bot messages in paired rooms', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
-    const saveState = vi.fn();
-    const lastAgentTimestamps: Record<string, string> = {};
-
-    vi.mocked(config.isClaudeService).mockReturnValue(false);
-    vi.mocked(config.isReviewService).mockReturnValue(false);
-    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'other-bot@test',
-        sender_name: 'Other Bot',
-        content: '정리해보면 Reaction Engine이 1순위 같아.',
-        timestamp: '2026-03-18T09:00:00.000Z',
-        is_bot_message: true,
-      },
-    ]);
     vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
         await onOutput?.({
           status: 'success',
-          result: '그 방향이 맞습니다.',
-          newSessionId: 'session-paired-bot',
+          result: '응답했습니다.',
+          phase: 'final',
         });
         return {
           status: 'success',
-          result: '그 방향이 맞습니다.',
-          newSessionId: 'session-paired-bot',
+          result: '응답했습니다.',
+          phase: 'final',
         };
       },
     );
 
     const runtime = createMessageRuntime({
       assistantName: 'Andy',
-      idleTimeout: 1_000,
+      idleTimeout: 60_000,
       pollInterval: 1_000,
       timezone: 'UTC',
       triggerPattern: /^@Andy\b/i,
       channels: [channel],
       queue: {
-        enqueueMessageCheck: vi.fn(),
         registerProcess: vi.fn(),
         closeStdin: vi.fn(),
         notifyIdle: vi.fn(),
@@ -175,57 +132,158 @@ describe('createMessageRuntime paired-room bot message filtering', () => {
       clearSession: vi.fn(),
     });
 
+    const first = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-triggerless-first-turn',
+      reason: 'messages',
+    });
+    const second = await runtime.processGroupMessages(chatJid, {
+      runId: 'run-triggerless-follow-up',
+      reason: 'messages',
+    });
+
+    expect(first).toBe(true);
+    expect(second).toBe(true);
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(2);
+    expect(channel.sendMessage).toHaveBeenNthCalledWith(
+      1,
+      chatJid,
+      '응답했습니다.',
+    );
+    expect(channel.sendMessage).toHaveBeenNthCalledWith(
+      2,
+      chatJid,
+      '응답했습니다.',
+    );
+  });
+});
+
+describe('createMessageRuntime poisoned session handling', () => {
+  it('clears Claude sessions and closes stdin immediately on poisoned output', async () => {
+    const chatJid = 'group@test';
+    const group = makeGroup('claude-code');
+    const channel = makeChannel(chatJid);
+    const closeStdin = vi.fn();
+    const notifyIdle = vi.fn();
+    const persistSession = vi.fn();
+    const clearSession = vi.fn();
+    const saveState = vi.fn();
+    const lastAgentTimestamps: Record<string, string> = {};
+
+    vi.mocked(db.getMessagesSince).mockReturnValue([
+      {
+        id: 'msg-1',
+        chat_jid: chatJid,
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-18T09:00:00.000Z',
+      },
+    ]);
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
+      async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result:
+            'An image in the conversation exceeds the dimension limit for many-image requests (2000px). Start a new session with fewer images.',
+          newSessionId: 'session-123',
+        });
+        return {
+          status: 'success',
+          result: null,
+          newSessionId: 'session-123',
+        };
+      },
+    );
+
+    const runtime = createMessageRuntime({
+      assistantName: 'Andy',
+      idleTimeout: 1_000,
+      pollInterval: 1_000,
+      timezone: 'UTC',
+      triggerPattern: /^@Andy\b/i,
+      channels: [channel],
+      queue: {
+        registerProcess: vi.fn(),
+        closeStdin,
+        notifyIdle,
+      } as any,
+      getRoomBindings: () => ({ [chatJid]: group }),
+      getSessions: () => ({}),
+      getLastTimestamp: () => '',
+      setLastTimestamp: vi.fn(),
+      getLastAgentTimestamps: () => lastAgentTimestamps,
+      saveState,
+      persistSession,
+      clearSession,
+    });
+
     const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-mentionless-paired-bot-message',
+      runId: 'run-1',
       reason: 'messages',
     });
 
     expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    expect(persistSession).toHaveBeenCalledWith(group.folder, 'session-123');
+    expect(clearSession).toHaveBeenCalledWith(group.folder);
+    expect(closeStdin).toHaveBeenCalledWith(chatJid, {
+      runId: 'run-1',
+      reason: 'poisoned-session-detected',
+    });
+    expect(notifyIdle).not.toHaveBeenCalled();
     expect(channel.sendMessage).toHaveBeenCalledWith(
       chatJid,
-      '그 방향이 맞습니다.',
+      'An image in the conversation exceeds the dimension limit for many-image requests (2000px). Start a new session with fewer images.',
     );
-    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
-    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
     expect(lastAgentTimestamps[chatJid]).toBe('1');
     expect(saveState).toHaveBeenCalled();
   });
 
-  it('does not defer typing-on for review turns', async () => {
+  it('does not apply the poisoned-session handling to Codex groups', async () => {
     const chatJid = 'group@test';
     const group = makeGroup('codex');
     const channel = makeChannel(chatJid);
-    const saveState = vi.fn();
-    const lastAgentTimestamps: Record<string, string> = {};
+    const closeStdin = vi.fn();
+    const notifyIdle = vi.fn();
+    const clearSession = vi.fn();
 
-    vi.mocked(config.isClaudeService).mockReturnValue(false);
-    vi.mocked(config.isReviewService).mockReturnValue(true);
-    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    vi.mocked(serviceRouting.getEffectiveChannelLease).mockReturnValue({
+      chat_jid: chatJid,
+      owner_agent_type: 'codex',
+      reviewer_agent_type: null,
+      arbiter_agent_type: null,
+      owner_service_id: 'codex',
+      reviewer_service_id: null,
+      arbiter_service_id: null,
+      owner_failover_active: false,
+      activated_at: null,
+      reason: null,
+      explicit: false,
+    });
+
     vi.mocked(db.getMessagesSince).mockReturnValue([
       {
         id: 'msg-1',
         chat_jid: chatJid,
-        sender: 'other-bot@test',
-        sender_name: 'Other Bot',
-        content: '이어서 확인해줘.',
+        sender: 'user@test',
+        sender_name: 'User',
+        content: 'hello',
         timestamp: '2026-03-18T09:00:00.000Z',
-        is_bot_message: true,
       },
     ]);
-    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
-        expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
         await onOutput?.({
           status: 'success',
-          phase: 'final',
-          result: '리뷰 확인 완료입니다.',
-          newSessionId: 'session-review-follow-up-immediate',
+          result:
+            'An image in the conversation exceeds the dimension limit for many-image requests (2000px). Start a new session with fewer images.',
+          newSessionId: 'session-456',
         });
         return {
           status: 'success',
-          result: '리뷰 확인 완료입니다.',
-          newSessionId: 'session-review-follow-up-immediate',
+          result: null,
+          newSessionId: 'session-456',
         };
       },
     );
@@ -239,79 +297,30 @@ describe('createMessageRuntime paired-room bot message filtering', () => {
       channels: [channel],
       queue: {
         registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-        notifyIdle: vi.fn(),
+        closeStdin,
+        notifyIdle,
       } as any,
       getRoomBindings: () => ({ [chatJid]: group }),
       getSessions: () => ({}),
       getLastTimestamp: () => '',
       setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
+      getLastAgentTimestamps: () => ({}),
+      saveState: vi.fn(),
       persistSession: vi.fn(),
-      clearSession: vi.fn(),
+      clearSession,
     });
 
     const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-review-follow-up-immediate-typing',
+      runId: 'run-2',
       reason: 'messages',
     });
 
     expect(result).toBe(true);
-    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, true);
-    expect(channel.setTyping).toHaveBeenCalledWith(chatJid, false);
-  });
-
-  it('ignores watcher status control messages in paired rooms', async () => {
-    const chatJid = 'group@test';
-    const group = makeGroup('codex');
-    const channel = makeChannel(chatJid);
-    const saveState = vi.fn();
-    const lastAgentTimestamps: Record<string, string> = {};
-
-    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
-    vi.mocked(db.getMessagesSince).mockReturnValue([
-      {
-        id: 'msg-1',
-        chat_jid: chatJid,
-        sender: 'codex-bot@test',
-        sender_name: 'Codex',
-        content: '\u2063\u2063\u2063CI 감시 중: run 123',
-        timestamp: '2026-03-23T00:00:00.000Z',
-        is_bot_message: true,
-      },
-    ]);
-
-    const runtime = createMessageRuntime({
-      assistantName: 'Andy',
-      idleTimeout: 1_000,
-      pollInterval: 1_000,
-      timezone: 'UTC',
-      triggerPattern: /^@Andy\b/i,
-      channels: [channel],
-      queue: {
-        registerProcess: vi.fn(),
-        closeStdin: vi.fn(),
-      } as any,
-      getRoomBindings: () => ({ [chatJid]: group }),
-      getSessions: () => ({}),
-      getLastTimestamp: () => '',
-      setLastTimestamp: vi.fn(),
-      getLastAgentTimestamps: () => lastAgentTimestamps,
-      saveState,
-      persistSession: vi.fn(),
-      clearSession: vi.fn(),
+    expect(clearSession).not.toHaveBeenCalled();
+    expect(notifyIdle).not.toHaveBeenCalled();
+    expect(closeStdin).toHaveBeenCalledWith(chatJid, {
+      runId: 'run-2',
+      reason: 'output-delivered-close',
     });
-
-    const result = await runtime.processGroupMessages(chatJid, {
-      runId: 'run-ignore-watch-status',
-      reason: 'messages',
-    });
-
-    expect(result).toBe(true);
-    expect(agentRunner.runAgentProcess).not.toHaveBeenCalled();
-    expect(channel.setTyping).not.toHaveBeenCalled();
-    expect(lastAgentTimestamps[chatJid]).toBe('0');
-    expect(saveState).toHaveBeenCalled();
   });
 });
