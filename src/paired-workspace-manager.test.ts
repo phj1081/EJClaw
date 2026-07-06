@@ -96,31 +96,51 @@ function ownerWorkspacePath(groupFolder: string): string {
   );
 }
 
-describe('paired workspace manager', () => {
+interface PairedWorkspaceTestEnv {
+  tempRoot: string;
+  previousDataDir: string | undefined;
+  previousGroupsDir: string | undefined;
+  previousStoreDir: string | undefined;
+}
+
+function setUpPairedWorkspaceTestEnv(): PairedWorkspaceTestEnv {
+  const tempRoot = fs.mkdtempSync(
+    path.join('/tmp', 'ejclaw-paired-workspace-'),
+  );
+  const env: PairedWorkspaceTestEnv = {
+    tempRoot,
+    previousDataDir: process.env.EJCLAW_DATA_DIR,
+    previousGroupsDir: process.env.EJCLAW_GROUPS_DIR,
+    previousStoreDir: process.env.EJCLAW_STORE_DIR,
+  };
+  process.env.EJCLAW_DATA_DIR = path.join(tempRoot, 'data');
+  process.env.EJCLAW_GROUPS_DIR = path.join(tempRoot, 'groups');
+  process.env.EJCLAW_STORE_DIR = path.join(tempRoot, 'store');
+  vi.resetModules();
+  return env;
+}
+
+function tearDownPairedWorkspaceTestEnv(env: PairedWorkspaceTestEnv): void {
+  if (env.previousDataDir === undefined) delete process.env.EJCLAW_DATA_DIR;
+  else process.env.EJCLAW_DATA_DIR = env.previousDataDir;
+  if (env.previousGroupsDir === undefined) delete process.env.EJCLAW_GROUPS_DIR;
+  else process.env.EJCLAW_GROUPS_DIR = env.previousGroupsDir;
+  if (env.previousStoreDir === undefined) delete process.env.EJCLAW_STORE_DIR;
+  else process.env.EJCLAW_STORE_DIR = env.previousStoreDir;
+  fs.rmSync(env.tempRoot, { recursive: true, force: true });
+}
+
+describe('paired workspace manager review handoff', () => {
   let tempRoot: string;
-  let previousDataDir: string | undefined;
-  let previousGroupsDir: string | undefined;
-  let previousStoreDir: string | undefined;
+  let env: PairedWorkspaceTestEnv;
 
   beforeEach(() => {
-    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-paired-workspace-'));
-    previousDataDir = process.env.EJCLAW_DATA_DIR;
-    previousGroupsDir = process.env.EJCLAW_GROUPS_DIR;
-    previousStoreDir = process.env.EJCLAW_STORE_DIR;
-    process.env.EJCLAW_DATA_DIR = path.join(tempRoot, 'data');
-    process.env.EJCLAW_GROUPS_DIR = path.join(tempRoot, 'groups');
-    process.env.EJCLAW_STORE_DIR = path.join(tempRoot, 'store');
-    vi.resetModules();
+    env = setUpPairedWorkspaceTestEnv();
+    tempRoot = env.tempRoot;
   });
 
   afterEach(() => {
-    if (previousDataDir === undefined) delete process.env.EJCLAW_DATA_DIR;
-    else process.env.EJCLAW_DATA_DIR = previousDataDir;
-    if (previousGroupsDir === undefined) delete process.env.EJCLAW_GROUPS_DIR;
-    else process.env.EJCLAW_GROUPS_DIR = previousGroupsDir;
-    if (previousStoreDir === undefined) delete process.env.EJCLAW_STORE_DIR;
-    else process.env.EJCLAW_STORE_DIR = previousStoreDir;
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    tearDownPairedWorkspaceTestEnv(env);
   });
 
   it('registers the owner workspace for reviewer execution when review is requested', async () => {
@@ -282,6 +302,20 @@ describe('paired workspace manager', () => {
       'active',
     );
   });
+});
+
+describe('paired workspace manager reviewer snapshot refresh', () => {
+  let tempRoot: string;
+  let env: PairedWorkspaceTestEnv;
+
+  beforeEach(() => {
+    env = setUpPairedWorkspaceTestEnv();
+    tempRoot = env.tempRoot;
+  });
+
+  afterEach(() => {
+    tearDownPairedWorkspaceTestEnv(env);
+  });
 
   it('uses the shared DB owner workspace across service-local data dirs', async () => {
     const canonicalDir = path.join(tempRoot, 'canonical');
@@ -432,6 +466,20 @@ describe('paired workspace manager', () => {
     expect(
       runGit(['status', '--short'], reviewerWorkspace.workspace_dir),
     ).toContain('D remove.txt');
+  });
+});
+
+describe('paired workspace manager reviewer snapshot filtering', () => {
+  let tempRoot: string;
+  let env: PairedWorkspaceTestEnv;
+
+  beforeEach(() => {
+    env = setUpPairedWorkspaceTestEnv();
+    tempRoot = env.tempRoot;
+  });
+
+  afterEach(() => {
+    tearDownPairedWorkspaceTestEnv(env);
   });
 
   it('filters secrets, caches, and build outputs out of reviewer snapshots', async () => {
@@ -652,6 +700,20 @@ describe('paired workspace manager', () => {
         'utf-8',
       ),
     ).toBe('EXAMPLE=1\n');
+  });
+});
+
+describe('paired workspace manager reviewer execution preparation', () => {
+  let tempRoot: string;
+  let env: PairedWorkspaceTestEnv;
+
+  beforeEach(() => {
+    env = setUpPairedWorkspaceTestEnv();
+    tempRoot = env.tempRoot;
+  });
+
+  afterEach(() => {
+    tearDownPairedWorkspaceTestEnv(env);
   });
 
   it('registers a reviewer workspace when an explicit review request already exists', async () => {
@@ -875,6 +937,20 @@ describe('paired workspace manager', () => {
         ?.snapshot_refreshed_at,
     ).not.toBe('2026-03-28T00:01:00.000Z');
   });
+});
+
+describe('paired workspace manager owner provisioning', () => {
+  let tempRoot: string;
+  let env: PairedWorkspaceTestEnv;
+
+  beforeEach(() => {
+    env = setUpPairedWorkspaceTestEnv();
+    tempRoot = env.tempRoot;
+  });
+
+  afterEach(() => {
+    tearDownPairedWorkspaceTestEnv(env);
+  });
 
   it('bases a new owner branch on the canonical repo HEAD without requiring a remote', async () => {
     const { db, manager } = await loadModules();
@@ -976,6 +1052,20 @@ describe('paired workspace manager', () => {
     expect(runGit(['worktree', 'list', '--porcelain'], canonicalDir)).toContain(
       reprovisioned.workspace_dir,
     );
+  });
+});
+
+describe('paired workspace manager owner workspace repair', () => {
+  let tempRoot: string;
+  let env: PairedWorkspaceTestEnv;
+
+  beforeEach(() => {
+    env = setUpPairedWorkspaceTestEnv();
+    tempRoot = env.tempRoot;
+  });
+
+  afterEach(() => {
+    tearDownPairedWorkspaceTestEnv(env);
   });
 
   it('lazy-migrates a detached dirty owner workspace to a new channel branch', async () => {
@@ -1143,6 +1233,20 @@ describe('paired workspace manager', () => {
     expect(
       runGit(['branch', '--show-current'], ownerWorkspace.workspace_dir),
     ).toBe(ownerBranchName('named-existing-room'));
+  });
+});
+
+describe('paired workspace manager owner branch re-anchoring', () => {
+  let tempRoot: string;
+  let env: PairedWorkspaceTestEnv;
+
+  beforeEach(() => {
+    env = setUpPairedWorkspaceTestEnv();
+    tempRoot = env.tempRoot;
+  });
+
+  afterEach(() => {
+    tearDownPairedWorkspaceTestEnv(env);
   });
 
   it('re-anchors a dirty named owner workspace without touching local changes', async () => {

@@ -1,4 +1,3 @@
-import { execFileSync } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -13,98 +12,33 @@ import {
 import { resolvePairedTaskWorkspacePath } from './group-folder.js';
 import { logger } from './logger.js';
 import { transitionPairedTaskStatus } from './paired-task-status.js';
+import {
+  branchRefName,
+  buildOwnerBranchName,
+  ensureBranchNotCheckedOutElsewhere,
+  ensureGitRepository,
+  isGitWorktreeClean,
+  repairOwnerWorktreeRegistration,
+  resolveBranchName,
+  resolveCommit,
+  runGit,
+} from './paired-workspace-manager-git.js';
+import {
+  applyReviewerSparseCheckout,
+  buildReviewerSnapshotFingerprint,
+  configureReviewerGitIsolation,
+  copySnapshotPaths,
+  listAllowedTrackedFiles,
+  listAllowedUntrackedFiles,
+  listDeletedTrackedFiles,
+  listReviewableTrackedDiffFiles,
+  removeSnapshotPaths,
+} from './paired-workspace-manager-snapshot.js';
 import type { PairedTask, PairedWorkspace } from './types.js';
 import { ensureWorkspaceDependenciesInstalled } from './workspace-package-manager.js';
 
 const REVIEWER_SNAPSHOT_NOT_READY_BLOCK_MESSAGE =
   'Review workspace is not ready yet. Wait for the owner to complete a turn so the reviewer workspace can be prepared.';
-const REVIEWER_SNAPSHOT_DENY_SEGMENTS = new Set([
-  '.git',
-  '.claude',
-  '.codex',
-  '.next',
-  '.turbo',
-  '.cache',
-  'node_modules',
-  'dist',
-  'build',
-  'coverage',
-  'logs',
-]);
-
-const REVIEWER_SNAPSHOT_ALLOWED_UNTRACKED_EXTENSIONS = new Set([
-  '.c',
-  '.cc',
-  '.cpp',
-  '.css',
-  '.csv',
-  '.go',
-  '.graphql',
-  '.h',
-  '.hpp',
-  '.html',
-  '.java',
-  '.js',
-  '.json',
-  '.jsx',
-  '.kt',
-  '.md',
-  '.mjs',
-  '.prisma',
-  '.proto',
-  '.py',
-  '.rb',
-  '.rs',
-  '.scss',
-  '.sh',
-  '.sql',
-  '.svg',
-  '.swift',
-  '.toml',
-  '.ts',
-  '.tsx',
-  '.txt',
-  '.xml',
-  '.yaml',
-  '.yml',
-]);
-
-const REVIEWER_SNAPSHOT_ALLOWED_UNTRACKED_BASENAMES = new Set([
-  '.editorconfig',
-  '.eslintignore',
-  '.eslintrc',
-  '.gitattributes',
-  '.gitignore',
-  '.npmrc',
-  '.nvmrc',
-  '.prettierignore',
-  '.prettierrc',
-  'Dockerfile',
-  'Makefile',
-  'README',
-  'README.md',
-  'package-lock.json',
-  'pnpm-lock.yaml',
-  'tsconfig.json',
-  'yarn.lock',
-]);
-
-function runGit(args: string[], cwd?: string): string {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
-}
-
-function runGitWithInput(args: string[], cwd: string, input: string): string {
-  return execFileSync('git', args, {
-    cwd,
-    input,
-    encoding: 'utf-8',
-    stdio: ['pipe', 'pipe', 'pipe'],
-  }).trim();
-}
 
 export class OwnerWorkspaceRepairNeededError extends Error {
   readonly blockMessage: string;
@@ -120,20 +54,6 @@ export function isOwnerWorkspaceRepairNeededError(
   error: unknown,
 ): error is OwnerWorkspaceRepairNeededError {
   return error instanceof OwnerWorkspaceRepairNeededError;
-}
-
-function ensureGitRepository(repoDir: string): void {
-  const insideWorkTree = runGit(
-    ['rev-parse', '--is-inside-work-tree'],
-    repoDir,
-  );
-  if (insideWorkTree !== 'true') {
-    throw new Error(`Not a git repository: ${repoDir}`);
-  }
-}
-
-function isGitWorktreeClean(repoDir: string): boolean {
-  return runGit(['status', '--short'], repoDir).length === 0;
 }
 
 function buildOwnerReanchorBackupPrefix(targetBranch: string): string {
@@ -268,329 +188,6 @@ function maybeRepairNamedOwnerWorkspaceBranch(args: {
   );
   runGit(['switch', targetBranch], workspaceDir);
   return true;
-}
-
-type GitWorktreeEntry = {
-  worktreePath: string;
-  head: string | null;
-  branchRef: string | null;
-  detached: boolean;
-  prunableReason: string | null;
-};
-
-function tryRunGit(args: string[], cwd?: string): string | null {
-  try {
-    return runGit(args, cwd);
-  } catch {
-    return null;
-  }
-}
-
-function listGitWorktrees(repoDir: string): GitWorktreeEntry[] {
-  const output = execFileSync('git', ['worktree', 'list', '--porcelain'], {
-    cwd: repoDir,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const entries: GitWorktreeEntry[] = [];
-  let current: GitWorktreeEntry | null = null;
-
-  const pushCurrent = () => {
-    if (current) {
-      entries.push(current);
-      current = null;
-    }
-  };
-
-  for (const rawLine of output.split('\n')) {
-    const line = rawLine.trimEnd();
-    if (line.length === 0) {
-      pushCurrent();
-      continue;
-    }
-    if (line.startsWith('worktree ')) {
-      pushCurrent();
-      current = {
-        worktreePath: path.resolve(line.slice('worktree '.length).trim()),
-        head: null,
-        branchRef: null,
-        detached: false,
-        prunableReason: null,
-      };
-      continue;
-    }
-    if (!current) {
-      continue;
-    }
-    if (line.startsWith('HEAD ')) {
-      current.head = line.slice('HEAD '.length).trim();
-      continue;
-    }
-    if (line.startsWith('branch ')) {
-      current.branchRef = line.slice('branch '.length).trim();
-      continue;
-    }
-    if (line === 'detached') {
-      current.detached = true;
-      continue;
-    }
-    if (line.startsWith('prunable')) {
-      current.prunableReason = line.slice('prunable'.length).trim() || null;
-    }
-  }
-  pushCurrent();
-  return entries;
-}
-
-function branchRefName(branchName: string): string {
-  return `refs/heads/${branchName}`;
-}
-
-function buildOwnerBranchName(groupFolder: string): string {
-  return `codex/owner/${groupFolder}`;
-}
-
-function resolveBranchName(repoDir: string): string | null {
-  return tryRunGit(['symbolic-ref', '--short', '-q', 'HEAD'], repoDir);
-}
-
-function resolveCommit(repoDir: string, ref: string): string | null {
-  return tryRunGit(['rev-parse', '--verify', `${ref}^{commit}`], repoDir);
-}
-
-function findWorktreeEntry(
-  repoDir: string,
-  workspaceDir: string,
-): GitWorktreeEntry | null {
-  const resolvedWorkspaceDir = path.resolve(workspaceDir);
-  return (
-    listGitWorktrees(repoDir).find(
-      (entry) => path.resolve(entry.worktreePath) === resolvedWorkspaceDir,
-    ) ?? null
-  );
-}
-
-function ensureBranchNotCheckedOutElsewhere(
-  canonicalWorkDir: string,
-  workspaceDir: string,
-  branchName: string,
-): void {
-  const resolvedWorkspaceDir = path.resolve(workspaceDir);
-  const targetBranchRef = branchRefName(branchName);
-  const conflictingWorktree = listGitWorktrees(canonicalWorkDir).find(
-    (entry) =>
-      entry.branchRef === targetBranchRef &&
-      path.resolve(entry.worktreePath) !== resolvedWorkspaceDir,
-  );
-  if (conflictingWorktree) {
-    throw new Error(
-      `Owner branch ${branchName} is already checked out at ${conflictingWorktree.worktreePath}.`,
-    );
-  }
-}
-
-function repairOwnerWorktreeRegistration(
-  workspaceDir: string,
-  canonicalWorkDir: string,
-): void {
-  runGit(['worktree', 'prune', '--expire', 'now'], canonicalWorkDir);
-
-  const entry = findWorktreeEntry(canonicalWorkDir, workspaceDir);
-  if (!entry) {
-    return;
-  }
-
-  const workspaceExists = fs.existsSync(workspaceDir);
-  if (!workspaceExists || entry.prunableReason) {
-    throw new Error(
-      `Owner workspace registration for ${workspaceDir} is stale after repair: ${entry.prunableReason ?? 'missing worktree path'}.`,
-    );
-  }
-}
-
-function listGitPaths(repoDir: string, args: string[]): string[] {
-  const output = execFileSync('git', args, {
-    cwd: repoDir,
-    encoding: 'utf-8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return output
-    .split('\0')
-    .map((value) => value.trim())
-    .filter(Boolean);
-}
-
-function isReviewerSnapshotDeniedPath(relativePath: string): boolean {
-  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
-  if (
-    segments.some((segment) => REVIEWER_SNAPSHOT_DENY_SEGMENTS.has(segment))
-  ) {
-    return true;
-  }
-
-  const basename = path.basename(relativePath);
-  if (basename === '.env') {
-    return true;
-  }
-  if (
-    basename.startsWith('.env.') &&
-    basename !== '.env.example' &&
-    basename !== '.env.sample'
-  ) {
-    return true;
-  }
-  if (basename.endsWith('.log')) {
-    return true;
-  }
-
-  return false;
-}
-
-function shouldIncludeUntrackedReviewerPath(relativePath: string): boolean {
-  if (isReviewerSnapshotDeniedPath(relativePath)) {
-    return false;
-  }
-
-  const basename = path.basename(relativePath);
-  if (REVIEWER_SNAPSHOT_ALLOWED_UNTRACKED_BASENAMES.has(basename)) {
-    return true;
-  }
-
-  return REVIEWER_SNAPSHOT_ALLOWED_UNTRACKED_EXTENSIONS.has(
-    path.extname(basename).toLowerCase(),
-  );
-}
-
-function listAllowedTrackedFiles(sourceDir: string): string[] {
-  return listGitPaths(sourceDir, ['ls-files', '--cached', '-z']).filter(
-    (relativePath) => !isReviewerSnapshotDeniedPath(relativePath),
-  );
-}
-
-function listDeletedTrackedFiles(sourceDir: string): string[] {
-  return listGitPaths(sourceDir, ['ls-files', '--deleted', '-z']).filter(
-    (relativePath) => !isReviewerSnapshotDeniedPath(relativePath),
-  );
-}
-
-function listAllowedUntrackedFiles(sourceDir: string): string[] {
-  return listGitPaths(sourceDir, [
-    'ls-files',
-    '--others',
-    '--exclude-standard',
-    '-z',
-  ]).filter(shouldIncludeUntrackedReviewerPath);
-}
-
-function listReviewableTrackedDiffFiles(
-  sourceDir: string,
-  sourceRef: string,
-): string[] {
-  return listGitPaths(sourceDir, [
-    'diff',
-    '--name-only',
-    '-z',
-    sourceRef,
-    '--',
-  ]).filter((relativePath) => !isReviewerSnapshotDeniedPath(relativePath));
-}
-
-function copySnapshotPaths(
-  sourceDir: string,
-  targetDir: string,
-  relativePaths: string[],
-): void {
-  for (const relativePath of [...new Set(relativePaths)].sort()) {
-    const sourcePath = path.join(sourceDir, relativePath);
-    if (!fs.existsSync(sourcePath)) continue;
-
-    const targetPath = path.join(targetDir, relativePath);
-    const srcStat = fs.statSync(sourcePath);
-    // When source is a directory (e.g. nested git repo listed by git ls-files),
-    // remove any conflicting non-directory at the target before copying.
-    if (srcStat.isDirectory()) {
-      if (fs.existsSync(targetPath) && !fs.statSync(targetPath).isDirectory()) {
-        fs.rmSync(targetPath, { force: true });
-      }
-    }
-    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-    fs.cpSync(sourcePath, targetPath, { force: true, recursive: true });
-  }
-}
-
-function removeSnapshotPaths(targetDir: string, relativePaths: string[]): void {
-  for (const relativePath of [...new Set(relativePaths)].sort()) {
-    fs.rmSync(path.join(targetDir, relativePath), {
-      recursive: true,
-      force: true,
-    });
-  }
-}
-
-function buildReviewerSnapshotFingerprint(args: {
-  sourceDir: string;
-  allowedTrackedFiles: string[];
-  deletedTrackedFiles: string[];
-  allowedUntrackedFiles: string[];
-}): string {
-  const hash = crypto.createHash('sha256');
-  const appendFile = (kind: 'tracked' | 'untracked', relativePath: string) => {
-    const sourcePath = path.join(args.sourceDir, relativePath);
-    if (!fs.existsSync(sourcePath)) return;
-    // Skip directories (e.g. submodules listed by git ls-files)
-    try {
-      if (fs.statSync(sourcePath).isDirectory()) return;
-    } catch {
-      return;
-    }
-    hash.update(`${kind}\0${relativePath}\0`);
-    hash.update(fs.readFileSync(sourcePath));
-    hash.update('\0');
-  };
-
-  for (const relativePath of [...new Set(args.allowedTrackedFiles)].sort()) {
-    appendFile('tracked', relativePath);
-  }
-  for (const relativePath of [...new Set(args.deletedTrackedFiles)].sort()) {
-    hash.update(`deleted\0${relativePath}\0`);
-  }
-  for (const relativePath of [...new Set(args.allowedUntrackedFiles)].sort()) {
-    appendFile('untracked', relativePath);
-  }
-
-  return hash.digest('hex');
-}
-
-function applyReviewerSparseCheckout(
-  reviewerDir: string,
-  allowedTrackedFiles: string[],
-): void {
-  runGit(['sparse-checkout', 'init', '--no-cone'], reviewerDir);
-  const patterns =
-    allowedTrackedFiles.length > 0
-      ? `${allowedTrackedFiles.join('\n')}\n`
-      : '/*\n!/*\n';
-  runGitWithInput(
-    ['sparse-checkout', 'set', '--no-cone', '--stdin'],
-    reviewerDir,
-    patterns,
-  );
-}
-
-function configureReviewerGitIsolation(workspaceDir: string): void {
-  try {
-    runGit(['config', '--local', 'push.default', 'nothing'], workspaceDir);
-    runGit(['config', '--local', 'credential.helper', ''], workspaceDir);
-    runGit(
-      ['config', '--local', 'remote.origin.pushurl', 'DISABLED_BY_EJCLAW'],
-      workspaceDir,
-    );
-  } catch (error) {
-    logger.warn(
-      { workspaceDir, error },
-      'Failed to apply reviewer git isolation settings',
-    );
-  }
 }
 
 function getTaskAndProject(taskId: string): {
