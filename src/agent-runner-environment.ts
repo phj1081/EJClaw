@@ -304,6 +304,7 @@ function prepareClaudeEnvironment(args: {
   envVars: Record<string, string>;
   group: RegisteredGroup;
 }): void {
+  const useAnthropicApiKey = args.group.agentConfig?.claudeAuthMode === 'api';
   if (args.envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY) {
     args.env.ANTHROPIC_API_KEY =
       args.envVars.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || '';
@@ -318,7 +319,10 @@ function prepareClaudeEnvironment(args: {
     args.env.ANTHROPIC_BASE_URL =
       args.envVars.ANTHROPIC_BASE_URL || process.env.ANTHROPIC_BASE_URL || '';
   }
-  {
+  if (useAnthropicApiKey) {
+    delete args.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete args.env.CLAUDE_CODE_OAUTH_TOKENS;
+  } else {
     // Token rotation takes priority over static .env value
     const oauthToken =
       getCurrentToken() ||

@@ -547,6 +547,32 @@ describe('prepareGroupEnvironment prompt stacks', () => {
     expect(prepared.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('token-a');
   });
 
+  it('can force Claude-compatible rooms to use ANTHROPIC_API_KEY instead of OAuth', () => {
+    vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);
+    mockReadEnvFile.mockReturnValue({
+      ANTHROPIC_API_KEY: 'anthropic-api-key',
+      CLAUDE_CODE_OAUTH_TOKENS: 'token-a, token-b',
+    });
+
+    const prepared = prepareGroupEnvironment(
+      {
+        ...group,
+        agentType: 'claude-code',
+        agentConfig: {
+          claudeAuthMode: 'api',
+          claudeModel: 'claude-fable-5',
+        },
+      },
+      false,
+      'dc:test',
+    );
+
+    expect(prepared.env.ANTHROPIC_API_KEY).toBe('anthropic-api-key');
+    expect(prepared.env.CLAUDE_MODEL).toBe('claude-fable-5');
+    expect(prepared.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    expect(prepared.env.CLAUDE_CODE_OAUTH_TOKENS).toBeUndefined();
+  });
+
   it('returns to the normal owner prompt stack after failover is cleared', () => {
     vi.mocked(config.isReviewService).mockReturnValue(true);
     vi.mocked(serviceRouting.hasReviewerLease).mockReturnValue(true);

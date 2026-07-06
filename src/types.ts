@@ -24,6 +24,11 @@ export interface AgentConfig {
   codexGoals?: boolean;
   claudeModel?: string;
   claudeEffort?: string;
+  /**
+   * Claude Code auth source. Default/oauth keeps subscription OAuth rotation;
+   * api removes Claude Code OAuth env so ANTHROPIC_API_KEY is used instead.
+   */
+  claudeAuthMode?: 'oauth' | 'api';
   claudeThinking?: 'adaptive' | 'enabled' | 'disabled';
   claudeThinkingBudget?: number;
 }
