@@ -531,18 +531,21 @@ function isPrivateBindHost(host: string): boolean {
  * With no token the API auth gate passes for everyone (see
  * isDashboardApiAuthorized). Binding that to a public interface / all
  * interfaces (0.0.0.0) would let any reachable client drive agents and restart
- * the service, so we fail fast. Loopback is fine; private / tailnet binds warn
- * loudly but still start so existing deployments keep running.
+ * the service, so we fail fast.
+ *
+ * Loopback and private / tailnet (Tailscale CGNAT) binds are treated as a
+ * trusted network boundary — Tailscale provides device-level auth — so they
+ * start without a token and only emit an informational note. Only a genuinely
+ * public bind requires WEB_DASHBOARD_TOKEN.
  */
 export function assertDashboardAuthPosture(host: string, token: string): void {
   if (token) return;
   if (isLoopbackHost(host)) return;
   if (isPrivateBindHost(host)) {
-    logger.warn(
+    logger.info(
       { host },
-      'Web dashboard is bound to a non-loopback host without WEB_DASHBOARD_TOKEN; ' +
-        'anyone who can reach this host can drive agents and restart the service. ' +
-        'Set WEB_DASHBOARD_TOKEN to require authentication.',
+      'Web dashboard bound to a private/tailnet host without WEB_DASHBOARD_TOKEN; ' +
+        'relying on network-level (e.g. Tailscale) trust. Set WEB_DASHBOARD_TOKEN to add app-level auth.',
     );
     return;
   }
