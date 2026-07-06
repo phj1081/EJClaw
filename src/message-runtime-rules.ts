@@ -17,6 +17,7 @@ import {
   type RoleAgentPlan,
 } from './role-agent-plan.js';
 import {
+  isClaudeCompatibleAgentType,
   type AgentType,
   type Channel,
   type NewMessage,
@@ -370,26 +371,29 @@ export function resolveEffectiveAgentType(
   return resolveAgentTypeForRole(plan, role);
 }
 
-/** Session folder key for a role. Owner uses groupFolder, others use groupFolder:role. */
+/**
+ * Session folder key for a role. Owner uses groupFolder, others use
+ * groupFolder:role, and codex sessions get an extra :codex scope.
+ */
 export function resolveSessionFolder(
   groupFolder: string,
   role: 'owner' | 'reviewer' | 'arbiter',
-  groupAgentType: AgentType | undefined,
-  reviewerAgentType: AgentType = REVIEWER_AGENT_TYPE,
-  arbiterAgentType: AgentType | null | undefined = ARBITER_AGENT_TYPE,
+  effectiveAgentType?: AgentType,
 ): string {
-  // Arbiter always gets a separate session — must never share with owner/reviewer
-  if (role === 'arbiter') return `${groupFolder}:arbiter`;
-  const plan = resolveConfiguredRoleAgentPlan(
-    role !== 'owner',
-    groupAgentType,
-    reviewerAgentType,
-    arbiterAgentType,
-  );
-  const effectiveType = resolveAgentTypeForRole(plan, role);
-  const groupDefault = plan.ownerAgentType;
-  if (effectiveType === groupDefault) return groupFolder;
-  return `${groupFolder}:${role}`;
+  // Reviewer/arbiter always get dedicated session keys. Sharing the owner key
+  // when the reviewer ran the same agent type used to let a reviewer resume
+  // (and then overwrite) the owner session — the reviewer executes in a
+  // separate CLAUDE_CONFIG_DIR, so the resume failed and the recovery path
+  // destroyed the owner context on every review cycle.
+  const roleKey = role === 'owner' ? groupFolder : `${groupFolder}:${role}`;
+  // Codex thread IDs live under a provider-scoped key so a temporary codex
+  // owner (failover or stale lease) can never resume or overwrite the Claude
+  // session stored at the base key — that contamination wiped whole-room
+  // context once the Claude owner came back and failed to resume a codex id.
+  if (effectiveAgentType && !isClaudeCompatibleAgentType(effectiveAgentType)) {
+    return `${roleKey}:codex`;
+  }
+  return roleKey;
 }
 
 export interface ExecutionTargetResolution {
@@ -457,9 +461,7 @@ export function resolveExecutionTarget(args: {
     sessionFolder: resolveSessionFolder(
       args.groupFolder,
       activeRole,
-      roleAgentPlan.ownerAgentType,
-      roleAgentPlan.reviewerAgentType ?? REVIEWER_AGENT_TYPE,
-      roleAgentPlan.arbiterAgentType ?? ARBITER_AGENT_TYPE,
+      effectiveAgentType,
     ),
   };
 }

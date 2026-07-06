@@ -1,11 +1,13 @@
 import { type AgentOutput } from './agent-runner.js';
 import { getLastBotFinalMessage } from './db.js';
 import { runAgentForGroup } from './message-agent-executor.js';
+import { resolveSessionFolder } from './message-runtime-rules.js';
 import { MessageTurnController } from './message-turn-controller.js';
 import {
   getEffectiveChannelLease,
   hasReviewerLease,
   resolveLeaseServiceId,
+  type EffectiveChannelLease,
 } from './service-routing.js';
 import { resolvePairedTurnRunOwnership } from './paired-turn-run-ownership.js';
 import { normalizeMessageForDedupe } from './router.js';
@@ -164,14 +166,29 @@ export function createRunAgent(deps: {
 export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
   return async (args) => {
     const { group, prompt, chatJid, runId, channel, startSeq, endSeq } = args;
-    const isClaudeCodeAgent =
-      (args.forcedAgentType ?? group.agentType ?? 'claude-code') ===
-      'claude-code';
+    const lease = getEffectiveChannelLease(chatJid);
     const pairedRoom = hasReviewerLease(chatJid);
     const resolvedDeliveryRole =
       args.deliveryRole ?? args.forcedRole ?? (pairedRoom ? 'owner' : null);
+    const turnRole: PairedRoomRole =
+      args.pairedTurnIdentity?.role ?? resolvedDeliveryRole ?? 'owner';
+    const turnAgentType = resolveTurnAgentType({
+      forcedAgentType: args.forcedAgentType,
+      groupAgentType: group.agentType,
+      lease,
+      role: turnRole,
+    });
+    // Session hygiene must target the executing turn's own session key —
+    // clearing group.folder here used to wipe the owner session whenever a
+    // reviewer/arbiter (or codex) turn tripped the poisoned-session check.
+    const turnSessionFolder = resolveSessionFolder(
+      group.folder,
+      turnRole,
+      turnAgentType,
+    );
+    const isClaudeCodeAgent = turnAgentType === 'claude-code';
     const resolvedDeliveryServiceId = resolveLeaseServiceId(
-      getEffectiveChannelLease(chatJid),
+      lease,
       resolvedDeliveryRole ?? 'owner',
     );
     const allowProgressReplayWithoutFinal =
@@ -185,7 +202,7 @@ export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
       idleTimeout: deps.idleTimeout,
       failureFinalText: deps.failureFinalText,
       isClaudeCodeAgent,
-      clearSession: () => deps.clearSession(group.folder),
+      clearSession: () => deps.clearSession(turnSessionFolder),
       requestClose: (reason) =>
         deps.queue.closeStdin(chatJid, { runId, reason }),
       allowProgressReplayWithoutFinal,
@@ -300,4 +317,20 @@ export function createExecuteTurn(deps: CreateExecuteTurnDeps): ExecuteTurnFn {
       await channel.setTyping?.(chatJid, false);
     }
   };
+}
+
+function resolveTurnAgentType(args: {
+  forcedAgentType: AgentType | undefined;
+  groupAgentType: AgentType | undefined;
+  lease: EffectiveChannelLease;
+  role: PairedRoomRole;
+}): AgentType {
+  if (args.forcedAgentType) return args.forcedAgentType;
+  if (args.role === 'reviewer' && args.lease.reviewer_agent_type) {
+    return args.lease.reviewer_agent_type;
+  }
+  if (args.role === 'arbiter' && args.lease.arbiter_agent_type) {
+    return args.lease.arbiter_agent_type;
+  }
+  return args.lease.owner_agent_type ?? args.groupAgentType ?? 'claude-code';
 }

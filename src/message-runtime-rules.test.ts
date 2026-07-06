@@ -366,7 +366,9 @@ describe('message-runtime-rules execution targets', () => {
       activeRole: 'reviewer',
       configuredAgentType: 'claude-code',
       effectiveAgentType: 'claude-code',
-      sessionFolder: 'group-1',
+      // Reviewer never shares the owner session key, even for the same agent
+      // type — sharing let reviewer runs destroy the owner session.
+      sessionFolder: 'group-1:reviewer',
     });
     expect(resolution.effectiveServiceId).toBe(resolution.reviewerServiceId);
   });
@@ -388,7 +390,7 @@ describe('message-runtime-rules execution targets', () => {
       activeRole: 'reviewer',
       configuredAgentType: 'codex',
       effectiveAgentType: 'codex',
-      sessionFolder: 'group-1:reviewer',
+      sessionFolder: 'group-1:reviewer:codex',
     });
     expect(resolution.effectiveServiceId).toBe('codex-review');
   });
@@ -451,7 +453,7 @@ describe('message-runtime-rules execution targets', () => {
       activeRole: 'arbiter',
       configuredAgentType: 'codex',
       effectiveAgentType: 'codex',
-      sessionFolder: 'group-1:arbiter',
+      sessionFolder: 'group-1:arbiter:codex',
     });
     expect(resolution.effectiveServiceId).toBe(
       resolveLeaseServiceId(baseLease, 'arbiter'),
@@ -524,11 +526,28 @@ describe('message-runtime-rules execution targets', () => {
   });
 
   it('always gives arbiter a dedicated session folder', () => {
-    expect(resolveSessionFolder('group-1', 'arbiter', 'claude-code')).toBe(
-      'group-1:arbiter',
+    expect(resolveSessionFolder('group-1', 'arbiter')).toBe('group-1:arbiter');
+  });
+
+  it('always gives reviewer a dedicated session folder', () => {
+    expect(resolveSessionFolder('group-1', 'reviewer')).toBe(
+      'group-1:reviewer',
     );
-    expect(resolveSessionFolder('group-1', 'arbiter', 'codex')).toBe(
-      'group-1:arbiter',
+    expect(resolveSessionFolder('group-1', 'owner')).toBe('group-1');
+  });
+
+  it('scopes codex sessions away from the claude session key', () => {
+    expect(resolveSessionFolder('group-1', 'owner', 'codex')).toBe(
+      'group-1:codex',
+    );
+    expect(resolveSessionFolder('group-1', 'owner', 'claude-code')).toBe(
+      'group-1',
+    );
+    expect(resolveSessionFolder('group-1', 'owner', 'glm-code')).toBe(
+      'group-1',
+    );
+    expect(resolveSessionFolder('group-1', 'reviewer', 'codex')).toBe(
+      'group-1:reviewer:codex',
     );
   });
 });

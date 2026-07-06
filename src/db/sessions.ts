@@ -140,12 +140,20 @@ export function deleteAllSessionsForGroupFromDatabase(
   database: Database,
   groupFolder: string,
 ): void {
+  // Group folders cannot contain ':' (see isValidGroupFolder), so the prefix
+  // match only removes this group's role/provider scoped keys
+  // (folder, folder:reviewer, folder:arbiter, folder:codex, ...).
   database
     .prepare(
       `DELETE FROM sessions
-       WHERE group_folder IN (?, ?, ?)`,
+       WHERE group_folder = ?
+          OR group_folder LIKE ? ESCAPE '\\'`,
     )
-    .run(groupFolder, `${groupFolder}:reviewer`, `${groupFolder}:arbiter`);
+    .run(groupFolder, `${escapeLikePattern(groupFolder)}:%`);
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
 
 export function getAllSessionsForAgentTypeFromDatabase(

@@ -145,6 +145,23 @@ class MessageAgentAttemptLifecycleRunner {
       logContext: this.args.rotationLogContext,
       rotationMessage,
       beforeTransientSameAccountRetry: ({ trigger, attempt, maxAttempts }) => {
+        // Transient provider failures (overloaded / network) are usually
+        // unrelated to the resumed session, so the first retry keeps it —
+        // clearing on every retry used to wipe the room's entire context on
+        // a single Anthropic 529. Only the final retry drops the session, in
+        // case a poisoned resume is what keeps failing.
+        if (attempt < maxAttempts) {
+          this.args.log.warn(
+            {
+              sessionFolder: this.args.sessionFolder,
+              reason: trigger.reason,
+              attempt,
+              maxAttempts,
+            },
+            'Retrying transient Claude failure with the session kept',
+          );
+          return;
+        }
         this.args.clearStoredSession();
         this.args.clearRoleSdkSessions();
         this.args.log.warn(
@@ -154,7 +171,7 @@ class MessageAgentAttemptLifecycleRunner {
             attempt,
             maxAttempts,
           },
-          'Cleared Claude session before transient retry so poisoned resume is not reused',
+          'Cleared Claude session before final transient retry so a poisoned resume is not reused',
         );
       },
       onSuccess: ({ sawOutput }) => {

@@ -10,6 +10,15 @@
 - `assign_room`에 `owner_model`/`owner_effort`/`reviewer_model`/`reviewer_effort`/`arbiter_model`/`arbiter_effort` 파라미터 추가 (빈 문자열로 삭제)
 - 웹 대시보드 설정 → 모델에 "방별 모델" 카드와 `/api/settings/room-models` API 추가
 
+### Fixed
+
+- 턴 간 컨텍스트 유실 수정: codex 세션을 provider별 키(`:codex`)로 분리해 failover/스케줄 codex 실행이 Claude owner 세션을 덮어쓰거나 지우지 못하게 함 (재배포 시 codex 스레드는 1회 새로 시작)
+- reviewer가 owner와 같은 agent type일 때 owner 세션 키를 공유해 리뷰 사이클마다 owner 컨텍스트를 파괴하던 문제 수정 (reviewer는 항상 `:reviewer` 키)
+- Anthropic 529/네트워크 일시 장애 재시도 시 세션을 무조건 삭제하던 로직을 완화 — 첫 재시도는 세션 유지, 마지막 재시도에서만 삭제
+- 세션 리셋 패턴이 에이전트의 긴 일반 출력(에러 문구 인용 등)에 오탐되어 세션을 삭제하던 문제 수정 — 짧은 원문 에러 텍스트/error 필드만 매칭
+- 세션 하이지니가 턴의 역할·provider와 무관하게 항상 owner 키를 지우던 문제 수정
+- codex resume이 조용히 새 스레드로 대체될 때 경고 로그를 남기도록 개선
+
 ## [0.2.3] - 2026-04-22
 
 ### Added
