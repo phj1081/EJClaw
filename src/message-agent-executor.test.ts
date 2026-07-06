@@ -3042,7 +3042,8 @@ describe('runAgentForGroup Claude rotation', () => {
   it('suppresses Claude 502 HTML and returns error when no rotation is available', async () => {
     const outputs: string[] = [];
 
-    vi.mocked(agentRunner.runAgentProcess).mockImplementationOnce(
+    // Persistent 502: initial attempt + same-account transient retries all fail
+    vi.mocked(agentRunner.runAgentProcess).mockImplementation(
       async (_group, _input, _onProcess, onOutput) => {
         await onOutput?.({
           status: 'success',
@@ -3074,7 +3075,8 @@ describe('runAgentForGroup Claude rotation', () => {
     });
 
     expect(result).toBe('error');
-    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(1);
+    // 1 initial attempt + 2 same-account transient retries for 502/overloaded
+    expect(agentRunner.runAgentProcess).toHaveBeenCalledTimes(3);
     expect(outputs).toEqual([]);
     expect(db.createServiceHandoff).not.toHaveBeenCalled();
   });
