@@ -4,10 +4,14 @@ import {
   getAgentOutputText,
 } from './agent-output.js';
 import { createScopedLogger, logger } from './logger.js';
+import {
+  recordSubagentProgress,
+  recordSubagentToolActivity,
+  renderProgressMessage,
+  type SubagentTrack,
+} from './message-turn-controller-progress-render.js';
 import { formatOutbound } from './router.js';
 import { shouldResetSessionOnAgentFailure } from './session-recovery.js';
-import { TASK_STATUS_MESSAGE_PREFIX } from './task-watch-status.js';
-import { formatElapsedKorean } from './utils.js';
 import type { PairedTurnIdentity } from './paired-turn-identity.js';
 import { isHumanMessageCloseReason } from './message-close-reasons.js';
 import {
@@ -22,11 +26,6 @@ import {
 } from './types.js';
 
 export type { VisiblePhase };
-
-interface SubagentTrack {
-  label: string;
-  activities: string[];
-}
 
 interface MessageTurnControllerOptions {
   chatJid: string;
@@ -187,112 +186,15 @@ export class MessageTurnController {
 
     switch (phase) {
       case 'intermediate':
-        if (text) {
-          if (this.progressMessageId) {
-            // Progress exists — update heading (works with or without subagents)
-            this.previousProgressText = this.latestProgressText;
-            this.latestProgressText = text;
-            this.latestProgressTextForFinal = text;
-            this.pendingProgressText = null; // discard stale buffer
-            this.toolActivities = [];
-            void this.syncTrackedProgressMessage();
-          } else {
-            // No progress yet — buffer (creates on next event)
-            this.bufferProgress(text);
-          }
-        }
-        if (!this.poisonedSessionDetected) {
-          this.resetIdleTimer();
-        }
+        this.handleIntermediateOutput(text);
         return;
 
       case 'tool-activity':
-        if (result.agentId) {
-          // Subagent tool activity
-          let track = this.subagents.get(result.agentId);
-          if (!track) {
-            track = { label: '작업 중...', activities: [] };
-            this.subagents.set(result.agentId, track);
-          }
-          if (text) {
-            const MAX = 2;
-            track.activities.push(text);
-            if (track.activities.length > MAX) {
-              track.activities = track.activities.slice(-MAX);
-            }
-          }
-          this.ensureProgressMessageExists();
-          this.ensureProgressTicker();
-          if (!this.poisonedSessionDetected) {
-            this.resetIdleTimer();
-          }
-          return;
-        }
-        // Main agent tool activity
-        this.ensureProgressMessageExists();
-        if (text) {
-          this.addToolActivity(text);
-        }
-        if (!this.poisonedSessionDetected) {
-          this.resetIdleTimer();
-        }
+        this.handleToolActivityOutput(result, text);
         return;
 
       case 'progress':
-        if (result.agentId) {
-          if (result.agentDone) {
-            const done = this.subagents.get(result.agentId);
-            if (done) {
-              done.label = done.label.replace('🔄', '✅');
-              done.activities = [];
-            }
-          } else {
-            const label =
-              text ||
-              (result.agentLabel ? `🔄 ${result.agentLabel}` : '작업 중...');
-            const existing = this.subagents.get(result.agentId);
-            if (existing) {
-              existing.label = label;
-              existing.activities = [];
-            } else {
-              this.subagents.set(result.agentId, { label, activities: [] });
-            }
-          }
-          if (!this.latestProgressText) {
-            this.latestProgressText = '작업 중...';
-            this.latestProgressTextForFinal = '작업 중...';
-          }
-          this.ensureProgressMessageExists();
-          this.ensureProgressTicker();
-          if (this.progressMessageId) {
-            void this.syncTrackedProgressMessage();
-          }
-          if (!this.poisonedSessionDetected) {
-            this.resetIdleTimer();
-          }
-          if (result.status === 'error') {
-            this.hadError = true;
-          }
-          return;
-        }
-        // Main agent progress
-        if (text) {
-          if (this.progressMessageId) {
-            // Progress message already visible — update heading directly
-            this.previousProgressText = this.latestProgressText;
-            this.latestProgressText = text;
-            this.toolActivities = [];
-            void this.syncTrackedProgressMessage();
-          } else {
-            this.bufferProgress(text);
-          }
-        }
-        if (!this.poisonedSessionDetected) {
-          this.resetIdleTimer();
-        }
-        if (result.status === 'error') {
-          this.hadError = true;
-        }
+        this.handleProgressOutput(result, text);
         return;
 
       case 'final':
@@ -342,6 +244,95 @@ export class MessageTurnController {
       this.requestAgentClose('output-delivered-close');
     }
 
+    if (result.status === 'error') {
+      this.hadError = true;
+    }
+  }
+
+  private handleIntermediateOutput(text: string | null): void {
+    if (text) {
+      if (this.progressMessageId) {
+        // Progress exists — update heading (works with or without subagents)
+        this.previousProgressText = this.latestProgressText;
+        this.latestProgressText = text;
+        this.latestProgressTextForFinal = text;
+        this.pendingProgressText = null; // discard stale buffer
+        this.toolActivities = [];
+        void this.syncTrackedProgressMessage();
+      } else {
+        // No progress yet — buffer (creates on next event)
+        this.bufferProgress(text);
+      }
+    }
+    if (!this.poisonedSessionDetected) {
+      this.resetIdleTimer();
+    }
+  }
+
+  private handleToolActivityOutput(
+    result: AgentOutput,
+    text: string | null,
+  ): void {
+    if (result.agentId) {
+      // Subagent tool activity
+      recordSubagentToolActivity(this.subagents, result.agentId, text);
+      this.ensureProgressMessageExists();
+      this.ensureProgressTicker();
+      if (!this.poisonedSessionDetected) {
+        this.resetIdleTimer();
+      }
+      return;
+    }
+    // Main agent tool activity
+    this.ensureProgressMessageExists();
+    if (text) {
+      this.addToolActivity(text);
+    }
+    if (!this.poisonedSessionDetected) {
+      this.resetIdleTimer();
+    }
+  }
+
+  private handleProgressOutput(result: AgentOutput, text: string | null): void {
+    if (result.agentId) {
+      recordSubagentProgress(this.subagents, {
+        agentId: result.agentId,
+        agentDone: result.agentDone,
+        agentLabel: result.agentLabel,
+        text,
+      });
+      if (!this.latestProgressText) {
+        this.latestProgressText = '작업 중...';
+        this.latestProgressTextForFinal = '작업 중...';
+      }
+      this.ensureProgressMessageExists();
+      this.ensureProgressTicker();
+      if (this.progressMessageId) {
+        void this.syncTrackedProgressMessage();
+      }
+      if (!this.poisonedSessionDetected) {
+        this.resetIdleTimer();
+      }
+      if (result.status === 'error') {
+        this.hadError = true;
+      }
+      return;
+    }
+    // Main agent progress
+    if (text) {
+      if (this.progressMessageId) {
+        // Progress message already visible — update heading directly
+        this.previousProgressText = this.latestProgressText;
+        this.latestProgressText = text;
+        this.toolActivities = [];
+        void this.syncTrackedProgressMessage();
+      } else {
+        this.bufferProgress(text);
+      }
+    }
+    if (!this.poisonedSessionDetected) {
+      this.resetIdleTimer();
+    }
     if (result.status === 'error') {
       this.hadError = true;
     }
@@ -401,39 +392,6 @@ export class MessageTurnController {
     return this.visiblePhase === 'final';
   }
 
-  private composeProgressBody(text: string): string {
-    if (this.subagents.size > 1) {
-      const lines: string[] = [];
-      for (const [, track] of this.subagents) {
-        const latest = track.activities[track.activities.length - 1];
-        lines.push(latest ? `${track.label} · ${latest}` : track.label);
-      }
-      return lines.join('\n');
-    }
-    if (this.subagents.size === 1) {
-      const [, track] = this.subagents.entries().next().value!;
-      const lines: string[] = [track.label];
-      for (let i = 0; i < track.activities.length; i++) {
-        const isLast = i === track.activities.length - 1;
-        lines.push(`${isLast ? '└' : '├'}  ${track.activities[i]}`);
-      }
-      return lines.join('\n');
-    }
-    const activityLines =
-      this.toolActivities.length > 0
-        ? '\n' +
-          this.toolActivities
-            .map((a, i) => {
-              const isLast = i === this.toolActivities.length - 1;
-              const connector = isLast ? '└' : '├';
-              const isSummary = a.startsWith('📋');
-              return isSummary ? `${connector} ${a}` : `${connector}  ${a}`;
-            })
-            .join('\n')
-        : '';
-    return text + activityLines;
-  }
-
   private persistProgressBody(body: string): void {
     const turnId = this.options.pairedTurnIdentity?.turnId;
     if (!turnId || !this.options.recordTurnProgress) return;
@@ -448,20 +406,13 @@ export class MessageTurnController {
   }
 
   private renderProgressMessage(text: string): string {
-    const elapsedMs =
-      this.progressStartedAt === null
-        ? 0
-        : Math.floor((Date.now() - this.progressStartedAt) / 5_000) * 5000;
-
-    const suffix = `\n\n${formatElapsedKorean(elapsedMs)}`;
-    const body = this.composeProgressBody(text);
-
-    this.persistProgressBody(body);
-
-    const maxBody = 2000 - TASK_STATUS_MESSAGE_PREFIX.length - suffix.length;
-    const truncated =
-      body.length > maxBody ? body.slice(0, maxBody - 1) + '…' : body;
-    return `${TASK_STATUS_MESSAGE_PREFIX}${truncated}${suffix}`;
+    return renderProgressMessage({
+      text,
+      progressStartedAt: this.progressStartedAt,
+      subagents: this.subagents,
+      toolActivities: this.toolActivities,
+      persistProgressBody: (body) => this.persistProgressBody(body),
+    });
   }
 
   private clearProgressTicker(): void {

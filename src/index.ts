@@ -313,33 +313,23 @@ function queueInterruptedPairedTurnAttemptRecovery(): void {
   }
 }
 
-async function main(): Promise<void> {
-  const processStartedAtMs = Date.now();
-  initDatabase();
-  logger.info('Database initialized');
-  if (HANDOFF_ONLY) {
-    logger.info({ serviceId: SERVICE_ID }, 'Starting in handoff-only mode');
-  }
-  initTokenRotation();
-  initCodexTokenRotation();
-  startTokenRefreshLoop();
-  startCodexAccountRefreshLoop();
+interface MainRuntimeHandles {
+  leaseRecoveryTimer: ReturnType<typeof setInterval> | null;
+  webDashboardServer: ReturnType<typeof startWebDashboardServer>;
+}
 
-  runtimeState.loadState();
-
+function registerShutdownHandlers(handles: MainRuntimeHandles): void {
   // Graceful shutdown handlers
-  let leaseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
-  let webDashboardServer: ReturnType<typeof startWebDashboardServer> = null;
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     stopTokenRefreshLoop();
     stopCodexAccountRefreshLoop();
-    if (leaseRecoveryTimer) {
-      clearInterval(leaseRecoveryTimer);
-      leaseRecoveryTimer = null;
+    if (handles.leaseRecoveryTimer) {
+      clearInterval(handles.leaseRecoveryTimer);
+      handles.leaseRecoveryTimer = null;
     }
-    webDashboardServer?.stop();
-    webDashboardServer = null;
+    handles.webDashboardServer?.stop();
+    handles.webDashboardServer = null;
     const roomBindings = runtimeState.getRoomBindings();
     const interruptedGroups = queue
       .getStatuses(Object.keys(roomBindings))
@@ -379,9 +369,11 @@ async function main(): Promise<void> {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+}
 
+function buildChannelConnectionOptions() {
   // Channel callbacks (shared by all channels)
-  const channelOpts = {
+  return {
     onMessage: (chatJid: string, msg: NewMessage) => {
       if (HANDOFF_ONLY) return;
       // Sender allowlist drop mode: discard messages from denied senders before storing
@@ -415,6 +407,10 @@ async function main(): Promise<void> {
     },
     roomBindings: runtimeState.getRoomBindings,
   };
+}
+
+async function connectRegisteredChannels(): Promise<void> {
+  const channelOpts = buildChannelConnectionOptions();
 
   // Create and connect all registered channels.
   // Each channel self-registers via the barrel import above.
@@ -449,25 +445,27 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   }
+}
 
-  // Start subsystems (independently of connection handler)
-  if (!HANDOFF_ONLY) {
-    startSchedulerLoop({
-      roomBindings: runtimeState.getRoomBindings,
-      getSessions: runtimeState.getSessions,
-      queue,
-      onProcess: (groupJid, proc, processName, ipcDir) =>
-        queue.registerProcess(groupJid, proc, processName, ipcDir),
-      sendMessage: (jid, rawText) =>
-        deliverFormattedCanonicalMessage(jid, rawText),
-      sendMessageViaReviewerBot: (jid, rawText) =>
-        deliverFormattedCanonicalMessage(jid, rawText, 'reviewer'),
-      sendTrackedMessage: (jid, rawText) =>
-        sendFormattedTrackedChannelMessage(channels, jid, rawText),
-      editTrackedMessage: (jid, messageId, rawText) =>
-        editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
-    });
-  }
+function startSchedulerSubsystem(): void {
+  startSchedulerLoop({
+    roomBindings: runtimeState.getRoomBindings,
+    getSessions: runtimeState.getSessions,
+    queue,
+    onProcess: (groupJid, proc, processName, ipcDir) =>
+      queue.registerProcess(groupJid, proc, processName, ipcDir),
+    sendMessage: (jid, rawText) =>
+      deliverFormattedCanonicalMessage(jid, rawText),
+    sendMessageViaReviewerBot: (jid, rawText) =>
+      deliverFormattedCanonicalMessage(jid, rawText, 'reviewer'),
+    sendTrackedMessage: (jid, rawText) =>
+      sendFormattedTrackedChannelMessage(channels, jid, rawText),
+    editTrackedMessage: (jid, messageId, rawText) =>
+      editFormattedTrackedChannelMessage(channels, jid, messageId, rawText),
+  });
+}
+
+function startIpcSubsystem(): void {
   startIpcWatcher({
     sendMessage: async (jid, text, senderRole, runId, attachments) => {
       await deliverIpcOutboundMessage(
@@ -538,74 +536,114 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot,
   });
+}
+
+async function runRestartRecovery(processStartedAtMs: number): Promise<void> {
+  queue.enterRecoveryMode();
+  queueInterruptedPairedTurnAttemptRecovery();
+  runtime.recoverPendingMessages();
+  const restartContext = await announceRestartRecovery(processStartedAtMs);
+  const roomBindings = runtimeState.getRoomBindings();
+  for (const candidate of getInterruptedRecoveryCandidates(
+    restartContext,
+    roomBindings,
+  )) {
+    queue.enqueueMessageCheck(
+      candidate.chatJid,
+      resolveGroupIpcPath(candidate.groupFolder),
+    );
+    logger.info(
+      {
+        chatJid: candidate.chatJid,
+        groupFolder: candidate.groupFolder,
+        status: candidate.status,
+        pendingMessages: candidate.pendingMessages,
+        pendingTasks: candidate.pendingTasks,
+      },
+      'Queued interrupted group for restart recovery',
+    );
+  }
+}
+
+async function startDashboards(handles: MainRuntimeHandles): Promise<void> {
+  await startUnifiedDashboard({
+    assistantName: ASSISTANT_NAME,
+    serviceId: SERVICE_ID,
+    serviceAgentType: 'claude-code',
+    statusChannelId: STATUS_CHANNEL_ID,
+    statusUpdateInterval: STATUS_UPDATE_INTERVAL,
+    usageUpdateInterval: USAGE_UPDATE_INTERVAL,
+    channels,
+    queue,
+    roomBindings: runtimeState.getRoomBindings,
+    onGroupNameSynced: (jid, name) => {
+      const group = runtimeState.getRoomBindings()[jid];
+      if (group) {
+        group.name = name;
+      }
+    },
+    purgeOnStart: true,
+  });
+  handles.webDashboardServer = startWebDashboardServer({
+    ...WEB_DASHBOARD,
+    getRoomBindings: runtimeState.getRoomBindings,
+    enqueueMessageCheck: (chatJid, groupFolder) =>
+      queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder)),
+    nudgeScheduler: nudgeSchedulerLoop,
+  });
+}
+
+function startLeaseRecoveryTimer(handles: MainRuntimeHandles): void {
+  handles.leaseRecoveryTimer = setInterval(() => {
+    const failover = getGlobalFailoverInfo();
+    if (!failover.active) return;
+    if (!hasAvailableClaudeToken()) return;
+    const activatedMs = failover.activatedAt
+      ? new Date(failover.activatedAt).getTime()
+      : NaN;
+    if (Number.isNaN(activatedMs)) return;
+    const elapsed = Date.now() - activatedMs;
+    if (elapsed < FAILOVER_MIN_DURATION_MS) return;
+    clearGlobalFailover();
+    logger.info(
+      { elapsedMin: Math.round(elapsed / 60_000) },
+      'Claude token available and hold period elapsed, global failover cleared',
+    );
+  }, 5_000);
+}
+
+async function main(): Promise<void> {
+  const processStartedAtMs = Date.now();
+  initDatabase();
+  logger.info('Database initialized');
+  if (HANDOFF_ONLY) {
+    logger.info({ serviceId: SERVICE_ID }, 'Starting in handoff-only mode');
+  }
+  initTokenRotation();
+  initCodexTokenRotation();
+  startTokenRefreshLoop();
+  startCodexAccountRefreshLoop();
+
+  runtimeState.loadState();
+
+  const handles: MainRuntimeHandles = {
+    leaseRecoveryTimer: null,
+    webDashboardServer: null,
+  };
+  registerShutdownHandlers(handles);
+
+  await connectRegisteredChannels();
+
+  // Start subsystems (independently of connection handler)
+  if (!HANDOFF_ONLY) {
+    startSchedulerSubsystem();
+  }
+  startIpcSubsystem();
   queue.setProcessMessagesFn(runtime.processGroupMessages);
   if (!HANDOFF_ONLY) {
-    queue.enterRecoveryMode();
-    queueInterruptedPairedTurnAttemptRecovery();
-    runtime.recoverPendingMessages();
-    const restartContext = await announceRestartRecovery(processStartedAtMs);
-    const roomBindings = runtimeState.getRoomBindings();
-    for (const candidate of getInterruptedRecoveryCandidates(
-      restartContext,
-      roomBindings,
-    )) {
-      queue.enqueueMessageCheck(
-        candidate.chatJid,
-        resolveGroupIpcPath(candidate.groupFolder),
-      );
-      logger.info(
-        {
-          chatJid: candidate.chatJid,
-          groupFolder: candidate.groupFolder,
-          status: candidate.status,
-          pendingMessages: candidate.pendingMessages,
-          pendingTasks: candidate.pendingTasks,
-        },
-        'Queued interrupted group for restart recovery',
-      );
-    }
-    await startUnifiedDashboard({
-      assistantName: ASSISTANT_NAME,
-      serviceId: SERVICE_ID,
-      serviceAgentType: 'claude-code',
-      statusChannelId: STATUS_CHANNEL_ID,
-      statusUpdateInterval: STATUS_UPDATE_INTERVAL,
-      usageUpdateInterval: USAGE_UPDATE_INTERVAL,
-      channels,
-      queue,
-      roomBindings: runtimeState.getRoomBindings,
-      onGroupNameSynced: (jid, name) => {
-        const group = runtimeState.getRoomBindings()[jid];
-        if (group) {
-          group.name = name;
-        }
-      },
-      purgeOnStart: true,
-    });
-    webDashboardServer = startWebDashboardServer({
-      ...WEB_DASHBOARD,
-      getRoomBindings: runtimeState.getRoomBindings,
-      enqueueMessageCheck: (chatJid, groupFolder) =>
-        queue.enqueueMessageCheck(chatJid, resolveGroupIpcPath(groupFolder)),
-      nudgeScheduler: nudgeSchedulerLoop,
-    });
-
-    leaseRecoveryTimer = setInterval(() => {
-      const failover = getGlobalFailoverInfo();
-      if (!failover.active) return;
-      if (!hasAvailableClaudeToken()) return;
-      const activatedMs = failover.activatedAt
-        ? new Date(failover.activatedAt).getTime()
-        : NaN;
-      if (Number.isNaN(activatedMs)) return;
-      const elapsed = Date.now() - activatedMs;
-      if (elapsed < FAILOVER_MIN_DURATION_MS) return;
-      clearGlobalFailover();
-      logger.info(
-        { elapsedMin: Math.round(elapsed / 60_000) },
-        'Claude token available and hold period elapsed, global failover cleared',
-      );
-    }, 5_000);
+    await runRestartRecovery(processStartedAtMs);
+    await startDashboards(handles);
+    startLeaseRecoveryTimer(handles);
   }
   runtime.startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');

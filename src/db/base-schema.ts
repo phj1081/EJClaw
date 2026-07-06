@@ -20,7 +20,7 @@ const ROOM_SKILL_OVERRIDES_SCHEMA = `
     ON room_skill_overrides(chat_jid, agent_type);
 `;
 
-export function applyBaseSchema(database: Database): void {
+function applyMessageTables(database: Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS chats (
       jid TEXT PRIMARY KEY,
@@ -48,7 +48,11 @@ export function applyBaseSchema(database: Database): void {
     CREATE TABLE IF NOT EXISTS message_sequence (
       id INTEGER PRIMARY KEY AUTOINCREMENT
     );
+  `);
+}
 
+function applyWorkItemTables(database: Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS work_items (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       group_folder TEXT NOT NULL,
@@ -75,7 +79,11 @@ export function applyBaseSchema(database: Database): void {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_open
       ON work_items(chat_jid, agent_type, IFNULL(delivery_role, ''))
       WHERE status IN ('produced', 'delivery_retry');
+  `);
+}
 
+function applyScheduledTaskTables(database: Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -109,7 +117,11 @@ export function applyBaseSchema(database: Database): void {
       FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
+  `);
+}
 
+function applyRouterStateTables(database: Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -120,6 +132,11 @@ export function applyBaseSchema(database: Database): void {
       session_id TEXT NOT NULL,
       PRIMARY KEY (group_folder, agent_type)
     );
+  `);
+}
+
+function applyPairedTaskTables(database: Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS paired_projects (
       chat_jid TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -187,6 +204,11 @@ export function applyBaseSchema(database: Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_paired_turn_outputs_task
       ON paired_turn_outputs(task_id, turn_number);
+  `);
+}
+
+function applyPairedTurnTables(database: Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS paired_turn_reservations (
       chat_jid TEXT NOT NULL,
       task_id TEXT NOT NULL,
@@ -329,6 +351,11 @@ export function applyBaseSchema(database: Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_paired_task_execution_leases_expires_at
       ON paired_task_execution_leases(expires_at);
+  `);
+}
+
+function applyRoomTables(database: Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS channel_owner (
       chat_jid TEXT PRIMARY KEY,
       owner_service_id TEXT NOT NULL,
@@ -370,6 +397,11 @@ export function applyBaseSchema(database: Database): void {
       CHECK (role IN ('owner', 'reviewer', 'arbiter')),
       CHECK (agent_type IN ('claude-code', 'codex'))
     );
+  `);
+}
+
+function applyServiceHandoffTables(database: Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS service_handoffs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       chat_jid TEXT NOT NULL,
@@ -417,6 +449,11 @@ export function applyBaseSchema(database: Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_service_handoffs_target
       ON service_handoffs(status, target_role, target_agent_type, created_at);
+  `);
+}
+
+function applyMemoryTables(database: Database): void {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS memories (
       id INTEGER PRIMARY KEY,
       scope_kind TEXT NOT NULL,
@@ -454,5 +491,17 @@ export function applyBaseSchema(database: Database): void {
       VALUES (new.id, new.content, new.keywords_json);
     END;
   `);
+}
+
+export function applyBaseSchema(database: Database): void {
+  applyMessageTables(database);
+  applyWorkItemTables(database);
+  applyScheduledTaskTables(database);
+  applyRouterStateTables(database);
+  applyPairedTaskTables(database);
+  applyPairedTurnTables(database);
+  applyRoomTables(database);
+  applyServiceHandoffTables(database);
+  applyMemoryTables(database);
   database.exec(ROOM_SKILL_OVERRIDES_SCHEMA);
 }
