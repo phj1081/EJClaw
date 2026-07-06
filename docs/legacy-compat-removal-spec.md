@@ -1,6 +1,6 @@
 # EJClaw 레거시 호환 제거 및 구조 정리 Spec
 
-- 상태: 대부분 구현 완료 (Phase 5 구조 분해 일부만 잔여)
+- 상태: 대부분 구현 완료 (Phase 5 구조 분해까지 완료, db façade 축소만 잔여)
 - 대상: 코어 개발자 / 리팩토링 담당자
 - 최초 작성일: 2026-04-09 (당시 저장소 정적 분석 기준)
 - 상태 갱신일: 2026-07-06
@@ -14,15 +14,17 @@
 - **Phase 4 완료** — `src/db/legacy-rebuilds.ts` 삭제됨. read-time repair helper 참조 0건.
 - **Phase 6 완료** — legacy env alias는 이제 `assertNoLegacyEnvAliasesConfigured()`가 startup error로 fail-fast 처리한다. router state alias 참조는 테스트(거부 동작 검증)에만 존재한다.
 - **Phase 0 (guard) 완료** — `scripts/check-legacy-guard.ts`가 §12 패턴을 검사하며 `quality:check`(CI `bun run check` 경유)에 포함된다.
+- **Phase 5 (구조 분해) 완료** — PR #229/#230에서 처리:
+  - `group-queue.ts` 737줄, `paired-state.ts` 317줄, `paired-workspace-manager.ts` 633줄, `message-turn-controller.ts` 899줄 등 프로덕션 파일 전부 기본 예산(900줄/함수 180줄) 이내
+  - `db.test.ts`(9,377줄) → 도메인별 15개 파일, `message-runtime.test.ts`(5,766줄) → 10개 파일 등 테스트 monolith 분할 완료
+  - ratcheted hotspot 41개 → 5개 (dashboard i18n/styles, dashboard-ux 스크립트, db.test.ts legacy provenance it 3건, paired-turn-provenance-schema)
 - **`setup/register.ts`** — `assignRoom()` 호출 thin wrapper로 교체 완료. `.env`/`CLAUDE.md` 수정 로직 제거됨.
 - **네이밍 정리(결정 6)** — `RegisteredGroup` 타입 참조 0건.
 
-### 잔여 항목 (Phase 5 구조 분해)
+### 잔여 항목
 
-- `src/group-queue.ts` (~1,016줄) 분해
-- `src/db/paired-turn-provenance-schema.ts` (~2,062줄) one-off rebuild 로직 정리
-- `src/db.test.ts` (~9,377줄) monolith 테스트 분할
-- `db.js` façade 직접 import 축소 (현재 다수 파일이 façade를 직접 참조)
+- `db.js` façade 직접 import 축소 (현재 100+ 파일이 façade를 직접 참조; façade 자체는 148줄 re-export 전용으로 축소 완료)
+- `src/db/paired-turn-provenance-schema.ts` (~2,062줄) one-off rebuild 로직 — migration 010 전용 코드로, 구버전 DB 지원이 필요 없어지는 시점에 삭제
 
 파일 크기 상한은 `quality/code-quality-budgets.json`의 ratcheted hotspot으로 추적 중이다.
 
