@@ -10,7 +10,10 @@ import {
   executePendingPairedTurn,
   isBotOnlyPairedRoomTurn,
 } from './message-runtime-flow.js';
-import { buildPairedTurnIdentity } from './paired-turn-identity.js';
+import {
+  buildPairedTurnIdentity,
+  type PairedTurnIdentity,
+} from './paired-turn-identity.js';
 import { resolveStoredVisibleVerdict } from './paired-verdict.js';
 import {
   advanceLastAgentCursor,
@@ -30,6 +33,7 @@ import type {
 import type {
   Channel,
   NewMessage,
+  PairedRoomRole,
   PairedTask,
   PairedTaskStatus,
   PairedTurnReservationIntentKind,
@@ -254,31 +258,35 @@ export async function runPendingPairedTurnIfNeeded(args: {
   });
 }
 
-export async function runQueuedGroupTurn(args: {
+type QueuedGroupTurnPlan =
+  | { kind: 'skip' }
+  | {
+      kind: 'run';
+      currentTask: PairedTask | null | undefined;
+      hasHumanMsg: boolean;
+      fallbackMessages: NewMessage[];
+      taskStatus: PairedTaskStatus | undefined;
+      turnOutputs: ReturnType<typeof getPairedTurnOutputs>;
+      turnRole: 'owner' | 'reviewer' | 'arbiter';
+      turnChannel: Channel | null;
+      cursorKey: string;
+      forcedRole: PairedRoomRole | undefined;
+      queuedIntentKind: PairedTurnReservationIntentKind | null;
+      pairedTurnIdentity: PairedTurnIdentity | undefined;
+    };
+
+function resolveQueuedGroupTurnPlan(args: {
   chatJid: string;
   group: RegisteredGroup;
-  runId: string;
-  log: typeof logger;
-  timezone: string;
-  missedMessages: NewMessage[];
   task: PairedTask | null | undefined;
+  missedMessages: NewMessage[];
   roleToChannel: RoleToChannelMap;
   ownerChannel: Channel;
   lastAgentTimestamps: Record<string, string>;
   saveState: () => void;
-  executeTurn: ExecuteTurnFn;
-  claimMessageRunInput?: (claim: {
-    runId: string;
-    startSeq: number | null;
-    endSeq: number | null;
-    messageIds: readonly string[];
-  }) => void;
-  getFixedRoleChannelName: (role: 'reviewer' | 'arbiter') => string;
-  labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
-  formatMessages: (messages: NewMessage[], timezone: string) => string;
-}): Promise<boolean> {
-  const { chatJid, group, runId, log, missedMessages, task, roleToChannel } =
-    args;
+  log: typeof logger;
+}): QueuedGroupTurnPlan {
+  const { chatJid, group, task, missedMessages, roleToChannel, log } = args;
   let currentTask = task;
   const hasHumanMsg = task
     ? missedMessages.some((message) =>
@@ -346,7 +354,7 @@ export async function runQueuedGroupTurn(args: {
       },
       'Skipped queued paired turn because the latest persisted turn already closed the pending handoff',
     );
-    return true;
+    return { kind: 'skip' };
   }
   const turnChannel =
     turnRole === 'owner' ? args.ownerChannel : roleToChannel[turnRole];
@@ -368,6 +376,135 @@ export async function runQueuedGroupTurn(args: {
           role: turnRole,
         })
       : undefined;
+
+  return {
+    kind: 'run',
+    currentTask,
+    hasHumanMsg,
+    fallbackMessages,
+    taskStatus,
+    turnOutputs,
+    turnRole,
+    turnChannel,
+    cursorKey,
+    forcedRole,
+    queuedIntentKind,
+    pairedTurnIdentity,
+  };
+}
+
+function finalizeQueuedGroupTurnOutcome(args: {
+  chatJid: string;
+  outputStatus: 'success' | 'error';
+  deliverySucceeded: boolean;
+  visiblePhase: unknown;
+  startSeq: number | null;
+  endSeq: number | null;
+  cursorKey: string;
+  rollbackOnSilentError: boolean;
+  lastAgentTimestamps: Record<string, string>;
+  saveState: () => void;
+  log: typeof logger;
+}): boolean {
+  const { log, startSeq, endSeq } = args;
+  if (
+    !finalizeQueuedRunCursor({
+      outputStatus: args.outputStatus,
+      visiblePhase: args.visiblePhase,
+      startSeq,
+      endSeq,
+      rollbackOnSilentError: args.rollbackOnSilentError,
+      log,
+    })
+  ) {
+    return false;
+  }
+
+  if (endSeq !== null) {
+    advanceLastAgentCursor(
+      args.lastAgentTimestamps,
+      args.saveState,
+      args.chatJid,
+      endSeq,
+      args.cursorKey,
+    );
+  }
+
+  if (!args.deliverySucceeded) {
+    log.warn(
+      {
+        messageSeqStart: startSeq,
+        messageSeqEnd: endSeq,
+      },
+      'Persisted produced output for delivery retry without rerunning agent',
+    );
+    return false;
+  }
+
+  log.info(
+    {
+      visiblePhase: args.visiblePhase,
+      messageSeqStart: startSeq,
+      messageSeqEnd: endSeq,
+    },
+    'Queued run completed successfully',
+  );
+
+  return true;
+}
+
+export async function runQueuedGroupTurn(args: {
+  chatJid: string;
+  group: RegisteredGroup;
+  runId: string;
+  log: typeof logger;
+  timezone: string;
+  missedMessages: NewMessage[];
+  task: PairedTask | null | undefined;
+  roleToChannel: RoleToChannelMap;
+  ownerChannel: Channel;
+  lastAgentTimestamps: Record<string, string>;
+  saveState: () => void;
+  executeTurn: ExecuteTurnFn;
+  claimMessageRunInput?: (claim: {
+    runId: string;
+    startSeq: number | null;
+    endSeq: number | null;
+    messageIds: readonly string[];
+  }) => void;
+  getFixedRoleChannelName: (role: 'reviewer' | 'arbiter') => string;
+  labelPairedSenders: (chatJid: string, messages: NewMessage[]) => NewMessage[];
+  formatMessages: (messages: NewMessage[], timezone: string) => string;
+}): Promise<boolean> {
+  const { chatJid, group, runId, log, missedMessages, task, roleToChannel } =
+    args;
+  const plan = resolveQueuedGroupTurnPlan({
+    chatJid,
+    group,
+    task,
+    missedMessages,
+    roleToChannel,
+    ownerChannel: args.ownerChannel,
+    lastAgentTimestamps: args.lastAgentTimestamps,
+    saveState: args.saveState,
+    log,
+  });
+  if (plan.kind === 'skip') {
+    return true;
+  }
+  const {
+    currentTask,
+    hasHumanMsg,
+    fallbackMessages,
+    taskStatus,
+    turnOutputs,
+    turnRole,
+    turnChannel,
+    cursorKey,
+    forcedRole,
+    queuedIntentKind,
+    pairedTurnIdentity,
+  } = plan;
 
   const prompt = buildQueuedGroupTurnPrompt({
     turnRole,
@@ -419,7 +556,6 @@ export async function runQueuedGroupTurn(args: {
     return true;
   }
 
-  const cursorAdvanced = endSeq !== null;
   args.claimMessageRunInput?.({
     runId,
     startSeq,
@@ -442,51 +578,20 @@ export async function runQueuedGroupTurn(args: {
       pairedTurnIdentity,
     });
 
-  if (
-    !finalizeQueuedRunCursor({
-      outputStatus,
-      visiblePhase,
-      startSeq,
-      endSeq,
-      rollbackOnSilentError:
-        hasHumanMsg &&
-        turnRole === 'owner' &&
-        currentTask?.owner_agent_type === 'codex',
-      log,
-    })
-  ) {
-    return false;
-  }
-
-  if (cursorAdvanced) {
-    advanceLastAgentCursor(
-      args.lastAgentTimestamps,
-      args.saveState,
-      chatJid,
-      endSeq,
-      cursorKey,
-    );
-  }
-
-  if (!deliverySucceeded) {
-    log.warn(
-      {
-        messageSeqStart: startSeq,
-        messageSeqEnd: endSeq,
-      },
-      'Persisted produced output for delivery retry without rerunning agent',
-    );
-    return false;
-  }
-
-  log.info(
-    {
-      visiblePhase,
-      messageSeqStart: startSeq,
-      messageSeqEnd: endSeq,
-    },
-    'Queued run completed successfully',
-  );
-
-  return true;
+  return finalizeQueuedGroupTurnOutcome({
+    chatJid,
+    outputStatus,
+    deliverySucceeded,
+    visiblePhase,
+    startSeq,
+    endSeq,
+    cursorKey,
+    rollbackOnSilentError:
+      hasHumanMsg &&
+      turnRole === 'owner' &&
+      currentTask?.owner_agent_type === 'codex',
+    lastAgentTimestamps: args.lastAgentTimestamps,
+    saveState: args.saveState,
+    log,
+  });
 }

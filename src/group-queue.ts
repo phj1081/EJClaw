@@ -7,13 +7,28 @@ import {
 } from './config.js';
 import { queueFollowUpMessage, writeCloseSentinel } from './group-queue-ipc.js';
 import {
+  clearPostCloseTimers,
+  isProcessAlive,
+  schedulePostCloseTermination,
+} from './group-queue-process.js';
+import {
+  getCloseReasonForRun,
+  getDirectTerminalDeliveryForRun,
+  hasDirectTerminalDeliveryForRun,
+  hasRecordedDirectTerminalDeliveryForRun,
+  isActiveMessageRunInput,
+  noteDirectTerminalDelivery,
+  recordActiveMessageRunInput,
+} from './group-queue-run-input.js';
+import { shutdownGroupProcesses } from './group-queue-shutdown.js';
+import {
   assertRunPhaseInvariants,
   createGroupState,
-  recordRecentDirectTerminalDelivery,
   resetRunState,
   transitionRunPhase,
 } from './group-queue-state.js';
 import { logger } from './logger.js';
+import type { ActiveMessageRunInputClaim } from './group-queue-run-input.js';
 import type {
   GroupRunContext,
   GroupState,
@@ -21,12 +36,7 @@ import type {
 } from './group-queue-state.js';
 import type { NewMessage } from './types.js';
 
-export type ActiveMessageRunInputClaim = {
-  runId: string;
-  startSeq: number | null;
-  endSeq: number | null;
-  messageIds?: readonly string[];
-};
+export type { ActiveMessageRunInputClaim } from './group-queue-run-input.js';
 
 export type { GroupRunContext } from './group-queue-state.js';
 
@@ -34,8 +44,6 @@ const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 5000;
 const MAX_CONCURRENT_TASKS =
   MAX_CONCURRENT_AGENTS > 1 ? MAX_CONCURRENT_AGENTS - 1 : 1;
-const POST_CLOSE_SIGTERM_DELAY_MS = 60_000;
-const POST_CLOSE_SIGKILL_DELAY_MS = 75_000;
 
 export interface GroupStatus {
   jid: string;
@@ -291,67 +299,15 @@ export class GroupQueue {
     groupJid: string,
     claim: ActiveMessageRunInputClaim,
   ): boolean {
-    const state = this.getGroup(groupJid);
-    if (
-      state.currentRunId !== claim.runId ||
-      state.runPhase !== 'running_messages'
-    ) {
-      logger.debug(
-        {
-          groupJid,
-          claimRunId: claim.runId,
-          currentRunId: state.currentRunId,
-          runPhase: state.runPhase,
-        },
-        'Ignoring active message input claim because it does not match the current run',
-      );
-      return false;
-    }
-
-    const startSeq = claim.startSeq;
-    const endSeq = claim.endSeq;
-    state.activeMessageRunInput = {
-      runId: claim.runId,
-      startSeq:
-        startSeq != null && endSeq != null
-          ? Math.min(startSeq, endSeq)
-          : startSeq,
-      endSeq:
-        startSeq != null && endSeq != null
-          ? Math.max(startSeq, endSeq)
-          : endSeq,
-      messageIds: new Set((claim.messageIds ?? []).filter(Boolean)),
-    };
-    logger.debug(
-      {
-        groupJid,
-        runId: claim.runId,
-        startSeq: state.activeMessageRunInput.startSeq,
-        endSeq: state.activeMessageRunInput.endSeq,
-        messageCount: state.activeMessageRunInput.messageIds.size,
-      },
-      'Recorded message input claimed by active run',
+    return recordActiveMessageRunInput(
+      this.getGroup(groupJid),
+      groupJid,
+      claim,
     );
-    return true;
   }
 
   isActiveMessageRunInput(groupJid: string, message: NewMessage): boolean {
-    const state = this.getGroup(groupJid);
-    const claim = state.activeMessageRunInput;
-    if (
-      !claim ||
-      state.currentRunId !== claim.runId ||
-      (state.runPhase !== 'running_messages' &&
-        state.runPhase !== 'closing_messages')
-    ) {
-      return false;
-    }
-
-    if (message.seq != null && claim.startSeq != null && claim.endSeq != null) {
-      return message.seq >= claim.startSeq && message.seq <= claim.endSeq;
-    }
-
-    return claim.messageIds.has(message.id);
+    return isActiveMessageRunInput(this.getGroup(groupJid), message);
   }
 
   noteDirectTerminalDelivery(
@@ -359,31 +315,11 @@ export class GroupQueue {
     senderRole?: string | null,
     text?: string | null,
   ): void {
-    const state = this.getGroup(groupJid);
-    if (
-      state.runPhase !== 'running_messages' ||
-      !state.currentRunId ||
-      !senderRole ||
-      !text ||
-      text.length === 0
-    ) {
-      return;
-    }
-    state.directTerminalDeliveries.set(senderRole, text);
-    recordRecentDirectTerminalDelivery(
-      state,
-      state.currentRunId,
+    noteDirectTerminalDelivery(
+      this.getGroup(groupJid),
+      groupJid,
       senderRole,
       text,
-    );
-    logger.info(
-      {
-        groupJid,
-        runId: state.currentRunId,
-        senderRole,
-        textLength: text.length,
-      },
-      'Recorded direct terminal delivery for active run',
     );
   }
 
@@ -392,11 +328,11 @@ export class GroupQueue {
     runId: string,
     senderRole?: string | null,
   ): boolean {
-    const state = this.getGroup(groupJid);
-    if (state.currentRunId !== runId || !senderRole) {
-      return false;
-    }
-    return state.directTerminalDeliveries.has(senderRole);
+    return hasDirectTerminalDeliveryForRun(
+      this.getGroup(groupJid),
+      runId,
+      senderRole,
+    );
   }
 
   getDirectTerminalDeliveryForRun(
@@ -404,118 +340,25 @@ export class GroupQueue {
     runId: string,
     senderRole?: string | null,
   ): string | null {
-    const state = this.getGroup(groupJid);
-    if (state.currentRunId !== runId || !senderRole) {
-      return null;
-    }
-    return state.directTerminalDeliveries.get(senderRole) ?? null;
+    return getDirectTerminalDeliveryForRun(
+      this.getGroup(groupJid),
+      runId,
+      senderRole,
+    );
   }
   getCloseReasonForRun(groupJid: string, runId: string): string | null {
-    const closeRequest = this.getGroup(groupJid).lastCloseRequest;
-    return closeRequest?.runId === runId ? closeRequest.reason : null;
+    return getCloseReasonForRun(this.getGroup(groupJid), runId);
   }
   hasRecordedDirectTerminalDeliveryForRun(
     groupJid: string,
     runId: string,
     senderRole?: string | null,
   ): boolean {
-    const state = this.getGroup(groupJid);
-    if (!senderRole) {
-      return false;
-    }
-    if (
-      state.currentRunId === runId &&
-      state.directTerminalDeliveries.has(senderRole)
-    ) {
-      return true;
-    }
-    return (
-      state.recentDirectTerminalDeliveries.get(runId)?.has(senderRole) ?? false
+    return hasRecordedDirectTerminalDeliveryForRun(
+      this.getGroup(groupJid),
+      runId,
+      senderRole,
     );
-  }
-  private clearPostCloseTimers(state: GroupState): void {
-    if (state.postCloseTermTimer) {
-      clearTimeout(state.postCloseTermTimer);
-      state.postCloseTermTimer = null;
-    }
-    if (state.postCloseKillTimer) {
-      clearTimeout(state.postCloseKillTimer);
-      state.postCloseKillTimer = null;
-    }
-  }
-
-  private schedulePostCloseTermination(
-    groupJid: string,
-    state: GroupState,
-    runId: string | null,
-    reason: string,
-  ): void {
-    const proc = state.process;
-    if (!proc || !runId || state.runPhase === 'running_task') {
-      return;
-    }
-
-    const processName = state.processName;
-    const isSameActiveProcess = () =>
-      state.process === proc &&
-      state.currentRunId === runId &&
-      this.isProcessAlive(proc);
-
-    this.clearPostCloseTimers(state);
-
-    state.postCloseTermTimer = setTimeout(() => {
-      state.postCloseTermTimer = null;
-      if (!isSameActiveProcess()) {
-        return;
-      }
-
-      logger.warn(
-        {
-          groupJid,
-          runId,
-          processName,
-          reason,
-          delayMs: POST_CLOSE_SIGTERM_DELAY_MS,
-        },
-        'Force-terminating lingering agent after stdin close request',
-      );
-
-      try {
-        proc.kill('SIGTERM');
-      } catch (err) {
-        logger.warn(
-          { groupJid, runId, processName, err },
-          'Failed to SIGTERM lingering agent after stdin close request',
-        );
-      }
-    }, POST_CLOSE_SIGTERM_DELAY_MS);
-
-    state.postCloseKillTimer = setTimeout(() => {
-      state.postCloseKillTimer = null;
-      if (!isSameActiveProcess()) {
-        return;
-      }
-
-      logger.error(
-        {
-          groupJid,
-          runId,
-          processName,
-          reason,
-          delayMs: POST_CLOSE_SIGKILL_DELAY_MS,
-        },
-        'Force-killing stubborn agent after stdin close request',
-      );
-
-      try {
-        proc.kill('SIGKILL');
-      } catch (err) {
-        logger.warn(
-          { groupJid, runId, processName, err },
-          'Failed to SIGKILL stubborn agent after stdin close request',
-        );
-      }
-    }, POST_CLOSE_SIGKILL_DELAY_MS);
   }
 
   closeStdin(
@@ -558,7 +401,7 @@ export class GroupQueue {
     }
 
     if (metadata?.reason === 'output-delivered-close') {
-      this.schedulePostCloseTermination(
+      schedulePostCloseTermination(
         groupJid,
         state,
         metadata.runId ?? state.currentRunId,
@@ -574,7 +417,7 @@ export class GroupQueue {
   killProcess(groupJid: string): boolean {
     const state = this.getGroup(groupJid);
     const proc = state.process;
-    if (!proc || !this.isProcessAlive(proc)) {
+    if (!proc || !isProcessAlive(proc)) {
       return false;
     }
     logger.info(
@@ -590,7 +433,7 @@ export class GroupQueue {
       // Falls back to SIGKILL after 5 seconds if the process doesn't exit.
       proc.kill('SIGTERM');
       setTimeout(() => {
-        if (this.isProcessAlive(proc)) {
+        if (isProcessAlive(proc)) {
           try {
             proc.kill('SIGKILL');
           } catch {
@@ -651,7 +494,7 @@ export class GroupQueue {
       );
       this.scheduleRetry(groupJid, state, runId);
     } finally {
-      this.clearPostCloseTimers(state);
+      clearPostCloseTimers(state);
       const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
       logger.info(
         {
@@ -699,7 +542,7 @@ export class GroupQueue {
       outcome = 'error';
       logger.error({ groupJid, taskId: task.id, err }, 'Error running task');
     } finally {
-      this.clearPostCloseTimers(state);
+      clearPostCloseTimers(state);
       const durationMs = state.startedAt ? Date.now() - state.startedAt : null;
       logger.info(
         {
@@ -882,135 +725,13 @@ export class GroupQueue {
     });
   }
 
-  private isProcessAlive(proc: ChildProcess): boolean {
-    return proc.exitCode === null && proc.signalCode === null;
-  }
-
-  private waitForProcessExit(proc: ChildProcess): Promise<void> {
-    if (!this.isProcessAlive(proc)) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      const handleExit = () => {
-        proc.off('close', handleExit);
-        proc.off('exit', handleExit);
-        resolve();
-      };
-
-      proc.once('close', handleExit);
-      proc.once('exit', handleExit);
-    });
-  }
-
   async shutdown(gracePeriodMs: number): Promise<void> {
     this.shuttingDown = true;
-
-    const activeProcesses: Array<{
-      groupJid: string;
-      process: ChildProcess;
-      processName: string;
-    }> = [];
-
-    for (const [groupJid, state] of this.groups) {
-      this.clearPostCloseTimers(state);
-      if (state.retryTimer) {
-        clearTimeout(state.retryTimer);
-        state.retryTimer = null;
-      }
-      state.retryScheduledAt = null;
-
-      if (state.process && state.processName) {
-        activeProcesses.push({
-          groupJid,
-          process: state.process,
-          processName: state.processName,
-        });
-
-        if (state.runPhase === 'running_messages' && state.ipcDir) {
-          this.closeStdin(groupJid, { reason: 'shutdown' });
-        }
-      }
-    }
-
-    if (activeProcesses.length === 0) {
-      logger.info('GroupQueue shutdown with no active agent processes');
-      return;
-    }
-
-    logger.info(
-      {
-        activeCount: this.activeCount,
-        processNames: activeProcesses.map(({ processName }) => processName),
-        gracePeriodMs,
-      },
-      'GroupQueue shutting down, waiting for active agent processes to exit',
+    await shutdownGroupProcesses(
+      this.groups,
+      this.activeCount,
+      gracePeriodMs,
+      (groupJid, metadata) => this.closeStdin(groupJid, metadata),
     );
-
-    const graceWaitMs = Math.max(gracePeriodMs, 0);
-    if (graceWaitMs > 0) {
-      await Promise.race([
-        Promise.all(
-          activeProcesses.map(({ process }) =>
-            this.waitForProcessExit(process),
-          ),
-        ),
-        new Promise((resolve) => setTimeout(resolve, graceWaitMs)),
-      ]);
-    }
-
-    const stillRunning = activeProcesses.filter(({ process }) =>
-      this.isProcessAlive(process),
-    );
-
-    if (stillRunning.length === 0) {
-      logger.info('All active agent processes exited during shutdown');
-      return;
-    }
-
-    logger.warn(
-      {
-        processNames: stillRunning.map(({ processName }) => processName),
-      },
-      'Terminating lingering agent processes during shutdown',
-    );
-
-    for (const { process } of stillRunning) {
-      try {
-        process.kill('SIGTERM');
-      } catch (err) {
-        logger.warn({ err }, 'Failed to SIGTERM lingering agent process');
-      }
-    }
-
-    await Promise.race([
-      Promise.all(
-        stillRunning.map(({ process }) => this.waitForProcessExit(process)),
-      ),
-      new Promise((resolve) => setTimeout(resolve, 2_000)),
-    ]);
-
-    const stubborn = stillRunning.filter(({ process }) =>
-      this.isProcessAlive(process),
-    );
-
-    if (stubborn.length === 0) {
-      return;
-    }
-
-    logger.error(
-      {
-        processNames: stubborn.map(({ processName }) => processName),
-      },
-      'Force-killing stubborn agent processes during shutdown',
-    );
-
-    for (const { process } of stubborn) {
-      try {
-        process.kill('SIGKILL');
-      } catch (err) {
-        logger.warn({ err }, 'Failed to SIGKILL stubborn agent process');
-      }
-    }
   }
 }

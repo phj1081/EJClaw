@@ -9,7 +9,10 @@ describe('config/env loading', () => {
   let previousEnv: NodeJS.ProcessEnv;
 
   beforeEach(() => {
-    tempRoot = fs.mkdtempSync(path.join('/tmp', 'ejclaw-config-'));
+    // realpath so assertions match resolved cwd on macOS (/tmp -> /private/tmp)
+    tempRoot = fs.realpathSync(
+      fs.mkdtempSync(path.join('/tmp', 'ejclaw-config-')),
+    );
     previousCwd = process.cwd();
     previousEnv = { ...process.env };
     process.chdir(tempRoot);

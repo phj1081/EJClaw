@@ -333,8 +333,3 @@ export function getActiveCodexFailoverLeases(): ActiveFailoverLease[] {
   }
   return [];
 }
-
-/** @deprecated Use getActiveCodexFailoverLeases() instead */
-export function getActiveCodexFailoverChatJids(): string[] {
-  return getActiveCodexFailoverLeases().map((l) => l.chatJid);
-}

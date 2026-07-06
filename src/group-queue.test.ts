@@ -27,9 +27,9 @@ vi.mock('fs', async () => {
   };
 });
 
-describe('GroupQueue', () => {
-  let queue: GroupQueue;
+let queue: GroupQueue;
 
+function registerQueueLifecycle() {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
@@ -39,6 +39,10 @@ describe('GroupQueue', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+}
+
+describe('GroupQueue single-group serialization', () => {
+  registerQueueLifecycle();
 
   // --- Single group at a time ---
 
@@ -138,6 +142,10 @@ describe('GroupQueue', () => {
     releaseRun(true);
     await vi.advanceTimersByTimeAsync(10);
   });
+});
+
+describe('GroupQueue active run delivery and termination', () => {
+  registerQueueLifecycle();
 
   it('stores direct terminal text for the active run, keeps a recent run record, and clears the active slot when the run ends', async () => {
     let releaseRun!: (value: boolean) => void;
@@ -289,6 +297,10 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(75_000);
     expect(proc.kill).not.toHaveBeenCalled();
   });
+});
+
+describe('GroupQueue concurrency and prioritization', () => {
+  registerQueueLifecycle();
 
   // --- Global concurrency limit ---
 
@@ -408,6 +420,10 @@ describe('GroupQueue', () => {
     expect(executionOrder[1]).toBe('task'); // task runs first in drain
     // Messages would run after task completes
   });
+});
+
+describe('GroupQueue retry backoff and shutdown', () => {
+  registerQueueLifecycle();
 
   // --- Retry with backoff on failure ---
 
@@ -552,6 +568,10 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(200000); // Wait a long time
     expect(callCount).toBe(countAfterMaxRetries);
   });
+});
+
+describe('GroupQueue drain and task dedup', () => {
+  registerQueueLifecycle();
 
   // --- Waiting groups get drained when slots free up ---
 
@@ -656,8 +676,10 @@ describe('GroupQueue', () => {
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
   });
+});
 
-  // --- Run phase transitions ---
+describe('GroupQueue run phase transitions', () => {
+  registerQueueLifecycle();
 
   it('transitions running_messages → closing_messages → idle', async () => {
     const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';
@@ -764,17 +786,7 @@ describe('GroupQueue', () => {
 });
 
 describe('GroupQueue close reason tracking', () => {
-  let queue: GroupQueue;
-
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.clearAllMocks();
-    queue = new GroupQueue();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  registerQueueLifecycle();
 
   it('records the close reason for the active message run until it finishes', async () => {
     const ipcDir = '/tmp/ejclaw-test-data/ipc/group-folder';

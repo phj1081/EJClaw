@@ -187,12 +187,14 @@ function createLegacyLeaseDatabase(args: {
   legacyDb.close();
 }
 
-describe('paired follow-up scheduler', () => {
-  beforeEach(() => {
-    _initTestDatabase();
-    resetPairedFollowUpScheduleState();
-    vi.useRealTimers();
-  });
+function resetSchedulerTestState(): void {
+  _initTestDatabase();
+  resetPairedFollowUpScheduleState();
+  vi.useRealTimers();
+}
+
+describe('paired follow-up scheduler: dedup and turn identity', () => {
+  beforeEach(resetSchedulerTestState);
 
   it('deduplicates the same follow-up intent while task state is unchanged', () => {
     const enqueue = vi.fn();
@@ -385,6 +387,11 @@ describe('paired follow-up scheduler', () => {
       resetPairedFollowUpScheduleState();
     }
   });
+});
+
+describe('paired follow-up scheduler: key and revision scheduling', () => {
+  beforeEach(resetSchedulerTestState);
+
   it('keeps different round trips schedulable', () => {
     const enqueue = vi.fn();
 
@@ -462,6 +469,10 @@ describe('paired follow-up scheduler', () => {
     expect(second).toBe(true);
     expect(enqueue).toHaveBeenCalledTimes(2);
   });
+});
+
+describe('paired follow-up scheduler: pending reservation requeue', () => {
+  beforeEach(resetSchedulerTestState);
 
   it('requeues an existing pending owner follow-up reservation after queue loss', () => {
     const recoveryEnqueue = vi.fn();
@@ -627,6 +638,10 @@ describe('paired follow-up scheduler', () => {
       0,
     );
   });
+});
+
+describe('paired follow-up scheduler: reviewer turn claims and retries', () => {
+  beforeEach(resetSchedulerTestState);
 
   it('does not create a fresh reviewer handoff identity after a pure claim leaves the semantic task revision unchanged', () => {
     const enqueue = vi.fn();
@@ -852,6 +867,10 @@ describe('paired follow-up scheduler', () => {
     expect(second).toBe(false);
     expect(getPairedTaskById(task.id)?.updated_at).toBe(task.updated_at);
   });
+});
+
+describe('paired follow-up scheduler: restart lease recovery', () => {
+  beforeEach(resetSchedulerTestState);
 
   it('reclaims an expired execution lease after restart while blocking fresh claims before expiry', () => {
     const tempDir = fs.mkdtempSync(
@@ -1083,6 +1102,10 @@ describe('paired follow-up scheduler', () => {
       resetPairedFollowUpScheduleState();
     }
   });
+});
+
+describe('paired follow-up scheduler: legacy lease preservation', () => {
+  beforeEach(resetSchedulerTestState);
 
   it('preserves legacy execution leases that belong to another service during startup cleanup', () => {
     const tempDir = fs.mkdtempSync(

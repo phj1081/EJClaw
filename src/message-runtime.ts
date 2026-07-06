@@ -41,6 +41,80 @@ export interface MessageRuntimeDeps {
   clearSession: (groupFolder: string, opts?: { allRoles?: boolean }) => void;
 }
 
+function createRuntimeExecuteTurn(args: {
+  deps: MessageRuntimeDeps;
+  failureFinalText: string;
+  runAgent: ReturnType<typeof createRunAgent>;
+  isDuplicateOfLastBotFinal: (chatJid: string, text: string) => boolean;
+  openContinuation: (chatJid: string) => void;
+}): ReturnType<typeof createExecuteTurn> {
+  const { deps } = args;
+  return createExecuteTurn({
+    runAgent: args.runAgent,
+    assistantName: deps.assistantName,
+    idleTimeout: deps.idleTimeout,
+    failureFinalText: args.failureFinalText,
+    channels: deps.channels,
+    queue: deps.queue,
+    getRoomBindings: deps.getRoomBindings,
+    getSessions: deps.getSessions,
+    persistSession: deps.persistSession,
+    clearSession: deps.clearSession,
+    deliverFinalText: async ({
+      text,
+      attachments,
+      chatJid,
+      runId,
+      channel,
+      group,
+      startSeq,
+      endSeq,
+      forcedAgentType,
+      deliveryRole,
+      deliveryServiceId,
+      replaceMessageId,
+    }) => {
+      return deliverMessageRuntimeFinalText({
+        text,
+        attachments,
+        chatJid,
+        runId,
+        channel,
+        group,
+        startSeq,
+        endSeq,
+        forcedAgentType,
+        deliveryRole,
+        deliveryServiceId,
+        replaceMessageId,
+        hasDirectTerminalDeliveryForRun:
+          deps.queue.hasDirectTerminalDeliveryForRun?.bind(deps.queue),
+        isDuplicateOfLastBotFinal: args.isDuplicateOfLastBotFinal,
+        openContinuation: (targetChatJid) =>
+          args.openContinuation(targetChatJid),
+      });
+    },
+    recordTurnProgress: (turnId, progressText) => {
+      updatePairedTurnProgressText(turnId, progressText);
+    },
+    afterDeliverySuccess: async ({
+      chatJid,
+      runId,
+      deliveryRole,
+      pairedRoom,
+    }) => {
+      await handleMessageRuntimeAfterDeliverySuccess({
+        chatJid,
+        runId,
+        deliveryRole,
+        pairedRoom,
+        enqueueMessageCheck: (targetChatJid) =>
+          deps.queue.enqueueMessageCheck(targetChatJid),
+      });
+    },
+  });
+}
+
 function createStartMessageLoop(args: {
   pollInterval: number;
   processTick: () => Promise<void>;
@@ -101,69 +175,12 @@ export function createMessageRuntime(deps: MessageRuntimeDeps): {
     persistSession: deps.persistSession,
     clearSession: deps.clearSession,
   });
-  const executeTurn = createExecuteTurn({
-    runAgent,
-    assistantName: deps.assistantName,
-    idleTimeout: deps.idleTimeout,
+  const executeTurn = createRuntimeExecuteTurn({
+    deps,
     failureFinalText: FAILURE_FINAL_TEXT,
-    channels: deps.channels,
-    queue: deps.queue,
-    getRoomBindings: deps.getRoomBindings,
-    getSessions: deps.getSessions,
-    persistSession: deps.persistSession,
-    clearSession: deps.clearSession,
-    deliverFinalText: async ({
-      text,
-      attachments,
-      chatJid,
-      runId,
-      channel,
-      group,
-      startSeq,
-      endSeq,
-      forcedAgentType,
-      deliveryRole,
-      deliveryServiceId,
-      replaceMessageId,
-    }) => {
-      return deliverMessageRuntimeFinalText({
-        text,
-        attachments,
-        chatJid,
-        runId,
-        channel,
-        group,
-        startSeq,
-        endSeq,
-        forcedAgentType,
-        deliveryRole,
-        deliveryServiceId,
-        replaceMessageId,
-        hasDirectTerminalDeliveryForRun:
-          deps.queue.hasDirectTerminalDeliveryForRun?.bind(deps.queue),
-        isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,
-        openContinuation: (targetChatJid) =>
-          continuationTracker.open(targetChatJid),
-      });
-    },
-    recordTurnProgress: (turnId, progressText) => {
-      updatePairedTurnProgressText(turnId, progressText);
-    },
-    afterDeliverySuccess: async ({
-      chatJid,
-      runId,
-      deliveryRole,
-      pairedRoom,
-    }) => {
-      await handleMessageRuntimeAfterDeliverySuccess({
-        chatJid,
-        runId,
-        deliveryRole,
-        pairedRoom,
-        enqueueMessageCheck: (targetChatJid) =>
-          deps.queue.enqueueMessageCheck(targetChatJid),
-      });
-    },
+    runAgent,
+    isDuplicateOfLastBotFinal: checkDuplicateOfLastBotFinal,
+    openContinuation: (chatJid) => continuationTracker.open(chatJid),
   });
 
   const enqueuePendingHandoffs = (): void => {

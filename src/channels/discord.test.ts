@@ -140,7 +140,10 @@ const ONE_PIXEL_PNG = Buffer.from(
 );
 
 function createTempPng(name = 'image.png'): { dir: string; filePath: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-discord-image-'));
+  // realpath so assertions match resolved paths on macOS (/var -> /private/var)
+  const dir = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-discord-image-')),
+  );
   const filePath = path.join(dir, name);
   fs.writeFileSync(filePath, ONE_PIXEL_PNG);
   return { dir, filePath };

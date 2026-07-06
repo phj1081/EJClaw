@@ -70,11 +70,13 @@ function makeChannel(): Channel {
   } as unknown as Channel;
 }
 
-describe('message-runtime-queue', () => {
-  beforeEach(() => {
-    _initTestDatabase();
-    resetPairedFollowUpScheduleState();
-  });
+function resetQueueTestState() {
+  _initTestDatabase();
+  resetPairedFollowUpScheduleState();
+}
+
+describe('message-runtime-queue runPendingPairedTurnIfNeeded', () => {
+  beforeEach(resetQueueTestState);
 
   it('skips a pending paired turn when another run already claimed the same task revision', async () => {
     const task = makeTask();
@@ -196,6 +198,10 @@ describe('message-runtime-queue', () => {
       }),
     );
   });
+});
+
+describe('message-runtime-queue runQueuedGroupTurn skip rules', () => {
+  beforeEach(resetQueueTestState);
 
   it('skips a queued owner turn while a reviewer execution lease is still active after a fresh refetch', async () => {
     const task = makeTask();
@@ -360,6 +366,10 @@ describe('message-runtime-queue', () => {
       }),
     );
   });
+});
+
+describe('message-runtime-queue runQueuedGroupTurn role routing', () => {
+  beforeEach(resetQueueTestState);
 
   it('always passes the explicit owner role for queued paired owner turns', async () => {
     const task = makeTask({

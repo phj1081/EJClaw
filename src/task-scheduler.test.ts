@@ -805,7 +805,8 @@ Check the run.
       created_at: '2026-02-22T00:00:00.000Z',
     });
 
-    (runAgentProcessMock as any).mockImplementationOnce(
+    // Persistent 502: initial attempt + same-account transient retries all fail
+    (runAgentProcessMock as any).mockImplementation(
       async (
         _group: unknown,
         _input: unknown,
@@ -856,7 +857,8 @@ Check the run.
 
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(runAgentProcessMock).toHaveBeenCalledTimes(1);
+    // 1 initial attempt + 2 same-account transient retries for 502/overloaded
+    expect(runAgentProcessMock).toHaveBeenCalledTimes(3);
     expect(tokenRotation.rotateToken).not.toHaveBeenCalled();
     // No fallback — 502 results in error without retrying on another provider
   });

@@ -1,10 +1,30 @@
 # EJClaw 레거시 호환 제거 및 구조 정리 Spec
 
-- 상태: Draft
+- 상태: 대부분 구현 완료 (Phase 5 구조 분해 일부만 잔여)
 - 대상: 코어 개발자 / 리팩토링 담당자
-- 기준일: 2026-04-09
-- 기준: 저장소 정적 분석 결과
-- 참고: 현재 환경에는 Bun 런타임이 없어 테스트/실행 검증은 하지 못했고, 이 문서는 코드 구조와 저장소 상태를 기준으로 작성했다.
+- 최초 작성일: 2026-04-09 (당시 저장소 정적 분석 기준)
+- 상태 갱신일: 2026-07-06
+- 참고: 3장(저장소 감사 결과)은 최초 작성 시점의 스냅샷이며, 현재 상태는 아래 "진행 현황"을 기준으로 본다.
+
+## 진행 현황 (2026-07-06 검증)
+
+§12 자동 검증 명령 기준으로 프로덕션 코드(`src`, `setup`, `runners`)의 레거시 참조를 재측정한 결과:
+
+- **Phase 1~3 완료** — `registered_groups` 참조는 명시적 마이그레이션 커맨드(`setup/migrate-room-registrations.ts`, `setup/legacy-room-registrations.ts`)와 테스트에만 남아 있고, 런타임 read/write 경로에는 0건이다. startup sync(`syncLegacyRegisteredGroupsIntoStoredRooms`)와 JSON migration-on-startup(`migrateJsonStateFromFiles`)은 제거됐다.
+- **Phase 4 완료** — `src/db/legacy-rebuilds.ts` 삭제됨. read-time repair helper 참조 0건.
+- **Phase 6 완료** — legacy env alias는 이제 `assertNoLegacyEnvAliasesConfigured()`가 startup error로 fail-fast 처리한다. router state alias 참조는 테스트(거부 동작 검증)에만 존재한다.
+- **Phase 0 (guard) 완료** — `scripts/check-legacy-guard.ts`가 §12 패턴을 검사하며 `quality:check`(CI `bun run check` 경유)에 포함된다.
+- **`setup/register.ts`** — `assignRoom()` 호출 thin wrapper로 교체 완료. `.env`/`CLAUDE.md` 수정 로직 제거됨.
+- **네이밍 정리(결정 6)** — `RegisteredGroup` 타입 참조 0건.
+
+### 잔여 항목 (Phase 5 구조 분해)
+
+- `src/group-queue.ts` (~1,016줄) 분해
+- `src/db/paired-turn-provenance-schema.ts` (~2,062줄) one-off rebuild 로직 정리
+- `src/db.test.ts` (~9,377줄) monolith 테스트 분할
+- `db.js` façade 직접 import 축소 (현재 다수 파일이 façade를 직접 참조)
+
+파일 크기 상한은 `quality/code-quality-budgets.json`의 ratcheted hotspot으로 추적 중이다.
 
 ## 0. 한 줄 결론
 
