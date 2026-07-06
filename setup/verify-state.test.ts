@@ -14,15 +14,15 @@ import {
   loadRoleRoutingRequirementsSummary,
 } from './verify-state.js';
 
-describe('verify state helpers', () => {
-  const tempRoots: string[] = [];
+const tempRoots: string[] = [];
 
-  afterEach(() => {
-    for (const root of tempRoots.splice(0)) {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
+describe('verify state credential and channel detection', () => {
   it('detects configured credentials from .env', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-verify-'));
     tempRoots.push(tempRoot);
@@ -109,7 +109,9 @@ describe('verify state helpers', () => {
       activeArbiterTasks: 1,
     });
   });
+});
 
+describe('verify state summary building', () => {
   it('builds a successful verification summary when all gates pass', () => {
     const services: ServiceCheck[] = [{ name: 'ejclaw', status: 'running' }];
     const serviceDefs: ServiceDef[] = [
@@ -201,7 +203,9 @@ describe('verify state helpers', () => {
       servicesSummary: { ejclaw: 'running' },
     });
   });
+});
 
+describe('verify state summary role-routing and migration gates', () => {
   it('fails verification when tribunal rooms exist but the reviewer channel is missing', () => {
     const services: ServiceCheck[] = [{ name: 'ejclaw', status: 'running' }];
 

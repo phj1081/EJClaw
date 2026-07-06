@@ -5,18 +5,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Database } from 'bun:sqlite';
 
+const tempRoots: string[] = [];
+
+afterEach(() => {
+  vi.resetModules();
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+  for (const root of tempRoots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe('migrate room registrations step', () => {
-  const tempRoots: string[] = [];
-
-  afterEach(() => {
-    vi.resetModules();
-    vi.unstubAllEnvs();
-    vi.restoreAllMocks();
-    for (const root of tempRoots.splice(0)) {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   it('migrates pending legacy rows into canonical room tables idempotently', async () => {
     const tempRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-migrate-rooms-'),
@@ -203,7 +203,9 @@ describe('migrate room registrations step', () => {
       }),
     );
   });
+});
 
+describe('migrate room registrations step with existing room settings', () => {
   it('backfills room_role_overrides for rooms that already have room_settings', async () => {
     const tempRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-migrate-rooms-mixed-'),
@@ -376,7 +378,9 @@ describe('migrate room registrations step', () => {
       }),
     );
   });
+});
 
+describe('migrate room registrations step guards', () => {
   it('fails when unexpected data state files are still present', async () => {
     const tempRoot = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-migrate-rooms-legacy-files-'),

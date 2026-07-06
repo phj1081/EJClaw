@@ -121,7 +121,9 @@ describe('service-routing global failover', () => {
       explicit: false,
     });
   });
+});
 
+describe('service-routing lease resolution from room settings', () => {
   it('uses explicit single room mode to suppress reviewer lease on dual registration', () => {
     _setRegisteredGroupForTests('dc:explicit-single', {
       name: 'Explicit Single',

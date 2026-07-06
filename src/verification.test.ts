@@ -149,7 +149,9 @@ describe('verification helpers', () => {
       COREPACK_ENABLE_PROJECT_SPEC: '0',
     });
   });
+});
 
+describe('verification snapshots', () => {
   it('computes a stable snapshot over the readable workspace inputs', () => {
     const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-snapshot-'));
     fs.mkdirSync(path.join(repoDir, 'src'), { recursive: true });
@@ -251,7 +253,9 @@ describe('verification helpers', () => {
 
     expect(second).not.toBe(first);
   });
+});
 
+describe('runVerificationRequest direct execution', () => {
   it('backfills legacy node_modules state before verification', async () => {
     const repoDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-verification-legacy-'),
@@ -383,7 +387,9 @@ describe('verification helpers', () => {
     expect(result.stdout).toContain('lint-check:1');
     expect(result.snapshotId).toBe(expectedSnapshotId);
   });
+});
 
+describe('runVerificationRequest workspace guards', () => {
   it('does not leak host secrets into direct verification commands', async () => {
     const repoDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'ejclaw-verification-direct-secret-'),

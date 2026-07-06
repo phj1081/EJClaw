@@ -278,7 +278,9 @@ describe('evaluateStreamedOutput', () => {
       expect(result.state.sawOutput).toBe(false);
     });
   });
+});
 
+describe('evaluateStreamedOutput banners and suppression', () => {
   describe('Claude auth-expired banner', () => {
     it('suppresses output and returns newTrigger', () => {
       vi.mocked(isClaudeAuthExpiredMessage).mockReturnValue(true);

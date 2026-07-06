@@ -10,15 +10,15 @@ import {
   getRoomRegistrationGateFailure,
 } from './room-registration-state.js';
 
-describe('room registration state', () => {
-  const tempRoots: string[] = [];
+const tempRoots: string[] = [];
 
-  afterEach(() => {
-    for (const root of tempRoots.splice(0)) {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+afterEach(() => {
+  for (const root of tempRoots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
+describe('room registration state detection', () => {
   it('reports no assigned rooms when the database does not exist', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ejclaw-room-reg-'));
     tempRoots.push(tempRoot);
@@ -257,7 +257,9 @@ describe('room registration state', () => {
       unexpectedDataStateDetected: true,
     });
   });
+});
 
+describe('room registration gate failures', () => {
   it('returns no gate failure when room-registration state is clean', () => {
     expect(
       getRoomRegistrationGateFailure(

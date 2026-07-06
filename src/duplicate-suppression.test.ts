@@ -330,7 +330,9 @@ describe('isDuplicateOfLastBotFinal (runtime function)', () => {
       true,
     );
   });
+});
 
+describe('isDuplicateOfLastBotFinal (normalization and work items)', () => {
   it('normalization handles whitespace and case differences', () => {
     const jid = 'dc:paired-room';
     setupChat(jid);

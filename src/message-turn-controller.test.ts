@@ -272,6 +272,12 @@ describe('MessageTurnController outbound audit logging', () => {
       ]),
     );
   });
+});
+
+describe('MessageTurnController final delivery and attachments', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
 
   it('does not flush pending progress before final delivery for paired reviewer turns', async () => {
     const channel = makeChannel();
@@ -434,6 +440,12 @@ describe('MessageTurnController outbound audit logging', () => {
       attachments,
     });
   });
+});
+
+describe('MessageTurnController owner progress replacement', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
 
   it('replaces the tracked progress message when an owner final arrives', async () => {
     const channel = {
@@ -533,6 +545,12 @@ describe('MessageTurnController outbound audit logging', () => {
     expect(deliverFinalText).toHaveBeenCalledWith('첫 진행 상황', {
       replaceMessageId: 'progress-1',
     });
+  });
+});
+
+describe('MessageTurnController stale owner turn delivery suppression', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
   });
 
   it('suppresses replaying the last progress update as final when final delivery is disallowed', async () => {
@@ -684,6 +702,12 @@ describe('MessageTurnController outbound audit logging', () => {
     expect(channel.sendAndTrack).not.toHaveBeenCalled();
     expect(channel.sendMessage).not.toHaveBeenCalled();
     expect(deliverFinalText).not.toHaveBeenCalled();
+  });
+});
+
+describe('MessageTurnController progress edit guard and failure finals', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
   });
 
   it('does not edit an existing tracked progress message after a stale owner turn loses delivery ownership', async () => {

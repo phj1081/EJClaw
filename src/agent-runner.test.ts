@@ -535,6 +535,18 @@ describe('agent-runner environment wiring', () => {
       prepareGroupEnvironmentSpy.mockRestore();
     }
   });
+});
+
+describe('agent-runner task and config environment wiring', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    fakeProc = createFakeProcess();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('serializes roomRoleContext into the runner stdin payload', async () => {
     vi.useRealTimers();
