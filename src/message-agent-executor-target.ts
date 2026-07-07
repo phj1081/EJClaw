@@ -6,6 +6,7 @@ import { isUnsafeHostPairedModeEnabled } from 'ejclaw-runners-shared';
 import { listAvailableGroups } from './available-groups.js';
 import {
   ARBITER_AGENT_TYPE,
+  OWNER_AGENT_TYPE,
   REVIEWER_AGENT_TYPE,
   getRoleModelConfig,
   shouldForceFreshClaudeReviewerSessionInUnsafeHostMode,
@@ -479,6 +480,7 @@ class MessageAgentExecutionTargetPreparer {
         args.activeRole,
       ),
       globalRoleConfig: getRoleModelConfig(args.activeRole),
+      globalRoleAgentType: this.getGlobalRoleAgentType(args.activeRole),
     });
     if (resolved.model) {
       const modelKey = args.isClaudeCodeAgent ? 'CLAUDE_MODEL' : 'CODEX_MODEL';
@@ -489,6 +491,19 @@ class MessageAgentExecutionTargetPreparer {
         ? 'CLAUDE_EFFORT'
         : 'CODEX_EFFORT';
       args.pairedExecutionContext.envOverrides[effortKey] = resolved.effort;
+    }
+  }
+
+  private getGlobalRoleAgentType(
+    role: PairedRoomRole,
+  ): AgentType | null | undefined {
+    switch (role) {
+      case 'owner':
+        return OWNER_AGENT_TYPE;
+      case 'reviewer':
+        return REVIEWER_AGENT_TYPE;
+      case 'arbiter':
+        return ARBITER_AGENT_TYPE;
     }
   }
 

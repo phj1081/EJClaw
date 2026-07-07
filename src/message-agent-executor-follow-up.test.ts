@@ -18,6 +18,7 @@ vi.mock('./config.js', () => ({
   CODEX_REVIEW_SERVICE_ID: 'codex-review',
   DATA_DIR: '/tmp/ejclaw-test-data',
   PAIRED_FORCE_FRESH_CLAUDE_REVIEWER_SESSION: false,
+  OWNER_AGENT_TYPE: 'codex',
   REVIEWER_AGENT_TYPE: 'claude-code',
   ARBITER_AGENT_TYPE: undefined,
   SERVICE_SESSION_SCOPE: 'claude',
