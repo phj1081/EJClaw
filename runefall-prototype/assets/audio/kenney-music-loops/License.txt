@@ -1,0 +1,11 @@
+Music Loops (1.1)
+
+Created/distributed by Kenney (www.kenney.nl)
+Creation date: 31-07-2015
+
+License: Creative Commons Zero, CC0
+http://creativecommons.org/publicdomain/zero/1.0/
+
+This content is free to use in personal, educational and commercial projects.
+Source used for this prototype:
+https://www.gamesounds.xyz/?dir=Kenney%27s+Sound+Pack%2FMusic+Loops
