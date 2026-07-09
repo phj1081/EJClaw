@@ -8,7 +8,7 @@
 
 ### Added
 
-- **웹 대시보드 전면 구축**: read-only MVP에서 시작해 two-pane 방 타임라인(라이브 진행 마크다운 렌더), Inbox(승인/거절/무시 액션), 스케줄 작업 생성·편집, 설정(모델/방별 모델/Fast Mode/Codex 계정/MoA/스킬), 사용량 쿼터 뷰(5h/7d), PWA 셸, 토큰 인증, 모바일 내비게이션까지 확장
+- **웹 대시보드 (베타, 미완성)**: read-only MVP에서 시작해 two-pane 방 타임라인(라이브 진행 마크다운 렌더), Inbox(승인/거절/무시 액션), 스케줄 작업 생성·편집, 설정(모델/방별 모델/Fast Mode/Codex 계정/MoA/스킬), 사용량 쿼터 뷰(5h/7d), PWA 셸, 토큰 인증, 모바일 내비게이션까지 확장 — 골격은 갖췄으나 미완성, UX/데이터 정합성 다듬기 진행 중
 - Android thin client MVP + 대시보드 토큰 인증
 - Ray-Ban display 대시보드 PoC
 - `glm-code` agent runner 타입 지원
