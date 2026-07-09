@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 
 import type {
   DashboardOverview,
@@ -94,7 +95,11 @@ function RoomsToolbar({
   t,
 }: RoomsToolbarProps) {
   return (
-    <div className="rooms-toolbar" role="toolbar" aria-label="Rooms filters">
+    <div
+      className="rooms-toolbar"
+      role="toolbar"
+      aria-label={t.rooms.filtersAria}
+    >
       <div className="rooms-filters">
         {ROOM_FILTER_ORDER.map((filterKey) => (
           <button
@@ -224,7 +229,8 @@ function RoomsDetail({
   return (
     <main className="rooms-detail">
       <button className="rooms-mobile-back" onClick={onBack} type="button">
-        ← {t.panels.rooms}
+        <ArrowLeft aria-hidden size={16} strokeWidth={2} />
+        <span>{t.panels.rooms}</span>
       </button>
       {selectedEntry ? (
         <RoomCardV2

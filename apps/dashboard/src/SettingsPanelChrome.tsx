@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import { LOCALES, languageNames, type Locale, type Messages } from './i18n';
 
@@ -193,7 +194,11 @@ export function SettingsCollapsible({
           {description ? <small>{description}</small> : null}
         </span>
         <span aria-hidden="true" className="settings-collapsible-chevron">
-          {open ? '▾' : '▸'}
+          {open ? (
+            <ChevronDown size={16} strokeWidth={2} />
+          ) : (
+            <ChevronRight size={16} strokeWidth={2} />
+          )}
         </span>
       </button>
       {open ? (

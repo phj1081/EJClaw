@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send } from 'lucide-react';
+import { ChevronDown, ChevronRight, Send } from 'lucide-react';
 
 import type { DashboardOverview, DashboardRoomActivity } from './api';
 import type { Locale, Messages } from './i18n';
@@ -245,6 +245,7 @@ export function RoomCardV2({
         lastWatcher={lastWatcher}
         locale={locale}
         senderRoleClass={senderRoleClass}
+        t={t}
         watcherCount={watcherMessages.length}
       />
       <CollapsedEmptyState
@@ -396,7 +397,11 @@ function RoomCardHead({
       )}
       {!pinned ? (
         <span className="room-toggle" aria-hidden>
-          {expanded ? '▾' : '▸'}
+          {expanded ? (
+            <ChevronDown size={14} strokeWidth={2} />
+          ) : (
+            <ChevronRight size={14} strokeWidth={2} />
+          )}
         </span>
       ) : null}
     </div>
@@ -510,7 +515,7 @@ function CollapsedLiveTurn({
     <div className="room-live">
       <header>
         <span className="live-dot" aria-hidden />
-        <span className="live-label">LIVE</span>
+        <span className="live-label">{t.rooms.live}</span>
         <strong className={senderRoleClass(turn.role)}>
           {displayRole(turn.role, locale)}
         </strong>
@@ -569,6 +574,7 @@ function CollapsedWatcherStrip({
   lastWatcher,
   locale,
   senderRoleClass,
+  t,
   watcherCount,
 }: {
   expanded: boolean;
@@ -576,12 +582,15 @@ function CollapsedWatcherStrip({
   lastWatcher: RoomMessage | null;
   locale: Locale;
   senderRoleClass: RoomCardFormatters['senderRoleClass'];
+  t: Messages;
   watcherCount: number;
 }) {
   if (expanded || watcherCount === 0 || !lastWatcher) return null;
   return (
     <div className="room-watcher-strip">
-      <span className="watcher-tag">워쳐 {watcherCount}</span>
+      <span className="watcher-tag">
+        {t.rooms.watcher} {watcherCount}
+      </span>
       <span className="watcher-line">
         <strong className={senderRoleClass(lastWatcher.senderName)}>
           {displayRole(lastWatcher.senderName, locale)}
@@ -673,6 +682,7 @@ function RoomExpandedContent({
         formatDate={formatters.formatDate}
         locale={locale}
         senderRoleClass={formatters.senderRoleClass}
+        t={t}
         watcherMessages={watcherMessages}
       />
       <section className="room-section room-compose-section">
@@ -842,7 +852,7 @@ function RoomLiveTimelineEntry({
           </span>
         ) : null}
         {!isProcessing ? (
-          <span className="live-label paused">중단됨</span>
+          <span className="live-label paused">{t.rooms.paused}</span>
         ) : null}
       </header>
       <div className="room-timeline-body">
@@ -860,18 +870,20 @@ function RoomWatcherFold({
   formatDate,
   locale,
   senderRoleClass,
+  t,
   watcherMessages,
 }: {
   formatDate: RoomCardFormatters['formatDate'];
   locale: Locale;
   senderRoleClass: RoomCardFormatters['senderRoleClass'];
+  t: Messages;
   watcherMessages: RoomMessage[];
 }) {
   if (watcherMessages.length === 0) return null;
   return (
     <details className="room-watcher-fold">
       <summary>
-        <span className="watcher-tag">워쳐</span>
+        <span className="watcher-tag">{t.rooms.watcher}</span>
         <small>{watcherMessages.length}</small>
       </summary>
       <ul className="room-watcher-list">

@@ -258,6 +258,69 @@ describe('RoomCardV2', () => {
     expect(html).toContain('<code>pnpm openapi:sync</code>');
     expect(html).not.toContain('`origin/dev`');
   });
+
+  it('localizes live and watcher labels outside Korean', () => {
+    const english = messages.en;
+    const html = renderToStaticMarkup(
+      createElement(RoomCardV2, {
+        activity: activity({
+          messages: [
+            {
+              id: 'watcher-1',
+              sender: 'bot-1',
+              senderName: 'reviewer',
+              content: '[Watcher] Build complete',
+              timestamp: '2026-04-28T02:00:00.000Z',
+              isFromMe: false,
+              isBotMessage: true,
+              sourceKind: 'bot',
+            },
+          ],
+          pairedTask: {
+            id: 'task-1',
+            title: 'OpenAPI sync',
+            status: 'running',
+            roundTripCount: 1,
+            updatedAt: '2026-04-28T02:01:00.000Z',
+            currentTurn: {
+              turnId: 'turn-1',
+              role: 'owner',
+              intentKind: 'implementation',
+              state: 'running',
+              attemptNo: 1,
+              executorServiceId: 'svc-1',
+              executorAgentType: 'codex',
+              activeRunId: null,
+              createdAt: '2026-04-28T02:00:00.000Z',
+              updatedAt: '2026-04-28T02:01:00.000Z',
+              completedAt: null,
+              lastError: null,
+              progressText: 'Checking responsive layout.',
+              progressUpdatedAt: '2026-04-28T02:01:00.000Z',
+            },
+            outputs: [],
+          },
+        }),
+        activityLoading: false,
+        busy: false,
+        draft: '',
+        entry: { ...entry, status: 'processing' },
+        expanded: false,
+        inboxItems: [],
+        locale: 'en',
+        onDraftChange: () => {},
+        onSendMessage: () => {},
+        onToggle: () => {},
+        pinned: false,
+        t: english,
+        ...formatters,
+      }),
+    );
+
+    expect(html).toContain(`>${english.rooms.live}</span>`);
+    expect(html).toContain(`>${english.rooms.watcher} 1</span>`);
+    expect(html).not.toContain('워처');
+  });
 });
 
 describe('RoomCardV2 room thread details', () => {

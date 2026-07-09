@@ -11,7 +11,7 @@
   justify-content: space-between;
   padding: 12px 14px;
   border: 1px solid var(--panel-border);
-  border-radius: 14px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.03);
 }
 
@@ -33,7 +33,7 @@
 .task-summary-next strong {
   font-size: 20px;
   line-height: 1.1;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .task-summary-next span {
@@ -90,7 +90,7 @@
   min-height: 46px;
   padding: 7px 10px;
   border: 1px solid var(--panel-border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(19, 24, 22, 0.72);
   color: var(--muted);
   font: inherit;
@@ -116,7 +116,7 @@
 
 .task-create-panel {
   border: 1px solid var(--panel-border);
-  border-radius: 14px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.025);
 }
 
@@ -172,7 +172,7 @@
   min-height: 40px;
   padding: 8px 10px;
   border: 1px solid var(--panel-border-strong);
-  border-radius: 10px;
+  border-radius: 8px;
   background: var(--bg-card);
   color: var(--bg-ink);
   font: inherit;
@@ -224,7 +224,7 @@
 .task-group-completed {
   padding: 10px 12px;
   border: 1px solid var(--panel-border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -247,7 +247,7 @@
 
 .task-group-head strong {
   font-size: 13px;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .task-list {
@@ -260,7 +260,7 @@
   gap: 0;
   min-width: 0;
   border: 1px solid var(--panel-border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -298,7 +298,7 @@
   overflow: hidden;
   font-size: 13px;
   line-height: 1.35;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -349,7 +349,7 @@
 
 .task-row-next strong {
   font-size: 13px;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .task-row-actions {
@@ -414,7 +414,7 @@
 }
 
 .task-action-cancel {
-  color: #8f2f22;
+  color: var(--status-critical);
   border-color: rgba(183, 71, 52, 0.22);
   background: rgba(183, 71, 52, 0.08);
 }
@@ -456,7 +456,7 @@
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--panel-border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -511,7 +511,7 @@
   gap: 4px;
   padding: 8px;
   border: 1px solid var(--panel-border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -541,7 +541,7 @@
 
 .task-edit {
   border: 1px solid var(--panel-border);
-  border-radius: 10px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.02);
 }
 
@@ -566,7 +566,7 @@
 
 .task-group-empty {
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 8px;
   color: var(--muted);
   font-size: 12px;
   background: rgba(255, 255, 255, 0.02);
@@ -633,7 +633,7 @@
   }
 
   .task-action {
-    min-height: 36px;
+    min-height: 40px;
     padding-inline: 12px;
     font-size: 11px;
   }

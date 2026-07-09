@@ -1,5 +1,13 @@
 import { type ReactNode } from 'react';
-import { Clock, Gauge, MessageSquare, Settings } from 'lucide-react';
+import {
+  Clock,
+  Gauge,
+  Menu,
+  MessageSquare,
+  RefreshCw,
+  Settings,
+  X,
+} from 'lucide-react';
 
 import { type DashboardOverview, type StatusSnapshot } from './api';
 import { type Messages } from './i18n';
@@ -178,9 +186,7 @@ export function SectionNav({
           onClick={drawerOpen ? onCloseDrawer : onOpenDrawer}
           type="button"
         >
-          <span />
-          <span />
-          <span />
+          <Menu aria-hidden size={20} strokeWidth={2} />
         </button>
         <strong className="topbar-label">{activeLabel}</strong>
         <span className={`topbar-status topbar-status-${freshness}`}>
@@ -195,7 +201,12 @@ export function SectionNav({
             onClick={onRefresh}
             type="button"
           >
-            {refreshing ? '...' : t.actions.refresh}
+            <RefreshCw
+              aria-hidden
+              className={refreshing ? 'is-spinning' : undefined}
+              size={18}
+              strokeWidth={2}
+            />
           </button>
         ) : null}
       </nav>
@@ -227,7 +238,7 @@ export function SectionNav({
                 onClick={onCloseDrawer}
                 type="button"
               >
-                {t.actions.close}
+                <X aria-hidden size={18} strokeWidth={2} />
               </button>
             </div>
             <DashboardNavLinks

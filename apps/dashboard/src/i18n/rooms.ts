@@ -3,6 +3,7 @@ import type { Locale } from '../i18n';
 export interface RoomMessages {
   empty: string;
   cardsAria: string;
+  filtersAria: string;
   room: string;
   service: string;
   agent: string;
@@ -34,6 +35,9 @@ export interface RoomMessages {
   send: string;
   sending: string;
   error: string;
+  live: string;
+  watcher: string;
+  paused: string;
   filterAll: string;
   sortRecent: string;
   sortName: string;
@@ -45,6 +49,7 @@ export const roomMessages = {
   ko: {
     empty: '룸 없음.',
     cardsAria: '룸 상태 카드',
+    filtersAria: '룸 필터',
     room: '룸',
     service: '서비스',
     agent: '에이전트',
@@ -76,6 +81,9 @@ export const roomMessages = {
     send: '전송',
     sending: '전송 중...',
     error: '오류',
+    live: '실시간',
+    watcher: '워처',
+    paused: '중단',
     filterAll: '전체',
     sortRecent: '최근 활동',
     sortName: '이름순',
@@ -85,6 +93,7 @@ export const roomMessages = {
   en: {
     empty: 'No rooms yet.',
     cardsAria: 'Room status cards',
+    filtersAria: 'Room filters',
     room: 'room',
     service: 'service',
     agent: 'agent',
@@ -116,6 +125,9 @@ export const roomMessages = {
     send: 'Send',
     sending: 'Sending',
     error: 'Error',
+    live: 'Live',
+    watcher: 'Watcher',
+    paused: 'Paused',
     filterAll: 'All',
     sortRecent: 'Recent activity',
     sortName: 'Name',
@@ -125,6 +137,7 @@ export const roomMessages = {
   zh: {
     empty: '暂无房间。',
     cardsAria: '房间状态卡片',
+    filtersAria: '房间筛选',
     room: '房间',
     service: '服务',
     agent: '代理',
@@ -151,11 +164,14 @@ export const roomMessages = {
     messageHistory: '消息记录',
     noMessages: '暂无消息',
     details: '详情',
-    message: 'Message',
+    message: '消息',
     messagePlaceholder: '输入请求...',
     send: '发送',
     sending: '发送中...',
     error: '错误',
+    live: '实时',
+    watcher: '监视器',
+    paused: '已暂停',
     filterAll: '全部',
     sortRecent: '最近活动',
     sortName: '名称',
@@ -165,6 +181,7 @@ export const roomMessages = {
   ja: {
     empty: 'ルームなし。',
     cardsAria: 'ルーム状態カード',
+    filtersAria: 'ルームフィルター',
     room: 'ルーム',
     service: 'サービス',
     agent: 'エージェント',
@@ -196,6 +213,9 @@ export const roomMessages = {
     send: '送信',
     sending: '送信中...',
     error: 'エラー',
+    live: 'ライブ',
+    watcher: 'ウォッチャー',
+    paused: '一時停止',
     filterAll: '全て',
     sortRecent: '最近の活動',
     sortName: '名前順',
