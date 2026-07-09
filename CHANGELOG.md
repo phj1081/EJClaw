@@ -4,20 +4,49 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-10
+
 ### Added
 
+- **웹 대시보드 전면 구축**: read-only MVP에서 시작해 two-pane 방 타임라인(라이브 진행 마크다운 렌더), Inbox(승인/거절/무시 액션), 스케줄 작업 생성·편집, 설정(모델/방별 모델/Fast Mode/Codex 계정/MoA/스킬), 사용량 쿼터 뷰(5h/7d), PWA 셸, 토큰 인증, 모바일 내비게이션까지 확장
+- Android thin client MVP + 대시보드 토큰 인증
+- Ray-Ban display 대시보드 PoC
+- `glm-code` agent runner 타입 지원
 - 방별(role별) 모델·effort override 지원: `room_role_overrides.agent_config_json`에 저장된 방별 값이 전역 `OWNER_/REVIEWER_/ARBITER_MODEL`보다 우선 적용
 - `assign_room`에 `owner_model`/`owner_effort`/`reviewer_model`/`reviewer_effort`/`arbiter_model`/`arbiter_effort` 파라미터 추가 (빈 문자열로 삭제)
 - 웹 대시보드 설정 → 모델에 "방별 모델" 카드와 `/api/settings/room-models` API 추가
+- Claude API auth mode (`claudeAuthMode: 'api'`) 방별 override — 구독 OAuth 대신 ANTHROPIC_API_KEY 사용 선택 가능
+- 방별 스킬 override 설정 및 runner spawn 반영
+- STEP_DONE/TASK_DONE verdict 분리, verdict 저장, step-done 루프 이스컬레이션
+- 구조화된 Discord 첨부(structured attachments) + `MEDIA:` outbound 첨부 디렉티브 + 첨부 allowlist 디렉토리 설정
+- reviewer/verification/GitHub step evidence preset + repo evidence MCP 툴 + host evidence IPC
+- Codex warm-up 스케줄러(옵션), Codex 계정 6h 자동 리프레시/수동 전환, 라이브 plan_type 조회
+- Claude OAuth refresh CLI + systemd 타이머 지원
+- handoff-only EJClaw runner 모드 (`SERVICE_SESSION_SCOPE` 분리 운영)
+- MoA(Mixture of Agents) 대시보드 설정, gated Codex goals 토글
+
+### Changed
+
+- 기본 역할 배치 스와프: owner=codex(`gpt-5.6-sol`), reviewer/arbiter=claude(`claude-opus-4-8`)
+- SDK 업데이트: `@openai/codex` 0.144.0, `@anthropic-ai/claude-agent-sdk` 0.3.205
+- 대규모 구조 리팩토링: message runtime/executor/dashboard 모듈 분리, 품질 버짓(quality budget) 도입 및 핫스팟 5개까지 축소, 테스트 모놀리스 분할
+- deprecated export 제거 및 legacy compat guard 추가
 
 ### Fixed
 
+- **Codex rotation 안정화**: 슬롯별 canonical `CODEX_HOME` 격리(OAuth copy-pool refresh token 무효화 재발 방지), 최종 스트림 출력 후 lease 해제, read-only prep 실패 시 lease 누수 수정, pool retry 루프 및 unavailable 복구 루프 상한, dead-auth 슬롯 분류 개선
+- **전역 role 모델 family-mismatch 가드**: `channel_owner` 라우팅이 전역 agent type과 다른 계열로 향할 때 전역 모델(예: gpt-5.5)이 잘못된 러너(CLAUDE_MODEL)로 주입되던 문제 차단
 - 턴 간 컨텍스트 유실 수정: codex 세션을 provider별 키(`:codex`)로 분리해 failover/스케줄 codex 실행이 Claude owner 세션을 덮어쓰거나 지우지 못하게 함 (재배포 시 codex 스레드는 1회 새로 시작)
 - reviewer가 owner와 같은 agent type일 때 owner 세션 키를 공유해 리뷰 사이클마다 owner 컨텍스트를 파괴하던 문제 수정 (reviewer는 항상 `:reviewer` 키)
 - Anthropic 529/네트워크 일시 장애 재시도 시 세션을 무조건 삭제하던 로직을 완화 — 첫 재시도는 세션 유지, 마지막 재시도에서만 삭제
 - 세션 리셋 패턴이 에이전트의 긴 일반 출력(에러 문구 인용 등)에 오탐되어 세션을 삭제하던 문제 수정 — 짧은 원문 에러 텍스트/error 필드만 매칭
 - 세션 하이지니가 턴의 역할·provider와 무관하게 항상 owner 키를 지우던 문제 수정
 - codex resume이 조용히 새 스레드로 대체될 때 경고 로그를 남기도록 개선
+- 오염된(poisoned) Claude resume 세션을 transient 재시도 전에 정리, Claude paired 일시 장애 재시도 추가
+- 고아 paired follow-up reservation 복구, 재시작 후 로컬/중단된 paired attempt 복구
+- arbiter ESCALATE 후 사용자 응답을 위해 task를 열린 상태로 유지
+- CI watcher 완료를 시스템 입력으로 처리해 owner wake 보장, watcher stall 수정
+- 보안: 공개 대시보드 바인드 시 auth 토큰 강제, outbound 텍스트의 Discord 봇 토큰 redaction, 모델 설정 env 쓰기 newline injection 차단, MoA base URL 사설 호스트 SSRF 차단, 의존성 취약점 패치
 
 ## [0.2.3] - 2026-04-22
 
