@@ -7,6 +7,9 @@ export type UsageRow = {
   h5reset: string;
   d7pct: number;
   d7reset: string;
+  fetchedAt?: string;
+  limitReached?: boolean;
+  staleAgeMinutes?: number;
 };
 
 export function formatResetRemaining(value: string | number): string {
@@ -81,8 +84,8 @@ export function buildClaudeUsageRows(
 
 /**
  * Extract Codex usage rows from a snapshot, applying staleness check.
- * Returns real rows if usageRowsFetchedAt is within maxAgeMs, otherwise a
- * single degraded row. Returns empty array if no usage data present.
+ * Prefers each row's fetchedAt and falls back to the legacy snapshot timestamp.
+ * Returns a degraded row only when usage exists without any fetch timestamp.
  */
 export function extractCodexUsageRows(
   snapshot: StatusSnapshot | undefined,
@@ -91,13 +94,39 @@ export function extractCodexUsageRows(
 ): UsageRow[] {
   if (!snapshot?.usageRows || snapshot.usageRows.length === 0) return [];
 
-  const fetchedAt = snapshot.usageRowsFetchedAt
-    ? new Date(snapshot.usageRowsFetchedAt).getTime()
-    : 0;
-  const usageAge = now - fetchedAt;
-  if (usageAge <= maxAgeMs) {
-    return [...snapshot.usageRows];
+  const hasFetchTimestamp =
+    Boolean(snapshot.usageRowsFetchedAt) ||
+    snapshot.usageRows.some((row) => Boolean(row.fetchedAt));
+  if (!hasFetchTimestamp) {
+    return [{ name: 'Codex', h5pct: -1, h5reset: '', d7pct: -1, d7reset: '' }];
   }
-  // Usage data is stale — return degraded indicator
-  return [{ name: 'Codex', h5pct: -1, h5reset: '', d7pct: -1, d7reset: '' }];
+
+  return markCodexUsageRowsStale(
+    snapshot.usageRows,
+    maxAgeMs,
+    now,
+    snapshot.usageRowsFetchedAt,
+  );
+}
+
+export function markCodexUsageRowsStale(
+  rows: UsageRow[],
+  maxAgeMs: number,
+  now: number = Date.now(),
+  fallbackFetchedAt?: string,
+): UsageRow[] {
+  return rows.map((row) => {
+    const { staleAgeMinutes: _previousStaleAge, ...baseRow } = row;
+    const rawFetchedAt = row.fetchedAt || fallbackFetchedAt;
+    if (!rawFetchedAt) return baseRow;
+
+    const fetchedAt = new Date(rawFetchedAt).getTime();
+    const ageMs = now - fetchedAt;
+    if (!Number.isFinite(ageMs) || ageMs <= maxAgeMs) return baseRow;
+
+    return {
+      ...baseRow,
+      staleAgeMinutes: Math.max(0, Math.floor(ageMs / 60_000)),
+    };
+  });
 }

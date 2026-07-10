@@ -52,6 +52,8 @@ interface CodexAccount {
   lastUsageD7Pct?: number;
   resetAt?: string;
   resetD7At?: string;
+  lastUsageFetchedAt?: string;
+  usageLimitReached?: boolean;
 }
 
 export interface CodexAuthLease {
@@ -142,7 +144,7 @@ export function initCodexTokenRotation(): void {
     }
   }
 
-  if (accounts.length > 1) loadCodexState();
+  if (accounts.length > 0) loadCodexState();
   logger.info(
     { count: accounts.length, dir: ACCOUNTS_DIR, activeIndex: currentIndex },
     `Codex token rotation: ${accounts.length} account(s) found`,
@@ -160,6 +162,9 @@ function saveCodexState(): void {
       usageD7Pcts: accounts.map((a) => a.lastUsageD7Pct ?? null),
       resetAts: accounts.map((a) => a.resetAt ?? null),
       resetD7Ats: accounts.map((a) => a.resetD7At ?? null),
+      usageFetchedAts: accounts.map((a) => a.lastUsageFetchedAt ?? null),
+      usageLimitReached: accounts.map((a) => a.usageLimitReached ?? null),
+      planTypes: accounts.map((a) => a.planType),
     };
     writeJsonFile(STATE_FILE, state);
   } catch (err) {
@@ -180,6 +185,9 @@ function loadCodexState(quiet = false): void {
     usageD7Pcts?: (number | null)[];
     resetAts?: (string | null)[];
     resetD7Ats?: (string | null)[];
+    usageFetchedAts?: (string | null)[];
+    usageLimitReached?: (boolean | null)[];
+    planTypes?: (string | null)[];
   }>(STATE_FILE);
   if (!state) return;
 
@@ -276,6 +284,41 @@ function loadCodexState(quiet = false): void {
       accounts[i].resetD7At = state.resetD7Ats[i] ?? undefined;
     }
   }
+  if (Array.isArray(state.usageFetchedAts)) {
+    for (
+      let i = 0;
+      i < Math.min(state.usageFetchedAts.length, accounts.length);
+      i++
+    ) {
+      accounts[i].lastUsageFetchedAt =
+        typeof state.usageFetchedAts[i] === 'string'
+          ? state.usageFetchedAts[i]!
+          : undefined;
+    }
+  }
+  if (Array.isArray(state.usageLimitReached)) {
+    for (
+      let i = 0;
+      i < Math.min(state.usageLimitReached.length, accounts.length);
+      i++
+    ) {
+      accounts[i].usageLimitReached =
+        typeof state.usageLimitReached[i] === 'boolean'
+          ? state.usageLimitReached[i]!
+          : undefined;
+    }
+  }
+  if (Array.isArray(state.planTypes)) {
+    for (
+      let i = 0;
+      i < Math.min(state.planTypes.length, accounts.length);
+      i++
+    ) {
+      if (typeof state.planTypes[i] === 'string') {
+        accounts[i].planType = state.planTypes[i]!;
+      }
+    }
+  }
   if (!quiet) {
     logger.info(
       { currentIndex, accountCount: accounts.length },
@@ -291,7 +334,7 @@ function loadCodexState(quiet = false): void {
  * performed by the Codex service process.
  */
 export function reloadCodexStateFromDisk(): void {
-  if (accounts.length <= 1) return;
+  if (accounts.length === 0) return;
   loadCodexState(true);
 }
 
@@ -777,6 +820,11 @@ export function updateCodexAccountUsage(
   accountIndex?: number,
   d7Pct?: number,
   resetD7At?: string,
+  metadata?: {
+    fetchedAt?: string;
+    limitReached?: boolean;
+    planType?: string | null;
+  },
 ): void {
   if (accounts.length === 0) return;
   const idx = accountIndex ?? currentIndex;
@@ -786,6 +834,13 @@ export function updateCodexAccountUsage(
     if (d7Pct != null) acct.lastUsageD7Pct = d7Pct;
     if (resetAt) acct.resetAt = resetAt;
     if (resetD7At) acct.resetD7At = resetD7At;
+    if (metadata?.fetchedAt) acct.lastUsageFetchedAt = metadata.fetchedAt;
+    if (metadata?.limitReached != null) {
+      acct.usageLimitReached = metadata.limitReached;
+    }
+    if (typeof metadata?.planType === 'string') {
+      acct.planType = metadata.planType;
+    }
     saveCodexState();
 
     // Auto-rotate away from 7d-exhausted current account to avoid API billing
@@ -859,6 +914,8 @@ export function getAllCodexAccounts(): {
   cachedUsageD7Pct?: number;
   resetAt?: string;
   resetD7At?: string;
+  lastUsageFetchedAt?: string;
+  usageLimitReached?: boolean;
 }[] {
   const now = Date.now();
   return accounts.map((a, i) => ({
@@ -875,5 +932,7 @@ export function getAllCodexAccounts(): {
     cachedUsageD7Pct: a.lastUsageD7Pct,
     resetAt: a.resetAt,
     resetD7At: a.resetD7At,
+    lastUsageFetchedAt: a.lastUsageFetchedAt,
+    usageLimitReached: a.usageLimitReached,
   }));
 }

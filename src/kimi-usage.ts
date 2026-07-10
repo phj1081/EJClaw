@@ -53,9 +53,27 @@ export interface KimiUsageData {
 
 const FETCH_TIMEOUT_MS = 10_000;
 const MIN_FETCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const FAILURE_BACKOFF_BASE_MS = 60_000;
+const FAILURE_BACKOFF_MAX_MS = 15 * 60_000;
 
 let lastFetchAt = 0;
 let cachedData: KimiUsageData | null = null;
+let consecutiveFailures = 0;
+let nextRetryAt = 0;
+
+function recordFetchFailure(now: number): void {
+  const delayMs = Math.min(
+    FAILURE_BACKOFF_BASE_MS * 2 ** consecutiveFailures,
+    FAILURE_BACKOFF_MAX_MS,
+  );
+  consecutiveFailures += 1;
+  nextRetryAt = now + delayMs;
+}
+
+function resetFetchFailures(): void {
+  consecutiveFailures = 0;
+  nextRetryAt = 0;
+}
 
 function getKimiConfig(): { baseUrl: string; authToken: string } | null {
   // Try MoA config first, then fallback config
@@ -120,24 +138,24 @@ export async function fetchKimiUsage(): Promise<KimiUsageData | null> {
   if (!config) return null;
 
   const now = Date.now();
+  if (now < nextRetryAt) return cachedData;
   if (now - lastFetchAt < MIN_FETCH_INTERVAL_MS && cachedData) {
     return cachedData;
   }
 
   const url = `${config.baseUrl.replace(/\/+$/, '')}/v1/usages`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
     const response = await fetch(url, {
       method: 'GET',
       headers: { Authorization: `Bearer ${config.authToken}` },
       signal: controller.signal,
     });
-    clearTimeout(timer);
 
     if (!response.ok) {
+      recordFetchFailure(Date.now());
       logger.warn(
         { status: response.status, url },
         'Kimi usage API returned non-OK status',
@@ -148,6 +166,7 @@ export async function fetchKimiUsage(): Promise<KimiUsageData | null> {
     const json = (await response.json()) as KimiUsageResponse;
     cachedData = parseResponse(json);
     lastFetchAt = Date.now();
+    resetFetchFailures();
 
     logger.debug(
       {
@@ -160,8 +179,11 @@ export async function fetchKimiUsage(): Promise<KimiUsageData | null> {
 
     return cachedData;
   } catch (err) {
+    recordFetchFailure(Date.now());
     logger.warn({ err, url }, 'Failed to fetch Kimi usage');
     return cachedData; // Return stale cache on failure
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -205,4 +227,5 @@ export function buildKimiUsageRows(data: KimiUsageData | null): UsageRow[] {
 export function resetKimiUsageCache(): void {
   cachedData = null;
   lastFetchAt = 0;
+  resetFetchFailures();
 }

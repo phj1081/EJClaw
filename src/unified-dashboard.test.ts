@@ -136,6 +136,24 @@ describe('renderUsageTable', () => {
     const lines = renderUsageTable([], []);
     expect(lines).toEqual(['_조회 불가_']);
   });
+
+  it('renders FULL beside 5h usage and appends the stale age marker', () => {
+    const lines = renderUsageTable(
+      [],
+      [
+        {
+          ...codexRow,
+          h5pct: 87,
+          limitReached: true,
+          staleAgeMinutes: 43,
+        },
+      ],
+    );
+    const codexLine = lines.find((line) => line.includes('Codex'));
+
+    expect(codexLine).toContain('87% FULL');
+    expect(codexLine).toContain('(43m)');
+  });
 });
 
 describe('buildWebUsageRowsForSnapshot', () => {

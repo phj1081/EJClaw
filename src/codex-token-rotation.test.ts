@@ -3,6 +3,8 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const TEST_STATE_DIR = '/tmp/ejclaw-codex-rot-data';
+
 vi.mock('./agent-error-detection.js', () => ({
   classifyAgentError: vi.fn(() => ({ category: 'none', reason: '' })),
   classifyCodexAuthError: vi.fn(() => ({ category: 'none', reason: '' })),
@@ -80,6 +82,7 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
 
   beforeEach(() => {
     vi.resetModules();
+    fs.rmSync(TEST_STATE_DIR, { recursive: true, force: true });
     tempHome = fs.mkdtempSync(path.join('/tmp', 'ejclaw-codex-rot-'));
     process.env.CODEX_ROT_TEST_HOME = tempHome;
     createFakeAccounts(tempHome, 4);
@@ -88,6 +91,7 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
   afterEach(() => {
     delete process.env.CODEX_ROT_TEST_HOME;
     fs.rmSync(tempHome, { recursive: true, force: true });
+    fs.rmSync(TEST_STATE_DIR, { recursive: true, force: true });
   });
 
   it('advanceCodexAccount skips accounts with d7 ≥ 100%', async () => {
@@ -162,6 +166,56 @@ describe('codex-token-rotation d7 ≥ 100% auto-skip', () => {
     );
   });
 
+  it('restores live usage metadata from rotation state after restart', async () => {
+    const fetchedAt = '2026-07-11T01:40:00.000Z';
+    fs.rmSync(TEST_STATE_DIR, { recursive: true, force: true });
+
+    const persistJson = (
+      file: string,
+      data: unknown,
+      pretty: boolean = false,
+    ) => {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(
+        file,
+        JSON.stringify(data, null, pretty ? 2 : undefined),
+      );
+    };
+
+    try {
+      const utils = await import('./utils.js');
+      vi.mocked(utils.writeJsonFile).mockImplementation(persistJson);
+      const mod = await import('./codex-token-rotation.js');
+
+      mod.initCodexTokenRotation();
+      mod.updateCodexAccountUsage(87, '01h 00m', 0, 53, '02d 00h', {
+        fetchedAt,
+        limitReached: true,
+        planType: 'prolite',
+      });
+
+      vi.resetModules();
+      const reloadedUtils = await import('./utils.js');
+      vi.mocked(reloadedUtils.writeJsonFile).mockImplementation(persistJson);
+      const reloaded = await import('./codex-token-rotation.js');
+      reloaded.initCodexTokenRotation();
+
+      expect(reloaded.getAllCodexAccounts()[0]).toEqual(
+        expect.objectContaining({
+          cachedUsagePct: 87,
+          cachedUsageD7Pct: 53,
+          lastUsageFetchedAt: fetchedAt,
+          usageLimitReached: true,
+          planType: 'prolite',
+        }),
+      );
+    } finally {
+      const cleanupUtils = await import('./utils.js');
+      vi.mocked(cleanupUtils.writeJsonFile).mockReset();
+      fs.rmSync(TEST_STATE_DIR, { recursive: true, force: true });
+    }
+  });
+
   it('does not append ~/.codex/auth.json fallback when numbered accounts exist', async () => {
     const fallbackAuthPath = createDefaultCodexAuth(tempHome);
 
@@ -229,6 +283,7 @@ describe('codex-token-rotation auth synchronization', () => {
 
   beforeEach(() => {
     vi.resetModules();
+    fs.rmSync(TEST_STATE_DIR, { recursive: true, force: true });
     tempHome = fs.mkdtempSync(path.join('/tmp', 'ejclaw-codex-rot-'));
     process.env.CODEX_ROT_TEST_HOME = tempHome;
     createFakeAccounts(tempHome, 4);
@@ -237,6 +292,7 @@ describe('codex-token-rotation auth synchronization', () => {
   afterEach(() => {
     delete process.env.CODEX_ROT_TEST_HOME;
     fs.rmSync(tempHome, { recursive: true, force: true });
+    fs.rmSync(TEST_STATE_DIR, { recursive: true, force: true });
   });
 
   it('recovers a dead_auth account when canonical auth.json is refreshed before lease claim', async () => {
@@ -408,6 +464,7 @@ describe('codex-token-rotation single-account fallback', () => {
 
   beforeEach(() => {
     vi.resetModules();
+    fs.rmSync(TEST_STATE_DIR, { recursive: true, force: true });
     tempHome = fs.mkdtempSync(path.join('/tmp', 'ejclaw-codex-fallback-'));
     process.env.CODEX_ROT_TEST_HOME = tempHome;
   });
@@ -415,6 +472,7 @@ describe('codex-token-rotation single-account fallback', () => {
   afterEach(() => {
     delete process.env.CODEX_ROT_TEST_HOME;
     fs.rmSync(tempHome, { recursive: true, force: true });
+    fs.rmSync(TEST_STATE_DIR, { recursive: true, force: true });
   });
 
   it('uses ~/.codex/auth.json fallback when ~/.codex-accounts is absent', async () => {

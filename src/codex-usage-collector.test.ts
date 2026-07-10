@@ -55,6 +55,52 @@ function createDefaultCodexAuth(homeDir: string): string {
   return authPath;
 }
 
+function createCodexAccounts(homeDir: string, count: number): void {
+  for (let index = 0; index < count; index += 1) {
+    const authPath = path.join(
+      homeDir,
+      '.codex-accounts',
+      String(index),
+      'auth.json',
+    );
+    fs.mkdirSync(path.dirname(authPath), { recursive: true });
+    fs.writeFileSync(
+      authPath,
+      JSON.stringify({
+        auth_mode: 'chatgpt',
+        tokens: {
+          account_id: `account-${index}`,
+          access_token: `test-access-${index}`,
+        },
+      }),
+    );
+  }
+}
+
+function createWhamResponse(args?: {
+  planType?: string;
+  limitReached?: boolean;
+  h5pct?: number;
+  d7pct?: number;
+}): Response {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return Response.json({
+    plan_type: args?.planType ?? 'pro',
+    rate_limit: {
+      allowed: true,
+      limit_reached: args?.limitReached ?? false,
+      primary_window: {
+        used_percent: args?.h5pct ?? 12.4,
+        reset_at: nowSeconds + 3_600,
+      },
+      secondary_window: {
+        used_percent: args?.d7pct ?? 67.6,
+        reset_at: nowSeconds + 86_400,
+      },
+    },
+  });
+}
+
 function createFakeChildProcess(rateLimitsByLimitId: Record<string, unknown>) {
   const proc = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter;
@@ -105,14 +151,97 @@ describe('codex-usage-collector fallback account usage', () => {
     vi.clearAllMocks();
     tempHome = fs.mkdtempSync(path.join('/tmp', 'ejclaw-codex-usage-'));
     process.env.CODEX_USAGE_TEST_HOME = tempHome;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(null, { status: 401 })),
+    );
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     delete process.env.CODEX_USAGE_TEST_HOME;
     fs.rmSync(tempHome, { recursive: true, force: true });
   });
 
-  it('refreshes usage via ~/.codex/auth.json when ~/.codex-accounts is missing', async () => {
+  it('uses direct wham usage for every account and preserves an unknown plan type', async () => {
+    createCodexAccounts(tempHome, 2);
+    const childProcess = await import('child_process');
+    const fetchMock = vi
+      .mocked(fetch)
+      .mockResolvedValueOnce(
+        createWhamResponse({
+          planType: 'prolite',
+          h5pct: 2.4,
+          d7pct: 41.6,
+        }),
+      )
+      .mockResolvedValueOnce(
+        createWhamResponse({
+          planType: 'prolite',
+          h5pct: 87.2,
+          d7pct: 53.1,
+        }),
+      );
+
+    const rotation = await import('./codex-token-rotation.js');
+    const usage = await import('./codex-usage-collector.js');
+    const utils = await import('./utils.js');
+
+    rotation.initCodexTokenRotation();
+    const result = await usage.refreshAllCodexAccountUsage();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+    expect(result.fetchedAt).toEqual(expect.any(String));
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        name: 'Codex1* prolite',
+        h5pct: 2,
+        d7pct: 42,
+        fetchedAt: expect.any(String),
+      }),
+      expect.objectContaining({
+        name: 'Codex2  prolite',
+        h5pct: 87,
+        d7pct: 53,
+        fetchedAt: expect.any(String),
+      }),
+    ]);
+    expect(vi.mocked(utils.writeJsonFile)).toHaveBeenLastCalledWith(
+      '/tmp/ejclaw-codex-usage-data/codex-rotation-state.json',
+      expect.objectContaining({
+        usageFetchedAts: [expect.any(String), expect.any(String)],
+        usageLimitReached: [false, false],
+        planTypes: ['prolite', 'prolite'],
+      }),
+    );
+  });
+
+  it('preserves limit_reached independently of the reported percentage', async () => {
+    createDefaultCodexAuth(tempHome);
+    vi.mocked(fetch).mockResolvedValueOnce(
+      createWhamResponse({
+        limitReached: true,
+        h5pct: 87.2,
+      }),
+    );
+
+    const rotation = await import('./codex-token-rotation.js');
+    const usage = await import('./codex-usage-collector.js');
+
+    rotation.initCodexTokenRotation();
+    const result = await usage.refreshActiveCodexUsage();
+
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        name: 'Codex',
+        h5pct: 87,
+        limitReached: true,
+      }),
+    ]);
+  });
+
+  it('falls back to app-server on wham 401', async () => {
     createDefaultCodexAuth(tempHome);
     const childProcess = await import('child_process');
     const fallbackCodexHome = path.join(tempHome, '.codex');
@@ -141,10 +270,12 @@ describe('codex-usage-collector fallback account usage', () => {
 
     const rotation = await import('./codex-token-rotation.js');
     const usage = await import('./codex-usage-collector.js');
+    const { logger } = await import('./logger.js');
 
     rotation.initCodexTokenRotation();
     const result = await usage.refreshActiveCodexUsage();
 
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(rotation.getCodexAccountCount()).toBe(1);
     expect(capturedCodexHome).toBe(fallbackCodexHome);
     expect(result.fetchedAt).toEqual(expect.any(String));
@@ -155,6 +286,10 @@ describe('codex-usage-collector fallback account usage', () => {
         d7pct: 68,
       }),
     ]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      { account: 1 },
+      'Direct Codex usage fetch failed; falling back to app-server',
+    );
   });
 
   it('finds codex via ~/.hermes/node/bin when running under bun', async () => {

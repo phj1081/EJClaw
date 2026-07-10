@@ -28,11 +28,7 @@ import {
   fetchAllClaudeProfiles,
   type ClaudeAccountUsage,
 } from './claude-usage.js';
-import {
-  CODEX_FULL_SCAN_INTERVAL,
-  refreshActiveCodexUsage,
-  refreshAllCodexAccountUsage,
-} from './codex-usage-collector.js';
+import { refreshAllCodexAccountUsage } from './codex-usage-collector.js';
 import { runCodexWarmupCycle } from './codex-warmup.js';
 import {
   composeDashboardContent,
@@ -48,6 +44,7 @@ import {
 import {
   buildClaudeUsageRows,
   extractCodexUsageRows,
+  markCodexUsageRowsStale,
   mergeClaudeDashboardAccounts,
   type UsageRow,
 } from './dashboard-usage-rows.js';
@@ -91,8 +88,6 @@ const STATUS_ICONS: Record<string, string> = {
 
 const CHANNEL_META_REFRESH_MS = 300000;
 const STATUS_SNAPSHOT_MAX_AGE_MS = 60000;
-/** Usage data can be up to 10 min old before considered stale. */
-const USAGE_SNAPSHOT_MAX_AGE_MS = 600_000;
 /**
  * Renderer refreshes usage cache every 30s (not 5min).
  * Claude API calls are internally rate-limited to 5min per token,
@@ -475,6 +470,8 @@ export function renderUsageTable(
     s ? s.replace(/\s+/g, '').replace(/m$/, '') : '';
 
   const lines: string[] = [];
+  const hasFullMarker = allRows.some((row) => row.limitReached);
+  const h5MarkerWidth = hasFullMarker ? 5 : 0;
 
   const renderRows = (rows: UsageRow[]) => {
     for (const row of rows) {
@@ -486,11 +483,14 @@ export function renderUsageTable(
         row.d7pct >= 0
           ? `${bar(row.d7pct)}${String(row.d7pct).padStart(3)}%`
           : ' —   ';
-      lines.push(`${padName(row.name)}${h5} ${d7}`);
+      const full = hasFullMarker ? (row.limitReached ? ' FULL' : '     ') : '';
+      const stale =
+        row.staleAgeMinutes != null ? ` (${row.staleAgeMinutes}m)` : '';
+      lines.push(`${padName(row.name)}${h5}${full} ${d7}${stale}`);
       const r5 = compactReset(row.h5reset);
       const r7 = compactReset(row.d7reset);
       if (r5 || r7) {
-        const d7ColStart = maxNameWidth + 10;
+        const d7ColStart = maxNameWidth + 10 + h5MarkerWidth;
         let resetLine = ' '.repeat(maxNameWidth);
         if (r5) resetLine += r5;
         resetLine = resetLine.padEnd(d7ColStart);
@@ -501,12 +501,12 @@ export function renderUsageTable(
   };
 
   lines.push('```');
-  lines.push(`${' '.repeat(maxNameWidth)}5h        7d`);
+  lines.push(`${' '.repeat(maxNameWidth)}5h${' '.repeat(8 + h5MarkerWidth)}7d`);
 
   renderRows(claudeBotRows);
 
   if (claudeBotRows.length > 0 && codexBotRows.length > 0) {
-    const separatorWidth = maxNameWidth + 20;
+    const separatorWidth = maxNameWidth + 20 + h5MarkerWidth;
     lines.push('─'.repeat(separatorWidth));
   }
 
@@ -517,7 +517,7 @@ export function renderUsageTable(
   return lines;
 }
 
-async function buildUsageContent(): Promise<string> {
+async function buildUsageContent(codexStaleAfterMs: number): Promise<string> {
   const shouldFetchClaudeUsage = USAGE_DASHBOARD_ENABLED;
   let liveClaudeAccounts: ClaudeAccountUsage[] | null = null;
 
@@ -557,13 +557,15 @@ async function buildUsageContent(): Promise<string> {
   // or fall back to snapshot from separate Codex service.
   const codexBotRows: UsageRow[] = [];
   if (cachedCodexUsageRows.length > 0) {
-    codexBotRows.push(...cachedCodexUsageRows);
+    codexBotRows.push(
+      ...markCodexUsageRowsStale(cachedCodexUsageRows, codexStaleAfterMs),
+    );
   } else {
     const codexSnapshot = readStatusSnapshots(STATUS_SNAPSHOT_MAX_AGE_MS).find(
       (s) => s.serviceId === 'codex-main' || s.serviceId === 'codex',
     );
     codexBotRows.push(
-      ...extractCodexUsageRows(codexSnapshot, USAGE_SNAPSHOT_MAX_AGE_MS),
+      ...extractCodexUsageRows(codexSnapshot, codexStaleAfterMs),
     );
   }
 
@@ -693,11 +695,11 @@ function buildUnifiedDashboardContent(): string {
   return composeDashboardContent(sections);
 }
 
-async function refreshUsageCache(): Promise<void> {
+async function refreshUsageCache(codexStaleAfterMs: number): Promise<void> {
   if (usageUpdateInProgress) return;
   usageUpdateInProgress = true;
   try {
-    cachedUsageContent = await buildUsageContent();
+    cachedUsageContent = await buildUsageContent(codexStaleAfterMs);
     rendererUsageFetchedAt = new Date().toISOString();
   } catch (err) {
     logger.warn({ err }, 'Failed to build usage content');
@@ -730,7 +732,7 @@ export async function startUnifiedDashboard(
 
   if (isRenderer) {
     await fetchAllClaudeProfiles();
-    await refreshUsageCache();
+    await refreshUsageCache(opts.usageUpdateInterval * 2);
   }
 
   const updateStatus = async () => {
@@ -808,7 +810,10 @@ export async function startUnifiedDashboard(
   await updateStatus();
 
   if (isRenderer) {
-    setInterval(refreshUsageCache, RENDERER_USAGE_REFRESH_MS);
+    setInterval(
+      () => void refreshUsageCache(opts.usageUpdateInterval * 2),
+      RENDERER_USAGE_REFRESH_MS,
+    );
   }
 
   // Codex usage collection — runs in unified service regardless of renderer role.
@@ -845,19 +850,17 @@ export async function startUnifiedDashboard(
   void refreshAllCodexAccountUsage()
     .then((r) => {
       applyCodexRefresh(r);
-      return refreshActiveCodexUsage().then(applyCodexRefresh);
+      return runCodexWarmup();
     })
-    .then(() => runCodexWarmup());
-  setInterval(
-    () => void refreshActiveCodexUsage().then(applyCodexRefresh),
-    opts.usageUpdateInterval,
-  );
+    .catch((err) => {
+      logger.warn({ err }, 'Initial Codex usage refresh failed');
+    });
   setInterval(
     () =>
       void refreshAllCodexAccountUsage()
         .then(applyCodexRefresh)
         .then(() => runCodexWarmup()),
-    CODEX_FULL_SCAN_INTERVAL,
+    opts.usageUpdateInterval,
   );
   if (CODEX_WARMUP_CONFIG.enabled) {
     setInterval(() => void runCodexWarmup(), CODEX_WARMUP_CONFIG.intervalMs);

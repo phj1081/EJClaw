@@ -23,6 +23,9 @@ export interface UsageRowSnapshot {
   h5reset: string;
   d7pct: number;
   d7reset: string;
+  fetchedAt?: string;
+  limitReached?: boolean;
+  staleAgeMinutes?: number;
 }
 
 export interface StatusSnapshot {

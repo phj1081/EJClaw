@@ -1,5 +1,19 @@
 import fs from 'fs';
 
+export function readCodexAccessToken(authPath: string): string | null {
+  try {
+    const data = JSON.parse(fs.readFileSync(authPath, 'utf-8')) as {
+      tokens?: { access_token?: unknown };
+    };
+    const accessToken = data.tokens?.access_token;
+    return typeof accessToken === 'string' && accessToken.trim() !== ''
+      ? accessToken
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function parseJwtAuth(idToken: string): {
   planType: string;
   expiresAt: string | null;

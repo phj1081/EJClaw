@@ -12,6 +12,7 @@ vi.mock('./claude-usage.js', () => ({
 import {
   buildClaudeUsageRows,
   extractCodexUsageRows,
+  markCodexUsageRowsStale,
   mergeClaudeDashboardAccounts,
 } from './dashboard-usage-rows.js';
 import type { StatusSnapshot } from './status-dashboard.js';
@@ -38,7 +39,7 @@ describe('extractCodexUsageRows staleness', () => {
     expect(result).toEqual(freshRows);
   });
 
-  it('returns degraded row when usageRowsFetchedAt exceeds maxAgeMs', () => {
+  it('marks rows with their stale age when usageRowsFetchedAt exceeds maxAgeMs', () => {
     const now = Date.now();
     const snapshot: StatusSnapshot = {
       serviceId: 'codex-main',
@@ -52,7 +53,10 @@ describe('extractCodexUsageRows staleness', () => {
 
     const result = extractCodexUsageRows(snapshot, TEN_MIN, now);
     expect(result).toEqual([
-      { name: 'Codex', h5pct: -1, h5reset: '', d7pct: -1, d7reset: '' },
+      {
+        ...freshRows[0],
+        staleAgeMinutes: 10,
+      },
     ]);
   });
 
@@ -89,6 +93,52 @@ describe('extractCodexUsageRows staleness', () => {
       usageRowsFetchedAt: new Date().toISOString(),
     };
     expect(extractCodexUsageRows(snapshot, TEN_MIN)).toEqual([]);
+  });
+});
+
+describe('markCodexUsageRowsStale', () => {
+  const TEN_MIN = 600_000;
+  const row = {
+    name: 'Codex1* pro',
+    h5pct: 42,
+    h5reset: '2h',
+    d7pct: 65,
+    d7reset: '3d',
+  };
+
+  it('keeps the marker off through the configured threshold', () => {
+    const now = Date.now();
+    expect(
+      markCodexUsageRowsStale(
+        [{ ...row, fetchedAt: new Date(now - TEN_MIN).toISOString() }],
+        TEN_MIN,
+        now,
+      ),
+    ).toEqual([
+      {
+        ...row,
+        fetchedAt: new Date(now - TEN_MIN).toISOString(),
+      },
+    ]);
+  });
+
+  it('uses each slot timestamp and reports whole stale minutes', () => {
+    const now = Date.now();
+    const rows = markCodexUsageRowsStale(
+      [
+        { ...row, fetchedAt: new Date(now - 9 * 60_000).toISOString() },
+        {
+          ...row,
+          name: 'Codex2  pro',
+          fetchedAt: new Date(now - 43 * 60_000 - 10_000).toISOString(),
+        },
+      ],
+      TEN_MIN,
+      now,
+    );
+
+    expect(rows[0].staleAgeMinutes).toBeUndefined();
+    expect(rows[1].staleAgeMinutes).toBe(43);
   });
 });
 
