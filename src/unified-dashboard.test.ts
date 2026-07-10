@@ -137,7 +137,7 @@ describe('renderUsageTable', () => {
     expect(lines).toEqual(['_조회 불가_']);
   });
 
-  it('renders FULL beside 5h usage and appends the stale age marker', () => {
+  it('keeps column layout fixed regardless of limitReached and appends the stale age marker', () => {
     const lines = renderUsageTable(
       [],
       [
@@ -151,7 +151,10 @@ describe('renderUsageTable', () => {
     );
     const codexLine = lines.find((line) => line.includes('Codex'));
 
-    expect(codexLine).toContain('87% FULL');
+    // limitReached must NOT widen the 5h column (mobile Discord wraps at ~40
+    // cols; a FULL marker between 5h and 7d pushed rows past that width).
+    expect(codexLine).not.toContain('FULL');
+    expect(codexLine).toContain('87%');
     expect(codexLine).toContain('(43m)');
   });
 });

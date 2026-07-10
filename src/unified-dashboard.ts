@@ -470,8 +470,6 @@ export function renderUsageTable(
     s ? s.replace(/\s+/g, '').replace(/m$/, '') : '';
 
   const lines: string[] = [];
-  const hasFullMarker = allRows.some((row) => row.limitReached);
-  const h5MarkerWidth = hasFullMarker ? 5 : 0;
 
   const renderRows = (rows: UsageRow[]) => {
     for (const row of rows) {
@@ -483,14 +481,13 @@ export function renderUsageTable(
         row.d7pct >= 0
           ? `${bar(row.d7pct)}${String(row.d7pct).padStart(3)}%`
           : ' —   ';
-      const full = hasFullMarker ? (row.limitReached ? ' FULL' : '     ') : '';
       const stale =
         row.staleAgeMinutes != null ? ` (${row.staleAgeMinutes}m)` : '';
-      lines.push(`${padName(row.name)}${h5}${full} ${d7}${stale}`);
+      lines.push(`${padName(row.name)}${h5} ${d7}${stale}`);
       const r5 = compactReset(row.h5reset);
       const r7 = compactReset(row.d7reset);
       if (r5 || r7) {
-        const d7ColStart = maxNameWidth + 10 + h5MarkerWidth;
+        const d7ColStart = maxNameWidth + 10;
         let resetLine = ' '.repeat(maxNameWidth);
         if (r5) resetLine += r5;
         resetLine = resetLine.padEnd(d7ColStart);
@@ -501,12 +498,12 @@ export function renderUsageTable(
   };
 
   lines.push('```');
-  lines.push(`${' '.repeat(maxNameWidth)}5h${' '.repeat(8 + h5MarkerWidth)}7d`);
+  lines.push(`${' '.repeat(maxNameWidth)}5h${' '.repeat(8)}7d`);
 
   renderRows(claudeBotRows);
 
   if (claudeBotRows.length > 0 && codexBotRows.length > 0) {
-    const separatorWidth = maxNameWidth + 20 + h5MarkerWidth;
+    const separatorWidth = maxNameWidth + 20;
     lines.push('─'.repeat(separatorWidth));
   }
 
