@@ -15,7 +15,9 @@ import {
   getAllTokens,
   getConfiguredClaudeTokens,
   getCurrentToken,
+  getCurrentTokenIndex,
 } from './token-rotation.js';
+import { forceRefreshToken } from './token-refresh.js';
 import { readJsonFile, writeJsonFile } from './utils.js';
 
 const USAGE_CACHE_FILE = path.join(DATA_DIR, 'claude-usage-cache.json');
@@ -114,6 +116,47 @@ export function getUsageCacheReadKeys(
 
 // Rate limit: at most one API call per token per 5 minutes
 const MIN_FETCH_INTERVAL_MS = 300_000;
+const FAILURE_COOLDOWN_MS = 10 * 60_000;
+
+const usageCooldownUntil = new Map<number, number>();
+const refreshAttemptedAt = new Map<number, number>();
+
+interface BearerTokenSelection {
+  token: string;
+  source: 'credentials' | 'env';
+  credentialsAccessToken: string | null;
+}
+
+function selectBearerToken(
+  envToken: string,
+  accountIndex?: number,
+): BearerTokenSelection {
+  const credentialsAccessToken =
+    accountIndex != null ? readCredentialsAccessToken(accountIndex) : null;
+  return {
+    token: credentialsAccessToken ?? envToken,
+    source: credentialsAccessToken ? 'credentials' : 'env',
+    credentialsAccessToken,
+  };
+}
+
+async function requestUsage(token: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(USAGE_ENDPOINT, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+        'User-Agent': 'ejclaw/1.0',
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function fetchUsageForToken(
   token: string,
@@ -122,11 +165,12 @@ async function fetchUsageForToken(
   loadUsageDiskCache();
 
   // Return cached data if attempted recently (avoid API rate-limit)
+  const selectedBearer = selectBearerToken(token, accountIndex);
   const writeKey = getUsageCacheWriteKey(token, accountIndex);
   const readKeys = getUsageCacheReadKeys(
     token,
     accountIndex,
-    accountIndex != null ? readCredentialsAccessToken(accountIndex) : null,
+    selectedBearer.credentialsAccessToken,
   );
   let cachedKey: string | null = null;
   let cached: UsageCacheEntry | undefined;
@@ -151,38 +195,81 @@ async function fetchUsageForToken(
   if (cached && Date.now() - lastAttempt < MIN_FETCH_INTERVAL_MS) {
     return cached.usage;
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+  const now = Date.now();
+  if (
+    accountIndex != null &&
+    (usageCooldownUntil.get(accountIndex) ?? 0) > now
+  ) {
+    logger.debug(
+      { account: accountIndex + 1 },
+      'Claude usage API: account is in failure cooldown, returning cached data',
+    );
+    return cached?.usage ?? null;
+  }
+
+  logger.debug(
+    {
+      account: accountIndex != null ? accountIndex + 1 : '?',
+      source: selectedBearer.source,
+    },
+    'Claude usage API: selected bearer token',
+  );
 
   try {
-    const res = await fetch(USAGE_ENDPOINT, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-        'User-Agent': 'ejclaw/1.0',
-      },
-      signal: controller.signal,
-    });
+    let res = await requestUsage(selectedBearer.token);
 
     if (res.status === 401) {
+      if (accountIndex != null) {
+        usageCooldownUntil.set(accountIndex, Date.now() + FAILURE_COOLDOWN_MS);
+      }
       logger.warn(
         {
           account: accountIndex != null ? accountIndex + 1 : '?',
-          tokenKey: legacyTokenCacheKey(token),
-          cacheKey: writeKey,
         },
         'Claude usage API: token expired or invalid (401)',
       );
-      return null;
+
+      const lastRefreshAttempt =
+        accountIndex != null ? (refreshAttemptedAt.get(accountIndex) ?? 0) : 0;
+      if (
+        accountIndex != null &&
+        Date.now() - lastRefreshAttempt >= FAILURE_COOLDOWN_MS
+      ) {
+        refreshAttemptedAt.set(accountIndex, Date.now());
+        let refreshedToken: string | null = null;
+        try {
+          refreshedToken = await forceRefreshToken(accountIndex);
+        } catch {
+          logger.warn(
+            { account: accountIndex + 1 },
+            'Claude usage API: token refresh failed unexpectedly',
+          );
+        }
+        if (refreshedToken) {
+          res = await requestUsage(refreshedToken);
+        } else {
+          return cached?.usage ?? null;
+        }
+      } else {
+        return cached?.usage ?? null;
+      }
+    }
+    if (res.status === 401) {
+      logger.warn(
+        { account: accountIndex != null ? accountIndex + 1 : '?' },
+        'Claude usage API: refreshed token was rejected (401)',
+      );
+      return cached?.usage ?? null;
     }
     if (res.status === 429) {
+      if (accountIndex != null) {
+        usageCooldownUntil.set(accountIndex, Date.now() + FAILURE_COOLDOWN_MS);
+      }
       const staleMs = cached ? Date.now() - cached.fetchedAt : 0;
       logger.warn(
         {
           account: accountIndex != null ? accountIndex + 1 : '?',
-          tokenKey: legacyTokenCacheKey(token),
-          cacheKey: writeKey,
           staleMinutes: Math.round(staleMs / 60_000),
         },
         'Claude usage API: rate limited (429), returning cached data',
@@ -199,8 +286,6 @@ async function fetchUsageForToken(
         {
           account: accountIndex != null ? accountIndex + 1 : '?',
           status: res.status,
-          tokenKey: legacyTokenCacheKey(token),
-          cacheKey: writeKey,
         },
         `Claude usage API: unexpected status ${res.status}`,
       );
@@ -227,13 +312,14 @@ async function fetchUsageForToken(
       fetchedAt: now,
       lastAttemptAt: now,
     };
+    if (accountIndex != null) {
+      usageCooldownUntil.delete(accountIndex);
+    }
     saveUsageDiskCache();
 
     logger.debug(
       {
         account: accountIndex != null ? accountIndex + 1 : '?',
-        tokenKey: legacyTokenCacheKey(token),
-        cacheKey: writeKey,
         h5: result.five_hour?.utilization,
         d7: result.seven_day?.utilization,
       },
@@ -246,8 +332,6 @@ async function fetchUsageForToken(
       logger.warn(
         {
           account: accountIndex != null ? accountIndex + 1 : '?',
-          tokenKey: legacyTokenCacheKey(token),
-          cacheKey: writeKey,
         },
         'Claude usage API: request timed out',
       );
@@ -256,8 +340,6 @@ async function fetchUsageForToken(
         {
           err,
           account: accountIndex != null ? accountIndex + 1 : '?',
-          tokenKey: legacyTokenCacheKey(token),
-          cacheKey: writeKey,
         },
         'Claude usage API: fetch failed',
       );
@@ -268,8 +350,6 @@ async function fetchUsageForToken(
       saveUsageDiskCache();
     }
     return cached?.usage ?? null;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -283,7 +363,7 @@ export async function fetchClaudeUsage(): Promise<ClaudeUsageData | null> {
     logger.debug('No Claude OAuth token available for usage check');
     return null;
   }
-  return fetchUsageForToken(token, undefined);
+  return fetchUsageForToken(token, getCurrentTokenIndex() ?? 0);
 }
 
 export interface ClaudeAccountProfile {
@@ -332,9 +412,14 @@ function readCredentialsAccessToken(accountIndex: number): string | null {
           );
     if (!fs.existsSync(credsPath)) return null;
     const data = readJsonFile<{
-      claudeAiOauth?: { accessToken?: string };
+      claudeAiOauth?: { accessToken?: string; expiresAt?: number };
     }>(credsPath);
-    return data?.claudeAiOauth?.accessToken || null;
+    const oauth = data?.claudeAiOauth;
+    if (!oauth?.accessToken) return null;
+    if (typeof oauth.expiresAt === 'number' && oauth.expiresAt <= Date.now()) {
+      return null;
+    }
+    return oauth.accessToken;
   } catch {
     return null;
   }
@@ -386,7 +471,12 @@ async function fetchProfileForToken(
 export async function fetchAllClaudeProfiles(): Promise<void> {
   const allTokens = getAllTokens();
   for (const t of allTokens) {
-    let profile = await fetchProfileForToken(t.token);
+    const selectedBearer = selectBearerToken(t.token, t.index);
+    logger.debug(
+      { account: t.index + 1, source: selectedBearer.source },
+      'Claude profile API: selected bearer token',
+    );
+    let profile = await fetchProfileForToken(selectedBearer.token);
 
     // Fallback: if profile API failed or returned unknown plan, use credentials file
     if (!profile || profile.planType === '?') {
