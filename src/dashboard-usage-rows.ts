@@ -66,17 +66,9 @@ export function buildClaudeUsageRows(
 
     return {
       name: label,
-      h5pct: h5
-        ? h5.utilization > 1
-          ? Math.round(h5.utilization)
-          : Math.round(h5.utilization * 100)
-        : -1,
+      h5pct: h5 ? Math.round(h5.utilization) : -1,
       h5reset: h5 ? formatResetRemaining(h5.resets_at) : '',
-      d7pct: d7
-        ? d7.utilization > 1
-          ? Math.round(d7.utilization)
-          : Math.round(d7.utilization * 100)
-        : -1,
+      d7pct: d7 ? Math.round(d7.utilization) : -1,
       d7reset: d7 ? formatResetRemaining(d7.resets_at) : '',
     };
   });

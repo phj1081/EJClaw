@@ -152,11 +152,11 @@ describe('dashboard Claude usage rows', () => {
         isRateLimited: false,
         usage: {
           five_hour: {
-            utilization: 0.4,
+            utilization: 40,
             resets_at: '2026-03-24T04:00:00+09:00',
           },
           seven_day: {
-            utilization: 0.7,
+            utilization: 70,
             resets_at: '2026-03-29T04:00:00+09:00',
           },
         },
@@ -181,6 +181,23 @@ describe('dashboard Claude usage rows', () => {
       h5pct: -1,
       d7pct: -1,
     });
+  });
+
+  it('treats OAuth usage utilization as a percentage, including exactly 1%', () => {
+    const [row] = buildClaudeUsageRows([
+      {
+        index: 0,
+        masked: 'tok-a',
+        isActive: true,
+        isRateLimited: false,
+        usage: {
+          five_hour: { utilization: 4, resets_at: '' },
+          seven_day: { utilization: 1, resets_at: '' },
+        },
+      },
+    ]);
+
+    expect(row).toMatchObject({ h5pct: 4, d7pct: 1 });
   });
 
   it('preserves the last successful usage per account instead of collapsing to one cache entry', () => {
