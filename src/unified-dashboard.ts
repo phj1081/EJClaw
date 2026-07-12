@@ -442,6 +442,47 @@ function buildStatusContent(): string {
   return `${header}\n\n${sections}`;
 }
 
+/** Previous /proc/stat sample for CPU utilization deltas. */
+let lastCpuSample: { idle: number; total: number } | null = null;
+
+/**
+ * Real CPU utilization percent from /proc/stat deltas between calls.
+ * First call (no previous sample) and non-Linux hosts return null.
+ * Exported for testing alongside resetCpuUtilizationSample.
+ */
+export function readCpuUtilizationPct(
+  readStat: () => string = () => fs.readFileSync('/proc/stat', 'utf-8'),
+): number | null {
+  try {
+    const cpuLine = readStat()
+      .split('\n')
+      .find((line) => line.startsWith('cpu '));
+    if (!cpuLine) return null;
+    const fields = cpuLine.trim().split(/\s+/).slice(1).map(Number);
+    if (fields.length < 5 || fields.some((n) => !Number.isFinite(n))) {
+      return null;
+    }
+    // user nice system idle iowait irq softirq steal ...
+    const idle = fields[3] + (fields[4] ?? 0); // idle + iowait
+    const total = fields.reduce((a, b) => a + b, 0);
+    const prev = lastCpuSample;
+    lastCpuSample = { idle, total };
+    if (!prev || total <= prev.total) return null;
+    const totalDelta = total - prev.total;
+    const idleDelta = idle - prev.idle;
+    return Math.round(
+      Math.min(100, Math.max(0, ((totalDelta - idleDelta) / totalDelta) * 100)),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** Test-only: reset the CPU sample so the next read starts fresh. */
+export function resetCpuUtilizationSample(): void {
+  lastCpuSample = null;
+}
+
 /**
  * Render usage table lines from two row groups (Claude and Codex).
  * Returns rendered lines including code block markers.
@@ -584,7 +625,11 @@ async function buildUsageContent(codexStaleAfterMs: number): Promise<string> {
 
   const loadAvg = os.loadavg();
   const cpuCount = os.cpus().length;
-  const cpuPct = Math.round((loadAvg[1] / cpuCount) * 100);
+  // Real CPU utilization from /proc/stat deltas between renders.
+  // Load-average-based percent counts D-state (I/O-wait) processes, so a
+  // writeback storm once rendered as "CPU 3104%" despite idle CPUs.
+  const cpuPct = readCpuUtilizationPct() ?? 0;
+  const loadPerCore = loadAvg[0] / cpuCount;
   const totalMem = os.totalmem();
   // os.freemem() includes buffers/cache as "used" — misleading.
   // Read MemAvailable from /proc/meminfo for actual available memory.
@@ -621,6 +666,12 @@ async function buildUsageContent(codexStaleAfterMs: number): Promise<string> {
 
   lines.push('```');
   lines.push(`${'CPU'.padEnd(8)}${bar(cpuPct)} ${String(cpuPct).padStart(3)}%`);
+  // Raw load average with core count: I/O storms (D-state pileups) show up
+  // here without masquerading as CPU usage. Flag when load exceeds cores.
+  const loadFlag = loadPerCore > 1 ? ' ▲' : '';
+  lines.push(
+    `${'Load'.padEnd(8)}${loadAvg[0] >= 100 ? loadAvg[0].toFixed(0) : loadAvg[0].toFixed(1)}/${cpuCount}cpu${loadFlag}`,
+  );
   lines.push(
     `${'Memory'.padEnd(8)}${bar(memPct)} ${String(memPct).padStart(3)}%  ${memUsedGB}/${memTotalGB}GB`,
   );

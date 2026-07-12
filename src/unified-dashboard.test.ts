@@ -5,10 +5,37 @@ import {
   buildWebUsageRowsForSnapshot,
   formatStatusHeader,
   getDashboardDuplicateCleanupIntervalMs,
+  readCpuUtilizationPct,
   renderUsageTable,
+  resetCpuUtilizationSample,
   shouldPurgeDashboardChannelOnStart,
   summarizeWatcherTasks,
 } from './unified-dashboard.js';
+
+describe('readCpuUtilizationPct', () => {
+  it('computes busy percentage from consecutive /proc/stat samples', () => {
+    resetCpuUtilizationSample();
+    expect(
+      readCpuUtilizationPct(() => 'cpu  100 0 100 800 0 0 0 0 0 0\n'),
+    ).toBeNull();
+    // +100 total ticks: +30 busy, +70 idle => 30%.
+    expect(
+      readCpuUtilizationPct(() => 'cpu  115 0 115 870 0 0 0 0 0 0\n'),
+    ).toBe(30);
+  });
+
+  it('counts iowait as idle and rejects malformed samples', () => {
+    resetCpuUtilizationSample();
+    expect(readCpuUtilizationPct(() => 'not-a-cpu-line\n')).toBeNull();
+    expect(
+      readCpuUtilizationPct(() => 'cpu  100 0 100 700 100 0 0 0 0 0\n'),
+    ).toBeNull();
+    // +100 total, all +100 is iowait: CPU busy must be 0%, not 100%.
+    expect(
+      readCpuUtilizationPct(() => 'cpu  100 0 100 700 200 0 0 0 0 0\n'),
+    ).toBe(0);
+  });
+});
 
 describe('summarizeWatcherTasks', () => {
   it('counts active and paused watcher tasks only', () => {
