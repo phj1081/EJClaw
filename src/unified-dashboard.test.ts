@@ -172,7 +172,10 @@ describe('renderUsageTable', () => {
       ],
     );
     const codexIdx = lines.findIndex((line) => line.includes('Codex'));
-    expect(lines[codexIdx]).toContain('—');
+    // Empty cell must match a real cell's char composition (5 bar-width
+    // chars + 4 ASCII) so columns stay aligned on mobile fonts.
+    expect(lines[codexIdx]).toContain('─────    ');
+    expect(lines[codexIdx]).not.toContain('—');
     const resetLine = lines[codexIdx + 1] ?? '';
     // Exactly one reset (7d); the 5h slot before it must stay blank.
     expect(resetLine.trim()).toBe('6d23h');

@@ -471,16 +471,21 @@ export function renderUsageTable(
 
   const lines: string[] = [];
 
+  // Missing-window placeholder. Must mirror a real cell's char composition
+  // (5 ambiguous-width bar chars + 4 ASCII): mobile fonts render block/box
+  // chars double-width, so a plain '—' cell breaks column alignment.
+  const emptyCell = '─'.repeat(5) + '    ';
+
   const renderRows = (rows: UsageRow[]) => {
     for (const row of rows) {
       const h5 =
         row.h5pct >= 0
           ? `${bar(row.h5pct)}${String(row.h5pct).padStart(3)}%`
-          : ' —   ';
+          : emptyCell;
       const d7 =
         row.d7pct >= 0
           ? `${bar(row.d7pct)}${String(row.d7pct).padStart(3)}%`
-          : ' —   ';
+          : emptyCell;
       const stale =
         row.staleAgeMinutes != null ? ` (${row.staleAgeMinutes}m)` : '';
       lines.push(`${padName(row.name)}${h5} ${d7}${stale}`);
