@@ -832,8 +832,19 @@ export function updateCodexAccountUsage(
   if (acct) {
     acct.lastUsagePct = usagePct;
     if (d7Pct != null) acct.lastUsageD7Pct = d7Pct;
-    if (resetAt) acct.resetAt = resetAt;
-    if (resetD7At) acct.resetD7At = resetD7At;
+    // Clear the reset time when its window is absent from the API response
+    // (usagePct < 0). Keeping the old value would render a ghost reset under
+    // an empty column after a schema change drops a window.
+    if (usagePct < 0) {
+      acct.resetAt = '';
+    } else if (resetAt) {
+      acct.resetAt = resetAt;
+    }
+    if (d7Pct != null && d7Pct < 0) {
+      acct.resetD7At = '';
+    } else if (resetD7At) {
+      acct.resetD7At = resetD7At;
+    }
     if (metadata?.fetchedAt) acct.lastUsageFetchedAt = metadata.fetchedAt;
     if (metadata?.limitReached != null) {
       acct.usageLimitReached = metadata.limitReached;

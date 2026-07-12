@@ -484,8 +484,10 @@ export function renderUsageTable(
       const stale =
         row.staleAgeMinutes != null ? ` (${row.staleAgeMinutes}m)` : '';
       lines.push(`${padName(row.name)}${h5} ${d7}${stale}`);
-      const r5 = compactReset(row.h5reset);
-      const r7 = compactReset(row.d7reset);
+      // Only show reset times for windows that actually have a value;
+      // a reset under an em-dash column is a stale leftover.
+      const r5 = row.h5pct >= 0 ? compactReset(row.h5reset) : '';
+      const r7 = row.d7pct >= 0 ? compactReset(row.d7reset) : '';
       if (r5 || r7) {
         const d7ColStart = maxNameWidth + 10;
         let resetLine = ' '.repeat(maxNameWidth);

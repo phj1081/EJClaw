@@ -157,6 +157,28 @@ describe('renderUsageTable', () => {
     expect(codexLine).toContain('87%');
     expect(codexLine).toContain('(43m)');
   });
+
+  it('hides the reset time under a missing (em-dash) window', () => {
+    const lines = renderUsageTable(
+      [],
+      [
+        {
+          ...codexRow,
+          h5pct: -1,
+          h5reset: '6d 23h',
+          d7pct: 42,
+          d7reset: '6d 23h',
+        },
+      ],
+    );
+    const codexIdx = lines.findIndex((line) => line.includes('Codex'));
+    expect(lines[codexIdx]).toContain('—');
+    const resetLine = lines[codexIdx + 1] ?? '';
+    // Exactly one reset (7d); the 5h slot before it must stay blank.
+    expect(resetLine.trim()).toBe('6d23h');
+    const d7Start = resetLine.indexOf('6d23h');
+    expect(resetLine.slice(0, d7Start).trim()).toBe('');
+  });
 });
 
 describe('buildWebUsageRowsForSnapshot', () => {
