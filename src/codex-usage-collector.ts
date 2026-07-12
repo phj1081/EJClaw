@@ -81,12 +81,53 @@ function windowResetAt(
 function mapWhamWindow(
   window: CodexRateLimitWindowSummary | null,
   checkedAt: string,
-): CodexRateLimit['primary'] | null {
+): (CodexRateLimit['primary'] & { windowSeconds: number | null }) | null {
   if (!window || window.usedPercent == null) return null;
   return {
     usedPercent: window.usedPercent,
     resetsAt: windowResetAt(window, checkedAt),
+    windowSeconds: window.limitWindowSeconds ?? null,
   };
+}
+
+const EMPTY_WINDOW: CodexRateLimit['primary'] = {
+  usedPercent: -1,
+  resetsAt: '',
+};
+
+/**
+ * Assign wham windows to the 5h/7d display slots by their actual window
+ * length instead of primary/secondary position. OpenAI has changed the
+ * response shape before (2026-07: primary became the 7-day window and
+ * secondary became null), so positional mapping mislabels values.
+ * Windows up to 24h go to the short slot; longer ones go to the weekly slot.
+ */
+function assignWhamWindows(
+  primary: (CodexRateLimit['primary'] & { windowSeconds: number | null }) | null,
+  secondary:
+    | (CodexRateLimit['primary'] & { windowSeconds: number | null })
+    | null,
+): { short: CodexRateLimit['primary']; weekly: CodexRateLimit['primary'] } {
+  const DAY_SECONDS = 86_400;
+  let short: CodexRateLimit['primary'] | null = null;
+  let weekly: CodexRateLimit['primary'] | null = null;
+
+  for (const win of [primary, secondary]) {
+    if (!win) continue;
+    const { windowSeconds, ...value } = win;
+    const isWeekly = windowSeconds != null && windowSeconds > DAY_SECONDS;
+    if (isWeekly) {
+      weekly ??= value;
+    } else if (windowSeconds != null) {
+      short ??= value;
+    } else {
+      // Unknown window length: keep legacy positional behavior.
+      if (win === primary) short ??= value;
+      else weekly ??= value;
+    }
+  }
+
+  return { short: short ?? EMPTY_WINDOW, weekly: weekly ?? EMPTY_WINDOW };
 }
 
 export async function fetchCodexWhamUsage(
@@ -126,22 +167,20 @@ export async function fetchCodexWhamUsage(
       summary.rateLimit?.primaryWindow ?? null,
       checkedAt,
     );
-    if (!primary) return null;
     const secondary = mapWhamWindow(
       summary.rateLimit?.secondaryWindow ?? null,
       checkedAt,
-    ) ?? {
-      usedPercent: -1,
-      resetsAt: '',
-    };
+    );
+    if (!primary && !secondary) return null;
+    const { short, weekly } = assignWhamWindows(primary, secondary);
 
     return {
       rateLimits: [
         {
           limitId: 'codex',
           limitName: 'Codex',
-          primary,
-          secondary,
+          primary: short,
+          secondary: weekly,
         },
       ],
       checkedAt,

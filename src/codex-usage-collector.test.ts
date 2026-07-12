@@ -91,12 +91,35 @@ function createWhamResponse(args?: {
       limit_reached: args?.limitReached ?? false,
       primary_window: {
         used_percent: args?.h5pct ?? 12.4,
+        limit_window_seconds: 18_000,
         reset_at: nowSeconds + 3_600,
       },
       secondary_window: {
         used_percent: args?.d7pct ?? 67.6,
+        limit_window_seconds: 604_800,
         reset_at: nowSeconds + 86_400,
       },
+    },
+  });
+}
+
+/** 2026-07 observed shape: primary IS the weekly window, secondary is null. */
+function createWeeklyOnlyWhamResponse(args?: {
+  weeklyPct?: number;
+}): Response {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  return Response.json({
+    plan_type: 'pro',
+    rate_limit: {
+      allowed: true,
+      limit_reached: false,
+      primary_window: {
+        used_percent: args?.weeklyPct ?? 3,
+        limit_window_seconds: 604_800,
+        reset_after_seconds: 604_800,
+        reset_at: nowSeconds + 604_800,
+      },
+      secondary_window: null,
     },
   });
 }
@@ -237,6 +260,27 @@ describe('codex-usage-collector fallback account usage', () => {
         name: 'Codex',
         h5pct: 87,
         limitReached: true,
+      }),
+    ]);
+  });
+
+  it('maps a weekly-only primary window to the 7d slot, not the 5h slot', async () => {
+    createDefaultCodexAuth(tempHome);
+    vi.mocked(fetch).mockResolvedValueOnce(
+      createWeeklyOnlyWhamResponse({ weeklyPct: 42 }),
+    );
+
+    const rotation = await import('./codex-token-rotation.js');
+    const usage = await import('./codex-usage-collector.js');
+
+    rotation.initCodexTokenRotation();
+    const result = await usage.refreshActiveCodexUsage();
+
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        name: 'Codex',
+        h5pct: -1,
+        d7pct: 42,
       }),
     ]);
   });
