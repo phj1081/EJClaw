@@ -8,7 +8,7 @@ import {
   getCodexAuthPath,
   updateCodexAccountUsage,
 } from './codex-token-rotation.js';
-import { readCodexAccessToken } from './codex-token-rotation-auth-file.js';
+import { readCodexAuthTokens } from './codex-token-rotation-auth-file.js';
 import {
   normalizeCodexLiveStatus,
   toCodexLiveStatusSummary,
@@ -92,15 +92,23 @@ function mapWhamWindow(
 export async function fetchCodexWhamUsage(
   authPath: string,
 ): Promise<CodexWhamUsageResult | null> {
-  const accessToken = readCodexAccessToken(authPath);
-  if (!accessToken) return null;
+  const authTokens = readCodexAuthTokens(authPath);
+  if (!authTokens) return null;
 
   try {
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${authTokens.accessToken}`,
+    };
+    // Scope the query to the workspace Codex actually uses. Multi-workspace
+    // tokens (team plans) may otherwise return another workspace's limits.
+    if (authTokens.accountId) {
+      headers['chatgpt-account-id'] = authTokens.accountId;
+    }
     const response = await fetchWithTimeout(
       CODEX_USAGE_URL,
       {
         method: 'GET',
-        headers: { authorization: `Bearer ${accessToken}` },
+        headers,
       },
       CODEX_USAGE_FETCH_TIMEOUT_MS,
     );
