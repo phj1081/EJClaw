@@ -1,0 +1,13 @@
+[Unit]
+Description=NanoClaw trusted host executor
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/nanoclaw-host-executor/server.py
+Restart=on-failure
+RestartSec=2
+Environment=TZ=Asia/Seoul
+
+[Install]
+WantedBy=default.target

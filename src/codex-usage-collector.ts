@@ -8,14 +8,28 @@ import {
   getCodexAuthPath,
   updateCodexAccountUsage,
 } from './codex-token-rotation.js';
+import { readCodexAuthTokens } from './codex-token-rotation-auth-file.js';
+import {
+  normalizeCodexLiveStatus,
+  toCodexLiveStatusSummary,
+  type CodexRateLimitWindowSummary,
+} from './codex-live-status.js';
 import { formatResetRemaining, type UsageRow } from './dashboard-usage-rows.js';
 import { logger } from './logger.js';
+import { fetchWithTimeout } from './utils.js';
 
 export interface CodexRateLimit {
   limitId?: string;
   limitName: string | null;
   primary: { usedPercent: number; resetsAt: string | number };
   secondary: { usedPercent: number; resetsAt: string | number };
+}
+
+export interface CodexWhamUsageResult {
+  rateLimits: CodexRateLimit[];
+  checkedAt: string;
+  limitReached: boolean;
+  planType: string | null;
 }
 
 /**
@@ -28,8 +42,8 @@ export interface CodexUsageRefreshResult {
   fetchedAt: string | null;
 }
 
-/** Full scan interval — exported so the orchestrator can schedule it. */
-export const CODEX_FULL_SCAN_INTERVAL = 3_600_000; // 1 hour
+const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+const CODEX_USAGE_FETCH_TIMEOUT_MS = 10_000;
 
 function getPreferredCodexPathEntries(): string[] {
   const entries = [
@@ -46,6 +60,138 @@ function getCodexHomeForAccount(accountIndex?: number): string | null {
   const authPath = getCodexAuthPath(accountIndex);
   if (!authPath || !fs.existsSync(authPath)) return null;
   return path.dirname(authPath);
+}
+
+function windowResetAt(
+  window: CodexRateLimitWindowSummary,
+  checkedAt: string,
+): string {
+  if (window.resetAt) return window.resetAt;
+  if (
+    window.resetAfterSeconds != null &&
+    Number.isFinite(window.resetAfterSeconds)
+  ) {
+    return new Date(
+      new Date(checkedAt).getTime() + window.resetAfterSeconds * 1000,
+    ).toISOString();
+  }
+  return '';
+}
+
+function mapWhamWindow(
+  window: CodexRateLimitWindowSummary | null,
+  checkedAt: string,
+): (CodexRateLimit['primary'] & { windowSeconds: number | null }) | null {
+  if (!window || window.usedPercent == null) return null;
+  return {
+    usedPercent: window.usedPercent,
+    resetsAt: windowResetAt(window, checkedAt),
+    windowSeconds: window.limitWindowSeconds ?? null,
+  };
+}
+
+const EMPTY_WINDOW: CodexRateLimit['primary'] = {
+  usedPercent: -1,
+  resetsAt: '',
+};
+
+/**
+ * Assign wham windows to the 5h/7d display slots by their actual window
+ * length instead of primary/secondary position. OpenAI has changed the
+ * response shape before (2026-07: primary became the 7-day window and
+ * secondary became null), so positional mapping mislabels values.
+ * Windows up to 24h go to the short slot; longer ones go to the weekly slot.
+ */
+function assignWhamWindows(
+  primary:
+    | (CodexRateLimit['primary'] & { windowSeconds: number | null })
+    | null,
+  secondary:
+    | (CodexRateLimit['primary'] & { windowSeconds: number | null })
+    | null,
+): { short: CodexRateLimit['primary']; weekly: CodexRateLimit['primary'] } {
+  const DAY_SECONDS = 86_400;
+  let short: CodexRateLimit['primary'] | null = null;
+  let weekly: CodexRateLimit['primary'] | null = null;
+
+  for (const win of [primary, secondary]) {
+    if (!win) continue;
+    const { windowSeconds, ...value } = win;
+    const isWeekly = windowSeconds != null && windowSeconds > DAY_SECONDS;
+    if (isWeekly) {
+      weekly ??= value;
+    } else if (windowSeconds != null) {
+      short ??= value;
+    } else {
+      // Unknown window length: keep legacy positional behavior.
+      if (win === primary) short ??= value;
+      else weekly ??= value;
+    }
+  }
+
+  return { short: short ?? EMPTY_WINDOW, weekly: weekly ?? EMPTY_WINDOW };
+}
+
+export async function fetchCodexWhamUsage(
+  authPath: string,
+): Promise<CodexWhamUsageResult | null> {
+  const authTokens = readCodexAuthTokens(authPath);
+  if (!authTokens) return null;
+
+  try {
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${authTokens.accessToken}`,
+    };
+    // Scope the query to the workspace Codex actually uses. Multi-workspace
+    // tokens (team plans) may otherwise return another workspace's limits.
+    if (authTokens.accountId) {
+      headers['chatgpt-account-id'] = authTokens.accountId;
+    }
+    const response = await fetchWithTimeout(
+      CODEX_USAGE_URL,
+      {
+        method: 'GET',
+        headers,
+      },
+      CODEX_USAGE_FETCH_TIMEOUT_MS,
+    );
+    if (!response.ok) return null;
+
+    const checkedAt = new Date().toISOString();
+    const normalized = normalizeCodexLiveStatus(
+      (await response.json()) as unknown,
+      checkedAt,
+    );
+    if (!normalized) return null;
+
+    const summary = toCodexLiveStatusSummary(normalized);
+    const primary = mapWhamWindow(
+      summary.rateLimit?.primaryWindow ?? null,
+      checkedAt,
+    );
+    const secondary = mapWhamWindow(
+      summary.rateLimit?.secondaryWindow ?? null,
+      checkedAt,
+    );
+    if (!primary && !secondary) return null;
+    const { short, weekly } = assignWhamWindows(primary, secondary);
+
+    return {
+      rateLimits: [
+        {
+          limitId: 'codex',
+          limitName: 'Codex',
+          primary: short,
+          secondary: weekly,
+        },
+      ],
+      checkedAt,
+      limitReached: summary.rateLimit?.limitReached === true,
+      planType: summary.planType,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchCodexUsage(
@@ -161,6 +307,11 @@ export async function fetchCodexUsage(
 export function applyCodexUsageToAccount(
   usage: CodexRateLimit[],
   accountIndex: number,
+  metadata?: {
+    fetchedAt?: string;
+    limitReached?: boolean;
+    planType?: string | null;
+  },
 ): void {
   if (usage.length === 0) return;
 
@@ -187,7 +338,14 @@ export function applyCodexUsageToAccount(
       { account: accountIndex + 1 },
       `Codex account #${accountIndex + 1}: no 'codex' bucket found among ${usage.length} buckets, showing unknown`,
     );
-    updateCodexAccountUsage(-1, undefined, accountIndex, -1, undefined);
+    updateCodexAccountUsage(
+      -1,
+      undefined,
+      accountIndex,
+      -1,
+      undefined,
+      metadata,
+    );
     return;
   }
 
@@ -199,7 +357,10 @@ export function applyCodexUsageToAccount(
   const resetD7Str = effective.secondary.resetsAt
     ? formatResetRemaining(effective.secondary.resetsAt)
     : undefined;
-  updateCodexAccountUsage(pct, resetStr, accountIndex, d7Pct, resetD7Str);
+  updateCodexAccountUsage(pct, resetStr, accountIndex, d7Pct, resetD7Str, {
+    ...metadata,
+    limitReached: metadata?.limitReached ?? pct >= 100,
+  });
   logger.info(
     {
       account: accountIndex + 1,
@@ -232,35 +393,78 @@ export function buildCodexUsageRowsFromState(): UsageRow[] {
       h5reset: acct.resetAt || '',
       d7pct: acct.cachedUsageD7Pct != null ? acct.cachedUsageD7Pct : -1,
       d7reset: acct.resetD7At || '',
+      fetchedAt: acct.lastUsageFetchedAt,
+      limitReached: acct.usageLimitReached,
     };
   });
 }
 
+async function refreshCodexAccountUsage(
+  accountIndex: number,
+): Promise<string | null> {
+  const authPath = getCodexAuthPath(accountIndex);
+  if (!authPath) return null;
+
+  const live = await fetchCodexWhamUsage(authPath);
+  if (live) {
+    applyCodexUsageToAccount(live.rateLimits, accountIndex, {
+      fetchedAt: live.checkedAt,
+      limitReached: live.limitReached,
+      planType: live.planType,
+    });
+    return live.checkedAt;
+  }
+
+  logger.warn(
+    { account: accountIndex + 1 },
+    'Direct Codex usage fetch failed; falling back to app-server',
+  );
+
+  const accountDir = getCodexHomeForAccount(accountIndex);
+  if (!accountDir) return null;
+  const usage = await fetchCodexUsage(accountDir);
+  if (!usage || !Array.isArray(usage) || usage.length === 0) return null;
+
+  const fetchedAt = new Date().toISOString();
+  applyCodexUsageToAccount(usage, accountIndex, { fetchedAt });
+  return fetchedAt;
+}
+
 /**
- * Scan ALL Codex accounts by spawning app-server with each auth.
+ * Refresh ALL Codex accounts, preferring direct wham/usage HTTP.
  * Returns refresh result — caller owns cache state.
  */
+let refreshAllInFlight = false;
+
 export async function refreshAllCodexAccountUsage(): Promise<CodexUsageRefreshResult> {
-  const codexAccounts = getAllCodexAccounts();
-  if (codexAccounts.length <= 1) {
+  if (refreshAllInFlight) {
+    // Overlapping call (5-min interval vs post-warmup refresh) — serve cached
+    // state instead of double-fetching every account.
     return { rows: buildCodexUsageRowsFromState(), fetchedAt: null };
   }
+  refreshAllInFlight = true;
+  try {
+    return await refreshAllCodexAccountUsageInner();
+  } finally {
+    refreshAllInFlight = false;
+  }
+}
+
+async function refreshAllCodexAccountUsageInner(): Promise<CodexUsageRefreshResult> {
+  const codexAccounts = getAllCodexAccounts();
+  if (codexAccounts.length === 0) return { rows: [], fetchedAt: null };
 
   logger.info(
     { accountCount: codexAccounts.length },
-    'Scanning all Codex accounts for usage data',
+    'Refreshing all Codex accounts for usage data',
   );
 
-  let anySuccess = false;
+  let latestFetchedAt: string | null = null;
   for (const acct of codexAccounts) {
-    const accountDir = getCodexHomeForAccount(acct.index);
-    if (!accountDir) continue;
-
     try {
-      const usage = await fetchCodexUsage(accountDir);
-      if (usage && Array.isArray(usage) && usage.length > 0) {
-        applyCodexUsageToAccount(usage, acct.index);
-        anySuccess = true;
+      const fetchedAt = await refreshCodexAccountUsage(acct.index);
+      if (fetchedAt && (!latestFetchedAt || fetchedAt > latestFetchedAt)) {
+        latestFetchedAt = fetchedAt;
       }
     } catch (err) {
       logger.debug(
@@ -272,7 +476,7 @@ export async function refreshAllCodexAccountUsage(): Promise<CodexUsageRefreshRe
 
   return {
     rows: buildCodexUsageRowsFromState(),
-    fetchedAt: anySuccess ? new Date().toISOString() : null,
+    fetchedAt: latestFetchedAt,
   };
 }
 
@@ -291,18 +495,9 @@ export async function refreshActiveCodexUsage(): Promise<CodexUsageRefreshResult
     return { rows: buildCodexUsageRowsFromState(), fetchedAt: null };
   }
 
-  const accountDir = getCodexHomeForAccount(active.index);
-  if (!accountDir) {
-    return { rows: buildCodexUsageRowsFromState(), fetchedAt: null };
-  }
-
   let fetchedAt: string | null = null;
   try {
-    const usage = await fetchCodexUsage(accountDir);
-    if (usage && Array.isArray(usage) && usage.length > 0) {
-      applyCodexUsageToAccount(usage, active.index);
-      fetchedAt = new Date().toISOString();
-    }
+    fetchedAt = await refreshCodexAccountUsage(active.index);
   } catch (err) {
     logger.debug({ err }, 'Failed to fetch active Codex account usage');
   }

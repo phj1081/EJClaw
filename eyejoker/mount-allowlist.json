@@ -1,0 +1,51 @@
+{
+ "allowedRoots": [
+  {
+   "path": "/home/ejclaw/nanoclaw-host-executor",
+   "allowReadWrite": false,
+   "description": "Read-only Host Executor MCP client"
+  },
+  {
+   "path": "/home/ejclaw/.local/share/nanoclaw-host-executor",
+   "allowReadWrite": true,
+   "description": "Trusted Host Executor Unix socket and audit storage"
+  },
+  {
+   "path": "/home/ejclaw/projects/eyejokerdb",
+   "allowReadWrite": true,
+   "description": "eyejokerdb monorepo workspace"
+  },
+  {
+   "path": "/home/ejclaw/projects/cleanapo",
+   "allowReadWrite": true,
+   "description": "cleanapo workspace"
+  },
+  {
+   "path": "/home/ejclaw/projects/varo-mouse-software",
+   "allowReadWrite": true,
+   "description": "varo mouse software workspace"
+  },
+  {
+   "path": "/home/ejclaw/.config/nanoclaw/git",
+   "allowReadWrite": false,
+   "description": "Per-group git deploy keys (read-only)"
+  },
+  {
+   "path": "/home/ejclaw/obsidian-tech/LLM Wiki",
+   "allowReadWrite": false,
+   "description": "LLM Wiki (read-only knowledge base)"
+  },
+  {
+   "path": "/home/ejclaw/.config/nanoclaw/shared-claude",
+   "allowReadWrite": false,
+   "description": "Shared agent instructions (managed by Hermes)"
+  },
+  {
+   "path": "/home/ejclaw/projects/agent-trees",
+   "allowReadWrite": true,
+   "description": "Per-agent-group isolated clones of the eyejokerdb monorepo"
+  }
+ ],
+ "blockedPatterns": [],
+ "nonMainReadOnly": true
+}

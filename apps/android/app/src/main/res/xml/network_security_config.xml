@@ -1,6 +1,0 @@
-<network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
-        <!-- Personal Tailscale dashboard endpoint used by the debug APK. -->
-        <domain includeSubdomains="false">100.101.210.95</domain>
-    </domain-config>
-</network-security-config>
