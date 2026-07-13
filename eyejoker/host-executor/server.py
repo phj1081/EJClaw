@@ -105,7 +105,8 @@ def execute(req: dict) -> dict:
                 "HOME": str(pathlib.Path.home()),
                 "USER": os.environ.get("USER", "ejclaw"),
                 "LOGNAME": os.environ.get("LOGNAME", os.environ.get("USER", "ejclaw")),
-                "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+                "PATH": "/home/ejclaw/.hermes/node/bin:/home/ejclaw/.local/bin:"
+                + os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
                 "LANG": os.environ.get("LANG", "C.UTF-8"),
                 "TZ": os.environ.get("TZ", "Asia/Seoul"),
                 # 1Password service account (user approved full access 2026-07-14).

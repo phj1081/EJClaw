@@ -10,6 +10,14 @@
 - **AgentMemory MCP** (`mcp__agentmemory__*`): Hermes와 같은 서버 공유. 작업 전 `memory_recall`/`memory_smart_search`로 과거 컨텍스트 검색. 중요 결정은 `memory_save`, 교훈은 `memory_lesson_save`.
 - **LLM Wiki** (`/workspace/extra/wiki`, read-only): 눈쟁이의 canonical 지식. 시작 전 `index.md`와 관련 `entities/`(eyejokerdb, maldhalla, homelab-infra 등) 확인. 수정은 host_exec로 원본(`/home/ejclaw/obsidian-tech/LLM Wiki`) 편집 + 그쪽 AGENTS.md 규칙 준수.
 
+## 브라우저 자동화 — 2계층
+
+1. **컨테이너 chromium + agent-browser 스킬** (기본): 일반 웹 조사/스크린샷/폼. 로그인 필요 없는 작업은 이걸로.
+2. **호스트 agbrowse** (host_exec 경유, 로그인 세션 필요할 때): Hermes가 쓰는 브라우저와 같은 인스턴스 — **눈쟁이 계정들이 이미 로그인돼 있음** (구글/노션/GitHub 등). 사용:
+   - `host_exec: agbrowse status` → running 확인 (죽어 있으면 `agbrowse start`)
+   - `host_exec: agbrowse new-tab <url>` (open 아님) → `agbrowse snapshot -i` → `agbrowse click @eN` / `agbrowse fill @eN "..."` / `agbrowse screenshot`. 끝나면 자기가 만든 탭만 닫기.
+   - **주의**: 공유 브라우저이므로 ① 기존 탭 함부로 닫기 금지 ② 작업은 새 탭에서 ③ 로그아웃/계정설정 변경 금지 ④ 구매/제출/발송은 눈쟁이 승인 후 ⑤ 세션 충돌 방지 위해 한 번에 하나의 에이전트만 사용 (다른 방이 쓰는 중이면 대기)
+
 ## 1Password (op) — 호스트 시크릿
 - host_exec 경유: `op read "op://<vault>/<item>/<field>"`, `op item list --vault person-service`
 - vault: person-service(서비스 계정/API키), homelab-infra, secret-archive, 회사
