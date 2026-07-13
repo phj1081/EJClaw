@@ -18,8 +18,10 @@
 
 ## 중첩 AI CLI
 - Claude CLI(컨테이너 안): `claude -p "..." --model claude-fable-5` (인증 자동). 재귀 금지 — 서브 작업 1단계만.
-- **GPT 모델도 같은 claude CLI로 호출 가능** (CLIProxyAPI 경유, 실측 검증됨):
-  `CLAUDE_CODE_OAUTH_TOKEN=$(cat /home/node/.claude-nested-token) ANTHROPIC_BASE_URL=http://172.17.0.1:8317 claude -p "..." --model gpt-5.6-sol`
+- **GPT 모델도 같은 claude CLI로 호출 가능** (CLIProxyAPI 경유, 실측 검증됨 — 에이전트 Bash 환경 기준):
+  1. 키 확보 (셸 변수로만, 출력 금지): `KEY=$(host_exec: grep -A2 "api-keys" ~/cliproxyapi/config.yaml | grep -oE "cpa-[A-Za-z0-9_-]+" | head -1)`
+  2. 호출: `env -u HTTP_PROXY -u HTTPS_PROXY NO_PROXY="*" ANTHROPIC_BASE_URL=http://172.17.0.1:8317 ANTHROPIC_API_KEY="$KEY" claude -p "..." --model gpt-5.6-sol`
+  - 주의 2가지: ① OneCLI 프록시가 172.17.0.1 요청을 가로채므로 **프록시 해제 필수** ② `.claude-nested-token`(OAuth)은 CLIProxyAPI가 거부 — **cpa- API 키를 ANTHROPIC_API_KEY로** 줘야 함.
   - 사용 가능 모델: gpt-5.6-sol(추천), gpt-5.6-terra, gpt-5.6-luna, gpt-5.4, gpt-5.3-codex-spark
   - 용도: 세컨드 오피니언, 교차 검증, 대량 배치 서브 작업 (fable 사용량 절약)
 - Codex(호스트, 에이전틱 코딩): host_exec로 `codex exec --cd <디렉터리> "..."`.
