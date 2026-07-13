@@ -104,9 +104,7 @@ function createWhamResponse(args?: {
 }
 
 /** 2026-07 observed shape: primary IS the weekly window, secondary is null. */
-function createWeeklyOnlyWhamResponse(args?: {
-  weeklyPct?: number;
-}): Response {
+function createWeeklyOnlyWhamResponse(args?: { weeklyPct?: number }): Response {
   const nowSeconds = Math.floor(Date.now() / 1000);
   return Response.json({
     plan_type: 'pro',

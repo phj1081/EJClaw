@@ -103,7 +103,9 @@ const EMPTY_WINDOW: CodexRateLimit['primary'] = {
  * Windows up to 24h go to the short slot; longer ones go to the weekly slot.
  */
 function assignWhamWindows(
-  primary: (CodexRateLimit['primary'] & { windowSeconds: number | null }) | null,
+  primary:
+    | (CodexRateLimit['primary'] & { windowSeconds: number | null })
+    | null,
   secondary:
     | (CodexRateLimit['primary'] & { windowSeconds: number | null })
     | null,
