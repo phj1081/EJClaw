@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""aiusage — Claude 구독 + Codex 슬롯 사용량 한 방에 보기 (구 EJClaw 대시보드의 콤팩트 후계)."""
+import json, glob, urllib.request, datetime, pathlib, time
+
+def pct_bar(p):
+    p = max(0, min(100, int(round(p))))
+    return f"{'█'*(p//10)}{'░'*(10-p//10)} {p:3d}%"
+
+def fmt_reset(ts):
+    try:
+        if isinstance(ts, str):
+            dt = datetime.datetime.fromisoformat(ts.replace('Z','+00:00'))
+        else:
+            dt = datetime.datetime.fromtimestamp(int(ts), tz=datetime.timezone.utc)
+        left = dt - datetime.datetime.now(datetime.timezone.utc)
+        s = max(0, left.total_seconds())
+        d = int(s//86400); h = int(s%86400//3600); m = int(s%3600//60)
+        return f"{d}d{h}h" if d else (f"{h}h{m:02d}m" if h else f"{m}m")
+    except Exception:
+        return "?"
+
+rows = []
+
+def add_window(acct, name, win):
+    if not win: return
+    rows.append((acct, name, win.get('used_percent', 0), win.get('reset_at')))
+
+# --- Codex slots (CLIProxyAPI auth store) ---
+for f in sorted(glob.glob(str(pathlib.Path.home()/'.cli-proxy-api'/'codex-slot*.json'))):
+    slot = pathlib.Path(f).stem.replace('codex-','')
+    try:
+        d = json.load(open(f))
+        req = urllib.request.Request('https://chatgpt.com/backend-api/wham/usage',
+            headers={'Authorization': f"Bearer {d['access_token']}", 'User-Agent': 'aiusage/1'})
+        u = json.load(urllib.request.urlopen(req, timeout=10))
+        plan = u.get('plan_type','')
+        add_window(f"{slot}({plan})", 'GPT-5.6', (u.get('rate_limit') or {}).get('primary_window'))
+        for extra in (u.get('additional_rate_limits') or []):
+            add_window(f"{slot}({plan})", extra.get('limit_name','extra')[:12],
+                       (extra.get('rate_limit') or {}).get('primary_window'))
+    except Exception as e:
+        rows.append((f"{slot}", 'ERROR', -1, str(e)[:28]))
+
+# --- Claude subscription (OAuth usage endpoint, 429 대비 캐시) ---
+CACHE = pathlib.Path.home()/'.hermes'/'state'/'aiusage-claude-cache.json'
+def claude_rows_from(u):
+    out=[]
+    lims = u.get('limits') or []
+    if lims:
+        for l in lims:
+            kind = l.get('kind') or 'window'
+            label = {'session':'5h 세션','weekly_all':'주간 전체','weekly_scoped':'주간(모델)'}.get(kind, kind)
+            pct = l.get('used_percent')
+            if pct is None:
+                util = l.get('utilization')
+                pct = util*100 if isinstance(util,(int,float)) and util<=1 else (util or 0)
+            out.append(('claude(max)', label[:12], pct, l.get('resets_at') or l.get('reset_at')))
+    else:
+        for key,label in (('five_hour','5h 세션'),('seven_day','주간 전체')):
+            w = u.get(key)
+            if w:
+                util=w.get('utilization') or 0
+                pct = util*100 if util<=1 else util
+                out.append(('claude(max)', label, pct, w.get('resets_at')))
+    return out
+
+fetched=False
+try:
+    cred = json.load(open(pathlib.Path.home()/'.claude'/'.credentials.json'))
+    tok = (cred.get('claudeAiOauth') or {}).get('accessToken')
+    req = urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
+        headers={'Authorization': f'Bearer {tok}', 'User-Agent': 'aiusage/1',
+                 'anthropic-beta': 'oauth-2025-04-20'})
+    u = json.load(urllib.request.urlopen(req, timeout=10))
+    rows += claude_rows_from(u)
+    fetched=True
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    json.dump({'at': time.time(), 'data': u}, open(CACHE,'w'))
+except Exception as e:
+    # 429 등 실패 → 캐시된 마지막 성공값 표시
+    try:
+        c = json.load(open(CACHE))
+        age_m = int((time.time()-c['at'])//60)
+        for acct,name,pct,reset in claude_rows_from(c['data']):
+            rows.append((acct, f"{name}*", pct, reset))
+        rows.append(('claude(max)', f"(캐시 {age_m}분 전)", -2, ''))
+    except Exception:
+        rows.append(('claude(max)', 'ERROR', -1, str(e)[:28]))
+
+print(f"{'계정':14}{'윈도우':14}{'사용량':17}리셋")
+for acct, name, pct, reset in rows:
+    if pct == -1:
+        print(f"{acct:14}{name:14}{'—':17}{reset}")
+    elif pct == -2:
+        print(f"{acct:14}{name:14}{reset}")
+    else:
+        print(f"{acct:14}{name:14}{pct_bar(pct):17}{fmt_reset(reset)}")
