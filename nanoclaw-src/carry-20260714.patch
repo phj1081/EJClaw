@@ -1,0 +1,671 @@
+diff --git a/EYEJOKER_STACK.md b/EYEJOKER_STACK.md
+new file mode 100644
+index 00000000..84da5ee7
+--- /dev/null
++++ b/EYEJOKER_STACK.md
+@@ -0,0 +1,28 @@
++# Eyejoker NanoClaw stack
++
++This checkout is a thin local carry layer on NanoClaw upstream.
++
++- Upstream base: `ef220b53` (`main`, MIT)
++- Discord adapter: applied from upstream's `channels` branch via the bundled `add-discord` skill
++- `gpt-proxy` provider: reuses the Claude Agent SDK harness while injecting the private CLIProxyAPI Anthropic-compatible endpoint for GPT/Codex rooms
++- Default EYEJOKER group: direct Claude subscription through OneCLI to `api.anthropic.com`
++- GPT group: `gpt-proxy` → OneCLI → CLIProxyAPI → Codex OAuth pool
++
++External runtime components are intentionally not vendored:
++
++- CLIProxyAPI: `~/cliproxyapi`, bound only to Docker bridge `172.17.0.1:8317`
++- ECC generated profile: `~/ecc-poc/.claude`; projection helper: `~/ecc-poc/sync-to-nanoclaw.sh`
++- Host Executor: `~/nanoclaw-host-executor`; runtime socket and audit log under `~/.local/share/nanoclaw-host-executor`
++- OneCLI: `~/.onecli`
++
++Secrets stay in ignored/local files (`.env`, `~/.cli-proxy-api`, OneCLI vault). Never commit them.
++
++## Verification
++
++```bash
++pnpm run build
++pnpm exec vitest run src/channels/discord-registration.test.ts
++cd container/agent-runner && bunx tsc --noEmit
++```
++
++Runtime probes exercised direct fable, proxied GPT, Discord channel delivery, Discord per-thread delivery, persistent session continuation, ECC observation capture, scheduled-task execution, and Host Executor MCP/audit logging.
+diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
+index 648e9838..561d888f 100644
+--- a/container/agent-runner/src/providers/claude.ts
++++ b/container/agent-runner/src/providers/claude.ts
+@@ -485,3 +485,4 @@ export class ClaudeProvider implements AgentProvider {
+ }
+ 
+ registerProvider('claude', (opts) => new ClaudeProvider(opts));
++registerProvider('gpt-proxy', (opts) => new ClaudeProvider(opts));
+diff --git a/package.json b/package.json
+index 79214c9b..b5a85df5 100644
+--- a/package.json
++++ b/package.json
+@@ -27,6 +27,7 @@
+     "test:watch": "vitest"
+   },
+   "dependencies": {
++    "@chat-adapter/discord": "4.29.0",
+     "@clack/core": "^1.2.0",
+     "@clack/prompts": "^1.2.0",
+     "@onecli-sh/sdk": "2.2.1",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index bbe8d700..dcf782f0 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -8,6 +8,9 @@ importers:
+ 
+   .:
+     dependencies:
++      '@chat-adapter/discord':
++        specifier: 4.29.0
++        version: 4.29.0
+       '@clack/core':
+         specifier: ^1.2.0
+         version: 1.2.0
+@@ -69,12 +72,48 @@ importers:
+ 
+ packages:
+ 
++  '@chat-adapter/discord@4.29.0':
++    resolution: {integrity: sha512-C6pDVKn7s0PhvgeqldYxoShWXJzthwtlo+sCesqenh56M03eHsioinqxeJttmtK8y1ZD8/qiP2lAZufDwuEQhA==}
++    engines: {node: '>=20'}
++
++  '@chat-adapter/shared@4.29.0':
++    resolution: {integrity: sha512-ARqTDoHJHKN9rpytbFPJbNmqqx3fOg5xwsTZdlingQPAssOSeHDBdqrFJkgDhyCRGbmDtG09cuS0FkVzeoh2qg==}
++    engines: {node: '>=20'}
++
+   '@clack/core@1.2.0':
+     resolution: {integrity: sha512-qfxof/3T3t9DPU/Rj3OmcFyZInceqj/NVtO9rwIuJqCUgh32gwPjpFQQp/ben07qKlhpwq7GzfWpST4qdJ5Drg==}
+ 
+   '@clack/prompts@1.2.0':
+     resolution: {integrity: sha512-4jmztR9fMqPMjz6H/UZXj0zEmE43ha1euENwkckKKel4XpSfokExPo5AiVStdHSAlHekz4d0CA/r45Ok1E4D3w==}
+ 
++  '@discordjs/builders@1.14.1':
++    resolution: {integrity: sha512-gSKkhXLqs96TCzk66VZuHHl8z2bQMJFGwrXC0f33ngK+FLNau4hU1PYny3DNJfNdSH+gVMzE85/d5FQ2BpcNwQ==}
++    engines: {node: '>=16.11.0'}
++
++  '@discordjs/collection@1.5.3':
++    resolution: {integrity: sha512-SVb428OMd3WO1paV3rm6tSjM4wC+Kecaa1EUGX7vc6/fddvw/6lg90z4QtCqm21zvVe92vMMDt9+DkIvjXImQQ==}
++    engines: {node: '>=16.11.0'}
++
++  '@discordjs/collection@2.1.1':
++    resolution: {integrity: sha512-LiSusze9Tc7qF03sLCujF5iZp7K+vRNEDBZ86FT9aQAv3vxMLihUvKvpsCWiQ2DJq1tVckopKm1rxomgNUc9hg==}
++    engines: {node: '>=18'}
++
++  '@discordjs/formatters@0.6.2':
++    resolution: {integrity: sha512-y4UPwWhH6vChKRkGdMB4odasUbHOUwy7KL+OVwF86PvT6QVOwElx+TiI1/6kcmcEe+g5YRXJFiXSXUdabqZOvQ==}
++    engines: {node: '>=16.11.0'}
++
++  '@discordjs/rest@2.6.1':
++    resolution: {integrity: sha512-wwQdgjeaoYFiaG+atbqx6aJDpqW7JHAo0HrQkBTbYzM3/PJ3GweQIpgElNcGZ26DCUOXMyawYd0YF7vtr+fZXg==}
++    engines: {node: '>=18'}
++
++  '@discordjs/util@1.2.0':
++    resolution: {integrity: sha512-3LKP7F2+atl9vJFhaBjn4nOaSWahZ/yWjOvA4e5pnXkt2qyXRCHLxoBQy81GFtLGCq7K9lPm9R517M1U+/90Qg==}
++    engines: {node: '>=18'}
++
++  '@discordjs/ws@1.2.3':
++    resolution: {integrity: sha512-wPlQDxEmlDg5IxhJPuxXr3Vy9AjYq5xCvFWGJyD7w7Np8ZGu+Mc+97LCoEc/+AYCo2IDpKioiH0/c/mj5ZR9Uw==}
++    engines: {node: '>=16.11.0'}
++
+   '@emnapi/core@1.9.2':
+     resolution: {integrity: sha512-UC+ZhH3XtczQYfOlu3lNEkdW/p4dsJ1r/bP7H8+rhao3TTTMO1ATq/4DdIi23XuGoFY+Cz0JmCbdVl0hz9jZcA==}
+ 
+@@ -408,6 +447,22 @@ packages:
+   '@rolldown/pluginutils@1.0.0-rc.15':
+     resolution: {integrity: sha512-UromN0peaE53IaBRe9W7CjrZgXl90fqGpK+mIZbA3qSTeYqg3pqpROBdIPvOG3F5ereDHNwoHBI2e50n1BDr1g==}
+ 
++  '@sapphire/async-queue@1.5.5':
++    resolution: {integrity: sha512-cvGzxbba6sav2zZkH8GPf2oGk9yYoD5qrNWdu9fRehifgnFZJMV+nuy2nON2roRO4yQQ+v7MK/Pktl/HgfsUXg==}
++    engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
++
++  '@sapphire/shapeshift@4.0.0':
++    resolution: {integrity: sha512-d9dUmWVA7MMiKobL3VpLF8P2aeanRTu6ypG2OIaEv/ZHH/SUQ2iHOVyi5wAPjQ+HmnMuL0whK9ez8I/raWbtIg==}
++    engines: {node: '>=v16'}
++
++  '@sapphire/snowflake@3.5.3':
++    resolution: {integrity: sha512-jjmJywLAFoWeBi1W7994zZyiNWPIiqRRNAmSERxyg93xRGzNYvGjlZ0gR6x0F4gPRi2+0O6S71kOZYyr3cxaIQ==}
++    engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
++
++  '@sapphire/snowflake@3.5.5':
++    resolution: {integrity: sha512-xzvBr1Q1c4lCe7i6sRnrofxeO1QTP/LKQ6A6qy0iB4x5yfiSfARMEQEghojzTNALDTcv8En04qYNIco9/K9eZQ==}
++    engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
++
+   '@standard-schema/spec@1.1.0':
+     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+ 
+@@ -444,6 +499,9 @@ packages:
+   '@types/unist@3.0.3':
+     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
+ 
++  '@types/ws@8.18.1':
++    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
++
+   '@typescript-eslint/eslint-plugin@8.58.2':
+     resolution: {integrity: sha512-aC2qc5thQahutKjP+cl8cgN9DWe3ZUqVko30CMSZHnFEHyhOYoZSzkGtAI2mcwZ38xeImDucI4dnqsHiOYuuCw==}
+     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+@@ -532,6 +590,10 @@ packages:
+   '@vitest/utils@4.1.4':
+     resolution: {integrity: sha512-13QMT+eysM5uVGa1rG4kegGYNp6cnQcsTc67ELFbhNLQO+vgsygtYJx2khvdt4gVQqSSpC/KT5FZZxUpP3Oatw==}
+ 
++  '@vladfrangu/async_event_emitter@2.4.7':
++    resolution: {integrity: sha512-Xfe6rpCTxSxfbswi/W/Pz7zp1WWSNn4A0eW4mLkQUewCrXXtMj31lCg+iQyTkh/CkusZSq9eDflu7tjEDXUY6g==}
++    engines: {node: '>=v14.0.0', npm: '>=7.0.0'}
++
+   '@workflow/serde@4.1.0-beta.2':
+     resolution: {integrity: sha512-8kkeoQKLDaKXefjV5dbhBj2aErfKp1Mc4pb6tj8144cF+Em5SPbyMbyLCHp+BVrFfFVCBluCtMx+jjvaFVZGww==}
+ 
+@@ -679,6 +741,20 @@ packages:
+   devlop@1.1.0:
+     resolution: {integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==}
+ 
++  discord-api-types@0.37.120:
++    resolution: {integrity: sha512-7xpNK0EiWjjDFp2nAhHXezE4OUWm7s1zhc/UXXN6hnFFU8dfoPHgV0Hx0RPiCa3ILRpdeh152icc68DGCyXYIw==}
++
++  discord-api-types@0.38.49:
++    resolution: {integrity: sha512-XnqcWmnFZFAE8ZM8SHAw9DIV8D3Or00rMQ8iQLotrEA2PmXhl+ykaf6L6q4l474hrSUH1JaYcv+iOMRWp2p6Tg==}
++
++  discord-interactions@4.4.0:
++    resolution: {integrity: sha512-jjJx8iwAeJcj8oEauV43fue9lNqkf38fy60aSs2+G8D1nJmDxUIrk08o3h0F3wgwuBWWJUZO+X/VgfXsxpCiJA==}
++    engines: {node: '>=18.4.0'}
++
++  discord.js@14.26.5:
++    resolution: {integrity: sha512-SGYgjiAs0o8ZzMC97XmFXKONyairJ9YzVda+LvoSKs9YYh2gPtQhY+liaV6H/w72jxYbu9ggiSqAXoF3FLOH4A==}
++    engines: {node: '>=18'}
++
+   end-of-stream@1.4.5:
+     resolution: {integrity: sha512-ooEGc6HP26xXq/N+GCGOT0JKCLDGrq2bQUZrQ7gyrJiZANJ/8YDTxTpQBXGMn+WbIQXNVpyWymm7KYVICQnyOg==}
+ 
+@@ -988,6 +1064,12 @@ packages:
+   lodash.merge@4.6.2:
+     resolution: {integrity: sha512-0KpjqXRVvrYyCsX1swR/XTK0va6VQkQM6MNo7PqW77ByjAhoARA8EfrP1N4+KlKj8YS0ZUCtRT/YUuhyYDujIQ==}
+ 
++  lodash.snakecase@4.1.1:
++    resolution: {integrity: sha512-QZ1d4xoBHYUeuouhEq3lk3Uq7ldgyFXGBhg04+oRLnIz8o9T65Eh+8YdroUwn846zchkA9yDsDl5CVVaV2nqYw==}
++
++  lodash@4.18.1:
++    resolution: {integrity: sha512-dMInicTPVE8d1e5otfwmmjlxkZoUpiVLwyeTdUsi/Caj/gfzzblBcCE5sRHV/AsjuCmxWrte2TNGSYuCeCq+0Q==}
++
+   longest-streak@3.1.0:
+     resolution: {integrity: sha512-9Ri+o0JYgehTaVBBDoMqIl8GXtbWg711O3srftcHhZ0dqnETqLaoIK0x17fUw9rFSlK/0NlsKe0Ahhyl5pXE2g==}
+ 
+@@ -995,6 +1077,9 @@ packages:
+     resolution: {integrity: sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew==}
+     engines: {node: '>=12'}
+ 
++  magic-bytes.js@1.13.0:
++    resolution: {integrity: sha512-afO2mnxW7GDTXMm5/AoN1WuOcdoKhtgXjIvHmobqTD1grNplhGdv3PFOyjCVmrnOZBIT/gD/koDKpYG+0mvHcg==}
++
+   magic-string@0.30.21:
+     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+ 
+@@ -1335,6 +1420,9 @@ packages:
+     peerDependencies:
+       typescript: '>=4.8.4'
+ 
++  ts-mixer@6.0.4:
++    resolution: {integrity: sha512-ufKpbmrugz5Aou4wcr5Wc1UUFWOLhq+Fm6qa6P0w0K5Qw2yhaUoiWszhCVuNQyNwrlGiscHOmqYoAox1PtvgjA==}
++
+   tslib@2.8.1:
+     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
+ 
+@@ -1365,6 +1453,10 @@ packages:
+   undici-types@6.21.0:
+     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+ 
++  undici@6.24.1:
++    resolution: {integrity: sha512-sC+b0tB1whOCzbtlx20fx3WgCXwkW627p4EA9uM+/tNNPkSS+eSEld6pAs9nDv7WbY1UUljBMYPtu9BCOrCWKA==}
++    engines: {node: '>=18.17'}
++
+   unified@11.0.5:
+     resolution: {integrity: sha512-xKvGhPWw3k84Qjh8bI3ZeJjqnyadK+GEFtazSfZv/rKeTkTjOJho6mFqh2SM96iIcZokxiOpg78GazTSg8+KHA==}
+ 
+@@ -1493,6 +1585,18 @@ packages:
+   wrappy@1.0.2:
+     resolution: {integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==}
+ 
++  ws@8.21.0:
++    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
++    engines: {node: '>=10.0.0'}
++    peerDependencies:
++      bufferutil: ^4.0.1
++      utf-8-validate: '>=5.0.2'
++    peerDependenciesMeta:
++      bufferutil:
++        optional: true
++      utf-8-validate:
++        optional: true
++
+   yocto-queue@0.1.0:
+     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
+     engines: {node: '>=10'}
+@@ -1502,6 +1606,28 @@ packages:
+ 
+ snapshots:
+ 
++  '@chat-adapter/discord@4.29.0':
++    dependencies:
++      '@chat-adapter/shared': 4.29.0
++      chat: 4.29.0
++      discord-api-types: 0.37.120
++      discord-interactions: 4.4.0
++      discord.js: 14.26.5
++    transitivePeerDependencies:
++      - ai
++      - bufferutil
++      - supports-color
++      - utf-8-validate
++      - zod
++
++  '@chat-adapter/shared@4.29.0':
++    dependencies:
++      chat: 4.29.0
++    transitivePeerDependencies:
++      - ai
++      - supports-color
++      - zod
++
+   '@clack/core@1.2.0':
+     dependencies:
+       fast-wrap-ansi: 0.1.6
+@@ -1514,6 +1640,55 @@ snapshots:
+       fast-wrap-ansi: 0.1.6
+       sisteransi: 1.0.5
+ 
++  '@discordjs/builders@1.14.1':
++    dependencies:
++      '@discordjs/formatters': 0.6.2
++      '@discordjs/util': 1.2.0
++      '@sapphire/shapeshift': 4.0.0
++      discord-api-types: 0.38.49
++      fast-deep-equal: 3.1.3
++      ts-mixer: 6.0.4
++      tslib: 2.8.1
++
++  '@discordjs/collection@1.5.3': {}
++
++  '@discordjs/collection@2.1.1': {}
++
++  '@discordjs/formatters@0.6.2':
++    dependencies:
++      discord-api-types: 0.38.49
++
++  '@discordjs/rest@2.6.1':
++    dependencies:
++      '@discordjs/collection': 2.1.1
++      '@discordjs/util': 1.2.0
++      '@sapphire/async-queue': 1.5.5
++      '@sapphire/snowflake': 3.5.5
++      '@vladfrangu/async_event_emitter': 2.4.7
++      discord-api-types: 0.38.49
++      magic-bytes.js: 1.13.0
++      tslib: 2.8.1
++      undici: 6.24.1
++
++  '@discordjs/util@1.2.0':
++    dependencies:
++      discord-api-types: 0.38.49
++
++  '@discordjs/ws@1.2.3':
++    dependencies:
++      '@discordjs/collection': 2.1.1
++      '@discordjs/rest': 2.6.1
++      '@discordjs/util': 1.2.0
++      '@sapphire/async-queue': 1.5.5
++      '@types/ws': 8.18.1
++      '@vladfrangu/async_event_emitter': 2.4.7
++      discord-api-types: 0.38.49
++      tslib: 2.8.1
++      ws: 8.21.0
++    transitivePeerDependencies:
++      - bufferutil
++      - utf-8-validate
++
+   '@emnapi/core@1.9.2':
+     dependencies:
+       '@emnapi/wasi-threads': 1.2.1
+@@ -1729,6 +1904,17 @@ snapshots:
+ 
+   '@rolldown/pluginutils@1.0.0-rc.15': {}
+ 
++  '@sapphire/async-queue@1.5.5': {}
++
++  '@sapphire/shapeshift@4.0.0':
++    dependencies:
++      fast-deep-equal: 3.1.3
++      lodash: 4.18.1
++
++  '@sapphire/snowflake@3.5.3': {}
++
++  '@sapphire/snowflake@3.5.5': {}
++
+   '@standard-schema/spec@1.1.0': {}
+ 
+   '@tybys/wasm-util@0.10.1':
+@@ -1767,6 +1953,10 @@ snapshots:
+ 
+   '@types/unist@3.0.3': {}
+ 
++  '@types/ws@8.18.1':
++    dependencies:
++      '@types/node': 22.19.17
++
+   '@typescript-eslint/eslint-plugin@8.58.2(@typescript-eslint/parser@8.58.2(eslint@9.39.4)(typescript@5.9.3))(eslint@9.39.4)(typescript@5.9.3)':
+     dependencies:
+       '@eslint-community/regexpp': 4.12.2
+@@ -1899,6 +2089,8 @@ snapshots:
+       convert-source-map: 2.0.0
+       tinyrainbow: 3.1.0
+ 
++  '@vladfrangu/async_event_emitter@2.4.7': {}
++
+   '@workflow/serde@4.1.0-beta.2': {}
+ 
+   acorn-jsx@5.3.2(acorn@8.16.0):
+@@ -2030,6 +2222,31 @@ snapshots:
+     dependencies:
+       dequal: 2.0.3
+ 
++  discord-api-types@0.37.120: {}
++
++  discord-api-types@0.38.49: {}
++
++  discord-interactions@4.4.0: {}
++
++  discord.js@14.26.5:
++    dependencies:
++      '@discordjs/builders': 1.14.1
++      '@discordjs/collection': 1.5.3
++      '@discordjs/formatters': 0.6.2
++      '@discordjs/rest': 2.6.1
++      '@discordjs/util': 1.2.0
++      '@discordjs/ws': 1.2.3
++      '@sapphire/snowflake': 3.5.3
++      discord-api-types: 0.38.49
++      fast-deep-equal: 3.1.3
++      lodash.snakecase: 4.1.1
++      magic-bytes.js: 1.13.0
++      tslib: 2.8.1
++      undici: 6.24.1
++    transitivePeerDependencies:
++      - bufferutil
++      - utf-8-validate
++
+   end-of-stream@1.4.5:
+     dependencies:
+       once: 1.4.0
+@@ -2315,10 +2532,16 @@ snapshots:
+ 
+   lodash.merge@4.6.2: {}
+ 
++  lodash.snakecase@4.1.1: {}
++
++  lodash@4.18.1: {}
++
+   longest-streak@3.1.0: {}
+ 
+   luxon@3.7.2: {}
+ 
++  magic-bytes.js@1.13.0: {}
++
+   magic-string@0.30.21:
+     dependencies:
+       '@jridgewell/sourcemap-codec': 1.5.5
+@@ -2851,8 +3074,9 @@ snapshots:
+     dependencies:
+       typescript: 5.9.3
+ 
+-  tslib@2.8.1:
+-    optional: true
++  ts-mixer@6.0.4: {}
++
++  tslib@2.8.1: {}
+ 
+   tsx@4.21.0:
+     dependencies:
+@@ -2884,6 +3108,8 @@ snapshots:
+ 
+   undici-types@6.21.0: {}
+ 
++  undici@6.24.1: {}
++
+   unified@11.0.5:
+     dependencies:
+       '@types/unist': 3.0.3
+@@ -2982,6 +3208,8 @@ snapshots:
+ 
+   wrappy@1.0.2: {}
+ 
++  ws@8.21.0: {}
++
+   yocto-queue@0.1.0: {}
+ 
+   zwitch@2.0.4: {}
+diff --git a/src/channels/discord-registration.test.ts b/src/channels/discord-registration.test.ts
+new file mode 100644
+index 00000000..871c5e1e
+--- /dev/null
++++ b/src/channels/discord-registration.test.ts
+@@ -0,0 +1,34 @@
++/**
++ * Integration test for the discord channel's single reach-in: the self-registration
++ * import in the `src/channels/index.ts` barrel. Importing the barrel runs discord.ts's
++ * top-level `registerChannelAdapter('discord', …)`; without the import the channel is
++ * silently absent.
++ *
++ * Behavior, not structural: it imports the real barrel and asserts the registry
++ * actually contains the channel. This reflects what happens at host boot — if the
++ * `import './discord.js';` line is deleted, or the barrel fails to evaluate for any
++ * reason (so the channel genuinely would not register), this goes red. A structural
++ * check of the import line would falsely pass in that second case.
++ *
++ * Importing the barrel is safe: registration is a pure top-level call, and discord.ts
++ * builds the SDK adapter / bridge only inside its factory (invoked at host startup),
++ * never at import. It does require the adapter package (`@chat-adapter/discord`) to be installed,
++ * which holds in a composed install: the skill's `pnpm install` step runs before this
++ * test — so this test also implicitly guards that dependency (an unmocked import throws
++ * if the package is missing).
++ *
++ * discord is a Chat SDK channel: discord.ts also consumes a load-bearing *core* API —
++ * `createChatSdkBridge(...)` from ./chat-sdk-bridge.js. That core-consumption is a
++ * typed call, so the build/typecheck leg (`pnpm run build`) guards it against upstream
++ * drift, not this test. Every Chat SDK channel follows this same shape.
++ */
++import { describe, it, expect } from 'vitest';
++
++import { getRegisteredChannelNames } from './channel-registry.js';
++import './index.js'; // the real barrel — triggers every channel's self-registration
++
++describe('discord channel registration', () => {
++  it('registers discord via the channel barrel', () => {
++    expect(getRegisteredChannelNames()).toContain('discord');
++  });
++});
+diff --git a/src/channels/discord.ts b/src/channels/discord.ts
+new file mode 100644
+index 00000000..f2bb09ec
+--- /dev/null
++++ b/src/channels/discord.ts
+@@ -0,0 +1,98 @@
++/**
++ * Discord channel adapter (v2) — uses Chat SDK bridge.
++ * Self-registers on import.
++ */
++import { createDiscordAdapter } from '@chat-adapter/discord';
++
++import { readEnvFile } from '../env.js';
++import type { ChannelDefaults } from './adapter.js';
++import { createChatSdkBridge, type ReplyContext } from './chat-sdk-bridge.js';
++import { registerChannelAdapter } from './channel-registry.js';
++
++/**
++ * Dedicated bot app on a threaded platform. group threads:true matches the
++ * declared supportsThreads (the skill-installed install-style knob) so
++ * mention-sticky engagement stays bounded per-thread. dm.threads:false —
++ * DM replies land top-level, one session per DM.
++ */
++const DISCORD_DEFAULTS: ChannelDefaults = {
++  dm: { engageMode: 'pattern', engagePattern: '.', threads: false, unknownSenderPolicy: 'request_approval' },
++  group: { engageMode: 'mention-sticky', threads: true, unknownSenderPolicy: 'request_approval' },
++  mentions: 'platform',
++};
++
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++function extractReplyContext(raw: Record<string, any>): ReplyContext | null {
++  if (!raw.referenced_message) return null;
++  const reply = raw.referenced_message;
++  return {
++    text: reply.content || '',
++    sender: reply.author?.global_name || reply.author?.username || 'Unknown',
++  };
++}
++
++/**
++ * Discord message forwards carry their content in `message_snapshots`, not
++ * `content` (`message_reference.type === 1` means FORWARD; 0 is a normal
++ * reply). The adapter only reads `content`/`attachments`, so without this the
++ * agent sees an empty message. Unwrap the snapshot back into the payload so
++ * text, attachment download, and formatting all ride the existing path.
++ * Note: snapshots contain no author, so the original sender is unavailable.
++ */
++// eslint-disable-next-line @typescript-eslint/no-explicit-any
++export function unwrapForwardedSnapshot(data: Record<string, any>): void {
++  if (data.message_reference?.type !== 1) return;
++  const snaps = (data.message_snapshots ?? [])
++    // eslint-disable-next-line @typescript-eslint/no-explicit-any
++    .map((s: any) => s?.message)
++    .filter(Boolean);
++  if (snaps.length === 0) return;
++  // eslint-disable-next-line @typescript-eslint/no-explicit-any
++  const text = snaps
++    .map((m: any) => m.content)
++    .filter(Boolean)
++    .join('\n');
++  const label = '[Forwarded message]';
++  data.content = text ? `${label}\n${text}` : data.content || label;
++  // eslint-disable-next-line @typescript-eslint/no-explicit-any
++  const fwdAttachments = snaps.flatMap((m: any) => m.attachments ?? []);
++  if (fwdAttachments.length > 0) {
++    data.attachments = [...(data.attachments ?? []), ...fwdAttachments];
++  }
++}
++
++function unwrapForwards(adapter: ReturnType<typeof createDiscordAdapter>): void {
++  const a = adapter as unknown as {
++    handleForwardedMessage: (data: Record<string, unknown>, options?: unknown) => Promise<void>;
++  };
++  const orig = a.handleForwardedMessage.bind(adapter);
++  a.handleForwardedMessage = async (data, options) => {
++    unwrapForwardedSnapshot(data);
++    return orig(data, options);
++  };
++}
++
++registerChannelAdapter('discord', {
++  factory: () => {
++    const env = readEnvFile(['DISCORD_BOT_TOKEN', 'DISCORD_PUBLIC_KEY', 'DISCORD_APPLICATION_ID']);
++    if (!env.DISCORD_BOT_TOKEN) return null;
++    const discordAdapter = createDiscordAdapter({
++      botToken: env.DISCORD_BOT_TOKEN,
++      publicKey: env.DISCORD_PUBLIC_KEY,
++      applicationId: env.DISCORD_APPLICATION_ID,
++    });
++    unwrapForwards(discordAdapter);
++    return createChatSdkBridge({
++      adapter: discordAdapter,
++      concurrency: 'concurrent',
++      botToken: env.DISCORD_BOT_TOKEN,
++      extractReplyContext,
++      supportsThreads: true,
++      defaults: DISCORD_DEFAULTS,
++      // Discord rejects messages over 2000 chars; without this the bridge
++      // would let long agent replies fail instead of splitting them.
++      maxTextLength: 2000,
++    });
++  },
++  defaults: DISCORD_DEFAULTS,
++});
+diff --git a/src/channels/index.ts b/src/channels/index.ts
+index e9b3bd1b..3be776af 100644
+--- a/src/channels/index.ts
++++ b/src/channels/index.ts
+@@ -7,3 +7,4 @@
+ // self-registration import below.
+ 
+ import './cli.js';
++import './discord.js';
+diff --git a/src/container-runner.ts b/src/container-runner.ts
+index f72c94cb..aa9628c1 100644
+--- a/src/container-runner.ts
++++ b/src/container-runner.ts
+@@ -504,6 +504,16 @@ async function buildContainerArgs(
+   }
+   log.info('OneCLI gateway applied', { containerName });
+ 
++  // Carry patch: git/libcurl don't honor SSL_CERT_FILE — they need their own
++  // CA vars to trust the OneCLI gateway MITM cert, otherwise `git pull`/`curl`
++  // to HTTPS remotes fail with "server certificate verification failed".
++  args.push('-e', 'GIT_SSL_CAINFO=/tmp/onecli-combined-ca.pem');
++  args.push('-e', 'CURL_CA_BUNDLE=/tmp/onecli-combined-ca.pem');
++  // Groups with a git-auth mount get a deploy key + https→ssh rewrite; for
++  // groups without the mount the path doesn't exist and git treats the
++  // global config as empty, so this is a safe no-op default.
++  args.push('-e', 'GIT_CONFIG_GLOBAL=/workspace/extra/git-auth/gitconfig');
++
+   // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
+   args.push('--entrypoint', 'bash');
+ 
+@@ -511,7 +521,15 @@ async function buildContainerArgs(
+   const imageTag = containerConfig.imageTag || CONTAINER_IMAGE;
+   args.push(imageTag);
+ 
+-  args.push('-c', 'exec bun run /app/src/index.ts');
++  // Carry patch: persist the gateway auth sentinel for nested `claude` CLI
++  // calls. The Agent SDK sanitizes CLAUDE_CODE_OAUTH_TOKEN out of Bash tool
++  // children, so sub-invocations of claude would see "Not logged in". The
++  // token is a OneCLI gateway sentinel (real credential never enters the
++  // container), so a 0600 file inside the container is the same trust domain.
++  args.push(
++    '-c',
++    'umask 077; printf %s "$CLAUDE_CODE_OAUTH_TOKEN" > /home/node/.claude-nested-token; exec bun run /app/src/index.ts',
++  );
+ 
+   return args;
+ }
+diff --git a/src/providers/gpt-proxy.ts b/src/providers/gpt-proxy.ts
+new file mode 100644
+index 00000000..e2c6f049
+--- /dev/null
++++ b/src/providers/gpt-proxy.ts
+@@ -0,0 +1,16 @@
++/** GPT/Codex subscription pool through CLIProxyAPI's Anthropic-compatible endpoint. */
++import { readEnvFile } from '../env.js';
++import { registerProviderContainerConfig } from './provider-container-registry.js';
++
++registerProviderContainerConfig('gpt-proxy', () => {
++  const dotenv = readEnvFile(['CLIPROXY_BASE_URL']);
++  if (!dotenv.CLIPROXY_BASE_URL) {
++    throw new Error('CLIPROXY_BASE_URL is required for the gpt-proxy provider');
++  }
++  return {
++    env: {
++      ANTHROPIC_BASE_URL: dotenv.CLIPROXY_BASE_URL,
++      ANTHROPIC_AUTH_TOKEN: 'placeholder',
++    },
++  };
++});
+diff --git a/src/providers/index.ts b/src/providers/index.ts
+index 9060a6b4..7e81f8d0 100644
+--- a/src/providers/index.ts
++++ b/src/providers/index.ts
+@@ -4,3 +4,5 @@
+ // needs (claude) don't appear here.
+ //
+ // Skills add a new provider by appending one import line below.
++import './claude.js';
++import './gpt-proxy.js';

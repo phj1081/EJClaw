@@ -1,0 +1,5 @@
+8ee50fbb docs: EYEJOKER stack provenance (carry inventory + rebuild notes)
+b5ffd342 feat(container-runner): EYEJOKER carries — OneCLI CA env, project-scoped git auth mount activation, nested-claude auth sentinel
+25e8652d feat(providers): gpt-proxy — CLIProxyAPI Anthropic-compat endpoint (Codex subscription pool)
+ca34ec7c feat(channels): Discord adapter (upstream channels branch carry)
+upstream base: ef220b53 (v2.1.53)
