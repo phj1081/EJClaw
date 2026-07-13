@@ -1,7 +1,0 @@
-## Copy to local.properties when building outside Android Studio.
-## Do not commit local.properties.
-sdk.dir=/home/ejclaw/android-sdk
-
-## Optional later, when enabling Meta Wearables DAT dependencies.
-## github_token=ghp_xxx
-## meta_dat_application_id=your_meta_wearables_application_id
