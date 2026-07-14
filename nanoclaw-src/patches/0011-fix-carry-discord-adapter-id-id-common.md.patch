@@ -1,0 +1,83 @@
+From 7e5ad2d549808fd233592b2140631a10e59bfa6d Mon Sep 17 00:00:00 2001
+From: EJ Claw <ejclaw@eyejoker.com>
+Date: Tue, 14 Jul 2026 20:51:03 +0900
+Subject: [PATCH 11/11] =?UTF-8?q?fix(carry):=20discord=20adapter=20?=
+ =?UTF-8?q?=EB=A9=98=EC=85=98=20=EC=9D=B4=EC=A4=91=EB=B3=80=ED=99=98=20?=
+ =?UTF-8?q?=EC=88=98=EC=A0=95=20=E2=80=94=20<@id>=EA=B0=80=20<<@id>>?=
+ =?UTF-8?q?=EB=A1=9C=20=EA=B9=A8=EC=A7=80=EB=8D=98=20=EA=B2=83;=20?=
+ =?UTF-8?q?=EC=B5=9C=EC=A2=85=EB=B3=B4=EA=B3=A0=20=EB=A9=98=EC=85=98=20?=
+ =?UTF-8?q?=EA=B7=9C=EC=B9=99=EC=9D=80=20common.md=EC=97=90?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ patches/@chat-adapter__discord@4.29.0.patch | 20 +++++++++++++++++++-
+ pnpm-lock.yaml                              |  6 +++---
+ 2 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/patches/@chat-adapter__discord@4.29.0.patch b/patches/@chat-adapter__discord@4.29.0.patch
+index 70b298a7..d3290551 100644
+--- a/patches/@chat-adapter__discord@4.29.0.patch
++++ b/patches/@chat-adapter__discord@4.29.0.patch
+@@ -1,7 +1,25 @@
+ diff --git a/dist/index.js b/dist/index.js
+-index e4f6fe07808ab3c9858fda724c36f7aef5084502..f042af2f9aadc413d2192564b13da9de6db64d05 100644
++index e4f6fe07808ab3c9858fda724c36f7aef5084502..6bef69461cbe78372c21865db4b3948bdc38006d 100644
+ --- a/dist/index.js
+ +++ b/dist/index.js
++@@ -276,7 +276,7 @@ var DiscordFormatConverter = class extends BaseFormatConverter {
++    * @name → <@name>
++    */
++   convertMentionsToDiscord(text) {
++-    return text.replace(/@(\w+)/g, "<@$1>");
+++    return text.replace(/(?<!<)@(\w+)/g, "<@$1>");
++   }
++   /**
++    * Override renderPostable to convert @mentions in plain strings.
++@@ -322,7 +322,7 @@ var DiscordFormatConverter = class extends BaseFormatConverter {
++       return getNodeChildren(node).map((child) => this.nodeToDiscordMarkdown(child)).join("");
++     }
++     if (isTextNode(node)) {
++-      return node.value.replace(/@(\w+)/g, "<@$1>");
+++      return node.value.replace(/(?<!<)@(\w+)/g, "<@$1>");
++     }
++     if (isStrongNode(node)) {
++       const content = getNodeChildren(node).map((child) => this.nodeToDiscordMarkdown(child)).join("");
+ @@ -346,6 +346,9 @@ ${node.value}
+      }
+      if (isLinkNode(node)) {
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 7a4c1a54..2e3c02de 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -6,7 +6,7 @@ settings:
+ 
+ patchedDependencies:
+   '@chat-adapter/discord@4.29.0':
+-    hash: 26bcbcadf2e5139da1559966c675b4b5fa33ca7daa5fe968a29918bb5728fbdd
++    hash: 37c6c06d51db511540b010ef86c692a1aecd27209770e5a1c1cafd09d2d28969
+     path: patches/@chat-adapter__discord@4.29.0.patch
+ 
+ importers:
+@@ -15,7 +15,7 @@ importers:
+     dependencies:
+       '@chat-adapter/discord':
+         specifier: 4.29.0
+-        version: 4.29.0(patch_hash=26bcbcadf2e5139da1559966c675b4b5fa33ca7daa5fe968a29918bb5728fbdd)
++        version: 4.29.0(patch_hash=37c6c06d51db511540b010ef86c692a1aecd27209770e5a1c1cafd09d2d28969)
+       '@clack/core':
+         specifier: ^1.2.0
+         version: 1.2.0
+@@ -1611,7 +1611,7 @@ packages:
+ 
+ snapshots:
+ 
+-  '@chat-adapter/discord@4.29.0(patch_hash=26bcbcadf2e5139da1559966c675b4b5fa33ca7daa5fe968a29918bb5728fbdd)':
++  '@chat-adapter/discord@4.29.0(patch_hash=37c6c06d51db511540b010ef86c692a1aecd27209770e5a1c1cafd09d2d28969)':
+     dependencies:
+       '@chat-adapter/shared': 4.29.0
+       chat: 4.29.0
+-- 
+2.43.0
+
