@@ -2,29 +2,54 @@
 """EJClaw status board — 구 EJClaw Status 대시보드 후계 (EJClaw 소유, 헤르메스 비의존).
 
 #status 채널의 메시지 1개를 편집. 오너 봇(NanoClaw .env의 DISCORD_BOT_TOKEN)으로 게시.
-구독 사용량은 CLIProxyAPI Management API의 auth-files/api-call 경로로만 조회하며,
-OAuth 파일·토큰을 직접 읽지 않는다. 관리 키는 1Password에서 런타임 조회한다.
+구독 사용량:
+- Claude/Codex: CLIProxyAPI Management auth-files + api-call (JSON). OAuth 파일을 보드가 직접 파싱하지 않는다.
+- Grok SuperGrok 주간 크레딧%: grok.com gRPC-web GetGrokCreditsConfig.
+  Management api-call은 바이너리 gRPC body를 전달하지 못해, CPA auth-dir의 xai-*.json access_token만 읽어 동일 호스트에서 직접 프로브한다
+  (외부 onWatch/CodexBar 데몬 없이 cliproxy 자격증명 재사용). 실패 시 grok-inspection 라벨 폴백.
+관리 키는 1Password에서 런타임 조회한다.
 구 unified-dashboard.ts 파리티:
 - 사용량 테이블 (5h/7d, 5칸 바, 리셋 sub-line, 모바일 고정폭)
-- 에이전트 상태 (활성 컨테이너 / 등록 그룹)
+- Grok 주간 크레딧% (7d 칸) 또는 순검 라벨 폴백
+- 에이전트 상태 (Native Claude SQLite / systemd health)
 - 서버 블록 (CPU/Load/Memory/Disk/Uptime)
 Tribunal 소속이던 모델구성(Owner/Reviewer/Arbiter/MoA) 블록은 은퇴로 제외.
 
 systemd user timer(ejclaw-status-board.timer)가 5분마다 실행. 침묵=정상.
 """
-import base64, json, os, re, shutil, subprocess, urllib.request, urllib.error, datetime, pathlib, time
+import base64, json, os, re, shutil, sqlite3, subprocess, urllib.request, urllib.error, datetime, pathlib, time
 
 CHANNEL_ID = "1481063226224672930"  # #status
 NANOCLAW_ENV = pathlib.Path.home()/'NanoClaw'/'.env'
 STATE_DIR = pathlib.Path.home()/'.local'/'state'/'ejclaw'
 STATE = STATE_DIR/'status-board.json'
 QUOTA_CACHE = STATE_DIR/'cliproxy-quota-cache.json'
+NATIVE_CLAUDE_STATE = pathlib.Path.home()/'.local'/'state'/'claude-native'/'state.sqlite'
+NATIVE_CLAUDE_ROUTES = pathlib.Path.home()/'.config'/'claude-native'/'routes.json'
+GROK_RESULTS = pathlib.Path(os.environ.get(
+    'GROK_INSPECTION_RESULTS',
+    str(pathlib.Path.home()/'cliproxyapi'/'data'/'grok-inspection'/'results.json')))
+CLIPROXY_AUTH_DIR = pathlib.Path(os.environ.get(
+    'CLIPROXY_AUTH_DIR', str(pathlib.Path.home()/'.cli-proxy-api')))
+GROK_CREDITS_URL = os.environ.get(
+    'GROK_CREDITS_URL',
+    'https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig')
+GROK_CREDITS_CACHE = STATE_DIR/'grok-credits-cache.json'
 CLIPROXY_MANAGEMENT_BASE = os.environ.get(
     'CLIPROXY_MANAGEMENT_BASE', 'http://172.17.0.1:8317/v0/management').rstrip('/')
 CLIPROXY_MANAGEMENT_KEY_REF = os.environ.get(
     'CLIPROXY_MANAGEMENT_KEY_REF',
     'op://person-service/xp6ijk75xjz2nde7ztd43yqc3u/password')
 UA = 'DiscordBot (https://eyejoker.com, ejclaw-status/1)'
+_GROK_LABELS = {
+    'healthy': 'ok',
+    'quota_exhausted': '한도소진',
+    'permission_denied': '권한거부',
+    'reauth': '재로그인',
+    'model_unavailable': '모델불가',
+    'error': '이상',
+    'other': '이상',
+}
 
 
 def get_bot_token():
@@ -60,13 +85,17 @@ def compact_reset(ts):
 
 EMPTY_CELL = '─'*5 + '    '
 
-def render_usage_table(claude_rows, codex_rows):
+def render_usage_table(claude_rows, codex_rows, grok_rows=None):
+    grok_rows = grok_rows or []
     all_rows = claude_rows + codex_rows
-    if not all_rows: return ['_조회 불가_']
-    name_w = max(8, *(vw(r[0]) for r in all_rows)) + 1
+    if not all_rows and not grok_rows:
+        return ['_조회 불가_']
+    names = [r[0] for r in all_rows] + [r[0] for r in grok_rows]
+    name_w = max(8, *(vw(n) for n in names)) + 1
     pad = lambda s: s + ' '*max(0, name_w - vw(s))
     lines = ['```']
-    lines.append(' '*name_w + '5h' + ' '*8 + '7d')
+    if all_rows:
+        lines.append(' '*name_w + '5h' + ' '*8 + '7d')
 
     def emit(rows):
         for name, h5p, h5r, d7p, d7r, stale in rows:
@@ -85,6 +114,26 @@ def render_usage_table(claude_rows, codex_rows):
     if claude_rows and codex_rows:
         lines.append('─'*(name_w + 20))
     emit(codex_rows)
+    if grok_rows:
+        if all_rows:
+            lines.append('─'*(name_w + 20))
+        # credit rows: same 6-tuple as Claude/Codex → bars in 7d
+        # label rows: (name, label, probe, stale, classification)
+        credit = [r for r in grok_rows if _is_grok_credit_row(r)]
+        labels = [r for r in grok_rows if not _is_grok_credit_row(r)]
+        if credit and not all_rows:
+            lines.append(' '*name_w + '5h' + ' '*8 + '7d')
+        if credit:
+            emit(credit)
+        for name, label, probe, stale, _cls in labels:
+            # 5h 칸 너비(~9)에 상태, 7d 칸에 probe 힌트.
+            # 순검 결과 나이: 1시간 이상일 때만 (Nm)
+            status = label + ' '*max(0, 9 - vw(label))
+            probe_cell = probe or ''
+            suffix = ''
+            if stale is not None and stale >= 60:
+                suffix = f" ({stale}m)"
+            lines.append(f"{pad(name)}{status} {probe_cell}{suffix}".rstrip())
     lines.append('```')
     return lines
 
@@ -424,26 +473,417 @@ def collect_quota_rows(warn, fetch=None, cache_path=QUOTA_CACHE, now=None):
             )
 
 
+def _is_grok_credit_row(row):
+    """Credit rows mirror Claude/Codex: (name, h5p, h5r, d7p, d7r, stale)."""
+    return (
+        isinstance(row, (list, tuple))
+        and len(row) >= 6
+        and isinstance(row[1], int)
+        and isinstance(row[3], int)
+    )
+
+
+def _grpc_web_frames(body: bytes):
+    msgs = []
+    trailers = b''
+    i = 0
+    while i + 5 <= len(body):
+        flags = body[i]
+        length = int.from_bytes(body[i + 1:i + 5], 'big')
+        i += 5
+        chunk = body[i:i + length]
+        i += length
+        if flags & 0x80:
+            trailers = chunk
+        else:
+            msgs.append(chunk)
+    return msgs, trailers.decode('utf-8', 'replace')
+
+
+def _proto_varint(buf: bytes, i: int):
+    shift = 0
+    result = 0
+    while True:
+        if i >= len(buf):
+            raise ValueError('truncated varint')
+        b = buf[i]
+        i += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            return result, i
+        shift += 7
+        if shift > 70:
+            raise ValueError('varint too long')
+
+
+def _walk_proto_fields(data: bytes, path: str = ''):
+    i = 0
+    fields = []
+    while i < len(data):
+        try:
+            key, i = _proto_varint(data, i)
+        except Exception:
+            break
+        field_num = key >> 3
+        wire = key & 7
+        if wire == 0:
+            val, i = _proto_varint(data, i)
+            fields.append((path + str(field_num), 'varint', val))
+        elif wire == 1:
+            if i + 8 > len(data):
+                break
+            i += 8
+        elif wire == 2:
+            ln, i = _proto_varint(data, i)
+            chunk = data[i:i + ln]
+            i += ln
+            nested = _walk_proto_fields(chunk, path + str(field_num) + '.')
+            if nested:
+                fields.append((path + str(field_num), 'message', nested))
+        elif wire == 5:
+            if i + 4 > len(data):
+                break
+            raw = data[i:i + 4]
+            i += 4
+            import struct as _struct
+            fields.append((path + str(field_num), 'fixed32', _struct.unpack('<f', raw)[0]))
+        else:
+            break
+    return fields
+
+
+def parse_grok_credits_protobuf(body: bytes):
+    """Parse GetGrokCreditsConfig grpc-web response → used% + resets_at unix.
+
+    Observed schema (wrapper field 1):
+      1: float credit_usage_percent (used)
+      4: Timestamp period start
+      5: Timestamp period end / reset
+    """
+    msgs, trailers = _grpc_web_frames(body)
+    if 'grpc-status:0' not in trailers.replace(' ', '') and trailers:
+        # tolerate missing trailer if message present
+        if 'grpc-status:' in trailers and 'grpc-status:0' not in trailers:
+            raise RuntimeError(f'grok credits grpc error: {trailers[:120]}')
+    if not msgs:
+        raise RuntimeError('empty grok credits response')
+    fields = _walk_proto_fields(msgs[0])
+    used = None
+    resets_at = None
+    period_start = None
+
+    def visit(items):
+        nonlocal used, resets_at, period_start
+        for p, t, v in items:
+            if t == 'fixed32' and p in ('1.1', '1.7.2'):
+                if isinstance(v, float) and 0.0 <= v <= 100.0:
+                    used = v
+            elif t == 'varint' and p in ('1.5.1', '1.8.3.1'):
+                if 1_600_000_000 < v < 2_100_000_000:
+                    resets_at = v
+            elif t == 'varint' and p in ('1.4.1', '1.8.2.1'):
+                if 1_600_000_000 < v < 2_100_000_000:
+                    period_start = v
+            elif t == 'message':
+                visit(v)
+
+    visit(fields)
+    if used is None:
+        raise ValueError('credit_usage_percent missing')
+    return {
+        'used_percent': _pct(used),
+        'resets_at': resets_at,
+        'period_start': period_start,
+    }
+
+
+def _probe_grok_credits(access_token, url=GROK_CREDITS_URL, opener=None):
+    frame = b'\x00\x00\x00\x00\x00'
+    req = urllib.request.Request(
+        url,
+        data=frame,
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/grpc-web+proto',
+            'x-grpc-web': '1',
+            'accept': '*/*',
+            'origin': 'https://grok.com',
+            'referer': 'https://grok.com/',
+            'User-Agent': 'ejclaw-status/1',
+        },
+        method='POST')
+    open_url = opener or urllib.request.urlopen
+    with open_url(req, timeout=20) as response:
+        body = response.read()
+    return parse_grok_credits_protobuf(body)
+
+
+def _list_cpa_xai_auth_files(auth_dir=CLIPROXY_AUTH_DIR):
+    root = pathlib.Path(auth_dir)
+    files = []
+    try:
+        paths = sorted(root.glob('xai-*.json'))
+    except Exception:
+        return []
+    for path in paths:
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            continue
+        if data.get('disabled'):
+            continue
+        if str(data.get('type') or data.get('provider') or '').lower() not in ('xai', 'grok', ''):
+            # still accept xai-*.json even if type missing
+            if data.get('type') not in (None, '', 'xai'):
+                continue
+        token = data.get('access_token')
+        if not token:
+            continue
+        files.append({'path': path, 'email': data.get('email') or path.name, 'access_token': token})
+    return files
+
+
+def collect_grok_credit_rows(auth_dir=CLIPROXY_AUTH_DIR, probe=None, cache_path=GROK_CREDITS_CACHE, now=None):
+    """Probe SuperGrok weekly credits via CPA xai auth tokens. Secret-free cache."""
+    clock = now or time.time
+    probe = probe or _probe_grok_credits
+    accounts = _list_cpa_xai_auth_files(auth_dir)
+    if not accounts:
+        return []
+    rows = []
+    live_ok = False
+    for index, account in enumerate(accounts, 1):
+        name = f'Grok{index}'
+        try:
+            usage = probe(account['access_token'])
+            rows.append((
+                name,
+                -1, '',
+                usage['used_percent'], usage.get('resets_at') or '',
+                None,
+            ))
+            live_ok = True
+        except Exception:
+            rows.append((name, -1, '', -1, '', None))
+    if live_ok:
+        try:
+            cache_path = pathlib.Path(cache_path)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps({
+                'at': clock(),
+                'rows': [[r[0], r[1], r[2], r[3], r[4], None] for r in rows],
+            }, ensure_ascii=False, separators=(',', ':'))
+            temporary = cache_path.with_name(f'.{cache_path.name}.{os.getpid()}.tmp')
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, 'w') as stream:
+                    stream.write(payload)
+                os.replace(temporary, cache_path)
+                os.chmod(cache_path, 0o600)
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
+        except Exception:
+            pass
+        # fill missing from cache partial
+        try:
+            cached = json.loads(pathlib.Path(cache_path).read_text())
+            stale = max(0, int((clock() - float(cached['at'])) // 60))
+            by_name = {r[0]: r for r in (cached.get('rows') or [])}
+            merged = []
+            for row in rows:
+                if row[3] >= 0:
+                    merged.append(row)
+                elif row[0] in by_name and by_name[row[0]][3] >= 0:
+                    c = by_name[row[0]]
+                    merged.append((c[0], c[1], c[2], c[3], c[4], stale))
+                else:
+                    merged.append(row)
+            return merged
+        except Exception:
+            return rows
+    # all failed → cache
+    try:
+        cached = json.loads(pathlib.Path(cache_path).read_text())
+        stale = max(0, int((clock() - float(cached['at'])) // 60))
+        cached_rows = cached.get('rows') or []
+        if cached_rows:
+            return _stale_rows(cached_rows, stale)
+    except Exception:
+        pass
+    return []
+
+
+def _grok_probe_tag(result):
+    """Weak probe-route hint only — not SuperGrok plan name."""
+    raw = ''
+    em = result.get('error_message')
+    if isinstance(em, str) and em.strip().startswith('{'):
+        try:
+            body = json.loads(em)
+            raw = str(body.get('model') or '')
+        except Exception:
+            raw = ''
+    if not raw:
+        raw = str(result.get('model') or '')
+    raw = raw.strip().lower()
+    if not raw:
+        return ''
+    if 'build-free' in raw:
+        return 'build-free'
+    if 'build' in raw:
+        return 'build'
+    if raw.startswith('grok-'):
+        return raw.replace('grok-', '', 1)[:12]
+    return raw[:12]
+
+
+def _grok_finished_unix(payload, result_path):
+    for key in ('finished_at', 'saved_at', 'started_at'):
+        value = payload.get(key)
+        if not value:
+            continue
+        try:
+            return datetime.datetime.fromisoformat(
+                str(value).replace('Z', '+00:00')).timestamp()
+        except Exception:
+            pass
+    try:
+        return result_path.stat().st_mtime
+    except Exception:
+        return None
+
+
+def collect_grok_inspection_rows(result_path=GROK_RESULTS, now=None):
+    """Read grok-inspection results.json labels. Fallback when credits probe fails."""
+    clock = now or time.time
+    path = pathlib.Path(result_path)
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:
+        return []
+    results = payload.get('results') or []
+    if not isinstance(results, list) or not results:
+        return []
+    finished = _grok_finished_unix(payload, path)
+    stale = None
+    if finished is not None:
+        stale = max(0, int((clock() - float(finished)) // 60))
+    rows = []
+    for index, item in enumerate(results, 1):
+        if not isinstance(item, dict):
+            continue
+        classification = str(item.get('classification') or 'other').strip().lower()
+        label = _GROK_LABELS.get(classification, classification or '이상')
+        rows.append((
+            f'Grok{index}',
+            label,
+            _grok_probe_tag(item),
+            stale,
+            classification,
+        ))
+    return rows
+
+
+def collect_grok_rows(result_path=GROK_RESULTS, auth_dir=CLIPROXY_AUTH_DIR, now=None, probe=None):
+    """Prefer SuperGrok weekly credit %; fall back to inspection status labels."""
+    credit_rows = collect_grok_credit_rows(auth_dir=auth_dir, probe=probe, now=now)
+    if any(row[3] >= 0 for row in credit_rows):
+        return credit_rows
+    return collect_grok_inspection_rows(result_path=result_path, now=now)
+
+
+def render_grok_table(rows):
+    """Backward-compatible helper: same fence as usage table, Grok only. """
+    return render_usage_table([], [], grok_rows=rows)
+
+
 # ── 에이전트/서버 블록 (구 status-dashboard 파리티) ──
 
-def agent_status_line():
-    active = groups = None
+def _native_route_count(routes_path):
     try:
-        r = subprocess.run(['docker','ps','--format','{{.Names}}','--filter','name=nanoclaw-v2'],
-                           capture_output=True, text=True, timeout=10)
-        active = len([l for l in r.stdout.splitlines() if l.strip()])
+        routes = json.loads(pathlib.Path(routes_path).read_text()).get('routes') or []
+        return len([
+            route for route in routes
+            if isinstance(route, dict) and route.get('id') != 'native-pilot'
+        ])
     except Exception:
-        pass
+        return None
+
+
+def _native_service_active():
     try:
-        r = subprocess.run(['pnpm','exec','tsx','scripts/q.ts','data/v2.db',
-                            'select count(*) from agent_groups'],
-                           capture_output=True, text=True, timeout=30,
-                           cwd=str(pathlib.Path.home()/'NanoClaw'))
-        groups = int(r.stdout.strip().splitlines()[-1])
+        result = subprocess.run(
+            ['systemctl', '--user', 'is-active', 'claude-native-bridge.service'],
+            capture_output=True, text=True, timeout=10)
+        return result.returncode == 0 and result.stdout.strip() == 'active'
     except Exception:
-        pass
-    if active is None: return None
-    return f"📊 **에이전트 상태** — 활성 {active}" + (f" / {groups}" if groups is not None else "")
+        return False
+
+
+def _heartbeat_stalled(value, now):
+    if not value:
+        return True
+    try:
+        heartbeat = datetime.datetime.fromisoformat(
+            str(value).replace('Z', '+00:00')).timestamp()
+        return now - heartbeat > 45
+    except Exception:
+        return True
+
+
+def agent_status_line(
+        native_state=NATIVE_CLAUDE_STATE,
+        native_routes=NATIVE_CLAUDE_ROUTES,
+        service_active=None,
+        now=None):
+    """Render Native Claude jobs; never infer agent work from Docker rows."""
+    state_path = pathlib.Path(native_state)
+    if not state_path.exists():
+        return None
+    groups = _native_route_count(native_routes)
+    suffix = f' / {groups}' if groups is not None else ''
+    if service_active is None:
+        service_active = _native_service_active()
+    if not service_active:
+        return f'🔴 **에이전트 상태** — runtime 중단{suffix}'
+
+    try:
+        connection = sqlite3.connect(f'file:{state_path}?mode=ro', uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT status, heartbeat_at FROM jobs "
+            "WHERE status IN ('running','queued','delivering')"
+        ).fetchall()
+        connection.close()
+    except Exception:
+        return f'🔴 **에이전트 상태** — 상태 조회 실패{suffix}'
+
+    counts = {
+        status: sum(1 for row in rows if row['status'] == status)
+        for status in ('running', 'queued', 'delivering')
+    }
+    clock = now or time.time
+    current = float(clock())
+    stalled = sum(
+        1 for row in rows
+        if row['status'] == 'running'
+        and _heartbeat_stalled(row['heartbeat_at'], current)
+    )
+    if not any(counts.values()):
+        return f'📊 **에이전트 상태** — 대기{suffix}'
+
+    parts = []
+    if counts['running']:
+        parts.append(f"실행 {counts['running']}")
+    if counts['queued']:
+        parts.append(f"대기 {counts['queued']}")
+    if counts['delivering']:
+        parts.append(f"전달 {counts['delivering']}")
+    if stalled:
+        parts.append(f'정체 {stalled}')
+    icon = '🔴' if stalled else '📊'
+    return f"{icon} **에이전트 상태** — {' · '.join(parts)}{suffix}"
 
 
 def server_block():
@@ -483,9 +923,10 @@ def server_block():
 def build_content():
     warn = []
     claude_rows, codex_rows = collect_quota_rows(warn)
+    grok_rows = collect_grok_rows()
     now = datetime.datetime.now().strftime('%m-%d %H:%M')
     parts = [f"📊 **사용량** · {now}"]
-    parts.append("\n".join(render_usage_table(claude_rows, codex_rows)))
+    parts.append("\n".join(render_usage_table(claude_rows, codex_rows, grok_rows)))
     ag = agent_status_line()
     if ag: parts.append(ag)
     sv = server_block()

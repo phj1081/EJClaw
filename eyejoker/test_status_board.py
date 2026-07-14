@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import pathlib
+import sqlite3
 import tempfile
 import unittest
 from unittest import mock
@@ -29,6 +30,7 @@ class CLIProxyQuotaCollectionTests(unittest.TestCase):
                 'collect_quota_rows',
                 side_effect=fake_collect,
             ),
+            mock.patch.object(status_board, 'collect_grok_rows', return_value=[]),
             mock.patch.object(status_board, 'agent_status_line', return_value=None),
             mock.patch.object(status_board, 'server_block', return_value=None),
         ):
@@ -36,6 +38,84 @@ class CLIProxyQuotaCollectionTests(unittest.TestCase):
 
         self.assertIn('100%', content)
         self.assertNotIn('⚠️', content)
+
+    def test_collects_and_renders_grok_inspection_status_labels(self):
+        payload = {
+            'finished_at': '2026-07-15T06:48:28+09:00',
+            'results': [
+                {
+                    'email': 'a@example.com',
+                    'classification': 'healthy',
+                    'model': 'grok-4.5',
+                    'error_message': json.dumps({'model': 'grok-4.5-build-free'}),
+                },
+                {
+                    'email': 'b@example.com',
+                    'classification': 'quota_exhausted',
+                    'model': 'grok-4.5',
+                    'error_message': json.dumps({'model': 'grok-4.5-build'}),
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'results.json'
+            path.write_text(json.dumps(payload))
+            finished = status_board._grok_finished_unix(payload, path)
+            rows = status_board.collect_grok_rows(
+                result_path=path,
+                auth_dir=pathlib.Path(directory) / 'no-auth',
+                now=lambda: finished + 600,
+            )
+            lines = status_board.render_grok_table(rows)
+
+        self.assertEqual(rows[0][0], 'Grok1')
+        self.assertEqual(rows[0][1], 'ok')
+        self.assertEqual(rows[0][2], 'build-free')
+        self.assertEqual(rows[0][3], 10)
+        self.assertEqual(rows[1][1], '한도소진')
+        self.assertEqual(rows[1][2], 'build')
+        text = '\n'.join(lines)
+        self.assertIn('Grok1', text)
+        self.assertIn('한도소진', text)
+        self.assertIn('build-free', text)
+        # 10분: 표기 안 함 / 75분: 표기
+        self.assertNotIn('(10m)', text)
+        old_rows = [(r[0], r[1], r[2], 75, r[4]) for r in rows]
+        old_text = '\n'.join(status_board.render_grok_table(old_rows))
+        self.assertIn('(75m)', old_text)
+        self.assertNotIn('SuperGrok', text)
+        self.assertNotIn('Premium', text)
+
+    def test_grok_rows_live_in_same_usage_table_fence(self):
+        claude = [('Claude1', 10, '', 20, '', None)]
+        codex = [('Codex1 pro', -1, '', 5, 1, None)]
+        grok = [('Grok1', 'ok', 'build', 0, 'healthy')]
+        lines = status_board.render_usage_table(claude, codex, grok)
+        text = '\n'.join(lines)
+        self.assertEqual(text.count('```'), 2)
+        self.assertLess(text.index('Claude1'), text.index('Codex1'))
+        self.assertLess(text.index('Codex1'), text.index('Grok1'))
+        self.assertIn('5h', text)
+        self.assertIn('ok', text)
+
+    def test_build_content_includes_grok_block(self):
+        with (
+            mock.patch.object(
+                status_board,
+                'collect_quota_rows',
+                return_value=([('Claude1', 1, '', 2, '', None)], []),
+            ),
+            mock.patch.object(
+                status_board,
+                'collect_grok_rows',
+                return_value=[('Grok1', 'ok', 'build', 0, 'healthy')],
+            ),
+            mock.patch.object(status_board, 'agent_status_line', return_value=None),
+            mock.patch.object(status_board, 'server_block', return_value=None),
+        ):
+            content = status_board.build_content()
+        self.assertIn('Grok1', content)
+        self.assertIn('ok', content)
 
     def test_collects_all_quota_capable_accounts_via_management_api(self):
         files = [
@@ -279,6 +359,156 @@ class CLIProxyQuotaCollectionTests(unittest.TestCase):
         self.assertEqual(codex_rows[0], ('Codex1 pro', -1, '', 5, 9999, None))
         self.assertEqual(cache_after['at'], 1000)
         self.assertIn('Claude2 5h 80%', warnings)
+
+
+
+class GrokCreditsTests(unittest.TestCase):
+    # Real CPA probe sample (account A ~3%, period end 2026-07-15T00:00:00Z)
+    SAMPLE_A = bytes.fromhex(
+        '000000003e'
+        '0a3c0d0000404012001a0022060880a6b6d2062a0608809bdbd2063a07080115000040404212080212060880a6b6d2061a0608809bdbd206580162006801'
+        '800000000f677270632d7374617475733a300d0a'
+    )
+    SAMPLE_B = bytes.fromhex(
+        '0000000056'
+        '0a540d0000c84212001a00220c08fefdbdd20610d09995e1022a0c08fef2e2d20610d09995e1023a070801150000c842421e0802120c08fefdbdd20610d09995e1021a0c08fef2e2d20610d09995e102580162006801'
+        '800000000f677270632d7374617475733a300d0a'
+    )
+
+    def test_parse_grok_credits_protobuf_percent_and_reset(self):
+        a = status_board.parse_grok_credits_protobuf(self.SAMPLE_A)
+        self.assertEqual(a['used_percent'], 3)
+        self.assertEqual(a['resets_at'], 1784073600)
+        b = status_board.parse_grok_credits_protobuf(self.SAMPLE_B)
+        self.assertEqual(b['used_percent'], 100)
+        self.assertEqual(b['resets_at'], 1784199550)
+
+    def test_collect_grok_credit_rows_renders_weekly_bar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'xai-a.json').write_text(json.dumps({
+                'type': 'xai', 'disabled': False, 'email': 'a@example.com',
+                'access_token': 'token-a',
+            }))
+            (root / 'xai-b.json').write_text(json.dumps({
+                'type': 'xai', 'disabled': False, 'email': 'b@example.com',
+                'access_token': 'token-b',
+            }))
+            cache = root / 'cache.json'
+
+            def probe(token, url=None, opener=None):
+                if token == 'token-a':
+                    return {'used_percent': 3, 'resets_at': 1784073600}
+                if token == 'token-b':
+                    return {'used_percent': 100, 'resets_at': 1784199550}
+                raise RuntimeError('unknown')
+
+            rows = status_board.collect_grok_credit_rows(
+                auth_dir=root, probe=probe, cache_path=cache, now=lambda: 1_000_000)
+            self.assertTrue(status_board._is_grok_credit_row(rows[0]))
+            self.assertEqual(rows[0][0], 'Grok1')
+            self.assertEqual(rows[0][3], 3)
+            self.assertEqual(rows[1][3], 100)
+            lines = status_board.render_usage_table([], [], rows)
+            text = '\n'.join(lines)
+            self.assertIn('3%', text)
+            self.assertIn('100%', text)
+            self.assertIn('7d', text)
+            # credit path should not print inspection labels
+            self.assertNotIn('한도소진', text)
+
+    def test_collect_grok_rows_prefers_credits_over_inspection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'xai-a.json').write_text(json.dumps({
+                'type': 'xai', 'access_token': 'token-a', 'disabled': False,
+            }))
+            results = root / 'results.json'
+            results.write_text(json.dumps({
+                'finished_at': '2026-07-15T06:48:28+09:00',
+                'results': [{'classification': 'healthy', 'model': 'grok-4.5'}],
+            }))
+            rows = status_board.collect_grok_rows(
+                result_path=results,
+                auth_dir=root,
+                now=lambda: 1_000_000,
+                probe=lambda token, url=None, opener=None: {
+                    'used_percent': 12, 'resets_at': 1784073600},
+            )
+            self.assertEqual(rows[0][3], 12)
+            self.assertTrue(status_board._is_grok_credit_row(rows[0]))
+
+
+class NativeAgentStatusTests(unittest.TestCase):
+    def _fixture(self, jobs):
+        directory = tempfile.TemporaryDirectory()
+        root = pathlib.Path(directory.name)
+        state = root / 'state.sqlite'
+        connection = sqlite3.connect(state)
+        connection.execute('CREATE TABLE jobs (status TEXT, heartbeat_at TEXT)')
+        connection.executemany(
+            'INSERT INTO jobs(status, heartbeat_at) VALUES (?, ?)', jobs)
+        connection.commit()
+        connection.close()
+        routes = root / 'routes.json'
+        routes.write_text(json.dumps({
+            'routes': [
+                {'id': 'native-pilot'},
+                {'id': 'crawler'},
+                {'id': 'portal'},
+            ]
+        }))
+        return directory, state, routes
+
+    def test_idle_native_runtime_does_not_count_docker_containers(self):
+        fixture, state, routes = self._fixture([('completed', None)])
+        try:
+            line = status_board.agent_status_line(
+                native_state=state,
+                native_routes=routes,
+                service_active=True,
+                now=lambda: 1000,
+            )
+        finally:
+            fixture.cleanup()
+
+        self.assertEqual(line, '📊 **에이전트 상태** — 대기 / 2')
+        self.assertNotIn('활성', line)
+
+    def test_reports_running_queue_delivery_and_stalled_from_native_state(self):
+        fixture, state, routes = self._fixture([
+            ('running', '1970-01-01T00:15:00+00:00'),
+            ('running', '1970-01-01T00:16:30+00:00'),
+            ('queued', None),
+            ('delivering', None),
+        ])
+        try:
+            line = status_board.agent_status_line(
+                native_state=state,
+                native_routes=routes,
+                service_active=True,
+                now=lambda: 1000,
+            )
+        finally:
+            fixture.cleanup()
+
+        self.assertEqual(
+            line,
+            '🔴 **에이전트 상태** — 실행 2 · 대기 1 · 전달 1 · 정체 1 / 2',
+        )
+
+    def test_reports_runtime_offline_without_falling_back_to_docker(self):
+        fixture, state, routes = self._fixture([])
+        try:
+            line = status_board.agent_status_line(
+                native_state=state,
+                native_routes=routes,
+                service_active=False,
+            )
+        finally:
+            fixture.cleanup()
+
+        self.assertEqual(line, '🔴 **에이전트 상태** — runtime 중단 / 2')
 
 
 if __name__ == '__main__':
