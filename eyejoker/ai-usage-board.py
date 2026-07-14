@@ -11,7 +11,7 @@ no_agent cron에서 5분마다 실행. 출력 없음(침묵) = 정상.
 """
 import json, glob, os, subprocess, urllib.request, urllib.error, datetime, pathlib, time
 
-CHANNEL_ID = "1489220254201549011"  # Hermes Home 채널
+CHANNEL_ID = "1481063226224672930"  # #status 채널 (구 EJClaw status 후계)
 STATE = pathlib.Path.home()/'.hermes'/'state'/'ai-usage-board.json'
 CLAUDE_CACHE = pathlib.Path.home()/'.hermes'/'state'/'aiusage-claude-cache.json'
 
