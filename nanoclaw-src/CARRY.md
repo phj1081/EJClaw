@@ -12,6 +12,7 @@ upstream에 PR하지 않는(못 받을) 기능들을 여기서 기능 단위로 
 | 0003 | container-runner carries | OneCLI CA / git auth / nested sentinel | 중간 (container-runner.ts 직접 수정) |
 | 0004 | EYEJOKER_STACK.md | 문서 | 없음 |
 | 0005–0007 | **live progress UX** | typing 모듈 확장 + activity_log | 중간 (typing/index.ts, claude.ts, chat-sdk-bridge.ts) |
+| 0008 | Discord 시스템 메시지 드랍 | 버그픽스 | **upstream PR #3039 제출됨** — merge되면 이 패치 드랍 |
 
 - `patches/` — `git format-patch` 시리즈 (기능별 rebase/드랍 판단용, 정본)
 - `carry-20260714.patch` — 통짜 diff (빠른 전체 적용용, 파생본)
