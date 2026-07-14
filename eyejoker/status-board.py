@@ -79,7 +79,8 @@ def compact_reset(ts):
         left = (dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
         if left <= 0: return '지남'
         d = int(left//86400); h = int(left%86400//3600); m = int(left%3600//60)
-        return f"{d}d{h}h" if d else (f"{h}h{m:02d}" if h else f"{m}")
+        # 분 단독은 단위 없으면 "12"만 보여 헷갈림 → 12m
+        return f"{d}d{h}h" if d else (f"{h}h{m:02d}" if h else f"{m}m")
     except Exception:
         return '?'
 

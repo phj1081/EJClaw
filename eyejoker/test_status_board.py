@@ -362,6 +362,18 @@ class CLIProxyQuotaCollectionTests(unittest.TestCase):
 
 
 
+
+class CompactResetTests(unittest.TestCase):
+    def test_compact_reset_minutes_include_unit(self):
+        now = status_board.datetime.datetime.now(status_board.datetime.timezone.utc)
+        in_12m = int((now + status_board.datetime.timedelta(minutes=12)).timestamp())
+        in_3h2 = int((now + status_board.datetime.timedelta(hours=3, minutes=2)).timestamp())
+        in_2d5h = int((now + status_board.datetime.timedelta(days=2, hours=5)).timestamp())
+        self.assertEqual(status_board.compact_reset(in_12m), '12m')
+        self.assertEqual(status_board.compact_reset(in_3h2), '3h02')
+        self.assertEqual(status_board.compact_reset(in_2d5h), '2d5h')
+
+
 class GrokCreditsTests(unittest.TestCase):
     # Real CPA probe sample (account A ~3%, period end 2026-07-15T00:00:00Z)
     SAMPLE_A = bytes.fromhex(
