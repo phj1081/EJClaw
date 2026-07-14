@@ -3,6 +3,7 @@ import {
   Client,
   GatewayIntentBits,
   Partials,
+  PermissionFlagsBits,
   type GuildTextBasedChannel,
   type MessageCreateOptions,
 } from "discord.js";
@@ -71,6 +72,29 @@ async function textChannel(id: string): Promise<GuildTextBasedChannel> {
   const channel = await client.channels.fetch(id);
   if (!channel?.isTextBased() || channel.isDMBased()) throw new Error(`Discord channel is unavailable: ${id}`);
   return channel as GuildTextBasedChannel;
+}
+
+async function validateRouteChannels(): Promise<void> {
+  if (!client.user) throw new Error("Discord client user is unavailable");
+  const failures: string[] = [];
+  for (const route of config.routes) {
+    try {
+      const channel = await textChannel(route.discordChannelId);
+      const permissions = channel.permissionsFor(client.user);
+      const required = [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.SendMessagesInThreads,
+      ];
+      if (!permissions || !required.every((permission) => permissions.has(permission))) {
+        failures.push(`${route.id}: missing view/send/thread permission`);
+      }
+    } catch (error) {
+      failures.push(`${route.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (failures.length > 0) throw new Error(`Discord route validation failed: ${failures.join("; ")}`);
+  console.log(`discord routes validated count=${config.routes.length}`);
 }
 
 async function startTyping(job: JobRecord): Promise<void> {
@@ -150,16 +174,23 @@ async function downloadAttachments(messageId: string, attachments: Iterable<{
   return { paths, errors };
 }
 
-client.once("clientReady", () => {
-  const recovered = runtime.recoverInterrupted("bridge service restart");
-  console.log(
-    `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} state=${statePath}`,
-  );
-  queuePoll = setInterval(() => {
-    if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
-  }, 2_000);
-  queuePoll.unref();
-  void runtime.runUntilIdle().catch((error) => console.error("startup pump failed", error));
+client.once("clientReady", async () => {
+  try {
+    await validateRouteChannels();
+    const recovered = runtime.recoverInterrupted("bridge service restart");
+    console.log(
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} state=${statePath}`,
+    );
+    queuePoll = setInterval(() => {
+      if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
+    }, 2_000);
+    queuePoll.unref();
+    void runtime.runUntilIdle().catch((error) => console.error("startup pump failed", error));
+  } catch (error) {
+    console.error("native bridge startup validation failed", error);
+    client.destroy();
+    setTimeout(() => process.exit(1), 100).unref();
+  }
 });
 
 client.on("messageCreate", async (message) => {
