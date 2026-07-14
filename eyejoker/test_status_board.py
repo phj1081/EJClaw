@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import pathlib
+import sqlite3
 import tempfile
 import unittest
 from unittest import mock
@@ -279,6 +280,78 @@ class CLIProxyQuotaCollectionTests(unittest.TestCase):
         self.assertEqual(codex_rows[0], ('Codex1 pro', -1, '', 5, 9999, None))
         self.assertEqual(cache_after['at'], 1000)
         self.assertIn('Claude2 5h 80%', warnings)
+
+
+class NativeAgentStatusTests(unittest.TestCase):
+    def _fixture(self, jobs):
+        directory = tempfile.TemporaryDirectory()
+        root = pathlib.Path(directory.name)
+        state = root / 'state.sqlite'
+        connection = sqlite3.connect(state)
+        connection.execute('CREATE TABLE jobs (status TEXT, heartbeat_at TEXT)')
+        connection.executemany(
+            'INSERT INTO jobs(status, heartbeat_at) VALUES (?, ?)', jobs)
+        connection.commit()
+        connection.close()
+        routes = root / 'routes.json'
+        routes.write_text(json.dumps({
+            'routes': [
+                {'id': 'native-pilot'},
+                {'id': 'crawler'},
+                {'id': 'portal'},
+            ]
+        }))
+        return directory, state, routes
+
+    def test_idle_native_runtime_does_not_count_docker_containers(self):
+        fixture, state, routes = self._fixture([('completed', None)])
+        try:
+            line = status_board.agent_status_line(
+                native_state=state,
+                native_routes=routes,
+                service_active=True,
+                now=lambda: 1000,
+            )
+        finally:
+            fixture.cleanup()
+
+        self.assertEqual(line, '📊 **에이전트 상태** — 대기 / 2')
+        self.assertNotIn('활성', line)
+
+    def test_reports_running_queue_delivery_and_stalled_from_native_state(self):
+        fixture, state, routes = self._fixture([
+            ('running', '1970-01-01T00:15:00+00:00'),
+            ('running', '1970-01-01T00:16:30+00:00'),
+            ('queued', None),
+            ('delivering', None),
+        ])
+        try:
+            line = status_board.agent_status_line(
+                native_state=state,
+                native_routes=routes,
+                service_active=True,
+                now=lambda: 1000,
+            )
+        finally:
+            fixture.cleanup()
+
+        self.assertEqual(
+            line,
+            '🔴 **에이전트 상태** — 실행 2 · 대기 1 · 전달 1 · 정체 1 / 2',
+        )
+
+    def test_reports_runtime_offline_without_falling_back_to_docker(self):
+        fixture, state, routes = self._fixture([])
+        try:
+            line = status_board.agent_status_line(
+                native_state=state,
+                native_routes=routes,
+                service_active=False,
+            )
+        finally:
+            fixture.cleanup()
+
+        self.assertEqual(line, '🔴 **에이전트 상태** — runtime 중단 / 2')
 
 
 if __name__ == '__main__':

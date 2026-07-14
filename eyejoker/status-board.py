@@ -6,19 +6,21 @@
 OAuth 파일·토큰을 직접 읽지 않는다. 관리 키는 1Password에서 런타임 조회한다.
 구 unified-dashboard.ts 파리티:
 - 사용량 테이블 (5h/7d, 5칸 바, 리셋 sub-line, 모바일 고정폭)
-- 에이전트 상태 (활성 컨테이너 / 등록 그룹)
+- 에이전트 상태 (Native Claude SQLite / systemd health)
 - 서버 블록 (CPU/Load/Memory/Disk/Uptime)
 Tribunal 소속이던 모델구성(Owner/Reviewer/Arbiter/MoA) 블록은 은퇴로 제외.
 
 systemd user timer(ejclaw-status-board.timer)가 5분마다 실행. 침묵=정상.
 """
-import base64, json, os, re, shutil, subprocess, urllib.request, urllib.error, datetime, pathlib, time
+import base64, json, os, re, shutil, sqlite3, subprocess, urllib.request, urllib.error, datetime, pathlib, time
 
 CHANNEL_ID = "1481063226224672930"  # #status
 NANOCLAW_ENV = pathlib.Path.home()/'NanoClaw'/'.env'
 STATE_DIR = pathlib.Path.home()/'.local'/'state'/'ejclaw'
 STATE = STATE_DIR/'status-board.json'
 QUOTA_CACHE = STATE_DIR/'cliproxy-quota-cache.json'
+NATIVE_CLAUDE_STATE = pathlib.Path.home()/'.local'/'state'/'claude-native'/'state.sqlite'
+NATIVE_CLAUDE_ROUTES = pathlib.Path.home()/'.config'/'claude-native'/'routes.json'
 CLIPROXY_MANAGEMENT_BASE = os.environ.get(
     'CLIPROXY_MANAGEMENT_BASE', 'http://172.17.0.1:8317/v0/management').rstrip('/')
 CLIPROXY_MANAGEMENT_KEY_REF = os.environ.get(
@@ -426,24 +428,90 @@ def collect_quota_rows(warn, fetch=None, cache_path=QUOTA_CACHE, now=None):
 
 # ── 에이전트/서버 블록 (구 status-dashboard 파리티) ──
 
-def agent_status_line():
-    active = groups = None
+def _native_route_count(routes_path):
     try:
-        r = subprocess.run(['docker','ps','--format','{{.Names}}','--filter','name=nanoclaw-v2'],
-                           capture_output=True, text=True, timeout=10)
-        active = len([l for l in r.stdout.splitlines() if l.strip()])
+        routes = json.loads(pathlib.Path(routes_path).read_text()).get('routes') or []
+        return len([
+            route for route in routes
+            if isinstance(route, dict) and route.get('id') != 'native-pilot'
+        ])
     except Exception:
-        pass
+        return None
+
+
+def _native_service_active():
     try:
-        r = subprocess.run(['pnpm','exec','tsx','scripts/q.ts','data/v2.db',
-                            'select count(*) from agent_groups'],
-                           capture_output=True, text=True, timeout=30,
-                           cwd=str(pathlib.Path.home()/'NanoClaw'))
-        groups = int(r.stdout.strip().splitlines()[-1])
+        result = subprocess.run(
+            ['systemctl', '--user', 'is-active', 'claude-native-bridge.service'],
+            capture_output=True, text=True, timeout=10)
+        return result.returncode == 0 and result.stdout.strip() == 'active'
     except Exception:
-        pass
-    if active is None: return None
-    return f"📊 **에이전트 상태** — 활성 {active}" + (f" / {groups}" if groups is not None else "")
+        return False
+
+
+def _heartbeat_stalled(value, now):
+    if not value:
+        return True
+    try:
+        heartbeat = datetime.datetime.fromisoformat(
+            str(value).replace('Z', '+00:00')).timestamp()
+        return now - heartbeat > 45
+    except Exception:
+        return True
+
+
+def agent_status_line(
+        native_state=NATIVE_CLAUDE_STATE,
+        native_routes=NATIVE_CLAUDE_ROUTES,
+        service_active=None,
+        now=None):
+    """Render Native Claude jobs; never infer agent work from Docker rows."""
+    state_path = pathlib.Path(native_state)
+    if not state_path.exists():
+        return None
+    groups = _native_route_count(native_routes)
+    suffix = f' / {groups}' if groups is not None else ''
+    if service_active is None:
+        service_active = _native_service_active()
+    if not service_active:
+        return f'🔴 **에이전트 상태** — runtime 중단{suffix}'
+
+    try:
+        connection = sqlite3.connect(f'file:{state_path}?mode=ro', uri=True, timeout=5)
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            "SELECT status, heartbeat_at FROM jobs "
+            "WHERE status IN ('running','queued','delivering')"
+        ).fetchall()
+        connection.close()
+    except Exception:
+        return f'🔴 **에이전트 상태** — 상태 조회 실패{suffix}'
+
+    counts = {
+        status: sum(1 for row in rows if row['status'] == status)
+        for status in ('running', 'queued', 'delivering')
+    }
+    clock = now or time.time
+    current = float(clock())
+    stalled = sum(
+        1 for row in rows
+        if row['status'] == 'running'
+        and _heartbeat_stalled(row['heartbeat_at'], current)
+    )
+    if not any(counts.values()):
+        return f'📊 **에이전트 상태** — 대기{suffix}'
+
+    parts = []
+    if counts['running']:
+        parts.append(f"실행 {counts['running']}")
+    if counts['queued']:
+        parts.append(f"대기 {counts['queued']}")
+    if counts['delivering']:
+        parts.append(f"전달 {counts['delivering']}")
+    if stalled:
+        parts.append(f'정체 {stalled}')
+    icon = '🔴' if stalled else '📊'
+    return f"{icon} **에이전트 상태** — {' · '.join(parts)}{suffix}"
 
 
 def server_block():
