@@ -486,8 +486,6 @@ def build_content():
     now = datetime.datetime.now().strftime('%m-%d %H:%M')
     parts = [f"📊 **사용량** · {now}"]
     parts.append("\n".join(render_usage_table(claude_rows, codex_rows)))
-    if warn:
-        parts.append("⚠️ " + ", ".join(warn))
     ag = agent_status_line()
     if ag: parts.append(ag)
     sv = server_block()

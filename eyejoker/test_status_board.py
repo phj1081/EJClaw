@@ -4,6 +4,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+from unittest import mock
 
 MODULE_PATH = pathlib.Path(__file__).with_name('status-board.py')
 spec = importlib.util.spec_from_file_location('status_board', MODULE_PATH)
@@ -14,6 +15,28 @@ spec.loader.exec_module(status_board)
 
 
 class CLIProxyQuotaCollectionTests(unittest.TestCase):
+    def test_build_content_does_not_repeat_quota_threshold_warning(self):
+        claude_rows = [('Claude1', 100, 'c5', 40, 'c7', None)]
+        codex_rows = [('Codex1 team', -1, '', 100, 1234, None)]
+
+        def fake_collect(warnings):
+            warnings.extend(['Claude1 5h 100%', 'Codex1 7d 100%'])
+            return claude_rows, codex_rows
+
+        with (
+            mock.patch.object(
+                status_board,
+                'collect_quota_rows',
+                side_effect=fake_collect,
+            ),
+            mock.patch.object(status_board, 'agent_status_line', return_value=None),
+            mock.patch.object(status_board, 'server_block', return_value=None),
+        ):
+            content = status_board.build_content()
+
+        self.assertIn('100%', content)
+        self.assertNotIn('⚠️', content)
+
     def test_collects_all_quota_capable_accounts_via_management_api(self):
         files = [
             {
