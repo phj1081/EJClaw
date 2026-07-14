@@ -1,0 +1,10 @@
+[Unit]
+Description=EJClaw status board every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20
+
+[Install]
+WantedBy=timers.target

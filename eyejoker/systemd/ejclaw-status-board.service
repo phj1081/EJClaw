@@ -1,0 +1,10 @@
+[Unit]
+Description=EJClaw status board (Discord #status single-message edit)
+Wants=cliproxyapi.service
+After=cliproxyapi.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/nanoclaw/host-executor.env
+UMask=0077
+ExecStart=/usr/bin/python3 %h/EJClaw/eyejoker/status-board.py

@@ -2,6 +2,8 @@
 """EJClaw status board — 구 EJClaw Status 대시보드 후계 (EJClaw 소유, 헤르메스 비의존).
 
 #status 채널의 메시지 1개를 편집. 오너 봇(NanoClaw .env의 DISCORD_BOT_TOKEN)으로 게시.
+구독 사용량은 CLIProxyAPI Management API의 auth-files/api-call 경로로만 조회하며,
+OAuth 파일·토큰을 직접 읽지 않는다. 관리 키는 1Password에서 런타임 조회한다.
 구 unified-dashboard.ts 파리티:
 - 사용량 테이블 (5h/7d, 5칸 바, 리셋 sub-line, 모바일 고정폭)
 - 에이전트 상태 (활성 컨테이너 / 등록 그룹)
@@ -10,14 +12,18 @@ Tribunal 소속이던 모델구성(Owner/Reviewer/Arbiter/MoA) 블록은 은퇴�
 
 systemd user timer(ejclaw-status-board.timer)가 5분마다 실행. 침묵=정상.
 """
-import json, glob, os, re, shutil, subprocess, urllib.request, urllib.error, datetime, pathlib, time
+import base64, json, os, re, shutil, subprocess, urllib.request, urllib.error, datetime, pathlib, time
 
 CHANNEL_ID = "1481063226224672930"  # #status
 NANOCLAW_ENV = pathlib.Path.home()/'NanoClaw'/'.env'
 STATE_DIR = pathlib.Path.home()/'.local'/'state'/'ejclaw'
 STATE = STATE_DIR/'status-board.json'
-CLAUDE_CACHE = STATE_DIR/'claude-usage-cache.json'
-HERMES_CLAUDE_CACHE = pathlib.Path.home()/'.hermes'/'state'/'aiusage-claude-cache.json'
+QUOTA_CACHE = STATE_DIR/'cliproxy-quota-cache.json'
+CLIPROXY_MANAGEMENT_BASE = os.environ.get(
+    'CLIPROXY_MANAGEMENT_BASE', 'http://172.17.0.1:8317/v0/management').rstrip('/')
+CLIPROXY_MANAGEMENT_KEY_REF = os.environ.get(
+    'CLIPROXY_MANAGEMENT_KEY_REF',
+    'op://person-service/xp6ijk75xjz2nde7ztd43yqc3u/password')
 UA = 'DiscordBot (https://eyejoker.com, ejclaw-status/1)'
 
 
@@ -83,78 +89,339 @@ def render_usage_table(claude_rows, codex_rows):
     return lines
 
 
-def collect_codex_rows(warn):
-    rows = []
-    for f in sorted(glob.glob(str(pathlib.Path.home()/'.cli-proxy-api'/'codex-slot*.json'))):
-        n = pathlib.Path(f).stem.replace('codex-slot','')
-        try:
-            d = json.load(open(f))
-            req = urllib.request.Request('https://chatgpt.com/backend-api/wham/usage',
-                headers={'Authorization': f"Bearer {d['access_token']}", 'User-Agent': 'aiusage/1'})
-            u = json.load(urllib.request.urlopen(req, timeout=10))
-            plan = (u.get('plan_type') or '')[:4]
-            win = (u.get('rate_limit') or {}).get('primary_window') or {}
-            pct = int(round(win.get('used_percent', 0)))
-            rows.append((f"Codex{n} {plan}", -1, '', pct, win.get('reset_at'), None))
-            if pct >= 80: warn.append(f"Codex{n} {pct}%")
-            for extra in (u.get('additional_rate_limits') or []):
-                w2 = (extra.get('rate_limit') or {}).get('primary_window') or {}
-                p2 = int(round(w2.get('used_percent', 0)))
-                if p2 > 0:
-                    nm = 'Spark' if 'Spark' in (extra.get('limit_name') or '') else (extra.get('limit_name') or '?')[:6]
-                    rows.append((f"{nm}{n}", -1, '', p2, w2.get('reset_at'), None))
-        except Exception:
-            rows.append((f"Codex{n}", -1, '', -1, '', None))
-    return rows
+def _pct(value):
+    """Quota upstreams already return percentages, including values <= 1."""
+    if not isinstance(value, (int, float)):
+        return -1
+    return max(0, min(100, int(round(value))))
 
 
-def collect_claude_rows(warn):
-    def rows_from(u, stale=None):
-        out = []
-        h5 = d7 = None
-        lims = u.get('limits') or []
-        if lims:
-            for l in lims:
-                kind = l.get('kind')
-                pct = l.get('used_percent')
-                if pct is None:
-                    util = l.get('utilization')
-                    pct = util*100 if isinstance(util,(int,float)) and util <= 1 else (util or 0)
-                if kind == 'session': h5 = (int(round(pct)), l.get('resets_at') or l.get('reset_at'))
-                elif kind == 'weekly_all': d7 = (int(round(pct)), l.get('resets_at') or l.get('reset_at'))
-        else:
-            for key in ('five_hour','seven_day'):
-                w = u.get(key)
-                if w:
-                    util = w.get('utilization') or 0
-                    v = (int(round(util*100 if util <= 1 else util)), w.get('resets_at'))
-                    if key == 'five_hour': h5 = v
-                    else: d7 = v
-        out.append(('Claude max',
-                    h5[0] if h5 else -1, h5[1] if h5 else '',
-                    d7[0] if d7 else -1, d7[1] if d7 else '', stale))
-        if h5 and h5[0] >= 80: warn.append(f"Claude 5h {h5[0]}%")
-        if d7 and d7[0] >= 80: warn.append(f"Claude 7d {d7[0]}%")
-        return out
+def _jwt_payload(token):
     try:
-        cred = json.load(open(pathlib.Path.home()/'.claude'/'.credentials.json'))
-        tok = (cred.get('claudeAiOauth') or {}).get('accessToken') or os.environ.get('CLAUDE_CODE_OAUTH_TOKEN','')
-        if not tok: raise RuntimeError('no token')
-        req = urllib.request.Request('https://api.anthropic.com/api/oauth/usage',
-            headers={'Authorization': f'Bearer {tok}','anthropic-beta':'oauth-2025-04-20','User-Agent':'aiusage/1'})
-        u = json.load(urllib.request.urlopen(req, timeout=10))
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        json.dump({'at': time.time(), 'data': u}, open(CLAUDE_CACHE,'w'))
-        return rows_from(u)
+        part = token.split('.')[1]
+        part += '=' * ((4 - len(part) % 4) % 4)
+        value = json.loads(base64.urlsafe_b64decode(part))
+        return value if isinstance(value, dict) else {}
     except Exception:
-        for cache in (CLAUDE_CACHE, HERMES_CLAUDE_CACHE):
-            try:
-                c = json.load(open(cache))
-                if c.get('data'):
-                    return rows_from(c['data'], stale=int((time.time()-c['at'])//60))
-            except Exception:
+        return {}
+
+
+def _codex_account_id(auth_file):
+    for box in (auth_file, auth_file.get('metadata') or {}, auth_file.get('attributes') or {}):
+        if not isinstance(box, dict):
+            continue
+        for key in ('account_id', 'chatgpt_account_id', 'chatgptAccountId'):
+            if box.get(key):
+                return str(box[key])
+        claims = _jwt_payload(str(box.get('id_token') or ''))
+        auth = claims.get('https://api.openai.com/auth') or claims
+        if isinstance(auth, dict):
+            for key in ('chatgpt_account_id', 'chatgptAccountId'):
+                if auth.get(key):
+                    return str(auth[key])
+    return ''
+
+
+def _management_key():
+    if os.environ.get('CLIPROXY_MANAGEMENT_KEY'):
+        return os.environ['CLIPROXY_MANAGEMENT_KEY']
+    op = shutil.which('op')
+    if not op:
+        raise RuntimeError('op CLI not found')
+    result = subprocess.run(
+        [op, 'read', CLIPROXY_MANAGEMENT_KEY_REF],
+        capture_output=True, text=True, timeout=20)
+    key = result.stdout.strip()
+    if result.returncode != 0 or not key:
+        raise RuntimeError('CLIProxyAPI management key lookup failed')
+    return key
+
+
+def _management_fetch(path, payload=None, key=None):
+    key = key or _management_key()
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(
+        CLIPROXY_MANAGEMENT_BASE + path,
+        data=data,
+        headers={
+            'Authorization': f'Bearer {key}',
+            'Content-Type': 'application/json',
+            'User-Agent': UA,
+        },
+        method='POST' if payload is not None else 'GET')
+    with urllib.request.urlopen(req, timeout=20) as response:
+        return json.load(response)
+
+
+def _claude_windows(usage):
+    h5 = d7 = None
+    limits = usage.get('limits') or []
+    if limits:
+        for limit in limits:
+            kind = limit.get('kind')
+            pct = limit.get('used_percent')
+            if pct is None:
+                pct = limit.get('percent')
+            if pct is None:
+                pct = limit.get('utilization')
+            window = (_pct(pct), limit.get('resets_at') or limit.get('reset_at'))
+            if kind in ('session', 'five_hour'):
+                h5 = window
+            elif kind in ('weekly_all', 'seven_day'):
+                d7 = window
+    else:
+        for key, target in (('five_hour', 'h5'), ('seven_day', 'd7')):
+            window = usage.get(key)
+            if not window:
                 continue
-        return [('Claude max', -1, '', -1, '', None)]
+            value = (_pct(window.get('utilization')), window.get('resets_at') or window.get('reset_at'))
+            if target == 'h5':
+                h5 = value
+            else:
+                d7 = value
+    return h5, d7
+
+
+def _codex_windows(usage):
+    h5 = d7 = None
+    rate = usage.get('rate_limit') or {}
+    for key in ('primary_window', 'secondary_window'):
+        window = rate.get(key)
+        if not window:
+            continue
+        value = (_pct(window.get('used_percent')), window.get('reset_at') or window.get('resets_at'))
+        seconds = window.get('limit_window_seconds')
+        if isinstance(seconds, (int, float)) and seconds <= 86400:
+            h5 = value
+        else:
+            d7 = value
+    return h5, d7
+
+
+def _codex_plan_hint(auth_file):
+    name = str(auth_file.get('name') or '').lower()
+    for plan in ('team', 'k12', 'pro', 'plus', 'max', 'free'):
+        if name.endswith(f'-{plan}.json'):
+            return plan
+    return ''
+
+
+def _quota_capable_auth_files(files):
+    available = [f for f in files
+                 if not f.get('disabled') and f.get('type') in ('claude', 'codex')
+                 and f.get('auth_index')]
+    claude = []
+    codex = []
+    for auth_file in available:
+        if auth_file.get('type') == 'claude':
+            label = str(auth_file.get('label') or '').lower()
+            name = str(auth_file.get('name') or '').lower()
+            if label.endswith('@local') or 'onecli-direct' in name:
+                continue
+            claude.append(auth_file)
+        else:
+            codex.append(auth_file)
+    claude.sort(key=lambda item: item.get('name') or '')
+    codex.sort(key=lambda item: (
+        _codex_plan_hint(item) in ('team', 'k12'),
+        item.get('name') or '',
+    ))
+    return claude, codex
+
+
+def collect_cliproxy_quota_rows(warn, fetch=None):
+    """Collect subscription quota through CLIProxyAPI without reading OAuth files."""
+    if fetch is None:
+        management_key = _management_key()
+
+        def live_fetch(path, payload=None):
+            return _management_fetch(path, payload, management_key)
+
+        fetch = live_fetch
+
+    files = (fetch('/auth-files') or {}).get('files') or []
+    claude_files, codex_files = _quota_capable_auth_files(files)
+    targets = [
+        ('claude', index, auth_file, '')
+        for index, auth_file in enumerate(claude_files, 1)
+    ] + [
+        ('codex', index, auth_file, _codex_plan_hint(auth_file))
+        for index, auth_file in enumerate(codex_files, 1)
+    ]
+    claude_rows = []
+    codex_rows = []
+
+    for provider, index, auth_file, plan_hint in targets:
+        row_name = f'Claude{index}' if provider == 'claude' else (
+            f"Codex{index}{' ' + plan_hint[:4] if plan_hint else ''}")
+        try:
+            headers = {'Authorization': 'Bearer $TOKEN$', 'User-Agent': 'aiusage/1'}
+            if provider == 'claude':
+                url = 'https://api.anthropic.com/api/oauth/usage'
+                headers['anthropic-beta'] = 'oauth-2025-04-20'
+            else:
+                url = 'https://chatgpt.com/backend-api/wham/usage'
+                headers['User-Agent'] = 'codex_cli_rs/0.76.0'
+                account_id = _codex_account_id(auth_file)
+                if account_id:
+                    headers['Chatgpt-Account-Id'] = account_id
+            response = fetch('/api-call', {
+                'auth_index': auth_file['auth_index'],
+                'method': 'GET',
+                'url': url,
+                'header': headers,
+            }) or {}
+            if response.get('status_code') != 200:
+                raise RuntimeError(f'{provider} quota unavailable')
+            usage = json.loads(response.get('body') or '{}')
+            if provider == 'claude':
+                h5, d7 = _claude_windows(usage)
+                if not h5 and not d7:
+                    raise ValueError('empty Claude quota response')
+                claude_rows.append((
+                    row_name,
+                    h5[0] if h5 else -1, h5[1] if h5 else '',
+                    d7[0] if d7 else -1, d7[1] if d7 else '', None))
+            else:
+                h5, d7 = _codex_windows(usage)
+                if not h5 and not d7:
+                    raise ValueError('empty Codex quota response')
+                plan = str(usage.get('plan_type') or plan_hint).strip().lower()[:4]
+                row_name = f"Codex{index}{' ' + plan if plan else ''}"
+                codex_rows.append((
+                    row_name,
+                    h5[0] if h5 else -1, h5[1] if h5 else '',
+                    d7[0] if d7 else -1, d7[1] if d7 else '', None))
+                for extra in usage.get('additional_rate_limits') or []:
+                    extra_h5, extra_d7 = _codex_windows({
+                        'rate_limit': extra.get('rate_limit') or {},
+                    })
+                    values = [v for v in (extra_h5, extra_d7) if v and v[0] > 0]
+                    if not values:
+                        continue
+                    raw_name = extra.get('limit_name') or '?'
+                    extra_name = 'Spark' if 'Spark' in raw_name else raw_name[:6]
+                    codex_rows.append((
+                        f'{extra_name}{index}',
+                        extra_h5[0] if extra_h5 else -1,
+                        extra_h5[1] if extra_h5 else '',
+                        extra_d7[0] if extra_d7 else -1,
+                        extra_d7[1] if extra_d7 else '',
+                        None,
+                    ))
+        except Exception:
+            row = (row_name, -1, '', -1, '', None)
+            if provider == 'claude':
+                claude_rows.append(row)
+            else:
+                codex_rows.append(row)
+
+    _append_quota_warnings(warn, claude_rows, codex_rows)
+    return claude_rows, codex_rows
+
+
+def _append_quota_warnings(warn, claude_rows, codex_rows):
+    for name, h5p, _h5r, d7p, _d7r, _stale in claude_rows + codex_rows:
+        if h5p >= 80:
+            warn.append(f'{name.split()[0]} 5h {h5p}%')
+        if d7p >= 80:
+            warn.append(f'{name.split()[0]} 7d {d7p}%')
+
+
+def _write_quota_cache(cache_path, claude_rows, codex_rows, now):
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({
+        'at': now,
+        'claude_rows': claude_rows,
+        'codex_rows': codex_rows,
+    }, ensure_ascii=False, separators=(',', ':'))
+    temporary = cache_path.with_name(f'.{cache_path.name}.{os.getpid()}.tmp')
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            stream.write(payload)
+        os.replace(temporary, cache_path)
+        os.chmod(cache_path, 0o600)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def _stale_rows(rows, stale_minutes):
+    return [tuple(list(row[:5]) + [stale_minutes]) for row in rows]
+
+
+def _row_key(row):
+    return str(row[0]).split()[0]
+
+
+def _row_missing(row):
+    return row[1] < 0 and row[3] < 0
+
+
+def _merge_cached_rows(live_rows, cached_rows, stale_minutes):
+    cached_by_name = {_row_key(row): row for row in cached_rows}
+    merged = []
+    had_failure = False
+    for row in live_rows:
+        if not _row_missing(row):
+            merged.append(row)
+            continue
+        had_failure = True
+        cached = cached_by_name.get(_row_key(row))
+        merged.append(
+            tuple(list(cached[:5]) + [stale_minutes]) if cached else row
+        )
+    return merged, had_failure
+
+
+def collect_quota_rows(warn, fetch=None, cache_path=QUOTA_CACHE, now=None):
+    """Prefer live CLIProxyAPI quota; isolate failures with a secret-free row cache."""
+    clock = now or time.time
+    warning_count = len(warn)
+    try:
+        claude_rows, codex_rows = collect_cliproxy_quota_rows(warn, fetch=fetch)
+        if not claude_rows and not codex_rows:
+            raise RuntimeError('no quota-capable CLIProxyAPI credentials')
+
+        cached_claude = []
+        cached_codex = []
+        stale = 0
+        try:
+            with open(cache_path) as stream:
+                cached = json.load(stream)
+            stale = max(0, int((clock() - float(cached['at'])) // 60))
+            cached_claude = cached.get('claude_rows') or []
+            cached_codex = cached.get('codex_rows') or []
+        except Exception:
+            pass
+
+        claude_rows, claude_failed = _merge_cached_rows(
+            claude_rows, cached_claude, stale)
+        codex_rows, codex_failed = _merge_cached_rows(
+            codex_rows, cached_codex, stale)
+        del warn[warning_count:]
+        _append_quota_warnings(warn, claude_rows, codex_rows)
+        if not claude_failed and not codex_failed:
+            _write_quota_cache(cache_path, claude_rows, codex_rows, clock())
+        return claude_rows, codex_rows
+    except Exception:
+        del warn[warning_count:]
+        try:
+            with open(cache_path) as stream:
+                cached = json.load(stream)
+            stale = max(0, int((clock() - float(cached['at'])) // 60))
+            claude_rows = _stale_rows(cached.get('claude_rows') or [], stale)
+            codex_rows = _stale_rows(cached.get('codex_rows') or [], stale)
+            if not claude_rows and not codex_rows:
+                raise ValueError('empty quota cache')
+            _append_quota_warnings(warn, claude_rows, codex_rows)
+            return claude_rows, codex_rows
+        except Exception:
+            return (
+                [('Claude', -1, '', -1, '', None)],
+                [('Codex', -1, '', -1, '', None)],
+            )
 
 
 # ── 에이전트/서버 블록 (구 status-dashboard 파리티) ──
@@ -215,8 +482,7 @@ def server_block():
 
 def build_content():
     warn = []
-    claude_rows = collect_claude_rows(warn)
-    codex_rows = collect_codex_rows(warn)
+    claude_rows, codex_rows = collect_quota_rows(warn)
     now = datetime.datetime.now().strftime('%m-%d %H:%M')
     parts = [f"📊 **사용량** · {now}"]
     parts.append("\n".join(render_usage_table(claude_rows, codex_rows)))
