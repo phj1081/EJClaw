@@ -1,7 +1,7 @@
 From b93c5bc9f6fd85e278e548e37bae459a690c2129 Mon Sep 17 00:00:00 2001
 From: EJ Claw <ejclaw@eyejoker.com>
 Date: Tue, 14 Jul 2026 17:54:36 +0900
-Subject: [PATCH 8/9] fix(channels): drop Discord system messages
+Subject: [PATCH 08/10] fix(channels): drop Discord system messages
  (THREAD_CREATED etc.) before routing
 
 Discord posts a type-18 THREAD_CREATED system message in the parent channel

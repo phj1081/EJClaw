@@ -1,9 +1,9 @@
 From 559753485645afc84b0dc1b15a81b6faaf56b977 Mon Sep 17 00:00:00 2001
 From: EJ Claw <ejclaw@eyejoker.com>
 Date: Tue, 14 Jul 2026 16:04:49 +0900
-Subject: [PATCH 6/9] =?UTF-8?q?feat(typing):=20old-EJClaw=20live=20progres?=
- =?UTF-8?q?s=20UX=20=E2=80=94=205s-granularity=20elapsed=20+=20Claude-Code?=
- =?UTF-8?q?-style=20tool=20activity=20tree?=
+Subject: [PATCH 06/10] =?UTF-8?q?feat(typing):=20old-EJClaw=20live=20progr?=
+ =?UTF-8?q?ess=20UX=20=E2=80=94=205s-granularity=20elapsed=20+=20Claude-Co?=
+ =?UTF-8?q?de-style=20tool=20activity=20tree?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

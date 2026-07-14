@@ -1,9 +1,9 @@
 From b5ffd34225546a70fd8f766697d2abfbeb8acd8f Mon Sep 17 00:00:00 2001
 From: EJ Claw <ejclaw@eyejoker.com>
 Date: Tue, 14 Jul 2026 06:32:32 +0900
-Subject: [PATCH 3/9] =?UTF-8?q?feat(container-runner):=20EYEJOKER=20carrie?=
- =?UTF-8?q?s=20=E2=80=94=20OneCLI=20CA=20env,=20project-scoped=20git=20aut?=
- =?UTF-8?q?h=20mount=20activation,=20nested-claude=20auth=20sentinel?=
+Subject: [PATCH 03/10] =?UTF-8?q?feat(container-runner):=20EYEJOKER=20carr?=
+ =?UTF-8?q?ies=20=E2=80=94=20OneCLI=20CA=20env,=20project-scoped=20git=20a?=
+ =?UTF-8?q?uth=20mount=20activation,=20nested-claude=20auth=20sentinel?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
