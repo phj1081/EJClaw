@@ -1,0 +1,836 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: EJ Claw <ejclaw@eyejoker.com>
+Date: Tue, 14 Jul 2026 16:04:49 +0900
+Subject: [PATCH 6/7] =?UTF-8?q?feat(typing):=20old-EJClaw=20live=20progres?=
+ =?UTF-8?q?s=20UX=20=E2=80=94=205s-granularity=20elapsed=20+=20Claude-Code?=
+ =?UTF-8?q?-style=20tool=20activity=20tree?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- tool_log table (rolling 50 rows) written by PreToolUse hook with sanitized
+  short details (basename / command head / query prefix — never raw input)
+- progress message after 30s, edited every 5s tick when body changed
+  (no-op edit skip protects platform rate limits)
+- body: '⏳ 작업 중 — N분 N초' + ├/└ tree of last 3 tool calls, current marked ←
+- elapsed formatted via old formatElapsedKorean at 5s buckets
+---
+ container/agent-runner/src/db/connection.ts   |  25 +++
+ .../agent-runner/src/providers/claude.ts      |  50 ++++-
+ eyejoker/host-executor/client.py              | 100 +++++++++
+ .../nanoclaw-host-executor.service            |  13 ++
+ eyejoker/host-executor/op.dropin.conf         |   2 +
+ eyejoker/host-executor/server.py              | 208 ++++++++++++++++++
+ eyejoker/host-executor/test_server.py         |  40 ++++
+ eyejoker/mount-allowlist.json                 |  51 +++++
+ eyejoker/shared-claude-common.md              |  28 +++
+ src/db/schema.ts                              |  10 +
+ src/db/session-db.ts                          |  22 ++
+ src/modules/typing/index.ts                   |  78 +++++--
+ 12 files changed, 611 insertions(+), 16 deletions(-)
+ create mode 100755 eyejoker/host-executor/client.py
+ create mode 100644 eyejoker/host-executor/nanoclaw-host-executor.service
+ create mode 100644 eyejoker/host-executor/op.dropin.conf
+ create mode 100755 eyejoker/host-executor/server.py
+ create mode 100644 eyejoker/host-executor/test_server.py
+ create mode 100644 eyejoker/mount-allowlist.json
+ create mode 100644 eyejoker/shared-claude-common.md
+
+diff --git a/container/agent-runner/src/db/connection.ts b/container/agent-runner/src/db/connection.ts
+index 00ce0ee3..ab89717f 100644
+--- a/container/agent-runner/src/db/connection.ts
++++ b/container/agent-runner/src/db/connection.ts
+@@ -112,6 +112,16 @@ export function getOutboundDb(): Database {
+         updated_at               TEXT NOT NULL
+       );
+     `);
++    // EYEJOKER carry: rolling tool-activity log for the host-side live
++    // progress message (old-EJClaw UX). Forward-compat for older DBs.
++    _outbound.exec(`
++      CREATE TABLE IF NOT EXISTS tool_log (
++        seq        INTEGER PRIMARY KEY AUTOINCREMENT,
++        tool       TEXT NOT NULL,
++        detail     TEXT,
++        started_at TEXT NOT NULL
++      );
++    `);
+   }
+   return _outbound;
+ }
+@@ -136,6 +146,21 @@ export function setContainerToolInFlight(tool: string, declaredTimeoutMs: number
+     .run(tool, declaredTimeoutMs, now, now);
+ }
+ 
++/**
++ * EYEJOKER carry: append one row to the rolling tool-activity log. `detail`
++ * is a short, pre-sanitized human label (e.g. a basename or command word) —
++ * never raw tool input. Trimmed to the latest 50 rows to bound growth.
++ */
++export function appendToolLog(tool: string, detail: string | null): void {
++  const db = getOutboundDb();
++  db.prepare(`INSERT INTO tool_log (tool, detail, started_at) VALUES (?, ?, ?)`).run(
++    tool,
++    detail,
++    new Date().toISOString(),
++  );
++  db.prepare(`DELETE FROM tool_log WHERE seq <= (SELECT MAX(seq) FROM tool_log) - 50`).run();
++}
++
+ /** Clear the in-flight tool — called on PostToolUse / PostToolUseFailure. */
+ export function clearContainerToolInFlight(): void {
+   const now = new Date().toISOString();
+diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
+index 561d888f..90f4420c 100644
+--- a/container/agent-runner/src/providers/claude.ts
++++ b/container/agent-runner/src/providers/claude.ts
+@@ -4,7 +4,7 @@ import path from 'path';
+ 
+ import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+ 
+-import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
++import { appendToolLog, clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
+ import { TIMEZONE, formatLocalStamp } from '../timezone.js';
+ import { registerProvider } from './provider-registry.js';
+ import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
+@@ -183,9 +183,57 @@ const preToolUseHook: HookCallback = async (input) => {
+   } catch (err) {
+     log(`PreToolUse: failed to record container_state: ${err instanceof Error ? err.message : String(err)}`);
+   }
++  // EYEJOKER carry: short, sanitized activity detail for the live progress
++  // message. Only safe display fragments — never full commands or contents.
++  try {
++    appendToolLog(toolName, toolLogDetail(toolName, i.tool_input));
++  } catch (err) {
++    log(`PreToolUse: failed to append tool_log: ${err instanceof Error ? err.message : String(err)}`);
++  }
+   return { continue: true };
+ };
+ 
++/**
++ * EYEJOKER carry: derive a short human-readable detail for the tool-activity
++ * log. Deliberately conservative: basenames for file tools, first word for
++ * Bash, truncated query/description for search/subagent tools.
++ */
++function toolLogDetail(toolName: string, input: Record<string, unknown> | undefined): string | null {
++  if (!input) return null;
++  const first = (s: unknown, n = 40): string | null =>
++    typeof s === 'string' && s.trim() ? s.trim().slice(0, n) : null;
++  const base = (s: unknown): string | null => (typeof s === 'string' && s ? (s.split('/').pop() ?? null) : null);
++  switch (toolName) {
++    case 'Bash': {
++      const cmd = typeof input.command === 'string' ? input.command.trim() : '';
++      if (!cmd) return null;
++      const words = cmd.split(/\s+/);
++      // command word + subcommand when it looks like `git push`, `pnpm build` …
++      const head = words.slice(0, 2).join(' ');
++      return first(head, 30);
++    }
++    case 'Read':
++    case 'Write':
++    case 'Edit':
++      return base(input.file_path);
++    case 'Glob':
++    case 'Grep':
++      return first(input.pattern, 30);
++    case 'WebSearch':
++      return first(input.query, 40);
++    case 'WebFetch':
++      try {
++        return typeof input.url === 'string' ? new URL(input.url).hostname : null;
++      } catch {
++        return null;
++      }
++    case 'Task':
++      return first(input.description, 40);
++    default:
++      return null;
++  }
++}
++
+ /** Clear in-flight tool on PostToolUse / PostToolUseFailure. */
+ const postToolUseHook: HookCallback = async () => {
+   try {
+diff --git a/eyejoker/host-executor/client.py b/eyejoker/host-executor/client.py
+new file mode 100755
+index 00000000..2e7221ff
+--- /dev/null
++++ b/eyejoker/host-executor/client.py
+@@ -0,0 +1,100 @@
++#!/usr/bin/env python3
++"""Minimal MCP stdio bridge to the host executor Unix socket."""
++from __future__ import annotations
++
++import json
++import os
++import socket
++import sys
++import uuid
++
++SOCKET_PATH = os.environ.get("HOST_EXECUTOR_SOCKET", "/workspace/extra/host-executor-run/executor.sock")
++
++TOOL = {
++    "name": "host_exec",
++    "description": (
++        "Execute a shell command on the trusted host computer as the host user, outside the container. "
++        "Use only when the request needs host files, services, Docker, processes, or hardware that the container cannot access. "
++        "Commands are audited. Root commands still depend on the host's sudo policy."
++    ),
++    "inputSchema": {
++        "type": "object",
++        "properties": {
++            "command": {"type": "string", "description": "Bash command to run on the host"},
++            "cwd": {"type": "string", "description": "Absolute host working directory; defaults to the host home"},
++            "timeout": {"type": "integer", "minimum": 1, "maximum": 600, "default": 120},
++            "confirm_dangerous": {
++                "type": "boolean",
++                "default": False,
++                "description": "Set true only when the user explicitly approved this destructive/root-impacting command",
++            },
++        },
++        "required": ["command"],
++        "additionalProperties": False,
++    },
++}
++
++
++def host_call(args: dict) -> dict:
++    request = {"id": str(uuid.uuid4()), **args}
++    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
++        s.settimeout(min(max(int(args.get("timeout", 120)) + 5, 10), 605))
++        s.connect(SOCKET_PATH)
++        s.sendall(json.dumps(request, ensure_ascii=False).encode("utf-8") + b"\n")
++        data = b""
++        while b"\n" not in data:
++            chunk = s.recv(8192)
++            if not chunk:
++                break
++            data += chunk
++    return json.loads(data.split(b"\n", 1)[0].decode("utf-8"))
++
++
++def reply(msg_id, result=None, error=None):
++    out = {"jsonrpc": "2.0", "id": msg_id}
++    if error is not None:
++        out["error"] = error
++    else:
++        out["result"] = result
++    sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
++    sys.stdout.flush()
++
++
++def main() -> None:
++    for line in sys.stdin:
++        try:
++            msg = json.loads(line)
++            method = msg.get("method")
++            msg_id = msg.get("id")
++            if method == "initialize":
++                reply(msg_id, {
++                    "protocolVersion": "2024-11-05",
++                    "capabilities": {"tools": {}},
++                    "serverInfo": {"name": "nanoclaw-host-executor", "version": "0.1.0"},
++                })
++            elif method == "notifications/initialized":
++                continue
++            elif method == "ping":
++                reply(msg_id, {})
++            elif method == "tools/list":
++                reply(msg_id, {"tools": [TOOL]})
++            elif method == "tools/call":
++                params = msg.get("params") or {}
++                if params.get("name") != "host_exec":
++                    reply(msg_id, error={"code": -32602, "message": "unknown tool"})
++                    continue
++                try:
++                    result = host_call(params.get("arguments") or {})
++                    text = json.dumps(result, ensure_ascii=False, indent=2)
++                    reply(msg_id, {"content": [{"type": "text", "text": text}], "isError": not result.get("ok", False)})
++                except Exception as e:
++                    reply(msg_id, {"content": [{"type": "text", "text": f"host executor error: {type(e).__name__}: {e}"}], "isError": True})
++            elif msg_id is not None:
++                reply(msg_id, error={"code": -32601, "message": "method not found"})
++        except Exception as e:
++            # Parse errors without a usable id are reported as JSON-RPC errors.
++            reply(None, error={"code": -32700, "message": f"parse error: {type(e).__name__}"})
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/eyejoker/host-executor/nanoclaw-host-executor.service b/eyejoker/host-executor/nanoclaw-host-executor.service
+new file mode 100644
+index 00000000..6e7b55c9
+--- /dev/null
++++ b/eyejoker/host-executor/nanoclaw-host-executor.service
+@@ -0,0 +1,13 @@
++[Unit]
++Description=NanoClaw trusted host executor
++After=default.target
++
++[Service]
++Type=simple
++ExecStart=/usr/bin/python3 %h/nanoclaw-host-executor/server.py
++Restart=on-failure
++RestartSec=2
++Environment=TZ=Asia/Seoul
++
++[Install]
++WantedBy=default.target
+diff --git a/eyejoker/host-executor/op.dropin.conf b/eyejoker/host-executor/op.dropin.conf
+new file mode 100644
+index 00000000..1a0d8f3e
+--- /dev/null
++++ b/eyejoker/host-executor/op.dropin.conf
+@@ -0,0 +1,2 @@
++[Service]
++EnvironmentFile=%h/.config/nanoclaw/host-executor.env
+diff --git a/eyejoker/host-executor/server.py b/eyejoker/host-executor/server.py
+new file mode 100755
+index 00000000..5b1ad88e
+--- /dev/null
++++ b/eyejoker/host-executor/server.py
+@@ -0,0 +1,208 @@
++#!/usr/bin/env python3
++"""Host-side command executor for one trusted NanoClaw agent.
++
++Protocol: one JSON object per Unix-socket connection, one JSON response.
++The socket is mode 0600 and peer UID must match the service UID.
++"""
++from __future__ import annotations
++
++import json
++import os
++import pathlib
++import re
++import selectors
++import signal
++import socket
++import struct
++import subprocess
++import sys
++import time
++import uuid
++from datetime import datetime, timezone
++
++RUNTIME_DIR = pathlib.Path(os.environ.get("HOST_EXECUTOR_RUNTIME", pathlib.Path.home() / ".local/share/nanoclaw-host-executor"))
++SOCKET_PATH = RUNTIME_DIR / "executor.sock"
++AUDIT_PATH = RUNTIME_DIR / "audit.jsonl"
++MAX_REQUEST = 64 * 1024
++MAX_OUTPUT = 100 * 1024
++MAX_TIMEOUT = 600
++EXPECTED_UID = os.getuid()
++
++DANGEROUS_COMMANDS = re.compile(
++    r"(?:"
++    r"\brm\s+-[^\s]*(?:r[^\s]*f|f[^\s]*r)[^\s]*\b|"
++    r"(?:^|[;&|]\s*)sudo\b|"
++    r"\b(?:mkfs(?:\.\w+)?|fdisk|parted|shutdown|reboot|poweroff|halt)\b|"
++    r"\bdd\s+[^\n]*\bof=/dev/|"
++    r"\bgit\s+(?:reset\s+--hard|clean\s+-[^\s]*f)|"
++    r"\bchmod\s+-R\s+777\s+/|"
++    r":\(\)\s*\{"
++    r")",
++    re.IGNORECASE | re.MULTILINE,
++)
++
++
++def audit(record: dict) -> None:
++    record = {"at": datetime.now(timezone.utc).isoformat(), **record}
++    with AUDIT_PATH.open("a", encoding="utf-8") as f:
++        f.write(json.dumps(record, ensure_ascii=False) + "\n")
++
++
++def peer_uid(conn: socket.socket) -> int | None:
++    try:
++        raw = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
++        _pid, uid, _gid = struct.unpack("3i", raw)
++        return uid
++    except (AttributeError, OSError):
++        return None
++
++
++def trim(data: bytes) -> tuple[str, bool]:
++    truncated = len(data) > MAX_OUTPUT
++    if truncated:
++        data = data[:MAX_OUTPUT]
++    return data.decode("utf-8", errors="replace"), truncated
++
++
++def execute(req: dict) -> dict:
++    request_id = str(req.get("id") or uuid.uuid4())
++    command = req.get("command")
++    if not isinstance(command, str) or not command.strip() or len(command) > 20000:
++        return {"ok": False, "id": request_id, "error": "command must be a non-empty string up to 20000 chars"}
++    if DANGEROUS_COMMANDS.search(command) and req.get("confirm_dangerous") is not True:
++        result = {
++            "ok": False,
++            "id": request_id,
++            "error": "dangerous command requires confirm_dangerous=true after explicit user approval",
++        }
++        audit({"id": request_id, "command": command, "denied": "dangerous_confirmation_required"})
++        return result
++
++    cwd_raw = req.get("cwd") or str(pathlib.Path.home())
++    if not isinstance(cwd_raw, str) or not os.path.isabs(cwd_raw) or not os.path.isdir(cwd_raw):
++        return {"ok": False, "id": request_id, "error": "cwd must be an existing absolute directory"}
++
++    try:
++        timeout = max(1, min(int(req.get("timeout", 120)), MAX_TIMEOUT))
++    except (TypeError, ValueError):
++        timeout = 120
++
++    started = time.monotonic()
++    base_audit = {
++        "id": request_id,
++        "cwd": cwd_raw,
++        "command": command,
++        "timeout": timeout,
++    }
++    try:
++        proc = subprocess.run(
++            ["/bin/bash", "-lc", command],
++            cwd=cwd_raw,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.PIPE,
++            timeout=timeout,
++            env={
++                "HOME": str(pathlib.Path.home()),
++                "USER": os.environ.get("USER", "ejclaw"),
++                "LOGNAME": os.environ.get("LOGNAME", os.environ.get("USER", "ejclaw")),
++                "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
++                "LANG": os.environ.get("LANG", "C.UTF-8"),
++                "TZ": os.environ.get("TZ", "Asia/Seoul"),
++                # 1Password service account (user approved full access 2026-07-14).
++                # Commands still go through the audit log; secrets resolve via `op read`.
++                **({"OP_SERVICE_ACCOUNT_TOKEN": os.environ["OP_SERVICE_ACCOUNT_TOKEN"]}
++                   if os.environ.get("OP_SERVICE_ACCOUNT_TOKEN") else {}),
++            },
++            check=False,
++        )
++        stdout, out_truncated = trim(proc.stdout)
++        stderr, err_truncated = trim(proc.stderr)
++        result = {
++            "ok": proc.returncode == 0,
++            "id": request_id,
++            "exit_code": proc.returncode,
++            "stdout": stdout,
++            "stderr": stderr,
++            "truncated": out_truncated or err_truncated,
++            "elapsed_ms": round((time.monotonic() - started) * 1000),
++        }
++        audit({**base_audit, "result": {k: result[k] for k in ("ok", "exit_code", "truncated", "elapsed_ms")}})
++        return result
++    except subprocess.TimeoutExpired as e:
++        stdout, out_truncated = trim(e.stdout or b"")
++        stderr, err_truncated = trim(e.stderr or b"")
++        result = {
++            "ok": False,
++            "id": request_id,
++            "error": "timeout",
++            "timed_out": True,
++            "stdout": stdout,
++            "stderr": stderr,
++            "truncated": out_truncated or err_truncated,
++            "elapsed_ms": round((time.monotonic() - started) * 1000),
++        }
++        audit({**base_audit, "result": {"ok": False, "error": "timeout", "elapsed_ms": result["elapsed_ms"]}})
++        return result
++
++
++def handle(conn: socket.socket) -> None:
++    uid = peer_uid(conn)
++    if uid is not None and uid != EXPECTED_UID:
++        audit({"denied": "peer_uid", "peer_uid": uid})
++        conn.sendall(json.dumps({"ok": False, "error": "peer uid denied"}).encode() + b"\n")
++        return
++    data = b""
++    while b"\n" not in data and len(data) <= MAX_REQUEST:
++        chunk = conn.recv(8192)
++        if not chunk:
++            break
++        data += chunk
++    if len(data) > MAX_REQUEST:
++        response = {"ok": False, "error": "request too large"}
++    else:
++        try:
++            req = json.loads(data.split(b"\n", 1)[0].decode("utf-8"))
++            response = execute(req) if isinstance(req, dict) else {"ok": False, "error": "request must be an object"}
++        except Exception as e:
++            response = {"ok": False, "error": f"invalid request: {type(e).__name__}"}
++    conn.sendall(json.dumps(response, ensure_ascii=False).encode("utf-8") + b"\n")
++
++
++def main() -> None:
++    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
++    os.chmod(RUNTIME_DIR, 0o700)
++    if SOCKET_PATH.exists() or SOCKET_PATH.is_socket():
++        SOCKET_PATH.unlink()
++    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++    server.bind(str(SOCKET_PATH))
++    os.chmod(SOCKET_PATH, 0o600)
++    server.listen(16)
++    server.settimeout(1.0)
++    stopping = False
++
++    def stop(_sig, _frame):
++        nonlocal stopping
++        stopping = True
++
++    signal.signal(signal.SIGTERM, stop)
++    signal.signal(signal.SIGINT, stop)
++    audit({"event": "started", "pid": os.getpid(), "socket": str(SOCKET_PATH)})
++    try:
++        while not stopping:
++            try:
++                conn, _ = server.accept()
++            except socket.timeout:
++                continue
++            with conn:
++                handle(conn)
++    finally:
++        server.close()
++        try:
++            SOCKET_PATH.unlink()
++        except FileNotFoundError:
++            pass
++        audit({"event": "stopped", "pid": os.getpid()})
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/eyejoker/host-executor/test_server.py b/eyejoker/host-executor/test_server.py
+new file mode 100644
+index 00000000..ce59cd5b
+--- /dev/null
++++ b/eyejoker/host-executor/test_server.py
+@@ -0,0 +1,40 @@
++import importlib.util
++import json
++import tempfile
++import unittest
++from pathlib import Path
++
++SPEC = importlib.util.spec_from_file_location("host_executor_server", Path(__file__).with_name("server.py"))
++server = importlib.util.module_from_spec(SPEC)
++assert SPEC and SPEC.loader
++SPEC.loader.exec_module(server)
++
++
++class HostExecutorTests(unittest.TestCase):
++    def setUp(self):
++        self.tmp = tempfile.TemporaryDirectory()
++        server.AUDIT_PATH = Path(self.tmp.name) / "audit.jsonl"
++
++    def tearDown(self):
++        self.tmp.cleanup()
++
++    def test_harmless_command_executes_and_is_audited(self):
++        result = server.execute({"command": "printf UNIT_OK", "cwd": "/tmp", "timeout": 5})
++        self.assertTrue(result["ok"])
++        self.assertEqual(result["stdout"], "UNIT_OK")
++        rows = [json.loads(line) for line in server.AUDIT_PATH.read_text().splitlines()]
++        self.assertEqual(rows[-1]["result"]["exit_code"], 0)
++
++    def test_dangerous_command_requires_confirmation(self):
++        result = server.execute({"command": "rm -rf /tmp/not-real"})
++        self.assertFalse(result["ok"])
++        self.assertIn("confirm_dangerous", result["error"])
++
++    def test_timeout_is_enforced(self):
++        result = server.execute({"command": "sleep 2", "timeout": 1})
++        self.assertFalse(result["ok"])
++        self.assertTrue(result["timed_out"])
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/eyejoker/mount-allowlist.json b/eyejoker/mount-allowlist.json
+new file mode 100644
+index 00000000..f306da51
+--- /dev/null
++++ b/eyejoker/mount-allowlist.json
+@@ -0,0 +1,51 @@
++{
++ "allowedRoots": [
++  {
++   "path": "/home/ejclaw/nanoclaw-host-executor",
++   "allowReadWrite": false,
++   "description": "Read-only Host Executor MCP client"
++  },
++  {
++   "path": "/home/ejclaw/.local/share/nanoclaw-host-executor",
++   "allowReadWrite": true,
++   "description": "Trusted Host Executor Unix socket and audit storage"
++  },
++  {
++   "path": "/home/ejclaw/projects/eyejokerdb",
++   "allowReadWrite": true,
++   "description": "eyejokerdb monorepo workspace"
++  },
++  {
++   "path": "/home/ejclaw/projects/cleanapo",
++   "allowReadWrite": true,
++   "description": "cleanapo workspace"
++  },
++  {
++   "path": "/home/ejclaw/projects/varo-mouse-software",
++   "allowReadWrite": true,
++   "description": "varo mouse software workspace"
++  },
++  {
++   "path": "/home/ejclaw/.config/nanoclaw/git",
++   "allowReadWrite": false,
++   "description": "Per-group git deploy keys (read-only)"
++  },
++  {
++   "path": "/home/ejclaw/obsidian-tech/LLM Wiki",
++   "allowReadWrite": false,
++   "description": "LLM Wiki (read-only knowledge base)"
++  },
++  {
++   "path": "/home/ejclaw/.config/nanoclaw/shared-claude",
++   "allowReadWrite": false,
++   "description": "Shared agent instructions (managed by Hermes)"
++  },
++  {
++   "path": "/home/ejclaw/projects/agent-trees",
++   "allowReadWrite": true,
++   "description": "Per-agent-group isolated clones of the eyejokerdb monorepo"
++  }
++ ],
++ "blockedPatterns": [],
++ "nonMainReadOnly": true
++}
+\ No newline at end of file
+diff --git a/eyejoker/shared-claude-common.md b/eyejoker/shared-claude-common.md
+new file mode 100644
+index 00000000..8c326900
+--- /dev/null
++++ b/eyejoker/shared-claude-common.md
+@@ -0,0 +1,28 @@
++# EYEJOKER 공용 에이전트 지침 (전 그룹 공유 — 원본: /home/ejclaw/.config/nanoclaw/shared-claude/common.md)
++
++> 이 파일은 호스트 관리자(Hermes)가 관리한다. 그룹별 노하우는 여기 말고 각 그룹의 CLAUDE.local.md에 쌓을 것.
++
++## 권한 철학
++- 눈쟁이 방침: **최대 개방, 승인 게이트 없음.** host_exec/op/git push 모두 자유. 안전장치는 감사 로그뿐.
++- 단, 스스로 판단해 위험이 큰 것(프로덕션 배포, 대량 삭제, 외부 제출/발송)은 실행 전에 눈쟁이에게 먼저 물어볼 것.
++
++## 지식/메모리 레이어 (Hermes와 공유)
++- **AgentMemory MCP** (`mcp__agentmemory__*`): Hermes와 같은 서버 공유. 작업 전 `memory_recall`/`memory_smart_search`로 과거 컨텍스트 검색. 중요 결정은 `memory_save`, 교훈은 `memory_lesson_save`.
++- **LLM Wiki** (`/workspace/extra/wiki`, read-only): 눈쟁이의 canonical 지식. 시작 전 `index.md`와 관련 `entities/`(eyejokerdb, maldhalla, homelab-infra 등) 확인. 수정은 host_exec로 원본(`/home/ejclaw/obsidian-tech/LLM Wiki`) 편집 + 그쪽 AGENTS.md 규칙 준수.
++
++## 1Password (op) — 호스트 시크릿
++- host_exec 경유: `op read "op://<vault>/<item>/<field>"`, `op item list --vault person-service`
++- vault: person-service(서비스 계정/API키), homelab-infra, secret-archive, 회사
++- eyejokerdb dev 로그인: `op://person-service/d5wbx7iqwgqexy4lccq4fj7jwu/password` (eyejoker@eyejoker.com)
++- **시크릿 값을 Discord 메시지/최종 응답에 절대 노출 금지.** 셸 안에서만 사용.
++
++## 중첩 AI CLI
++- Claude CLI(컨테이너 안): `claude -p "..." --model claude-fable-5` (인증 자동). 재귀 금지 — 서브 작업 1단계만.
++- Codex(호스트, GPT): host_exec로 `codex exec --cd <디렉터리> "..."`.
++
++## 눈쟁이 작업 선호
++- 한국어 반말/편한 말투, 결론 먼저, 메타발언 X.
++- 대시보드/리포트: 숫자·판단만, 모바일 고정폭, 그래프>텍스트, 정상=침묵.
++- 성능/번들 최적화 후 로딩 UX 회귀검증 필수 (용량 수치만 X, 초기 paint 실측).
++- 반복 수작업 제안 금지 — 1회 셋업 후 완전 자동화.
++- 제출/발송/권리 관련은 승인 전 실행 금지.
+diff --git a/src/db/schema.ts b/src/db/schema.ts
+index cfa0a966..5ddd6950 100644
+--- a/src/db/schema.ts
++++ b/src/db/schema.ts
+@@ -271,4 +271,14 @@ CREATE TABLE IF NOT EXISTS container_state (
+   tool_started_at          TEXT,
+   updated_at               TEXT NOT NULL
+ );
++
++-- EYEJOKER carry: rolling tool-activity log written by the container's
++-- PreToolUse hook (tool name + short sanitized detail). Host typing module
++-- reads the tail to render the old-EJClaw style live progress message.
++CREATE TABLE IF NOT EXISTS tool_log (
++  seq        INTEGER PRIMARY KEY AUTOINCREMENT,
++  tool       TEXT NOT NULL,
++  detail     TEXT,
++  started_at TEXT NOT NULL
++);
+ `;
+diff --git a/src/db/session-db.ts b/src/db/session-db.ts
+index b5fbaf4b..f5b7c712 100644
+--- a/src/db/session-db.ts
++++ b/src/db/session-db.ts
+@@ -242,6 +242,28 @@ export function getContainerState(outDb: Database.Database): ContainerState | nu
+   }
+ }
+ 
++export interface ToolLogRow {
++  seq: number;
++  tool: string;
++  detail: string | null;
++  started_at: string;
++}
++
++/**
++ * EYEJOKER carry: tail of the container's rolling tool-activity log (oldest
++ * first). Empty array when the table is missing (older session DBs).
++ */
++export function getToolLogTail(outDb: Database.Database, limit: number): ToolLogRow[] {
++  try {
++    const rows = outDb
++      .prepare(`SELECT seq, tool, detail, started_at FROM tool_log ORDER BY seq DESC LIMIT ?`)
++      .all(limit) as ToolLogRow[];
++    return rows.reverse();
++  } catch {
++    return [];
++  }
++}
++
+ // ---------------------------------------------------------------------------
+ // messages_out (read-only from host)
+ // ---------------------------------------------------------------------------
+diff --git a/src/modules/typing/index.ts b/src/modules/typing/index.ts
+index 87c037c9..be383acf 100644
+--- a/src/modules/typing/index.ts
++++ b/src/modules/typing/index.ts
+@@ -20,17 +20,18 @@
+ import fs from 'fs';
+ 
+ import { heartbeatPath, openOutboundDb } from '../../session-manager.js';
+-import { getContainerState } from '../../db/session-db.js';
++import { getContainerState, getToolLogTail } from '../../db/session-db.js';
+ 
+ const TYPING_REFRESH_MS = 4000;
+ /**
+  * EYEJOKER carry: after this long of continuous work without a user-facing
+- * delivery, post a visible progress message ("⏳ 작업 중 — N분 · 도구") and
+- * keep editing it. Deleted when the real answer arrives. Ported from old
+- * EJClaw message-turn-controller progress UX.
++ * delivery, post a visible progress message and keep editing it — old-EJClaw
++ * message-turn-controller UX: elapsed time at ~5s granularity plus a
++ * Claude-Code-style tree of recent tool activity. Deleted when the real
++ * answer arrives.
+  */
+-const PROGRESS_AFTER_MS = 60_000;
+-const PROGRESS_EDIT_MS = 30_000;
++const PROGRESS_AFTER_MS = 30_000;
++const PROGRESS_EDIT_MS = 5_000;
+ /**
+  * Grace window from startTypingRefresh: fire typing unconditionally
+  * for this long regardless of heartbeat state. Covers container
+@@ -80,6 +81,7 @@ interface TypingTarget {
+   progressMsgId: string | null;
+   progressLastEditAt: number;
+   progressPosting: boolean;
++  progressLastBody?: string;
+ }
+ 
+ let adapter: TypingAdapter | null = null;
+@@ -178,14 +180,55 @@ function toolLabelKo(tool: string | null | undefined): string {
+     WebFetch: '웹 조회',
+     Task: '서브에이전트',
+   };
+-  const name = KO[tool] ?? (tool.startsWith('mcp__') ? 'MCP 도구' : tool);
+-  return ` · ${name}`;
++  return KO[tool] ?? (tool.startsWith('mcp__') ? 'MCP 도구' : tool);
+ }
+ 
++/** Old-EJClaw formatElapsedKorean, at ~5s granularity below the minute. */
++function formatElapsedKorean(ms: number): string {
++  const totalSeconds = Math.floor(ms / 1000 / 5) * 5;
++  const hours = Math.floor(totalSeconds / 3600);
++  const minutes = Math.floor((totalSeconds % 3600) / 60);
++  const seconds = totalSeconds % 60;
++  const parts: string[] = [];
++  if (hours > 0) parts.push(`${hours}시간`);
++  if (minutes > 0) parts.push(`${minutes}분`);
++  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}초`);
++  return parts.join(' ');
++}
++
++/**
++ * Old-EJClaw composeProgressBody: header line with elapsed time, then a
++ * Claude-Code-style activity tree of the most recent tool calls (├/└),
++ * current one marked. detail comes pre-sanitized from the container hook.
++ */
+ function progressBody(entry: TypingTarget, sessionId: string): string {
+-  const mins = Math.max(1, Math.round((Date.now() - entry.startedAt) / 60_000));
++  const elapsed = formatElapsedKorean(Date.now() - entry.startedAt);
+   const inFlight = toolInFlight(entry.agentGroupId, sessionId);
+-  return `⏳ 작업 중 — ${mins}분 경과${toolLabelKo(inFlight?.tool)}`;
++  const lines = [`⏳ **작업 중** — ${elapsed}`];
++  try {
++    const outDb = openOutboundDb(entry.agentGroupId, sessionId);
++    try {
++      // Only activity from this stretch of work — drop rows older than startedAt.
++      const tail = getToolLogTail(outDb, 8).filter((r) => Date.parse(r.started_at) >= entry.startedAt - 2000);
++      const recent = tail.slice(-3);
++      for (let i = 0; i < recent.length; i++) {
++        const r = recent[i];
++        const isLast = i === recent.length - 1;
++        const label = toolLabelKo(r.tool);
++        const detail = r.detail ? ` \`${r.detail}\`` : '';
++        const marker = isLast && inFlight ? ' ←' : '';
++        lines.push(`${isLast ? '└' : '├'} ${label}${detail}${marker}`);
++      }
++    } finally {
++      outDb.close();
++    }
++  } catch {
++    // No tool log — header only.
++  }
++  if (lines.length === 1 && inFlight) {
++    lines.push(`└ ${toolLabelKo(inFlight.tool)} ←`);
++  }
++  return lines.join('\n');
+ }
+ 
+ function tickProgress(sessionId: string, entry: TypingTarget): void {
+@@ -193,12 +236,12 @@ function tickProgress(sessionId: string, entry: TypingTarget): void {
+   const now = Date.now();
+   if (now - entry.startedAt < PROGRESS_AFTER_MS) return;
+ 
+-  const send = (operation: 'post' | 'edit') => {
++  const send = (operation: 'post' | 'edit', body: string) => {
+     entry.progressPosting = true;
+     const content =
+       operation === 'edit'
+-        ? JSON.stringify({ operation: 'edit', messageId: entry.progressMsgId, text: progressBody(entry, sessionId) })
+-        : JSON.stringify({ text: progressBody(entry, sessionId) });
++        ? JSON.stringify({ operation: 'edit', messageId: entry.progressMsgId, text: body })
++        : JSON.stringify({ text: body });
+     adapter!.deliver!(
+       entry.channelType,
+       entry.platformId,
+@@ -211,6 +254,7 @@ function tickProgress(sessionId: string, entry: TypingTarget): void {
+       .then((msgId) => {
+         if (operation === 'post' && msgId) entry.progressMsgId = msgId;
+         entry.progressLastEditAt = Date.now();
++        entry.progressLastBody = body;
+       })
+       .catch(() => {
+         // Editing a deleted message / adapter hiccup: stop trying this turn.
+@@ -223,9 +267,12 @@ function tickProgress(sessionId: string, entry: TypingTarget): void {
+   };
+ 
+   if (!entry.progressMsgId) {
+-    send('post');
++    send('post', progressBody(entry, sessionId));
+   } else if (entry.progressMsgId !== 'failed' && now - entry.progressLastEditAt >= PROGRESS_EDIT_MS) {
+-    send('edit');
++    // Skip no-op edits: with 5s ticks the body is often unchanged (same
++    // elapsed bucket, same tool) — don't burn platform rate limit on those.
++    const body = progressBody(entry, sessionId);
++    if (body !== entry.progressLastBody) send('edit', body);
+   }
+ }
+ 
+@@ -358,6 +405,7 @@ export function pauseTypingRefreshAfterDelivery(sessionId: string): void {
+   clearProgress(sessionId, entry);
+   entry.startedAt = Date.now();
+   entry.progressLastEditAt = 0;
++  entry.progressLastBody = undefined;
+ }
+ 
+ export function stopTypingRefresh(sessionId: string): void {
+-- 
+2.43.0
+

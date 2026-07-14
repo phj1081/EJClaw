@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: EJ Claw <ejclaw@eyejoker.com>
+Date: Tue, 14 Jul 2026 06:32:32 +0900
+Subject: [PATCH 3/7] =?UTF-8?q?feat(container-runner):=20EYEJOKER=20carrie?=
+ =?UTF-8?q?s=20=E2=80=94=20OneCLI=20CA=20env,=20project-scoped=20git=20aut?=
+ =?UTF-8?q?h=20mount=20activation,=20nested-claude=20auth=20sentinel?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .../agent-runner/src/providers/claude.ts      |  1 +
+ src/container-runner.ts                       | 20 ++++++++++++++++++-
+ 2 files changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
+index 648e9838..561d888f 100644
+--- a/container/agent-runner/src/providers/claude.ts
++++ b/container/agent-runner/src/providers/claude.ts
+@@ -485,3 +485,4 @@ export class ClaudeProvider implements AgentProvider {
+ }
+ 
+ registerProvider('claude', (opts) => new ClaudeProvider(opts));
++registerProvider('gpt-proxy', (opts) => new ClaudeProvider(opts));
+diff --git a/src/container-runner.ts b/src/container-runner.ts
+index f72c94cb..aa9628c1 100644
+--- a/src/container-runner.ts
++++ b/src/container-runner.ts
+@@ -504,6 +504,16 @@ async function buildContainerArgs(
+   }
+   log.info('OneCLI gateway applied', { containerName });
+ 
++  // Carry patch: git/libcurl don't honor SSL_CERT_FILE — they need their own
++  // CA vars to trust the OneCLI gateway MITM cert, otherwise `git pull`/`curl`
++  // to HTTPS remotes fail with "server certificate verification failed".
++  args.push('-e', 'GIT_SSL_CAINFO=/tmp/onecli-combined-ca.pem');
++  args.push('-e', 'CURL_CA_BUNDLE=/tmp/onecli-combined-ca.pem');
++  // Groups with a git-auth mount get a deploy key + https→ssh rewrite; for
++  // groups without the mount the path doesn't exist and git treats the
++  // global config as empty, so this is a safe no-op default.
++  args.push('-e', 'GIT_CONFIG_GLOBAL=/workspace/extra/git-auth/gitconfig');
++
+   // Override entrypoint: run v2 entry point directly via Bun (no tsc, no stdin).
+   args.push('--entrypoint', 'bash');
+ 
+@@ -511,7 +521,15 @@ async function buildContainerArgs(
+   const imageTag = containerConfig.imageTag || CONTAINER_IMAGE;
+   args.push(imageTag);
+ 
+-  args.push('-c', 'exec bun run /app/src/index.ts');
++  // Carry patch: persist the gateway auth sentinel for nested `claude` CLI
++  // calls. The Agent SDK sanitizes CLAUDE_CODE_OAUTH_TOKEN out of Bash tool
++  // children, so sub-invocations of claude would see "Not logged in". The
++  // token is a OneCLI gateway sentinel (real credential never enters the
++  // container), so a 0600 file inside the container is the same trust domain.
++  args.push(
++    '-c',
++    'umask 077; printf %s "$CLAUDE_CODE_OAUTH_TOKEN" > /home/node/.claude-nested-token; exec bun run /app/src/index.ts',
++  );
+ 
+   return args;
+ }
+-- 
+2.43.0
+

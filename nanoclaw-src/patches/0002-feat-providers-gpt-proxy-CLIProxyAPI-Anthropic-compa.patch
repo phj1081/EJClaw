@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: EJ Claw <ejclaw@eyejoker.com>
+Date: Tue, 14 Jul 2026 06:32:29 +0900
+Subject: [PATCH 2/7] =?UTF-8?q?feat(providers):=20gpt-proxy=20=E2=80=94=20?=
+ =?UTF-8?q?CLIProxyAPI=20Anthropic-compat=20endpoint=20(Codex=20subscripti?=
+ =?UTF-8?q?on=20pool)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ src/providers/gpt-proxy.ts | 16 ++++++++++++++++
+ src/providers/index.ts     |  2 ++
+ 2 files changed, 18 insertions(+)
+ create mode 100644 src/providers/gpt-proxy.ts
+
+diff --git a/src/providers/gpt-proxy.ts b/src/providers/gpt-proxy.ts
+new file mode 100644
+index 00000000..e2c6f049
+--- /dev/null
++++ b/src/providers/gpt-proxy.ts
+@@ -0,0 +1,16 @@
++/** GPT/Codex subscription pool through CLIProxyAPI's Anthropic-compatible endpoint. */
++import { readEnvFile } from '../env.js';
++import { registerProviderContainerConfig } from './provider-container-registry.js';
++
++registerProviderContainerConfig('gpt-proxy', () => {
++  const dotenv = readEnvFile(['CLIPROXY_BASE_URL']);
++  if (!dotenv.CLIPROXY_BASE_URL) {
++    throw new Error('CLIPROXY_BASE_URL is required for the gpt-proxy provider');
++  }
++  return {
++    env: {
++      ANTHROPIC_BASE_URL: dotenv.CLIPROXY_BASE_URL,
++      ANTHROPIC_AUTH_TOKEN: 'placeholder',
++    },
++  };
++});
+diff --git a/src/providers/index.ts b/src/providers/index.ts
+index 9060a6b4..7e81f8d0 100644
+--- a/src/providers/index.ts
++++ b/src/providers/index.ts
+@@ -4,3 +4,5 @@
+ // needs (claude) don't appear here.
+ //
+ // Skills add a new provider by appending one import line below.
++import './claude.js';
++import './gpt-proxy.js';
+-- 
+2.43.0
+

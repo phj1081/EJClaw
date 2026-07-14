@@ -1,0 +1,298 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: EJ Claw <ejclaw@eyejoker.com>
+Date: Tue, 14 Jul 2026 15:40:47 +0900
+Subject: [PATCH 5/7] =?UTF-8?q?feat(typing):=20EYEJOKER=20carry=20?=
+ =?UTF-8?q?=E2=80=94=20old-EJClaw=20visible=20progress=20message?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- After 60s of continuous work, post '⏳ 작업 중 — N분 경과 · <도구>' and edit every 30s
+- Tool label from container_state (PreToolUse hook); Korean tool names
+- toolInFlight also feeds the typing keepalive: heartbeat goes stale during
+  long blocking tool calls, container_state covers the gap (bounded by
+  declared timeout + slack / 10min default)
+- Progress message deleted when the real answer is delivered (delete op
+  added to chat-sdk-bridge; checkmark-edit fallback)
+- Elapsed base resets on each delivery
+---
+ src/channels/chat-sdk-bridge.ts |   8 ++
+ src/modules/typing/index.ts     | 189 +++++++++++++++++++++++++++++++-
+ 2 files changed, 195 insertions(+), 2 deletions(-)
+
+diff --git a/src/channels/chat-sdk-bridge.ts b/src/channels/chat-sdk-bridge.ts
+index 5a7eb508..b61aef7d 100644
+--- a/src/channels/chat-sdk-bridge.ts
++++ b/src/channels/chat-sdk-bridge.ts
+@@ -422,6 +422,14 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
+         return;
+       }
+ 
++      // EYEJOKER carry: delete op for ephemeral host-side messages (typing
++      // module's progress placeholder). Chat SDK adapters all implement
++      // deleteMessage; failures propagate to the caller's catch.
++      if (content.operation === 'delete' && content.messageId) {
++        await adapter.deleteMessage(tid, content.messageId as string);
++        return;
++      }
++
+       if (content.operation === 'reaction' && content.messageId && content.emoji) {
+         await adapter.addReaction(tid, content.messageId as string, content.emoji as string);
+         return;
+diff --git a/src/modules/typing/index.ts b/src/modules/typing/index.ts
+index 79c28ea7..87c037c9 100644
+--- a/src/modules/typing/index.ts
++++ b/src/modules/typing/index.ts
+@@ -19,9 +19,18 @@
+  */
+ import fs from 'fs';
+ 
+-import { heartbeatPath } from '../../session-manager.js';
++import { heartbeatPath, openOutboundDb } from '../../session-manager.js';
++import { getContainerState } from '../../db/session-db.js';
+ 
+ const TYPING_REFRESH_MS = 4000;
++/**
++ * EYEJOKER carry: after this long of continuous work without a user-facing
++ * delivery, post a visible progress message ("⏳ 작업 중 — N분 · 도구") and
++ * keep editing it. Deleted when the real answer arrives. Ported from old
++ * EJClaw message-turn-controller progress UX.
++ */
++const PROGRESS_AFTER_MS = 60_000;
++const PROGRESS_EDIT_MS = 30_000;
+ /**
+  * Grace window from startTypingRefresh: fire typing unconditionally
+  * for this long regardless of heartbeat state. Covers container
+@@ -46,6 +55,15 @@ const POST_DELIVERY_PAUSE_MS = 10000;
+ 
+ interface TypingAdapter {
+   setTyping?(channelType: string, platformId: string, threadId: string | null, instance?: string): Promise<void>;
++  deliver?(
++    channelType: string,
++    platformId: string,
++    threadId: string | null,
++    kind: string,
++    content: string,
++    files?: unknown,
++    instance?: string,
++  ): Promise<string | undefined>;
+ }
+ 
+ interface TypingTarget {
+@@ -58,6 +76,10 @@ interface TypingTarget {
+   interval: NodeJS.Timeout;
+   startedAt: number;
+   pausedUntil: number; // epoch ms; 0 = not paused
++  // EYEJOKER carry: visible progress message state
++  progressMsgId: string | null;
++  progressLastEditAt: number;
++  progressPosting: boolean;
+ }
+ 
+ let adapter: TypingAdapter | null = null;
+@@ -97,6 +119,150 @@ function isHeartbeatFresh(agentGroupId: string, sessionId: string): boolean {
+   }
+ }
+ 
++// ── EYEJOKER carry: visible progress message ─────────────────────────
++// Old-EJClaw style "⏳ 작업 중 — N분 · 도구" message: posted after
++// PROGRESS_AFTER_MS of continuous work, edited every PROGRESS_EDIT_MS,
++// deleted when the turn's real answer is delivered (see
++// pauseTypingRefreshAfterDelivery). Best-effort: any failure disables
++// the progress message for the rest of the turn but never breaks typing.
++
++/** Max in-flight window for a tool with no declared timeout. */
++const TOOL_IN_FLIGHT_DEFAULT_MS = 10 * 60_000;
++/** Slack past a declared timeout before we stop trusting container_state. */
++const TOOL_IN_FLIGHT_SLACK_MS = 60_000;
++
++interface ToolInFlight {
++  tool: string;
++}
++
++/**
++ * EYEJOKER carry: during a long blocking tool call (e.g. a 3-minute Bash
++ * build) the container's poll-loop heartbeat goes stale even though the
++ * agent is very much working. container_state (written by the SDK
++ * PreToolUse/PostToolUse hooks) is the authoritative "tool in flight"
++ * signal — trust it while within the tool's declared timeout (+slack),
++ * or a default cap when no timeout was declared.
++ */
++function toolInFlight(agentGroupId: string, sessionId: string): ToolInFlight | null {
++  try {
++    const outDb = openOutboundDb(agentGroupId, sessionId);
++    try {
++      const st = getContainerState(outDb);
++      if (!st?.current_tool || !st.tool_started_at) return null;
++      const startedAt = Date.parse(st.tool_started_at);
++      if (Number.isNaN(startedAt)) return null;
++      const windowMs =
++        st.tool_declared_timeout_ms != null
++          ? st.tool_declared_timeout_ms + TOOL_IN_FLIGHT_SLACK_MS
++          : TOOL_IN_FLIGHT_DEFAULT_MS;
++      if (Date.now() - startedAt > windowMs) return null;
++      return { tool: st.current_tool };
++    } finally {
++      outDb.close();
++    }
++  } catch {
++    return null;
++  }
++}
++
++function toolLabelKo(tool: string | null | undefined): string {
++  if (!tool) return '';
++  const KO: Record<string, string> = {
++    Bash: '명령 실행',
++    Read: '파일 읽기',
++    Write: '파일 쓰기',
++    Edit: '파일 수정',
++    Glob: '파일 탐색',
++    Grep: '코드 검색',
++    WebSearch: '웹 검색',
++    WebFetch: '웹 조회',
++    Task: '서브에이전트',
++  };
++  const name = KO[tool] ?? (tool.startsWith('mcp__') ? 'MCP 도구' : tool);
++  return ` · ${name}`;
++}
++
++function progressBody(entry: TypingTarget, sessionId: string): string {
++  const mins = Math.max(1, Math.round((Date.now() - entry.startedAt) / 60_000));
++  const inFlight = toolInFlight(entry.agentGroupId, sessionId);
++  return `⏳ 작업 중 — ${mins}분 경과${toolLabelKo(inFlight?.tool)}`;
++}
++
++function tickProgress(sessionId: string, entry: TypingTarget): void {
++  if (!adapter?.deliver || entry.progressPosting) return;
++  const now = Date.now();
++  if (now - entry.startedAt < PROGRESS_AFTER_MS) return;
++
++  const send = (operation: 'post' | 'edit') => {
++    entry.progressPosting = true;
++    const content =
++      operation === 'edit'
++        ? JSON.stringify({ operation: 'edit', messageId: entry.progressMsgId, text: progressBody(entry, sessionId) })
++        : JSON.stringify({ text: progressBody(entry, sessionId) });
++    adapter!.deliver!(
++      entry.channelType,
++      entry.platformId,
++      entry.threadId,
++      'message',
++      content,
++      undefined,
++      entry.instance,
++    )
++      .then((msgId) => {
++        if (operation === 'post' && msgId) entry.progressMsgId = msgId;
++        entry.progressLastEditAt = Date.now();
++      })
++      .catch(() => {
++        // Editing a deleted message / adapter hiccup: stop trying this turn.
++        entry.progressMsgId = entry.progressMsgId ?? 'failed';
++        entry.progressLastEditAt = Number.MAX_SAFE_INTEGER;
++      })
++      .finally(() => {
++        entry.progressPosting = false;
++      });
++  };
++
++  if (!entry.progressMsgId) {
++    send('post');
++  } else if (entry.progressMsgId !== 'failed' && now - entry.progressLastEditAt >= PROGRESS_EDIT_MS) {
++    send('edit');
++  }
++}
++
++function clearProgress(sessionId: string, entry: TypingTarget): void {
++  if (!entry.progressMsgId || entry.progressMsgId === 'failed' || !adapter?.deliver) {
++    entry.progressMsgId = null;
++    return;
++  }
++  const msgId = entry.progressMsgId;
++  entry.progressMsgId = null;
++  // Delete the placeholder outright (old-EJClaw behavior). Falls back to
++  // editing it to a checkmark if the adapter can't delete.
++  adapter
++    .deliver(
++      entry.channelType,
++      entry.platformId,
++      entry.threadId,
++      'message',
++      JSON.stringify({ operation: 'delete', messageId: msgId }),
++      undefined,
++      entry.instance,
++    )
++    .catch(() => {
++      adapter
++        ?.deliver?.(
++          entry.channelType,
++          entry.platformId,
++          entry.threadId,
++          'message',
++          JSON.stringify({ operation: 'edit', messageId: msgId, text: '✅ 완료' }),
++          undefined,
++          entry.instance,
++        )
++        .catch(() => {});
++    });
++}
++
+ export function startTypingRefresh(
+   sessionId: string,
+   agentGroupId: string,
+@@ -141,12 +307,21 @@ export function startTypingRefresh(
+     if (entry.pausedUntil > Date.now()) return;
+ 
+     const withinGrace = Date.now() - entry.startedAt < TYPING_GRACE_MS;
+-    if (withinGrace || isHeartbeatFresh(entry.agentGroupId, sessionId)) {
++    // EYEJOKER carry: heartbeat goes stale during long blocking tool calls
++    // (poll-loop can't touch it mid-SDK-call) — container_state's tool-in-
++    // flight record covers that gap so typing + progress survive long Bash.
++    if (
++      withinGrace ||
++      isHeartbeatFresh(entry.agentGroupId, sessionId) ||
++      toolInFlight(entry.agentGroupId, sessionId) !== null
++    ) {
+       triggerTyping(entry.channelType, entry.platformId, entry.threadId, entry.instance).catch(() => {});
++      tickProgress(sessionId, entry); // EYEJOKER carry
+       return;
+     }
+ 
+     // Out of grace AND heartbeat stale — agent is idle, stop refreshing.
++    clearProgress(sessionId, entry); // EYEJOKER carry
+     clearInterval(entry.interval);
+     typingRefreshers.delete(sessionId);
+   }, TYPING_REFRESH_MS);
+@@ -161,6 +336,9 @@ export function startTypingRefresh(
+     interval,
+     startedAt,
+     pausedUntil: 0,
++    progressMsgId: null,
++    progressLastEditAt: 0,
++    progressPosting: false,
+   });
+ }
+ 
+@@ -174,11 +352,18 @@ export function pauseTypingRefreshAfterDelivery(sessionId: string): void {
+   const entry = typingRefreshers.get(sessionId);
+   if (!entry) return;
+   entry.pausedUntil = Date.now() + POST_DELIVERY_PAUSE_MS;
++  // EYEJOKER carry: a real user-facing message just landed — the progress
++  // placeholder is obsolete. Also reset the elapsed-time base so a follow-up
++  // long stretch in the same session measures from the last delivery.
++  clearProgress(sessionId, entry);
++  entry.startedAt = Date.now();
++  entry.progressLastEditAt = 0;
+ }
+ 
+ export function stopTypingRefresh(sessionId: string): void {
+   const entry = typingRefreshers.get(sessionId);
+   if (!entry) return;
++  clearProgress(sessionId, entry); // EYEJOKER carry
+   clearInterval(entry.interval);
+   typingRefreshers.delete(sessionId);
+ }
+-- 
+2.43.0
+

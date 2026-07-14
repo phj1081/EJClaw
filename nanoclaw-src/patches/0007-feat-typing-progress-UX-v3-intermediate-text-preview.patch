@@ -1,0 +1,381 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: EJ Claw <ejclaw@eyejoker.com>
+Date: Tue, 14 Jul 2026 17:05:04 +0900
+Subject: [PATCH 7/7] =?UTF-8?q?feat(typing):=20progress=20UX=20v3=20?=
+ =?UTF-8?q?=E2=80=94=20intermediate=20text=20preview=20+=20multi-subagent?=
+ =?UTF-8?q?=20tracks=20(old-EJClaw=20parity)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- activity_log table: full SDK stream mirror (tool_use, text, subagent
+  lifecycle) with parent_tool_use_id attribution; written from
+  translateEvents, display-only, trimmed to 100 rows
+- subagent spawn detected via Task/Agent tool_use; label from description;
+  agent_done on matching tool_result
+- renderer: >1 subagent → per-track lines (🔄/✅ + latest activity, old
+  SubagentTrack UX); single track → ├/└ tree with 💬 text previews,
+  <internal> markers stripped
+- typing keepalive: processing_ack claim (age-bounded 30m) covers model
+  thinking gaps between tools; tool_log kept for older container images
+---
+ container/agent-runner/src/db/connection.ts   |  33 +++++
+ .../agent-runner/src/providers/claude.ts      |  63 ++++++++-
+ src/db/session-db.ts                          |  24 ++++
+ src/modules/typing/index.ts                   | 123 +++++++++++++++---
+ 4 files changed, 223 insertions(+), 20 deletions(-)
+
+diff --git a/container/agent-runner/src/db/connection.ts b/container/agent-runner/src/db/connection.ts
+index ab89717f..8b41dd3f 100644
+--- a/container/agent-runner/src/db/connection.ts
++++ b/container/agent-runner/src/db/connection.ts
+@@ -122,6 +122,21 @@ export function getOutboundDb(): Database {
+         started_at TEXT NOT NULL
+       );
+     `);
++    // EYEJOKER carry v2: full activity log (tools + intermediate text +
++    // subagent lifecycle), written from the SDK message stream with
++    // parent_tool_use_id attribution — the same source the old EJClaw
++    // message-turn-controller consumed. Supersedes tool_log (kept above
++    // for forward-compat with already-open host readers).
++    _outbound.exec(`
++      CREATE TABLE IF NOT EXISTS activity_log (
++        seq        INTEGER PRIMARY KEY AUTOINCREMENT,
++        kind       TEXT NOT NULL,
++        agent_id   TEXT NOT NULL DEFAULT 'main',
++        tool       TEXT,
++        detail     TEXT,
++        started_at TEXT NOT NULL
++      );
++    `);
+   }
+   return _outbound;
+ }
+@@ -161,6 +176,24 @@ export function appendToolLog(tool: string, detail: string | null): void {
+   db.prepare(`DELETE FROM tool_log WHERE seq <= (SELECT MAX(seq) FROM tool_log) - 50`).run();
+ }
+ 
++/**
++ * EYEJOKER carry v2: append one row to the full activity log.
++ * kind: 'tool' | 'text' | 'agent_start' | 'agent_done'
++ * agentId: 'main' for the root agent, or the Task tool_use id for a subagent.
++ * detail is pre-sanitized/short. Trimmed to the latest 100 rows.
++ */
++export function appendActivity(kind: string, agentId: string, tool: string | null, detail: string | null): void {
++  const db = getOutboundDb();
++  db.prepare(`INSERT INTO activity_log (kind, agent_id, tool, detail, started_at) VALUES (?, ?, ?, ?, ?)`).run(
++    kind,
++    agentId,
++    tool,
++    detail,
++    new Date().toISOString(),
++  );
++  db.prepare(`DELETE FROM activity_log WHERE seq <= (SELECT MAX(seq) FROM activity_log) - 100`).run();
++}
++
+ /** Clear the in-flight tool — called on PostToolUse / PostToolUseFailure. */
+ export function clearContainerToolInFlight(): void {
+   const now = new Date().toISOString();
+diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
+index 90f4420c..7d9df2f8 100644
+--- a/container/agent-runner/src/providers/claude.ts
++++ b/container/agent-runner/src/providers/claude.ts
+@@ -4,7 +4,7 @@ import path from 'path';
+ 
+ import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+ 
+-import { appendToolLog, clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
++import { appendActivity, appendToolLog, clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
+ import { TIMEZONE, formatLocalStamp } from '../timezone.js';
+ import { registerProvider } from './provider-registry.js';
+ import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
+@@ -485,6 +485,61 @@ export class ClaudeProvider implements AgentProvider {
+ 
+     let aborted = false;
+ 
++    // EYEJOKER carry v2: mirror the SDK message stream into activity_log —
++    // the same event source the old EJClaw message-turn-controller consumed.
++    // Task tool_use ids identify subagents; assistant messages carry
++    // parent_tool_use_id so subagent activity is attributed to its track.
++    const knownTaskIds = new Set<string>();
++    function recordActivity(message: unknown): void {
++      const m = message as {
++        type?: string;
++        parent_tool_use_id?: string | null;
++        message?: { content?: unknown };
++      };
++      const blocks = Array.isArray(m.message?.content) ? (m.message.content as Array<Record<string, unknown>>) : [];
++      if (m.type === 'assistant') {
++        const agentId = m.parent_tool_use_id ?? 'main';
++        for (const block of blocks) {
++          if (block.type === 'text' && typeof block.text === 'string') {
++            let t = block.text.trim();
++            // Skip delivery envelopes — the host renders those as the real
++            // reply; previewing them would duplicate the final message.
++            if (!t || t.startsWith('<message')) continue;
++            // Scratchpad/internal markers are noise in a preview — unwrap.
++            t = t
++              .replace(/<\/?internal>/g, '')
++              .replace(/\s+/g, ' ')
++              .trim();
++            if (t) appendActivity('text', agentId, null, t.slice(0, 100));
++          } else if (block.type === 'tool_use' && typeof block.name === 'string') {
++            const input = (block.input ?? {}) as Record<string, unknown>;
++            // Subagent spawn: named 'Task' in older SDKs, 'Agent' in newer ones.
++            if ((block.name === 'Task' || block.name === 'Agent') && typeof block.id === 'string') {
++              knownTaskIds.add(block.id);
++              const label =
++                (typeof input.description === 'string' && input.description.trim().slice(0, 40)) ||
++                (typeof input.prompt === 'string' && input.prompt.trim().replace(/\s+/g, ' ').slice(0, 40)) ||
++                null;
++              appendActivity('agent_start', block.id, block.name, label);
++            } else {
++              appendActivity('tool', agentId, block.name, toolLogDetail(block.name, input));
++            }
++          }
++        }
++      } else if (m.type === 'user') {
++        for (const block of blocks) {
++          if (
++            block.type === 'tool_result' &&
++            typeof block.tool_use_id === 'string' &&
++            knownTaskIds.has(block.tool_use_id)
++          ) {
++            knownTaskIds.delete(block.tool_use_id);
++            appendActivity('agent_done', block.tool_use_id, 'Task', null);
++          }
++        }
++      }
++    }
++
+     async function* translateEvents(): AsyncGenerator<ProviderEvent> {
+       let messageCount = 0;
+       for await (const message of sdkResult) {
+@@ -494,6 +549,12 @@ export class ClaudeProvider implements AgentProvider {
+         // Yield activity for every SDK event so the poll loop knows the agent is working
+         yield { type: 'activity' };
+ 
++        try {
++          recordActivity(message);
++        } catch {
++          // activity_log is display-only — never let it break the stream.
++        }
++
+         if (message.type === 'system' && message.subtype === 'init') {
+           yield { type: 'init', continuation: message.session_id };
+         } else if (message.type === 'result') {
+diff --git a/src/db/session-db.ts b/src/db/session-db.ts
+index f5b7c712..e6a4fd06 100644
+--- a/src/db/session-db.ts
++++ b/src/db/session-db.ts
+@@ -264,6 +264,30 @@ export function getToolLogTail(outDb: Database.Database, limit: number): ToolLog
+   }
+ }
+ 
++export interface ActivityRow {
++  seq: number;
++  kind: string; // 'tool' | 'text' | 'agent_start' | 'agent_done'
++  agent_id: string; // 'main' or Task tool_use id
++  tool: string | null;
++  detail: string | null;
++  started_at: string;
++}
++
++/**
++ * EYEJOKER carry v2: tail of the container's full activity log (oldest
++ * first). Empty array when the table is missing (older session DBs).
++ */
++export function getActivityTail(outDb: Database.Database, limit: number): ActivityRow[] {
++  try {
++    const rows = outDb
++      .prepare(`SELECT seq, kind, agent_id, tool, detail, started_at FROM activity_log ORDER BY seq DESC LIMIT ?`)
++      .all(limit) as ActivityRow[];
++    return rows.reverse();
++  } catch {
++    return [];
++  }
++}
++
+ // ---------------------------------------------------------------------------
+ // messages_out (read-only from host)
+ // ---------------------------------------------------------------------------
+diff --git a/src/modules/typing/index.ts b/src/modules/typing/index.ts
+index be383acf..b2525220 100644
+--- a/src/modules/typing/index.ts
++++ b/src/modules/typing/index.ts
+@@ -20,7 +20,13 @@
+ import fs from 'fs';
+ 
+ import { heartbeatPath, openOutboundDb } from '../../session-manager.js';
+-import { getContainerState, getToolLogTail } from '../../db/session-db.js';
++import {
++  getActivityTail,
++  getContainerState,
++  getProcessingClaims,
++  getToolLogTail,
++  type ActivityRow,
++} from '../../db/session-db.js';
+ 
+ const TYPING_REFRESH_MS = 4000;
+ /**
+@@ -167,6 +173,31 @@ function toolInFlight(agentGroupId: string, sessionId: string): ToolInFlight | n
+   }
+ }
+ 
++/**
++ * EYEJOKER carry: an unfinished processing_ack claim means the container is
++ * mid-turn (thinking between tool calls leaves both the heartbeat and
++ * container_state quiet). Bounded by age so a crashed container's orphan
++ * claim can't keep typing alive forever — host-sweep clears those anyway.
++ */
++const CLAIM_FRESH_MS = 30 * 60_000;
++function turnActive(agentGroupId: string, sessionId: string): boolean {
++  try {
++    const outDb = openOutboundDb(agentGroupId, sessionId);
++    try {
++      const claims = getProcessingClaims(outDb);
++      const now = Date.now();
++      return claims.some((c) => {
++        const t = Date.parse(c.status_changed);
++        return !Number.isNaN(t) && now - t < CLAIM_FRESH_MS;
++      });
++    } finally {
++      outDb.close();
++    }
++  } catch {
++    return false;
++  }
++}
++
+ function toolLabelKo(tool: string | null | undefined): string {
+   if (!tool) return '';
+   const KO: Record<string, string> = {
+@@ -179,6 +210,7 @@ function toolLabelKo(tool: string | null | undefined): string {
+     WebSearch: '웹 검색',
+     WebFetch: '웹 조회',
+     Task: '서브에이전트',
++    Agent: '서브에이전트',
+   };
+   return KO[tool] ?? (tool.startsWith('mcp__') ? 'MCP 도구' : tool);
+ }
+@@ -197,33 +229,84 @@ function formatElapsedKorean(ms: number): string {
+ }
+ 
+ /**
+- * Old-EJClaw composeProgressBody: header line with elapsed time, then a
+- * Claude-Code-style activity tree of the most recent tool calls (├/└),
+- * current one marked. detail comes pre-sanitized from the container hook.
++ * Old-EJClaw composeProgressBody, ported to the activity_log source:
++ *  - single track: header + ├/└ tree of recent activity (tools + text
++ *    previews), current tool marked ←
++ *  - multi subagent: one line per running/finished subagent (🔄/✅) with
++ *    its latest activity, like the old SubagentTrack rendering
+  */
+ function progressBody(entry: TypingTarget, sessionId: string): string {
+   const elapsed = formatElapsedKorean(Date.now() - entry.startedAt);
+   const inFlight = toolInFlight(entry.agentGroupId, sessionId);
+-  const lines = [`⏳ **작업 중** — ${elapsed}`];
++  const header = `⏳ **작업 중** — ${elapsed}`;
++
++  let rows: ActivityRow[] = [];
++  let legacyTools: ReturnType<typeof getToolLogTail> = [];
+   try {
+     const outDb = openOutboundDb(entry.agentGroupId, sessionId);
+     try {
+-      // Only activity from this stretch of work — drop rows older than startedAt.
+-      const tail = getToolLogTail(outDb, 8).filter((r) => Date.parse(r.started_at) >= entry.startedAt - 2000);
+-      const recent = tail.slice(-3);
+-      for (let i = 0; i < recent.length; i++) {
+-        const r = recent[i];
+-        const isLast = i === recent.length - 1;
+-        const label = toolLabelKo(r.tool);
+-        const detail = r.detail ? ` \`${r.detail}\`` : '';
+-        const marker = isLast && inFlight ? ' ←' : '';
+-        lines.push(`${isLast ? '└' : '├'} ${label}${detail}${marker}`);
++      const since = entry.startedAt - 2000;
++      rows = getActivityTail(outDb, 60).filter((r) => Date.parse(r.started_at) >= since);
++      if (rows.length === 0) {
++        // Older container image without activity_log — fall back to tool_log.
++        legacyTools = getToolLogTail(outDb, 8).filter((r) => Date.parse(r.started_at) >= since);
+       }
+     } finally {
+       outDb.close();
+     }
+   } catch {
+-    // No tool log — header only.
++    // No DB yet — header only.
++  }
++
++  const fmt = (r: { kind?: string; tool: string | null; detail: string | null }): string => {
++    if (r.kind === 'text') return `💬 ${r.detail ?? ''}`;
++    const label = toolLabelKo(r.tool);
++    return r.detail ? `${label} \`${r.detail}\`` : label;
++  };
++
++  // ── Subagent tracks (old SubagentTrack map) ──
++  const subagents = new Map<string, { label: string; done: boolean; last: string | null }>();
++  const mainRows: ActivityRow[] = [];
++  for (const r of rows) {
++    if (r.kind === 'agent_start') {
++      subagents.set(r.agent_id, { label: r.detail || '작업 중...', done: false, last: null });
++    } else if (r.kind === 'agent_done') {
++      const t = subagents.get(r.agent_id);
++      if (t) {
++        t.done = true;
++        t.last = null;
++      }
++    } else if (r.agent_id !== 'main') {
++      const t = subagents.get(r.agent_id) ?? { label: '작업 중...', done: false, last: null };
++      t.last = fmt(r);
++      subagents.set(r.agent_id, t);
++    } else {
++      mainRows.push(r);
++    }
++  }
++
++  if (subagents.size > 1) {
++    const lines = [header];
++    for (const [, t] of subagents) {
++      const icon = t.done ? '✅' : '🔄';
++      lines.push(t.last && !t.done ? `${icon} ${t.label} · ${t.last}` : `${icon} ${t.label}`);
++    }
++    return lines.join('\n');
++  }
++
++  // ── Single track: main + (optional) lone subagent inline ──
++  const treeSource: Array<{ kind?: string; tool: string | null; detail: string | null }> =
++    rows.length > 0 ? mainRows : legacyTools;
++  if (subagents.size === 1) {
++    const [, t] = [...subagents.entries()][0];
++    treeSource.push({ kind: 'tool', tool: 'Task', detail: t.done ? `${t.label} ✅` : t.label });
++  }
++  const recent = treeSource.slice(-4);
++  const lines = [header];
++  for (let i = 0; i < recent.length; i++) {
++    const isLast = i === recent.length - 1;
++    const marker = isLast && inFlight ? ' ←' : '';
++    lines.push(`${isLast ? '└' : '├'} ${fmt(recent[i])}${marker}`);
+   }
+   if (lines.length === 1 && inFlight) {
+     lines.push(`└ ${toolLabelKo(inFlight.tool)} ←`);
+@@ -355,12 +438,14 @@ export function startTypingRefresh(
+ 
+     const withinGrace = Date.now() - entry.startedAt < TYPING_GRACE_MS;
+     // EYEJOKER carry: heartbeat goes stale during long blocking tool calls
+-    // (poll-loop can't touch it mid-SDK-call) — container_state's tool-in-
+-    // flight record covers that gap so typing + progress survive long Bash.
++    // and during model thinking between tools — container_state (tool in
++    // flight) and processing_ack (turn claimed, mid-turn) cover those gaps
++    // so typing + progress survive the whole turn.
+     if (
+       withinGrace ||
+       isHeartbeatFresh(entry.agentGroupId, sessionId) ||
+-      toolInFlight(entry.agentGroupId, sessionId) !== null
++      toolInFlight(entry.agentGroupId, sessionId) !== null ||
++      turnActive(entry.agentGroupId, sessionId)
+     ) {
+       triggerTyping(entry.channelType, entry.platformId, entry.threadId, entry.instance).catch(() => {});
+       tickProgress(sessionId, entry); // EYEJOKER carry
+-- 
+2.43.0
+

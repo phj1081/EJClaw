@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: EJ Claw <ejclaw@eyejoker.com>
+Date: Tue, 14 Jul 2026 06:32:35 +0900
+Subject: [PATCH 4/7] docs: EYEJOKER stack provenance (carry inventory +
+ rebuild notes)
+
+---
+ EYEJOKER_STACK.md | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+ create mode 100644 EYEJOKER_STACK.md
+
+diff --git a/EYEJOKER_STACK.md b/EYEJOKER_STACK.md
+new file mode 100644
+index 00000000..84da5ee7
+--- /dev/null
++++ b/EYEJOKER_STACK.md
+@@ -0,0 +1,28 @@
++# Eyejoker NanoClaw stack
++
++This checkout is a thin local carry layer on NanoClaw upstream.
++
++- Upstream base: `ef220b53` (`main`, MIT)
++- Discord adapter: applied from upstream's `channels` branch via the bundled `add-discord` skill
++- `gpt-proxy` provider: reuses the Claude Agent SDK harness while injecting the private CLIProxyAPI Anthropic-compatible endpoint for GPT/Codex rooms
++- Default EYEJOKER group: direct Claude subscription through OneCLI to `api.anthropic.com`
++- GPT group: `gpt-proxy` → OneCLI → CLIProxyAPI → Codex OAuth pool
++
++External runtime components are intentionally not vendored:
++
++- CLIProxyAPI: `~/cliproxyapi`, bound only to Docker bridge `172.17.0.1:8317`
++- ECC generated profile: `~/ecc-poc/.claude`; projection helper: `~/ecc-poc/sync-to-nanoclaw.sh`
++- Host Executor: `~/nanoclaw-host-executor`; runtime socket and audit log under `~/.local/share/nanoclaw-host-executor`
++- OneCLI: `~/.onecli`
++
++Secrets stay in ignored/local files (`.env`, `~/.cli-proxy-api`, OneCLI vault). Never commit them.
++
++## Verification
++
++```bash
++pnpm run build
++pnpm exec vitest run src/channels/discord-registration.test.ts
++cd container/agent-runner && bunx tsc --noEmit
++```
++
++Runtime probes exercised direct fable, proxied GPT, Discord channel delivery, Discord per-thread delivery, persistent session continuation, ECC observation capture, scheduled-task execution, and Host Executor MCP/audit logging.
+-- 
+2.43.0
+
