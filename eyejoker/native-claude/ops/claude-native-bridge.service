@@ -1,0 +1,25 @@
+[Unit]
+Description=Eyejoker native Claude Code Discord bridge
+After=network-online.target cliproxyapi.service
+Wants=network-online.target
+Requires=cliproxyapi.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/EJClaw/eyejoker/native-claude
+EnvironmentFile=%h/.config/claude-native/env
+Environment=CLAUDE_NATIVE_CONFIG=%h/.config/claude-native/routes.json
+Environment=CLAUDE_NATIVE_STATE_DIR=%h/.local/state/claude-native
+Environment=CLAUDE_NATIVE_STATE_DB=%h/.local/state/claude-native/state.sqlite
+Environment=PATH=%h/.hermes/node/bin:%h/.bun/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CLAUDE_NATIVE_CLAUDE_BIN=%h/.hermes/node/bin/claude
+ExecStart=%h/.bun/bin/bun run src/index.ts
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
