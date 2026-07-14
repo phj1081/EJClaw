@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Maldhalla balance Native Claude schedule
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 Asia/Seoul
+Persistent=true
+AccuracySec=1min
+Unit=claude-native-maldhalla-balance.service
+
+[Install]
+WantedBy=timers.target

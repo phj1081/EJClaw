@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   conversationKey,
+  isReplyableMessageId,
   isSupportedMessageType,
   sanitizeAttachmentName,
   stripBotMention,
@@ -22,6 +23,12 @@ describe("Discord bridge helpers", () => {
 
   test("strips only the runtime bot mention", () => {
     expect(stripBotMention("<@123> 작업해 <@999>", "123")).toBe("작업해 <@999>");
+  });
+
+  test("does not reply to synthetic or scheduled non-Discord ids", () => {
+    expect(isReplyableMessageId("123456789012345678")).toBe(true);
+    expect(isReplyableMessageId("synthetic:test")).toBe(false);
+    expect(isReplyableMessageId("scheduled:daily:2026-07-15")).toBe(false);
   });
 
   test("prevents attachment path traversal", () => {

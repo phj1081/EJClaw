@@ -4,6 +4,10 @@ export function conversationKey(route: { id: string }, actualChannelId: string):
   return `${route.id}:${actualChannelId}`;
 }
 
+export function isReplyableMessageId(messageId: string): boolean {
+  return !messageId.startsWith("synthetic:") && !messageId.startsWith("scheduled:");
+}
+
 export function isSupportedMessageType(type: number): boolean {
   return type === 0 || type === 19;
 }

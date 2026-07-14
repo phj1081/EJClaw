@@ -9,7 +9,13 @@ import {
 } from "discord.js";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { conversationKey, isSupportedMessageType, sanitizeAttachmentName, stripBotMention } from "./bridge-utils";
+import {
+  conversationKey,
+  isReplyableMessageId,
+  isSupportedMessageType,
+  sanitizeAttachmentName,
+  stripBotMention,
+} from "./bridge-utils";
 import { loadConfig, resolveRoute } from "./config";
 import { ClaudeProcessExecutor } from "./executor";
 import { formatFinalMessage, splitDiscordMessage } from "./protocol";
@@ -125,7 +131,7 @@ async function deliverFinal(job: JobRecord, ok: boolean, result: string): Promis
       content: chunk,
       allowedMentions: index === 0 ? { users: [config.ownerId] } : { parse: [] },
     };
-    if (index === 0 && !job.messageId.startsWith("synthetic:")) {
+    if (index === 0 && isReplyableMessageId(job.messageId)) {
       options.reply = { messageReference: job.messageId, failIfNotExists: false };
     }
     await channel.send(options);

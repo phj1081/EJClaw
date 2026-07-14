@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { join, resolve } from "node:path";
+import { readSecurePromptFile, scheduleIdentity } from "./admin-utils";
 import { loadConfig } from "./config";
 import { StateStore } from "./store";
 import { renderStatusSnapshot } from "./status-format";
@@ -14,6 +15,27 @@ const config = loadConfig(configPath);
 const store = new StateStore(statePath);
 const [command, ...args] = process.argv.slice(2);
 
+function enqueue(
+  routeId: string,
+  prompt: string,
+  identity: { messageId: string; conversationKey: string },
+): void {
+  const route = config.routes.find((candidate) => candidate.id === routeId);
+  if (!route) throw new Error(`unknown route: ${routeId}`);
+  const job = store.enqueue({
+    routeId: route.id,
+    lockKey: route.lockKey ?? route.cwd,
+    conversationKey: identity.conversationKey,
+    channelId: route.discordChannelId,
+    threadId: null,
+    messageId: identity.messageId,
+    authorId: config.ownerId,
+    prompt,
+    attachmentPaths: [],
+  });
+  console.log(JSON.stringify({ id: job.id, route: job.routeId, status: job.status, session_id: job.sessionId }));
+}
+
 try {
   if (command === "status") {
     console.log(JSON.stringify(renderStatusSnapshot(store.listActive()), null, 2));
@@ -21,28 +43,32 @@ try {
     const routeId = args.shift();
     const prompt = args.join(" ").trim();
     if (!routeId || !prompt) throw new Error("usage: admin.ts enqueue <route> <prompt>");
-    const route = config.routes.find((candidate) => candidate.id === routeId);
-    if (!route) throw new Error(`unknown route: ${routeId}`);
     const id = crypto.randomUUID();
-    const job = store.enqueue({
-      routeId: route.id,
-      lockKey: route.lockKey ?? route.cwd,
-      conversationKey: `${route.id}:synthetic:${id}`,
-      channelId: route.discordChannelId,
-      threadId: null,
+    enqueue(routeId, prompt, {
+      conversationKey: `${routeId}:synthetic:${id}`,
       messageId: `synthetic:${id}`,
-      authorId: config.ownerId,
-      prompt,
-      attachmentPaths: [],
     });
-    console.log(JSON.stringify({ id: job.id, route: job.routeId, status: job.status, session_id: job.sessionId }));
+  } else if (command === "enqueue-file") {
+    const [routeId, promptPath] = args;
+    if (!routeId || !promptPath || args.length !== 2) {
+      throw new Error("usage: admin.ts enqueue-file <route> <mode-600-prompt-file>");
+    }
+    const scheduleKey = process.env.CLAUDE_NATIVE_SCHEDULE_KEY;
+    if (!scheduleKey) throw new Error("CLAUDE_NATIVE_SCHEDULE_KEY is required");
+    const identity = scheduleIdentity(
+      routeId,
+      scheduleKey,
+      new Date(),
+      process.env.CLAUDE_NATIVE_SCHEDULE_TZ ?? "Asia/Seoul",
+    );
+    enqueue(routeId, readSecurePromptFile(resolve(promptPath)), identity);
   } else if (command === "cancel") {
     const key = args[0];
     if (!key) throw new Error("usage: admin.ts cancel <conversation-key>");
     const cancelled = store.cancelByConversation(key);
     console.log(JSON.stringify({ cancelled: cancelled.map((job) => job.id) }));
   } else {
-    throw new Error("usage: admin.ts <status|enqueue|cancel> ...");
+    throw new Error("usage: admin.ts <status|enqueue|enqueue-file|cancel> ...");
   }
 } finally {
   store.close();

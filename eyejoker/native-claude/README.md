@@ -37,8 +37,12 @@ install -m 600 ops/routes.example.json ~/.config/claude-native/routes.json
 # 위 두 파일의 placeholder와 secret을 운영 값으로 교체
 
 install -m 644 ops/claude-native-bridge.service ~/.config/systemd/user/claude-native-bridge.service
+install -m 644 ops/claude-native-maldhalla-balance.service ~/.config/systemd/user/
+install -m 644 ops/claude-native-maldhalla-balance.timer ~/.config/systemd/user/
+# 반복 작업 prompt는 ~/.config/claude-native/schedules/*.prompt에 mode 600으로 둔다.
 systemctl --user daemon-reload
 systemctl --user enable --now claude-native-bridge.service
+systemctl --user enable --now claude-native-maldhalla-balance.timer
 ```
 
 ## 운영
@@ -48,6 +52,8 @@ systemctl --user status claude-native-bridge.service
 journalctl --user -u claude-native-bridge.service -f
 bun run src/status.ts
 bun run src/status.ts --json
+bun run src/admin.ts enqueue-file maldhalla-balance ~/.config/claude-native/schedules/maldhalla-balance.prompt
+systemctl --user list-timers claude-native-maldhalla-balance.timer
 ```
 
 Discord 명령:
