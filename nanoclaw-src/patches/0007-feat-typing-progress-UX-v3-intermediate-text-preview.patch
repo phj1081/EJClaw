@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: EJ Claw <ejclaw@eyejoker.com>
 Date: Tue, 14 Jul 2026 17:05:04 +0900
-Subject: [PATCH 7/7] =?UTF-8?q?feat(typing):=20progress=20UX=20v3=20?=
+Subject: [PATCH 7/8] =?UTF-8?q?feat(typing):=20progress=20UX=20v3=20?=
  =?UTF-8?q?=E2=80=94=20intermediate=20text=20preview=20+=20multi-subagent?=
  =?UTF-8?q?=20tracks=20(old-EJClaw=20parity)?=
 MIME-Version: 1.0

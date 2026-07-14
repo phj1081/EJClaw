@@ -1150,7 +1150,7 @@ index bbe8d700..dcf782f0 100644
  
    zwitch@2.0.4: {}
 diff --git a/src/channels/chat-sdk-bridge.ts b/src/channels/chat-sdk-bridge.ts
-index 5a7eb508..b61aef7d 100644
+index 5a7eb508..f03dca8c 100644
 --- a/src/channels/chat-sdk-bridge.ts
 +++ b/src/channels/chat-sdk-bridge.ts
 @@ -422,6 +422,14 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
@@ -1168,6 +1168,28 @@ index 5a7eb508..b61aef7d 100644
        if (content.operation === 'reaction' && content.messageId && content.emoji) {
          await adapter.addReaction(tid, content.messageId as string, content.emoji as string);
          return;
+@@ -647,6 +655,21 @@ async function handleForwardedEvent(
+     return;
+   }
+ 
++  // EYEJOKER carry: drop Discord SYSTEM messages before they reach the
++  // adapter. When a user creates a thread, Discord posts a type-18
++  // THREAD_CREATED system message in the PARENT channel whose `content` is
++  // the thread name. @chat-adapter/discord's handleForwardedMessage never
++  // checks `type`, so that system message routes as a normal user message
++  // in the parent channel and the agent replies to the thread *title* in
++  // the main channel. Keep only real user content: 0 DEFAULT, 19 REPLY.
++  if (event.type === 'GATEWAY_MESSAGE_CREATE' && event.data) {
++    const msgType = (event.data as { type?: unknown }).type;
++    if (typeof msgType === 'number' && msgType !== 0 && msgType !== 19) {
++      log.info('Dropping Discord system message', { messageType: msgType });
++      return;
++    }
++  }
++
+   // Handle interaction events (button clicks) — not handled by adapter's handleForwardedGatewayEvent
+   if (event.type === 'GATEWAY_INTERACTION_CREATE' && event.data) {
+     const interaction = event.data;
 diff --git a/src/channels/discord-registration.test.ts b/src/channels/discord-registration.test.ts
 new file mode 100644
 index 00000000..871c5e1e

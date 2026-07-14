@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: EJ Claw <ejclaw@eyejoker.com>
 Date: Tue, 14 Jul 2026 06:32:32 +0900
-Subject: [PATCH 3/7] =?UTF-8?q?feat(container-runner):=20EYEJOKER=20carrie?=
+Subject: [PATCH 3/8] =?UTF-8?q?feat(container-runner):=20EYEJOKER=20carrie?=
  =?UTF-8?q?s=20=E2=80=94=20OneCLI=20CA=20env,=20project-scoped=20git=20aut?=
  =?UTF-8?q?h=20mount=20activation,=20nested-claude=20auth=20sentinel?=
 MIME-Version: 1.0
