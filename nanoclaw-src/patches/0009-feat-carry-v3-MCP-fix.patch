@@ -1,0 +1,539 @@
+From fba767f1ba25c9480d07062ce86880adf186b299 Mon Sep 17 00:00:00 2001
+From: EJ Claw <ejclaw@eyejoker.com>
+Date: Tue, 14 Jul 2026 20:31:47 +0900
+Subject: [PATCH 9/9] =?UTF-8?q?feat(carry):=20=EB=AA=A8=EB=8D=B8=20?=
+ =?UTF-8?q?=EA=B0=80=EC=8B=9C=EC=84=B1=20v3=20+=20=ED=84=B4=20=EC=9C=A0?=
+ =?UTF-8?q?=EC=8B=A4=20=EB=B0=A9=EC=A7=80=20+=20MCP=20=EB=9D=BC=EB=B2=A8/?=
+ =?UTF-8?q?=EC=84=9C=EB=AA=85/=EB=A7=81=ED=81=AC=20fix?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- poll-loop: follow-up push 즉시 completed ack → result 턴 경계로 이연 (컨테이너 사망 시 재전달)
+- claude provider: init/assistant model 추적, model_state 테이블, refusal/과부하 폴백 notice 이벤트
+- poll-loop: notice 이벤트를 채널 메시지로 즉시 전달 (폴백 영구 기록)
+- typing: 헤더에 현재 모델(⚡=폴백 발생), 서브에이전트 트랙에 (모델) 표기(inherit는 생략), MCP 도구 서버명+도구명 표시
+- destinations: assistantName 서명 지시 제거 (Never sign)
+- @chat-adapter/discord pnpm patch: 라벨==URL인 마크다운 링크를 bare URL로 (디코 자동 링크화)
+---
+ container/agent-runner/src/db/connection.ts   | 28 ++++++
+ container/agent-runner/src/destinations.ts    |  2 +-
+ container/agent-runner/src/poll-loop.ts       | 36 ++++++-
+ .../agent-runner/src/providers/claude.ts      | 93 ++++++++++++++++++-
+ container/agent-runner/src/providers/types.ts |  6 ++
+ patches/@chat-adapter__discord@4.29.0.patch   | 14 +++
+ pnpm-lock.yaml                                |  9 +-
+ pnpm-workspace.yaml                           |  2 +
+ src/db/session-db.ts                          | 16 ++++
+ src/modules/typing/index.ts                   | 46 +++++++--
+ 10 files changed, 237 insertions(+), 15 deletions(-)
+ create mode 100644 patches/@chat-adapter__discord@4.29.0.patch
+
+diff --git a/container/agent-runner/src/db/connection.ts b/container/agent-runner/src/db/connection.ts
+index 8b41dd3f..7b5193e7 100644
+--- a/container/agent-runner/src/db/connection.ts
++++ b/container/agent-runner/src/db/connection.ts
+@@ -137,6 +137,17 @@ export function getOutboundDb(): Database {
+         started_at TEXT NOT NULL
+       );
+     `);
++    // EYEJOKER carry v3 (model visibility): single-row current-model state so
++    // the host progress renderer can show which model the main agent is on
++    // (survives activity_log's rolling trim). Display-only.
++    _outbound.exec(`
++      CREATE TABLE IF NOT EXISTS model_state (
++        id         INTEGER PRIMARY KEY CHECK (id = 1),
++        model      TEXT NOT NULL,
++        note       TEXT,
++        updated_at TEXT NOT NULL
++      );
++    `);
+   }
+   return _outbound;
+ }
+@@ -194,6 +205,23 @@ export function appendActivity(kind: string, agentId: string, tool: string | nul
+   db.prepare(`DELETE FROM activity_log WHERE seq <= (SELECT MAX(seq) FROM activity_log) - 100`).run();
+ }
+ 
++/**
++ * EYEJOKER carry v3: record the model the main agent is currently running on.
++ * `note` carries a transition label ("fable-5 → sonnet-4-5") or null for the
++ * initial set. Single row — the host reads it for the progress header.
++ */
++export function setModelState(model: string, note: string | null): void {
++  getOutboundDb()
++    .prepare(
++      `INSERT INTO model_state (id, model, note, updated_at) VALUES (1, ?, ?, ?)
++       ON CONFLICT(id) DO UPDATE SET
++         model = excluded.model,
++         note = excluded.note,
++         updated_at = excluded.updated_at`,
++    )
++    .run(model, note, new Date().toISOString());
++}
++
+ /** Clear the in-flight tool — called on PostToolUse / PostToolUseFailure. */
+ export function clearContainerToolInFlight(): void {
+   const now = new Date().toISOString();
+diff --git a/container/agent-runner/src/destinations.ts b/container/agent-runner/src/destinations.ts
+index 74a5efbe..f9036972 100644
+--- a/container/agent-runner/src/destinations.ts
++++ b/container/agent-runner/src/destinations.ts
+@@ -85,7 +85,7 @@ export function buildSystemPromptAddendum(assistantName?: string, mode: SessionM
+   const sections: string[] = [];
+ 
+   if (assistantName) {
+-    sections.push(['# You are ' + assistantName, '', `Your name is **${assistantName}**. Use it when the channel asks who you are, when introducing yourself, and when signing any message that explicitly calls for a signature.`].join('\n'));
++    sections.push(['# You are ' + assistantName, '', `Your name is **${assistantName}**. Use it when the channel asks who you are or when introducing yourself. Never sign your messages.`].join('\n'));
+   }
+ 
+   sections.push(buildDestinationsSection(mode));
+diff --git a/container/agent-runner/src/poll-loop.ts b/container/agent-runner/src/poll-loop.ts
+index e566abce..9a6dadd0 100644
+--- a/container/agent-runner/src/poll-loop.ts
++++ b/container/agent-runner/src/poll-loop.ts
+@@ -372,6 +372,10 @@ export async function processQuery(
+   let pollInFlight = false;
+   let endedForCommand = false;
+   let corruptionStreak = 0;
++  // EYEJOKER carry (turn-loss fix): follow-up rows pushed into the active
++  // query stay 'processing' until the next result event acks them. See the
++  // push site below for rationale.
++  const pushedFollowUpIds: string[] = [];
+   const pollHandle = setInterval(() => {
+     if (done || pollInFlight || endedForCommand) return;
+     pollInFlight = true;
+@@ -440,7 +444,15 @@ export async function processQuery(
+         taskBlockNudged = false;
+         query.push(prompt);
+         archivePrompts.push(prompt);
+-        markCompleted(keptIds);
++        // EYEJOKER carry (turn-loss fix): do NOT ack completed at push time.
++        // A push only queues the prompt into the SDK stream — if the
++        // container dies mid-turn (host recycle, absolute ceiling, OOM),
++        // rows already acked 'completed' are never redelivered and the
++        // user's message silently vanishes. Keep them 'processing' and ack
++        // on the next result event (turn boundary). Crash before result →
++        // host sweep / clearStaleProcessingAcks resets them to pending →
++        // redelivery (at-least-once, matching the initial-batch contract).
++        pushedFollowUpIds.push(...keptIds);
+       } catch (err) {
+         // Without this catch the rejection escapes the void IIFE and Node
+         // terminates the container on unhandled-rejection. The initial-batch
+@@ -501,6 +513,12 @@ export async function processQuery(
+         // (send_message) mid-turn, or the message may not need a response
+         // at all — either way the turn is finished.
+         markCompleted(initialBatchIds);
++        // EYEJOKER carry (turn-loss fix): ack pushed follow-ups at the same
++        // turn boundary — they were part of the turn that just completed.
++        if (pushedFollowUpIds.length > 0) {
++          markCompleted(pushedFollowUpIds);
++          pushedFollowUpIds.length = 0;
++        }
+         if (event.text) {
+           const { sent, hasUnwrapped, taskBlocks } = dispatchResultText(event.text, routing);
+           const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskRun, taskBlocks, taskBlockNudged);
+@@ -602,6 +620,22 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
+     case 'progress':
+       log(`Progress: ${event.message}`);
+       break;
++    case 'notice':
++      // EYEJOKER carry (model visibility): user-facing one-liner (e.g. a
++      // mid-turn model fallback). Deliver immediately as its own message —
++      // the progress message gets deleted on final delivery, so this is the
++      // only durable trace the user sees.
++      log(`Notice: ${event.text}`);
++      writeMessageOut({
++        id: generateId(),
++        in_reply_to: _routing.inReplyTo,
++        kind: 'chat',
++        platform_id: _routing.platformId,
++        channel_type: _routing.channelType,
++        thread_id: _routing.threadId,
++        content: JSON.stringify({ text: event.text }),
++      });
++      break;
+   }
+ }
+ 
+diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
+index 7d9df2f8..4ad06e5f 100644
+--- a/container/agent-runner/src/providers/claude.ts
++++ b/container/agent-runner/src/providers/claude.ts
+@@ -4,7 +4,7 @@ import path from 'path';
+ 
+ import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+ 
+-import { appendActivity, appendToolLog, clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
++import { appendActivity, appendToolLog, clearContainerToolInFlight, setContainerToolInFlight, setModelState } from '../db/connection.js';
+ import { TIMEZONE, formatLocalStamp } from '../timezone.js';
+ import { registerProvider } from './provider-registry.js';
+ import type { AgentProvider, AgentQuery, McpServerConfig, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
+@@ -230,6 +230,12 @@ function toolLogDetail(toolName: string, input: Record<string, unknown> | undefi
+     case 'Task':
+       return first(input.description, 40);
+     default:
++      // MCP tools (mcp__<server>__<tool>): the host renders "MCP <server>"
++      // as the label — record the tool name as the detail.
++      if (toolName.startsWith('mcp__')) {
++        const parts = toolName.split('__');
++        return parts.length >= 3 ? first(parts.slice(2).join('__'), 40) : null;
++      }
+       return null;
+   }
+ }
+@@ -490,15 +496,46 @@ export class ClaudeProvider implements AgentProvider {
+     // Task tool_use ids identify subagents; assistant messages carry
+     // parent_tool_use_id so subagent activity is attributed to its track.
+     const knownTaskIds = new Set<string>();
+-    function recordActivity(message: unknown): void {
++    // EYEJOKER carry v3 (model visibility): track the model per agent track.
++    // init gives the session's primary model; each assistant message carries
++    // message.model, so silent overload-fallback (fallbackModel option) is
++    // detected by drift, and refusal-fallback arrives as an explicit system
++    // event (handled in translateEvents). Returns user-facing notices for
++    // transitions so the poll-loop can surface them at turn end.
++    let mainModel: string | null = null;
++    const subagentModels = new Map<string, string>();
++    function recordActivity(message: unknown): string | null {
++      let notice: string | null = null;
+       const m = message as {
+         type?: string;
+         parent_tool_use_id?: string | null;
+-        message?: { content?: unknown };
++        message?: { content?: unknown; model?: string };
+       };
+       const blocks = Array.isArray(m.message?.content) ? (m.message.content as Array<Record<string, unknown>>) : [];
+       if (m.type === 'assistant') {
+         const agentId = m.parent_tool_use_id ?? 'main';
++        // Model tracking: detect silent overload-fallback by drift between
++        // the init model and the model actually answering. Subagents get
++        // their model recorded once (shown on their track); main-agent drift
++        // is a transition worth surfacing.
++        const msgModel = typeof m.message?.model === 'string' ? m.message.model : null;
++        if (msgModel) {
++          if (agentId === 'main') {
++            if (mainModel && msgModel !== mainModel) {
++              const label = `${shortModel(mainModel)} → ${shortModel(msgModel)}`;
++              appendActivity('model_change', 'main', null, label);
++              setModelState(msgModel, label);
++              notice = `⚠️ 모델 전환: ${label} (과부하/폴백)`;
++              mainModel = msgModel;
++            } else if (!mainModel) {
++              mainModel = msgModel;
++              setModelState(msgModel, null);
++            }
++          } else if (!subagentModels.has(agentId)) {
++            subagentModels.set(agentId, msgModel);
++            appendActivity('agent_model', agentId, null, shortModel(msgModel));
++          }
++        }
+         for (const block of blocks) {
+           if (block.type === 'text' && typeof block.text === 'string') {
+             let t = block.text.trim();
+@@ -538,6 +575,12 @@ export class ClaudeProvider implements AgentProvider {
+           }
+         }
+       }
++      return notice;
++    }
++
++    /** "claude-fable-5" → "fable-5", "claude-sonnet-4-5-20250929" → "sonnet-4-5". */
++    function shortModel(model: string): string {
++      return model.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+     }
+ 
+     async function* translateEvents(): AsyncGenerator<ProviderEvent> {
+@@ -550,13 +593,55 @@ export class ClaudeProvider implements AgentProvider {
+         yield { type: 'activity' };
+ 
+         try {
+-          recordActivity(message);
++          const notice = recordActivity(message);
++          if (notice) yield { type: 'notice', text: notice };
+         } catch {
+           // activity_log is display-only — never let it break the stream.
+         }
+ 
+         if (message.type === 'system' && message.subtype === 'init') {
++          // EYEJOKER carry (model visibility): the init frame carries the
++          // session's primary model — seed tracking before any assistant
++          // message arrives.
++          const initModel = (message as { model?: string }).model;
++          if (typeof initModel === 'string' && initModel) {
++            mainModel = initModel;
++            try {
++              setModelState(initModel, null);
++            } catch {
++              // display-only
++            }
++          }
+           yield { type: 'init', continuation: message.session_id };
++        } else if (
++          message.type === 'system' &&
++          (message as { subtype?: string }).subtype === 'model_refusal_fallback'
++        ) {
++          // EYEJOKER carry (model visibility): explicit refusal-fallback —
++          // the SDK swapped models mid-turn. Structured, so surface it with
++          // its direction (retry/revert/sticky) rather than waiting for
++          // model drift on the next assistant frame.
++          const f = message as { original_model?: string; fallback_model?: string; direction?: string };
++          if (f.original_model && f.fallback_model) {
++            const label = `${shortModel(f.original_model)} → ${shortModel(f.fallback_model)}`;
++            try {
++              appendActivity('model_change', 'main', null, label);
++              setModelState(f.fallback_model, label);
++            } catch {
++              // display-only
++            }
++            mainModel = f.fallback_model;
++            yield { type: 'notice', text: `⚠️ 모델 전환: ${label} (refusal${f.direction ? `/${f.direction}` : ''})` };
++          }
++        } else if (
++          message.type === 'system' &&
++          (message as { subtype?: string }).subtype === 'model_refusal_no_fallback'
++        ) {
++          const f = message as { original_model?: string };
++          yield {
++            type: 'notice',
++            text: `⚠️ ${f.original_model ? shortModel(f.original_model) : '모델'} refusal — 폴백 모델 없음, 턴이 에러로 끝날 수 있음`,
++          };
+         } else if (message.type === 'result') {
+           // `result` text exists only on subtype:"success"; error subtypes
+           // (e.g. a non-retryable 403 billing_error) carry their message in
+diff --git a/container/agent-runner/src/providers/types.ts b/container/agent-runner/src/providers/types.ts
+index 00c66482..5e7bcc13 100644
+--- a/container/agent-runner/src/providers/types.ts
++++ b/container/agent-runner/src/providers/types.ts
+@@ -134,6 +134,12 @@ export type ProviderEvent =
+   | { type: 'result'; text: string | null; isError?: boolean }
+   | { type: 'error'; message: string; retryable: boolean; classification?: string }
+   | { type: 'progress'; message: string }
++  /**
++   * EYEJOKER carry (model visibility): a short user-facing notice the
++   * poll-loop delivers to the channel as its own message (e.g. a mid-turn
++   * model fallback alert). Display-only — no effect on turn lifecycle.
++   */
++  | { type: 'notice'; text: string }
+   /**
+    * Liveness signal. Providers MUST yield this on every underlying SDK
+    * event (tool call, thinking, partial message, anything) so the
+diff --git a/patches/@chat-adapter__discord@4.29.0.patch b/patches/@chat-adapter__discord@4.29.0.patch
+new file mode 100644
+index 00000000..70b298a7
+--- /dev/null
++++ b/patches/@chat-adapter__discord@4.29.0.patch
+@@ -0,0 +1,14 @@
++diff --git a/dist/index.js b/dist/index.js
++index e4f6fe07808ab3c9858fda724c36f7aef5084502..f042af2f9aadc413d2192564b13da9de6db64d05 100644
++--- a/dist/index.js
+++++ b/dist/index.js
++@@ -346,6 +346,9 @@ ${node.value}
++     }
++     if (isLinkNode(node)) {
++       const linkText = getNodeChildren(node).map((child) => this.nodeToDiscordMarkdown(child)).join("");
+++      if (linkText === node.url || `${linkText}/` === node.url || linkText === `${node.url}/`) {
+++        return node.url;
+++      }
++       return `[${linkText}](${node.url})`;
++     }
++     if (isBlockquoteNode(node)) {
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index dcf782f0..7a4c1a54 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -4,13 +4,18 @@ settings:
+   autoInstallPeers: true
+   excludeLinksFromLockfile: false
+ 
++patchedDependencies:
++  '@chat-adapter/discord@4.29.0':
++    hash: 26bcbcadf2e5139da1559966c675b4b5fa33ca7daa5fe968a29918bb5728fbdd
++    path: patches/@chat-adapter__discord@4.29.0.patch
++
+ importers:
+ 
+   .:
+     dependencies:
+       '@chat-adapter/discord':
+         specifier: 4.29.0
+-        version: 4.29.0
++        version: 4.29.0(patch_hash=26bcbcadf2e5139da1559966c675b4b5fa33ca7daa5fe968a29918bb5728fbdd)
+       '@clack/core':
+         specifier: ^1.2.0
+         version: 1.2.0
+@@ -1606,7 +1611,7 @@ packages:
+ 
+ snapshots:
+ 
+-  '@chat-adapter/discord@4.29.0':
++  '@chat-adapter/discord@4.29.0(patch_hash=26bcbcadf2e5139da1559966c675b4b5fa33ca7daa5fe968a29918bb5728fbdd)':
+     dependencies:
+       '@chat-adapter/shared': 4.29.0
+       chat: 4.29.0
+diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
+index 53327583..df0d3a13 100644
+--- a/pnpm-workspace.yaml
++++ b/pnpm-workspace.yaml
+@@ -3,6 +3,8 @@ onlyBuiltDependencies:
+   - esbuild
+   - protobufjs
+   - sharp
++patchedDependencies:
++  '@chat-adapter/discord@4.29.0': patches/@chat-adapter__discord@4.29.0.patch
+ 
+ pnpm:
+   minimumReleaseAge: 4320
+diff --git a/src/db/session-db.ts b/src/db/session-db.ts
+index e6a4fd06..f858af3d 100644
+--- a/src/db/session-db.ts
++++ b/src/db/session-db.ts
+@@ -288,6 +288,22 @@ export function getActivityTail(outDb: Database.Database, limit: number): Activi
+   }
+ }
+ 
++/**
++ * EYEJOKER carry v3 (model visibility): the model the main agent is currently
++ * running on, with an optional transition note ("fable-5 → sonnet-4-5").
++ * Null when the table is missing (older container image) or unset.
++ */
++export function getModelState(outDb: Database.Database): { model: string; note: string | null } | null {
++  try {
++    const row = outDb.prepare(`SELECT model, note FROM model_state WHERE id = 1`).get() as
++      | { model: string; note: string | null }
++      | undefined;
++    return row ?? null;
++  } catch {
++    return null;
++  }
++}
++
+ // ---------------------------------------------------------------------------
+ // messages_out (read-only from host)
+ // ---------------------------------------------------------------------------
+diff --git a/src/modules/typing/index.ts b/src/modules/typing/index.ts
+index b2525220..ec574627 100644
+--- a/src/modules/typing/index.ts
++++ b/src/modules/typing/index.ts
+@@ -23,6 +23,7 @@ import { heartbeatPath, openOutboundDb } from '../../session-manager.js';
+ import {
+   getActivityTail,
+   getContainerState,
++  getModelState,
+   getProcessingClaims,
+   getToolLogTail,
+   type ActivityRow,
+@@ -212,7 +213,19 @@ function toolLabelKo(tool: string | null | undefined): string {
+     Task: '서브에이전트',
+     Agent: '서브에이전트',
+   };
+-  return KO[tool] ?? (tool.startsWith('mcp__') ? 'MCP 도구' : tool);
++  if (KO[tool]) return KO[tool];
++  // MCP tools are named mcp__<server>__<tool> — show the server here and let
++  // the caller render the tool name as the detail.
++  if (tool.startsWith('mcp__')) {
++    const server = tool.split('__')[1];
++    return server ? `MCP ${server}` : 'MCP 도구';
++  }
++  return tool;
++}
++
++/** "claude-fable-5" → "fable-5", "claude-sonnet-4-5-20250929" → "sonnet-4-5". */
++function shortModelLabel(model: string): string {
++  return model.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+ }
+ 
+ /** Old-EJClaw formatElapsedKorean, at ~5s granularity below the minute. */
+@@ -238,10 +251,10 @@ function formatElapsedKorean(ms: number): string {
+ function progressBody(entry: TypingTarget, sessionId: string): string {
+   const elapsed = formatElapsedKorean(Date.now() - entry.startedAt);
+   const inFlight = toolInFlight(entry.agentGroupId, sessionId);
+-  const header = `⏳ **작업 중** — ${elapsed}`;
+ 
+   let rows: ActivityRow[] = [];
+   let legacyTools: ReturnType<typeof getToolLogTail> = [];
++  let modelState: { model: string; note: string | null } | null = null;
+   try {
+     const outDb = openOutboundDb(entry.agentGroupId, sessionId);
+     try {
+@@ -251,6 +264,7 @@ function progressBody(entry: TypingTarget, sessionId: string): string {
+         // Older container image without activity_log — fall back to tool_log.
+         legacyTools = getToolLogTail(outDb, 8).filter((r) => Date.parse(r.started_at) >= since);
+       }
++      modelState = getModelState(outDb);
+     } finally {
+       outDb.close();
+     }
+@@ -258,26 +272,36 @@ function progressBody(entry: TypingTarget, sessionId: string): string {
+     // No DB yet — header only.
+   }
+ 
++  // Header carries the main agent's current model; a ⚡ prefix flags that a
++  // fallback transition happened (the transition itself also shows in the
++  // activity tree as a ⚠️ row).
++  const modelSuffix = modelState ? ` · ${modelState.note ? '⚡' : ''}${shortModelLabel(modelState.model)}` : '';
++  const header = `⏳ **작업 중** — ${elapsed}${modelSuffix}`;
++
+   const fmt = (r: { kind?: string; tool: string | null; detail: string | null }): string => {
+     if (r.kind === 'text') return `💬 ${r.detail ?? ''}`;
++    if (r.kind === 'model_change') return `⚠️ 모델 전환 ${r.detail ?? ''}`;
+     const label = toolLabelKo(r.tool);
+     return r.detail ? `${label} \`${r.detail}\`` : label;
+   };
+ 
+   // ── Subagent tracks (old SubagentTrack map) ──
+-  const subagents = new Map<string, { label: string; done: boolean; last: string | null }>();
++  const subagents = new Map<string, { label: string; done: boolean; last: string | null; model: string | null }>();
+   const mainRows: ActivityRow[] = [];
+   for (const r of rows) {
+     if (r.kind === 'agent_start') {
+-      subagents.set(r.agent_id, { label: r.detail || '작업 중...', done: false, last: null });
++      subagents.set(r.agent_id, { label: r.detail || '작업 중...', done: false, last: null, model: null });
+     } else if (r.kind === 'agent_done') {
+       const t = subagents.get(r.agent_id);
+       if (t) {
+         t.done = true;
+         t.last = null;
+       }
++    } else if (r.kind === 'agent_model') {
++      const t = subagents.get(r.agent_id);
++      if (t) t.model = r.detail;
+     } else if (r.agent_id !== 'main') {
+-      const t = subagents.get(r.agent_id) ?? { label: '작업 중...', done: false, last: null };
++      const t = subagents.get(r.agent_id) ?? { label: '작업 중...', done: false, last: null, model: null };
+       t.last = fmt(r);
+       subagents.set(r.agent_id, t);
+     } else {
+@@ -285,11 +309,18 @@ function progressBody(entry: TypingTarget, sessionId: string): string {
+     }
+   }
+ 
++  // Subagent model tag: only shown when it differs from the main model —
++  // inherit (the default) is noise.
++  const mainShort = modelState ? shortModelLabel(modelState.model) : null;
++  const trackLabel = (t: { label: string; model: string | null }): string =>
++    t.model && t.model !== mainShort ? `${t.label} (${t.model})` : t.label;
++
+   if (subagents.size > 1) {
+     const lines = [header];
+     for (const [, t] of subagents) {
+       const icon = t.done ? '✅' : '🔄';
+-      lines.push(t.last && !t.done ? `${icon} ${t.label} · ${t.last}` : `${icon} ${t.label}`);
++      const label = trackLabel(t);
++      lines.push(t.last && !t.done ? `${icon} ${label} · ${t.last}` : `${icon} ${label}`);
+     }
+     return lines.join('\n');
+   }
+@@ -299,7 +330,8 @@ function progressBody(entry: TypingTarget, sessionId: string): string {
+     rows.length > 0 ? mainRows : legacyTools;
+   if (subagents.size === 1) {
+     const [, t] = [...subagents.entries()][0];
+-    treeSource.push({ kind: 'tool', tool: 'Task', detail: t.done ? `${t.label} ✅` : t.label });
++    const label = trackLabel(t);
++    treeSource.push({ kind: 'tool', tool: 'Task', detail: t.done ? `${label} ✅` : label });
+   }
+   const recent = treeSource.slice(-4);
+   const lines = [header];
+-- 
+2.43.0
+

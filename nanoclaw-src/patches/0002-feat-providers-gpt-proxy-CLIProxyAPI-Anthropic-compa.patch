@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 25e8652dab82e24c3d48f757cd3528320c12c3f1 Mon Sep 17 00:00:00 2001
 From: EJ Claw <ejclaw@eyejoker.com>
 Date: Tue, 14 Jul 2026 06:32:29 +0900
-Subject: [PATCH 2/8] =?UTF-8?q?feat(providers):=20gpt-proxy=20=E2=80=94=20?=
+Subject: [PATCH 2/9] =?UTF-8?q?feat(providers):=20gpt-proxy=20=E2=80=94=20?=
  =?UTF-8?q?CLIProxyAPI=20Anthropic-compat=20endpoint=20(Codex=20subscripti?=
  =?UTF-8?q?on=20pool)?=
 MIME-Version: 1.0

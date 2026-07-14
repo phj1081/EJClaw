@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From ca34ec7c0083d305f3a2d33da0e05a0b6190fcff Mon Sep 17 00:00:00 2001
 From: EJ Claw <ejclaw@eyejoker.com>
 Date: Tue, 14 Jul 2026 06:32:25 +0900
-Subject: [PATCH 1/8] feat(channels): Discord adapter (upstream channels branch
+Subject: [PATCH 1/9] feat(channels): Discord adapter (upstream channels branch
  carry)
 
 ---
