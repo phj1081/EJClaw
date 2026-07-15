@@ -92,6 +92,11 @@ export interface JobRecord {
   completedAt: string | null;
 }
 
+export interface InteractiveQuestion {
+  question: string;
+  choices: string[];
+}
+
 export interface ClaudeExecution {
   ok: boolean;
   result: string;
@@ -110,6 +115,7 @@ export interface ExecutionRequest {
   resume: boolean;
   onSpawn?: (pid: number) => void;
   onHeartbeat?: () => void;
+  onQuestion?: (question: InteractiveQuestion) => Promise<string>;
   onProgress?: (
     event: import("./stream-progress").ProgressEvent,
     aggregator: import("./stream-progress").StreamProgressAggregator,
@@ -120,6 +126,7 @@ export type ClaudeExecutor = (request: ExecutionRequest) => Promise<ClaudeExecut
 
 export type FinalHook = (job: JobRecord, execution: ClaudeExecution) => Promise<void>;
 export type StartHook = (job: JobRecord) => Promise<void>;
+export type QuestionHook = (job: JobRecord, question: InteractiveQuestion) => Promise<string>;
 export type ProgressHook = (
   job: JobRecord,
   event: import("./stream-progress").ProgressEvent,

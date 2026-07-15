@@ -1,0 +1,46 @@
+import { describe, expect, test } from "bun:test";
+import { parseInteractiveQuestion, QuestionBroker, renderInteractiveQuestion } from "../src/interactive-control";
+
+describe("interactive Discord control protocol", () => {
+  test("parses a bounded one-line question marker", () => {
+    expect(
+      parseInteractiveQuestion('작업 전에 확인 필요\nDISCORD_QUESTION:{"question":"배포할까?","choices":["예","아니오"]}'),
+    ).toEqual({ question: "배포할까?", choices: ["예", "아니오"] });
+  });
+
+  test("rejects malformed or unbounded markers", () => {
+    expect(parseInteractiveQuestion("DISCORD_QUESTION:not-json")).toBeNull();
+    expect(
+      parseInteractiveQuestion(`DISCORD_QUESTION:${JSON.stringify({ question: "q", choices: ["1", "2", "3", "4", "5"] })}`),
+    ).toBeNull();
+  });
+
+  test("waits for a conversation text answer and clears the pending question", async () => {
+    const broker = new QuestionBroker();
+    const waiting = broker.wait(
+      "job-1",
+      "route:thread",
+      { question: "A/B?", choices: ["A", "B"] },
+      async () => "discord-question-1",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(broker.hasPending("route:thread")).toBe(true);
+    expect(broker.answerConversation("route:thread", "B")).toBe(true);
+    expect(await waiting).toBe("B");
+    expect(broker.hasPending("route:thread")).toBe(false);
+  });
+
+  test("maps a reaction on the question message to its choice", async () => {
+    const broker = new QuestionBroker();
+    const waiting = broker.wait(
+      "job-2",
+      "route:thread-2",
+      { question: "선택?", choices: ["첫째", "둘째"] },
+      async () => "discord-question-2",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(broker.answerReaction("discord-question-2", "2️⃣")).toBe(true);
+    expect(await waiting).toBe("둘째");
+    expect(renderInteractiveQuestion({ question: "선택?", choices: ["첫째", "둘째"] })).toContain("1️⃣ 첫째");
+  });
+});

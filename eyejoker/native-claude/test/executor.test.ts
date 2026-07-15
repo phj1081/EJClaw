@@ -104,6 +104,46 @@ describe("Claude process executor", () => {
     expect(execution.mainModel).toBe("claude-fable-5");
   });
 
+  test("keeps stdin open for a Discord question answer before finalizing", async () => {
+    const binary = fakeClaude(
+      [
+        "IFS= read -r initial",
+        `printf '%s\\n' '{"type":"result","subtype":"success","result":"DISCORD_QUESTION:{\\"question\\":\\"고를까?\\",\\"choices\\":[\\"A\\",\\"B\\"]}","session_id":"11111111-1111-4111-8111-111111111111","is_error":false}'`,
+        "IFS= read -r answer",
+        `printf '%s\\n' '{"type":"result","subtype":"success","result":"ANSWERED","session_id":"11111111-1111-4111-8111-111111111111","is_error":false}'`,
+      ].join("\n"),
+    );
+    const questions: string[] = [];
+    const executor = new ClaudeProcessExecutor({ binary, timeoutSeconds: 10 });
+    const execution = await executor.run({
+      ...request(),
+      onQuestion: async (question) => {
+        questions.push(question.question);
+        return "B";
+      },
+    });
+    expect(questions).toEqual(["고를까?"]);
+    expect(execution.result).toBe("ANSWERED");
+  });
+
+  test("steers a running Claude process through a second user event", async () => {
+    const binary = fakeClaude(
+      [
+        "IFS= read -r initial",
+        "IFS= read -r steering",
+        `python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","result":sys.argv[1],"session_id":"11111111-1111-4111-8111-111111111111","is_error":False}))' "$steering"`,
+      ].join("\n"),
+    );
+    let spawned!: () => void;
+    const ready = new Promise<void>((resolve) => (spawned = resolve));
+    const executor = new ClaudeProcessExecutor({ binary, timeoutSeconds: 10 });
+    const running = executor.run({ ...request(), onSpawn: spawned });
+    await ready;
+    expect(executor.steer("job-1", "STEER_NOW")).toBe(true);
+    const execution = await running;
+    expect(execution.result).toContain("STEER_NOW");
+  });
+
   test("escalates cancellation to SIGKILL when Claude ignores SIGTERM", async () => {
     const binary = fakeClaude(`trap '' TERM\nsleep 30`);
     let spawned!: () => void;

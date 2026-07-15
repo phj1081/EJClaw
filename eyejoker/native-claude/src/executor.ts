@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { buildClaudeInvocation } from "./protocol";
 import { finalizeStreamJsonResult, StreamProgressAggregator, type ProgressEvent } from "./stream-progress";
+import { parseInteractiveQuestion, streamUserEvent } from "./interactive-control";
 import type { ClaudeExecution, ExecutionRequest } from "./types";
 
 interface ExecutorOptions {
@@ -36,11 +37,26 @@ export class ClaudeProcessExecutor {
     return first;
   }
 
+  steer(jobId: string, content: string): boolean {
+    const child = this.children.get(jobId);
+    return child ? this.writeUser(child, content) : false;
+  }
+
   cancel(jobId: string): boolean {
     const child = this.children.get(jobId);
     if (!child) return false;
     this.terminate(child);
     return true;
+  }
+
+  private writeUser(child: ChildProcess, content: string): boolean {
+    if (!child.stdin || child.stdin.destroyed || !child.stdin.writable) return false;
+    try {
+      child.stdin.write(streamUserEvent(content));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private signal(child: ChildProcess, signal: NodeJS.Signals): void {
@@ -68,11 +84,10 @@ export class ClaudeProcessExecutor {
       const child = spawn(this.binary, invocation.args, {
         cwd: request.route.cwd,
         env: { ...process.env, ...invocation.env },
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["pipe", "pipe", "pipe"],
         detached: process.platform !== "win32",
       });
       this.children.set(request.job.id, child);
-      if (child.pid && request.onSpawn) request.onSpawn(child.pid);
 
       let stdout = "";
       let stderr = "";
@@ -83,6 +98,7 @@ export class ClaudeProcessExecutor {
         return (current + value.toString()).slice(0, this.maxOutputBytes);
       };
 
+      let questionInFlight = false;
       const emitProgress = (event: ProgressEvent | null): void => {
         if (!event || !request.onProgress) return;
         try {
@@ -92,6 +108,30 @@ export class ClaudeProcessExecutor {
         }
       };
 
+      const ingestLine = (line: string): void => {
+        const event = aggregator.ingestLine(line);
+        emitProgress(event);
+        if (event?.kind !== "result" || questionInFlight) return;
+        const question = parseInteractiveQuestion(event.finalResult ?? "");
+        if (!question || !request.onQuestion) {
+          child.stdin?.end();
+          return;
+        }
+        questionInFlight = true;
+        void request
+          .onQuestion(question)
+          .then((answer) => {
+            questionInFlight = false;
+            if (!this.writeUser(child, `[Discord 질문 답변]\n${answer}`)) {
+              throw new Error("Claude stdin closed before question answer");
+            }
+          })
+          .catch((error) => {
+            stderr += `\nquestion bridge failed: ${error instanceof Error ? error.message : String(error)}`;
+            child.stdin?.end();
+          });
+      };
+
       child.stdout.on("data", (data: Buffer) => {
         stdout = append(stdout, data);
         lineBuffer += data.toString();
@@ -99,7 +139,7 @@ export class ClaudeProcessExecutor {
         while (newline >= 0) {
           const line = lineBuffer.slice(0, newline);
           lineBuffer = lineBuffer.slice(newline + 1);
-          emitProgress(aggregator.ingestLine(line));
+          ingestLine(line);
           newline = lineBuffer.indexOf("\n");
         }
         request.onHeartbeat?.();
@@ -108,6 +148,12 @@ export class ClaudeProcessExecutor {
         stderr = append(stderr, data);
         request.onHeartbeat?.();
       });
+
+      if (!this.writeUser(child, request.prompt)) {
+        stderr += "\nfailed to write initial Claude user event";
+        child.stdin?.end();
+      }
+      if (child.pid && request.onSpawn) request.onSpawn(child.pid);
 
       const heartbeat = setInterval(() => request.onHeartbeat?.(), 10_000);
       heartbeat.unref();
@@ -125,7 +171,7 @@ export class ClaudeProcessExecutor {
         clearInterval(heartbeat);
         clearTimeout(timeout);
         this.children.delete(request.job.id);
-        if (lineBuffer.trim()) emitProgress(aggregator.ingestLine(lineBuffer));
+        if (lineBuffer.trim()) ingestLine(lineBuffer);
         const exitCode = timedOut ? 124 : (code ?? 1);
         const parsed = finalizeStreamJsonResult(
           aggregator,

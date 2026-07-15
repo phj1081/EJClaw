@@ -32,6 +32,7 @@ describe("Claude protocol", () => {
     expect(prompt).toContain("apps/soriq만 담당");
     expect(prompt).not.toContain("중간 진행은 Discord progress 카드");
     expect(prompt).toContain("MEDIA:/absolute/path");
+    expect(prompt).toContain("DISCORD_QUESTION:");
     expect(prompt.split("\n")[0]!.length).toBeLessThan(200);
   });
 
@@ -55,6 +56,9 @@ describe("Claude protocol", () => {
   test("uses stream-json with partial messages for live progress", () => {
     const fresh = buildClaudeInvocation(route, "hello", "session-1", false);
     expect(fresh.args).toContain("stream-json");
+    expect(fresh.args).toContain("--input-format");
+    expect(fresh.args).toContain("--replay-user-messages");
+    expect(fresh.args).not.toContain("hello");
     expect(fresh.args).toContain("--include-partial-messages");
     expect(fresh.args).toContain("--include-hook-events");
     expect(fresh.args).toContain("--verbose");

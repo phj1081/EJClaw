@@ -26,6 +26,7 @@ import { progressElapsedSeconds, workElapsedSeconds } from "./duration";
 import { ProgressLifecycle, progressCleanupFallbackText } from "./progress-lifecycle";
 import { cleanupExpiredAttachmentDirs } from "./attachment-cleanup";
 import { extractOutboundArtifacts } from "./outbound-artifacts";
+import { QuestionBroker, QUESTION_REACTIONS, renderInteractiveQuestion } from "./interactive-control";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
@@ -78,6 +79,7 @@ const executor = new ClaudeProcessExecutor({
 });
 const typingTimers = new Map<string, ReturnType<typeof setInterval>>();
 const progressBoards = new Map<string, ProgressBoard>();
+const questionBroker = new QuestionBroker();
 const attachmentRoot = join(stateDir, "attachments");
 const attachmentTtlMs = 7 * 24 * 60 * 60 * 1_000;
 let queuePoll: ReturnType<typeof setInterval> | null = null;
@@ -388,6 +390,19 @@ const runtime = new JobRuntime({
     if (!board) return;
     board.handleEvent(event, aggregator);
   },
+  onQuestion: (job, question) =>
+    questionBroker.wait(job.id, job.conversationKey, question, async () => {
+      const channel = await textChannel(job.channelId);
+      const message = await channel.send({
+        content: renderInteractiveQuestion(question),
+        allowedMentions: { parse: [] },
+      });
+      for (const emoji of QUESTION_REACTIONS.slice(0, question.choices.length)) {
+        await message.react(emoji).catch((error) => console.warn(`question reaction failed id=${job.id}`, String(error)));
+      }
+      console.log(`job waiting for Discord answer id=${job.id} question_message=${message.id}`);
+      return message.id;
+    }),
   onFinal: async (job, execution) => {
     await deliverFinal(job, execution);
   },
@@ -522,6 +537,7 @@ client.on("messageCreate", async (message) => {
       const cancelled = store.cancelByConversation(key);
       const boards = new Map<string, ProgressBoard>();
       for (const job of cancelled) {
+        questionBroker.cancelJob(job.id, "cancelled by user");
         executor.cancel(job.id);
         stopTyping(job.id);
         const board = progressBoards.get(job.id) ?? (job.progressMessageId ? new ProgressBoard(job) : null);
@@ -538,6 +554,11 @@ client.on("messageCreate", async (message) => {
       }
       return;
     }
+    if (questionBroker.answerConversation(key, promptText)) {
+      await message.react("👍").catch(() => undefined);
+      console.log(`Discord question answered by message conversation=${key} message=${message.id}`);
+      return;
+    }
 
     const attachments = await downloadAttachments(message.id, message.attachments.values());
     let prompt = promptText;
@@ -548,6 +569,15 @@ client.on("messageCreate", async (message) => {
       return;
     }
     prompt = appendDiscordContext(prompt, await discordContextFor(message, !store.sessionHasHistory(key)));
+
+    const running = store
+      .listActive()
+      .find((candidate) => candidate.conversationKey === key && candidate.status === "running");
+    if (running && executor.steer(running.id, `[Discord 실행 중 추가 지시 · message=${message.id}]\n${prompt}`)) {
+      await message.react("👀").catch(() => undefined);
+      console.log(`job steered id=${running.id} message=${message.id} len=${prompt.length}`);
+      return;
+    }
 
     const job = store.enqueue({
       routeId: route.id,
@@ -596,8 +626,11 @@ client.on("messageUpdate", async (_oldMessage, updatedMessage) => {
       console.log(`queued job updated id=${queued.id} message=${message.id} len=${prompt.length}`);
       return;
     }
-    // A running edit is forwarded by the interactive stdin controller added below.
-    console.log(`running source edited id=${job.id} message=${message.id}`);
+    if (executor.steer(job.id, `[Discord 원본 요청 수정 · message=${message.id}]\n${prompt}`)) {
+      console.log(`running source edit steered id=${job.id} message=${message.id}`);
+      return;
+    }
+    console.warn(`running source edit could not steer id=${job.id} message=${message.id}`);
   } catch (error) {
     console.error("message update handler failed", error);
   }
@@ -608,6 +641,7 @@ async function cancelDeletedSource(messageId: string): Promise<void> {
   if (!job) return;
   const cancelled = store.cancelByMessageId(messageId);
   if (!cancelled) return;
+  questionBroker.cancelJob(cancelled.id, "source message deleted");
   executor.cancel(cancelled.id);
   stopTyping(cancelled.id);
   const board = progressBoards.get(cancelled.id) ?? (job.progressMessageId ? new ProgressBoard(job) : null);
@@ -626,6 +660,18 @@ client.on("messageDelete", (message) => {
 client.on("messageDeleteBulk", (messages) => {
   for (const messageId of messages.keys()) {
     void cancelDeletedSource(messageId).catch((error) => console.error("bulk message delete handler failed", error));
+  }
+});
+
+client.on("messageReactionAdd", async (partialReaction, user) => {
+  try {
+    if (user.bot || !allowedUsers.has(user.id)) return;
+    const reaction = partialReaction.partial ? await partialReaction.fetch() : partialReaction;
+    const emoji = reaction.emoji.name ?? "";
+    if (!questionBroker.answerReaction(reaction.message.id, emoji)) return;
+    console.log(`Discord question answered by reaction message=${reaction.message.id} user=${user.id} emoji=${emoji}`);
+  } catch (error) {
+    console.error("reaction handler failed", error);
   }
 });
 

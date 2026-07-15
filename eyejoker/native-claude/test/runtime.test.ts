@@ -68,6 +68,31 @@ function enqueue(store: StateStore, id: string) {
 }
 
 describe("job runtime", () => {
+  test("passes interactive questions through the job-scoped runtime hook", async () => {
+    const store = freshStore();
+    const seen: string[] = [];
+    const executor: ClaudeExecutor = async (request) => {
+      const answer = await request.onQuestion?.({ question: "A/B?", choices: ["A", "B"] });
+      return ok(request.sessionId, `answer=${answer}`);
+    };
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, route]]),
+      executor,
+      onQuestion: async (job, question) => {
+        seen.push(`${job.messageId}:${question.question}`);
+        return "B";
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 1,
+      maxAttempts: 1,
+    });
+    enqueue(store, "question-message");
+    await runtime.runUntilIdle();
+    expect(seen).toEqual(["question-message:A/B?"]);
+    expect(store.listJobs()[0]?.result).toBe("answer=B");
+  });
+
   test("first turn creates a session and the next turn resumes it", async () => {
     const env = setup([
       { ok: true, result: "one", sessionId: "session-a", stderr: "", exitCode: 0 },
