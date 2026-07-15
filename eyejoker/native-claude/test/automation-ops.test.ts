@@ -38,6 +38,7 @@ describe("native automation systemd contracts", () => {
     expect(smoke).not.toContain("...process.env");
     expect(service).toContain("ProtectHome=read-only");
     expect(service).toContain("ReadWritePaths=/home/ejclaw/.local/state/claude-native");
+    expect(service).toContain("NPM_CONFIG_CACHE=/home/ejclaw/.local/state/claude-native/npm-cache");
     expect(service).toContain("UnsetEnvironment=DISCORD_BOT_TOKEN");
     expect(envExample).toContain("DISCORD_STATE_DIR=/home/ejclaw/.claude/channels/discord-owner");
     expect(envExample).not.toContain("discord-pilot");
