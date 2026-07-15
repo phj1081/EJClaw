@@ -12,11 +12,19 @@ export interface RouteConfig {
   cwd: string;
   lockKey?: string;
   model: string;
+  fallbackModel?: string;
   effort: "low" | "medium" | "high" | "xhigh" | "max";
   permissionMode: PermissionMode;
   requireMention: boolean;
   instructions?: string;
   mixedAgents?: boolean;
+}
+
+export interface ConversationSettings {
+  model: string | null;
+  permissionMode: PermissionMode | null;
+  effort: RouteConfig["effort"] | null;
+  forkNext: boolean;
 }
 
 export interface RuntimeConfig {
@@ -37,6 +45,7 @@ export interface EnqueueInput {
   messageId: string;
   authorId: string;
   prompt: string;
+  rawPrompt?: boolean;
   attachmentPaths: string[];
 }
 
@@ -65,6 +74,7 @@ export interface JobRecord {
   messageId: string;
   authorId: string;
   prompt: string;
+  rawPrompt: boolean;
   attachmentPaths: string[];
   status: JobStatus;
   sessionId: string;
@@ -113,6 +123,7 @@ export interface ExecutionRequest {
   prompt: string;
   sessionId: string;
   resume: boolean;
+  forkSession?: boolean;
   onSpawn?: (pid: number) => void;
   onHeartbeat?: () => void;
   onQuestion?: (question: InteractiveQuestion) => Promise<string>;

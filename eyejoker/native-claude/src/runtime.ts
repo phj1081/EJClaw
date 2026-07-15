@@ -134,16 +134,27 @@ export class JobRuntime {
     }
     if (this.store.getJob(job.id)?.status === "cancelled") return;
 
+    const settings = this.store.getConversationSettings(job.conversationKey);
+    const effectiveRoute: RouteConfig = {
+      ...route,
+      model: settings.model ?? route.model,
+      permissionMode: settings.permissionMode ?? route.permissionMode,
+      effort: settings.effort ?? route.effort,
+    };
     const resume = job.startedBefore || this.store.sessionHasHistory(job.conversationKey);
-    const prompt = buildGoalPrompt(route, job.prompt, job.attachmentPaths, job.recoveryReason);
+    const forkSession = resume && this.store.consumeFork(job.conversationKey);
+    const prompt = job.rawPrompt
+      ? job.prompt
+      : buildGoalPrompt(effectiveRoute, job.prompt, job.attachmentPaths, job.recoveryReason);
     let execution: ClaudeExecution;
     try {
       execution = await this.executor({
         job,
-        route,
+        route: effectiveRoute,
         prompt,
         sessionId: job.sessionId,
         resume,
+        forkSession,
         onSpawn: (pid) => this.store.setPid(job.id, pid),
         onHeartbeat: () => this.store.heartbeat(job.id),
         ...(this.onQuestion

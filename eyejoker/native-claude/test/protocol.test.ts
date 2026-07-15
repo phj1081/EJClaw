@@ -16,6 +16,7 @@ const route: RouteConfig = {
   discordChannelId: "100",
   cwd: "/tmp/project",
   model: "claude-fable-5",
+  fallbackModel: "gpt-5.6-sol",
   effort: "high",
   permissionMode: "bypassPermissions" as const,
   requireMention: false,
@@ -50,6 +51,10 @@ describe("Claude protocol", () => {
     const resumed = buildClaudeInvocation(route, "hello", "session-1", true);
     expect(resumed.args).toContain("--resume");
     expect(resumed.args).not.toContain("--session-id");
+    expect(resumed.args).toContain("--fallback-model");
+    expect(resumed.args).toContain("gpt-5.6-sol");
+    const forked = buildClaudeInvocation(route, "hello", "session-1", true, true);
+    expect(forked.args).toContain("--fork-session");
     expect(resumed.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
   });
 

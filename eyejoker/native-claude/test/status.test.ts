@@ -13,6 +13,7 @@ function job(status: JobRecord["status"], routeId = "cleanapo"): JobRecord {
     messageId: crypto.randomUUID(),
     authorId: "owner",
     prompt: "task",
+    rawPrompt: false,
     attachmentPaths: [],
     status,
     sessionId: crypto.randomUUID(),

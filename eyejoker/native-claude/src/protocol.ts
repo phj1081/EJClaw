@@ -52,6 +52,7 @@ export function buildClaudeInvocation(
   _prompt: string,
   sessionId: string,
   resume: boolean,
+  forkSession = false,
 ): { args: string[]; env: Record<string, string> } {
   const args = [
     "-p",
@@ -73,6 +74,8 @@ export function buildClaudeInvocation(
     `native-${route.id}`,
   ];
   if (route.mixedAgents !== false) args.push("--agents", JSON.stringify(defaultAgents));
+  if (route.fallbackModel) args.push("--fallback-model", route.fallbackModel);
+  if (resume && forkSession) args.push("--fork-session");
   args.push(resume ? "--resume" : "--session-id", sessionId);
   return {
     args,

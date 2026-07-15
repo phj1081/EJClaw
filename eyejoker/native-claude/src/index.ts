@@ -26,6 +26,7 @@ import { progressElapsedSeconds, workElapsedSeconds } from "./duration";
 import { ProgressLifecycle, progressCleanupFallbackText } from "./progress-lifecycle";
 import { cleanupExpiredAttachmentDirs } from "./attachment-cleanup";
 import { extractOutboundArtifacts } from "./outbound-artifacts";
+import { parseControlCommand } from "./control-commands";
 import { QuestionBroker, QUESTION_REACTIONS, renderInteractiveQuestion } from "./interactive-control";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
@@ -528,7 +529,8 @@ client.on("messageCreate", async (message) => {
     if (store.getByMessageId(message.id)) return;
 
     const key = conversationKey(route, message.channelId);
-    const promptText = stripBotMention(message.content ?? "", client.user.id);
+    let promptText = stripBotMention(message.content ?? "", client.user.id);
+    let rawPrompt = false;
     if (promptText === "!status") {
       await message.reply({ content: formatDiscordStatus(renderStatusSnapshot(store.listActive())), allowedMentions: { parse: [] } });
       return;
@@ -554,6 +556,64 @@ client.on("messageCreate", async (message) => {
       }
       return;
     }
+
+    const control = parseControlCommand(promptText);
+    if (control?.kind === "setting") {
+      const settings = store.setConversationSetting(key, control.field, control.value);
+      await message.reply({
+        content: `설정 저장됨 · model=${settings.model ?? route.model} · permission=${settings.permissionMode ?? route.permissionMode} · effort=${settings.effort ?? route.effort}`,
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+    if (control?.kind === "fork") {
+      store.requestFork(key);
+      await message.reply({ content: "다음 resume 작업을 현재 세션에서 fork하도록 예약했어.", allowedMentions: { parse: [] } });
+      return;
+    }
+    if (control?.kind === "reset") {
+      const active = store.listActive().some((candidate) => candidate.conversationKey === key);
+      if (active) {
+        await message.reply({ content: "실행·대기 중인 작업이 있어서 reset하지 않았어. 먼저 !cancel 해줘.", allowedMentions: { parse: [] } });
+      } else {
+        store.resetSession(key, route.id);
+        await message.reply({ content: "Claude 세션을 새로 시작하도록 reset했어.", allowedMentions: { parse: [] } });
+      }
+      return;
+    }
+    if (control?.kind === "settings") {
+      const settings = store.getConversationSettings(key);
+      await message.reply({
+        content: [
+          `model: ${settings.model ?? `${route.model} (route default)`}`,
+          `fallback: ${route.fallbackModel ?? "없음"}`,
+          `permission: ${settings.permissionMode ?? `${route.permissionMode} (route default)`}`,
+          `effort: ${settings.effort ?? `${route.effort} (route default)`}`,
+          `fork next: ${settings.forkNext ? "yes" : "no"}`,
+          `session history: ${store.sessionHasHistory(key) ? "yes" : "no"}`,
+        ].join("\n"),
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+    if (control?.kind === "help") {
+      await message.reply({
+        content: "!status · !cancel · !settings · !model · !permission · !effort · !fork · !reset · !compact · !claude /command · !background",
+        allowedMentions: { parse: [] },
+      });
+      return;
+    }
+    if (control?.kind === "unsupported") {
+      await message.reply({ content: control.message, allowedMentions: { parse: [] } });
+      return;
+    }
+    if (control?.kind === "raw") {
+      promptText = control.prompt;
+      rawPrompt = true;
+    } else if (control?.kind === "background") {
+      promptText = control.prompt;
+    }
+
     if (questionBroker.answerConversation(key, promptText)) {
       await message.react("👍").catch(() => undefined);
       console.log(`Discord question answered by message conversation=${key} message=${message.id}`);
@@ -568,12 +628,15 @@ client.on("messageCreate", async (message) => {
       await message.reply({ content: "작업 내용을 적어줘.", allowedMentions: { parse: [] } });
       return;
     }
-    prompt = appendDiscordContext(prompt, await discordContextFor(message, !store.sessionHasHistory(key)));
+    if (!rawPrompt) {
+      prompt = appendDiscordContext(prompt, await discordContextFor(message, !store.sessionHasHistory(key)));
+    }
 
     const running = store
       .listActive()
       .find((candidate) => candidate.conversationKey === key && candidate.status === "running");
-    if (running && executor.steer(running.id, `[Discord 실행 중 추가 지시 · message=${message.id}]\n${prompt}`)) {
+    const steeringPrompt = rawPrompt ? promptText : `[Discord 실행 중 추가 지시 · message=${message.id}]\n${prompt}`;
+    if (running && executor.steer(running.id, steeringPrompt)) {
       await message.react("👀").catch(() => undefined);
       console.log(`job steered id=${running.id} message=${message.id} len=${prompt.length}`);
       return;
@@ -588,6 +651,7 @@ client.on("messageCreate", async (message) => {
       messageId: message.id,
       authorId: message.author.id,
       prompt,
+      rawPrompt,
       attachmentPaths: attachments.paths,
     });
     await message.react("👀").catch(() => undefined);

@@ -126,6 +126,26 @@ describe("durable job store", () => {
     expect(db.cancelByMessageId("deletable")).toBeNull();
   });
 
+  test("persists conversation overrides and consumes fork/reset controls once", () => {
+    const db = store();
+    const first = db.enqueue(input("cleanapo", "cleanapo:controls", "controls-1"));
+    db.setConversationSetting("cleanapo:controls", "model", "gpt-5.6-sol");
+    db.setConversationSetting("cleanapo:controls", "permissionMode", "plan");
+    db.setConversationSetting("cleanapo:controls", "effort", "max");
+    expect(db.getConversationSettings("cleanapo:controls")).toEqual({
+      model: "gpt-5.6-sol",
+      permissionMode: "plan",
+      effort: "max",
+      forkNext: false,
+    });
+    db.requestFork("cleanapo:controls");
+    expect(db.consumeFork("cleanapo:controls")).toBe(true);
+    expect(db.consumeFork("cleanapo:controls")).toBe(false);
+    const reset = db.resetSession("cleanapo:controls");
+    expect(reset).not.toBe(first.sessionId);
+    expect(db.sessionHasHistory("cleanapo:controls")).toBe(false);
+  });
+
   test("forgets a temporary progress message after Discord cleanup", () => {
     const db = store();
     const job = db.enqueue(input("cleanapo", "cleanapo:one", "progress"));

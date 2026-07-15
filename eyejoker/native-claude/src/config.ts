@@ -7,6 +7,7 @@ interface RawRoute {
   cwd?: unknown;
   lock_key?: unknown;
   model?: unknown;
+  fallback_model?: unknown;
   effort?: unknown;
   permission_mode?: unknown;
   require_mention?: unknown;
@@ -63,6 +64,9 @@ function parseRoute(raw: RawRoute): RouteConfig {
     requireMention: raw.require_mention === true,
   };
   if (typeof raw.lock_key === "string" && raw.lock_key.trim()) route.lockKey = raw.lock_key.trim();
+  if (typeof raw.fallback_model === "string" && raw.fallback_model.trim()) {
+    route.fallbackModel = raw.fallback_model.trim();
+  }
   if (typeof raw.instructions === "string" && raw.instructions.trim()) route.instructions = raw.instructions.trim();
   if (typeof raw.mixed_agents === "boolean") route.mixedAgents = raw.mixed_agents;
   return route;

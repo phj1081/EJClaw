@@ -4,11 +4,13 @@ import { dirname } from "node:path";
 import type { DeliveryPlan } from "./final-delivery";
 import type {
   ClaudeExecution,
+  ConversationSettings,
   EnqueueInput,
   FinalStatus,
   JobRecord,
   JobStatus,
   OutboundFile,
+  PermissionMode,
 } from "./types";
 
 interface JobRow {
@@ -21,6 +23,7 @@ interface JobRow {
   message_id: string;
   author_id: string;
   prompt: string;
+  raw_prompt: number;
   attachment_paths: string;
   status: JobStatus;
   session_id: string;
@@ -63,6 +66,7 @@ function fromRow(row: JobRow): JobRecord {
     messageId: row.message_id,
     authorId: row.author_id,
     prompt: row.prompt,
+    rawPrompt: row.raw_prompt === 1,
     attachmentPaths: JSON.parse(row.attachment_paths) as string[],
     status: row.status,
     sessionId: row.session_id,
@@ -112,6 +116,14 @@ export class StateStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS conversation_settings (
+        conversation_key TEXT PRIMARY KEY,
+        model TEXT,
+        permission_mode TEXT,
+        effort TEXT,
+        fork_next INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
         route_id TEXT NOT NULL,
@@ -146,6 +158,7 @@ export class StateStore {
       CREATE INDEX IF NOT EXISTS jobs_lock_status_idx ON jobs(lock_key, status);
       CREATE INDEX IF NOT EXISTS jobs_delivery_idx ON jobs(status, delivery_after);
     `);
+    this.ensureColumn("jobs", "raw_prompt", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("jobs", "progress_message_id", "TEXT");
     this.ensureColumn("jobs", "progress_text", "TEXT");
     this.ensureColumn("jobs", "main_model", "TEXT");
@@ -183,9 +196,9 @@ export class StateStore {
       this.db
         .query(
           `INSERT INTO jobs(
-            id,route_id,lock_key,conversation_key,channel_id,thread_id,message_id,author_id,prompt,
+            id,route_id,lock_key,conversation_key,channel_id,thread_id,message_id,author_id,prompt,raw_prompt,
             attachment_paths,status,session_id,created_at,queued_at
-          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           jobId,
@@ -197,6 +210,7 @@ export class StateStore {
           input.messageId,
           input.authorId,
           input.prompt,
+          input.rawPrompt ? 1 : 0,
           JSON.stringify(input.attachmentPaths),
           "queued",
           sessionId,
@@ -260,6 +274,81 @@ export class StateStore {
     });
     tx();
     return rows.length;
+  }
+
+  getConversationSettings(conversationKey: string): ConversationSettings {
+    const row = this.db
+      .query<
+        { model: string | null; permission_mode: string | null; effort: string | null; fork_next: number },
+        [string]
+      >("SELECT model, permission_mode, effort, fork_next FROM conversation_settings WHERE conversation_key=?")
+      .get(conversationKey);
+    return {
+      model: row?.model ?? null,
+      permissionMode: (row?.permission_mode as PermissionMode | null | undefined) ?? null,
+      effort: (row?.effort as ConversationSettings["effort"] | undefined) ?? null,
+      forkNext: row?.fork_next === 1,
+    };
+  }
+
+  setConversationSetting(
+    conversationKey: string,
+    field: "model" | "permissionMode" | "effort",
+    value: string | null,
+  ): ConversationSettings {
+    const column = field === "permissionMode" ? "permission_mode" : field;
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .query("INSERT OR IGNORE INTO conversation_settings(conversation_key, updated_at) VALUES(?,?)")
+        .run(conversationKey, timestamp);
+      this.db.query(`UPDATE conversation_settings SET ${column}=?, updated_at=? WHERE conversation_key=?`).run(
+        value,
+        timestamp,
+        conversationKey,
+      );
+    });
+    tx();
+    return this.getConversationSettings(conversationKey);
+  }
+
+  requestFork(conversationKey: string): void {
+    const timestamp = now();
+    this.db
+      .query(
+        `INSERT INTO conversation_settings(conversation_key, fork_next, updated_at) VALUES(?,1,?)
+         ON CONFLICT(conversation_key) DO UPDATE SET fork_next=1, updated_at=excluded.updated_at`,
+      )
+      .run(conversationKey, timestamp);
+  }
+
+  consumeFork(conversationKey: string): boolean {
+    const tx = this.db.transaction(() => {
+      const row = this.db
+        .query<{ fork_next: number }, [string]>(
+          "SELECT fork_next FROM conversation_settings WHERE conversation_key=?",
+        )
+        .get(conversationKey);
+      if (row?.fork_next !== 1) return false;
+      this.db
+        .query("UPDATE conversation_settings SET fork_next=0, updated_at=? WHERE conversation_key=?")
+        .run(now(), conversationKey);
+      return true;
+    });
+    return tx();
+  }
+
+  resetSession(conversationKey: string, routeId = "reset"): string {
+    const sessionId = crypto.randomUUID();
+    const timestamp = now();
+    this.db
+      .query(
+        `INSERT INTO sessions(conversation_key, route_id, session_id, has_history, created_at, updated_at)
+         VALUES(?,?,?,0,?,?)
+         ON CONFLICT(conversation_key) DO UPDATE SET session_id=excluded.session_id, has_history=0, updated_at=excluded.updated_at`,
+      )
+      .run(conversationKey, routeId, sessionId, timestamp, timestamp);
+    return sessionId;
   }
 
   sessionHasHistory(conversationKey: string): boolean {

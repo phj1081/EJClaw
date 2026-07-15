@@ -68,6 +68,23 @@ function enqueue(store: StateStore, id: string) {
 }
 
 describe("job runtime", () => {
+  test("passes raw Claude slash commands without wrapping them in /goal", async () => {
+    const env = setup([ok("raw-session", "compacted")]);
+    env.store.enqueue({
+      routeId: route.id,
+      conversationKey: `${route.id}:raw-thread`,
+      channelId: "raw-thread",
+      threadId: "raw-thread",
+      messageId: "raw-command",
+      authorId: "owner",
+      prompt: "/compact",
+      attachmentPaths: [],
+      rawPrompt: true,
+    });
+    await env.runtime.runUntilIdle();
+    expect(env.calls[0]?.prompt).toBe("/compact");
+  });
+
   test("passes interactive questions through the job-scoped runtime hook", async () => {
     const store = freshStore();
     const seen: string[] = [];

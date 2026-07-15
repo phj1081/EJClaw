@@ -25,6 +25,7 @@ function fixture() {
           discord_channel_id: "100",
           cwd: project,
           model: "claude-fable-5",
+          fallback_model: "gpt-5.6-sol",
           effort: "high",
           permission_mode: "bypassPermissions",
           require_mention: false,
@@ -41,6 +42,7 @@ describe("route config", () => {
     const { configPath, project } = fixture();
     const config = loadConfig(configPath);
     expect(config.routes[0]?.cwd).toBe(project);
+    expect(config.routes[0]?.fallbackModel).toBe("gpt-5.6-sol");
     expect(resolveRoute(config, "thread-7", "100")?.id).toBe("cleanapo");
     expect(resolveRoute(config, "100", null)?.id).toBe("cleanapo");
     expect(resolveRoute(config, "999", null)).toBeNull();

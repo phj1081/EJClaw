@@ -80,7 +80,13 @@ export class ClaudeProcessExecutor {
 
   private runOnce(request: ExecutionRequest, resume: boolean): Promise<ClaudeExecution> {
     return new Promise((resolve) => {
-      const invocation = buildClaudeInvocation(request.route, request.prompt, request.sessionId, resume);
+      const invocation = buildClaudeInvocation(
+        request.route,
+        request.prompt,
+        request.sessionId,
+        resume,
+        resume && request.forkSession === true,
+      );
       const child = spawn(this.binary, invocation.args, {
         cwd: request.route.cwd,
         env: { ...process.env, ...invocation.env },
