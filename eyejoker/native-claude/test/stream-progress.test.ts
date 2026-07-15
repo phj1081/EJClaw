@@ -63,6 +63,18 @@ describe("stream progress aggregator", () => {
     expect(card).not.toContain("**타임라인**");
     expect(card).not.toContain("**라이브 출력**");
     expect(card.length).toBeLessThanOrEqual(1900);
+
+    const longCard = renderProgressCard({
+      routeId: "cleanapo",
+      attempt: 1,
+      maxAttempts: 2,
+      elapsedSeconds: 4_328,
+      promptPreview: "장기 작업",
+      snapshot: agg.snapshot(),
+      mode: "running",
+    });
+    expect(longCard).toContain("⏳ **작업 중** — 1시간 12분");
+    expect(longCard).not.toContain("72분");
   });
 
   test("parseStreamJsonResult extracts the terminal result event", () => {

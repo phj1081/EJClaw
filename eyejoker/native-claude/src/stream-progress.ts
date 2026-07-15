@@ -1,3 +1,5 @@
+import { formatElapsedKorean } from "./duration";
+
 export type ProgressPhase =
   | "starting"
   | "thinking"
@@ -454,22 +456,13 @@ export interface ProgressRenderInput {
   ok?: boolean;
 }
 
-function formatElapsedKorean(elapsedSeconds: number): string {
-  const totalSeconds = Math.floor(Math.max(0, elapsedSeconds) / 5) * 5;
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const parts: string[] = [];
-  if (hours > 0) parts.push(`${hours}시간`);
-  if (minutes > 0) parts.push(`${minutes}분`);
-  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}초`);
-  return parts.join(" ");
-}
-
 export function renderProgressCard(input: ProgressRenderInput): string {
   const mode = input.mode ?? "running";
   const snap = input.snapshot;
-  const elapsed = formatElapsedKorean(input.elapsedSeconds);
+  const elapsed = formatElapsedKorean(input.elapsedSeconds, {
+    bucketSeconds: 5,
+    includeSecondsWithHours: true,
+  });
   const header =
     mode === "cancelled"
       ? `🛑 **작업 취소됨** — ${elapsed}`

@@ -19,7 +19,8 @@ import {
 } from "./bridge-utils";
 import { loadConfig, resolveRoute } from "./config";
 import { ClaudeProcessExecutor } from "./executor";
-import { formatFinalMessage, splitDiscordMessage } from "./protocol";
+import { buildFinalChunkOptions, formatFinalMessage, splitDiscordMessage } from "./protocol";
+import { workElapsedSeconds } from "./duration";
 import { ProgressLifecycle } from "./progress-lifecycle";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { JobRuntime } from "./runtime";
@@ -309,17 +310,11 @@ function stopTyping(jobId: string): void {
 
 async function deliverFinal(job: JobRecord, ok: boolean, result: string): Promise<void> {
   stopTyping(job.id);
-  const elapsed = Math.max(0, Math.round((Date.now() - Date.parse(job.createdAt)) / 1000));
+  const elapsed = workElapsedSeconds(job.startedAt, job.createdAt);
   const chunks = splitDiscordMessage(formatFinalMessage(config.ownerId, ok, result, elapsed));
   const channel = await textChannel(job.channelId);
   for (const [index, chunk] of chunks.entries()) {
-    const options: MessageCreateOptions = {
-      content: chunk,
-      allowedMentions: index === 0 ? { users: [config.ownerId] } : { parse: [] },
-    };
-    if (index === 0 && isReplyableMessageId(job.messageId)) {
-      options.reply = { messageReference: job.messageId, failIfNotExists: false };
-    }
+    const options: MessageCreateOptions = buildFinalChunkOptions(config.ownerId, chunk, index);
     await channel.send(options);
   }
 

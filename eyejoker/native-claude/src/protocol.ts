@@ -1,4 +1,5 @@
 import type { ClaudeExecution, RouteConfig } from "./types";
+import { formatElapsedKorean } from "./duration";
 import { parseStreamJsonResult } from "./stream-progress";
 
 const defaultAgents = {
@@ -26,7 +27,6 @@ export function buildGoalPrompt(
     "",
     "너는 눈쟁이의 신뢰된 프로젝트 코딩 에이전트다. 한국어 반말, 결론 먼저.",
     "기존 사용자 변경을 보존하고, 추측한 결과나 실행하지 않은 테스트를 성공했다고 쓰지 마.",
-    "중간 진행은 Discord progress 카드로 실시간 표시된다. 최종 결과/실제 블로커는 간결하고 증거 중심으로 반환해.",
     "완료 판단은 자연어 약속이 아니라 diff, 테스트, 커밋, PR, CI, 배포/런타임 증거로 해.",
     "요청이 길더라도 /goal 조건은 위 한 줄만 쓰고, 세부 작업 내용은 아래 사용자 요청을 따른다.",
     "진짜 외부 블로커가 증명되거나 20턴/6시간에 도달하면 중단하고 증거를 보고한다.",
@@ -91,10 +91,7 @@ export function parseClaudeOutput(stdout: string, stderr: string, exitCode: numb
 }
 
 export function formatProgressMessage(activity: string, elapsedSeconds: number): string {
-  const minutes = Math.floor(elapsedSeconds / 60);
-  const seconds = elapsedSeconds % 60;
-  const elapsed = minutes > 0 ? `${minutes}분 ${seconds}초` : `${seconds}초`;
-  return `⏳ **작업 중** — ${elapsed}\n└ ${activity}`;
+  return `⏳ **작업 중** — ${formatElapsedKorean(elapsedSeconds)}\n└ ${activity}`;
 }
 
 export function formatFinalMessage(
@@ -104,7 +101,20 @@ export function formatFinalMessage(
   elapsedSeconds: number,
 ): string {
   const clean = body.replace(new RegExp(`<@!?${ownerId}>`, "g"), "").trim();
-  return `<@${ownerId}> ${ok ? "✅" : "⛔"} ${elapsedSeconds}s\n${clean || "(empty result)"}`;
+  const status = ok ? "✅ 완료" : "⛔ 실패";
+  return `<@${ownerId}> ${status} · 작업 시간 ${formatElapsedKorean(elapsedSeconds)}\n${clean || "결과 없음"}`;
+}
+
+export interface FinalChunkOptions {
+  content: string;
+  allowedMentions: { users: string[] } | { parse: [] };
+}
+
+export function buildFinalChunkOptions(ownerId: string, content: string, index: number): FinalChunkOptions {
+  return {
+    content,
+    allowedMentions: index === 0 ? { users: [ownerId] } : { parse: [] },
+  };
 }
 
 export function splitDiscordMessage(text: string, limit = 1900): string[] {

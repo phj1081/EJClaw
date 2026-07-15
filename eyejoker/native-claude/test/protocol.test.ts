@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildClaudeInvocation,
+  buildFinalChunkOptions,
   buildGoalPrompt,
   formatFinalMessage,
   formatProgressMessage,
@@ -8,6 +9,7 @@ import {
 } from "../src/protocol";
 
 import type { RouteConfig } from "../src/types";
+import { formatElapsedKorean, workElapsedSeconds } from "../src/duration";
 
 const route: RouteConfig = {
   id: "cleanapo",
@@ -28,6 +30,7 @@ describe("Claude protocol", () => {
     expect(prompt).toContain("테스트");
     expect(prompt).toContain("진짜 외부 블로커");
     expect(prompt).toContain("apps/soriq만 담당");
+    expect(prompt).not.toContain("중간 진행은 Discord progress 카드");
     expect(prompt.split("\n")[0]!.length).toBeLessThan(200);
   });
 
@@ -67,10 +70,34 @@ describe("Claude protocol", () => {
     expect(parsed.sessionId).toBe("abc");
   });
 
-  test("mentions owner only in final output", () => {
+  test("formats progress and final durations for humans", () => {
+    expect(formatElapsedKorean(48)).toBe("48초");
+    expect(formatElapsedKorean(728)).toBe("12분 8초");
+    expect(formatElapsedKorean(4_328)).toBe("1시간 12분");
+    expect(formatProgressMessage("테스트 실행", 4_328)).toContain("1시간 12분");
+  });
+
+  test("measures work from execution start instead of queue creation", () => {
+    expect(
+      workElapsedSeconds("2026-07-15T01:10:00.000Z", "2026-07-15T01:00:00.000Z", Date.parse("2026-07-15T01:11:30.000Z")),
+    ).toBe(90);
+  });
+
+  test("mentions owner once with a labeled human work duration", () => {
     const progress = formatProgressMessage("테스트 실행", 65);
-    const final = formatFinalMessage("216851709744513024", true, "완료", 65);
+    const final = formatFinalMessage("216851709744513024", true, "완료", 4_328);
+    const failure = formatFinalMessage("216851709744513024", false, "실패 원인", 258);
     expect(progress).not.toContain("216851709744513024");
+    expect(final).toBe("<@216851709744513024> ✅ 완료 · 작업 시간 1시간 12분\n완료");
+    expect(failure).toBe("<@216851709744513024> ⛔ 실패 · 작업 시간 4분 18초\n실패 원인");
     expect(final.match(/<@216851709744513024>/g)).toHaveLength(1);
+  });
+
+  test("uses a direct mention without a reply reference for final delivery", () => {
+    const first = buildFinalChunkOptions("216851709744513024", "첫 청크", 0);
+    const second = buildFinalChunkOptions("216851709744513024", "다음 청크", 1);
+    expect(first).toEqual({ content: "첫 청크", allowedMentions: { users: ["216851709744513024"] } });
+    expect(first).not.toHaveProperty("reply");
+    expect(second).toEqual({ content: "다음 청크", allowedMentions: { parse: [] } });
   });
 });
