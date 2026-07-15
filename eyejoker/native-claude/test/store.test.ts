@@ -146,6 +146,84 @@ describe("durable job store", () => {
     expect(db.sessionHasHistory("cleanapo:controls")).toBe(false);
   });
 
+  test("preserves fork branches and can switch the active session pointer", () => {
+    const db = store();
+    const original = db.enqueue(input("branches", "branches:one", "branch-message"));
+    const running = db.claimNext(1)!;
+    const forkedSessionId = crypto.randomUUID();
+    db.stageDelivery(
+      running.id,
+      { ok: true, result: "forked", sessionId: forkedSessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
+    const branches = db.listSessionBranches(original.conversationKey);
+    expect(branches.map((branch) => branch.sessionId).sort()).toEqual([original.sessionId, forkedSessionId].sort());
+    expect(branches.find((branch) => branch.sessionId === forkedSessionId)?.status).toBe("active");
+
+    db.useSessionBranch(original.conversationKey, original.sessionId.slice(0, 8));
+    const followup = db.enqueue(input("branches", "branches:one", "branch-followup"));
+    expect(followup.sessionId).toBe(original.sessionId);
+  });
+
+  test("preserves the first started_at across execution retries", () => {
+    const db = store();
+    const queued = db.enqueue(input("deadline", "deadline:one", "deadline-message"));
+    const first = db.claimNext(1)!;
+    const startedAt = first.startedAt;
+    db.retryOrFail(
+      first.id,
+      { ok: false, result: "retry", sessionId: queued.sessionId, stderr: "failure", exitCode: 1 },
+      2,
+    );
+    const second = db.claimNext(1)!;
+    expect(second.startedAt).toBe(startedAt);
+  });
+
+  test("persists checkpoints and consumes rewind previews only once", () => {
+    const db = store();
+    const job = db.enqueue(input("rewind", "rewind:one", "rewind-message"));
+    const checkpoint = crypto.randomUUID();
+    db.recordSessionCheckpoint(job.id, checkpoint);
+    expect(db.listSessionCheckpoints(job.conversationKey)[0]?.userMessageId).toBe(checkpoint);
+    const operation = db.createRewindOperation(job.conversationKey, job.sessionId, checkpoint, {
+      canRewind: true,
+      filesChanged: ["src/a.ts"],
+      insertions: 1,
+      deletions: 2,
+    });
+    expect(db.getRewindOperation(job.conversationKey, operation.id.slice(0, 8))?.checkpoint).toBe(checkpoint);
+    expect(db.markRewindApplied(operation.id)).toBe(true);
+    expect(db.markRewindApplied(operation.id)).toBe(false);
+  });
+
+  test("deduplicates and reuses durable interaction answers after restart", () => {
+    const path = join(tmpdir(), `native-interaction-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const first = new StateStore(path);
+    const job = first.enqueue(input("interactive", "interactive:one", "question-message"));
+    const interaction = first.beginInteraction(job.id, job.conversationKey, {
+      question: "배포할까?",
+      choices: ["배포", "중단"],
+      requestId: "sdk-request-1",
+      kind: "question",
+    });
+    expect(interaction.status).toBe("pending");
+    first.setInteractionMessage(interaction.id, "discord-question-1");
+    first.answerInteraction(interaction.id, "배포");
+
+    const reopened = new StateStore(path);
+    const replay = reopened.beginInteraction(job.id, job.conversationKey, {
+      question: "배포할까?",
+      choices: ["배포", "중단"],
+      requestId: "sdk-request-1",
+      kind: "question",
+    });
+    expect(replay.id).toBe(interaction.id);
+    expect(replay.status).toBe("answered");
+    expect(replay.answer).toBe("배포");
+    expect(replay.discordMessageId).toBe("discord-question-1");
+  });
+
   test("forgets a temporary progress message after Discord cleanup", () => {
     const db = store();
     const job = db.enqueue(input("cleanapo", "cleanapo:one", "progress"));

@@ -157,6 +157,7 @@ export class JobRuntime {
         forkSession,
         onSpawn: (pid) => this.store.setPid(job.id, pid),
         onHeartbeat: () => this.store.heartbeat(job.id),
+        onCheckpoint: (userMessageId) => this.store.recordSessionCheckpoint(job.id, userMessageId),
         ...(this.onQuestion
           ? {
               onQuestion: (question: Parameters<QuestionHook>[1]) =>

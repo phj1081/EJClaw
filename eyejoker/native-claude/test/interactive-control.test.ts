@@ -30,6 +30,23 @@ describe("interactive Discord control protocol", () => {
     expect(broker.hasPending("route:thread")).toBe(false);
   });
 
+  test("persists an answer synchronously before releasing the waiting SDK callback", async () => {
+    const broker = new QuestionBroker();
+    const order: string[] = [];
+    const waiting = broker.wait(
+      "job-persist",
+      "conversation-persist",
+      { question: "계속?", choices: ["예", "아니오"] },
+      async () => "discord-persist",
+      (answer) => order.push(`persist:${answer}`),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(broker.answerConversation("conversation-persist", "예")).toBe(true);
+    const answer = await waiting;
+    order.push(`resolved:${answer}`);
+    expect(order).toEqual(["persist:예", "resolved:예"]);
+  });
+
   test("maps a reaction on the question message to its choice", async () => {
     const broker = new QuestionBroker();
     const waiting = broker.wait(

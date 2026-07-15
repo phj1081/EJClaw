@@ -11,12 +11,23 @@ describe("Discord Claude controls", () => {
 
   test("parses session and raw slash controls", () => {
     expect(parseControlCommand("!fork")).toEqual({ kind: "fork" });
+    expect(parseControlCommand("!branch list")).toEqual({ kind: "branches" });
+    expect(parseControlCommand("!branch use abc12345")).toEqual({ kind: "useBranch", prefix: "abc12345" });
+    expect(parseControlCommand("!checkpoint list")).toEqual({ kind: "checkpoints" });
+    expect(parseControlCommand("!rewind preview user-uuid")).toEqual({
+      kind: "rewindPreview",
+      checkpoint: "user-uuid",
+    });
+    expect(parseControlCommand("!rewind apply op-uuid")).toEqual({ kind: "rewindApply", operationId: "op-uuid" });
     expect(parseControlCommand("!reset")).toEqual({ kind: "reset" });
     expect(parseControlCommand("!settings")).toEqual({ kind: "settings" });
     expect(parseControlCommand("!compact")).toEqual({ kind: "raw", prompt: "/compact" });
     expect(parseControlCommand("!claude /review 123")).toEqual({ kind: "raw", prompt: "/review 123" });
     expect(parseControlCommand("!background 긴 작업")).toEqual({ kind: "background", prompt: "긴 작업" });
-    expect(parseControlCommand("!rewind abc")).toEqual({ kind: "unsupported", message: expect.stringContaining("설치본") });
+    expect(parseControlCommand("!rewind abc")).toEqual({
+      kind: "unsupported",
+      message: expect.stringContaining("preview"),
+    });
   });
 
   test("leaves normal prompts untouched", () => {

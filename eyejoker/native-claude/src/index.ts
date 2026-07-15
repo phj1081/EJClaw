@@ -8,7 +8,7 @@ import {
   type Message,
   type MessageCreateOptions,
 } from "discord.js";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   appendDiscordContext,
@@ -20,12 +20,15 @@ import {
   type DiscordContextEntry,
 } from "./bridge-utils";
 import { loadConfig, resolveRoute } from "./config";
-import { ClaudeProcessExecutor } from "./executor";
+import { ClaudeSdkExecutor } from "./sdk-executor";
+import { assertClaudeExecutableCompatibility } from "./sdk-compat";
 import { buildFinalChunkOptions, formatFinalMessage, splitDiscordMessage } from "./protocol";
 import { progressElapsedSeconds, workElapsedSeconds } from "./duration";
 import { ProgressLifecycle, progressCleanupFallbackText } from "./progress-lifecycle";
 import { cleanupExpiredAttachmentDirs } from "./attachment-cleanup";
+import { writeBoundedResponse } from "./bounded-download";
 import { extractOutboundArtifacts } from "./outbound-artifacts";
+import { removeOutboundSpool, spoolOutboundArtifacts } from "./outbound-spool";
 import { parseControlCommand } from "./control-commands";
 import { QuestionBroker, QUESTION_REACTIONS, renderInteractiveQuestion } from "./interactive-control";
 import { ProgressEditGate } from "./progress-edit-cadence";
@@ -74,23 +77,32 @@ const config = loadConfig(configPath);
 const routes = new Map(config.routes.map((route) => [route.id, route]));
 const allowedUsers = new Set(config.allowedUserIds);
 const store = new StateStore(statePath);
-const executor = new ClaudeProcessExecutor({
-  binary: process.env.CLAUDE_NATIVE_CLAUDE_BIN ?? "claude",
+const claudeExecutable = process.env.CLAUDE_NATIVE_CLAUDE_BIN ?? "/home/ejclaw/.hermes/node/bin/claude";
+assertClaudeExecutableCompatibility(claudeExecutable);
+const executor = new ClaudeSdkExecutor({
+  claudeExecutable,
   timeoutSeconds: config.jobTimeoutSeconds,
 });
 const typingTimers = new Map<string, ReturnType<typeof setInterval>>();
 const progressBoards = new Map<string, ProgressBoard>();
 const questionBroker = new QuestionBroker();
 const attachmentRoot = join(stateDir, "attachments");
+const outboundRoot = join(stateDir, "outbound");
 const attachmentTtlMs = 7 * 24 * 60 * 60 * 1_000;
 let queuePoll: ReturnType<typeof setInterval> | null = null;
 let attachmentCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 function cleanupExpiredAttachments(): number {
-  return cleanupExpiredAttachmentDirs(attachmentRoot, {
-    activePaths: store.listActive().flatMap((job) => job.attachmentPaths),
+  const active = store.listActive();
+  const inboundDeleted = cleanupExpiredAttachmentDirs(attachmentRoot, {
+    activePaths: active.flatMap((job) => job.attachmentPaths),
     ttlMs: attachmentTtlMs,
-  }).length;
+  });
+  const outboundDeleted = cleanupExpiredAttachmentDirs(outboundRoot, {
+    activePaths: active.flatMap((job) => job.deliveryFiles.map((file) => file.path)),
+    ttlMs: attachmentTtlMs,
+  });
+  return inboundDeleted.length + outboundDeleted.length;
 }
 
 const client = new Client({
@@ -339,11 +351,15 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
   const mainModel = execution.mainModel ?? job.mainModel ?? routeModel;
   const subagentModels = execution.subagentModels ?? job.subagentModels;
   const artifacts = extractOutboundArtifacts(execution.result);
+  const deliveryFiles = job.deliveryChunks
+    ? job.deliveryFiles
+    : spoolOutboundArtifacts(job.id, artifacts.files, outboundRoot);
   const renderedChunks = splitDiscordMessage(
     formatFinalMessage(config.ownerId, execution.ok, artifacts.body, elapsed, mainModel, subagentModels),
   );
-  const plan = store.prepareDelivery(job.id, renderedChunks, artifacts.files);
+  const plan = store.prepareDelivery(job.id, renderedChunks, deliveryFiles);
   const channel = await textChannel(job.channelId);
+  let recentForReconcile: Message[] | null = null;
   await deliverPendingChunks(
     job.id,
     plan,
@@ -360,6 +376,17 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
     async (index, messageId) => {
       store.markDeliveryChunk(job.id, index, messageId);
     },
+    async (_index, nonce) => {
+      if (!recentForReconcile) {
+        const fetched = await channel.messages.fetch({ limit: 100, cache: false });
+        recentForReconcile = [...fetched.values()];
+      }
+      return (
+        recentForReconcile.find(
+          (message) => message.author.id === client.user?.id && message.nonce !== null && String(message.nonce) === nonce,
+        )?.id ?? null
+      );
+    },
   );
 
   // Match the old NanoClaw contract: a temporary card only disappears after
@@ -370,6 +397,7 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
     await board.cleanupAfterFinalDelivery();
     progressBoards.delete(job.id);
   }
+  removeOutboundSpool(job.id, outboundRoot);
   console.log(`job final id=${job.id} route=${job.routeId} ok=${execution.ok} elapsed=${elapsed}`);
 }
 
@@ -391,19 +419,27 @@ const runtime = new JobRuntime({
     if (!board) return;
     board.handleEvent(event, aggregator);
   },
-  onQuestion: (job, question) =>
-    questionBroker.wait(job.id, job.conversationKey, question, async () => {
+  onQuestion: async (job, question) => {
+    const interaction = store.beginInteraction(job.id, job.conversationKey, question);
+    if (interaction.status === "answered" && interaction.answer) return interaction.answer;
+    const answer = await questionBroker.wait(job.id, job.conversationKey, question, async () => {
+      if (interaction.discordMessageId) return interaction.discordMessageId;
       const channel = await textChannel(job.channelId);
       const message = await channel.send({
         content: renderInteractiveQuestion(question),
         allowedMentions: { parse: [] },
       });
+      store.setInteractionMessage(interaction.id, message.id);
       for (const emoji of QUESTION_REACTIONS.slice(0, question.choices.length)) {
         await message.react(emoji).catch((error) => console.warn(`question reaction failed id=${job.id}`, String(error)));
       }
       console.log(`job waiting for Discord answer id=${job.id} question_message=${message.id}`);
       return message.id;
-    }),
+    }, (value) => {
+      store.answerInteraction(interaction.id, value);
+    });
+    return answer;
+  },
   onFinal: async (job, execution) => {
     await deliverFinal(job, execution);
   },
@@ -427,11 +463,8 @@ async function downloadAttachments(messageId: string, attachments: Iterable<{
     try {
       mkdirSync(targetDir, { recursive: true, mode: 0o700 });
       const response = await fetch(attachment.url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = Buffer.from(await response.arrayBuffer());
-      if (data.length > 25 * 1024 * 1024) throw new Error("download exceeded 25MB");
       const path = join(targetDir, sanitizeAttachmentName(attachment.name));
-      writeFileSync(path, data, { mode: 0o600 });
+      await writeBoundedResponse(response, path, 25 * 1024 * 1024);
       paths.push(path);
     } catch (error) {
       errors.push(`${attachment.name}: ${error instanceof Error ? error.message : String(error)}`);
@@ -559,9 +592,27 @@ client.on("messageCreate", async (message) => {
 
     const control = parseControlCommand(promptText);
     if (control?.kind === "setting") {
+      const running = store.listActive().find((job) => job.conversationKey === key && job.status === "running");
+      let appliedLive = false;
+      try {
+        if (running && control.field === "model") {
+          appliedLive = await executor.setModel(running.id, control.value ?? route.model);
+        } else if (running && control.field === "permissionMode") {
+          appliedLive = await executor.setPermissionMode(
+            running.id,
+            (control.value ?? route.permissionMode) as typeof route.permissionMode,
+          );
+        }
+      } catch (error) {
+        await message.reply({
+          content: `실행 중 설정 적용 실패: ${error instanceof Error ? error.message : String(error)}`,
+          allowedMentions: { parse: [] },
+        });
+        return;
+      }
       const settings = store.setConversationSetting(key, control.field, control.value);
       await message.reply({
-        content: `설정 저장됨 · model=${settings.model ?? route.model} · permission=${settings.permissionMode ?? route.permissionMode} · effort=${settings.effort ?? route.effort}`,
+        content: `${appliedLive ? "실행 중 적용 + " : ""}설정 저장됨 · model=${settings.model ?? route.model} · permission=${settings.permissionMode ?? route.permissionMode} · effort=${settings.effort ?? route.effort}`,
         allowedMentions: { parse: [] },
       });
       return;
@@ -569,6 +620,40 @@ client.on("messageCreate", async (message) => {
     if (control?.kind === "fork") {
       store.requestFork(key);
       await message.reply({ content: "다음 resume 작업을 현재 세션에서 fork하도록 예약했어.", allowedMentions: { parse: [] } });
+      return;
+    }
+    if (control?.kind === "branches") {
+      const branches = store.listSessionBranches(key);
+      const content = branches.length
+        ? branches
+            .map((branch) => `${branch.status === "active" ? "*" : "-"} ${branch.sessionId.slice(0, 8)} · ${branch.label ?? "session"}`)
+            .join("\n")
+        : "저장된 branch 없음";
+      await message.reply({ content, allowedMentions: { parse: [] } });
+      return;
+    }
+    if (control?.kind === "checkpoints") {
+      const checkpoints = store.listSessionCheckpoints(key);
+      const content = checkpoints.length
+        ? checkpoints
+            .map((checkpoint) => `- ${checkpoint.userMessageId} · session ${checkpoint.sessionId.slice(0, 8)}`)
+            .join("\n")
+        : "저장된 checkpoint 없음";
+      await message.reply({ content, allowedMentions: { parse: [] } });
+      return;
+    }
+    if (control?.kind === "useBranch") {
+      const active = store.listActive().some((job) => job.conversationKey === key);
+      if (active) {
+        await message.reply({ content: "active job이 끝난 뒤 branch를 전환해줘.", allowedMentions: { parse: [] } });
+        return;
+      }
+      try {
+        const selected = store.useSessionBranch(key, control.prefix);
+        await message.reply({ content: `branch 전환됨 · ${selected.sessionId}`, allowedMentions: { parse: [] } });
+      } catch (error) {
+        await message.reply({ content: error instanceof Error ? error.message : String(error), allowedMentions: { parse: [] } });
+      }
       return;
     }
     if (control?.kind === "reset") {
@@ -596,9 +681,80 @@ client.on("messageCreate", async (message) => {
       });
       return;
     }
+    if (control?.kind === "rewindPreview") {
+      if (store.listActive().some((job) => job.conversationKey === key)) {
+        await message.reply({ content: "active job이 끝난 뒤 rewind preview를 실행해줘.", allowedMentions: { parse: [] } });
+        return;
+      }
+      const matches = store
+        .listSessionCheckpoints(key)
+        .filter((checkpoint) => checkpoint.userMessageId.startsWith(control.checkpoint));
+      if (matches.length !== 1) {
+        await message.reply({ content: matches.length === 0 ? "checkpoint 없음" : "checkpoint prefix가 모호함", allowedMentions: { parse: [] } });
+        return;
+      }
+      const checkpoint = matches[0]!;
+      const activeBranch = store.listSessionBranches(key).find((branch) => branch.status === "active");
+      if (!activeBranch || activeBranch.sessionId !== checkpoint.sessionId) {
+        await message.reply({ content: "checkpoint가 현재 active branch 소속이 아냐.", allowedMentions: { parse: [] } });
+        return;
+      }
+      try {
+        const preview = await executor.rewindSession(route.cwd, checkpoint.sessionId, checkpoint.userMessageId, true);
+        if (!preview.canRewind) {
+          await message.reply({ content: `rewind 불가: ${preview.error ?? "원인 없음"}`, allowedMentions: { parse: [] } });
+          return;
+        }
+        const operation = store.createRewindOperation(key, checkpoint.sessionId, checkpoint.userMessageId, preview);
+        const files = preview.filesChanged?.slice(0, 15).join("\n") || "변경 파일 정보 없음";
+        await message.reply({
+          content: `rewind preview · op=${operation.id}\ninsertions=${preview.insertions ?? 0} deletions=${preview.deletions ?? 0}\n${files}\n\n적용: !rewind apply ${operation.id}`,
+          allowedMentions: { parse: [] },
+        });
+      } catch (error) {
+        await message.reply({ content: `rewind preview 실패: ${error instanceof Error ? error.message : String(error)}`, allowedMentions: { parse: [] } });
+      }
+      return;
+    }
+    if (control?.kind === "rewindApply") {
+      if (store.listActive().some((job) => job.conversationKey === key)) {
+        await message.reply({ content: "active job이 끝난 뒤 rewind apply를 실행해줘.", allowedMentions: { parse: [] } });
+        return;
+      }
+      const operation = store.getRewindOperation(key, control.operationId);
+      const activeBranch = store.listSessionBranches(key).find((branch) => branch.status === "active");
+      if (!operation || operation.status !== "previewed") {
+        await message.reply({ content: "유효한 preview operation이 아냐.", allowedMentions: { parse: [] } });
+        return;
+      }
+      if (Date.now() - Date.parse(operation.createdAt) > 15 * 60 * 1_000) {
+        await message.reply({ content: "preview가 15분을 지나 만료됐어. 다시 preview해줘.", allowedMentions: { parse: [] } });
+        return;
+      }
+      if (!activeBranch || activeBranch.sessionId !== operation.sessionId) {
+        await message.reply({ content: "preview 이후 active branch가 바뀌어서 적용하지 않았어.", allowedMentions: { parse: [] } });
+        return;
+      }
+      if (!store.markRewindApplied(operation.id)) {
+        await message.reply({ content: "operation이 이미 소비됐어.", allowedMentions: { parse: [] } });
+        return;
+      }
+      try {
+        const applied = await executor.rewindSession(route.cwd, operation.sessionId, operation.checkpoint, false);
+        await message.reply({
+          content: applied.canRewind
+            ? `rewind 적용됨 · files=${applied.filesChanged?.length ?? operation.preview.filesChanged?.length ?? 0}`
+            : `rewind 적용 실패: ${applied.error ?? "원인 없음"}`,
+          allowedMentions: { parse: [] },
+        });
+      } catch (error) {
+        await message.reply({ content: `rewind 적용 실패: ${error instanceof Error ? error.message : String(error)} · 다시 preview가 필요해.`, allowedMentions: { parse: [] } });
+      }
+      return;
+    }
     if (control?.kind === "help") {
       await message.reply({
-        content: "!status · !cancel · !settings · !model · !permission · !effort · !fork · !reset · !compact · !claude /command · !background",
+        content: "!status · !cancel · !settings · !model · !permission · !effort · !fork · !branch list/use · !checkpoint list · !rewind preview/apply · !reset · !compact · !claude /command · !background",
         allowedMentions: { parse: [] },
       });
       return;

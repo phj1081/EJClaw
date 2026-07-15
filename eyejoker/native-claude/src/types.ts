@@ -20,6 +20,32 @@ export interface RouteConfig {
   mixedAgents?: boolean;
 }
 
+export interface SessionBranch {
+  sessionId: string;
+  conversationKey: string;
+  parentSessionId: string | null;
+  label: string | null;
+  status: "active" | "archived";
+  createdAt: string;
+}
+
+export interface RewindOperation {
+  id: string;
+  conversationKey: string;
+  sessionId: string;
+  checkpoint: string;
+  preview: {
+    canRewind: boolean;
+    error?: string;
+    filesChanged?: string[];
+    insertions?: number;
+    deletions?: number;
+  };
+  status: "previewed" | "applied";
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ConversationSettings {
   model: string | null;
   permissionMode: PermissionMode | null;
@@ -105,6 +131,21 @@ export interface JobRecord {
 export interface InteractiveQuestion {
   question: string;
   choices: string[];
+  requestId?: string;
+  kind?: "question" | "permission";
+}
+
+export interface InteractionRecord {
+  id: string;
+  jobId: string;
+  conversationKey: string;
+  requestKey: string;
+  question: InteractiveQuestion;
+  discordMessageId: string | null;
+  answer: string | null;
+  status: "pending" | "answered" | "orphaned";
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ClaudeExecution {
@@ -126,6 +167,7 @@ export interface ExecutionRequest {
   forkSession?: boolean;
   onSpawn?: (pid: number) => void;
   onHeartbeat?: () => void;
+  onCheckpoint?: (userMessageId: string) => void;
   onQuestion?: (question: InteractiveQuestion) => Promise<string>;
   onProgress?: (
     event: import("./stream-progress").ProgressEvent,

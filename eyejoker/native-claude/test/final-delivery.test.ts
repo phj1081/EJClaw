@@ -2,6 +2,34 @@ import { describe, expect, test } from "bun:test";
 import { deliveryNonce, deliverPendingChunks, type DeliveryPlan } from "../src/final-delivery";
 
 describe("durable final chunk delivery", () => {
+  test("reconciles a Discord-accepted chunk after a crash before the SQLite ack", async () => {
+    const plan: DeliveryPlan = { chunks: ["already sent", "new"], cursor: 0 };
+    const sent: number[] = [];
+    const marked: Array<[number, string]> = [];
+    await deliverPendingChunks(
+      "crash-job",
+      plan,
+      async (index) => {
+        sent.push(index);
+        return `new-message-${index}`;
+      },
+      async (index, messageId) => {
+        marked.push([index, messageId]);
+        plan.cursor = index + 1;
+      },
+      async (index, nonce) => {
+        expect(nonce).toBe(deliveryNonce("crash-job", index));
+        return index === 0 ? "existing-message-0" : null;
+      },
+    );
+    expect(sent).toEqual([1]);
+    expect(marked).toEqual([
+      [0, "existing-message-0"],
+      [1, "new-message-1"],
+    ]);
+    expect(plan.cursor).toBe(2);
+  });
+
   test("resumes after the last accepted chunk and uses stable Discord nonces", async () => {
     const plan: DeliveryPlan = {
       chunks: ["one", "two", "three"],

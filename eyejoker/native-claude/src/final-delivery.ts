@@ -18,11 +18,18 @@ export async function deliverPendingChunks(
   plan: DeliveryPlan,
   send: (index: number, content: string, nonce: string, files: OutboundFile[]) => Promise<string>,
   markSent: (index: number, messageId: string) => Promise<void> | void,
+  reconcile?: (index: number, nonce: string) => Promise<string | null>,
 ): Promise<void> {
   for (let index = plan.cursor; index < plan.chunks.length; index += 1) {
     const content = plan.chunks[index]!;
     const files = index === 0 ? (plan.files ?? []) : [];
-    const messageId = await send(index, content, deliveryNonce(jobId, index), files);
+    const nonce = deliveryNonce(jobId, index);
+    const recoveredMessageId = reconcile ? await reconcile(index, nonce) : null;
+    if (recoveredMessageId) {
+      await markSent(index, recoveredMessageId);
+      continue;
+    }
+    const messageId = await send(index, content, nonce, files);
     await markSent(index, messageId);
   }
 }

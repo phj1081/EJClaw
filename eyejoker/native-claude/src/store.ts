@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { createHash } from "node:crypto";
 import type { DeliveryPlan } from "./final-delivery";
 import type {
   ClaudeExecution,
@@ -9,8 +10,12 @@ import type {
   FinalStatus,
   JobRecord,
   JobStatus,
+  InteractionRecord,
+  InteractiveQuestion,
   OutboundFile,
   PermissionMode,
+  RewindOperation,
+  SessionBranch,
 } from "./types";
 
 interface JobRow {
@@ -49,6 +54,34 @@ interface JobRow {
   started_at: string | null;
   heartbeat_at: string | null;
   completed_at: string | null;
+}
+
+interface InteractionRow {
+  id: string;
+  job_id: string;
+  conversation_key: string;
+  request_key: string;
+  question_json: string;
+  discord_message_id: string | null;
+  answer: string | null;
+  status: "pending" | "answered" | "orphaned";
+  created_at: string;
+  updated_at: string;
+}
+
+function interactionFromRow(row: InteractionRow): InteractionRecord {
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    conversationKey: row.conversation_key,
+    requestKey: row.request_key,
+    question: JSON.parse(row.question_json) as InteractiveQuestion,
+    discordMessageId: row.discord_message_id,
+    answer: row.answer,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 function now(): string {
@@ -116,6 +149,35 @@ export class StateStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS session_branches (
+        session_id TEXT PRIMARY KEY,
+        conversation_key TEXT NOT NULL,
+        parent_session_id TEXT,
+        label TEXT,
+        status TEXT NOT NULL CHECK(status IN ('active','archived')),
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS session_branches_conversation_idx
+        ON session_branches(conversation_key, status, created_at);
+      CREATE TABLE IF NOT EXISTS session_checkpoints (
+        user_message_id TEXT PRIMARY KEY,
+        conversation_key TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS session_checkpoints_conversation_idx
+        ON session_checkpoints(conversation_key, created_at);
+      CREATE TABLE IF NOT EXISTS rewind_operations (
+        id TEXT PRIMARY KEY,
+        conversation_key TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        checkpoint TEXT NOT NULL,
+        preview_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('previewed','applied')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS conversation_settings (
         conversation_key TEXT PRIMARY KEY,
         model TEXT,
@@ -157,6 +219,25 @@ export class StateStore {
       CREATE INDEX IF NOT EXISTS jobs_status_created_idx ON jobs(status, created_at);
       CREATE INDEX IF NOT EXISTS jobs_lock_status_idx ON jobs(lock_key, status);
       CREATE INDEX IF NOT EXISTS jobs_delivery_idx ON jobs(status, delivery_after);
+      CREATE TABLE IF NOT EXISTS interactions (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        conversation_key TEXT NOT NULL,
+        request_key TEXT NOT NULL,
+        question_json TEXT NOT NULL,
+        discord_message_id TEXT,
+        answer TEXT,
+        status TEXT NOT NULL CHECK(status IN ('pending','answered','orphaned')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(job_id, request_key),
+        FOREIGN KEY(job_id) REFERENCES jobs(id)
+      );
+      CREATE INDEX IF NOT EXISTS interactions_pending_idx ON interactions(status, conversation_key);
+    `);
+    this.db.exec(`
+      INSERT OR IGNORE INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at)
+      SELECT session_id,conversation_key,NULL,'legacy','active',created_at FROM sessions;
     `);
     this.ensureColumn("jobs", "raw_prompt", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("jobs", "progress_message_id", "TEXT");
@@ -173,6 +254,27 @@ export class StateStore {
     const rows = this.db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
     if (rows.some((row) => row.name === column)) return;
     this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+
+  private activateSessionBranch(
+    conversationKey: string,
+    previousSessionId: string,
+    nextSessionId: string,
+    timestamp: string,
+  ): void {
+    if (nextSessionId !== previousSessionId) {
+      this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
+      this.db
+        .query(
+          `INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at)
+           VALUES(?,?,?,'fork','active',?)
+           ON CONFLICT(session_id) DO UPDATE SET status='active'`,
+        )
+        .run(nextSessionId, conversationKey, previousSessionId, timestamp);
+    }
+    this.db
+      .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
+      .run(nextSessionId, timestamp, conversationKey);
   }
 
   enqueue(input: EnqueueInput): JobRecord {
@@ -192,6 +294,11 @@ export class StateStore {
             "INSERT INTO sessions(conversation_key, route_id, session_id, created_at, updated_at) VALUES(?,?,?,?,?)",
           )
           .run(input.conversationKey, input.routeId, sessionId, timestamp, timestamp);
+        this.db
+          .query(
+            "INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at) VALUES(?,?,NULL,NULL,'active',?)",
+          )
+          .run(sessionId, input.conversationKey, timestamp);
       }
       this.db
         .query(
@@ -239,7 +346,7 @@ export class StateStore {
     const timestamp = now();
     const changed = this.db
       .query(
-        `UPDATE jobs SET status='running', attempts=attempts+1, started_at=?, heartbeat_at=?, pid=NULL
+        `UPDATE jobs SET status='running', attempts=attempts+1, started_at=COALESCE(started_at,?), heartbeat_at=?, pid=NULL
          WHERE id=? AND status='queued'`,
       )
       .run(timestamp, timestamp, row.id);
@@ -341,14 +448,149 @@ export class StateStore {
   resetSession(conversationKey: string, routeId = "reset"): string {
     const sessionId = crypto.randomUUID();
     const timestamp = now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO sessions(conversation_key, route_id, session_id, has_history, created_at, updated_at)
+           VALUES(?,?,?,0,?,?)
+           ON CONFLICT(conversation_key) DO UPDATE SET session_id=excluded.session_id, has_history=0, updated_at=excluded.updated_at`,
+        )
+        .run(conversationKey, routeId, sessionId, timestamp, timestamp);
+      this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
+      this.db
+        .query(
+          "INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at) VALUES(?,?,NULL,'reset','active',?)",
+        )
+        .run(sessionId, conversationKey, timestamp);
+    });
+    tx();
+    return sessionId;
+  }
+
+  listSessionBranches(conversationKey: string): SessionBranch[] {
+    return this.db
+      .query<
+        {
+          session_id: string;
+          conversation_key: string;
+          parent_session_id: string | null;
+          label: string | null;
+          status: "active" | "archived";
+          created_at: string;
+        },
+        [string]
+      >("SELECT * FROM session_branches WHERE conversation_key=? ORDER BY created_at DESC")
+      .all(conversationKey)
+      .map((row) => ({
+        sessionId: row.session_id,
+        conversationKey: row.conversation_key,
+        parentSessionId: row.parent_session_id,
+        label: row.label,
+        status: row.status,
+        createdAt: row.created_at,
+      }));
+  }
+
+  useSessionBranch(conversationKey: string, sessionPrefix: string): SessionBranch {
+    const matches = this.listSessionBranches(conversationKey).filter((branch) => branch.sessionId.startsWith(sessionPrefix));
+    if (matches.length !== 1) throw new Error(matches.length === 0 ? "branch 없음" : "branch prefix가 모호함");
+    const selected = matches[0]!;
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
+      this.db.query("UPDATE session_branches SET status='active' WHERE session_id=?").run(selected.sessionId);
+      this.db
+        .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
+        .run(selected.sessionId, timestamp, conversationKey);
+    });
+    tx();
+    return { ...selected, status: "active" };
+  }
+
+  recordSessionCheckpoint(jobId: string, userMessageId: string): void {
+    const job = this.getJob(jobId);
+    if (!job) throw new Error(`job not found: ${jobId}`);
     this.db
       .query(
-        `INSERT INTO sessions(conversation_key, route_id, session_id, has_history, created_at, updated_at)
-         VALUES(?,?,?,0,?,?)
-         ON CONFLICT(conversation_key) DO UPDATE SET session_id=excluded.session_id, has_history=0, updated_at=excluded.updated_at`,
+        `INSERT OR IGNORE INTO session_checkpoints(user_message_id,conversation_key,session_id,job_id,created_at)
+         VALUES(?,?,?,?,?)`,
       )
-      .run(conversationKey, routeId, sessionId, timestamp, timestamp);
-    return sessionId;
+      .run(userMessageId, job.conversationKey, job.sessionId, jobId, now());
+  }
+
+  listSessionCheckpoints(conversationKey: string): Array<{
+    userMessageId: string;
+    sessionId: string;
+    jobId: string;
+    createdAt: string;
+  }> {
+    return this.db
+      .query<
+        { user_message_id: string; session_id: string; job_id: string; created_at: string },
+        [string]
+      >("SELECT user_message_id,session_id,job_id,created_at FROM session_checkpoints WHERE conversation_key=? ORDER BY created_at DESC LIMIT 20")
+      .all(conversationKey)
+      .map((row) => ({
+        userMessageId: row.user_message_id,
+        sessionId: row.session_id,
+        jobId: row.job_id,
+        createdAt: row.created_at,
+      }));
+  }
+
+  createRewindOperation(
+    conversationKey: string,
+    sessionId: string,
+    checkpoint: string,
+    preview: RewindOperation["preview"],
+  ): RewindOperation {
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    this.db
+      .query(
+        `INSERT INTO rewind_operations(id,conversation_key,session_id,checkpoint,preview_json,status,created_at,updated_at)
+         VALUES(?,?,?,?,?,'previewed',?,?)`,
+      )
+      .run(id, conversationKey, sessionId, checkpoint, JSON.stringify(preview), timestamp, timestamp);
+    return this.getRewindOperation(conversationKey, id)!;
+  }
+
+  getRewindOperation(conversationKey: string, idOrPrefix: string): RewindOperation | null {
+    const rows = this.db
+      .query<
+        {
+          id: string;
+          conversation_key: string;
+          session_id: string;
+          checkpoint: string;
+          preview_json: string;
+          status: "previewed" | "applied";
+          created_at: string;
+          updated_at: string;
+        },
+        [string, string]
+      >("SELECT * FROM rewind_operations WHERE conversation_key=? AND id LIKE ? ORDER BY created_at DESC LIMIT 2")
+      .all(conversationKey, `${idOrPrefix}%`);
+    if (rows.length !== 1) return null;
+    const row = rows[0]!;
+    return {
+      id: row.id,
+      conversationKey: row.conversation_key,
+      sessionId: row.session_id,
+      checkpoint: row.checkpoint,
+      preview: JSON.parse(row.preview_json) as RewindOperation["preview"],
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  markRewindApplied(id: string): boolean {
+    return (
+      this.db
+        .query("UPDATE rewind_operations SET status='applied', updated_at=? WHERE id=? AND status='previewed'")
+        .run(now(), id).changes === 1
+    );
   }
 
   sessionHasHistory(conversationKey: string): boolean {
@@ -473,9 +715,15 @@ export class StateStore {
           JSON.stringify(execution.subagentModels ?? []),
           id,
         );
+      this.activateSessionBranch(
+        job.conversationKey,
+        job.sessionId,
+        execution.sessionId || job.sessionId,
+        timestamp,
+      );
       this.db
-        .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
-        .run(execution.sessionId || job.sessionId, timestamp, job.conversationKey);
+        .query("UPDATE session_checkpoints SET session_id=? WHERE job_id=?")
+        .run(execution.sessionId || job.sessionId, job.id);
     });
     tx();
     return this.getJob(id)!;
@@ -519,9 +767,15 @@ export class StateStore {
     const timestamp = now();
     const error = executionError(execution);
     const tx = this.db.transaction(() => {
+      this.activateSessionBranch(
+        job.conversationKey,
+        job.sessionId,
+        execution.sessionId || job.sessionId,
+        timestamp,
+      );
       this.db
-        .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
-        .run(execution.sessionId || job.sessionId, timestamp, job.conversationKey);
+        .query("UPDATE session_checkpoints SET session_id=? WHERE job_id=?")
+        .run(execution.sessionId || job.sessionId, job.id);
       if (job.attempts < maxAttempts) {
         this.db
           .query(
@@ -589,6 +843,44 @@ export class StateStore {
       )
       .run(reason, timestamp, conversationKey);
     return rows.map(fromRow);
+  }
+
+  beginInteraction(jobId: string, conversationKey: string, question: InteractiveQuestion): InteractionRecord {
+    const fingerprint = createHash("sha256")
+      .update(JSON.stringify({ question: question.question, choices: question.choices, kind: question.kind ?? "question" }))
+      .digest("hex");
+    const requestKey = question.requestId ?? `fingerprint:${fingerprint}`;
+    const timestamp = now();
+    this.db
+      .query(
+        `INSERT OR IGNORE INTO interactions(
+          id,job_id,conversation_key,request_key,question_json,status,created_at,updated_at
+        ) VALUES(?,?,?,?,?,'pending',?,?)`,
+      )
+      .run(crypto.randomUUID(), jobId, conversationKey, requestKey, JSON.stringify(question), timestamp, timestamp);
+    const row = this.db
+      .query<InteractionRow, [string, string]>("SELECT * FROM interactions WHERE job_id=? AND request_key=?")
+      .get(jobId, requestKey);
+    if (!row) throw new Error(`interaction not found after insert: ${jobId}/${requestKey}`);
+    return interactionFromRow(row);
+  }
+
+  setInteractionMessage(id: string, messageId: string): InteractionRecord {
+    this.db
+      .query("UPDATE interactions SET discord_message_id=?, updated_at=? WHERE id=?")
+      .run(messageId, now(), id);
+    const row = this.db.query<InteractionRow, [string]>("SELECT * FROM interactions WHERE id=?").get(id);
+    if (!row) throw new Error(`interaction not found: ${id}`);
+    return interactionFromRow(row);
+  }
+
+  answerInteraction(id: string, answer: string): InteractionRecord {
+    this.db
+      .query("UPDATE interactions SET answer=?, status='answered', updated_at=? WHERE id=?")
+      .run(answer, now(), id);
+    const row = this.db.query<InteractionRow, [string]>("SELECT * FROM interactions WHERE id=?").get(id);
+    if (!row) throw new Error(`interaction not found: ${id}`);
+    return interactionFromRow(row);
   }
 
   getJob(id: string): JobRecord | null {

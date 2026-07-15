@@ -3,10 +3,15 @@ import type { PermissionMode, RouteConfig } from "./types";
 export type ControlCommand =
   | { kind: "setting"; field: "model" | "permissionMode" | "effort"; value: string | null }
   | { kind: "fork" }
+  | { kind: "branches" }
+  | { kind: "checkpoints" }
+  | { kind: "useBranch"; prefix: string }
   | { kind: "reset" }
   | { kind: "settings" }
   | { kind: "raw"; prompt: string }
   | { kind: "background"; prompt: string }
+  | { kind: "rewindPreview"; checkpoint: string }
+  | { kind: "rewindApply"; operationId: string }
   | { kind: "unsupported"; message: string }
   | { kind: "help" };
 
@@ -47,6 +52,18 @@ export function parseControlCommand(content: string): ControlCommand | null {
     return { kind: "setting", field: "effort", value: argument };
   }
   if (command === "fork") return { kind: "fork" };
+  if (command === "branch") {
+    if (argument === "list") return { kind: "branches" };
+    const use = /^use\s+(\S+)$/.exec(argument);
+    return use
+      ? { kind: "useBranch", prefix: use[1]! }
+      : { kind: "unsupported", message: "사용법: !branch list | !branch use <session-prefix>" };
+  }
+  if (command === "checkpoint") {
+    return argument === "list"
+      ? { kind: "checkpoints" }
+      : { kind: "unsupported", message: "사용법: !checkpoint list" };
+  }
   if (command === "reset") return { kind: "reset" };
   if (command === "settings") return { kind: "settings" };
   if (command === "help") return { kind: "help" };
@@ -62,10 +79,12 @@ export function parseControlCommand(content: string): ControlCommand | null {
   }
   if (rawAliases.has(command)) return { kind: "raw", prompt: `/${command}${argument ? ` ${argument}` : ""}` };
   if (command === "rewind") {
-    return {
-      kind: "unsupported",
-      message: "현재 Claude Code 설치본은 rewind/resume-session-at CLI를 제공하지 않아. !fork 또는 !reset을 써줘.",
-    };
+    const preview = /^preview\s+(\S+)$/.exec(argument);
+    if (preview) return { kind: "rewindPreview", checkpoint: preview[1]! };
+    const apply = /^apply\s+(\S+)$/.exec(argument);
+    return apply
+      ? { kind: "rewindApply", operationId: apply[1]! }
+      : { kind: "unsupported", message: "사용법: !rewind preview <user-message-uuid> | !rewind apply <operation-id>" };
   }
   return null;
 }

@@ -27,4 +27,15 @@ describe("Discord outbound artifacts", () => {
     expect(parsed.errors).toEqual([`${missing}: 파일 없음`]);
     expect(parsed.body).toContain("첨부 실패");
   });
+
+  test("rejects credential-like outbound filenames", () => {
+    const root = join(tmpdir(), `native-outbound-${crypto.randomUUID()}`);
+    roots.push(root);
+    mkdirSync(root, { recursive: true });
+    const secret = join(root, "api-token.txt");
+    writeFileSync(secret, "secret");
+    const parsed = extractOutboundArtifacts(`MEDIA:${secret}`);
+    expect(parsed.files).toEqual([]);
+    expect(parsed.errors[0]).toContain("credential성 파일명 거부");
+  });
 });

@@ -5,6 +5,17 @@ import type { OutboundFile } from "./types";
 const MAX_FILES = 10;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
+export function isSensitiveArtifactName(name: string): boolean {
+  const lower = basename(name).toLowerCase();
+  return (
+    lower === ".env" ||
+    lower.startsWith(".env.") ||
+    /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/.test(lower) ||
+    /\.(pem|key|p12|pfx|keystore)$/.test(lower) ||
+    /(^|[._-])(secret|token|credentials?|password|passwd|private[-_]?key|api[-_]?key)([._-]|$)/.test(lower)
+  );
+}
+
 export interface OutboundArtifactResult {
   body: string;
   files: OutboundFile[];
@@ -34,6 +45,10 @@ export function extractOutboundArtifacts(body: string): OutboundArtifactResult {
     seen.add(path);
     if (files.length >= MAX_FILES) {
       errors.push(`${path}: 최대 ${MAX_FILES}개 초과`);
+      continue;
+    }
+    if (isSensitiveArtifactName(path)) {
+      errors.push(`${path}: credential성 파일명 거부`);
       continue;
     }
 

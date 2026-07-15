@@ -11,6 +11,7 @@ interface PendingQuestion {
   settled: boolean;
   resolve: (answer: string) => void;
   reject: (error: Error) => void;
+  persist?: (answer: string) => void;
 }
 
 export function renderInteractiveQuestion(question: InteractiveQuestion): string {
@@ -30,6 +31,7 @@ export class QuestionBroker {
     conversationKey: string,
     question: InteractiveQuestion,
     post: () => Promise<string>,
+    persist?: (answer: string) => void,
   ): Promise<string> {
     if (this.byConversation.has(conversationKey)) {
       return Promise.reject(new Error(`question already pending: ${conversationKey}`));
@@ -49,6 +51,7 @@ export class QuestionBroker {
       resolve: resolveAnswer,
       reject: rejectAnswer,
     };
+    if (persist) pending.persist = persist;
     this.byConversation.set(conversationKey, pending);
     this.byJob.set(jobId, pending);
     void post()
@@ -88,6 +91,12 @@ export class QuestionBroker {
   private resolvePending(pending: PendingQuestion, answer: string): boolean {
     const value = answer.trim();
     if (!value || pending.settled) return false;
+    try {
+      pending.persist?.(value);
+    } catch (error) {
+      this.rejectPending(pending, error instanceof Error ? error : new Error(String(error)));
+      return false;
+    }
     pending.settled = true;
     this.cleanup(pending);
     pending.resolve(value);
