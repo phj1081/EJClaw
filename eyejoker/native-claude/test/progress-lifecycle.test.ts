@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ProgressLifecycle, PROGRESS_AFTER_MS } from "../src/progress-lifecycle";
+import { ProgressLifecycle, PROGRESS_AFTER_MS, progressCleanupFallbackText } from "../src/progress-lifecycle";
 
 describe("transient Discord progress lifecycle", () => {
   test("does not display a progress card before the NanoClaw 30-second threshold", () => {
@@ -25,5 +25,12 @@ describe("transient Discord progress lifecycle", () => {
     expect(lifecycle.messageId()).toBe("progress-123");
     expect(lifecycle.takeCleanupAfterFinalDelivery()).toBe("progress-123");
     expect(lifecycle.takeCleanupAfterFinalDelivery()).toBeNull();
+  });
+
+  test("uses a neutral cleanup fallback without redundant completion decoration", () => {
+    const text = progressCleanupFallbackText();
+    expect(text).toBe("최종 응답 전송됨");
+    expect(text).not.toContain("✅");
+    expect(text).not.toContain("완료");
   });
 });

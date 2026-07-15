@@ -20,8 +20,9 @@ import {
 import { loadConfig, resolveRoute } from "./config";
 import { ClaudeProcessExecutor } from "./executor";
 import { buildFinalChunkOptions, formatFinalMessage, splitDiscordMessage } from "./protocol";
-import { workElapsedSeconds } from "./duration";
-import { ProgressLifecycle } from "./progress-lifecycle";
+import { progressElapsedSeconds, workElapsedSeconds } from "./duration";
+import { ProgressLifecycle, progressCleanupFallbackText } from "./progress-lifecycle";
+import { cleanupExpiredAttachmentDirs } from "./attachment-cleanup";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
@@ -74,7 +75,17 @@ const executor = new ClaudeProcessExecutor({
 });
 const typingTimers = new Map<string, ReturnType<typeof setInterval>>();
 const progressBoards = new Map<string, ProgressBoard>();
+const attachmentRoot = join(stateDir, "attachments");
+const attachmentTtlMs = 7 * 24 * 60 * 60 * 1_000;
 let queuePoll: ReturnType<typeof setInterval> | null = null;
+let attachmentCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function cleanupExpiredAttachments(): number {
+  return cleanupExpiredAttachmentDirs(attachmentRoot, {
+    activePaths: store.listActive().flatMap((job) => job.attachmentPaths),
+    ttlMs: attachmentTtlMs,
+  }).length;
+}
 
 const client = new Client({
   intents: [
@@ -184,7 +195,7 @@ class ProgressBoard {
   }
 
   private elapsedSeconds(): number {
-    return Math.max(0, Math.round((Date.now() - Date.parse(this.job.createdAt)) / 1000));
+    return progressElapsedSeconds(this.job.startedAt, this.job.createdAt);
   }
 
   private render(mode: "running" | "final" | "cancelled", ok = true): string {
@@ -256,7 +267,7 @@ class ProgressBoard {
       try {
         const channel = await textChannel(this.job.channelId);
         const message = this.message ?? (await channel.messages.fetch(messageId));
-        await message.edit({ content: "✅ 완료", allowedMentions: { parse: [] } });
+        await message.edit({ content: progressCleanupFallbackText(), allowedMentions: { parse: [] } });
         store.clearProgress(this.job.id);
       } catch (fallbackError) {
         console.warn(
@@ -382,7 +393,7 @@ async function downloadAttachments(messageId: string, attachments: Iterable<{
 }>): Promise<{ paths: string[]; errors: string[] }> {
   const paths: string[] = [];
   const errors: string[] = [];
-  const targetDir = join(stateDir, "attachments", messageId);
+  const targetDir = join(attachmentRoot, messageId);
   for (const attachment of [...attachments].slice(0, 10)) {
     if (attachment.size > 25 * 1024 * 1024) {
       errors.push(`${attachment.name}: 25MB 초과`);
@@ -409,13 +420,23 @@ client.once("clientReady", async () => {
     await validateRouteChannels();
     const recovered = runtime.recoverInterrupted("bridge service restart");
     const terminalProgressCleaned = await cleanupTerminalProgress();
+    const expiredAttachmentsCleaned = cleanupExpiredAttachments();
     console.log(
-      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} terminal_progress_cleanup=${terminalProgressCleaned} state=${statePath}`,
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} terminal_progress_cleanup=${terminalProgressCleaned} attachment_cleanup=${expiredAttachmentsCleaned} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
       if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
     }, 2_000);
     queuePoll.unref();
+    attachmentCleanupTimer = setInterval(() => {
+      try {
+        const deleted = cleanupExpiredAttachments();
+        if (deleted > 0) console.log(`attachment cleanup deleted=${deleted}`);
+      } catch (error) {
+        console.warn("attachment cleanup failed", String(error));
+      }
+    }, 6 * 60 * 60 * 1_000);
+    attachmentCleanupTimer.unref();
     void runtime.runUntilIdle().catch((error) => console.error("startup pump failed", error));
   } catch (error) {
     console.error("native bridge startup validation failed", error);
@@ -506,6 +527,7 @@ function stop(signal: string): void {
   console.log(`stopping native bridge signal=${signal}`);
   for (const timer of typingTimers.values()) clearInterval(timer);
   if (queuePoll) clearInterval(queuePoll);
+  if (attachmentCleanupTimer) clearInterval(attachmentCleanupTimer);
   client.destroy();
   store.close();
   process.exit(0);

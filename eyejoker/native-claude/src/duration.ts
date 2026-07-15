@@ -35,3 +35,11 @@ export function workElapsedSeconds(
   if (!Number.isFinite(startMs)) return 0;
   return Math.max(0, Math.round((nowMs - startMs) / 1_000));
 }
+
+export function progressElapsedSeconds(
+  startedAt: string | null,
+  createdAt: string,
+  nowMs = Date.now(),
+): number {
+  return workElapsedSeconds(startedAt, createdAt, nowMs);
+}

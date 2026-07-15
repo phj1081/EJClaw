@@ -9,7 +9,7 @@ import {
 } from "../src/protocol";
 
 import type { RouteConfig } from "../src/types";
-import { formatElapsedKorean, workElapsedSeconds } from "../src/duration";
+import { formatElapsedKorean, progressElapsedSeconds, workElapsedSeconds } from "../src/duration";
 
 const route: RouteConfig = {
   id: "cleanapo",
@@ -78,9 +78,11 @@ describe("Claude protocol", () => {
   });
 
   test("measures work from execution start instead of queue creation", () => {
-    expect(
-      workElapsedSeconds("2026-07-15T01:10:00.000Z", "2026-07-15T01:00:00.000Z", Date.parse("2026-07-15T01:11:30.000Z")),
-    ).toBe(90);
+    const now = Date.parse("2026-07-15T01:11:30.000Z");
+    const startedAt = "2026-07-15T01:10:00.000Z";
+    const createdAt = "2026-07-15T01:00:00.000Z";
+    expect(workElapsedSeconds(startedAt, createdAt, now)).toBe(90);
+    expect(progressElapsedSeconds(startedAt, createdAt, now)).toBe(90);
   });
 
   test("mentions owner once with work duration and actual model, without redundant success decoration", () => {

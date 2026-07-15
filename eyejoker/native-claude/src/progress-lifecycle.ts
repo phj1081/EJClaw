@@ -1,5 +1,9 @@
 export const PROGRESS_AFTER_MS = 30_000;
 
+export function progressCleanupFallbackText(): string {
+  return "최종 응답 전송됨";
+}
+
 export class ProgressLifecycle {
   private progressMessageId: string | null;
 
