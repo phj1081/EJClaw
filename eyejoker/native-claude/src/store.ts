@@ -266,6 +266,21 @@ export class StateStore {
       .run(progressMessageId, progressText.slice(0, 4000), now(), id);
   }
 
+  clearProgress(id: string): void {
+    this.db
+      .query("UPDATE jobs SET progress_message_id=NULL, progress_text=NULL WHERE id=?")
+      .run(id);
+  }
+
+  listTerminalProgress(): JobRecord[] {
+    return this.db
+      .query<JobRow, []>(
+        "SELECT * FROM jobs WHERE status IN ('completed','failed','cancelled') AND progress_message_id IS NOT NULL ORDER BY completed_at, id",
+      )
+      .all()
+      .map(fromRow);
+  }
+
   stageDelivery(id: string, execution: ClaudeExecution, finalStatus: FinalStatus): JobRecord {
     const job = this.getJob(id);
     if (!job) throw new Error(`job not found: ${id}`);

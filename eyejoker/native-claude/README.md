@@ -6,7 +6,7 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 
 - Discord 채널/스레드 → 프로젝트와 Claude session ID 매핑
 - 매 요청을 `/goal`로 실행해 코드·테스트·PR/CI 같은 완료 조건까지 bounded continuation
-- Discord progress 카드 + 이벤트 스트림 실시간 갱신 (`stream-json`)
+- `stream-json` 전체 이벤트를 수집해 **30초 뒤 임시 Discord progress 카드 한 장**만 갱신; 최종 답변 전송 성공 후 카드는 삭제 (삭제 실패 시 `✅ 완료` fallback)
 - 프로젝트(lock key)별 직렬화, 서로 다른 프로젝트는 병렬 실행
 - SQLite durable queue와 동일 session `--resume`
 - 서비스 재시작 시 `running → queued` 복구

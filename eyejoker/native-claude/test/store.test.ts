@@ -82,4 +82,16 @@ describe("durable job store", () => {
     expect(b.id).toBe(a.id);
     expect(db.listJobs()).toHaveLength(1);
   });
+
+  test("forgets a temporary progress message after Discord cleanup", () => {
+    const db = store();
+    const job = db.enqueue(input("cleanapo", "cleanapo:one", "progress"));
+    db.claimNext(1);
+    db.setProgress(job.id, "discord-progress-123", "⏳ 작업 진행 중");
+    expect(db.getJob(job.id)?.progressMessageId).toBe("discord-progress-123");
+
+    db.clearProgress(job.id);
+    expect(db.getJob(job.id)?.progressMessageId).toBeNull();
+    expect(db.getJob(job.id)?.progressText).toBeNull();
+  });
 });
