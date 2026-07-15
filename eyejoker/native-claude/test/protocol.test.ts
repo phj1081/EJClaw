@@ -34,6 +34,7 @@ describe("Claude protocol", () => {
     expect(prompt).not.toContain("중간 진행은 Discord progress 카드");
     expect(prompt).toContain("MEDIA:/absolute/path");
     expect(prompt).toContain("DISCORD_QUESTION:");
+    expect(prompt).toContain("PR_WATCH: https://github.com/");
     expect(prompt.split("\n")[0]!.length).toBeLessThan(200);
   });
 

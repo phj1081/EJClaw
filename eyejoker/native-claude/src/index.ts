@@ -43,6 +43,7 @@ import {
   renderInteractiveQuestion,
 } from "./interactive-control";
 import { KeyedSerialQueue } from "./keyed-serial-queue";
+import { parsePullRequestWatchMarkers } from "./github-watch-policy";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
@@ -527,7 +528,12 @@ const runtime = new JobRuntime({
     return answer;
   },
   onFinal: async (job, execution) => {
-    await deliverFinal(job, execution);
+    const parsed = parsePullRequestWatchMarkers(execution.result);
+    for (const reference of parsed.references) {
+      const watch = store.upsertPullRequestWatch(job, reference);
+      console.log(`PR watch registered id=${watch.id} repo=${watch.repo} pr=${watch.number} job=${job.id}`);
+    }
+    await deliverFinal(job, { ...execution, result: parsed.cleanText });
   },
   maxConcurrent: config.maxConcurrent,
   maxAttempts: config.maxAttempts,

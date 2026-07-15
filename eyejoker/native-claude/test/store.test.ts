@@ -382,4 +382,46 @@ describe("durable job store", () => {
     expect(db.getJob(job.id)?.progressMessageId).toBeNull();
     expect(db.getJob(job.id)?.progressText).toBeNull();
   });
+
+  test("persists PR watches and resumes the originating Discord conversation", () => {
+    const db = store();
+    const origin = db.enqueue({
+      ...input("eyejokerdb", "eyejokerdb:thread-9", "source-pr"),
+      channelId: "channel-9",
+      threadId: "thread-9",
+      lockKey: "/repo/eyejokerdb",
+    });
+    const watch = db.upsertPullRequestWatch(origin, {
+      repo: "EyeJoker-Internal/eyejokerdb",
+      number: 123,
+      url: "https://github.com/EyeJoker-Internal/eyejokerdb/pull/123",
+    });
+    expect(watch).toMatchObject({
+      routeId: "eyejokerdb",
+      conversationKey: "eyejokerdb:thread-9",
+      channelId: "channel-9",
+      threadId: "thread-9",
+      status: "active",
+      wakeCount: 0,
+    });
+    expect(db.listActivePullRequestWatches()).toHaveLength(1);
+
+    const wake = db.enqueue({
+      ...input("eyejokerdb", origin.conversationKey, `github-watch:${watch.id}:signal-1`),
+      channelId: watch.channelId,
+      threadId: watch.threadId,
+      lockKey: watch.lockKey,
+      prompt: "fix current-head CI",
+    });
+    expect(wake.sessionId).toBe(origin.sessionId);
+    db.recordPullRequestObservation(watch.id, "signal-1", wake.id);
+    expect(db.getPullRequestWatch(watch.id)).toMatchObject({
+      lastObservedSignal: "signal-1",
+      lastWakeSignal: "signal-1",
+      activeJobId: wake.id,
+      wakeCount: 1,
+    });
+    db.completePullRequestWatch(watch.id, "merged");
+    expect(db.listActivePullRequestWatches()).toHaveLength(0);
+  });
 });

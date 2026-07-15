@@ -131,6 +131,28 @@ export interface JobRecord {
   completedAt: string | null;
 }
 
+export interface PullRequestWatchRecord {
+  id: string;
+  routeId: string;
+  lockKey: string;
+  conversationKey: string;
+  channelId: string;
+  threadId: string | null;
+  authorId: string;
+  repo: string;
+  number: number;
+  url: string;
+  status: "active" | "completed";
+  lastObservedSignal: string | null;
+  lastWakeSignal: string | null;
+  activeJobId: string | null;
+  wakeCount: number;
+  expiresAt: string;
+  completedReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface InteractiveQuestion {
   question: string;
   choices: string[];

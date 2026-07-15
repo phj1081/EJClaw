@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll Claude Native durable GitHub PR/CI watches
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+RandomizedDelaySec=10s
+Persistent=true
+Unit=claude-native-github-watch.service
+
+[Install]
+WantedBy=timers.target

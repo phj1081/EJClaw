@@ -32,6 +32,7 @@ export function buildGoalPrompt(
     "요청이 길더라도 /goal 조건은 위 한 줄만 쓰고, 세부 작업 내용은 아래 사용자 요청을 따른다.",
     "진짜 외부 블로커가 증명되거나 20턴/6시간에 도달하면 중단하고 증거를 보고한다.",
     "Discord에 전달할 생성 파일이 있으면 최종 응답 끝에 파일마다 단독 줄 MEDIA:/absolute/path 형식으로 적어. 민감 파일은 절대 첨부하지 마.",
+    "네가 이번 작업에서 직접 생성·소유하고 CI/리뷰/merge 후속 감시가 필요한 GitHub PR이 있으면 최종 응답 끝에 PR마다 단독 줄 PR_WATCH: https://github.com/owner/repo/pull/123 형식으로 적어. 단순 조사·리뷰 대상 PR에는 붙이지 마. bridge가 marker를 숨기고 내구성 watcher에 등록한다.",
     "진행에 사용자 선택이 반드시 필요하면 반드시 native AskUserQuestion 도구를 호출해. Discord bridge가 선택지를 버튼으로 보여주고 답변을 같은 세션에 반환한다.",
     'native AskUserQuestion 도구를 사용할 수 없는 경우에만 최종 응답 끝에 단독 한 줄 DISCORD_QUESTION:{"question":"질문","choices":["선택1","선택2"]}를 fallback으로 적어. 선택지는 최대 4개.',
   ];
