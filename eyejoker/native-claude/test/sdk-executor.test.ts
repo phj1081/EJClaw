@@ -107,6 +107,8 @@ describe("ClaudeSdkExecutor", () => {
     expect(initial?.message).toEqual({ role: "user", content: "SDK TASK" });
     expect(options?.model).toBe("claude-fable-5");
     expect(options?.fallbackModel).toBe("gpt-5.6-sol");
+    expect(options?.agents?.["fable-worker"]?.model).toBe("claude-fable-5");
+    expect(options?.agents?.["gpt-worker"]?.model).toBe("gpt-5.6-sol");
     expect(options?.pathToClaudeCodeExecutable).toBe("/home/ejclaw/.hermes/node/bin/claude");
     expect(execution.ok).toBe(true);
     expect(execution.result).toBe("SDK_OK");
@@ -230,6 +232,51 @@ describe("ClaudeSdkExecutor", () => {
     expect(modes).toEqual(["default"]);
   });
 
+  test("corrects and retracts already-consumed follow-up steering inputs", async () => {
+    const observed: SDKUserMessage[] = [];
+    let actorReady!: () => void;
+    let steeringConsumed!: () => void;
+    let correctionConsumed!: () => void;
+    const actorReadyPromise = new Promise<void>((resolve) => (actorReady = resolve));
+    const steeringConsumedPromise = new Promise<void>((resolve) => (steeringConsumed = resolve));
+    const correctionConsumedPromise = new Promise<void>((resolve) => (correctionConsumed = resolve));
+    const factory: SdkQueryFactory = ({ prompt }) =>
+      (async function* () {
+        const iterator = prompt[Symbol.asyncIterator]();
+        observed.push((await iterator.next()).value!);
+        actorReady();
+        observed.push((await iterator.next()).value!);
+        steeringConsumed();
+        observed.push((await iterator.next()).value!);
+        correctionConsumed();
+        observed.push((await iterator.next()).value!);
+        yield result();
+      })() as Query;
+    const checkpoints: string[] = [];
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const executionPromise = executor.run(
+      request({ onCheckpoint: (messageId) => checkpoints.push(messageId) }),
+    );
+    await actorReadyPromise;
+
+    const steeringId = crypto.randomUUID();
+    expect(executor.steer("job-sdk", "첫 추가 지시", steeringId)).toBe(true);
+    await steeringConsumedPromise;
+    const edit = executor.editSteering("job-sdk", steeringId, "수정된 추가 지시");
+    expect(edit?.mode).toBe("corrected");
+    await correctionConsumedPromise;
+    const deletion = executor.deleteSteering("job-sdk", edit!.sdkMessageId);
+    expect(deletion?.mode).toBe("retracted");
+
+    expect((await executionPromise).ok).toBe(true);
+    expect(String(observed[1]?.message.content)).toBe("첫 추가 지시");
+    expect(String(observed[2]?.message.content)).toContain("수정된 추가 지시");
+    expect(String(observed[3]?.message.content)).toContain("지시는 사용자가 삭제했어");
+    expect(checkpoints).toContain(steeringId);
+    expect(checkpoints).toContain(edit!.sdkMessageId);
+    expect(checkpoints).toContain(deletion!.sdkMessageId);
+  });
+
   test("opens a resumed checkpoint-enabled SDK control session for rewind preview", async () => {
     let resume: string | undefined;
     let dryRun: boolean | undefined;
@@ -280,6 +327,47 @@ describe("ClaudeSdkExecutor", () => {
     expect(execution.ok).toBe(true);
     expect(observedQuestion).toMatchObject({ kind: "permission", requestId: "permission-1" });
     expect(permissionResult).toMatchObject({ behavior: "allow", updatedInput: { command: "pwd" } });
+  });
+
+  test("continues a marker fallback question in the same SDK session", async () => {
+    const prompts: string[] = [];
+    const optionsSeen: Options[] = [];
+    const observed: InteractiveQuestion[] = [];
+    let call = 0;
+    const factory: SdkQueryFactory = ({ prompt, options }) => {
+      optionsSeen.push(options ?? {});
+      return (async function* () {
+        prompts.push(String((await prompt[Symbol.asyncIterator]().next()).value?.message.content));
+        call += 1;
+        if (call === 1) {
+          yield {
+            ...result("marker-session"),
+            result:
+              '선택이 필요해.\nDISCORD_QUESTION:{"question":"배포할까?","choices":["배포","중단"]}',
+          };
+          return;
+        }
+        yield { ...result("marker-session"), result: "MARKER_CONTINUED_OK" };
+      })() as Query;
+    };
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const execution = await executor.run(
+      request({
+        onQuestion: async (question) => {
+          observed.push(question);
+          return "배포";
+        },
+      }),
+    );
+
+    expect(execution.ok).toBe(true);
+    expect(execution.result).toBe("MARKER_CONTINUED_OK");
+    expect(observed).toEqual([
+      expect.objectContaining({ question: "배포할까?", choices: ["배포", "중단"], kind: "question" }),
+    ]);
+    expect(optionsSeen).toHaveLength(2);
+    expect(optionsSeen[1]?.resume).toBe("marker-session");
+    expect(prompts[1]).toContain("배포");
   });
 
   test("answers native AskUserQuestion through the Discord question hook", async () => {

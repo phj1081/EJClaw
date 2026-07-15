@@ -148,6 +148,20 @@ export interface InteractionRecord {
   updatedAt: string;
 }
 
+export type SteeringInputState = "pending" | "accepted" | "edited" | "deleted";
+
+export interface SteeringInputRecord {
+  messageId: string;
+  jobId: string;
+  conversationKey: string;
+  content: string;
+  sdkMessageId: string;
+  state: SteeringInputState;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
 export interface ClaudeExecution {
   ok: boolean;
   result: string;

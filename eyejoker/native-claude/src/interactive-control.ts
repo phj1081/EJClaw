@@ -2,6 +2,17 @@ import type { InteractiveQuestion } from "./types";
 
 const PREFIX = "DISCORD_QUESTION:";
 export const QUESTION_REACTIONS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"] as const;
+const QUESTION_BUTTON_PREFIX = "claude-question";
+
+export function questionButtonId(interactionId: string, choiceIndex: number): string {
+  return `${QUESTION_BUTTON_PREFIX}:${interactionId}:${choiceIndex}`;
+}
+
+export function parseQuestionButtonId(customId: string): { interactionId: string; choiceIndex: number } | null {
+  const match = /^claude-question:([0-9a-f-]{36}):([0-3])$/i.exec(customId);
+  if (!match) return null;
+  return { interactionId: match[1]!, choiceIndex: Number(match[2]) };
+}
 
 interface PendingQuestion {
   jobId: string;
@@ -70,6 +81,15 @@ export class QuestionBroker {
 
   answerConversation(conversationKey: string, answer: string): boolean {
     const pending = this.byConversation.get(conversationKey);
+    return pending ? this.resolvePending(pending, answer) : false;
+  }
+
+  messageIdForConversation(conversationKey: string): string | null {
+    return this.byConversation.get(conversationKey)?.messageId ?? null;
+  }
+
+  answerMessage(messageId: string, answer: string): boolean {
+    const pending = this.byMessage.get(messageId);
     return pending ? this.resolvePending(pending, answer) : false;
   }
 

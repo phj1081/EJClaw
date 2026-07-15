@@ -14,6 +14,29 @@ describe("AsyncMailbox", () => {
     expect(received).toEqual(["first", "second"]);
   });
 
+  test("replaces or removes values that have not been consumed", async () => {
+    const mailbox = new AsyncMailbox<{ id: string; content: string }>();
+    mailbox.push({ id: "a", content: "old" });
+    mailbox.push({ id: "b", content: "delete-me" });
+
+    expect(mailbox.replace((value) => value.id === "a", { id: "a", content: "new" })).toBe(true);
+    expect(mailbox.remove((value) => value.id === "b")).toBe(true);
+    expect(mailbox.remove((value) => value.id === "missing")).toBe(false);
+    mailbox.close();
+
+    const observed: Array<{ id: string; content: string }> = [];
+    for await (const value of mailbox) observed.push(value);
+    expect(observed).toEqual([{ id: "a", content: "new" }]);
+  });
+
+  test("rejects buffered mutations after close", () => {
+    const mailbox = new AsyncMailbox<number>();
+    mailbox.push(1);
+    mailbox.close();
+    expect(mailbox.replace((value) => value === 1, 2)).toBe(false);
+    expect(mailbox.remove((value) => value === 1)).toBe(false);
+  });
+
   test("wakes a waiting consumer and aborts with the original error", async () => {
     const mailbox = new AsyncMailbox<string>();
     const iterator = mailbox[Symbol.asyncIterator]();

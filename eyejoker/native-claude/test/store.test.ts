@@ -196,6 +196,48 @@ describe("durable job store", () => {
     expect(db.markRewindApplied(operation.id)).toBe(false);
   });
 
+  test("persists follow-up steering message lifecycle across restart", () => {
+    const path = join(tmpdir(), `native-steering-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const first = new StateStore(path);
+    const job = first.enqueue(input("steering", "steering:one", "source-message"));
+    const initialSdkId = crypto.randomUUID();
+    const pending = first.beginSteeringInput({
+      messageId: "followup-message",
+      jobId: job.id,
+      conversationKey: job.conversationKey,
+      content: "처음 지시",
+      sdkMessageId: initialSdkId,
+    });
+    expect(pending.state).toBe("pending");
+    expect(first.acceptSteeringInput("followup-message").state).toBe("accepted");
+
+    const reopened = new StateStore(path);
+    expect(reopened.getSteeringInput("followup-message")?.sdkMessageId).toBe(initialSdkId);
+    const editedSdkId = crypto.randomUUID();
+    const edited = reopened.updateSteeringInput("followup-message", "수정 지시", editedSdkId);
+    expect(edited).toMatchObject({ content: "수정 지시", sdkMessageId: editedSdkId, state: "edited" });
+    const deletedSdkId = crypto.randomUUID();
+    const deleted = reopened.deleteSteeringInput("followup-message", deletedSdkId);
+    expect(deleted).toMatchObject({ sdkMessageId: deletedSdkId, state: "deleted" });
+    expect(deleted?.deletedAt).not.toBeNull();
+    expect(reopened.listJobSteeringInputs(job.id)).toHaveLength(1);
+  });
+
+  test("discards only a pending steering row when actor acceptance fails", () => {
+    const db = store();
+    const job = db.enqueue(input("steering", "steering:two", "source-message-2"));
+    db.beginSteeringInput({
+      messageId: "followup-pending",
+      jobId: job.id,
+      conversationKey: job.conversationKey,
+      content: "pending",
+      sdkMessageId: crypto.randomUUID(),
+    });
+    expect(db.discardPendingSteeringInput("followup-pending")).toBe(true);
+    expect(db.getSteeringInput("followup-pending")).toBeNull();
+  });
+
   test("deduplicates and reuses durable interaction answers after restart", () => {
     const path = join(tmpdir(), `native-interaction-${crypto.randomUUID()}.sqlite`);
     paths.push(path);
@@ -222,6 +264,7 @@ describe("durable job store", () => {
     expect(replay.status).toBe("answered");
     expect(replay.answer).toBe("배포");
     expect(replay.discordMessageId).toBe("discord-question-1");
+    expect(reopened.getInteraction(interaction.id)).toEqual(replay);
   });
 
   test("forgets a temporary progress message after Discord cleanup", () => {

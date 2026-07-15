@@ -16,6 +16,8 @@ import type {
   PermissionMode,
   RewindOperation,
   SessionBranch,
+  SteeringInputRecord,
+  SteeringInputState,
 } from "./types";
 
 interface JobRow {
@@ -67,6 +69,32 @@ interface InteractionRow {
   status: "pending" | "answered" | "orphaned";
   created_at: string;
   updated_at: string;
+}
+
+interface SteeringInputRow {
+  message_id: string;
+  job_id: string;
+  conversation_key: string;
+  content: string;
+  sdk_message_id: string;
+  state: SteeringInputState;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+function steeringInputFromRow(row: SteeringInputRow): SteeringInputRecord {
+  return {
+    messageId: row.message_id,
+    jobId: row.job_id,
+    conversationKey: row.conversation_key,
+    content: row.content,
+    sdkMessageId: row.sdk_message_id,
+    state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    deletedAt: row.deleted_at,
+  };
 }
 
 function interactionFromRow(row: InteractionRow): InteractionRecord {
@@ -234,6 +262,19 @@ export class StateStore {
         FOREIGN KEY(job_id) REFERENCES jobs(id)
       );
       CREATE INDEX IF NOT EXISTS interactions_pending_idx ON interactions(status, conversation_key);
+      CREATE TABLE IF NOT EXISTS steering_inputs (
+        message_id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        conversation_key TEXT NOT NULL,
+        content TEXT NOT NULL,
+        sdk_message_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('pending','accepted','edited','deleted')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT,
+        FOREIGN KEY(job_id) REFERENCES jobs(id)
+      );
+      CREATE INDEX IF NOT EXISTS steering_inputs_job_idx ON steering_inputs(job_id, created_at);
     `);
     this.db.exec(`
       INSERT OR IGNORE INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at)
@@ -845,6 +886,97 @@ export class StateStore {
     return rows.map(fromRow);
   }
 
+  beginSteeringInput(input: {
+    messageId: string;
+    jobId: string;
+    conversationKey: string;
+    content: string;
+    sdkMessageId: string;
+  }): SteeringInputRecord {
+    const timestamp = now();
+    this.db
+      .query(
+        `INSERT OR IGNORE INTO steering_inputs(
+          message_id,job_id,conversation_key,content,sdk_message_id,state,created_at,updated_at
+        ) VALUES(?,?,?,?,?,'pending',?,?)`,
+      )
+      .run(
+        input.messageId,
+        input.jobId,
+        input.conversationKey,
+        input.content,
+        input.sdkMessageId,
+        timestamp,
+        timestamp,
+      );
+    const record = this.getSteeringInput(input.messageId);
+    if (!record) throw new Error(`steering input not found after insert: ${input.messageId}`);
+    return record;
+  }
+
+  acceptSteeringInput(messageId: string): SteeringInputRecord {
+    this.db
+      .query("UPDATE steering_inputs SET state='accepted', updated_at=? WHERE message_id=? AND state='pending'")
+      .run(now(), messageId);
+    const record = this.getSteeringInput(messageId);
+    if (!record) throw new Error(`steering input not found: ${messageId}`);
+    return record;
+  }
+
+  updateSteeringInput(messageId: string, content: string, sdkMessageId: string): SteeringInputRecord | null {
+    this.db
+      .query(
+        "UPDATE steering_inputs SET content=?, sdk_message_id=?, state='edited', updated_at=? WHERE message_id=? AND state!='deleted'",
+      )
+      .run(content, sdkMessageId, now(), messageId);
+    return this.getSteeringInput(messageId);
+  }
+
+  deleteSteeringInput(messageId: string, sdkMessageId: string): SteeringInputRecord | null {
+    const timestamp = now();
+    this.db
+      .query(
+        "UPDATE steering_inputs SET sdk_message_id=?, state='deleted', updated_at=?, deleted_at=? WHERE message_id=? AND state!='deleted'",
+      )
+      .run(sdkMessageId, timestamp, timestamp, messageId);
+    return this.getSteeringInput(messageId);
+  }
+
+  discardPendingSteeringInput(messageId: string): boolean {
+    const result = this.db.query("DELETE FROM steering_inputs WHERE message_id=? AND state='pending'").run(messageId);
+    return result.changes > 0;
+  }
+
+  getSteeringInput(messageId: string): SteeringInputRecord | null {
+    const row = this.db
+      .query<SteeringInputRow, [string]>("SELECT * FROM steering_inputs WHERE message_id=?")
+      .get(messageId);
+    return row ? steeringInputFromRow(row) : null;
+  }
+
+  listJobSteeringInputs(jobId: string): SteeringInputRecord[] {
+    return this.db
+      .query<SteeringInputRow, [string]>("SELECT * FROM steering_inputs WHERE job_id=? ORDER BY created_at, message_id")
+      .all(jobId)
+      .map(steeringInputFromRow);
+  }
+
+  listPendingSteeringInputs(jobId: string): SteeringInputRecord[] {
+    return this.db
+      .query<SteeringInputRow, [string]>(
+        "SELECT * FROM steering_inputs WHERE job_id=? AND state='pending' ORDER BY created_at, message_id",
+      )
+      .all(jobId)
+      .map(steeringInputFromRow);
+  }
+
+  acceptPendingSteeringInputs(jobId: string): number {
+    const result = this.db
+      .query("UPDATE steering_inputs SET state='accepted', updated_at=? WHERE job_id=? AND state='pending'")
+      .run(now(), jobId);
+    return result.changes;
+  }
+
   beginInteraction(jobId: string, conversationKey: string, question: InteractiveQuestion): InteractionRecord {
     const fingerprint = createHash("sha256")
       .update(JSON.stringify({ question: question.question, choices: question.choices, kind: question.kind ?? "question" }))
@@ -881,6 +1013,11 @@ export class StateStore {
     const row = this.db.query<InteractionRow, [string]>("SELECT * FROM interactions WHERE id=?").get(id);
     if (!row) throw new Error(`interaction not found: ${id}`);
     return interactionFromRow(row);
+  }
+
+  getInteraction(id: string): InteractionRecord | null {
+    const row = this.db.query<InteractionRow, [string]>("SELECT * FROM interactions WHERE id=?").get(id);
+    return row ? interactionFromRow(row) : null;
   }
 
   getJob(id: string): JobRecord | null {

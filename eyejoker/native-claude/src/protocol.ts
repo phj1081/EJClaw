@@ -3,7 +3,7 @@ import { formatElapsedKorean } from "./duration";
 import { formatModelUsage } from "./model-visibility";
 import { parseStreamJsonResult } from "./stream-progress";
 
-const defaultAgents = {
+export const defaultAgents = {
   "fable-worker": {
     description: "독립 구현·검증 작업을 수행하는 Fable 코딩 서브에이전트",
     prompt: "코드와 런타임 증거를 직접 확인하고 맡은 작업을 끝까지 구현·검증해라.",
@@ -32,7 +32,8 @@ export function buildGoalPrompt(
     "요청이 길더라도 /goal 조건은 위 한 줄만 쓰고, 세부 작업 내용은 아래 사용자 요청을 따른다.",
     "진짜 외부 블로커가 증명되거나 20턴/6시간에 도달하면 중단하고 증거를 보고한다.",
     "Discord에 전달할 생성 파일이 있으면 최종 응답 끝에 파일마다 단독 줄 MEDIA:/absolute/path 형식으로 적어. 민감 파일은 절대 첨부하지 마.",
-    '진행에 사용자 선택이 반드시 필요하면 최종 응답 끝에 단독 한 줄 DISCORD_QUESTION:{"question":"질문","choices":["선택1","선택2"]}를 적고 답을 받은 뒤 같은 세션에서 계속해. 선택지는 최대 4개.',
+    "진행에 사용자 선택이 반드시 필요하면 반드시 native AskUserQuestion 도구를 호출해. Discord bridge가 선택지를 버튼으로 보여주고 답변을 같은 세션에 반환한다.",
+    'native AskUserQuestion 도구를 사용할 수 없는 경우에만 최종 응답 끝에 단독 한 줄 DISCORD_QUESTION:{"question":"질문","choices":["선택1","선택2"]}를 fallback으로 적어. 선택지는 최대 4개.',
   ];
   if (route.instructions) lines.push("", `프로젝트 범위:\n${route.instructions}`);
   if (recoveryReason) {
