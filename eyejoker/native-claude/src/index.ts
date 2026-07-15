@@ -5,6 +5,7 @@ import {
   Partials,
   PermissionFlagsBits,
   type GuildTextBasedChannel,
+  type Message,
   type MessageCreateOptions,
 } from "discord.js";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,6 +21,11 @@ import { loadConfig, resolveRoute } from "./config";
 import { ClaudeProcessExecutor } from "./executor";
 import { formatFinalMessage, splitDiscordMessage } from "./protocol";
 import { JobRuntime } from "./runtime";
+import {
+  StreamProgressAggregator,
+  renderProgressCard,
+  type ProgressEvent,
+} from "./stream-progress";
 import { StateStore } from "./store";
 import { formatDiscordStatus, renderStatusSnapshot } from "./status-format";
 import type { JobRecord } from "./types";
@@ -63,6 +69,7 @@ const executor = new ClaudeProcessExecutor({
   timeoutSeconds: config.jobTimeoutSeconds,
 });
 const typingTimers = new Map<string, ReturnType<typeof setInterval>>();
+const progressBoards = new Map<string, ProgressBoard>();
 let queuePoll: ReturnType<typeof setInterval> | null = null;
 
 const client = new Client({
@@ -103,6 +110,158 @@ async function validateRouteChannels(): Promise<void> {
   console.log(`discord routes validated count=${config.routes.length}`);
 }
 
+class ProgressBoard {
+  private message: Message | null = null;
+  private feedMessage: Message | null = null;
+  private lastEditAt = 0;
+  private lastFeedAt = 0;
+  private pending: ReturnType<typeof setTimeout> | null = null;
+  private closed = false;
+  private lastCard = "";
+  private feedLines: string[] = [];
+  private latest = new StreamProgressAggregator();
+
+  constructor(private job: JobRecord) {}
+
+  async start(): Promise<void> {
+    const channel = await textChannel(this.job.channelId);
+    const content = this.render("running");
+    const options: MessageCreateOptions = {
+      content,
+      allowedMentions: { parse: [] },
+    };
+    if (isReplyableMessageId(this.job.messageId)) {
+      options.reply = { messageReference: this.job.messageId, failIfNotExists: false };
+    }
+    if (this.job.progressMessageId) {
+      try {
+        const existing = await channel.messages.fetch(this.job.progressMessageId);
+        this.message = await existing.edit({ content, allowedMentions: { parse: [] } });
+      } catch {
+        this.message = await channel.send(options);
+      }
+    } else {
+      this.message = await channel.send(options);
+    }
+    this.lastCard = content;
+    this.lastEditAt = Date.now();
+    store.setProgress(this.job.id, this.message.id, content);
+  }
+
+  handleEvent(event: ProgressEvent, aggregator: StreamProgressAggregator): void {
+    if (this.closed) return;
+    this.latest = aggregator;
+    const force =
+      event.kind === "tool_start" ||
+      event.kind === "tool_result" ||
+      event.kind === "result" ||
+      event.kind === "status" ||
+      event.kind === "system";
+    void this.queueCardEdit(force);
+    if (event.kind === "tool_start" || event.kind === "tool_result" || event.kind === "result") {
+      void this.appendFeed(event);
+    }
+  }
+
+  private elapsedSeconds(): number {
+    return Math.max(0, Math.round((Date.now() - Date.parse(this.job.createdAt)) / 1000));
+  }
+
+  private render(mode: "running" | "final" | "cancelled", ok = true): string {
+    return renderProgressCard({
+      routeId: this.job.routeId,
+      attempt: this.job.attempts,
+      maxAttempts: config.maxAttempts,
+      elapsedSeconds: this.elapsedSeconds(),
+      promptPreview: this.job.prompt,
+      recoveryReason: this.job.recoveryReason,
+      snapshot: this.latest.snapshot(),
+      mode,
+      ok,
+    });
+  }
+
+  private queueCardEdit(force: boolean): void {
+    if (this.closed) return;
+    const minInterval = force ? 800 : 1500;
+    const dueIn = Math.max(0, minInterval - (Date.now() - this.lastEditAt));
+    if (this.pending) return;
+    this.pending = setTimeout(() => {
+      this.pending = null;
+      void this.flushCard();
+    }, dueIn);
+    this.pending.unref?.();
+  }
+
+  private async flushCard(mode: "running" | "final" | "cancelled" = "running", ok = true): Promise<void> {
+    if (!this.message) return;
+    if (this.closed && mode === "running") return;
+    const content = this.render(mode, ok);
+    if (content === this.lastCard && mode === "running") return;
+    try {
+      this.message = await this.message.edit({ content, allowedMentions: { parse: [] } });
+      this.lastCard = content;
+      this.lastEditAt = Date.now();
+      store.setProgress(this.job.id, this.message.id, content);
+    } catch (error) {
+      console.warn("progress card edit failed", this.job.id, String(error));
+    }
+  }
+
+  private async appendFeed(event: ProgressEvent): Promise<void> {
+    if (this.closed) return;
+    const stamp = new Date(event.at).toLocaleTimeString("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    const detail = event.detail ? ` · ${event.detail}` : "";
+    const line = `• \`${stamp}\` ${event.summary}${detail}`.slice(0, 180);
+    this.feedLines.push(line);
+    if (this.feedLines.length > 20) this.feedLines = this.feedLines.slice(-20);
+    if (Date.now() - this.lastFeedAt < 2500 && event.kind !== "result") return;
+    this.lastFeedAt = Date.now();
+    const content = ["📡 **실시간 이벤트 스트림**", ...this.feedLines].join("\n").slice(0, 1900);
+    try {
+      const channel = await textChannel(this.job.channelId);
+      if (this.feedMessage) {
+        this.feedMessage = await this.feedMessage.edit({ content, allowedMentions: { parse: [] } });
+      } else {
+        this.feedMessage = await channel.send({ content, allowedMentions: { parse: [] } });
+      }
+    } catch (error) {
+      console.warn("progress feed update failed", this.job.id, String(error));
+    }
+  }
+
+  async finish(ok: boolean, finalResult?: string): Promise<void> {
+    if (this.pending) {
+      clearTimeout(this.pending);
+      this.pending = null;
+    }
+    if (finalResult) {
+      this.latest.finalResult = finalResult;
+      this.latest.liveText = finalResult.slice(-4000);
+      this.latest.phase = ok ? "completed" : "failed";
+      this.latest.currentActivity = ok ? "완료" : "실패";
+    }
+    await this.flushCard("final", ok);
+    this.closed = true;
+  }
+
+  async cancel(): Promise<void> {
+    if (this.pending) {
+      clearTimeout(this.pending);
+      this.pending = null;
+    }
+    this.latest.phase = "cancelled";
+    this.latest.currentActivity = "사용자 취소";
+    await this.flushCard("cancelled", false);
+    this.closed = true;
+  }
+}
+
 async function startTyping(job: JobRecord): Promise<void> {
   stopTyping(job.id);
   const channel = await textChannel(job.channelId);
@@ -113,6 +272,13 @@ async function startTyping(job: JobRecord): Promise<void> {
   timer.unref();
   typingTimers.set(job.id, timer);
   console.log(`job start id=${job.id} route=${job.routeId} attempt=${job.attempts}`);
+
+  let board = progressBoards.get(job.id);
+  if (!board) {
+    board = new ProgressBoard(job);
+    progressBoards.set(job.id, board);
+  }
+  await board.start();
 }
 
 function stopTyping(jobId: string): void {
@@ -123,6 +289,11 @@ function stopTyping(jobId: string): void {
 
 async function deliverFinal(job: JobRecord, ok: boolean, result: string): Promise<void> {
   stopTyping(job.id);
+  const board = progressBoards.get(job.id);
+  if (board) {
+    await board.finish(ok, result);
+    progressBoards.delete(job.id);
+  }
   const elapsed = Math.max(0, Math.round((Date.now() - Date.parse(job.createdAt)) / 1000));
   const chunks = splitDiscordMessage(formatFinalMessage(config.ownerId, ok, result, elapsed));
   const channel = await textChannel(job.channelId);
@@ -144,6 +315,11 @@ const runtime = new JobRuntime({
   routes,
   executor: (request) => executor.run(request),
   onStart: startTyping,
+  onProgress: (job, event, aggregator) => {
+    const board = progressBoards.get(job.id);
+    if (!board) return;
+    board.handleEvent(event, aggregator);
+  },
   onFinal: async (job, execution) => {
     await deliverFinal(job, execution.ok, execution.result);
   },
@@ -224,6 +400,11 @@ client.on("messageCreate", async (message) => {
       for (const job of cancelled) {
         executor.cancel(job.id);
         stopTyping(job.id);
+        const board = progressBoards.get(job.id);
+        if (board) {
+          await board.cancel();
+          progressBoards.delete(job.id);
+        }
       }
       await message.reply({ content: `중지 요청 ${cancelled.length}건 처리`, allowedMentions: { parse: [] } });
       return;

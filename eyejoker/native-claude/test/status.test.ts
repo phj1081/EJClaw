@@ -26,6 +26,8 @@ function job(status: JobRecord["status"], routeId = "cleanapo"): JobRecord {
     deliveryAttempts: 0,
     deliveryAfter: null,
     deliveryError: null,
+    progressMessageId: null,
+    progressText: null,
     createdAt: "2026-07-15T00:00:00.000Z",
     startedAt: status === "running" ? "2026-07-15T00:00:01.000Z" : null,
     heartbeatAt: status === "running" ? "2026-07-15T00:00:02.000Z" : null,
@@ -39,7 +41,10 @@ describe("native runtime status", () => {
   });
 
   test("reports real running and queued jobs", () => {
-    const status = renderStatusSnapshot([job("running"), job("queued", "crawler")]);
+    const status = renderStatusSnapshot(
+      [job("running"), job("queued", "crawler")],
+      "2026-07-15T00:00:10.000Z",
+    );
     expect(status.state).toBe("working");
     expect(status.running).toHaveLength(1);
     expect(status.queued).toHaveLength(1);

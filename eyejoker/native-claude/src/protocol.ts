@@ -1,4 +1,5 @@
 import type { ClaudeExecution, RouteConfig } from "./types";
+import { parseStreamJsonResult } from "./stream-progress";
 
 const defaultAgents = {
   "fable-worker": {
@@ -19,15 +20,16 @@ export function buildGoalPrompt(
   attachmentPaths: string[],
   recoveryReason: string | null,
 ): string {
-  const condition =
-    "아래 사용자 요청을 실제 산출물로 완수한다. 요청 범위의 수정과 관련 테스트·빌드·런타임 검증을 실행하고, 승인된 Git/PR/CI/배포 후속이 있으면 끝까지 처리한다. 계획·진행 보고만 하고 멈추지 않는다. 진짜 외부 블로커가 증명되거나 20턴/6시간에 도달하면 중단하고 증거를 보고한다.";
+  const condition = "사용자 요청을 실제 산출물·테스트·필요 시 PR/CI 증거로 완수할 것. 계획만 하고 멈추지 말 것.";
   const lines = [
     `/goal ${condition}`,
     "",
     "너는 눈쟁이의 신뢰된 프로젝트 코딩 에이전트다. 한국어 반말, 결론 먼저.",
     "기존 사용자 변경을 보존하고, 추측한 결과나 실행하지 않은 테스트를 성공했다고 쓰지 마.",
-    "중간 진행 메시지는 transport가 담당하므로 최종 결과 또는 실제 블로커만 간결하게 반환해.",
+    "중간 진행은 Discord progress 카드로 실시간 표시된다. 최종 결과/실제 블로커는 간결하고 증거 중심으로 반환해.",
     "완료 판단은 자연어 약속이 아니라 diff, 테스트, 커밋, PR, CI, 배포/런타임 증거로 해.",
+    "요청이 길더라도 /goal 조건은 위 한 줄만 쓰고, 세부 작업 내용은 아래 사용자 요청을 따른다.",
+    "진짜 외부 블로커가 증명되거나 20턴/6시간에 도달하면 중단하고 증거를 보고한다.",
   ];
   if (route.instructions) lines.push("", `프로젝트 범위:\n${route.instructions}`);
   if (recoveryReason) {
@@ -58,7 +60,10 @@ export function buildClaudeInvocation(
     "--effort",
     route.effort,
     "--output-format",
-    "json",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--include-hook-events",
     "--name",
     `native-${route.id}`,
   ];
@@ -74,43 +79,14 @@ export function buildClaudeInvocation(
   };
 }
 
-function jsonCandidates(stdout: string): unknown[] {
-  const candidates: unknown[] = [];
-  const text = stdout.trim();
-  if (!text) return candidates;
-  try {
-    candidates.push(JSON.parse(text));
-  } catch {
-    for (const line of text.split("\n")) {
-      try {
-        candidates.push(JSON.parse(line));
-      } catch {
-        // Non-JSON diagnostics are ignored; stderr is retained separately.
-      }
-    }
-  }
-  return candidates;
-}
-
 export function parseClaudeOutput(stdout: string, stderr: string, exitCode: number): ClaudeExecution {
-  const values = jsonCandidates(stdout);
-  let result = "";
-  let sessionId = "";
-  let isError = exitCode !== 0;
-  for (const value of values) {
-    if (!value || typeof value !== "object") continue;
-    const item = value as Record<string, unknown>;
-    if (typeof item.session_id === "string") sessionId = item.session_id;
-    if (typeof item.result === "string") result = item.result;
-    if (item.is_error === true || item.subtype === "error") isError = true;
-  }
-  if (!result) result = stdout.trim() || stderr.trim() || "(empty Claude result)";
+  const parsed = parseStreamJsonResult(stdout, stderr, exitCode);
   return {
-    ok: !isError,
-    result: result.slice(0, 16000),
-    sessionId,
-    stderr: stderr.slice(0, 8000),
-    exitCode,
+    ok: parsed.ok,
+    result: parsed.result,
+    sessionId: parsed.sessionId,
+    stderr: parsed.stderr,
+    exitCode: parsed.exitCode,
   };
 }
 

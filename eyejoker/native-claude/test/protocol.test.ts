@@ -28,6 +28,7 @@ describe("Claude protocol", () => {
     expect(prompt).toContain("테스트");
     expect(prompt).toContain("진짜 외부 블로커");
     expect(prompt).toContain("apps/soriq만 담당");
+    expect(prompt.split("\n")[0]!.length).toBeLessThan(200);
   });
 
   test("recovery prompt explicitly resumes existing artifacts", () => {
@@ -45,6 +46,14 @@ describe("Claude protocol", () => {
     expect(resumed.args).toContain("--resume");
     expect(resumed.args).not.toContain("--session-id");
     expect(resumed.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
+  });
+
+  test("uses stream-json with partial messages for live progress", () => {
+    const fresh = buildClaudeInvocation(route, "hello", "session-1", false);
+    expect(fresh.args).toContain("stream-json");
+    expect(fresh.args).toContain("--include-partial-messages");
+    expect(fresh.args).toContain("--include-hook-events");
+    expect(fresh.args).toContain("--verbose");
   });
 
   test("extracts result and session id from Claude json output", () => {

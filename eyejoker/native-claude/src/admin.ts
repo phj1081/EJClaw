@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { join, resolve } from "node:path";
-import { readSecurePromptFile, scheduleIdentity } from "./admin-utils";
+import { buildScheduledJobPrompt, readSecurePromptFile, scheduleIdentity } from "./admin-utils";
 import { loadConfig } from "./config";
 import { StateStore } from "./store";
 import { renderStatusSnapshot } from "./status-format";
@@ -19,6 +19,7 @@ function enqueue(
   routeId: string,
   prompt: string,
   identity: { messageId: string; conversationKey: string },
+  attachmentPaths: string[] = [],
 ): void {
   const route = config.routes.find((candidate) => candidate.id === routeId);
   if (!route) throw new Error(`unknown route: ${routeId}`);
@@ -31,7 +32,7 @@ function enqueue(
     messageId: identity.messageId,
     authorId: config.ownerId,
     prompt,
-    attachmentPaths: [],
+    attachmentPaths,
   });
   console.log(JSON.stringify({ id: job.id, route: job.routeId, status: job.status, session_id: job.sessionId }));
 }
@@ -61,7 +62,9 @@ try {
       new Date(),
       process.env.CLAUDE_NATIVE_SCHEDULE_TZ ?? "Asia/Seoul",
     );
-    enqueue(routeId, readSecurePromptFile(resolve(promptPath)), identity);
+    const absolute = resolve(promptPath);
+    const built = buildScheduledJobPrompt(absolute, readSecurePromptFile(absolute));
+    enqueue(routeId, built.prompt, identity, built.attachmentPaths);
   } else if (command === "cancel") {
     const key = args[0];
     if (!key) throw new Error("usage: admin.ts cancel <conversation-key>");

@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { readSecurePromptFile, scheduleIdentity } from "../src/admin-utils";
+import {
+  buildScheduledJobPrompt,
+  normalizePromptText,
+  readSecurePromptFile,
+  scheduleIdentity,
+} from "../src/admin-utils";
 
 const paths: string[] = [];
 afterEach(() => {
@@ -22,6 +27,17 @@ describe("scheduled native jobs", () => {
     expect(readSecurePromptFile(promptFile(0o600))).toBe("daily task");
     expect(() => readSecurePromptFile(promptFile(0o644))).toThrow("mode 600");
     expect(() => readSecurePromptFile(promptFile(0o600, "  "))).toThrow("empty");
+  });
+
+  test("unwraps JSON prompt wrappers and keeps long tasks as file references", () => {
+    const longBody = `말드할라 작업 ${"x".repeat(2200)}`;
+    const wrapped = JSON.stringify({ prompt: longBody });
+    expect(normalizePromptText(wrapped)).toBe(longBody);
+    const path = promptFile(0o600, wrapped);
+    const built = buildScheduledJobPrompt(path, wrapped);
+    expect(built.attachmentPaths).toEqual([path]);
+    expect(built.prompt).toContain(path);
+    expect(built.prompt.length).toBeLessThan(1200);
   });
 
   test("uses a stable date-scoped id so Persistent timers cannot duplicate a run", () => {

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { buildClaudeInvocation, parseClaudeOutput } from "./protocol";
+import { StreamProgressAggregator, type ProgressEvent } from "./stream-progress";
 import type { ClaudeExecution, ExecutionRequest } from "./types";
 
 interface ExecutorOptions {
@@ -75,15 +76,37 @@ export class ClaudeProcessExecutor {
 
       let stdout = "";
       let stderr = "";
+      let lineBuffer = "";
+      const aggregator = new StreamProgressAggregator();
       const append = (current: string, value: Buffer): string => {
         if (Buffer.byteLength(current) >= this.maxOutputBytes) return current;
         return (current + value.toString()).slice(0, this.maxOutputBytes);
       };
+
+      const emitProgress = (event: ProgressEvent | null): void => {
+        if (!event || !request.onProgress) return;
+        try {
+          request.onProgress(event, aggregator);
+        } catch (error) {
+          console.warn("onProgress failed", error);
+        }
+      };
+
       child.stdout.on("data", (data: Buffer) => {
         stdout = append(stdout, data);
+        lineBuffer += data.toString();
+        let newline = lineBuffer.indexOf("\n");
+        while (newline >= 0) {
+          const line = lineBuffer.slice(0, newline);
+          lineBuffer = lineBuffer.slice(newline + 1);
+          emitProgress(aggregator.ingestLine(line));
+          newline = lineBuffer.indexOf("\n");
+        }
+        request.onHeartbeat?.();
       });
       child.stderr.on("data", (data: Buffer) => {
         stderr = append(stderr, data);
+        request.onHeartbeat?.();
       });
 
       const heartbeat = setInterval(() => request.onHeartbeat?.(), 10_000);
@@ -102,9 +125,10 @@ export class ClaudeProcessExecutor {
         clearInterval(heartbeat);
         clearTimeout(timeout);
         this.children.delete(request.job.id);
+        if (lineBuffer.trim()) emitProgress(aggregator.ingestLine(lineBuffer));
         const exitCode = timedOut ? 124 : (code ?? 1);
         const parsed = parseClaudeOutput(stdout, timedOut ? `${stderr}\njob timed out` : stderr, exitCode);
-        if (!parsed.sessionId) parsed.sessionId = request.sessionId;
+        if (!parsed.sessionId) parsed.sessionId = aggregator.sessionId || request.sessionId;
         resolve(parsed);
       });
     });

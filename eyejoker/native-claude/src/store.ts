@@ -32,6 +32,8 @@ interface JobRow {
   delivery_attempts: number;
   delivery_after: string | null;
   delivery_error: string | null;
+  progress_message_id: string | null;
+  progress_text: string | null;
   created_at: string;
   started_at: string | null;
   heartbeat_at: string | null;
@@ -66,6 +68,8 @@ function fromRow(row: JobRow): JobRecord {
     deliveryAttempts: row.delivery_attempts,
     deliveryAfter: row.delivery_after,
     deliveryError: row.delivery_error,
+    progressMessageId: row.progress_message_id,
+    progressText: row.progress_text,
     createdAt: row.created_at,
     startedAt: row.started_at,
     heartbeatAt: row.heartbeat_at,
@@ -128,6 +132,14 @@ export class StateStore {
       CREATE INDEX IF NOT EXISTS jobs_lock_status_idx ON jobs(lock_key, status);
       CREATE INDEX IF NOT EXISTS jobs_delivery_idx ON jobs(status, delivery_after);
     `);
+    this.ensureColumn("jobs", "progress_message_id", "TEXT");
+    this.ensureColumn("jobs", "progress_text", "TEXT");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const rows = this.db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+    if (rows.some((row) => row.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 
   enqueue(input: EnqueueInput): JobRecord {
@@ -243,6 +255,15 @@ export class StateStore {
 
   heartbeat(id: string): void {
     this.db.query("UPDATE jobs SET heartbeat_at=? WHERE id=? AND status='running'").run(now(), id);
+  }
+
+  setProgress(id: string, progressMessageId: string, progressText: string): void {
+    this.db
+      .query(
+        `UPDATE jobs SET progress_message_id=?, progress_text=?, heartbeat_at=?
+         WHERE id=? AND status IN ('running','delivering','completed','failed','cancelled')`,
+      )
+      .run(progressMessageId, progressText.slice(0, 4000), now(), id);
   }
 
   stageDelivery(id: string, execution: ClaudeExecution, finalStatus: FinalStatus): JobRecord {

@@ -4,6 +4,7 @@ import type {
   ClaudeExecutor,
   FinalHook,
   JobRecord,
+  ProgressHook,
   RouteConfig,
   StartHook,
 } from "./types";
@@ -15,6 +16,7 @@ interface RuntimeOptions {
   executor: ClaudeExecutor;
   onFinal: FinalHook;
   onStart?: StartHook;
+  onProgress?: ProgressHook;
   maxConcurrent: number;
   maxAttempts: number;
   deliveryRetryMs?: number;
@@ -26,6 +28,7 @@ export class JobRuntime {
   private readonly executor: ClaudeExecutor;
   private readonly onFinal: FinalHook;
   private readonly onStart: StartHook | undefined;
+  private readonly onProgress: ProgressHook | undefined;
   private readonly maxConcurrent: number;
   private readonly maxAttempts: number;
   private readonly deliveryRetryMs: number;
@@ -37,6 +40,7 @@ export class JobRuntime {
     this.executor = options.executor;
     this.onFinal = options.onFinal;
     this.onStart = options.onStart;
+    this.onProgress = options.onProgress;
     this.maxConcurrent = options.maxConcurrent;
     this.maxAttempts = options.maxAttempts;
     this.deliveryRetryMs = options.deliveryRetryMs ?? 5_000;
@@ -136,6 +140,13 @@ export class JobRuntime {
         resume,
         onSpawn: (pid) => this.store.setPid(job.id, pid),
         onHeartbeat: () => this.store.heartbeat(job.id),
+        onProgress: (event, aggregator) => {
+          if (!this.onProgress) return;
+          const current = this.store.getJob(job.id) ?? job;
+          void Promise.resolve(this.onProgress(current, event, aggregator)).catch((error) =>
+            console.warn("progress hook failed", error),
+          );
+        },
       });
     } catch (error) {
       execution = {

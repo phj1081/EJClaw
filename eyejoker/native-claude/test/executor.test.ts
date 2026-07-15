@@ -45,6 +45,8 @@ function request(resume = false): ExecutionRequest {
       deliveryAttempts: 0,
       deliveryAfter: null,
       deliveryError: null,
+      progressMessageId: null,
+      progressText: null,
       createdAt: new Date().toISOString(),
       startedAt: new Date().toISOString(),
       heartbeatAt: null,
@@ -114,5 +116,30 @@ describe("Claude process executor", () => {
     expect(execution.ok).toBe(true);
     expect(execution.result).toBe("RECOVERED");
     expect(Bun.file(count).text()).resolves.toBe("2\n");
+  });
+
+  test("emits onProgress events while reading stream-json lines", async () => {
+    const binary = fakeClaude(
+      [
+        `printf '%s\\n' '{"type":"system","subtype":"status","status":"requesting","session_id":"11111111-1111-4111-8111-111111111111"}'`,
+        `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"Bash","input":{}}},"session_id":"11111111-1111-4111-8111-111111111111"}'`,
+        `printf '%s\\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok","is_error":false}]},"session_id":"11111111-1111-4111-8111-111111111111"}'`,
+        `printf '%s\\n' '{"type":"result","subtype":"success","result":"STREAM_OK","session_id":"11111111-1111-4111-8111-111111111111","is_error":false}'`,
+      ].join("\n"),
+    );
+    const kinds: string[] = [];
+    const executor = new ClaudeProcessExecutor({ binary, timeoutSeconds: 10 });
+    const execution = await executor.run({
+      ...request(),
+      onProgress: (event) => {
+        kinds.push(event.kind);
+      },
+    });
+    expect(execution.ok).toBe(true);
+    expect(execution.result).toBe("STREAM_OK");
+    expect(kinds).toContain("status");
+    expect(kinds).toContain("tool_start");
+    expect(kinds).toContain("tool_result");
+    expect(kinds).toContain("result");
   });
 });

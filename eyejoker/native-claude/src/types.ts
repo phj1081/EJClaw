@@ -73,6 +73,8 @@ export interface JobRecord {
   deliveryAttempts: number;
   deliveryAfter: string | null;
   deliveryError: string | null;
+  progressMessageId: string | null;
+  progressText: string | null;
   createdAt: string;
   startedAt: string | null;
   heartbeatAt: string | null;
@@ -95,9 +97,18 @@ export interface ExecutionRequest {
   resume: boolean;
   onSpawn?: (pid: number) => void;
   onHeartbeat?: () => void;
+  onProgress?: (
+    event: import("./stream-progress").ProgressEvent,
+    aggregator: import("./stream-progress").StreamProgressAggregator,
+  ) => void;
 }
 
 export type ClaudeExecutor = (request: ExecutionRequest) => Promise<ClaudeExecution>;
 
 export type FinalHook = (job: JobRecord, execution: ClaudeExecution) => Promise<void>;
 export type StartHook = (job: JobRecord) => Promise<void>;
+export type ProgressHook = (
+  job: JobRecord,
+  event: import("./stream-progress").ProgressEvent,
+  aggregator: import("./stream-progress").StreamProgressAggregator,
+) => Promise<void> | void;
