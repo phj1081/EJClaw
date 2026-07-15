@@ -41,6 +41,27 @@ function sdkUserMessage(content: string): SDKUserMessage {
   };
 }
 
+export function splitInitialSdkMessages(prompt: string): string[] {
+  if (!prompt.startsWith("/goal ")) return [prompt];
+  const newline = prompt.indexOf("\n");
+  if (newline < 0) return [prompt];
+  const command = prompt.slice(0, newline).trimEnd();
+  const task = prompt.slice(newline + 1).trimStart();
+  return task ? [command, task] : [command];
+}
+
+function normalizeLocalCommandFailure(execution: ClaudeExecution): ClaudeExecution {
+  if (!execution.ok || !/^Goal condition is limited to \d+ characters \(got \d+\)$/m.test(execution.result.trim())) {
+    return execution;
+  }
+  return {
+    ...execution,
+    ok: false,
+    stderr: execution.stderr || execution.result,
+    exitCode: execution.exitCode === 0 ? 1 : execution.exitCode,
+  };
+}
+
 function normalizePermissionMode(mode: PermissionMode): SdkPermissionMode {
   return mode === "manual" ? "default" : mode;
 }
@@ -170,9 +191,11 @@ export class ClaudeSdkExecutor {
       const actor: SdkActor = { query, mailbox, abortController };
       if (request.onCheckpoint) actor.onCheckpoint = request.onCheckpoint;
       this.actors.set(request.job.id, actor);
-      const initialMessage = sdkUserMessage(request.prompt);
-      if (initialMessage.uuid) request.onCheckpoint?.(initialMessage.uuid);
-      mailbox.push(initialMessage);
+      for (const content of splitInitialSdkMessages(request.prompt)) {
+        const initialMessage = sdkUserMessage(content);
+        if (initialMessage.uuid) request.onCheckpoint?.(initialMessage.uuid);
+        mailbox.push(initialMessage);
+      }
 
       for await (const message of query) {
         request.onHeartbeat?.();
@@ -196,7 +219,9 @@ export class ClaudeSdkExecutor {
         : thrown === undefined
           ? ""
           : String(thrown);
-    return finalizeStreamJsonResult(aggregator, "", errorText, timedOut ? 124 : thrown !== undefined ? 1 : 0);
+    return normalizeLocalCommandFailure(
+      finalizeStreamJsonResult(aggregator, "", errorText, timedOut ? 124 : thrown !== undefined ? 1 : 0),
+    );
   }
 
   steer(jobId: string, content: string): boolean {
