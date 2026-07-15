@@ -238,8 +238,11 @@ export function decidePullRequestWake(
   if (previous && pullRequestSnapshotSignal(previous) === pullRequestSnapshotSignal(current)) {
     return { kind: "observe", reason: "unchanged" };
   }
-  if (current.checks === "failed") return { kind: "wake", reason: "checks-failed" };
-  if (current.trustedChangeRequestSignal) {
+  const trustedChangeRequestChanged = Boolean(
+    current.trustedChangeRequestSignal &&
+    current.trustedChangeRequestSignal !== previous?.trustedChangeRequestSignal,
+  );
+  if (trustedChangeRequestChanged) {
     return { kind: "wake", reason: "review-changes-requested" };
   }
   if (
@@ -249,6 +252,7 @@ export function decidePullRequestWake(
   ) {
     return { kind: "wake", reason: "new-review-activity" };
   }
+  if (current.checks === "failed") return { kind: "wake", reason: "checks-failed" };
   if (current.checks === "success" && previous?.checks !== "success") {
     if (
       current.mergeStateStatus === "CLEAN" &&

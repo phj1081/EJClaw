@@ -36,6 +36,41 @@ export function candidateCohortKey(candidate: CohortVersions): string {
   return `sdk-${candidate.sdkVersion}__claude-${candidate.claudeCodeVersion}`;
 }
 
+function cohortVersions(value: unknown): CohortVersions | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Partial<CohortVersions>;
+  const sdkVersion = String(candidate.sdkVersion ?? "").trim();
+  const claudeCodeVersion = String(candidate.claudeCodeVersion ?? "").trim();
+  return sdkVersion && claudeCodeVersion ? { sdkVersion, claudeCodeVersion } : null;
+}
+
+export function normalizeCohortState(value: unknown): CohortState | null {
+  if (!value || typeof value !== "object") return null;
+  const state = value as Partial<CohortState>;
+  const current = cohortVersions(state.current);
+  const candidate = cohortVersions(state.candidate);
+  if (!current || !candidate || (state.status !== "passed" && state.status !== "failed")) return null;
+  const summary = String(state.summary ?? "").trim();
+  const checkedAt = String(state.checkedAt ?? "").trim();
+  const logPath = String(state.logPath ?? "").trim();
+  if (!summary || !checkedAt || !logPath) return null;
+  const candidateKey = candidateCohortKey(candidate);
+  if (state.candidateKey && state.candidateKey !== candidateKey) return null;
+  const hasLockEvidence = Boolean(state.lockPath && state.lockSha256);
+  return {
+    current,
+    candidate,
+    status: state.status,
+    summary,
+    checkedAt,
+    logPath,
+    lockPath: hasLockEvidence ? String(state.lockPath) : null,
+    lockSha256: hasLockEvidence ? String(state.lockSha256) : null,
+    candidateKey,
+    noticeMessageId: `cohort-verifier:${candidateKey}:${state.status}`,
+  };
+}
+
 export function cohortNeedsVerification(
   previous: Pick<CohortState, "candidateKey" | "status"> | null,
   candidate: CohortVersions,

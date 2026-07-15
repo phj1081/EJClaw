@@ -32,9 +32,14 @@ export function readInstalledSdkCohort(packagePath = defaultSdkPackagePath): Ins
 export function assertClaudeExecutableCompatibility(
   executable: string,
   sdkPackagePath = defaultSdkPackagePath,
+  timeoutMs = 15_000,
 ): void {
   const expected = readInstalledSdkCohort(sdkPackagePath);
-  const result = spawnSync(executable, ["--version"], { encoding: "utf8", timeout: 15_000 });
+  const result = spawnSync(executable, ["--version"], {
+    encoding: "utf8",
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
+  });
   if (result.error) throw new Error(`Claude executable 확인 실패: ${result.error.message}`);
   if (result.status !== 0) {
     throw new Error(`Claude executable --version 실패 (${result.status}): ${(result.stderr || result.stdout).trim()}`);

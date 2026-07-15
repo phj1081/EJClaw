@@ -19,6 +19,7 @@ import {
   candidateCohortKey,
   cohortNeedsVerification,
   cohortNoticeAction,
+  normalizeCohortState,
   renderCohortNotice,
   validateCandidateCohort,
   type CohortResult,
@@ -29,6 +30,7 @@ import {
   buildBubblewrapInvocation,
   buildBubblewrapProcessInvocation,
   buildCohortSandboxEnvironment,
+  buildUnixBrokeredBubblewrapInvocation,
 } from "./cohort-sandbox";
 import { loadConfig } from "./config";
 import { StateStore } from "./store";
@@ -144,50 +146,100 @@ function sleep(milliseconds: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
-function startCredentialProxy(): { baseUrl: string; credential: string; stop: () => void } {
-  const upstreamBase = process.env.ANTHROPIC_BASE_URL;
-  const upstreamKey = process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN;
-  if (!upstreamBase || !upstreamKey) throw new Error("credentialed cohort smoke requires ANTHROPIC_BASE_URL and API key");
-  const clientToken = randomBytes(32).toString("base64url");
-  const portFile = join(stateRoot, `proxy-${crypto.randomUUID()}.json`);
+interface UnixBroker {
+  baseUrl: string;
+  hostSocketPath: string;
+  sandboxSocketPath: string;
+  loopbackPort: number;
+  stop: () => void;
+}
+
+function startUnixBroker(
+  workRoot: string,
+  name: string,
+  loopbackPort: number,
+  script: string,
+  environment: (hostSocketPath: string, baseUrl: string) => Record<string, string>,
+): UnixBroker {
+  const hostSocketPath = join(workRoot, `.${name}.sock`);
+  const sandboxSocketPath = `/work/.${name}.sock`;
+  const baseUrl = `http://127.0.0.1:${loopbackPort}`;
+  const readyFile = join(stateRoot, `${name}-${crypto.randomUUID()}.json`);
+  rmSync(hostSocketPath, { force: true });
   const proxy: ChildProcess = spawn(
     bunExecutable,
-    [join(sourceRoot, "src", "cohort-proxy.ts"), portFile],
+    [join(sourceRoot, "src", script), readyFile],
     {
       cwd: sourceRoot,
-      env: hostEnvironment({
-        ANTHROPIC_BASE_URL: upstreamBase,
-        ANTHROPIC_API_KEY: upstreamKey,
-        COHORT_PROXY_CLIENT_TOKEN: clientToken,
-        COHORT_PROXY_MAX_REQUESTS: "32",
-      }),
+      env: hostEnvironment(environment(hostSocketPath, baseUrl)),
       stdio: ["ignore", "ignore", "inherit"],
     },
   );
   try {
     for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (existsSync(portFile)) {
-        const { port } = readJson<{ port?: unknown }>(portFile);
-        const parsedPort = Number(port);
-        if (!Number.isInteger(parsedPort) || parsedPort < 1) throw new Error("cohort proxy returned an invalid port");
+      if (existsSync(readyFile)) {
+        const { socket } = readJson<{ socket?: unknown }>(readyFile);
+        if (socket !== hostSocketPath || !existsSync(hostSocketPath)) {
+          throw new Error(`${name} returned an invalid Unix socket`);
+        }
         return {
-          baseUrl: `http://127.0.0.1:${parsedPort}`,
-          credential: clientToken,
+          baseUrl,
+          hostSocketPath,
+          sandboxSocketPath,
+          loopbackPort,
           stop: () => {
             proxy.kill("SIGTERM");
-            rmSync(portFile, { force: true });
+            rmSync(readyFile, { force: true });
+            rmSync(hostSocketPath, { force: true });
           },
         };
       }
-      if (proxy.exitCode !== null) throw new Error(`cohort proxy exited before ready (${proxy.exitCode})`);
+      if (proxy.exitCode !== null) throw new Error(`${name} exited before ready (${proxy.exitCode})`);
       sleep(50);
     }
-    throw new Error("cohort proxy readiness timeout");
+    throw new Error(`${name} readiness timeout`);
   } catch (error) {
     proxy.kill("SIGKILL");
-    rmSync(portFile, { force: true });
+    rmSync(readyFile, { force: true });
+    rmSync(hostSocketPath, { force: true });
     throw error;
   }
+}
+
+function startCredentialProxy(workRoot: string): UnixBroker & { credential: string } {
+  const upstreamBase = process.env.ANTHROPIC_BASE_URL;
+  const upstreamKey = process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN;
+  if (!upstreamBase || !upstreamKey) throw new Error("credentialed cohort smoke requires ANTHROPIC_BASE_URL and API key");
+  const credential = randomBytes(32).toString("base64url");
+  const broker = startUnixBroker(
+    workRoot,
+    "cohort-api",
+    18_765,
+    "cohort-proxy.ts",
+    (hostSocketPath) => ({
+      ANTHROPIC_BASE_URL: upstreamBase,
+      ANTHROPIC_API_KEY: upstreamKey,
+      COHORT_PROXY_CLIENT_TOKEN: credential,
+      COHORT_PROXY_MAX_REQUESTS: "32",
+      COHORT_PROXY_UNIX_SOCKET: hostSocketPath,
+    }),
+  );
+  return { ...broker, credential };
+}
+
+function startRegistryProxy(workRoot: string): UnixBroker {
+  return startUnixBroker(
+    workRoot,
+    "cohort-registry",
+    18_764,
+    "cohort-registry-proxy.ts",
+    (hostSocketPath, baseUrl) => ({
+      COHORT_REGISTRY_UNIX_SOCKET: hostSocketPath,
+      COHORT_REGISTRY_CLIENT_ORIGIN: baseUrl,
+      COHORT_REGISTRY_UPSTREAM: "https://registry.npmjs.org/",
+      COHORT_REGISTRY_MAX_REQUESTS: "2048",
+    }),
+  );
 }
 
 interface CandidateRunResult {
@@ -220,10 +272,20 @@ function runCandidate(
     args: string[],
     environment: Record<string, string>,
     timeout: number,
-    shareNetwork: boolean,
+    broker?: UnixBroker,
   ): string => {
-    const invocation = buildBubblewrapInvocation(workRoot, bunExecutable, args, environment, shareNetwork);
-    logs.push(`$ sandbox bun ${args.join(" ")}`);
+    const invocation = broker
+      ? buildUnixBrokeredBubblewrapInvocation(
+          workRoot,
+          bunExecutable,
+          "/sandbox-bin/bun",
+          args,
+          environment,
+          broker.sandboxSocketPath,
+          broker.loopbackPort,
+        )
+      : buildBubblewrapInvocation(workRoot, bunExecutable, args, environment, false);
+    logs.push(`$ sandbox bun ${args.join(" ")} network=${broker ? "unix-broker" : "none"}`);
     const result = spawnSync(invocation.command, invocation.args, {
       cwd: sourceRoot,
       env: hostEnvironment(),
@@ -242,17 +304,27 @@ function runCandidate(
     args: string[],
     environment: Record<string, string>,
     timeout: number,
-    shareNetwork: boolean,
+    broker?: UnixBroker,
   ): string => {
-    const invocation = buildBubblewrapProcessInvocation(
-      workRoot,
-      bunExecutable,
-      command,
-      args,
-      environment,
-      shareNetwork,
-    );
-    logs.push(`$ sandbox ${basename(command)} ${args.join(" ")}`);
+    const invocation = broker
+      ? buildUnixBrokeredBubblewrapInvocation(
+          workRoot,
+          bunExecutable,
+          command,
+          args,
+          environment,
+          broker.sandboxSocketPath,
+          broker.loopbackPort,
+        )
+      : buildBubblewrapProcessInvocation(
+          workRoot,
+          bunExecutable,
+          command,
+          args,
+          environment,
+          false,
+        );
+    logs.push(`$ sandbox ${basename(command)} ${args.join(" ")} network=${broker ? "unix-broker" : "none"}`);
     const result = spawnSync(invocation.command, invocation.args, {
       cwd: sourceRoot,
       env: hostEnvironment(),
@@ -283,13 +355,23 @@ function runCandidate(
     writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
     rmSync(join(workRoot, "bun.lock"), { force: true });
 
-    const staticEnvironment = buildCohortSandboxEnvironment(
-      candidate,
-      "http://127.0.0.1:9",
-      "cohort-install-non-secret",
-      cohortModel,
-    );
-    runBun(["install"], staticEnvironment, 10 * 60_000, true);
+    const staticEnvironment = {
+      ...buildCohortSandboxEnvironment(
+        candidate,
+        "http://127.0.0.1:9",
+        "cohort-install-non-secret",
+        cohortModel,
+      ),
+      BUN_CONFIG_REGISTRY: "http://127.0.0.1:18764/",
+      NPM_CONFIG_REGISTRY: "http://127.0.0.1:18764/",
+      npm_config_registry: "http://127.0.0.1:18764/",
+    };
+    const registry = startRegistryProxy(workRoot);
+    try {
+      runBun(["install"], staticEnvironment, 10 * 60_000, registry);
+    } finally {
+      registry.stop();
+    }
     lockEvidence = preserveCandidateLock(workRoot, candidateKey);
     if (!lockEvidence) throw new Error("candidate install produced no bun.lock evidence");
     copyProjectForCheck(workRoot);
@@ -299,13 +381,13 @@ function runCandidate(
     );
     const candidateExecutable = "/work/node_modules/@anthropic-ai/claude-code/bin/claude.exe";
     const installedCliVersion = versionFromOutput(
-      runProcess(candidateExecutable, ["--version"], staticEnvironment, 60_000, false),
+      runProcess(candidateExecutable, ["--version"], staticEnvironment, 60_000),
     );
     validateCandidateCohort(installedSdk, installedCliVersion);
-    runBun(["run", "check"], staticEnvironment, 20 * 60_000, false);
+    runBun(["run", "check"], staticEnvironment, 20 * 60_000);
     pruneForLiveSmoke(workRoot);
 
-    const proxy = startCredentialProxy();
+    const proxy = startCredentialProxy(workRoot);
     try {
       const liveEnvironment = buildCohortSandboxEnvironment(
         candidate,
@@ -317,7 +399,7 @@ function runCandidate(
         ["run", "src/cohort-smoke.ts", candidateExecutable],
         liveEnvironment,
         10 * 60_000,
-        true,
+        proxy,
       );
     } finally {
       proxy.stop();
@@ -327,7 +409,7 @@ function runCandidate(
     chmodSync(logPath, 0o600);
     return {
       status: "passed",
-      summary: `bwrap 격리 install/check와 제한된 live smoke 통과; lock sha256=${lockEvidence.sha256}`,
+      summary: `lo-only bwrap와 Unix broker 제한 install/live smoke 통과; lock sha256=${lockEvidence.sha256}`,
       lockPath: lockEvidence.path,
       lockSha256: lockEvidence.sha256,
     };
@@ -362,6 +444,7 @@ function ensureNotice(state: CohortState): ReturnType<typeof cohortNoticeAction>
   try {
     const existing = store.getByMessageId(state.noticeMessageId);
     const action = cohortNoticeAction(existing?.status ?? null);
+    const prompt = noticePrompt(state);
     if (action === "enqueue") {
       store.enqueue({
         routeId: route.id,
@@ -371,13 +454,18 @@ function ensureNotice(state: CohortState): ReturnType<typeof cohortNoticeAction>
         threadId: null,
         messageId: state.noticeMessageId,
         authorId: config.ownerId,
-        prompt: noticePrompt(state),
+        prompt,
         attachmentPaths: [],
       });
     } else if (action === "requeue") {
-      const replay = store.requeueTerminalByMessageId(state.noticeMessageId, "durable cohort notice replay");
+      const replay = store.requeueTerminalByMessageId(
+        state.noticeMessageId,
+        "durable cohort notice replay",
+        prompt,
+      );
       if (!replay) throw new Error(`failed to requeue cohort notice: ${state.noticeMessageId}`);
-      store.updateQueuedPrompt(state.noticeMessageId, noticePrompt(state));
+    } else if (existing?.status === "queued") {
+      store.updateQueuedPrompt(state.noticeMessageId, prompt);
     }
     return action;
   } finally {
@@ -385,21 +473,28 @@ function ensureNotice(state: CohortState): ReturnType<typeof cohortNoticeAction>
   }
 }
 
-function isCohortState(value: unknown): value is CohortState {
-  if (!value || typeof value !== "object") return false;
-  const state = value as Partial<CohortState>;
-  return Boolean(
-    state.candidateKey && state.noticeMessageId && state.current && state.candidate &&
-    state.status && state.summary && state.checkedAt && state.logPath,
-  );
+function withPreservedLockEvidence(state: CohortState): CohortState {
+  if (state.lockPath && state.lockSha256) return state;
+  const preservedLock = join(stateRoot, `${state.candidateKey}.bun.lock`);
+  if (!existsSync(preservedLock)) return state;
+  return {
+    ...state,
+    lockPath: preservedLock,
+    lockSha256: createHash("sha256").update(readFileSync(preservedLock)).digest("hex"),
+  };
 }
 
 const current = currentCohort();
 const candidate = latestCandidate();
 const previousValue = existsSync(statePath) ? readJson<unknown>(statePath) : null;
-const previous = previousValue as Pick<CohortState, "candidateKey" | "status"> | null;
+const normalizedPrevious = normalizeCohortState(previousValue);
+const previousState = normalizedPrevious ? withPreservedLockEvidence(normalizedPrevious) : null;
+if (previousState && JSON.stringify(previousValue) !== JSON.stringify(previousState)) {
+  writePrivateJson(statePath, previousState);
+}
+const previous = previousState as Pick<CohortState, "candidateKey" | "status"> | null;
 let reconciledNotice: ReturnType<typeof cohortNoticeAction> | null = null;
-if (isCohortState(previousValue)) reconciledNotice = ensureNotice(previousValue);
+if (previousState) reconciledNotice = ensureNotice(previousState);
 
 if (candidateCohortKey(current) === candidateCohortKey(candidate)) {
   console.log(JSON.stringify({ status: "up-to-date", current, reconciledNotice }));

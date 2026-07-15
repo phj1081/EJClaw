@@ -168,6 +168,45 @@ describe("durable GitHub PR watcher policy", () => {
     });
   });
 
+  test("wakes for trusted feedback even while the same failed check remains deduped", () => {
+    const failed = (comments: Array<Record<string, unknown>>) => snapshotFromGitHub({
+      author: { login: "pr-author" },
+      state: "OPEN",
+      headRefOid: "same-failed-head",
+      reviewDecision: "REVIEW_REQUIRED",
+      mergeStateStatus: "UNSTABLE",
+      comments,
+      reviews: [],
+      statusCheckRollup: [{
+        name: "ci",
+        workflowName: "test",
+        status: "COMPLETED",
+        conclusion: "FAILURE",
+        completedAt: "2026-07-16T00:01:00Z",
+        detailsUrl: "https://github.com/o/r/actions/runs/1",
+      }],
+    });
+    const first = failed([]);
+    const outsider = failed([{
+      id: "outsider",
+      author: { login: "outsider" },
+      authorAssociation: "NONE",
+      createdAt: "2026-07-16T00:02:00Z",
+    }]);
+    const trusted = failed([
+      { id: "outsider", author: { login: "outsider" }, authorAssociation: "NONE", createdAt: "2026-07-16T00:02:00Z" },
+      { id: "trusted", author: { login: "maintainer" }, authorAssociation: "MEMBER", createdAt: "2026-07-16T00:03:00Z" },
+    ]);
+
+    expect(decidePullRequestWake(null, first)).toEqual({ kind: "wake", reason: "checks-failed" });
+    expect(decidePullRequestWake(first, outsider)).toEqual({ kind: "wake", reason: "checks-failed" });
+    expect(pullRequestActionKey(outsider, "checks-failed")).toBe(pullRequestActionKey(first, "checks-failed"));
+    expect(decidePullRequestWake(outsider, trusted)).toEqual({ kind: "wake", reason: "new-review-activity" });
+    expect(pullRequestActionKey(trusted, "new-review-activity")).not.toBe(
+      pullRequestActionKey(first, "checks-failed"),
+    );
+  });
+
   test("dedupes actionable failures independently from comments but distinguishes check reruns", () => {
     const failedRun = (completedAt: string, detailsUrl: string, comments: Array<{ id: string; createdAt: string }> = []) =>
       snapshotFromGitHub({

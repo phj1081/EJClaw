@@ -3,6 +3,7 @@ import {
   candidateCohortKey,
   cohortNeedsVerification,
   cohortNoticeAction,
+  normalizeCohortState,
   renderCohortNotice,
   validateCandidateCohort,
 } from "../src/cohort-policy";
@@ -23,6 +24,25 @@ describe("Claude Code/Agent SDK cohort policy", () => {
     expect(cohortNeedsVerification({ candidateKey: candidateCohortKey(candidate), status: "passed" }, candidate, false)).toBe(false);
     expect(cohortNeedsVerification({ candidateKey: candidateCohortKey(candidate), status: "failed" }, candidate, false)).toBe(true);
     expect(cohortNeedsVerification({ candidateKey: candidateCohortKey(candidate), status: "failed" }, candidate, true)).toBe(true);
+  });
+
+  test("normalizes legacy passed state into deterministic durable notice intent", () => {
+    const legacy = {
+      current: { sdkVersion: "0.3.201", claudeCodeVersion: "2.1.201" },
+      candidate: { sdkVersion: "0.3.210", claudeCodeVersion: "2.1.210" },
+      status: "passed" as const,
+      summary: "legacy passed",
+      checkedAt: "2026-07-16T00:00:00Z",
+      logPath: "/tmp/legacy.log",
+    };
+    expect(normalizeCohortState(legacy)).toEqual({
+      ...legacy,
+      candidateKey: "sdk-0.3.210__claude-2.1.210",
+      noticeMessageId: "cohort-verifier:sdk-0.3.210__claude-2.1.210:passed",
+      lockPath: null,
+      lockSha256: null,
+    });
+    expect(normalizeCohortState({ ...legacy, status: "unknown" })).toBeNull();
   });
 
   test("reconciles durable notice intent with terminal queue states", () => {

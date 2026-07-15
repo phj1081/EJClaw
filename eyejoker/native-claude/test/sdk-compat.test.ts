@@ -35,6 +35,20 @@ describe("Claude Agent SDK compatibility pin", () => {
     }
   });
 
+  test("kills a version probe that ignores SIGTERM", () => {
+    const root = mkdtempSync(join(tmpdir(), "sdk-timeout-"));
+    try {
+      const executable = join(root, "claude-hang");
+      writeFileSync(executable, "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n");
+      chmodSync(executable, 0o755);
+      const started = performance.now();
+      expect(() => assertClaudeExecutableCompatibility(executable, undefined, 100)).toThrow("확인 실패");
+      expect(performance.now() - started).toBeLessThan(2_000);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("derives the CLI requirement from the installed SDK artifact, not environment overrides", () => {
     const root = mkdtempSync(join(tmpdir(), "sdk-artifact-"));
     const previousSdk = process.env.CLAUDE_NATIVE_EXPECTED_SDK_VERSION;
