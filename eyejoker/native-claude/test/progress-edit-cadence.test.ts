@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { PROGRESS_EDIT_INTERVAL_MS, progressEditDelayMs } from "../src/progress-edit-cadence";
+import {
+  PROGRESS_EDIT_INTERVAL_MS,
+  ProgressEditGate,
+  progressEditDelayMs,
+} from "../src/progress-edit-cadence";
 
 describe("progress edit cadence", () => {
   test("coalesces every progress update to at most one edit per two seconds", () => {
@@ -7,5 +11,18 @@ describe("progress edit cadence", () => {
     expect(progressEditDelayMs(10_000, 10_000)).toBe(2_000);
     expect(progressEditDelayMs(10_000, 11_999)).toBe(1);
     expect(progressEditDelayMs(10_000, 12_000)).toBe(0);
+  });
+
+  test("does not allow a second edit while Discord is still editing the first one", () => {
+    const gate = new ProgressEditGate();
+    gate.markDirty();
+    expect(gate.scheduleDelay(10_000)).toBe(0);
+    expect(gate.beginEdit()).toBe(true);
+
+    gate.markDirty();
+    expect(gate.scheduleDelay(10_500)).toBeNull();
+
+    gate.finishEdit(10_700, true);
+    expect(gate.scheduleDelay(10_700)).toBe(2_000);
   });
 });

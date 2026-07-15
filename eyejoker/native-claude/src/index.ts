@@ -21,7 +21,7 @@ import { loadConfig, resolveRoute } from "./config";
 import { ClaudeProcessExecutor } from "./executor";
 import { formatFinalMessage, splitDiscordMessage } from "./protocol";
 import { ProgressLifecycle } from "./progress-lifecycle";
-import { progressEditDelayMs } from "./progress-edit-cadence";
+import { ProgressEditGate } from "./progress-edit-cadence";
 import { JobRuntime } from "./runtime";
 import {
   StreamProgressAggregator,
@@ -114,7 +114,7 @@ async function validateRouteChannels(): Promise<void> {
 
 class ProgressBoard {
   private message: Message | null = null;
-  private lastEditAt = 0;
+  private readonly editGate = new ProgressEditGate();
   private pending: ReturnType<typeof setTimeout> | null = null;
   private visibleTimer: ReturnType<typeof setTimeout> | null = null;
   private closed = false;
@@ -170,13 +170,14 @@ class ProgressBoard {
     this.message = message;
     this.lifecycle.recordPosted(message.id);
     this.lastCard = content;
-    this.lastEditAt = Date.now();
+    this.editGate.recordEdit();
     store.setProgress(this.job.id, message.id, content);
   }
 
   handleEvent(_event: ProgressEvent, aggregator: StreamProgressAggregator): void {
     if (this.closed) return;
     this.latest = aggregator;
+    this.editGate.markDirty();
     void this.queueCardEdit();
   }
 
@@ -200,8 +201,8 @@ class ProgressBoard {
 
   private queueCardEdit(): void {
     if (this.closed || !this.message) return;
-    const dueIn = progressEditDelayMs(this.lastEditAt);
-    if (this.pending) return;
+    const dueIn = this.editGate.scheduleDelay();
+    if (dueIn === null) return;
     this.pending = setTimeout(() => {
       this.pending = null;
       void this.flushCard();
@@ -212,15 +213,26 @@ class ProgressBoard {
   private async flushCard(mode: "running" | "final" | "cancelled" = "running", ok = true): Promise<void> {
     if (!this.message) return;
     if (this.closed && mode === "running") return;
+    if (!this.editGate.beginEdit()) return;
+
     const content = this.render(mode, ok);
-    if (content === this.lastCard && mode === "running") return;
+    if (content === this.lastCard && mode === "running") {
+      this.editGate.finishEdit(Date.now(), false);
+      void this.queueCardEdit();
+      return;
+    }
+
+    let committed = false;
     try {
       this.message = await this.message.edit({ content, allowedMentions: { parse: [] } });
       this.lastCard = content;
-      this.lastEditAt = Date.now();
       store.setProgress(this.job.id, this.message.id, content);
+      committed = true;
     } catch (error) {
       console.warn("progress card edit failed", this.job.id, String(error));
+    } finally {
+      this.editGate.finishEdit(Date.now(), committed);
+      void this.queueCardEdit();
     }
   }
 
