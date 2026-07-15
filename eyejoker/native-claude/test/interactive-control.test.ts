@@ -20,9 +20,10 @@ describe("interactive Discord control protocol", () => {
     expect(
       parseInteractiveQuestion(`DISCORD_QUESTION:${JSON.stringify({ question: "q", choices: ["1", "2", "3", "4", "5"] })}`),
     ).toBeNull();
+    expect(parseInteractiveQuestion('DISCORD_QUESTION:{"question":"open","choices":[]}')).toBeNull();
   });
 
-  test("waits for a conversation text answer and clears the pending question", async () => {
+  test("exposes only Discord button settlement for pending questions", async () => {
     const broker = new QuestionBroker();
     const waiting = broker.wait(
       "job-1",
@@ -32,7 +33,9 @@ describe("interactive Discord control protocol", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(broker.hasPending("route:thread")).toBe(true);
-    expect(broker.answerConversation("route:thread", "B")).toBe(true);
+    expect((broker as unknown as { answerConversation?: unknown }).answerConversation).toBeUndefined();
+    expect((broker as unknown as { answerReaction?: unknown }).answerReaction).toBeUndefined();
+    expect(broker.answerMessage("discord-question-1", "B")).toBe(true);
     expect(await waiting).toBe("B");
     expect(broker.hasPending("route:thread")).toBe(false);
   });
@@ -48,7 +51,7 @@ describe("interactive Discord control protocol", () => {
       (answer) => order.push(`persist:${answer}`),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(broker.answerConversation("conversation-persist", "예")).toBe(true);
+    expect(broker.answerMessage("discord-persist", "예")).toBe(true);
     const answer = await waiting;
     order.push(`resolved:${answer}`);
     expect(order).toEqual(["persist:예", "resolved:예"]);
@@ -80,41 +83,19 @@ describe("interactive Discord control protocol", () => {
     expect(first).not.toBe(questionNonce("22222222-2222-4222-8222-222222222222"));
   });
 
-  test("persists an early text answer even before the Discord post resolves", async () => {
-    const broker = new QuestionBroker();
-    let releasePost!: () => void;
-    const posted = new Promise<void>((resolve) => (releasePost = resolve));
-    const persisted: string[] = [];
-    const waiting = broker.wait(
-      "job-early",
-      "route:early",
-      { question: "계속?", choices: ["예", "아니오"] },
-      async () => {
-        await posted;
-        return "discord-late-question";
-      },
-      (answer) => persisted.push(answer),
-    );
-
-    expect(broker.answerConversation("route:early", "예")).toBe(true);
-    expect(await waiting).toBe("예");
-    expect(persisted).toEqual(["예"]);
-    releasePost();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(broker.messageIdForConversation("route:early")).toBeNull();
+  test("renders a button-only question card without numbered reaction instructions", () => {
+    const rendered = renderInteractiveQuestion({ question: "선택?", choices: ["첫째", "둘째"] });
+    expect(rendered).toContain("아래 버튼으로 선택해줘.");
+    expect(rendered).not.toContain("1️⃣");
+    expect(rendered).not.toContain("reaction");
+    expect(rendered).not.toContain("메시지로 답");
   });
 
-  test("maps a reaction on the question message to its choice", async () => {
-    const broker = new QuestionBroker();
-    const waiting = broker.wait(
-      "job-2",
-      "route:thread-2",
-      { question: "선택?", choices: ["첫째", "둘째"] },
-      async () => "discord-question-2",
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(broker.answerReaction("discord-question-2", "2️⃣")).toBe(true);
-    expect(await waiting).toBe("둘째");
-    expect(renderInteractiveQuestion({ question: "선택?", choices: ["첫째", "둘째"] })).toContain("1️⃣ 첫째");
+  test("does not register text or reaction fallback handlers in the Discord bridge", async () => {
+    const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
+    expect(source).not.toContain("questionBroker.answerConversation");
+    expect(source).not.toContain('client.on("messageReactionAdd"');
+    expect(source).not.toContain("question reaction failed");
+    expect(source).toContain('message.react("👀")');
   });
 });

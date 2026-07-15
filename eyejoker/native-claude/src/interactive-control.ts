@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import type { InteractiveQuestion } from "./types";
 
 const PREFIX = "DISCORD_QUESTION:";
-export const QUESTION_REACTIONS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"] as const;
 const QUESTION_BUTTON_PREFIX = "claude-question";
 
 export function questionNonce(interactionId: string): string {
@@ -41,10 +40,7 @@ interface PendingQuestion {
 }
 
 export function renderInteractiveQuestion(question: InteractiveQuestion): string {
-  const lines = ["❓ **Claude 질문**", question.question];
-  question.choices.forEach((choice, index) => lines.push(`${QUESTION_REACTIONS[index]} ${choice}`));
-  lines.push("", question.choices.length > 0 ? "메시지로 답하거나 번호 reaction을 눌러줘." : "메시지로 답해줘.");
-  return lines.join("\n");
+  return ["❓ **Claude 질문**", question.question, "", "아래 버튼으로 선택해줘."].join("\n");
 }
 
 export class QuestionBroker {
@@ -94,11 +90,6 @@ export class QuestionBroker {
     return this.byConversation.has(conversationKey);
   }
 
-  answerConversation(conversationKey: string, answer: string): boolean {
-    const pending = this.byConversation.get(conversationKey);
-    return pending ? this.resolvePending(pending, answer) : false;
-  }
-
   messageIdForConversation(conversationKey: string): string | null {
     return this.byConversation.get(conversationKey)?.messageId ?? null;
   }
@@ -108,13 +99,6 @@ export class QuestionBroker {
     return pending ? this.resolvePending(pending, answer) : false;
   }
 
-  answerReaction(messageId: string, emoji: string): boolean {
-    const pending = this.byMessage.get(messageId);
-    if (!pending) return false;
-    const index = QUESTION_REACTIONS.indexOf(emoji as (typeof QUESTION_REACTIONS)[number]);
-    const choice = index >= 0 ? pending.question.choices[index] : undefined;
-    return choice ? this.resolvePending(pending, choice) : false;
-  }
 
   cancelJob(jobId: string, reason = "question cancelled"): boolean {
     const pending = this.byJob.get(jobId);
@@ -167,7 +151,7 @@ export function parseInteractiveQuestion(result: string): InteractiveQuestion | 
     if (typeof parsed.question !== "string") return null;
     const question = parsed.question.trim();
     if (!question || question.length > 1_000) return null;
-    if (!Array.isArray(parsed.choices) || parsed.choices.length > 4) return null;
+    if (!Array.isArray(parsed.choices) || parsed.choices.length < 1 || parsed.choices.length > 4) return null;
     const choices = parsed.choices.map((choice) => (typeof choice === "string" ? choice.trim() : ""));
     if (choices.some((choice) => !choice || choice.length > 200)) return null;
     return { question, choices };

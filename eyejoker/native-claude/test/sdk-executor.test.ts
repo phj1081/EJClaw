@@ -448,4 +448,88 @@ describe("ClaudeSdkExecutor", () => {
       updatedInput: { answers: { "배포할까?": "배포", "환경은?": "production" } },
     });
   });
+
+  test("fails closed instead of flattening native multi-select questions", async () => {
+    let permissionResult: Awaited<ReturnType<CanUseTool>> | undefined;
+    let questionCalls = 0;
+    const factory: SdkQueryFactory = ({ prompt, options }) =>
+      (async function* () {
+        await prompt[Symbol.asyncIterator]().next();
+        permissionResult = await options?.canUseTool?.(
+          "AskUserQuestion",
+          {
+            questions: [
+              {
+                question: "여러 개 고를까?",
+                options: [{ label: "A" }, { label: "B" }],
+                multiSelect: true,
+              },
+            ],
+          },
+          { signal: new AbortController().signal, suggestions: [], toolUseID: "ask-multi", requestId: "request-multi" },
+        );
+        yield result();
+      })() as Query;
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const execution = await executor.run(
+      request({
+        onQuestion: async () => {
+          questionCalls += 1;
+          return "A";
+        },
+      }),
+    );
+
+    expect(execution.ok).toBe(true);
+    expect(questionCalls).toBe(0);
+    expect(permissionResult).toMatchObject({
+      behavior: "deny",
+      message: expect.stringContaining("다중 선택"),
+    });
+  });
+
+  test("fails closed when native questions cannot render one to four buttons", async () => {
+    const permissionResults: Array<Exclude<Awaited<ReturnType<CanUseTool>>, null | undefined>> = [];
+    let questionCalls = 0;
+    const factory: SdkQueryFactory = ({ prompt, options }) =>
+      (async function* () {
+        await prompt[Symbol.asyncIterator]().next();
+        for (const optionCount of [0, 5]) {
+          const response = await options?.canUseTool?.(
+            "AskUserQuestion",
+            {
+              questions: [
+                {
+                  question: `선택지 ${optionCount}개`,
+                  options: Array.from({ length: optionCount }, (_, index) => ({ label: `선택 ${index + 1}` })),
+                  multiSelect: false,
+                },
+              ],
+            },
+            {
+              signal: new AbortController().signal,
+              suggestions: [],
+              toolUseID: `ask-options-${optionCount}`,
+              requestId: `request-options-${optionCount}`,
+            },
+          );
+          if (response) permissionResults.push(response);
+        }
+        yield result();
+      })() as Query;
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const execution = await executor.run(
+      request({
+        onQuestion: async () => {
+          questionCalls += 1;
+          return "선택 1";
+        },
+      }),
+    );
+
+    expect(execution.ok).toBe(true);
+    expect(questionCalls).toBe(0);
+    expect(permissionResults).toHaveLength(2);
+    expect(permissionResults.every((response) => response.behavior === "deny")).toBe(true);
+  });
 });
