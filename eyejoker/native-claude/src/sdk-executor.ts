@@ -185,7 +185,7 @@ export class ClaudeSdkExecutor {
     const mailbox = new AsyncMailbox<SDKUserMessage>();
     const abortController = new AbortController();
     const aggregator = new StreamProgressAggregator();
-    const canUseTool = this.permissionHandler(request);
+    const canUseTool = this.permissionHandler(request, aggregator);
     let query: Query | undefined;
     let timedOut = false;
     let thrown: unknown;
@@ -413,7 +413,7 @@ export class ClaudeSdkExecutor {
     }
   }
 
-  private permissionHandler(request: ExecutionRequest): CanUseTool {
+  private permissionHandler(request: ExecutionRequest, aggregator: StreamProgressAggregator): CanUseTool {
     return async (toolName, input, context) => {
       if (toolName === "AskUserQuestion") {
         const hasMultiSelect =
@@ -432,6 +432,7 @@ export class ClaudeSdkExecutor {
           ...question,
           requestId:
             parsedQuestions.length > 1 ? `${context.toolUseID}:${index}` : context.toolUseID,
+          toolUseId: context.toolUseID,
           kind: "question" as const,
         }));
         if (questions.length === 0 || !request.onQuestion) {
@@ -440,6 +441,7 @@ export class ClaudeSdkExecutor {
         const answers: Record<string, string> = {};
         for (const question of questions) {
           answers[question.question] = await request.onQuestion(question);
+          aggregator.resetAfterInteraction(question.toolUseId);
         }
         return { behavior: "allow", updatedInput: { ...input, answers } };
       }
@@ -451,9 +453,11 @@ export class ClaudeSdkExecutor {
         question: `${toolName} 실행을 허용할까?\n${boundedInput(input)}`,
         choices: ["이번만 허용", "거부"],
         requestId: context.toolUseID,
+        toolUseId: context.toolUseID,
         kind: "permission",
       };
       const answer = await request.onQuestion(prompt);
+      aggregator.resetAfterInteraction(prompt.toolUseId);
       return answer === "이번만 허용"
         ? { behavior: "allow", updatedInput: input }
         : { behavior: "deny", message: "사용자가 거부함" };

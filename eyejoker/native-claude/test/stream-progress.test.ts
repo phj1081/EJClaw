@@ -123,6 +123,87 @@ describe("stream progress aggregator", () => {
     expect(card).not.toContain("Fable 구현 검증 (fable-5)");
   });
 
+  test("resets prior activity at a Discord interaction boundary and suppresses its late tool result", () => {
+    const agg = new StreamProgressAggregator();
+    agg.ingestObject({ type: "system", subtype: "init", session_id: "interaction-session", model: "claude-fable-5" });
+    agg.ingestObject({
+      type: "assistant",
+      message: {
+        model: "claude-fable-5",
+        content: [
+          { type: "tool_use", id: "old-1", name: "Read", input: { file_path: "/tmp/old" } },
+          { type: "tool_use", id: "old-2", name: "Bash", input: { command: "echo OLD" } },
+          {
+            type: "tool_use",
+            id: "ask-1",
+            name: "AskUserQuestion",
+            input: { questions: [{ question: "계속?", options: [{ label: "예" }, { label: "아니오" }] }] },
+          },
+        ],
+      },
+      session_id: "interaction-session",
+    });
+    agg.ingestObject({
+      type: "user",
+      message: {
+        content: [
+          { type: "tool_result", tool_use_id: "old-1", content: "OLD_READ", is_error: false },
+          { type: "tool_result", tool_use_id: "old-2", content: "OLD_BASH", is_error: false },
+        ],
+      },
+      session_id: "interaction-session",
+    });
+
+    const reset = (agg as unknown as { resetAfterInteraction?: (toolUseId?: string) => void }).resetAfterInteraction;
+    expect(reset).toBeFunction();
+    reset!.call(agg, "ask-1");
+    expect(agg.snapshot()).toMatchObject({
+      tools: [],
+      timeline: [],
+      liveText: "",
+      subagents: [],
+      mainModel: "claude-fable-5",
+      sessionId: "interaction-session",
+    });
+
+    agg.ingestObject({
+      type: "assistant",
+      message: {
+        model: "claude-fable-5",
+        content: [{ type: "tool_use", id: "ask-1", name: "AskUserQuestion", input: {} }],
+      },
+      session_id: "interaction-session",
+    });
+    agg.ingestObject({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "ask-1", content: "예", is_error: false }] },
+      session_id: "interaction-session",
+    });
+    expect(agg.snapshot().tools).toEqual([]);
+
+    agg.ingestObject({
+      type: "assistant",
+      message: {
+        model: "claude-fable-5",
+        content: [{ type: "tool_use", id: "new-bash", name: "Bash", input: { command: "echo NEW" } }],
+      },
+      session_id: "interaction-session",
+    });
+    const card = renderProgressCard({
+      routeId: "native-pilot",
+      attempt: 1,
+      maxAttempts: 2,
+      elapsedSeconds: 90,
+      promptPreview: "interaction reset",
+      snapshot: agg.snapshot(),
+      mode: "running",
+    });
+    expect(card).toContain("echo NEW");
+    expect(card).not.toContain("echo OLD");
+    expect(card).not.toContain("AskUserQuestion");
+    expect(card).not.toContain("OLD_READ");
+  });
+
   test("preserves long terminal results so trailing artifact markers survive", () => {
     const result = `${"x".repeat(20_000)}\nMEDIA:/tmp/result.png`;
     const parsed = parseStreamJsonResult(

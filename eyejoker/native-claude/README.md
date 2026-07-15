@@ -6,7 +6,7 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 
 - Discord 채널/스레드 → 프로젝트와 Claude session ID/branch/checkpoint 매핑
 - 일반 요청은 `/goal` 완료 계약으로 실행하고, raw Claude slash는 wrapper 없이 전달
-- native `AskUserQuestion`·permission callback을 owner-only Discord 버튼으로만 왕복
+- native `AskUserQuestion`·permission callback을 owner-only Discord 버튼으로만 왕복하고, 선택 완료 시 대기 문구를 제거하며 이전 progress 활동을 비운 뒤 후속 작업만 표시
 - 실행 중 follow-up steering과 동적 model/permission 제어
 - reply/history context와 source/follow-up message edit/delete 전파
 - **30초 뒤 임시 Discord progress 카드 한 장**만 2초 cadence로 갱신하고, final delivery 성공 후 삭제

@@ -43,6 +43,10 @@ export function renderInteractiveQuestion(question: InteractiveQuestion): string
   return ["❓ **Claude 질문**", question.question, "", "아래 버튼으로 선택해줘."].join("\n");
 }
 
+export function renderAnsweredInteractiveQuestion(question: InteractiveQuestion, answer: string): string {
+  return ["❓ **Claude 질문**", question.question, "", "✅ **선택 완료**", answer].join("\n");
+}
+
 export class QuestionBroker {
   private readonly byConversation = new Map<string, PendingQuestion>();
   private readonly byMessage = new Map<string, PendingQuestion>();

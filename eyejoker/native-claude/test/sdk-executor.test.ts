@@ -449,6 +449,65 @@ describe("ClaudeSdkExecutor", () => {
     });
   });
 
+  test("resets native question progress even when its SDK events arrive after the answer callback", async () => {
+    const toolSnapshots: string[][] = [];
+    const factory: SdkQueryFactory = ({ prompt, options }) =>
+      (async function* () {
+        await prompt[Symbol.asyncIterator]().next();
+        await options?.canUseTool?.(
+          "AskUserQuestion",
+          {
+            questions: [
+              {
+                question: "계속할까?",
+                options: [{ label: "계속" }, { label: "중단" }],
+                multiSelect: false,
+              },
+            ],
+          },
+          { signal: new AbortController().signal, suggestions: [], toolUseID: "ask-late", requestId: "request-late" },
+        );
+        yield {
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            model: "claude-fable-5",
+            content: [{ type: "tool_use", id: "ask-late", name: "AskUserQuestion", input: {} }],
+          },
+          session_id: "late-session",
+        };
+        yield {
+          type: "user",
+          parent_tool_use_id: null,
+          message: { content: [{ type: "tool_result", tool_use_id: "ask-late", content: "계속", is_error: false }] },
+          session_id: "late-session",
+        };
+        yield {
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            model: "claude-fable-5",
+            content: [{ type: "tool_use", id: "bash-after", name: "Bash", input: { command: "echo AFTER" } }],
+          },
+          session_id: "late-session",
+        };
+        yield result("late-session");
+      })() as Query;
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const execution = await executor.run(
+      request({
+        onQuestion: async () => "계속",
+        onProgress: (_event, aggregator) => {
+          toolSnapshots.push(aggregator.snapshot().tools.map((tool) => tool.name));
+        },
+      }),
+    );
+
+    expect(execution.ok).toBe(true);
+    expect(toolSnapshots.some((tools) => tools.includes("Bash"))).toBe(true);
+    expect(toolSnapshots.every((tools) => !tools.includes("AskUserQuestion"))).toBe(true);
+  });
+
   test("fails closed instead of flattening native multi-select questions", async () => {
     let permissionResult: Awaited<ReturnType<CanUseTool>> | undefined;
     let questionCalls = 0;

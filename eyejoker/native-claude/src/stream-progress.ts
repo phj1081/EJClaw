@@ -131,6 +131,7 @@ export class StreamProgressAggregator {
   private openToolId: string | null = null;
   private toolJsonBuffer = new Map<string, string>();
   private lastTimelineKey = "";
+  private suppressedInteractionToolIds = new Set<string>();
 
   private markDirty(): void {
     this.dirty = true;
@@ -140,6 +141,31 @@ export class StreamProgressAggregator {
     const value = this.dirty;
     this.dirty = false;
     return value;
+  }
+
+  resetAfterInteraction(toolUseId?: string): void {
+    for (const tool of this.tools.values()) {
+      if (tool.result == null) this.suppressedInteractionToolIds.add(tool.id);
+    }
+    for (const track of this.subagents.values()) {
+      if (!track.done) this.suppressedInteractionToolIds.add(track.id);
+    }
+    if (toolUseId) this.suppressedInteractionToolIds.add(toolUseId);
+    this.phase = "thinking";
+    this.statusLabel = "working";
+    this.currentActivity = "질문 답변 반영 중";
+    this.liveText = "";
+    this.timeline = [];
+    this.tools.clear();
+    this.subagents.clear();
+    this.finalResult = "";
+    this.terminalSeen = false;
+    this.isError = false;
+    this.modelTransition = "";
+    this.openToolId = null;
+    this.toolJsonBuffer.clear();
+    this.lastTimelineKey = "";
+    this.markDirty();
   }
 
   private observeModel(agentId: string, model: string): void {
@@ -300,6 +326,7 @@ export class StreamProgressAggregator {
         if (blockType === "tool_use") {
           const id = String(block.id ?? `tool-${this.tools.size + 1}`);
           const name = String(block.name ?? "tool");
+          if (this.suppressedInteractionToolIds.has(id)) return null;
           this.openToolId = id;
           this.toolJsonBuffer.set(id, "");
           this.tools.set(id, { id, name, input: "", agentId });
@@ -396,6 +423,7 @@ export class StreamProgressAggregator {
         if (block.type === "tool_use") {
           const id = String(block.id ?? `tool-${this.tools.size + 1}`);
           const name = String(block.name ?? "tool");
+          if (this.suppressedInteractionToolIds.has(id)) continue;
           if (name === "Agent" || name === "Task") {
             const track = this.ensureSubagent(id, block.input);
             this.tools.delete(id);
@@ -455,6 +483,11 @@ export class StreamProgressAggregator {
         const block = raw as Record<string, unknown>;
         if (block.type === "tool_result") {
           const id = String(block.tool_use_id ?? this.openToolId ?? `tool-${this.tools.size}`);
+          if (this.suppressedInteractionToolIds.delete(id)) {
+            this.toolJsonBuffer.delete(id);
+            if (this.openToolId === id) this.openToolId = null;
+            continue;
+          }
           const isError = block.is_error === true;
           const subagent = this.subagents.get(id);
           if (subagent) {

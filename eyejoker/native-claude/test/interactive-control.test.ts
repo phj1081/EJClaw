@@ -5,6 +5,7 @@ import {
   questionButtonId,
   questionNonce,
   QuestionBroker,
+  renderAnsweredInteractiveQuestion,
   renderInteractiveQuestion,
 } from "../src/interactive-control";
 
@@ -91,11 +92,21 @@ describe("interactive Discord control protocol", () => {
     expect(rendered).not.toContain("메시지로 답");
   });
 
+  test("renders a distinct answered state without the pending button instruction", () => {
+    const rendered = renderAnsweredInteractiveQuestion(
+      { question: "언제 재시작할까?", choices: ["60초 후", "나중에"] },
+      "60초 후",
+    );
+    expect(rendered).toBe("❓ **Claude 질문**\n언제 재시작할까?\n\n✅ **선택 완료**\n60초 후");
+    expect(rendered).not.toContain("아래 버튼으로 선택해줘.");
+  });
+
   test("does not register text or reaction fallback handlers in the Discord bridge", async () => {
     const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
     expect(source).not.toContain("questionBroker.answerConversation");
     expect(source).not.toContain('client.on("messageReactionAdd"');
     expect(source).not.toContain("question reaction failed");
     expect(source).toContain('message.react("👀")');
+    expect(source).toContain("progressBoards.get(job.id)?.resetAfterInteraction(question.toolUseId)");
   });
 });

@@ -135,6 +135,7 @@ export interface InteractiveQuestion {
   question: string;
   choices: string[];
   requestId?: string;
+  toolUseId?: string;
   kind?: "question" | "permission";
   continuation?: {
     sessionId: string;
