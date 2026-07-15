@@ -141,37 +141,50 @@ export class JobRuntime {
       permissionMode: settings.permissionMode ?? route.permissionMode,
       effort: settings.effort ?? route.effort,
     };
-    const resume = job.startedBefore || this.store.sessionHasHistory(job.conversationKey);
-    const forkSession = resume && this.store.consumeFork(job.conversationKey);
-    const recoverySteering = job.recoveryReason ? this.store.listPendingSteeringInputs(job.id) : [];
+    const hasContinuation = Boolean(job.continuationPrompt && job.continuationSessionId);
+    const resume = hasContinuation || job.startedBefore || this.store.sessionHasHistory(job.conversationKey);
+    const forkSession = hasContinuation ? false : resume && this.store.consumeFork(job.conversationKey);
+    const recoverySteering = job.recoveryReason ? this.store.listRecoverySteeringInputs(job.id) : [];
     const taskPrompt =
       recoverySteering.length === 0
         ? job.prompt
         : [
             job.prompt,
             "",
-            "[재시작 경계에서 수락 여부가 불명확한 Discord 추가 지시]",
-            "아래 지시를 아직 반영하지 않았다면 반영하고, 이미 반영했다면 중복 실행하지 마.",
-            ...recoverySteering.flatMap((input) => [
-              `message=${input.messageId} sdk_message=${input.sdkMessageId}`,
-              input.content,
-            ]),
+            "[재시작 경계의 Discord 추가 지시 최종 상태]",
+            "아래 각 message의 현재 상태를 기준으로 처리해. 이미 반영한 동일 지시는 중복 실행하지 마.",
+            ...recoverySteering.flatMap((input) =>
+              input.state === "deleted"
+                ? [
+                    `message=${input.messageId} state=deleted original_sdk_message=${input.originalSdkMessageId}`,
+                    "이 Discord 추가 지시와 관련된 원본 및 모든 수정본은 삭제됐으므로 더 이상 따르지 마.",
+                  ]
+                : [
+                    `message=${input.messageId} state=${input.state} original_sdk_message=${input.originalSdkMessageId}`,
+                    input.content,
+                  ],
+            ),
           ].join("\n");
-    const prompt = job.rawPrompt
-      ? job.prompt
-      : buildGoalPrompt(effectiveRoute, taskPrompt, job.attachmentPaths, job.recoveryReason);
+    const prompt = hasContinuation
+      ? job.continuationPrompt!
+      : job.rawPrompt
+        ? job.prompt
+        : buildGoalPrompt(effectiveRoute, taskPrompt, job.attachmentPaths, job.recoveryReason);
     let execution: ClaudeExecution;
     try {
       execution = await this.executor({
         job,
         route: effectiveRoute,
         prompt,
-        sessionId: job.sessionId,
+        sessionId: job.continuationSessionId ?? job.sessionId,
         resume,
         forkSession,
+        continuationTurn: job.continuationTurn,
         onSpawn: (pid) => this.store.setPid(job.id, pid),
         onHeartbeat: () => this.store.heartbeat(job.id),
         onCheckpoint: (userMessageId) => this.store.recordSessionCheckpoint(job.id, userMessageId),
+        onContinuation: (continuationPrompt, continuationSessionId, continuationTurn) =>
+          this.store.stageContinuation(job.id, continuationPrompt, continuationSessionId, continuationTurn),
         ...(this.onQuestion
           ? {
               onQuestion: (question: Parameters<QuestionHook>[1]) =>

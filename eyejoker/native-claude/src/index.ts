@@ -12,6 +12,7 @@ import {
   type MessageCreateOptions,
 } from "discord.js";
 import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import {
   appendDiscordContext,
@@ -36,6 +37,7 @@ import { parseControlCommand } from "./control-commands";
 import {
   parseQuestionButtonId,
   questionButtonId,
+  questionNonce,
   QuestionBroker,
   QUESTION_REACTIONS,
   renderInteractiveQuestion,
@@ -144,6 +146,11 @@ function questionComponents(interactionId: string, choices: string[]): ActionRow
       ),
     ),
   ];
+}
+
+function steeringFallbackMessageId(kind: "add" | "edit" | "delete", messageId: string, content = ""): string {
+  const digest = createHash("sha256").update(`${kind}:${messageId}:${content}`).digest("hex").slice(0, 24);
+  return `steering-${kind}:${messageId}:${digest}`;
 }
 
 async function clearQuestionComponents(channelId: string, messageId: string): Promise<void> {
@@ -456,12 +463,27 @@ const runtime = new JobRuntime({
     const answer = await questionBroker.wait(job.id, job.conversationKey, question, async () => {
       if (interaction.discordMessageId) return interaction.discordMessageId;
       const channel = await textChannel(job.channelId);
-      const message = await channel.send({
-        content: renderInteractiveQuestion(question),
-        components: questionComponents(interaction.id, question.choices),
-        allowedMentions: { parse: [] },
-      });
+      const nonce = questionNonce(interaction.id);
+      const recent = await channel.messages.fetch({ limit: 100, cache: false });
+      let message = [...recent.values()].find(
+        (candidate) => candidate.author.id === client.user?.id && String(candidate.nonce ?? "") === nonce,
+      );
+      if (!message) {
+        message = await channel.send({
+          content: renderInteractiveQuestion(question),
+          components: questionComponents(interaction.id, question.choices),
+          allowedMentions: { parse: [] },
+          nonce,
+          enforceNonce: true,
+        });
+      }
       store.setInteractionMessage(interaction.id, message.id);
+      if (store.getInteraction(interaction.id)?.status === "answered") {
+        await message.edit({ components: [], allowedMentions: { parse: [] } }).catch((error) =>
+          console.warn(`answered question cleanup failed id=${job.id}`, String(error)),
+        );
+        return message.id;
+      }
       for (const emoji of QUESTION_REACTIONS.slice(0, question.choices.length)) {
         await message.react(emoji).catch((error) => console.warn(`question reaction failed id=${job.id}`, String(error)));
       }
@@ -824,6 +846,7 @@ client.on("messageCreate", (message) => {
       return;
     }
     const steeringContent = prompt;
+    let pendingSteeringFallback = false;
     if (!rawPrompt) {
       prompt = appendDiscordContext(prompt, await discordContextFor(message, !store.sessionHasHistory(key)));
     }
@@ -853,8 +876,8 @@ client.on("messageCreate", (message) => {
         console.log(`job steered id=${running.id} message=${message.id} sdk_message=${sdkMessageId} len=${prompt.length}`);
         return;
       }
-      store.discardPendingSteeringInput(message.id);
-      console.log(`steering actor closed; enqueueing new job id=${running.id} message=${message.id}`);
+      pendingSteeringFallback = true;
+      console.log(`steering actor closed; durable fallback enqueue id=${running.id} message=${message.id}`);
     }
 
     const job = store.enqueue({
@@ -868,7 +891,7 @@ client.on("messageCreate", (message) => {
       prompt,
       rawPrompt,
       attachmentPaths: attachments.paths,
-    });
+    }, pendingSteeringFallback ? message.id : undefined);
     await message.react("👀").catch(() => undefined);
     console.log(
       `job queued id=${job.id} route=${route.id} channel=${message.channelId} author=${message.author.id} len=${prompt.length}`,
@@ -908,17 +931,38 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
         basePrompt,
         await discordContextFor(message, !store.sessionHasHistory(job.conversationKey)),
       );
+      const desired = store.prepareSteeringEdit(message.id, basePrompt);
+      if (!desired) return;
+      const steeringEditPrompt = `[Discord 추가 지시 수정 · message=${message.id}]\n${contextualPrompt}`;
       const mutation =
         job.status === "running"
           ? executor.editSteering(
               job.id,
-              steering.sdkMessageId,
-              `[Discord 추가 지시 수정 · message=${message.id}]\n${contextualPrompt}`,
+              desired.sdkMessageId,
+              steeringEditPrompt,
+              message.id,
+              desired.originalSdkMessageId,
             )
           : null;
-      store.updateSteeringInput(message.id, basePrompt, mutation?.sdkMessageId ?? steering.sdkMessageId);
+      if (mutation) {
+        store.recordSteeringMutation(message.id, mutation.sdkMessageId);
+      } else if (job.status === "running") {
+        const fallback = store.enqueue({
+          routeId: job.routeId,
+          lockKey: job.lockKey,
+          conversationKey: job.conversationKey,
+          channelId: job.channelId,
+          threadId: job.threadId,
+          messageId: steeringFallbackMessageId("edit", message.id, basePrompt),
+          authorId: job.authorId,
+          prompt: steeringEditPrompt,
+          attachmentPaths: attachments.paths,
+        });
+        console.log(`steering edit actor closed; fallback job=${fallback.id} source_job=${job.id} message=${message.id}`);
+        void runtime.runUntilIdle().catch((error) => console.error("steering edit fallback pump failed", error));
+      }
       console.log(
-        `steering message updated job=${job.id} message=${message.id} mode=${mutation?.mode ?? "record-only"} status=${job.status}`,
+        `steering message updated job=${job.id} message=${message.id} mode=${mutation?.mode ?? "record-or-fallback"} status=${job.status}`,
       );
       return;
     }
@@ -970,11 +1014,42 @@ async function retractDeletedSteering(messageId: string, reason = "follow-up mes
   if (!steering || steering.state === "deleted") return;
   const job = store.getJob(steering.jobId);
   if (!job) return;
+  const desired = store.prepareSteeringDelete(messageId);
+  if (!desired) return;
+  const retractionPrompt = [
+    `[Discord 추가 지시 삭제 · message=${messageId}]`,
+    `원본 SDK user message: ${desired.originalSdkMessageId}`,
+    `직전 SDK user message: ${desired.sdkMessageId}`,
+    "이 Discord logical message의 원본과 모든 수정본을 더 이상 따르지 마. 이미 발생한 외부 side effect는 임의로 되돌리지 말고 최종 결과에 알려.",
+  ].join("\n");
   const mutation =
-    job.status === "running" ? executor.deleteSteering(job.id, steering.sdkMessageId) : null;
-  store.deleteSteeringInput(messageId, mutation?.sdkMessageId ?? steering.sdkMessageId);
+    job.status === "running"
+      ? executor.deleteSteering(
+          job.id,
+          desired.sdkMessageId,
+          messageId,
+          desired.originalSdkMessageId,
+        )
+      : null;
+  if (mutation) {
+    store.recordSteeringMutation(messageId, mutation.sdkMessageId);
+  } else if (job.status === "running") {
+    const fallback = store.enqueue({
+      routeId: job.routeId,
+      lockKey: job.lockKey,
+      conversationKey: job.conversationKey,
+      channelId: job.channelId,
+      threadId: job.threadId,
+      messageId: steeringFallbackMessageId("delete", messageId),
+      authorId: job.authorId,
+      prompt: retractionPrompt,
+      attachmentPaths: [],
+    });
+    console.log(`steering delete actor closed; fallback job=${fallback.id} source_job=${job.id} message=${messageId}`);
+    void runtime.runUntilIdle().catch((error) => console.error("steering delete fallback pump failed", error));
+  }
   console.log(
-    `steering message deleted job=${job.id} message=${messageId} mode=${mutation?.mode ?? "record-only"} status=${job.status} reason=${reason}`,
+    `steering message deleted job=${job.id} message=${messageId} mode=${mutation?.mode ?? "record-or-fallback"} status=${job.status} reason=${reason}`,
   );
 }
 
@@ -1061,6 +1136,7 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.update({
       content: `${renderInteractiveQuestion(record.question)}\n\n✅ 선택: **${choice}**`,
       components: [],
+      allowedMentions: { parse: [] },
     });
     console.log(`Discord question answered by button interaction=${record.id} user=${interaction.user.id} choice=${parsed.choiceIndex}`);
   } catch (error) {

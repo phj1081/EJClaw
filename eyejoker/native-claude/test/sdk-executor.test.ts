@@ -27,6 +27,9 @@ function request(overrides: Partial<ExecutionRequest> = {}): ExecutionRequest {
       attempts: 1,
       startedBefore: false,
       recoveryReason: null,
+      continuationPrompt: null,
+      continuationSessionId: null,
+      continuationTurn: 0,
       pid: null,
       result: null,
       error: null,
@@ -265,13 +268,15 @@ describe("ClaudeSdkExecutor", () => {
     const edit = executor.editSteering("job-sdk", steeringId, "수정된 추가 지시");
     expect(edit?.mode).toBe("corrected");
     await correctionConsumedPromise;
-    const deletion = executor.deleteSteering("job-sdk", edit!.sdkMessageId);
+    const deletion = executor.deleteSteering("job-sdk", edit!.sdkMessageId, "discord-followup-1", steeringId);
     expect(deletion?.mode).toBe("retracted");
 
     expect((await executionPromise).ok).toBe(true);
     expect(String(observed[1]?.message.content)).toBe("첫 추가 지시");
     expect(String(observed[2]?.message.content)).toContain("수정된 추가 지시");
-    expect(String(observed[3]?.message.content)).toContain("지시는 사용자가 삭제했어");
+    expect(String(observed[3]?.message.content)).toContain("원본 및 모든 수정 지시를 사용자가 삭제했어");
+    expect(String(observed[3]?.message.content)).toContain("discord-followup-1");
+    expect(String(observed[3]?.message.content)).toContain(steeringId);
     expect(checkpoints).toContain(steeringId);
     expect(checkpoints).toContain(edit!.sdkMessageId);
     expect(checkpoints).toContain(deletion!.sdkMessageId);
@@ -325,7 +330,7 @@ describe("ClaudeSdkExecutor", () => {
       }),
     );
     expect(execution.ok).toBe(true);
-    expect(observedQuestion).toMatchObject({ kind: "permission", requestId: "permission-1" });
+    expect(observedQuestion).toMatchObject({ kind: "permission", requestId: "bash-1" });
     expect(permissionResult).toMatchObject({ behavior: "allow", updatedInput: { command: "pwd" } });
   });
 
@@ -368,6 +373,27 @@ describe("ClaudeSdkExecutor", () => {
     expect(optionsSeen).toHaveLength(2);
     expect(optionsSeen[1]?.resume).toBe("marker-session");
     expect(prompts[1]).toContain("배포");
+  });
+
+  test("allows a normal final result after exactly four marker answers", async () => {
+    let calls = 0;
+    const factory: SdkQueryFactory = ({ prompt }) =>
+      (async function* () {
+        await prompt[Symbol.asyncIterator]().next();
+        calls += 1;
+        yield {
+          ...result("four-marker-session"),
+          result:
+            calls <= 4
+              ? `DISCORD_QUESTION:{"question":"선택 ${calls}?","choices":["계속","중단"]}`
+              : "FOUR_MARKERS_FINAL_OK",
+        };
+      })() as Query;
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const execution = await executor.run(request({ onQuestion: async () => "계속" }));
+
+    expect(calls).toBe(5);
+    expect(execution).toMatchObject({ ok: true, result: "FOUR_MARKERS_FINAL_OK" });
   });
 
   test("answers native AskUserQuestion through the Discord question hook", async () => {
@@ -416,7 +442,7 @@ describe("ClaudeSdkExecutor", () => {
     );
 
     expect(execution.ok).toBe(true);
-    expect(observedRequestIds).toEqual(["request-1:0", "request-1:1"]);
+    expect(observedRequestIds).toEqual(["ask-1:0", "ask-1:1"]);
     expect(permissionResult).toMatchObject({
       behavior: "allow",
       updatedInput: { answers: { "배포할까?": "배포", "환경은?": "production" } },

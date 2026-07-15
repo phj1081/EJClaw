@@ -216,12 +216,44 @@ describe("durable job store", () => {
     expect(reopened.getSteeringInput("followup-message")?.sdkMessageId).toBe(initialSdkId);
     const editedSdkId = crypto.randomUUID();
     const edited = reopened.updateSteeringInput("followup-message", "수정 지시", editedSdkId);
-    expect(edited).toMatchObject({ content: "수정 지시", sdkMessageId: editedSdkId, state: "edited" });
+    expect(edited).toMatchObject({
+      content: "수정 지시",
+      sdkMessageId: editedSdkId,
+      originalSdkMessageId: initialSdkId,
+      state: "edited",
+    });
     const deletedSdkId = crypto.randomUUID();
     const deleted = reopened.deleteSteeringInput("followup-message", deletedSdkId);
     expect(deleted).toMatchObject({ sdkMessageId: deletedSdkId, state: "deleted" });
     expect(deleted?.deletedAt).not.toBeNull();
     expect(reopened.listJobSteeringInputs(job.id)).toHaveLength(1);
+  });
+
+  test("recovers the latest desired state for accepted, edited and deleted steering", () => {
+    const db = store();
+    const job = db.enqueue(input("steering", "steering:recovery", "source-recovery"));
+    for (const [messageId, content] of [
+      ["accepted-followup", "수락된 지시"],
+      ["edited-followup", "편집 전 지시"],
+      ["deleted-followup", "삭제 전 지시"],
+    ] as const) {
+      db.beginSteeringInput({
+        messageId,
+        jobId: job.id,
+        conversationKey: job.conversationKey,
+        content,
+        sdkMessageId: crypto.randomUUID(),
+      });
+      db.acceptSteeringInput(messageId);
+    }
+    db.updateSteeringInput("edited-followup", "편집된 현재 지시", crypto.randomUUID());
+    db.deleteSteeringInput("deleted-followup", crypto.randomUUID());
+
+    expect(db.listRecoverySteeringInputs(job.id).map((record) => [record.messageId, record.state, record.content])).toEqual([
+      ["accepted-followup", "accepted", "수락된 지시"],
+      ["edited-followup", "edited", "편집된 현재 지시"],
+      ["deleted-followup", "deleted", "삭제 전 지시"],
+    ]);
   });
 
   test("discards only a pending steering row when actor acceptance fails", () => {
@@ -236,6 +268,26 @@ describe("durable job store", () => {
     });
     expect(db.discardPendingSteeringInput("followup-pending")).toBe(true);
     expect(db.getSteeringInput("followup-pending")).toBeNull();
+  });
+
+  test("atomically replaces a pending steering row with a fallback job", () => {
+    const db = store();
+    const running = db.enqueue(input("steering", "steering:fallback", "source-fallback"));
+    db.beginSteeringInput({
+      messageId: "fallback-followup",
+      jobId: running.id,
+      conversationKey: running.conversationKey,
+      content: "fallback content",
+      sdkMessageId: crypto.randomUUID(),
+    });
+
+    const fallback = db.enqueue(
+      input("steering", running.conversationKey, "fallback-followup"),
+      "fallback-followup",
+    );
+
+    expect(fallback.messageId).toBe("fallback-followup");
+    expect(db.getSteeringInput("fallback-followup")).toBeNull();
   });
 
   test("deduplicates and reuses durable interaction answers after restart", () => {
@@ -267,6 +319,25 @@ describe("durable job store", () => {
     expect(replay.answer).toBe("배포");
     expect(replay.discordMessageId).toBe("discord-question-1");
     expect(reopened.getInteraction(interaction.id)).toEqual(replay);
+  });
+
+  test("atomically persists a marker answer and its exact continuation prompt", () => {
+    const db = store();
+    const job = db.enqueue(input("interactive", "interactive:marker", "marker-message"));
+    const interaction = db.beginInteraction(job.id, job.conversationKey, {
+      question: "배포할까?",
+      choices: ["배포", "중단"],
+      requestId: "marker:job:0",
+      kind: "question",
+      continuation: { sessionId: "marker-session", turn: 1 },
+    });
+
+    expect(db.tryAnswerInteraction(interaction.id, "배포")?.answer).toBe("배포");
+    expect(db.getJob(job.id)).toMatchObject({
+      continuationPrompt: expect.stringContaining("사용자 선택: 배포"),
+      continuationSessionId: "marker-session",
+      continuationTurn: 1,
+    });
   });
 
   test("forgets a temporary progress message after Discord cleanup", () => {
