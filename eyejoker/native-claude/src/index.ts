@@ -23,6 +23,7 @@ import { buildFinalChunkOptions, formatFinalMessage, splitDiscordMessage } from 
 import { progressElapsedSeconds, workElapsedSeconds } from "./duration";
 import { ProgressLifecycle, progressCleanupFallbackText } from "./progress-lifecycle";
 import { cleanupExpiredAttachmentDirs } from "./attachment-cleanup";
+import { extractOutboundArtifacts } from "./outbound-artifacts";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
@@ -328,19 +329,21 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
   const routeModel = routes.get(job.routeId)?.model;
   const mainModel = execution.mainModel ?? job.mainModel ?? routeModel;
   const subagentModels = execution.subagentModels ?? job.subagentModels;
+  const artifacts = extractOutboundArtifacts(execution.result);
   const renderedChunks = splitDiscordMessage(
-    formatFinalMessage(config.ownerId, execution.ok, execution.result, elapsed, mainModel, subagentModels),
+    formatFinalMessage(config.ownerId, execution.ok, artifacts.body, elapsed, mainModel, subagentModels),
   );
-  const plan = store.prepareDelivery(job.id, renderedChunks);
+  const plan = store.prepareDelivery(job.id, renderedChunks, artifacts.files);
   const channel = await textChannel(job.channelId);
   await deliverPendingChunks(
     job.id,
     plan,
-    async (index, chunk, nonce) => {
+    async (index, chunk, nonce, files) => {
       const options: MessageCreateOptions = {
         ...buildFinalChunkOptions(config.ownerId, chunk, index),
         nonce,
         enforceNonce: true,
+        files: files.map((file) => ({ attachment: file.path, name: file.name })),
       };
       const sent = await channel.send(options);
       return sent.id;

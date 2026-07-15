@@ -31,6 +31,7 @@ describe("Claude protocol", () => {
     expect(prompt).toContain("진짜 외부 블로커");
     expect(prompt).toContain("apps/soriq만 담당");
     expect(prompt).not.toContain("중간 진행은 Discord progress 카드");
+    expect(prompt).toContain("MEDIA:/absolute/path");
     expect(prompt.split("\n")[0]!.length).toBeLessThan(200);
   });
 

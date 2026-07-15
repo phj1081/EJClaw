@@ -123,6 +123,17 @@ describe("stream progress aggregator", () => {
     expect(card).not.toContain("Fable 구현 검증 (fable-5)");
   });
 
+  test("preserves long terminal results so trailing artifact markers survive", () => {
+    const result = `${"x".repeat(20_000)}\nMEDIA:/tmp/result.png`;
+    const parsed = parseStreamJsonResult(
+      JSON.stringify({ type: "result", subtype: "success", is_error: false, result, session_id: "long" }),
+      "",
+      0,
+    );
+    expect(parsed.result).toBe(result);
+    expect(parsed.result.endsWith("MEDIA:/tmp/result.png")).toBe(true);
+  });
+
   test("parseStreamJsonResult extracts the terminal result event", () => {
     const parsed = parseStreamJsonResult(sample, "", 0);
     expect(parsed.ok).toBe(true);

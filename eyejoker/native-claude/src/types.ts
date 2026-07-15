@@ -50,6 +50,11 @@ export type JobStatus =
 
 export type FinalStatus = "completed" | "failed";
 
+export interface OutboundFile {
+  path: string;
+  name: string;
+}
+
 export interface JobRecord {
   id: string;
   routeId: string;
@@ -74,6 +79,7 @@ export interface JobRecord {
   deliveryAfter: string | null;
   deliveryError: string | null;
   deliveryChunks: string[] | null;
+  deliveryFiles: OutboundFile[];
   deliveryCursor: number;
   deliveryMessageIds: string[];
   progressMessageId: string | null;

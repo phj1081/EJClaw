@@ -87,17 +87,25 @@ describe("durable job store", () => {
     const db = store();
     const job = db.enqueue(input("delivery", "delivery:one", "delivery-message"));
 
-    expect(db.prepareDelivery(job.id, ["one", "two"])).toEqual({
+    const files = [{ path: "/tmp/result.png", name: "result.png" }];
+    expect(db.prepareDelivery(job.id, ["one", "two"], files)).toEqual({
       chunks: ["one", "two"],
       cursor: 0,
       messageIds: [],
+      files,
     });
     db.markDeliveryChunk(job.id, 0, "discord-1");
 
-    const reopened = db.prepareDelivery(job.id, ["different"]);
-    expect(reopened).toEqual({ chunks: ["one", "two"], cursor: 1, messageIds: ["discord-1"] });
+    const reopened = db.prepareDelivery(job.id, ["different"], []);
+    expect(reopened).toEqual({
+      chunks: ["one", "two"],
+      cursor: 1,
+      messageIds: ["discord-1"],
+      files,
+    });
     expect(db.getJob(job.id)?.deliveryCursor).toBe(1);
     expect(db.getJob(job.id)?.deliveryMessageIds).toEqual(["discord-1"]);
+    expect(db.getJob(job.id)?.deliveryFiles).toEqual(files);
     db.close();
   });
 

@@ -31,6 +31,7 @@ export function buildGoalPrompt(
     "완료 판단은 자연어 약속이 아니라 diff, 테스트, 커밋, PR, CI, 배포/런타임 증거로 해.",
     "요청이 길더라도 /goal 조건은 위 한 줄만 쓰고, 세부 작업 내용은 아래 사용자 요청을 따른다.",
     "진짜 외부 블로커가 증명되거나 20턴/6시간에 도달하면 중단하고 증거를 보고한다.",
+    "Discord에 전달할 생성 파일이 있으면 최종 응답 끝에 파일마다 단독 줄 MEDIA:/absolute/path 형식으로 적어. 민감 파일은 절대 첨부하지 마.",
   ];
   if (route.instructions) lines.push("", `프로젝트 범위:\n${route.instructions}`);
   if (recoveryReason) {

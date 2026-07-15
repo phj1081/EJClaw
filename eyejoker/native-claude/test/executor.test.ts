@@ -46,6 +46,7 @@ function request(resume = false): ExecutionRequest {
       deliveryAfter: null,
       deliveryError: null,
       deliveryChunks: null,
+      deliveryFiles: [],
       deliveryCursor: 0,
       deliveryMessageIds: [],
       progressMessageId: null,

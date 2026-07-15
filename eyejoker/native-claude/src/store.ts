@@ -8,6 +8,7 @@ import type {
   FinalStatus,
   JobRecord,
   JobStatus,
+  OutboundFile,
 } from "./types";
 
 interface JobRow {
@@ -34,6 +35,7 @@ interface JobRow {
   delivery_after: string | null;
   delivery_error: string | null;
   delivery_chunks: string | null;
+  delivery_files: string | null;
   delivery_cursor: number;
   delivery_message_ids: string | null;
   progress_message_id: string | null;
@@ -75,6 +77,7 @@ function fromRow(row: JobRow): JobRecord {
     deliveryAfter: row.delivery_after,
     deliveryError: row.delivery_error,
     deliveryChunks: row.delivery_chunks ? (JSON.parse(row.delivery_chunks) as string[]) : null,
+    deliveryFiles: row.delivery_files ? (JSON.parse(row.delivery_files) as OutboundFile[]) : [],
     deliveryCursor: row.delivery_cursor ?? 0,
     deliveryMessageIds: row.delivery_message_ids ? (JSON.parse(row.delivery_message_ids) as string[]) : [],
     progressMessageId: row.progress_message_id,
@@ -148,6 +151,7 @@ export class StateStore {
     this.ensureColumn("jobs", "main_model", "TEXT");
     this.ensureColumn("jobs", "subagent_models", "TEXT");
     this.ensureColumn("jobs", "delivery_chunks", "TEXT");
+    this.ensureColumn("jobs", "delivery_files", "TEXT");
     this.ensureColumn("jobs", "delivery_cursor", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("jobs", "delivery_message_ids", "TEXT");
   }
@@ -288,25 +292,37 @@ export class StateStore {
       .run(id);
   }
 
-  prepareDelivery(id: string, chunks: string[]): DeliveryPlan & { messageIds: string[] } {
+  prepareDelivery(
+    id: string,
+    chunks: string[],
+    files: OutboundFile[] = [],
+  ): DeliveryPlan & { messageIds: string[]; files: OutboundFile[] } {
     const tx = this.db.transaction(() => {
       const row = this.db
         .query<
-          { delivery_chunks: string | null; delivery_cursor: number | null; delivery_message_ids: string | null },
+          {
+            delivery_chunks: string | null;
+            delivery_files: string | null;
+            delivery_cursor: number | null;
+            delivery_message_ids: string | null;
+          },
           [string]
-        >("SELECT delivery_chunks, delivery_cursor, delivery_message_ids FROM jobs WHERE id=?")
+        >("SELECT delivery_chunks, delivery_files, delivery_cursor, delivery_message_ids FROM jobs WHERE id=?")
         .get(id);
       if (!row) throw new Error(`unknown job: ${id}`);
 
       if (!row.delivery_chunks) {
         this.db
-          .query("UPDATE jobs SET delivery_chunks=?, delivery_cursor=0, delivery_message_ids='[]' WHERE id=?")
-          .run(JSON.stringify(chunks), id);
-        return { chunks: [...chunks], cursor: 0, messageIds: [] };
+          .query(
+            "UPDATE jobs SET delivery_chunks=?, delivery_files=?, delivery_cursor=0, delivery_message_ids='[]' WHERE id=?",
+          )
+          .run(JSON.stringify(chunks), JSON.stringify(files), id);
+        return { chunks: [...chunks], files: [...files], cursor: 0, messageIds: [] };
       }
 
       return {
         chunks: JSON.parse(row.delivery_chunks) as string[],
+        files: row.delivery_files ? (JSON.parse(row.delivery_files) as OutboundFile[]) : [],
         cursor: row.delivery_cursor ?? 0,
         messageIds: row.delivery_message_ids ? (JSON.parse(row.delivery_message_ids) as string[]) : [],
       };
@@ -353,7 +369,7 @@ export class StateStore {
         .query(
           `UPDATE jobs SET status='delivering', final_status=?, result=?, error=?, session_id=?, pid=NULL,
            heartbeat_at=?, delivery_attempts=0, delivery_after=?, delivery_error=NULL, recovery_reason=NULL,
-           delivery_chunks=NULL, delivery_cursor=0, delivery_message_ids='[]',
+           delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0, delivery_message_ids='[]',
            main_model=?, subagent_models=?
            WHERE id=?`,
         )
@@ -429,7 +445,7 @@ export class StateStore {
           .query(
             `UPDATE jobs SET status='delivering', final_status='failed', result=?, error=?, session_id=?,
              delivery_attempts=0, delivery_after=?, delivery_error=NULL, pid=NULL, heartbeat_at=?,
-             delivery_chunks=NULL, delivery_cursor=0, delivery_message_ids='[]',
+             delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0, delivery_message_ids='[]',
              main_model=?, subagent_models=? WHERE id=?`,
           )
           .run(

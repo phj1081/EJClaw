@@ -3,16 +3,20 @@ import { deliveryNonce, deliverPendingChunks, type DeliveryPlan } from "../src/f
 
 describe("durable final chunk delivery", () => {
   test("resumes after the last accepted chunk and uses stable Discord nonces", async () => {
-    const plan: DeliveryPlan = { chunks: ["one", "two", "three"], cursor: 0 };
-    const sent: Array<{ index: number; content: string; nonce: string }> = [];
+    const plan: DeliveryPlan = {
+      chunks: ["one", "two", "three"],
+      cursor: 0,
+      files: [{ path: "/tmp/result.png", name: "result.png" }],
+    };
+    const sent: Array<{ index: number; content: string; nonce: string; files: string[] }> = [];
     let failSecond = true;
 
     const run = () =>
       deliverPendingChunks(
         "job-123",
         plan,
-        async (index, content, nonce) => {
-          sent.push({ index, content, nonce });
+        async (index, content, nonce, files) => {
+          sent.push({ index, content, nonce, files: files.map((file) => file.path) });
           if (index === 1 && failSecond) throw new Error("Discord unavailable");
           return `message-${index}`;
         },
@@ -24,6 +28,8 @@ describe("durable final chunk delivery", () => {
     await expect(run()).rejects.toThrow("Discord unavailable");
     expect(plan.cursor).toBe(1);
     expect(sent.map(({ index }) => index)).toEqual([0, 1]);
+    expect(sent[0]?.files).toEqual(["/tmp/result.png"]);
+    expect(sent[1]?.files).toEqual([]);
 
     const failedNonce = sent[1]?.nonce;
     failSecond = false;

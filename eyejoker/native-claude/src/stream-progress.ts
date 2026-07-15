@@ -666,7 +666,7 @@ export function finalizeStreamJsonResult(
   if (snap.finalResult || snap.sessionId) {
     return {
       ok: !snap.isError && exitCode === 0,
-      result: (snap.finalResult || snap.liveText || stderr || "(empty Claude result)").slice(0, 16000),
+      result: snap.finalResult || snap.liveText || stderr || "(empty Claude result)",
       sessionId: snap.sessionId,
       stderr: stderr.slice(0, 8000),
       exitCode,
@@ -679,7 +679,7 @@ export function finalizeStreamJsonResult(
     const obj = JSON.parse(fallbackStdout.trim()) as Record<string, unknown>;
     return {
       ok: obj.is_error !== true && exitCode === 0,
-      result: String(obj.result ?? fallbackStdout).slice(0, 16000),
+      result: String(obj.result ?? fallbackStdout),
       sessionId: typeof obj.session_id === "string" ? obj.session_id : "",
       stderr: stderr.slice(0, 8000),
       exitCode,
@@ -689,7 +689,7 @@ export function finalizeStreamJsonResult(
   } catch {
     return {
       ok: exitCode === 0,
-      result: (fallbackStdout.trim() || stderr.trim() || "(empty Claude result)").slice(0, 16000),
+      result: fallbackStdout.trim() || stderr.trim() || "(empty Claude result)",
       sessionId: "",
       stderr: stderr.slice(0, 8000),
       exitCode,

@@ -27,6 +27,7 @@ function job(status: JobRecord["status"], routeId = "cleanapo"): JobRecord {
     deliveryAfter: null,
     deliveryError: null,
     deliveryChunks: null,
+    deliveryFiles: [],
     deliveryCursor: 0,
     deliveryMessageIds: [],
     progressMessageId: null,
