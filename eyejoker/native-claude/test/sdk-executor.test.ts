@@ -197,6 +197,7 @@ describe("ClaudeSdkExecutor", () => {
 
   test("answers native AskUserQuestion through the Discord question hook", async () => {
     let permissionResult: Awaited<ReturnType<CanUseTool>> | undefined;
+    const observedRequestIds: string[] = [];
     const factory: SdkQueryFactory = ({ prompt, options }) =>
       (async function* () {
         await prompt[Symbol.asyncIterator]().next();
@@ -213,6 +214,15 @@ describe("ClaudeSdkExecutor", () => {
                 ],
                 multiSelect: false,
               },
+              {
+                question: "환경은?",
+                header: "환경",
+                options: [
+                  { label: "production", description: "운영" },
+                  { label: "staging", description: "스테이징" },
+                ],
+                multiSelect: false,
+              },
             ],
           },
           { signal: new AbortController().signal, suggestions: [], toolUseID: "ask-1", requestId: "request-1" },
@@ -222,13 +232,19 @@ describe("ClaudeSdkExecutor", () => {
 
     const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
     const execution = await executor.run(
-      request({ onQuestion: async (question) => (question.choices?.[0] === "배포" ? "배포" : "중단") }),
+      request({
+        onQuestion: async (question) => {
+          if (question.requestId) observedRequestIds.push(question.requestId);
+          return question.choices?.[0] ?? "";
+        },
+      }),
     );
 
     expect(execution.ok).toBe(true);
+    expect(observedRequestIds).toEqual(["request-1:0", "request-1:1"]);
     expect(permissionResult).toMatchObject({
       behavior: "allow",
-      updatedInput: { answers: { "배포할까?": "배포" } },
+      updatedInput: { answers: { "배포할까?": "배포", "환경은?": "production" } },
     });
   });
 });

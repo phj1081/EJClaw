@@ -11,6 +11,7 @@
       "cwd": "/home/ejclaw/projects/project-name",
       "lock_key": "project-name",
       "model": "claude-fable-5",
+      "fallback_model": "gpt-5.6-sol",
       "effort": "high",
       "permission_mode": "bypassPermissions",
       "require_mention": false,
