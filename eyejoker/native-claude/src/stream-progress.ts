@@ -70,6 +70,7 @@ export interface ProgressSnapshot {
   numTurns: number | null;
   costUsd: number | null;
   finalResult: string;
+  terminalSeen: boolean;
   isError: boolean;
   eventCount: number;
   dirty: boolean;
@@ -122,6 +123,7 @@ export class StreamProgressAggregator {
   numTurns: number | null = null;
   costUsd: number | null = null;
   finalResult = "";
+  terminalSeen = false;
   isError = false;
   eventCount = 0;
   dirty = false;
@@ -520,6 +522,7 @@ export class StreamProgressAggregator {
       const result = typeof obj.result === "string" ? obj.result : "";
       const isError = obj.is_error === true || obj.subtype === "error";
       this.finalResult = result;
+      this.terminalSeen = true;
       this.isError = isError;
       this.numTurns = typeof obj.num_turns === "number" ? obj.num_turns : this.numTurns;
       this.costUsd = typeof obj.total_cost_usd === "number" ? obj.total_cost_usd : this.costUsd;
@@ -557,6 +560,7 @@ export class StreamProgressAggregator {
       numTurns: this.numTurns,
       costUsd: this.costUsd,
       finalResult: this.finalResult,
+      terminalSeen: this.terminalSeen,
       isError: this.isError,
       eventCount: this.eventCount,
       dirty: this.dirty,
@@ -663,10 +667,10 @@ export function finalizeStreamJsonResult(
 ): ParsedStreamResult {
   const snap = aggregator.snapshot();
   const subagentModels = [...new Set(snap.subagents.map((track) => track.model).filter(Boolean))];
-  if (snap.finalResult || snap.sessionId) {
+  if (snap.terminalSeen) {
     return {
       ok: !snap.isError && exitCode === 0,
-      result: snap.finalResult || snap.liveText || stderr || "(empty Claude result)",
+      result: snap.finalResult || stderr || "(empty Claude result)",
       sessionId: snap.sessionId,
       stderr: stderr.slice(0, 8000),
       exitCode,
@@ -674,29 +678,17 @@ export function finalizeStreamJsonResult(
       subagentModels,
     };
   }
-  // Fallback for legacy single-json output and early process failures.
-  try {
-    const obj = JSON.parse(fallbackStdout.trim()) as Record<string, unknown>;
-    return {
-      ok: obj.is_error !== true && exitCode === 0,
-      result: String(obj.result ?? fallbackStdout),
-      sessionId: typeof obj.session_id === "string" ? obj.session_id : "",
-      stderr: stderr.slice(0, 8000),
-      exitCode,
-      mainModel: snap.mainModel,
-      subagentModels,
-    };
-  } catch {
-    return {
-      ok: exitCode === 0,
-      result: fallbackStdout.trim() || stderr.trim() || "(empty Claude result)",
-      sessionId: "",
-      stderr: stderr.slice(0, 8000),
-      exitCode,
-      mainModel: snap.mainModel,
-      subagentModels,
-    };
-  }
+
+  const diagnostic = fallbackStdout.trim() || stderr.trim() || "(no process output)";
+  return {
+    ok: false,
+    result: `Claude protocol error: process exited without a terminal result event\n${diagnostic}`,
+    sessionId: snap.sessionId,
+    stderr: stderr.slice(0, 8000),
+    exitCode,
+    mainModel: snap.mainModel,
+    subagentModels,
+  };
 }
 
 export function parseStreamJsonResult(stdout: string, stderr: string, exitCode: number): ParsedStreamResult {

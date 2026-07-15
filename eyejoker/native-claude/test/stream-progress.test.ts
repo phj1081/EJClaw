@@ -134,6 +134,19 @@ describe("stream progress aggregator", () => {
     expect(parsed.result.endsWith("MEDIA:/tmp/result.png")).toBe(true);
   });
 
+  test("fails closed when the process exits zero without a terminal result event", () => {
+    const parsed = parseStreamJsonResult(
+      [
+        JSON.stringify({ type: "system", subtype: "init", session_id: "session-no-result" }),
+        JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "아직 작업 중" }] } }),
+      ].join("\n"),
+      "",
+      0,
+    );
+    expect(parsed.ok).toBe(false);
+    expect(parsed.result).toContain("protocol error");
+  });
+
   test("parseStreamJsonResult extracts the terminal result event", () => {
     const parsed = parseStreamJsonResult(sample, "", 0);
     expect(parsed.ok).toBe(true);

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { buildClaudeInvocation } from "./protocol";
 import { finalizeStreamJsonResult, StreamProgressAggregator, type ProgressEvent } from "./stream-progress";
 import { parseInteractiveQuestion, streamUserEvent } from "./interactive-control";
@@ -99,9 +100,11 @@ export class ClaudeProcessExecutor {
       let stderr = "";
       let lineBuffer = "";
       const aggregator = new StreamProgressAggregator();
-      const append = (current: string, value: Buffer): string => {
+      const stdoutDecoder = new StringDecoder("utf8");
+      const append = (current: string, value: Buffer | string): string => {
         if (Buffer.byteLength(current) >= this.maxOutputBytes) return current;
-        return (current + value.toString()).slice(0, this.maxOutputBytes);
+        const text = typeof value === "string" ? value : value.toString();
+        return (current + text).slice(0, this.maxOutputBytes);
       };
 
       let questionInFlight = false;
@@ -139,8 +142,9 @@ export class ClaudeProcessExecutor {
       };
 
       child.stdout.on("data", (data: Buffer) => {
-        stdout = append(stdout, data);
-        lineBuffer += data.toString();
+        const text = stdoutDecoder.write(data);
+        stdout = append(stdout, text);
+        lineBuffer += text;
         let newline = lineBuffer.indexOf("\n");
         while (newline >= 0) {
           const line = lineBuffer.slice(0, newline);
@@ -177,6 +181,11 @@ export class ClaudeProcessExecutor {
         clearInterval(heartbeat);
         clearTimeout(timeout);
         this.children.delete(request.job.id);
+        const decoderTail = stdoutDecoder.end();
+        if (decoderTail) {
+          stdout = append(stdout, decoderTail);
+          lineBuffer += decoderTail;
+        }
         if (lineBuffer.trim()) ingestLine(lineBuffer);
         const exitCode = timedOut ? 124 : (code ?? 1);
         const parsed = finalizeStreamJsonResult(

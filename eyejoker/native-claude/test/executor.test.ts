@@ -145,6 +145,18 @@ describe("Claude process executor", () => {
     expect(execution.result).toContain("STEER_NOW");
   });
 
+  test("decodes stream-json across split UTF-8 byte boundaries", async () => {
+    const binary = fakeClaude(
+      [
+        `python3 -c 'import json,os,time; raw=(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"한글 완료","session_id":"utf8-session"},ensure_ascii=False)+"\\n").encode(); token="완료".encode(); cut=raw.index(token)+1; os.write(1,raw[:cut]); time.sleep(0.05); os.write(1,raw[cut:])'`,
+      ].join("\n"),
+    );
+    const executor = new ClaudeProcessExecutor({ binary, timeoutSeconds: 5 });
+    const result = await executor.run(request());
+    expect(result.ok).toBe(true);
+    expect(result.result).toBe("한글 완료");
+  });
+
   test("escalates cancellation to SIGKILL when Claude ignores SIGTERM", async () => {
     const binary = fakeClaude(`trap '' TERM\nsleep 30`);
     let spawned!: () => void;
