@@ -40,6 +40,7 @@ import {
   QUESTION_REACTIONS,
   renderInteractiveQuestion,
 } from "./interactive-control";
+import { KeyedSerialQueue } from "./keyed-serial-queue";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
@@ -95,6 +96,7 @@ const executor = new ClaudeSdkExecutor({
 const typingTimers = new Map<string, ReturnType<typeof setInterval>>();
 const progressBoards = new Map<string, ProgressBoard>();
 const questionBroker = new QuestionBroker();
+const messageLifecycleQueue = new KeyedSerialQueue();
 const attachmentRoot = join(stateDir, "attachments");
 const outboundRoot = join(stateDir, "outbound");
 const attachmentTtlMs = 7 * 24 * 60 * 60 * 1_000;
@@ -577,8 +579,9 @@ client.once("clientReady", async () => {
   }
 });
 
-client.on("messageCreate", async (message) => {
-  try {
+client.on("messageCreate", (message) => {
+  void messageLifecycleQueue.run(message.id, async () => {
+    try {
     if (!message.inGuild() || !client.user) return;
     if (message.author.id === client.user.id) return;
     if (!isSupportedMessageType(Number(message.type))) return;
@@ -871,14 +874,16 @@ client.on("messageCreate", async (message) => {
       `job queued id=${job.id} route=${route.id} channel=${message.channelId} author=${message.author.id} len=${prompt.length}`,
     );
     void runtime.runUntilIdle().catch((error) => console.error("job pump failed", error));
-  } catch (error) {
-    console.error("message handler failed", error);
-    await message.reply({ content: "⛔ 작업 등록 중 오류가 났어. 로그를 확인할게.", allowedMentions: { parse: [] } }).catch(() => undefined);
-  }
+    } catch (error) {
+      console.error("message handler failed", error);
+      await message.reply({ content: "⛔ 작업 등록 중 오류가 났어. 로그를 확인할게.", allowedMentions: { parse: [] } }).catch(() => undefined);
+    }
+  });
 });
 
-client.on("messageUpdate", async (_oldMessage, updatedMessage) => {
-  try {
+client.on("messageUpdate", (_oldMessage, updatedMessage) => {
+  void messageLifecycleQueue.run(updatedMessage.id, async () => {
+    try {
     const sourceJob = store.getByMessageId(updatedMessage.id);
     const steering = sourceJob ? null : store.getSteeringInput(updatedMessage.id);
     const job = sourceJob ?? (steering ? store.getJob(steering.jobId) : null);
@@ -937,9 +942,10 @@ client.on("messageUpdate", async (_oldMessage, updatedMessage) => {
       return;
     }
     console.warn(`running source edit could not steer id=${job.id} message=${message.id}`);
-  } catch (error) {
-    console.error("message update handler failed", error);
-  }
+    } catch (error) {
+      console.error("message update handler failed", error);
+    }
+  });
 });
 
 async function cancelDeletedSource(messageId: string): Promise<void> {
@@ -981,12 +987,16 @@ async function handleDeletedMessage(messageId: string): Promise<void> {
 }
 
 client.on("messageDelete", (message) => {
-  void handleDeletedMessage(message.id).catch((error) => console.error("message delete handler failed", error));
+  void messageLifecycleQueue
+    .run(message.id, () => handleDeletedMessage(message.id))
+    .catch((error) => console.error("message delete handler failed", error));
 });
 
 client.on("messageDeleteBulk", (messages) => {
   for (const messageId of messages.keys()) {
-    void handleDeletedMessage(messageId).catch((error) => console.error("bulk message delete handler failed", error));
+    void messageLifecycleQueue
+      .run(messageId, () => handleDeletedMessage(messageId))
+      .catch((error) => console.error("bulk message delete handler failed", error));
   }
 });
 
@@ -1015,8 +1025,13 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
     const record = store.getInteraction(parsed.interactionId);
-    if (!record || record.discordMessageId !== interaction.message.id) {
+    const interactionJob = record ? store.getJob(record.jobId) : null;
+    if (!record || !interactionJob || record.discordMessageId !== interaction.message.id) {
       await interaction.reply({ content: "만료되었거나 알 수 없는 질문이야.", ephemeral: true });
+      return;
+    }
+    if (interaction.user.id !== interactionJob.authorId) {
+      await interaction.reply({ content: "이 질문을 시작한 사용자만 답할 수 있어.", ephemeral: true });
       return;
     }
     if (record.status !== "pending") {
@@ -1032,7 +1047,17 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
     const released = questionBroker.answerMessage(interaction.message.id, choice);
-    if (!released) store.answerInteraction(record.id, choice);
+    if (!released) {
+      const accepted = store.tryAnswerInteraction(record.id, choice);
+      if (!accepted) {
+        const current = store.getInteraction(record.id);
+        await interaction.reply({
+          content: current?.status === "answered" ? `이미 답변됨: ${current.answer ?? "(답 없음)"}` : "만료된 질문이야.",
+          ephemeral: true,
+        });
+        return;
+      }
+    }
     await interaction.update({
       content: `${renderInteractiveQuestion(record.question)}\n\n✅ 선택: **${choice}**`,
       components: [],

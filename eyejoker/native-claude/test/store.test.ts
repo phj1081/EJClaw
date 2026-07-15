@@ -252,6 +252,8 @@ describe("durable job store", () => {
     expect(interaction.status).toBe("pending");
     first.setInteractionMessage(interaction.id, "discord-question-1");
     first.answerInteraction(interaction.id, "배포");
+    expect(first.tryAnswerInteraction(interaction.id, "중단")).toBeNull();
+    expect(first.getInteraction(interaction.id)?.answer).toBe("배포");
 
     const reopened = new StateStore(path);
     const replay = reopened.beginInteraction(job.id, job.conversationKey, {

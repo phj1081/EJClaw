@@ -1007,12 +1007,19 @@ export class StateStore {
   }
 
   answerInteraction(id: string, answer: string): InteractionRecord {
-    this.db
-      .query("UPDATE interactions SET answer=?, status='answered', updated_at=? WHERE id=?")
+    const answered = this.tryAnswerInteraction(id, answer);
+    if (answered) return answered;
+    const existing = this.getInteraction(id);
+    if (!existing) throw new Error(`interaction not found: ${id}`);
+    return existing;
+  }
+
+  tryAnswerInteraction(id: string, answer: string): InteractionRecord | null {
+    const changed = this.db
+      .query("UPDATE interactions SET answer=?, status='answered', updated_at=? WHERE id=? AND status='pending'")
       .run(answer, now(), id);
-    const row = this.db.query<InteractionRow, [string]>("SELECT * FROM interactions WHERE id=?").get(id);
-    if (!row) throw new Error(`interaction not found: ${id}`);
-    return interactionFromRow(row);
+    if (changed.changes !== 1) return null;
+    return this.getInteraction(id);
   }
 
   getInteraction(id: string): InteractionRecord | null {
