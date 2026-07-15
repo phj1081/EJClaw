@@ -143,9 +143,23 @@ export class JobRuntime {
     };
     const resume = job.startedBefore || this.store.sessionHasHistory(job.conversationKey);
     const forkSession = resume && this.store.consumeFork(job.conversationKey);
+    const recoverySteering = job.recoveryReason ? this.store.listPendingSteeringInputs(job.id) : [];
+    const taskPrompt =
+      recoverySteering.length === 0
+        ? job.prompt
+        : [
+            job.prompt,
+            "",
+            "[재시작 경계에서 수락 여부가 불명확한 Discord 추가 지시]",
+            "아래 지시를 아직 반영하지 않았다면 반영하고, 이미 반영했다면 중복 실행하지 마.",
+            ...recoverySteering.flatMap((input) => [
+              `message=${input.messageId} sdk_message=${input.sdkMessageId}`,
+              input.content,
+            ]),
+          ].join("\n");
     const prompt = job.rawPrompt
       ? job.prompt
-      : buildGoalPrompt(effectiveRoute, job.prompt, job.attachmentPaths, job.recoveryReason);
+      : buildGoalPrompt(effectiveRoute, taskPrompt, job.attachmentPaths, job.recoveryReason);
     let execution: ClaudeExecution;
     try {
       execution = await this.executor({
@@ -185,6 +199,7 @@ export class JobRuntime {
     const current = this.store.getJob(job.id);
     if (current?.status === "cancelled") return;
     if (execution.ok) {
+      this.store.acceptPendingSteeringInputs(job.id);
       this.store.stageDelivery(job.id, execution, "completed");
       return;
     }

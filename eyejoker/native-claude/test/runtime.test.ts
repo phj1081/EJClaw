@@ -129,12 +129,22 @@ describe("job runtime", () => {
     ]);
     const job = enqueue(env.store, "m1");
     env.store.claimNext(1);
+    env.store.beginSteeringInput({
+      messageId: "pending-followup",
+      jobId: job.id,
+      conversationKey: job.conversationKey,
+      content: "재시작 경계 추가 지시",
+      sdkMessageId: crypto.randomUUID(),
+    });
     env.store.recoverInterrupted("service restart");
     await env.runtime.runUntilIdle();
     expect(env.calls[0]?.resume).toBe(true);
     expect(env.calls[0]?.sessionId).toBe(job.sessionId);
     expect(env.calls[0]?.prompt).toContain("task-m1");
     expect(env.calls[0]?.prompt).toContain("service restart");
+    expect(env.calls[0]?.prompt).toContain("재시작 경계 추가 지시");
+    expect(env.calls[0]?.prompt).toContain("중복 실행하지 마");
+    expect(env.store.getSteeringInput("pending-followup")?.state).toBe("accepted");
   });
 
   test("cancelled while the start hook is pending never launches Claude", async () => {

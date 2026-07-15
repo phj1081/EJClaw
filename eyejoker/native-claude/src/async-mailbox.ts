@@ -17,6 +17,22 @@ export class AsyncMailbox<T> implements AsyncIterable<T> {
     return true;
   }
 
+  replace(predicate: (value: T) => boolean, replacement: T): boolean {
+    if (this.closed || this.failure !== undefined) return false;
+    const index = this.queued.findIndex(predicate);
+    if (index < 0) return false;
+    this.queued[index] = replacement;
+    return true;
+  }
+
+  remove(predicate: (value: T) => boolean): boolean {
+    if (this.closed || this.failure !== undefined) return false;
+    const index = this.queued.findIndex(predicate);
+    if (index < 0) return false;
+    this.queued.splice(index, 1);
+    return true;
+  }
+
   close(): void {
     if (this.closed || this.failure !== undefined) return;
     this.closed = true;

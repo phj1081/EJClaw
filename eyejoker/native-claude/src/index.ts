@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   Client,
   GatewayIntentBits,
   Partials,
@@ -30,7 +33,14 @@ import { writeBoundedResponse } from "./bounded-download";
 import { extractOutboundArtifacts } from "./outbound-artifacts";
 import { removeOutboundSpool, spoolOutboundArtifacts } from "./outbound-spool";
 import { parseControlCommand } from "./control-commands";
-import { QuestionBroker, QUESTION_REACTIONS, renderInteractiveQuestion } from "./interactive-control";
+import {
+  parseQuestionButtonId,
+  questionButtonId,
+  QuestionBroker,
+  QUESTION_REACTIONS,
+  renderInteractiveQuestion,
+} from "./interactive-control";
+import { KeyedSerialQueue } from "./keyed-serial-queue";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
@@ -86,6 +96,7 @@ const executor = new ClaudeSdkExecutor({
 const typingTimers = new Map<string, ReturnType<typeof setInterval>>();
 const progressBoards = new Map<string, ProgressBoard>();
 const questionBroker = new QuestionBroker();
+const messageLifecycleQueue = new KeyedSerialQueue();
 const attachmentRoot = join(stateDir, "attachments");
 const outboundRoot = join(stateDir, "outbound");
 const attachmentTtlMs = 7 * 24 * 60 * 60 * 1_000;
@@ -119,6 +130,26 @@ async function textChannel(id: string): Promise<GuildTextBasedChannel> {
   const channel = await client.channels.fetch(id);
   if (!channel?.isTextBased() || channel.isDMBased()) throw new Error(`Discord channel is unavailable: ${id}`);
   return channel as GuildTextBasedChannel;
+}
+
+function questionComponents(interactionId: string, choices: string[]): ActionRowBuilder<ButtonBuilder>[] {
+  if (choices.length === 0) return [];
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      choices.slice(0, 4).map((choice, index) =>
+        new ButtonBuilder()
+          .setCustomId(questionButtonId(interactionId, index))
+          .setLabel(choice.slice(0, 80))
+          .setStyle(index === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+      ),
+    ),
+  ];
+}
+
+async function clearQuestionComponents(channelId: string, messageId: string): Promise<void> {
+  const channel = await textChannel(channelId);
+  const message = await channel.messages.fetch(messageId);
+  await message.edit({ components: [] });
 }
 
 async function validateRouteChannels(): Promise<void> {
@@ -427,6 +458,7 @@ const runtime = new JobRuntime({
       const channel = await textChannel(job.channelId);
       const message = await channel.send({
         content: renderInteractiveQuestion(question),
+        components: questionComponents(interaction.id, question.choices),
         allowedMentions: { parse: [] },
       });
       store.setInteractionMessage(interaction.id, message.id);
@@ -547,8 +579,9 @@ client.once("clientReady", async () => {
   }
 });
 
-client.on("messageCreate", async (message) => {
-  try {
+client.on("messageCreate", (message) => {
+  void messageLifecycleQueue.run(message.id, async () => {
+    try {
     if (!message.inGuild() || !client.user) return;
     if (message.author.id === client.user.id) return;
     if (!isSupportedMessageType(Number(message.type))) return;
@@ -770,8 +803,14 @@ client.on("messageCreate", async (message) => {
       promptText = control.prompt;
     }
 
+    const pendingQuestionMessageId = questionBroker.messageIdForConversation(key);
     if (questionBroker.answerConversation(key, promptText)) {
       await message.react("👍").catch(() => undefined);
+      if (pendingQuestionMessageId) {
+        await clearQuestionComponents(message.channelId, pendingQuestionMessageId).catch((error) =>
+          console.warn("question button cleanup failed", String(error)),
+        );
+      }
       console.log(`Discord question answered by message conversation=${key} message=${message.id}`);
       return;
     }
@@ -784,6 +823,7 @@ client.on("messageCreate", async (message) => {
       await message.reply({ content: "작업 내용을 적어줘.", allowedMentions: { parse: [] } });
       return;
     }
+    const steeringContent = prompt;
     if (!rawPrompt) {
       prompt = appendDiscordContext(prompt, await discordContextFor(message, !store.sessionHasHistory(key)));
     }
@@ -792,10 +832,29 @@ client.on("messageCreate", async (message) => {
       .listActive()
       .find((candidate) => candidate.conversationKey === key && candidate.status === "running");
     const steeringPrompt = rawPrompt ? promptText : `[Discord 실행 중 추가 지시 · message=${message.id}]\n${prompt}`;
-    if (running && executor.steer(running.id, steeringPrompt)) {
-      await message.react("👀").catch(() => undefined);
-      console.log(`job steered id=${running.id} message=${message.id} len=${prompt.length}`);
-      return;
+    if (running) {
+      const existingSteering = store.getSteeringInput(message.id);
+      if (existingSteering && existingSteering.state !== "pending") {
+        await message.react("👀").catch(() => undefined);
+        console.log(`duplicate steering ignored id=${running.id} message=${message.id}`);
+        return;
+      }
+      const sdkMessageId = existingSteering?.sdkMessageId ?? crypto.randomUUID();
+      store.beginSteeringInput({
+        messageId: message.id,
+        jobId: running.id,
+        conversationKey: key,
+        content: steeringContent,
+        sdkMessageId,
+      });
+      if (executor.steer(running.id, steeringPrompt, sdkMessageId)) {
+        store.acceptSteeringInput(message.id);
+        await message.react("👀").catch(() => undefined);
+        console.log(`job steered id=${running.id} message=${message.id} sdk_message=${sdkMessageId} len=${prompt.length}`);
+        return;
+      }
+      store.discardPendingSteeringInput(message.id);
+      console.log(`steering actor closed; enqueueing new job id=${running.id} message=${message.id}`);
     }
 
     const job = store.enqueue({
@@ -815,30 +874,62 @@ client.on("messageCreate", async (message) => {
       `job queued id=${job.id} route=${route.id} channel=${message.channelId} author=${message.author.id} len=${prompt.length}`,
     );
     void runtime.runUntilIdle().catch((error) => console.error("job pump failed", error));
-  } catch (error) {
-    console.error("message handler failed", error);
-    await message.reply({ content: "⛔ 작업 등록 중 오류가 났어. 로그를 확인할게.", allowedMentions: { parse: [] } }).catch(() => undefined);
-  }
+    } catch (error) {
+      console.error("message handler failed", error);
+      await message.reply({ content: "⛔ 작업 등록 중 오류가 났어. 로그를 확인할게.", allowedMentions: { parse: [] } }).catch(() => undefined);
+    }
+  });
 });
 
-client.on("messageUpdate", async (_oldMessage, updatedMessage) => {
-  try {
-    const job = store.getByMessageId(updatedMessage.id);
-    if (!job || !["queued", "running"].includes(job.status)) return;
+client.on("messageUpdate", (_oldMessage, updatedMessage) => {
+  void messageLifecycleQueue.run(updatedMessage.id, async () => {
+    try {
+    const sourceJob = store.getByMessageId(updatedMessage.id);
+    const steering = sourceJob ? null : store.getSteeringInput(updatedMessage.id);
+    const job = sourceJob ?? (steering ? store.getJob(steering.jobId) : null);
+    if (!job) return;
+    if (sourceJob && !["queued", "running"].includes(sourceJob.status)) return;
+    if (steering?.state === "deleted") return;
     const message = updatedMessage.partial ? await updatedMessage.fetch() : updatedMessage;
     if (!message.inGuild() || !client.user || message.author.id !== job.authorId || !allowedUsers.has(message.author.id)) return;
 
     const attachments = await downloadAttachments(message.id, message.attachments.values());
-    let prompt = stripBotMention(message.content ?? "", client.user.id);
-    if (!prompt && attachments.paths.length > 0) prompt = "첨부 파일을 확인하고 필요한 작업을 수행해.";
-    if (attachments.errors.length > 0) prompt += `\n\n첨부 다운로드 오류:\n${attachments.errors.join("\n")}`;
-    if (!prompt.trim()) {
+    let basePrompt = stripBotMention(message.content ?? "", client.user.id);
+    if (!basePrompt && attachments.paths.length > 0) basePrompt = "첨부 파일을 확인하고 필요한 작업을 수행해.";
+    if (attachments.errors.length > 0) basePrompt += `\n\n첨부 다운로드 오류:\n${attachments.errors.join("\n")}`;
+
+    if (steering) {
+      if (!basePrompt.trim()) {
+        await retractDeletedSteering(message.id, "follow-up message cleared by edit");
+        return;
+      }
+      if (steering.content === basePrompt) return;
+      const contextualPrompt = appendDiscordContext(
+        basePrompt,
+        await discordContextFor(message, !store.sessionHasHistory(job.conversationKey)),
+      );
+      const mutation =
+        job.status === "running"
+          ? executor.editSteering(
+              job.id,
+              steering.sdkMessageId,
+              `[Discord 추가 지시 수정 · message=${message.id}]\n${contextualPrompt}`,
+            )
+          : null;
+      store.updateSteeringInput(message.id, basePrompt, mutation?.sdkMessageId ?? steering.sdkMessageId);
+      console.log(
+        `steering message updated job=${job.id} message=${message.id} mode=${mutation?.mode ?? "record-only"} status=${job.status}`,
+      );
+      return;
+    }
+
+    if (!basePrompt.trim()) {
       const cancelled = store.cancelByMessageId(message.id, "source message cleared by edit");
       if (cancelled) executor.cancel(cancelled.id);
       return;
     }
-    prompt = appendDiscordContext(
-      prompt,
+    const prompt = appendDiscordContext(
+      basePrompt,
       await discordContextFor(message, !store.sessionHasHistory(job.conversationKey)),
     );
     const queued = store.updateQueuedPrompt(message.id, prompt, attachments.paths);
@@ -851,9 +942,10 @@ client.on("messageUpdate", async (_oldMessage, updatedMessage) => {
       return;
     }
     console.warn(`running source edit could not steer id=${job.id} message=${message.id}`);
-  } catch (error) {
-    console.error("message update handler failed", error);
-  }
+    } catch (error) {
+      console.error("message update handler failed", error);
+    }
+  });
 });
 
 async function cancelDeletedSource(messageId: string): Promise<void> {
@@ -873,13 +965,38 @@ async function cancelDeletedSource(messageId: string): Promise<void> {
   console.log(`job cancelled after source deletion id=${cancelled.id} message=${messageId}`);
 }
 
+async function retractDeletedSteering(messageId: string, reason = "follow-up message deleted"): Promise<void> {
+  const steering = store.getSteeringInput(messageId);
+  if (!steering || steering.state === "deleted") return;
+  const job = store.getJob(steering.jobId);
+  if (!job) return;
+  const mutation =
+    job.status === "running" ? executor.deleteSteering(job.id, steering.sdkMessageId) : null;
+  store.deleteSteeringInput(messageId, mutation?.sdkMessageId ?? steering.sdkMessageId);
+  console.log(
+    `steering message deleted job=${job.id} message=${messageId} mode=${mutation?.mode ?? "record-only"} status=${job.status} reason=${reason}`,
+  );
+}
+
+async function handleDeletedMessage(messageId: string): Promise<void> {
+  if (store.getByMessageId(messageId)) {
+    await cancelDeletedSource(messageId);
+    return;
+  }
+  await retractDeletedSteering(messageId);
+}
+
 client.on("messageDelete", (message) => {
-  void cancelDeletedSource(message.id).catch((error) => console.error("message delete handler failed", error));
+  void messageLifecycleQueue
+    .run(message.id, () => handleDeletedMessage(message.id))
+    .catch((error) => console.error("message delete handler failed", error));
 });
 
 client.on("messageDeleteBulk", (messages) => {
   for (const messageId of messages.keys()) {
-    void cancelDeletedSource(messageId).catch((error) => console.error("bulk message delete handler failed", error));
+    void messageLifecycleQueue
+      .run(messageId, () => handleDeletedMessage(messageId))
+      .catch((error) => console.error("bulk message delete handler failed", error));
   }
 });
 
@@ -889,9 +1006,68 @@ client.on("messageReactionAdd", async (partialReaction, user) => {
     const reaction = partialReaction.partial ? await partialReaction.fetch() : partialReaction;
     const emoji = reaction.emoji.name ?? "";
     if (!questionBroker.answerReaction(reaction.message.id, emoji)) return;
+    await reaction.message.edit({ components: [] }).catch((error) =>
+      console.warn("question reaction button cleanup failed", String(error)),
+    );
     console.log(`Discord question answered by reaction message=${reaction.message.id} user=${user.id} emoji=${emoji}`);
   } catch (error) {
     console.error("reaction handler failed", error);
+  }
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isButton()) return;
+  const parsed = parseQuestionButtonId(interaction.customId);
+  if (!parsed) return;
+  try {
+    if (!allowedUsers.has(interaction.user.id)) {
+      await interaction.reply({ content: "이 질문은 owner만 답할 수 있어.", ephemeral: true });
+      return;
+    }
+    const record = store.getInteraction(parsed.interactionId);
+    const interactionJob = record ? store.getJob(record.jobId) : null;
+    if (!record || !interactionJob || record.discordMessageId !== interaction.message.id) {
+      await interaction.reply({ content: "만료되었거나 알 수 없는 질문이야.", ephemeral: true });
+      return;
+    }
+    if (interaction.user.id !== interactionJob.authorId) {
+      await interaction.reply({ content: "이 질문을 시작한 사용자만 답할 수 있어.", ephemeral: true });
+      return;
+    }
+    if (record.status !== "pending") {
+      await interaction.reply({
+        content: record.status === "answered" ? `이미 답변됨: ${record.answer ?? "(답 없음)"}` : "만료된 질문이야.",
+        ephemeral: true,
+      });
+      return;
+    }
+    const choice = record.question.choices[parsed.choiceIndex];
+    if (!choice) {
+      await interaction.reply({ content: "유효하지 않은 선택지야.", ephemeral: true });
+      return;
+    }
+    const released = questionBroker.answerMessage(interaction.message.id, choice);
+    if (!released) {
+      const accepted = store.tryAnswerInteraction(record.id, choice);
+      if (!accepted) {
+        const current = store.getInteraction(record.id);
+        await interaction.reply({
+          content: current?.status === "answered" ? `이미 답변됨: ${current.answer ?? "(답 없음)"}` : "만료된 질문이야.",
+          ephemeral: true,
+        });
+        return;
+      }
+    }
+    await interaction.update({
+      content: `${renderInteractiveQuestion(record.question)}\n\n✅ 선택: **${choice}**`,
+      components: [],
+    });
+    console.log(`Discord question answered by button interaction=${record.id} user=${interaction.user.id} choice=${parsed.choiceIndex}`);
+  } catch (error) {
+    console.error("button interaction handler failed", error);
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({ content: "질문 답변 처리 중 오류가 났어.", ephemeral: true }).catch(() => undefined);
+    }
   }
 });
 

@@ -10,6 +10,8 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { AsyncMailbox } from "./async-mailbox";
+import { parseInteractiveQuestion } from "./interactive-control";
+import { defaultAgents } from "./protocol";
 import { finalizeStreamJsonResult, StreamProgressAggregator } from "./stream-progress";
 import type { ClaudeExecution, ExecutionRequest, InteractiveQuestion, PermissionMode } from "./types";
 
@@ -31,12 +33,19 @@ interface SdkExecutorOptions {
   timeoutSeconds: number;
 }
 
-function sdkUserMessage(content: string): SDKUserMessage {
+export interface SteeringMutationResult {
+  mode: "replaced" | "corrected" | "removed" | "retracted";
+  sdkMessageId: string;
+}
+
+type SdkUuid = NonNullable<SDKUserMessage["uuid"]>;
+
+function sdkUserMessage(content: string, uuid: SdkUuid = crypto.randomUUID()): SDKUserMessage {
   return {
     type: "user",
     message: { role: "user", content },
     parent_tool_use_id: null,
-    uuid: crypto.randomUUID(),
+    uuid,
     timestamp: new Date().toISOString(),
   };
 }
@@ -124,11 +133,46 @@ export class ClaudeSdkExecutor {
   }
 
   async run(request: ExecutionRequest): Promise<ClaudeExecution> {
-    const first = await this.runOnce(request, request.resume);
-    if (request.resume && !first.ok && missingSessionTranscript(first)) {
-      return this.runOnce(request, false);
+    let execution = await this.runOnce(request, request.resume);
+    if (request.resume && !execution.ok && missingSessionTranscript(execution)) {
+      execution = await this.runOnce(request, false);
     }
-    return first;
+
+    for (let markerTurn = 0; markerTurn < 4; markerTurn += 1) {
+      if (!execution.ok || !request.onQuestion) return execution;
+      const parsed = parseInteractiveQuestion(execution.result);
+      if (!parsed) return execution;
+      const question: InteractiveQuestion = {
+        ...parsed,
+        requestId: `marker:${request.job.id}:${markerTurn}`,
+        kind: "question",
+      };
+      const answer = await request.onQuestion(question);
+      const sessionId = execution.sessionId || request.sessionId;
+      execution = await this.runOnce(
+        {
+          ...request,
+          prompt: [
+            "[Discord 질문 답변]",
+            `질문: ${question.question}`,
+            `사용자 선택: ${answer}`,
+            "이 선택을 반영해 원래 요청을 같은 세션에서 계속하고 최종 결과를 완성해.",
+          ].join("\n"),
+          sessionId,
+          resume: true,
+          forkSession: false,
+        },
+        true,
+      );
+    }
+
+    return {
+      ...execution,
+      ok: false,
+      result: "interactive question continuation limit exceeded",
+      stderr: "more than 4 marker questions in one job",
+      exitCode: 1,
+    };
   }
 
   private async runOnce(request: ExecutionRequest, resume: boolean): Promise<ClaudeExecution> {
@@ -177,6 +221,7 @@ export class ClaudeSdkExecutor {
         includeHookEvents: true,
         forwardSubagentText: true,
         enableFileCheckpointing: true,
+        ...(request.route.mixedAgents === false ? {} : { agents: defaultAgents }),
         canUseTool,
         env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0" },
       };
@@ -224,13 +269,52 @@ export class ClaudeSdkExecutor {
     );
   }
 
-  steer(jobId: string, content: string): boolean {
+  steer(jobId: string, content: string, userMessageId: string = crypto.randomUUID()): boolean {
     const actor = this.actors.get(jobId);
     if (!actor) return false;
-    const message = sdkUserMessage(content);
+    const message = sdkUserMessage(content, userMessageId as SdkUuid);
     const accepted = actor.mailbox.push(message);
     if (accepted && message.uuid) actor.onCheckpoint?.(message.uuid);
     return accepted;
+  }
+
+  editSteering(jobId: string, userMessageId: string, content: string): SteeringMutationResult | null {
+    const actor = this.actors.get(jobId);
+    if (!actor) return null;
+    const replacement = sdkUserMessage(content, userMessageId as SdkUuid);
+    if (actor.mailbox.replace((message) => message.uuid === userMessageId, replacement)) {
+      return { mode: "replaced", sdkMessageId: userMessageId };
+    }
+    const correction = sdkUserMessage(
+      [
+        "[Discord 추가 지시 수정]",
+        `이전에 받은 SDK user message ${userMessageId}의 지시는 아래 내용으로 교체됐어.`,
+        "이전 내용 대신 수정된 지시를 따라.",
+        "",
+        content,
+      ].join("\n"),
+    );
+    if (!actor.mailbox.push(correction) || !correction.uuid) return null;
+    actor.onCheckpoint?.(correction.uuid);
+    return { mode: "corrected", sdkMessageId: correction.uuid };
+  }
+
+  deleteSteering(jobId: string, userMessageId: string): SteeringMutationResult | null {
+    const actor = this.actors.get(jobId);
+    if (!actor) return null;
+    if (actor.mailbox.remove((message) => message.uuid === userMessageId)) {
+      return { mode: "removed", sdkMessageId: userMessageId };
+    }
+    const retraction = sdkUserMessage(
+      [
+        "[Discord 추가 지시 철회]",
+        `이전에 받은 SDK user message ${userMessageId}의 지시는 사용자가 삭제했어.`,
+        "그 지시를 더 이상 따르지 마. 이미 발생한 외부 side effect를 임의로 되돌리지는 말고 최종 결과에 알려.",
+      ].join("\n"),
+    );
+    if (!actor.mailbox.push(retraction) || !retraction.uuid) return null;
+    actor.onCheckpoint?.(retraction.uuid);
+    return { mode: "retracted", sdkMessageId: retraction.uuid };
   }
 
   cancel(jobId: string): boolean {

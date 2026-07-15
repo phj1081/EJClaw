@@ -6,8 +6,9 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 
 - Discord 채널/스레드 → 프로젝트와 Claude session ID/branch/checkpoint 매핑
 - 일반 요청은 `/goal` 완료 계약으로 실행하고, raw Claude slash는 wrapper 없이 전달
-- native `AskUserQuestion`·permission callback·실행 중 steering·동적 model/permission 제어
-- reply/history context와 source message edit/delete/reaction 전파
+- native `AskUserQuestion`·permission callback을 owner-only Discord 버튼(평문/reaction fallback)으로 왕복
+- 실행 중 follow-up steering과 동적 model/permission 제어
+- reply/history context와 source/follow-up message edit/delete 전파
 - **30초 뒤 임시 Discord progress 카드 한 장**만 2초 cadence로 갱신하고, final delivery 성공 후 삭제
 - 프로젝트(lock key)별 직렬화, 서로 다른 프로젝트는 최대 3개 병렬 실행
 - SQLite durable queue/session/interaction/delivery cursor와 practical exactly-once nonce reconciliation
@@ -15,6 +16,7 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 - 최초 시작 시점 기준 6시간 absolute timeout·최대 시도 횟수·`!cancel`
 - bounded inbound streaming, credential 파일명 차단, immutable outbound spool, `MEDIA:` attachment delivery
 - 실제 SDK message metadata 기반 main/subagent model 표시
+- SDK custom Agent `fable-worker → claude-fable-5`, `gpt-worker → gpt-5.6-sol` 등록
 - owner allowlist와 final mention 1회
 
 ## 일부러 만들지 않은 것
@@ -65,6 +67,13 @@ Discord 명령:
 - 세션: `!fork`, `!branch list`, `!branch use <prefix>`, `!reset`
 - checkpoint/rewind: `!checkpoint list`, `!rewind preview <uuid>`, `!rewind apply <operation-id>`
 - Claude command: `!compact`, `!claude /command`, `!background <prompt>`
+
+Discord message lifecycle:
+
+- 최초 source 수정은 queued prompt 교체 또는 running correction, 삭제는 queued/running job 전체 취소다.
+- running 중 follow-up 수정은 아직 SDK mailbox에 있으면 교체하고, 이미 소비됐으면 correction을 보낸다.
+- follow-up 삭제는 mailbox에서 제거하거나 retraction을 보낼 뿐 job 전체를 취소하지 않는다.
+- 이미 실행된 외부 side effect는 메시지 삭제만으로 rollback하지 않는다. 파일 복구는 별도 checkpoint/rewind를 사용한다.
 
 ## Cutover 원칙
 

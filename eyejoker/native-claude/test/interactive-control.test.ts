@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { parseInteractiveQuestion, QuestionBroker, renderInteractiveQuestion } from "../src/interactive-control";
+import {
+  parseInteractiveQuestion,
+  parseQuestionButtonId,
+  questionButtonId,
+  QuestionBroker,
+  renderInteractiveQuestion,
+} from "../src/interactive-control";
 
 describe("interactive Discord control protocol", () => {
   test("parses a bounded one-line question marker", () => {
@@ -45,6 +51,25 @@ describe("interactive Discord control protocol", () => {
     const answer = await waiting;
     order.push(`resolved:${answer}`);
     expect(order).toEqual(["persist:예", "resolved:예"]);
+  });
+
+  test("encodes durable Discord button choices and resolves by question message", async () => {
+    const interactionId = "11111111-1111-4111-8111-111111111111";
+    const customId = questionButtonId(interactionId, 1);
+    expect(parseQuestionButtonId(customId)).toEqual({ interactionId, choiceIndex: 1 });
+    expect(parseQuestionButtonId("claude-question:bad:9")).toBeNull();
+
+    const broker = new QuestionBroker();
+    const waiting = broker.wait(
+      "job-button",
+      "route:button",
+      { question: "선택?", choices: ["첫째", "둘째"] },
+      async () => "discord-button-question",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(broker.messageIdForConversation("route:button")).toBe("discord-button-question");
+    expect(broker.answerMessage("discord-button-question", "둘째")).toBe(true);
+    expect(await waiting).toBe("둘째");
   });
 
   test("maps a reaction on the question message to its choice", async () => {
