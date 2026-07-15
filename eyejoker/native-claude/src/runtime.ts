@@ -4,6 +4,7 @@ import type {
   ClaudeExecutor,
   FinalHook,
   JobRecord,
+  PreflightHook,
   ProgressHook,
   QuestionHook,
   RouteConfig,
@@ -16,6 +17,7 @@ interface RuntimeOptions {
   routes: Map<string, RouteConfig>;
   executor: ClaudeExecutor;
   onFinal: FinalHook;
+  preflight?: PreflightHook;
   onStart?: StartHook;
   onProgress?: ProgressHook;
   onQuestion?: QuestionHook;
@@ -29,6 +31,7 @@ export class JobRuntime {
   private readonly routes: Map<string, RouteConfig>;
   private readonly executor: ClaudeExecutor;
   private readonly onFinal: FinalHook;
+  private readonly preflight: PreflightHook | undefined;
   private readonly onStart: StartHook | undefined;
   private readonly onProgress: ProgressHook | undefined;
   private readonly onQuestion: QuestionHook | undefined;
@@ -42,6 +45,7 @@ export class JobRuntime {
     this.routes = options.routes;
     this.executor = options.executor;
     this.onFinal = options.onFinal;
+    this.preflight = options.preflight;
     this.onStart = options.onStart;
     this.onProgress = options.onProgress;
     this.onQuestion = options.onQuestion;
@@ -125,6 +129,26 @@ export class JobRuntime {
       return;
     }
 
+    if (this.preflight) {
+      try {
+        const decision = await this.preflight(job);
+        if (!decision.ok) {
+          this.store.cancelJob(job.id, `preflight rejected: ${decision.reason}`);
+          return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.store.retryOrFail(job.id, {
+          ok: false,
+          result: `preflight failed: ${message}`,
+          sessionId: job.sessionId,
+          stderr: message,
+          exitCode: 1,
+        }, this.maxAttempts);
+        return;
+      }
+    }
+
     if (this.onStart) {
       try {
         await this.onStart(job);
@@ -142,8 +166,8 @@ export class JobRuntime {
       effort: settings.effort ?? route.effort,
     };
     const hasContinuation = Boolean(job.continuationPrompt && job.continuationSessionId);
-    const resume = hasContinuation || job.startedBefore || this.store.sessionHasHistory(job.conversationKey);
-    const forkSession = hasContinuation ? false : resume && this.store.consumeFork(job.conversationKey);
+    const resume = hasContinuation || job.pinnedSession || job.startedBefore || this.store.sessionHasHistory(job.conversationKey);
+    const forkSession = hasContinuation || job.pinnedSession ? false : resume && this.store.consumeFork(job.conversationKey);
     const recoverySteering = job.recoveryReason ? this.store.listRecoverySteeringInputs(job.id) : [];
     const taskPrompt =
       recoverySteering.length === 0

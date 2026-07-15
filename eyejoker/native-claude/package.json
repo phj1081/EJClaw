@@ -15,10 +15,14 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.201",
-    "discord.js": "14.25.1"
+    "discord.js": "14.27.0"
   },
   "devDependencies": {
     "@types/bun": "1.2.23",
     "typescript": "5.9.3"
+  },
+  "overrides": {
+    "@discordjs/rest": "2.6.2",
+    "undici": "6.27.0"
   }
 }

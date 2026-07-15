@@ -1,10 +1,12 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { loadConfig } from "./config";
 import {
   buildPullRequestWakePrompt,
   decidePullRequestWake,
+  pullRequestActionKey,
   pullRequestSnapshotSignal,
   snapshotFromGitHub,
   type GitHubPullRequestPayload,
@@ -33,24 +35,27 @@ function previousSnapshot(value: string | null): GitHubPullRequestSnapshot | nul
 }
 
 function fetchPullRequest(repo: string, number: number): GitHubPullRequestPayload {
-  const result = Bun.spawnSync(
+  const configuredTimeout = Number(process.env.CLAUDE_NATIVE_GH_TIMEOUT_MS ?? "15000");
+  const timeout = Number.isFinite(configuredTimeout) && configuredTimeout >= 50 ? configuredTimeout : 15_000;
+  const result = spawnSync(
+    "gh",
     [
-      "gh",
       "pr",
       "view",
       String(number),
       "--repo",
       repo,
       "--json",
-      "state,headRefOid,reviewDecision,mergeStateStatus,updatedAt,comments,reviews,statusCheckRollup",
+      "author,state,headRefOid,reviewDecision,mergeStateStatus,updatedAt,comments,reviews,statusCheckRollup",
     ],
-    { stdout: "pipe", stderr: "pipe", env: process.env },
+    { env: process.env, encoding: "utf8", timeout, killSignal: "SIGKILL" },
   );
-  if (result.exitCode !== 0) {
-    const detail = result.stderr.toString().trim().slice(0, 800);
-    throw new Error(`gh pr view failed (${result.exitCode}): ${detail}`);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    const detail = (result.stderr || result.stdout).trim().slice(0, 800);
+    throw new Error(`gh pr view failed (${result.status}): ${detail}`);
   }
-  return JSON.parse(result.stdout.toString()) as GitHubPullRequestPayload;
+  return JSON.parse(result.stdout) as GitHubPullRequestPayload;
 }
 
 let observed = 0;
@@ -85,12 +90,13 @@ try {
         observed += 1;
         continue;
       }
+      const actionKey = pullRequestActionKey(current, decision.reason);
       const activeJob = watch.activeJobId ? store.getJob(watch.activeJobId) : null;
       if (activeJob && activeJobStatuses.has(activeJob.status)) {
         observed += 1;
         continue;
       }
-      if (watch.lastWakeSignal === signal) {
+      if (watch.lastWakeSignal === actionKey) {
         store.recordPullRequestObservation(watch.id, signal);
         observed += 1;
         continue;
@@ -100,7 +106,7 @@ try {
         completed += 1;
         continue;
       }
-      const signalId = createHash("sha256").update(signal).digest("hex").slice(0, 20);
+      const signalId = createHash("sha256").update(actionKey).digest("hex").slice(0, 20);
       const job = store.enqueue({
         routeId: watch.routeId,
         lockKey: watch.lockKey,
@@ -111,8 +117,13 @@ try {
         authorId: watch.authorId,
         prompt: buildPullRequestWakePrompt(reference, current, decision.reason),
         attachmentPaths: [],
+        sessionId: watch.sessionId,
+        pinnedSession: true,
+        githubWatchRepo: watch.repo,
+        githubWatchNumber: watch.number,
+        expectedHeadSha: current.headSha,
       });
-      store.recordPullRequestObservation(watch.id, signal, job.id);
+      store.recordPullRequestObservation(watch.id, signal, job.id, actionKey);
       woke += 1;
     } catch (error) {
       errors += 1;
@@ -120,6 +131,7 @@ try {
     }
   }
   console.log(JSON.stringify({ observed, woke, completed, errors }));
+  if (errors > 0) process.exitCode = 1;
 } finally {
   store.close();
 }

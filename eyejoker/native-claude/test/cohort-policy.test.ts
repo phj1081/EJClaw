@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   candidateCohortKey,
   cohortNeedsVerification,
+  cohortNoticeAction,
   renderCohortNotice,
   validateCandidateCohort,
 } from "../src/cohort-policy";
@@ -24,6 +25,16 @@ describe("Claude Code/Agent SDK cohort policy", () => {
     expect(cohortNeedsVerification({ candidateKey: candidateCohortKey(candidate), status: "failed" }, candidate, true)).toBe(true);
   });
 
+  test("reconciles durable notice intent with terminal queue states", () => {
+    expect(cohortNoticeAction(null)).toBe("enqueue");
+    for (const status of ["queued", "running", "delivering"] as const) {
+      expect(cohortNoticeAction(status)).toBe("wait");
+    }
+    expect(cohortNoticeAction("completed")).toBe("done");
+    expect(cohortNoticeAction("failed")).toBe("requeue");
+    expect(cohortNoticeAction("cancelled")).toBe("requeue");
+  });
+
   test("renders a concise notice without claiming production was upgraded", () => {
     const notice = renderCohortNotice({
       current: { sdkVersion: "0.3.201", claudeCodeVersion: "2.1.201" },
@@ -32,6 +43,8 @@ describe("Claude Code/Agent SDK cohort policy", () => {
       summary: "tests and live smoke passed",
       checkedAt: "2026-07-16T00:00:00Z",
       logPath: "/tmp/cohort.log",
+      lockPath: "/tmp/cohort.bun.lock",
+      lockSha256: "abc123",
     });
     expect(notice).toContain("업데이트 가능");
     expect(notice).toContain("production은 변경하지 않았어");

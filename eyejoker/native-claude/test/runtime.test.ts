@@ -202,6 +202,45 @@ describe("job runtime", () => {
     expect(store.getJob(queued.id)?.status).toBe("cancelled");
   });
 
+  test("cancels a stale watcher job before Claude execution", async () => {
+    const store = freshStore();
+    let executions = 0;
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, route]]),
+      executor: async (request) => {
+        executions += 1;
+        return ok(request.sessionId);
+      },
+      preflight: async (job) => ({
+        ok: false,
+        reason: `head changed from ${job.expectedHeadSha} to new-head`,
+      }),
+      onFinal: async () => {},
+      maxConcurrent: 1,
+      maxAttempts: 2,
+    });
+    const queued = store.enqueue({
+      routeId: route.id,
+      conversationKey: `${route.id}:watcher-thread`,
+      channelId: "watcher-thread",
+      threadId: "watcher-thread",
+      messageId: "stale-watch",
+      authorId: "owner",
+      prompt: "fix old head",
+      attachmentPaths: [],
+      githubWatchRepo: "owner/repo",
+      githubWatchNumber: 9,
+      expectedHeadSha: "old-head",
+    });
+
+    await runtime.runUntilIdle();
+
+    expect(executions).toBe(0);
+    expect(store.getJob(queued.id)?.status).toBe("cancelled");
+    expect(store.getJob(queued.id)?.error).toContain("head changed");
+  });
+
   test("persists final delivery and model telemetry across retries without rerunning Claude", async () => {
     const store = freshStore();
     let executions = 0;

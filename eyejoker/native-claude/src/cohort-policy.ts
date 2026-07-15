@@ -3,9 +3,9 @@ export interface CohortVersions {
   claudeCodeVersion: string;
 }
 
-export interface CohortState {
+export interface CohortState extends CohortResult {
   candidateKey: string;
-  status: "passed" | "failed";
+  noticeMessageId: string;
 }
 
 export interface CohortResult {
@@ -15,6 +15,8 @@ export interface CohortResult {
   summary: string;
   checkedAt: string;
   logPath: string;
+  lockPath: string | null;
+  lockSha256: string | null;
 }
 
 export function validateCandidateCohort(
@@ -35,12 +37,21 @@ export function candidateCohortKey(candidate: CohortVersions): string {
 }
 
 export function cohortNeedsVerification(
-  previous: CohortState | null,
+  previous: Pick<CohortState, "candidateKey" | "status"> | null,
   candidate: CohortVersions,
   force: boolean,
 ): boolean {
   if (force || !previous) return true;
   return previous.candidateKey !== candidateCohortKey(candidate) || previous.status === "failed";
+}
+
+export function cohortNoticeAction(
+  status: "queued" | "running" | "delivering" | "completed" | "failed" | "cancelled" | null,
+): "enqueue" | "wait" | "done" | "requeue" {
+  if (status === null) return "enqueue";
+  if (status === "completed") return "done";
+  if (status === "failed" || status === "cancelled") return "requeue";
+  return "wait";
 }
 
 export function renderCohortNotice(result: CohortResult): string {
