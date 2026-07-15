@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { dirname } from "node:path";
 import { chmodSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type { DeliveryPlan } from "./final-delivery";
 import type {
   ClaudeExecution,
   EnqueueInput,
@@ -32,6 +33,9 @@ interface JobRow {
   delivery_attempts: number;
   delivery_after: string | null;
   delivery_error: string | null;
+  delivery_chunks: string | null;
+  delivery_cursor: number;
+  delivery_message_ids: string | null;
   progress_message_id: string | null;
   progress_text: string | null;
   main_model: string | null;
@@ -70,6 +74,9 @@ function fromRow(row: JobRow): JobRecord {
     deliveryAttempts: row.delivery_attempts,
     deliveryAfter: row.delivery_after,
     deliveryError: row.delivery_error,
+    deliveryChunks: row.delivery_chunks ? (JSON.parse(row.delivery_chunks) as string[]) : null,
+    deliveryCursor: row.delivery_cursor ?? 0,
+    deliveryMessageIds: row.delivery_message_ids ? (JSON.parse(row.delivery_message_ids) as string[]) : [],
     progressMessageId: row.progress_message_id,
     progressText: row.progress_text,
     mainModel: row.main_model,
@@ -140,6 +147,9 @@ export class StateStore {
     this.ensureColumn("jobs", "progress_text", "TEXT");
     this.ensureColumn("jobs", "main_model", "TEXT");
     this.ensureColumn("jobs", "subagent_models", "TEXT");
+    this.ensureColumn("jobs", "delivery_chunks", "TEXT");
+    this.ensureColumn("jobs", "delivery_cursor", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("jobs", "delivery_message_ids", "TEXT");
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -278,6 +288,52 @@ export class StateStore {
       .run(id);
   }
 
+  prepareDelivery(id: string, chunks: string[]): DeliveryPlan & { messageIds: string[] } {
+    const tx = this.db.transaction(() => {
+      const row = this.db
+        .query<
+          { delivery_chunks: string | null; delivery_cursor: number | null; delivery_message_ids: string | null },
+          [string]
+        >("SELECT delivery_chunks, delivery_cursor, delivery_message_ids FROM jobs WHERE id=?")
+        .get(id);
+      if (!row) throw new Error(`unknown job: ${id}`);
+
+      if (!row.delivery_chunks) {
+        this.db
+          .query("UPDATE jobs SET delivery_chunks=?, delivery_cursor=0, delivery_message_ids='[]' WHERE id=?")
+          .run(JSON.stringify(chunks), id);
+        return { chunks: [...chunks], cursor: 0, messageIds: [] };
+      }
+
+      return {
+        chunks: JSON.parse(row.delivery_chunks) as string[],
+        cursor: row.delivery_cursor ?? 0,
+        messageIds: row.delivery_message_ids ? (JSON.parse(row.delivery_message_ids) as string[]) : [],
+      };
+    });
+    return tx();
+  }
+
+  markDeliveryChunk(id: string, index: number, messageId: string): void {
+    const tx = this.db.transaction(() => {
+      const row = this.db
+        .query<{ delivery_cursor: number | null; delivery_message_ids: string | null }, [string]>(
+          "SELECT delivery_cursor, delivery_message_ids FROM jobs WHERE id=?",
+        )
+        .get(id);
+      if (!row) throw new Error(`unknown job: ${id}`);
+      const cursor = row.delivery_cursor ?? 0;
+      if (cursor > index) return;
+      if (cursor !== index) throw new Error(`delivery cursor mismatch: expected ${cursor}, got ${index}`);
+      const messageIds = row.delivery_message_ids ? (JSON.parse(row.delivery_message_ids) as string[]) : [];
+      messageIds[index] = messageId;
+      this.db
+        .query("UPDATE jobs SET delivery_cursor=?, delivery_message_ids=? WHERE id=?")
+        .run(index + 1, JSON.stringify(messageIds), id);
+    });
+    tx();
+  }
+
   listTerminalProgress(): JobRecord[] {
     return this.db
       .query<JobRow, []>(
@@ -297,6 +353,7 @@ export class StateStore {
         .query(
           `UPDATE jobs SET status='delivering', final_status=?, result=?, error=?, session_id=?, pid=NULL,
            heartbeat_at=?, delivery_attempts=0, delivery_after=?, delivery_error=NULL, recovery_reason=NULL,
+           delivery_chunks=NULL, delivery_cursor=0, delivery_message_ids='[]',
            main_model=?, subagent_models=?
            WHERE id=?`,
         )
@@ -372,6 +429,7 @@ export class StateStore {
           .query(
             `UPDATE jobs SET status='delivering', final_status='failed', result=?, error=?, session_id=?,
              delivery_attempts=0, delivery_after=?, delivery_error=NULL, pid=NULL, heartbeat_at=?,
+             delivery_chunks=NULL, delivery_cursor=0, delivery_message_ids='[]',
              main_model=?, subagent_models=? WHERE id=?`,
           )
           .run(

@@ -73,6 +73,9 @@ export interface JobRecord {
   deliveryAttempts: number;
   deliveryAfter: string | null;
   deliveryError: string | null;
+  deliveryChunks: string[] | null;
+  deliveryCursor: number;
+  deliveryMessageIds: string[];
   progressMessageId: string | null;
   progressText: string | null;
   mainModel: string | null;

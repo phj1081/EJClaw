@@ -23,6 +23,7 @@ import { buildFinalChunkOptions, formatFinalMessage, splitDiscordMessage } from 
 import { workElapsedSeconds } from "./duration";
 import { ProgressLifecycle } from "./progress-lifecycle";
 import { ProgressEditGate } from "./progress-edit-cadence";
+import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
 import {
   StreamProgressAggregator,
@@ -316,14 +317,27 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
   const routeModel = routes.get(job.routeId)?.model;
   const mainModel = execution.mainModel ?? job.mainModel ?? routeModel;
   const subagentModels = execution.subagentModels ?? job.subagentModels;
-  const chunks = splitDiscordMessage(
+  const renderedChunks = splitDiscordMessage(
     formatFinalMessage(config.ownerId, execution.ok, execution.result, elapsed, mainModel, subagentModels),
   );
+  const plan = store.prepareDelivery(job.id, renderedChunks);
   const channel = await textChannel(job.channelId);
-  for (const [index, chunk] of chunks.entries()) {
-    const options: MessageCreateOptions = buildFinalChunkOptions(config.ownerId, chunk, index);
-    await channel.send(options);
-  }
+  await deliverPendingChunks(
+    job.id,
+    plan,
+    async (index, chunk, nonce) => {
+      const options: MessageCreateOptions = {
+        ...buildFinalChunkOptions(config.ownerId, chunk, index),
+        nonce,
+        enforceNonce: true,
+      };
+      const sent = await channel.send(options);
+      return sent.id;
+    },
+    async (index, messageId) => {
+      store.markDeliveryChunk(job.id, index, messageId);
+    },
+  );
 
   // Match the old NanoClaw contract: a temporary card only disappears after
   // the real user-facing result has been accepted by Discord. Cleanup is

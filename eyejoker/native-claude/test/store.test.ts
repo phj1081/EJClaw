@@ -83,6 +83,24 @@ describe("durable job store", () => {
     expect(db.listJobs()).toHaveLength(1);
   });
 
+  test("persists final chunks, cursor and accepted message ids across restarts", () => {
+    const db = store();
+    const job = db.enqueue(input("delivery", "delivery:one", "delivery-message"));
+
+    expect(db.prepareDelivery(job.id, ["one", "two"])).toEqual({
+      chunks: ["one", "two"],
+      cursor: 0,
+      messageIds: [],
+    });
+    db.markDeliveryChunk(job.id, 0, "discord-1");
+
+    const reopened = db.prepareDelivery(job.id, ["different"]);
+    expect(reopened).toEqual({ chunks: ["one", "two"], cursor: 1, messageIds: ["discord-1"] });
+    expect(db.getJob(job.id)?.deliveryCursor).toBe(1);
+    expect(db.getJob(job.id)?.deliveryMessageIds).toEqual(["discord-1"]);
+    db.close();
+  });
+
   test("forgets a temporary progress message after Discord cleanup", () => {
     const db = store();
     const job = db.enqueue(input("cleanapo", "cleanapo:one", "progress"));
