@@ -10,7 +10,7 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import { AsyncMailbox } from "./async-mailbox";
-import { parseInteractiveQuestion } from "./interactive-control";
+import { markerContinuationPrompt, parseInteractiveQuestion } from "./interactive-control";
 import { defaultAgents } from "./protocol";
 import { finalizeStreamJsonResult, StreamProgressAggregator } from "./stream-progress";
 import type { ClaudeExecution, ExecutionRequest, InteractiveQuestion, PermissionMode } from "./types";
@@ -138,41 +138,44 @@ export class ClaudeSdkExecutor {
       execution = await this.runOnce(request, false);
     }
 
-    for (let markerTurn = 0; markerTurn < 4; markerTurn += 1) {
+    let markerTurn = request.continuationTurn ?? 0;
+    while (true) {
       if (!execution.ok || !request.onQuestion) return execution;
       const parsed = parseInteractiveQuestion(execution.result);
       if (!parsed) return execution;
+      if (markerTurn >= 4) {
+        return {
+          ...execution,
+          ok: false,
+          result: "interactive question continuation limit exceeded",
+          stderr: "more than 4 marker questions in one job",
+          exitCode: 1,
+        };
+      }
+      const sessionId = execution.sessionId || request.sessionId;
+      const nextTurn = markerTurn + 1;
       const question: InteractiveQuestion = {
         ...parsed,
         requestId: `marker:${request.job.id}:${markerTurn}`,
-        kind: "question",
+        kind: "question" as const,
+        continuation: { sessionId, turn: nextTurn },
       };
       const answer = await request.onQuestion(question);
-      const sessionId = execution.sessionId || request.sessionId;
+      const continuationPrompt = markerContinuationPrompt(question, answer);
+      request.onContinuation?.(continuationPrompt, sessionId, nextTurn);
       execution = await this.runOnce(
         {
           ...request,
-          prompt: [
-            "[Discord 질문 답변]",
-            `질문: ${question.question}`,
-            `사용자 선택: ${answer}`,
-            "이 선택을 반영해 원래 요청을 같은 세션에서 계속하고 최종 결과를 완성해.",
-          ].join("\n"),
+          prompt: continuationPrompt,
           sessionId,
           resume: true,
           forkSession: false,
+          continuationTurn: nextTurn,
         },
         true,
       );
+      markerTurn = nextTurn;
     }
-
-    return {
-      ...execution,
-      ok: false,
-      result: "interactive question continuation limit exceeded",
-      stderr: "more than 4 marker questions in one job",
-      exitCode: 1,
-    };
   }
 
   private async runOnce(request: ExecutionRequest, resume: boolean): Promise<ClaudeExecution> {
@@ -278,7 +281,13 @@ export class ClaudeSdkExecutor {
     return accepted;
   }
 
-  editSteering(jobId: string, userMessageId: string, content: string): SteeringMutationResult | null {
+  editSteering(
+    jobId: string,
+    userMessageId: string,
+    content: string,
+    logicalMessageId?: string,
+    originalUserMessageId: string = userMessageId,
+  ): SteeringMutationResult | null {
     const actor = this.actors.get(jobId);
     if (!actor) return null;
     const replacement = sdkUserMessage(content, userMessageId as SdkUuid);
@@ -288,8 +297,10 @@ export class ClaudeSdkExecutor {
     const correction = sdkUserMessage(
       [
         "[Discord 추가 지시 수정]",
-        `이전에 받은 SDK user message ${userMessageId}의 지시는 아래 내용으로 교체됐어.`,
-        "이전 내용 대신 수정된 지시를 따라.",
+        logicalMessageId ? `Discord message ${logicalMessageId}의 현재 지시 상태야.` : "Discord 추가 지시의 현재 상태야.",
+        `원본 SDK user message: ${originalUserMessageId}`,
+        `직전 SDK user message: ${userMessageId}`,
+        "이전 원본과 모든 수정본 대신 아래 최신 지시만 따라.",
         "",
         content,
       ].join("\n"),
@@ -299,17 +310,31 @@ export class ClaudeSdkExecutor {
     return { mode: "corrected", sdkMessageId: correction.uuid };
   }
 
-  deleteSteering(jobId: string, userMessageId: string): SteeringMutationResult | null {
+  deleteSteering(
+    jobId: string,
+    userMessageId: string,
+    logicalMessageId?: string,
+    originalUserMessageId: string = userMessageId,
+  ): SteeringMutationResult | null {
     const actor = this.actors.get(jobId);
     if (!actor) return null;
-    if (actor.mailbox.remove((message) => message.uuid === userMessageId)) {
+    const removedCurrent = actor.mailbox.remove((message) => message.uuid === userMessageId);
+    const removedOriginal =
+      originalUserMessageId === userMessageId
+        ? removedCurrent
+        : actor.mailbox.remove((message) => message.uuid === originalUserMessageId);
+    if (originalUserMessageId === userMessageId && removedOriginal) {
       return { mode: "removed", sdkMessageId: userMessageId };
     }
     const retraction = sdkUserMessage(
       [
         "[Discord 추가 지시 철회]",
-        `이전에 받은 SDK user message ${userMessageId}의 지시는 사용자가 삭제했어.`,
-        "그 지시를 더 이상 따르지 마. 이미 발생한 외부 side effect를 임의로 되돌리지는 말고 최종 결과에 알려.",
+        logicalMessageId
+          ? `Discord message ${logicalMessageId}의 원본 및 모든 수정 지시를 사용자가 삭제했어.`
+          : "Discord 추가 지시의 원본 및 모든 수정 지시를 사용자가 삭제했어.",
+        `원본 SDK user message: ${originalUserMessageId}`,
+        `직전 SDK user message: ${userMessageId}`,
+        "해당 logical message의 어떤 버전도 더 이상 따르지 마. 이미 발생한 외부 side effect를 임의로 되돌리지는 말고 최종 결과에 알려.",
       ].join("\n"),
     );
     if (!actor.mailbox.push(retraction) || !retraction.uuid) return null;
@@ -392,7 +417,7 @@ export class ClaudeSdkExecutor {
         const questions = parsedQuestions.map((question, index) => ({
           ...question,
           requestId:
-            parsedQuestions.length > 1 ? `${context.requestId}:${index}` : context.requestId,
+            parsedQuestions.length > 1 ? `${context.toolUseID}:${index}` : context.toolUseID,
           kind: "question" as const,
         }));
         if (questions.length === 0 || !request.onQuestion) {
@@ -411,7 +436,7 @@ export class ClaudeSdkExecutor {
       const prompt: InteractiveQuestion = {
         question: `${toolName} 실행을 허용할까?\n${boundedInput(input)}`,
         choices: ["이번만 허용", "거부"],
-        requestId: context.requestId,
+        requestId: context.toolUseID,
         kind: "permission",
       };
       const answer = await request.onQuestion(prompt);

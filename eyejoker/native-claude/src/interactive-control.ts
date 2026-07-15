@@ -1,8 +1,23 @@
+import { createHash } from "node:crypto";
 import type { InteractiveQuestion } from "./types";
 
 const PREFIX = "DISCORD_QUESTION:";
 export const QUESTION_REACTIONS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"] as const;
 const QUESTION_BUTTON_PREFIX = "claude-question";
+
+export function questionNonce(interactionId: string): string {
+  const hex = createHash("sha256").update(`question:${interactionId}`).digest("hex").slice(0, 16);
+  return BigInt(`0x${hex}`).toString(10);
+}
+
+export function markerContinuationPrompt(question: InteractiveQuestion, answer: string): string {
+  return [
+    "[Discord 질문 답변]",
+    `질문: ${question.question}`,
+    `사용자 선택: ${answer}`,
+    "이 선택을 반영해 원래 요청을 같은 세션에서 계속하고 최종 결과를 완성해.",
+  ].join("\n");
+}
 
 export function questionButtonId(interactionId: string, choiceIndex: number): string {
   return `${QUESTION_BUTTON_PREFIX}:${interactionId}:${choiceIndex}`;

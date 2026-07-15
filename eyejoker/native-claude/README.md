@@ -11,8 +11,8 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 - reply/history context와 source/follow-up message edit/delete 전파
 - **30초 뒤 임시 Discord progress 카드 한 장**만 2초 cadence로 갱신하고, final delivery 성공 후 삭제
 - 프로젝트(lock key)별 직렬화, 서로 다른 프로젝트는 최대 3개 병렬 실행
-- SQLite durable queue/session/interaction/delivery cursor와 practical exactly-once nonce reconciliation
-- 서비스 재시작 시 interrupted execution 복구, 질문 request ID dedupe, delivery-only retry
+- SQLite durable queue/session/interaction/steering desired state/delivery cursor와 Discord nonce reconciliation
+- 서비스 재시작 시 interrupted execution을 at-least-once로 복구하고, 질문은 logical `toolUseID`, marker answer+exact continuation, final delivery는 stable nonce로 dedupe
 - 최초 시작 시점 기준 6시간 absolute timeout·최대 시도 횟수·`!cancel`
 - bounded inbound streaming, credential 파일명 차단, immutable outbound spool, `MEDIA:` attachment delivery
 - 실제 SDK message metadata 기반 main/subagent model 표시
@@ -72,7 +72,8 @@ Discord message lifecycle:
 
 - 최초 source 수정은 queued prompt 교체 또는 running correction, 삭제는 queued/running job 전체 취소다.
 - running 중 follow-up 수정은 아직 SDK mailbox에 있으면 교체하고, 이미 소비됐으면 correction을 보낸다.
-- follow-up 삭제는 mailbox에서 제거하거나 retraction을 보낼 뿐 job 전체를 취소하지 않는다.
+- follow-up 삭제는 mailbox에서 제거하거나 원본·모든 correction을 가리키는 retraction을 보낼 뿐 job 전체를 취소하지 않는다.
+- follow-up의 현재 desired state는 DB에 먼저 저장한다. crash recovery에서는 accepted/edited/deleted 전체를 at-least-once로 재구성하며 이미 반영한 동일 지시는 중복 실행하지 않도록 명시한다.
 - 이미 실행된 외부 side effect는 메시지 삭제만으로 rollback하지 않는다. 파일 복구는 별도 checkpoint/rewind를 사용한다.
 
 ## Cutover 원칙

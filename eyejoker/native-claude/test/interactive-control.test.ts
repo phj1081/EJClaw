@@ -3,6 +3,7 @@ import {
   parseInteractiveQuestion,
   parseQuestionButtonId,
   questionButtonId,
+  questionNonce,
   QuestionBroker,
   renderInteractiveQuestion,
 } from "../src/interactive-control";
@@ -70,6 +71,37 @@ describe("interactive Discord control protocol", () => {
     expect(broker.messageIdForConversation("route:button")).toBe("discord-button-question");
     expect(broker.answerMessage("discord-button-question", "둘째")).toBe(true);
     expect(await waiting).toBe("둘째");
+  });
+
+  test("uses a stable Discord-safe nonce per durable interaction", () => {
+    const first = questionNonce("11111111-1111-4111-8111-111111111111");
+    expect(first).toBe(questionNonce("11111111-1111-4111-8111-111111111111"));
+    expect(first).toMatch(/^\d{1,25}$/);
+    expect(first).not.toBe(questionNonce("22222222-2222-4222-8222-222222222222"));
+  });
+
+  test("persists an early text answer even before the Discord post resolves", async () => {
+    const broker = new QuestionBroker();
+    let releasePost!: () => void;
+    const posted = new Promise<void>((resolve) => (releasePost = resolve));
+    const persisted: string[] = [];
+    const waiting = broker.wait(
+      "job-early",
+      "route:early",
+      { question: "계속?", choices: ["예", "아니오"] },
+      async () => {
+        await posted;
+        return "discord-late-question";
+      },
+      (answer) => persisted.push(answer),
+    );
+
+    expect(broker.answerConversation("route:early", "예")).toBe(true);
+    expect(await waiting).toBe("예");
+    expect(persisted).toEqual(["예"]);
+    releasePost();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(broker.messageIdForConversation("route:early")).toBeNull();
   });
 
   test("maps a reaction on the question message to its choice", async () => {

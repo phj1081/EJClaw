@@ -107,6 +107,9 @@ export interface JobRecord {
   attempts: number;
   startedBefore: boolean;
   recoveryReason: string | null;
+  continuationPrompt: string | null;
+  continuationSessionId: string | null;
+  continuationTurn: number;
   pid: number | null;
   result: string | null;
   error: string | null;
@@ -133,6 +136,10 @@ export interface InteractiveQuestion {
   choices: string[];
   requestId?: string;
   kind?: "question" | "permission";
+  continuation?: {
+    sessionId: string;
+    turn: number;
+  };
 }
 
 export interface InteractionRecord {
@@ -156,6 +163,7 @@ export interface SteeringInputRecord {
   conversationKey: string;
   content: string;
   sdkMessageId: string;
+  originalSdkMessageId: string;
   state: SteeringInputState;
   createdAt: string;
   updatedAt: string;
@@ -179,9 +187,11 @@ export interface ExecutionRequest {
   sessionId: string;
   resume: boolean;
   forkSession?: boolean;
+  continuationTurn?: number;
   onSpawn?: (pid: number) => void;
   onHeartbeat?: () => void;
   onCheckpoint?: (userMessageId: string) => void;
+  onContinuation?: (prompt: string, sessionId: string, turn: number) => void;
   onQuestion?: (question: InteractiveQuestion) => Promise<string>;
   onProgress?: (
     event: import("./stream-progress").ProgressEvent,

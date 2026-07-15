@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import type { DeliveryPlan } from "./final-delivery";
+import { markerContinuationPrompt } from "./interactive-control";
 import type {
   ClaudeExecution,
   ConversationSettings,
@@ -37,6 +38,9 @@ interface JobRow {
   attempts: number;
   started_before: number;
   recovery_reason: string | null;
+  continuation_prompt: string | null;
+  continuation_session_id: string | null;
+  continuation_turn: number;
   pid: number | null;
   result: string | null;
   error: string | null;
@@ -77,6 +81,7 @@ interface SteeringInputRow {
   conversation_key: string;
   content: string;
   sdk_message_id: string;
+  original_sdk_message_id: string | null;
   state: SteeringInputState;
   created_at: string;
   updated_at: string;
@@ -90,6 +95,7 @@ function steeringInputFromRow(row: SteeringInputRow): SteeringInputRecord {
     conversationKey: row.conversation_key,
     content: row.content,
     sdkMessageId: row.sdk_message_id,
+    originalSdkMessageId: row.original_sdk_message_id ?? row.sdk_message_id,
     state: row.state,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -134,6 +140,9 @@ function fromRow(row: JobRow): JobRecord {
     attempts: row.attempts,
     startedBefore: row.started_before === 1,
     recoveryReason: row.recovery_reason,
+    continuationPrompt: row.continuation_prompt,
+    continuationSessionId: row.continuation_session_id,
+    continuationTurn: row.continuation_turn ?? 0,
     pid: row.pid,
     result: row.result,
     error: row.error,
@@ -268,6 +277,7 @@ export class StateStore {
         conversation_key TEXT NOT NULL,
         content TEXT NOT NULL,
         sdk_message_id TEXT NOT NULL,
+        original_sdk_message_id TEXT,
         state TEXT NOT NULL CHECK(state IN ('pending','accepted','edited','deleted')),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -289,6 +299,11 @@ export class StateStore {
     this.ensureColumn("jobs", "delivery_files", "TEXT");
     this.ensureColumn("jobs", "delivery_cursor", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("jobs", "delivery_message_ids", "TEXT");
+    this.ensureColumn("jobs", "continuation_prompt", "TEXT");
+    this.ensureColumn("jobs", "continuation_session_id", "TEXT");
+    this.ensureColumn("jobs", "continuation_turn", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("steering_inputs", "original_sdk_message_id", "TEXT");
+    this.db.exec("UPDATE steering_inputs SET original_sdk_message_id=sdk_message_id WHERE original_sdk_message_id IS NULL");
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -318,9 +333,12 @@ export class StateStore {
       .run(nextSessionId, timestamp, conversationKey);
   }
 
-  enqueue(input: EnqueueInput): JobRecord {
+  enqueue(input: EnqueueInput, replacePendingSteeringMessageId?: string): JobRecord {
     const existing = this.db.query<JobRow, [string]>("SELECT * FROM jobs WHERE message_id = ?").get(input.messageId);
-    if (existing) return fromRow(existing);
+    if (existing) {
+      if (replacePendingSteeringMessageId) this.discardPendingSteeringInput(replacePendingSteeringMessageId);
+      return fromRow(existing);
+    }
 
     const timestamp = now();
     const session = this.db
@@ -365,6 +383,11 @@ export class StateStore {
           timestamp,
           timestamp,
         );
+      if (replacePendingSteeringMessageId) {
+        this.db
+          .query("DELETE FROM steering_inputs WHERE message_id=? AND state='pending'")
+          .run(replacePendingSteeringMessageId);
+      }
     });
     tx();
     return this.getJob(jobId)!;
@@ -742,6 +765,7 @@ export class StateStore {
           `UPDATE jobs SET status='delivering', final_status=?, result=?, error=?, session_id=?, pid=NULL,
            heartbeat_at=?, delivery_attempts=0, delivery_after=?, delivery_error=NULL, recovery_reason=NULL,
            delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0, delivery_message_ids='[]',
+           continuation_prompt=NULL, continuation_session_id=NULL, continuation_turn=0,
            main_model=?, subagent_models=?
            WHERE id=?`,
         )
@@ -830,6 +854,7 @@ export class StateStore {
             `UPDATE jobs SET status='delivering', final_status='failed', result=?, error=?, session_id=?,
              delivery_attempts=0, delivery_after=?, delivery_error=NULL, pid=NULL, heartbeat_at=?,
              delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0, delivery_message_ids='[]',
+             continuation_prompt=NULL, continuation_session_id=NULL, continuation_turn=0,
              main_model=?, subagent_models=? WHERE id=?`,
           )
           .run(
@@ -897,14 +922,15 @@ export class StateStore {
     this.db
       .query(
         `INSERT OR IGNORE INTO steering_inputs(
-          message_id,job_id,conversation_key,content,sdk_message_id,state,created_at,updated_at
-        ) VALUES(?,?,?,?,?,'pending',?,?)`,
+          message_id,job_id,conversation_key,content,sdk_message_id,original_sdk_message_id,state,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,'pending',?,?)`,
       )
       .run(
         input.messageId,
         input.jobId,
         input.conversationKey,
         input.content,
+        input.sdkMessageId,
         input.sdkMessageId,
         timestamp,
         timestamp,
@@ -923,23 +949,40 @@ export class StateStore {
     return record;
   }
 
-  updateSteeringInput(messageId: string, content: string, sdkMessageId: string): SteeringInputRecord | null {
-    this.db
+  prepareSteeringEdit(messageId: string, content: string): SteeringInputRecord | null {
+    const changed = this.db
       .query(
-        "UPDATE steering_inputs SET content=?, sdk_message_id=?, state='edited', updated_at=? WHERE message_id=? AND state!='deleted'",
+        "UPDATE steering_inputs SET content=?, state='edited', updated_at=? WHERE message_id=? AND state!='deleted'",
       )
-      .run(content, sdkMessageId, now(), messageId);
+      .run(content, now(), messageId);
+    return changed.changes === 1 ? this.getSteeringInput(messageId) : null;
+  }
+
+  prepareSteeringDelete(messageId: string): SteeringInputRecord | null {
+    const timestamp = now();
+    const changed = this.db
+      .query(
+        "UPDATE steering_inputs SET state='deleted', updated_at=?, deleted_at=? WHERE message_id=? AND state!='deleted'",
+      )
+      .run(timestamp, timestamp, messageId);
+    return changed.changes === 1 ? this.getSteeringInput(messageId) : null;
+  }
+
+  recordSteeringMutation(messageId: string, sdkMessageId: string): SteeringInputRecord | null {
+    this.db
+      .query("UPDATE steering_inputs SET sdk_message_id=?, updated_at=? WHERE message_id=?")
+      .run(sdkMessageId, now(), messageId);
     return this.getSteeringInput(messageId);
   }
 
+  updateSteeringInput(messageId: string, content: string, sdkMessageId: string): SteeringInputRecord | null {
+    if (!this.prepareSteeringEdit(messageId, content)) return null;
+    return this.recordSteeringMutation(messageId, sdkMessageId);
+  }
+
   deleteSteeringInput(messageId: string, sdkMessageId: string): SteeringInputRecord | null {
-    const timestamp = now();
-    this.db
-      .query(
-        "UPDATE steering_inputs SET sdk_message_id=?, state='deleted', updated_at=?, deleted_at=? WHERE message_id=? AND state!='deleted'",
-      )
-      .run(sdkMessageId, timestamp, timestamp, messageId);
-    return this.getSteeringInput(messageId);
+    if (!this.prepareSteeringDelete(messageId)) return this.getSteeringInput(messageId);
+    return this.recordSteeringMutation(messageId, sdkMessageId);
   }
 
   discardPendingSteeringInput(messageId: string): boolean {
@@ -961,6 +1004,10 @@ export class StateStore {
       .map(steeringInputFromRow);
   }
 
+  listRecoverySteeringInputs(jobId: string): SteeringInputRecord[] {
+    return this.listJobSteeringInputs(jobId);
+  }
+
   listPendingSteeringInputs(jobId: string): SteeringInputRecord[] {
     return this.db
       .query<SteeringInputRow, [string]>(
@@ -975,6 +1022,17 @@ export class StateStore {
       .query("UPDATE steering_inputs SET state='accepted', updated_at=? WHERE job_id=? AND state='pending'")
       .run(now(), jobId);
     return result.changes;
+  }
+
+  stageContinuation(jobId: string, prompt: string, sessionId: string, turn: number): JobRecord {
+    this.db
+      .query(
+        "UPDATE jobs SET continuation_prompt=?, continuation_session_id=?, continuation_turn=?, heartbeat_at=? WHERE id=?",
+      )
+      .run(prompt, sessionId, turn, now(), jobId);
+    const job = this.getJob(jobId);
+    if (!job) throw new Error(`job not found: ${jobId}`);
+    return job;
   }
 
   beginInteraction(jobId: string, conversationKey: string, question: InteractiveQuestion): InteractionRecord {
@@ -1015,10 +1073,31 @@ export class StateStore {
   }
 
   tryAnswerInteraction(id: string, answer: string): InteractionRecord | null {
-    const changed = this.db
-      .query("UPDATE interactions SET answer=?, status='answered', updated_at=? WHERE id=? AND status='pending'")
-      .run(answer, now(), id);
-    if (changed.changes !== 1) return null;
+    const transaction = this.db.transaction(() => {
+      const row = this.db.query<InteractionRow, [string]>("SELECT * FROM interactions WHERE id=? AND status='pending'").get(id);
+      if (!row) return false;
+      const timestamp = now();
+      const changed = this.db
+        .query("UPDATE interactions SET answer=?, status='answered', updated_at=? WHERE id=? AND status='pending'")
+        .run(answer, timestamp, id);
+      if (changed.changes !== 1) return false;
+      const question = JSON.parse(row.question_json) as InteractiveQuestion;
+      if (question.continuation) {
+        this.db
+          .query(
+            "UPDATE jobs SET continuation_prompt=?, continuation_session_id=?, continuation_turn=?, heartbeat_at=? WHERE id=?",
+          )
+          .run(
+            markerContinuationPrompt(question, answer),
+            question.continuation.sessionId,
+            question.continuation.turn,
+            timestamp,
+            row.job_id,
+          );
+      }
+      return true;
+    });
+    if (!transaction()) return null;
     return this.getInteraction(id);
   }
 

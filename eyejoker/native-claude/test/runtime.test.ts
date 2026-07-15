@@ -147,6 +147,24 @@ describe("job runtime", () => {
     expect(env.store.getSteeringInput("pending-followup")?.state).toBe("accepted");
   });
 
+  test("startup recovery resumes the exact persisted marker continuation instead of the original task", async () => {
+    const env = setup([ok("marker-session", "continued")]);
+    const job = enqueue(env.store, "marker-recovery");
+    env.store.claimNext(1);
+    env.store.stageContinuation(job.id, "[Discord 질문 답변]\n사용자 선택: 배포", "marker-session", 2);
+    env.store.recoverInterrupted("service restart");
+
+    await env.runtime.runUntilIdle();
+
+    expect(env.calls[0]).toMatchObject({
+      resume: true,
+      sessionId: "marker-session",
+      prompt: "[Discord 질문 답변]\n사용자 선택: 배포",
+      continuationTurn: 2,
+    });
+    expect(env.store.getJob(job.id)?.continuationPrompt).toBeNull();
+  });
+
   test("cancelled while the start hook is pending never launches Claude", async () => {
     const store = freshStore();
     let releaseStart!: () => void;
