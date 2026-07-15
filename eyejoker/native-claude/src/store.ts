@@ -15,6 +15,7 @@ import type {
   InteractiveQuestion,
   OutboundFile,
   PermissionMode,
+  PullRequestWatchRecord,
   RewindOperation,
   SessionBranch,
   SteeringInputRecord,
@@ -75,6 +76,28 @@ interface InteractionRow {
   updated_at: string;
 }
 
+interface PullRequestWatchRow {
+  id: string;
+  route_id: string;
+  lock_key: string;
+  conversation_key: string;
+  channel_id: string;
+  thread_id: string | null;
+  author_id: string;
+  repo: string;
+  pr_number: number;
+  url: string;
+  status: "active" | "completed";
+  last_observed_signal: string | null;
+  last_wake_signal: string | null;
+  active_job_id: string | null;
+  wake_count: number;
+  expires_at: string;
+  completed_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface SteeringInputRow {
   message_id: string;
   job_id: string;
@@ -113,6 +136,30 @@ function interactionFromRow(row: InteractionRow): InteractionRecord {
     discordMessageId: row.discord_message_id,
     answer: row.answer,
     status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function pullRequestWatchFromRow(row: PullRequestWatchRow): PullRequestWatchRecord {
+  return {
+    id: row.id,
+    routeId: row.route_id,
+    lockKey: row.lock_key,
+    conversationKey: row.conversation_key,
+    channelId: row.channel_id,
+    threadId: row.thread_id,
+    authorId: row.author_id,
+    repo: row.repo,
+    number: row.pr_number,
+    url: row.url,
+    status: row.status,
+    lastObservedSignal: row.last_observed_signal,
+    lastWakeSignal: row.last_wake_signal,
+    activeJobId: row.active_job_id,
+    wakeCount: row.wake_count,
+    expiresAt: row.expires_at,
+    completedReason: row.completed_reason,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -285,6 +332,30 @@ export class StateStore {
         FOREIGN KEY(job_id) REFERENCES jobs(id)
       );
       CREATE INDEX IF NOT EXISTS steering_inputs_job_idx ON steering_inputs(job_id, created_at);
+      CREATE TABLE IF NOT EXISTS pull_request_watches (
+        id TEXT PRIMARY KEY,
+        route_id TEXT NOT NULL,
+        lock_key TEXT NOT NULL,
+        conversation_key TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
+        thread_id TEXT,
+        author_id TEXT NOT NULL,
+        repo TEXT NOT NULL COLLATE NOCASE,
+        pr_number INTEGER NOT NULL,
+        url TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active','completed')),
+        last_observed_signal TEXT,
+        last_wake_signal TEXT,
+        active_job_id TEXT,
+        wake_count INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT NOT NULL,
+        completed_reason TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(repo, pr_number)
+      );
+      CREATE INDEX IF NOT EXISTS pull_request_watches_active_idx
+        ON pull_request_watches(status, expires_at, updated_at);
     `);
     this.db.exec(`
       INSERT OR IGNORE INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at)
@@ -1153,6 +1224,98 @@ export class StateStore {
       )
       .all()
       .map(interactionFromRow);
+  }
+
+  upsertPullRequestWatch(
+    job: JobRecord,
+    reference: { repo: string; number: number; url: string },
+    ttlDays = 14,
+  ): PullRequestWatchRecord {
+    const timestamp = now();
+    const expiresAt = new Date(Date.now() + ttlDays * 86_400_000).toISOString();
+    const id = createHash("sha256")
+      .update(`${reference.repo.toLowerCase()}#${reference.number}`)
+      .digest("hex")
+      .slice(0, 24);
+    this.db
+      .query(
+        `INSERT INTO pull_request_watches(
+          id,route_id,lock_key,conversation_key,channel_id,thread_id,author_id,repo,pr_number,url,
+          status,last_observed_signal,last_wake_signal,active_job_id,wake_count,expires_at,completed_reason,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,'active',NULL,NULL,NULL,0,?,NULL,?,?)
+        ON CONFLICT(repo,pr_number) DO UPDATE SET
+          route_id=excluded.route_id,
+          lock_key=excluded.lock_key,
+          conversation_key=excluded.conversation_key,
+          channel_id=excluded.channel_id,
+          thread_id=excluded.thread_id,
+          author_id=excluded.author_id,
+          url=excluded.url,
+          status='active',
+          expires_at=excluded.expires_at,
+          completed_reason=NULL,
+          updated_at=excluded.updated_at`,
+      )
+      .run(
+        id,
+        job.routeId,
+        job.lockKey,
+        job.conversationKey,
+        job.channelId,
+        job.threadId,
+        job.authorId,
+        reference.repo,
+        reference.number,
+        reference.url,
+        expiresAt,
+        timestamp,
+        timestamp,
+      );
+    return this.getPullRequestWatch(id)!;
+  }
+
+  getPullRequestWatch(id: string): PullRequestWatchRecord | null {
+    const row = this.db.query<PullRequestWatchRow, [string]>("SELECT * FROM pull_request_watches WHERE id=?").get(id);
+    return row ? pullRequestWatchFromRow(row) : null;
+  }
+
+  listActivePullRequestWatches(): PullRequestWatchRecord[] {
+    return this.db
+      .query<PullRequestWatchRow, []>("SELECT * FROM pull_request_watches WHERE status='active' ORDER BY created_at,id")
+      .all()
+      .map(pullRequestWatchFromRow);
+  }
+
+  recordPullRequestObservation(id: string, signal: string, wakeJobId?: string): PullRequestWatchRecord | null {
+    const timestamp = now();
+    if (wakeJobId) {
+      this.db
+        .query(
+          `UPDATE pull_request_watches SET
+             last_observed_signal=?,
+             wake_count=wake_count + CASE WHEN last_wake_signal IS ? THEN 0 ELSE 1 END,
+             last_wake_signal=?,
+             active_job_id=?,
+             updated_at=?
+           WHERE id=? AND status='active'`,
+        )
+        .run(signal, signal, signal, wakeJobId, timestamp, id);
+    } else {
+      this.db
+        .query("UPDATE pull_request_watches SET last_observed_signal=?,updated_at=? WHERE id=? AND status='active'")
+        .run(signal, timestamp, id);
+    }
+    return this.getPullRequestWatch(id);
+  }
+
+  completePullRequestWatch(id: string, reason: string): PullRequestWatchRecord | null {
+    this.db
+      .query(
+        `UPDATE pull_request_watches SET status='completed',completed_reason=?,active_job_id=NULL,updated_at=?
+         WHERE id=?`,
+      )
+      .run(reason, now(), id);
+    return this.getPullRequestWatch(id);
   }
 
   getJob(id: string): JobRecord | null {

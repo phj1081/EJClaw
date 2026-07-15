@@ -7,6 +7,8 @@
     "start": "bun run src/index.ts",
     "status": "bun run src/status.ts",
     "admin": "bun run src/admin.ts",
+    "watch:github": "bun run src/github-watch.ts",
+    "verify:cohort": "bun run src/cohort-verifier.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "check": "bun test && tsc --noEmit"

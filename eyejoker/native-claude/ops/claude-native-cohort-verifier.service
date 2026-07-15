@@ -1,0 +1,14 @@
+[Unit]
+Description=Verify new Claude Code and Agent SDK cohorts in isolation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ejclaw/projects/ejclaw-native/eyejoker/native-claude
+EnvironmentFile=-/home/ejclaw/.config/claude-native/env
+Environment=CLAUDE_NATIVE_COHORT_ROUTE=native-pilot
+ExecStart=/home/ejclaw/.bun/bin/bun run src/cohort-verifier.ts
+NoNewPrivileges=true
+PrivateTmp=true
+TimeoutStartSec=45min

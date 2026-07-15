@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Claude Code and Agent SDK cohort verification weekly
+
+[Timer]
+OnCalendar=Mon *-*-* 04:20:00 Asia/Seoul
+RandomizedDelaySec=15min
+Persistent=true
+Unit=claude-native-cohort-verifier.service
+
+[Install]
+WantedBy=timers.target

@@ -41,11 +41,17 @@ install -m 600 ops/routes.example.json ~/.config/claude-native/routes.json
 # 위 두 파일의 placeholder와 secret을 운영 값으로 교체
 
 install -m 644 ops/claude-native-bridge.service ~/.config/systemd/user/claude-native-bridge.service
+install -m 644 ops/claude-native-github-watch.service ~/.config/systemd/user/
+install -m 644 ops/claude-native-github-watch.timer ~/.config/systemd/user/
+install -m 644 ops/claude-native-cohort-verifier.service ~/.config/systemd/user/
+install -m 644 ops/claude-native-cohort-verifier.timer ~/.config/systemd/user/
 install -m 644 ops/claude-native-maldhalla-balance.service ~/.config/systemd/user/
 install -m 644 ops/claude-native-maldhalla-balance.timer ~/.config/systemd/user/
 # 반복 작업 prompt는 ~/.config/claude-native/schedules/*.prompt에 mode 600으로 둔다.
 systemctl --user daemon-reload
 systemctl --user enable --now claude-native-bridge.service
+systemctl --user enable --now claude-native-github-watch.timer
+systemctl --user enable --now claude-native-cohort-verifier.timer
 systemctl --user enable --now claude-native-maldhalla-balance.timer
 ```
 
@@ -58,7 +64,12 @@ bun run src/status.ts
 bun run src/status.ts --json
 bun run src/admin.ts enqueue-file maldhalla-balance ~/.config/claude-native/schedules/maldhalla-balance.prompt
 systemctl --user list-timers claude-native-maldhalla-balance.timer
+systemctl --user list-timers claude-native-github-watch.timer claude-native-cohort-verifier.timer
 ```
+
+직접 생성·소유한 PR은 Claude가 최종 응답의 내부 `PR_WATCH:` marker로 등록한다. bridge는 marker를 Discord에 보내기 전에 제거하고, watcher는 SQLite에 남은 PR을 2분마다 조회해 current-head CI 실패, 리뷰 변경 요청, 새 리뷰 활동, merge 준비 상태만 같은 Claude/Discord conversation에 다시 enqueue한다. 공개 webhook endpoint는 열지 않는다.
+
+cohort verifier는 매주 npm의 최신 Agent SDK metadata가 지정한 Claude Code 버전 조합을 격리 복사본에 설치하고 전체 test/typecheck와 실제 AskUserQuestion·Bash·session resume smoke를 실행한다. 결과가 바뀔 때만 Native queue로 보고하며 production package나 service는 자동 변경하지 않는다. 상태와 mode-600 로그는 `~/.local/state/claude-native/cohort-verifier/`에 남는다.
 
 Discord 명령:
 

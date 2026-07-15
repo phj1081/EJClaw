@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 
-export const EXPECTED_CLAUDE_CODE_VERSION = "2.1.201";
-export const EXPECTED_AGENT_SDK_VERSION = "0.3.201";
+export const EXPECTED_CLAUDE_CODE_VERSION =
+  process.env.CLAUDE_NATIVE_EXPECTED_CLAUDE_VERSION ?? "2.1.201";
+export const EXPECTED_AGENT_SDK_VERSION =
+  process.env.CLAUDE_NATIVE_EXPECTED_SDK_VERSION ?? "0.3.201";
 
 export function assertClaudeExecutableCompatibility(executable: string): void {
   const result = spawnSync(executable, ["--version"], { encoding: "utf8", timeout: 15_000 });

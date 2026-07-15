@@ -1,0 +1,14 @@
+[Unit]
+Description=Claude Native durable GitHub PR/CI watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/ejclaw/projects/ejclaw-native/eyejoker/native-claude
+EnvironmentFile=-/home/ejclaw/.config/claude-native/env
+Environment=CLAUDE_NATIVE_STATE_DB=/home/ejclaw/.local/state/claude-native/state.sqlite
+ExecStart=/home/ejclaw/.bun/bin/bun run src/github-watch.ts
+NoNewPrivileges=true
+PrivateTmp=true
+TimeoutStartSec=90

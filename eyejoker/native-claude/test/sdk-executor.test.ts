@@ -76,9 +76,12 @@ function result(sessionId = "sdk-session"): SDKMessage {
     is_error: false,
     num_turns: 1,
     result: "SDK_OK",
+    stop_reason: null,
     session_id: sessionId,
     total_cost_usd: 0,
     usage: {} as never,
+    modelUsage: {},
+    permission_denials: [],
     uuid: crypto.randomUUID(),
   };
 }
