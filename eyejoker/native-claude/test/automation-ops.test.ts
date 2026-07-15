@@ -32,13 +32,20 @@ describe("native automation systemd contracts", () => {
     expect(verifier).toContain('"@anthropic-ai/claude-code"');
     expect(verifier).toContain("trustedDependencies");
     expect(verifier).toContain("buildBubblewrapInvocation");
+    expect(verifier).toContain('"npm_config_cache"');
     expect(verifier).not.toContain("...process.env");
     expect(smoke).toContain('tools: ["AskUserQuestion"]');
     expect(smoke).not.toContain("tools: { type: \"preset\", preset: \"claude_code\" }");
     expect(smoke).not.toContain("...process.env");
     expect(service).toContain("ProtectHome=read-only");
     expect(service).toContain("ReadWritePaths=/home/ejclaw/.local/state/claude-native");
-    expect(service).toContain("NPM_CONFIG_CACHE=/home/ejclaw/.local/state/claude-native/npm-cache");
+    const cachePath = "/home/ejclaw/.local/state/claude-native/npm-cache";
+    const npmCacheProbe = Bun.spawnSync(["npm", "config", "get", "cache"], {
+      env: { ...process.env, npm_config_cache: cachePath },
+    });
+    expect(npmCacheProbe.exitCode).toBe(0);
+    expect(new TextDecoder().decode(npmCacheProbe.stdout).trim()).toBe(cachePath);
+    expect(service).toContain(`npm_config_cache=${cachePath}`);
     expect(service).toContain("UnsetEnvironment=DISCORD_BOT_TOKEN");
     expect(envExample).toContain("DISCORD_STATE_DIR=/home/ejclaw/.claude/channels/discord-owner");
     expect(envExample).not.toContain("discord-pilot");

@@ -60,7 +60,7 @@ function hostEnvironment(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
     LC_ALL: process.env.LC_ALL ?? "C.UTF-8",
     NO_COLOR: "1",
   };
-  for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NPM_CONFIG_REGISTRY"]) {
+  for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "NPM_CONFIG_REGISTRY", "npm_config_cache"]) {
     if (process.env[key]) environment[key] = process.env[key];
   }
   Object.assign(environment, extra);
