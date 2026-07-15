@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   query as sdkQuery,
   type CanUseTool,
@@ -89,7 +90,9 @@ export class ClaudeSdkExecutor {
 
   constructor(options: SdkExecutorOptions) {
     this.queryFactory = options.queryFactory ?? sdkQuery;
-    this.claudeExecutable = options.claudeExecutable ?? "/home/ejclaw/.hermes/node/bin/claude";
+    const home = process.env.HOME;
+    this.claudeExecutable =
+      options.claudeExecutable ?? (home ? join(home, ".hermes/node/bin/claude") : "claude");
     this.timeoutMs = options.timeoutSeconds * 1000;
   }
 

@@ -77,7 +77,7 @@ const config = loadConfig(configPath);
 const routes = new Map(config.routes.map((route) => [route.id, route]));
 const allowedUsers = new Set(config.allowedUserIds);
 const store = new StateStore(statePath);
-const claudeExecutable = process.env.CLAUDE_NATIVE_CLAUDE_BIN ?? "/home/ejclaw/.hermes/node/bin/claude";
+const claudeExecutable = process.env.CLAUDE_NATIVE_CLAUDE_BIN ?? join(home, ".hermes/node/bin/claude");
 assertClaudeExecutableCompatibility(claudeExecutable);
 const executor = new ClaudeSdkExecutor({
   claudeExecutable,

@@ -1,20 +1,21 @@
 # Native Claude Code Runtime
 
-NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Discord를 Native Claude Code `claude -p` 세션에 연결하는 얇은 운영 런타임이다.
+NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Discord를 `@anthropic-ai/claude-agent-sdk` streaming 세션에 연결하는 durable 운영 런타임이다. SDK `0.3.201`과 Claude Code `2.1.201`을 같은 cohort로 고정하고 시작 시 버전을 검증한다.
 
 ## 보장하는 것
 
-- Discord 채널/스레드 → 프로젝트와 Claude session ID 매핑
-- 매 요청을 `/goal`로 실행해 코드·테스트·PR/CI 같은 완료 조건까지 bounded continuation
-- `stream-json` 전체 이벤트를 수집해 **30초 뒤 임시 Discord progress 카드 한 장**만 갱신; 최종 답변 전송 성공 후 카드는 삭제 (삭제 실패 시 `✅ 완료` fallback)
-- 프로젝트(lock key)별 직렬화, 서로 다른 프로젝트는 병렬 실행
-- SQLite durable queue와 동일 session `--resume`
-- 서비스 재시작 시 `running → queued` 복구
-- 최대 시도 횟수·6시간 기본 timeout·`!cancel`
-- 실제 프로세스/heartbeat 기반 `working / stalled / queued / idle`
-- owner 멘션은 최종 완료/실패 메시지에만 1회
-- 첨부 파일 로컬 mode 600 보존
-- CLIProxy API-key only. OAuth 환경 변수는 자식 Claude 프로세스에서 비운다.
+- Discord 채널/스레드 → 프로젝트와 Claude session ID/branch/checkpoint 매핑
+- 일반 요청은 `/goal` 완료 계약으로 실행하고, raw Claude slash는 wrapper 없이 전달
+- native `AskUserQuestion`·permission callback·실행 중 steering·동적 model/permission 제어
+- reply/history context와 source message edit/delete/reaction 전파
+- **30초 뒤 임시 Discord progress 카드 한 장**만 2초 cadence로 갱신하고, final delivery 성공 후 삭제
+- 프로젝트(lock key)별 직렬화, 서로 다른 프로젝트는 최대 3개 병렬 실행
+- SQLite durable queue/session/interaction/delivery cursor와 practical exactly-once nonce reconciliation
+- 서비스 재시작 시 interrupted execution 복구, 질문 request ID dedupe, delivery-only retry
+- 최초 시작 시점 기준 6시간 absolute timeout·최대 시도 횟수·`!cancel`
+- bounded inbound streaming, credential 파일명 차단, immutable outbound spool, `MEDIA:` attachment delivery
+- 실제 SDK message metadata 기반 main/subagent model 표시
+- owner allowlist와 final mention 1회
 
 ## 일부러 만들지 않은 것
 
@@ -23,7 +24,7 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 - PR/CI 상태 머신
 - 모델 텍스트를 완료로 간주하는 가짜 status
 
-Claude Code의 `/goal`, native Agent tool, session transcript, worktree/CLI 기능을 그대로 사용한다.
+Claude Code의 native Agent tool, session transcript, settings/CLAUDE.md, file checkpointing을 SDK 제어면으로 그대로 사용한다.
 
 ## 설치
 
@@ -59,8 +60,11 @@ systemctl --user list-timers claude-native-maldhalla-balance.timer
 
 Discord 명령:
 
-- `!status`: 해당 bridge의 실제 queue/process 상태
-- `!cancel`: 현재 채널/스레드의 queued/running 작업 중지
+- 상태/중지: `!status`, `!cancel`, `!settings`
+- 실행 설정: `!model`, `!permission`, `!effort`
+- 세션: `!fork`, `!branch list`, `!branch use <prefix>`, `!reset`
+- checkpoint/rewind: `!checkpoint list`, `!rewind preview <uuid>`, `!rewind apply <operation-id>`
+- Claude command: `!compact`, `!claude /command`, `!background <prompt>`
 
 ## Cutover 원칙
 
