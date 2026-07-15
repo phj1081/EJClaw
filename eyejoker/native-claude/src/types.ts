@@ -73,6 +73,11 @@ export interface EnqueueInput {
   prompt: string;
   rawPrompt?: boolean;
   attachmentPaths: string[];
+  sessionId?: string;
+  pinnedSession?: boolean;
+  githubWatchRepo?: string;
+  githubWatchNumber?: number;
+  expectedHeadSha?: string;
 }
 
 export type JobStatus =
@@ -104,6 +109,10 @@ export interface JobRecord {
   attachmentPaths: string[];
   status: JobStatus;
   sessionId: string;
+  pinnedSession: boolean;
+  githubWatchRepo: string | null;
+  githubWatchNumber: number | null;
+  expectedHeadSha: string | null;
   attempts: number;
   startedBefore: boolean;
   recoveryReason: string | null;
@@ -136,6 +145,7 @@ export interface PullRequestWatchRecord {
   routeId: string;
   lockKey: string;
   conversationKey: string;
+  sessionId: string;
   channelId: string;
   threadId: string | null;
   authorId: string;
@@ -226,6 +236,8 @@ export type ClaudeExecutor = (request: ExecutionRequest) => Promise<ClaudeExecut
 
 export type FinalHook = (job: JobRecord, execution: ClaudeExecution) => Promise<void>;
 export type StartHook = (job: JobRecord) => Promise<void>;
+export type PreflightDecision = { ok: true } | { ok: false; reason: string };
+export type PreflightHook = (job: JobRecord) => Promise<PreflightDecision>;
 export type QuestionHook = (job: JobRecord, question: InteractiveQuestion) => Promise<string>;
 export type ProgressHook = (
   job: JobRecord,

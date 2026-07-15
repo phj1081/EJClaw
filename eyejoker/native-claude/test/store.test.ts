@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
 import { StateStore } from "../src/store";
 
 const paths: string[] = [];
@@ -81,6 +82,19 @@ describe("durable job store", () => {
     const b = db.enqueue(input("cleanapo", "cleanapo:one", "same"));
     expect(b.id).toBe(a.id);
     expect(db.listJobs()).toHaveLength(1);
+  });
+
+  test("requeues a terminal durable notice with the same deterministic message id", () => {
+    const db = store();
+    const job = db.enqueue(input("notice", "notice:one", "cohort-notice"));
+    db.cancelByMessageId("cohort-notice", "simulated delivery failure");
+    expect(db.getJob(job.id)?.status).toBe("cancelled");
+
+    const replay = db.requeueTerminalByMessageId("cohort-notice", "durable notice replay");
+    expect(replay?.id).toBe(job.id);
+    expect(replay?.status).toBe("queued");
+    expect(replay?.attempts).toBe(0);
+    expect(replay?.error).toBeNull();
   });
 
   test("persists final chunks, cursor and accepted message ids across restarts", () => {
@@ -192,6 +206,87 @@ describe("durable job store", () => {
     db.useSessionBranch(original.conversationKey, original.sessionId.slice(0, 8));
     const followup = db.enqueue(input("branches", "branches:one", "branch-followup"));
     expect(followup.sessionId).toBe(original.sessionId);
+  });
+
+  test("uses a pinned historical session without changing the active conversation pointer", () => {
+    const db = store();
+    const original = db.enqueue(input("watch", "watch:thread", "origin"));
+    const originalRun = db.claimNext(1)!;
+    db.stageDelivery(
+      originalRun.id,
+      { ok: true, result: "origin done", sessionId: original.sessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
+    const resetSession = db.resetSession(original.conversationKey);
+    const pinned = db.enqueue({
+      ...input("watch", original.conversationKey, "watch-wake"),
+      sessionId: original.sessionId,
+      pinnedSession: true,
+    });
+    const pinnedRun = db.claimNext(1)!;
+    expect(pinnedRun.id).toBe(pinned.id);
+    db.stageDelivery(
+      pinnedRun.id,
+      { ok: true, result: "watch done", sessionId: original.sessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
+    const normalAfterWatch = db.enqueue(input("watch", original.conversationKey, "normal-after-watch"));
+    expect(normalAfterWatch.sessionId).toBe(resetSession);
+    expect(db.listSessionBranches(original.conversationKey).find((branch) => branch.sessionId === resetSession)?.status)
+      .toBe("active");
+    db.cancelByMessageId(normalAfterWatch.messageId, "test cleanup");
+
+    const retryPinned = db.enqueue({
+      ...input("watch", original.conversationKey, "watch-retry"),
+      sessionId: original.sessionId,
+      pinnedSession: true,
+    });
+    const retryRun = db.claimNext(1)!;
+    expect(retryRun.id).toBe(retryPinned.id);
+    db.retryOrFail(
+      retryRun.id,
+      { ok: false, result: "retry", sessionId: original.sessionId, stderr: "failed", exitCode: 1 },
+      2,
+    );
+    expect(db.enqueue(input("watch", original.conversationKey, "normal-after-retry")).sessionId).toBe(resetSession);
+  });
+
+  test("rejects an empty pinned session and closes migrated active watches without provenance", () => {
+    const db = store();
+    expect(() => db.enqueue({
+      ...input("watch", "watch:empty", "empty-pin"),
+      sessionId: "",
+      pinnedSession: true,
+    })).toThrow("pinned session id is required");
+    db.close();
+
+    const path = join(tmpdir(), `native-legacy-watch-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE pull_request_watches(
+        id TEXT PRIMARY KEY, route_id TEXT NOT NULL, lock_key TEXT NOT NULL,
+        conversation_key TEXT NOT NULL, channel_id TEXT NOT NULL, thread_id TEXT,
+        author_id TEXT NOT NULL, repo TEXT NOT NULL, pr_number INTEGER NOT NULL, url TEXT NOT NULL,
+        status TEXT NOT NULL, last_observed_signal TEXT, last_wake_signal TEXT, active_job_id TEXT,
+        wake_count INTEGER NOT NULL DEFAULT 0, expires_at TEXT NOT NULL, completed_reason TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(repo, pr_number)
+      );
+      INSERT INTO pull_request_watches VALUES(
+        'legacy','watch','watch','watch:legacy','channel',NULL,'owner','owner/repo',1,
+        'https://github.com/owner/repo/pull/1','active',NULL,NULL,NULL,0,
+        '2099-01-01T00:00:00.000Z',NULL,'2026-01-01T00:00:00.000Z','2026-01-01T00:00:00.000Z'
+      );
+    `);
+    legacy.close();
+    const migrated = new StateStore(path);
+    expect(migrated.listActivePullRequestWatches()).toHaveLength(0);
+    migrated.close();
+    const inspected = new Database(path, { readonly: true });
+    expect(inspected.query<{ status: string; completed_reason: string }, []>(
+      "SELECT status,completed_reason FROM pull_request_watches WHERE id='legacy'",
+    ).get()).toEqual({ status: "completed", completed_reason: "legacy-missing-session" });
+    inspected.close();
   });
 
   test("preserves the first started_at across execution retries", () => {

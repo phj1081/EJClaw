@@ -36,6 +36,10 @@ interface JobRow {
   attachment_paths: string;
   status: JobStatus;
   session_id: string;
+  pinned_session: number;
+  github_watch_repo: string | null;
+  github_watch_number: number | null;
+  expected_head_sha: string | null;
   attempts: number;
   started_before: number;
   recovery_reason: string | null;
@@ -81,6 +85,7 @@ interface PullRequestWatchRow {
   route_id: string;
   lock_key: string;
   conversation_key: string;
+  session_id: string;
   channel_id: string;
   thread_id: string | null;
   author_id: string;
@@ -147,6 +152,7 @@ function pullRequestWatchFromRow(row: PullRequestWatchRow): PullRequestWatchReco
     routeId: row.route_id,
     lockKey: row.lock_key,
     conversationKey: row.conversation_key,
+    sessionId: row.session_id,
     channelId: row.channel_id,
     threadId: row.thread_id,
     authorId: row.author_id,
@@ -184,6 +190,10 @@ function fromRow(row: JobRow): JobRecord {
     attachmentPaths: JSON.parse(row.attachment_paths) as string[],
     status: row.status,
     sessionId: row.session_id,
+    pinnedSession: row.pinned_session === 1,
+    githubWatchRepo: row.github_watch_repo,
+    githubWatchNumber: row.github_watch_number,
+    expectedHeadSha: row.expected_head_sha,
     attempts: row.attempts,
     startedBefore: row.started_before === 1,
     recoveryReason: row.recovery_reason,
@@ -283,6 +293,10 @@ export class StateStore {
         attachment_paths TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('queued','running','delivering','completed','failed','cancelled')),
         session_id TEXT NOT NULL,
+        pinned_session INTEGER NOT NULL DEFAULT 0,
+        github_watch_repo TEXT,
+        github_watch_number INTEGER,
+        expected_head_sha TEXT,
         attempts INTEGER NOT NULL DEFAULT 0,
         started_before INTEGER NOT NULL DEFAULT 0,
         recovery_reason TEXT,
@@ -337,6 +351,7 @@ export class StateStore {
         route_id TEXT NOT NULL,
         lock_key TEXT NOT NULL,
         conversation_key TEXT NOT NULL,
+        session_id TEXT NOT NULL,
         channel_id TEXT NOT NULL,
         thread_id TEXT,
         author_id TEXT NOT NULL,
@@ -373,6 +388,18 @@ export class StateStore {
     this.ensureColumn("jobs", "continuation_prompt", "TEXT");
     this.ensureColumn("jobs", "continuation_session_id", "TEXT");
     this.ensureColumn("jobs", "continuation_turn", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("jobs", "pinned_session", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("jobs", "github_watch_repo", "TEXT");
+    this.ensureColumn("jobs", "github_watch_number", "INTEGER");
+    this.ensureColumn("jobs", "expected_head_sha", "TEXT");
+    this.ensureColumn("pull_request_watches", "session_id", "TEXT NOT NULL DEFAULT ''");
+    this.db
+      .query(
+        `UPDATE pull_request_watches
+         SET status='completed', completed_reason='legacy-missing-session', active_job_id=NULL, updated_at=?
+         WHERE status='active' AND trim(session_id)=''`,
+      )
+      .run(now());
     this.ensureColumn("steering_inputs", "original_sdk_message_id", "TEXT");
     this.db.exec("UPDATE steering_inputs SET original_sdk_message_id=sdk_message_id WHERE original_sdk_message_id IS NULL");
   }
@@ -405,6 +432,9 @@ export class StateStore {
   }
 
   enqueue(input: EnqueueInput, replacePendingSteeringMessageId?: string): JobRecord {
+    if (input.pinnedSession && !input.sessionId?.trim()) {
+      throw new Error("pinned session id is required");
+    }
     const existing = this.db.query<JobRow, [string]>("SELECT * FROM jobs WHERE message_id = ?").get(input.messageId);
     if (existing) {
       if (replacePendingSteeringMessageId) this.discardPendingSteeringInput(replacePendingSteeringMessageId);
@@ -415,7 +445,17 @@ export class StateStore {
     const session = this.db
       .query<{ session_id: string }, [string]>("SELECT session_id FROM sessions WHERE conversation_key = ?")
       .get(input.conversationKey);
-    const sessionId = session?.session_id ?? crypto.randomUUID();
+    if (input.sessionId) {
+      const branch = this.db
+        .query<{ found: number }, [string, string]>(
+          "SELECT 1 AS found FROM session_branches WHERE session_id=? AND conversation_key=?",
+        )
+        .get(input.sessionId, input.conversationKey);
+      if (!branch && session?.session_id !== input.sessionId) {
+        throw new Error(`pinned session does not belong to conversation: ${input.sessionId}`);
+      }
+    }
+    const sessionId = input.sessionId ?? session?.session_id ?? crypto.randomUUID();
     const jobId = crypto.randomUUID();
     const tx = this.db.transaction(() => {
       if (!session) {
@@ -434,8 +474,9 @@ export class StateStore {
         .query(
           `INSERT INTO jobs(
             id,route_id,lock_key,conversation_key,channel_id,thread_id,message_id,author_id,prompt,raw_prompt,
-            attachment_paths,status,session_id,created_at,queued_at
-          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            attachment_paths,status,session_id,pinned_session,github_watch_repo,github_watch_number,expected_head_sha,
+            created_at,queued_at
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           jobId,
@@ -451,6 +492,10 @@ export class StateStore {
           JSON.stringify(input.attachmentPaths),
           "queued",
           sessionId,
+          input.pinnedSession ? 1 : 0,
+          input.githubWatchRepo ?? null,
+          input.githubWatchNumber ?? null,
+          input.expectedHeadSha ?? null,
           timestamp,
           timestamp,
         );
@@ -851,12 +896,14 @@ export class StateStore {
           JSON.stringify(execution.subagentModels ?? []),
           id,
         );
-      this.activateSessionBranch(
-        job.conversationKey,
-        job.sessionId,
-        execution.sessionId || job.sessionId,
-        timestamp,
-      );
+      if (!job.pinnedSession) {
+        this.activateSessionBranch(
+          job.conversationKey,
+          job.sessionId,
+          execution.sessionId || job.sessionId,
+          timestamp,
+        );
+      }
       this.db
         .query("UPDATE session_checkpoints SET session_id=? WHERE job_id=?")
         .run(execution.sessionId || job.sessionId, job.id);
@@ -903,12 +950,14 @@ export class StateStore {
     const timestamp = now();
     const error = executionError(execution);
     const tx = this.db.transaction(() => {
-      this.activateSessionBranch(
-        job.conversationKey,
-        job.sessionId,
-        execution.sessionId || job.sessionId,
-        timestamp,
-      );
+      if (!job.pinnedSession) {
+        this.activateSessionBranch(
+          job.conversationKey,
+          job.sessionId,
+          execution.sessionId || job.sessionId,
+          timestamp,
+        );
+      }
       this.db
         .query("UPDATE session_checkpoints SET session_id=? WHERE job_id=?")
         .run(execution.sessionId || job.sessionId, job.id);
@@ -953,6 +1002,41 @@ export class StateStore {
           .query("UPDATE jobs SET prompt=?, queued_at=? WHERE message_id=? AND status='queued'")
           .run(prompt, now(), messageId);
     return changed.changes === 1 ? this.getByMessageId(messageId) : null;
+  }
+
+  requeueTerminalByMessageId(messageId: string, reason: string): JobRecord | null {
+    const timestamp = now();
+    const changed = this.db
+      .query(
+        `UPDATE jobs SET
+           status='queued', attempts=0, started_before=0, recovery_reason=?, pid=NULL,
+           result=NULL, error=NULL, final_status=NULL, delivery_attempts=0, delivery_after=NULL,
+           delivery_error=NULL, delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0,
+           delivery_message_ids='[]', progress_message_id=NULL, progress_text=NULL,
+           continuation_prompt=NULL, continuation_session_id=NULL, continuation_turn=0,
+           queued_at=?, started_at=NULL, heartbeat_at=NULL, completed_at=NULL
+         WHERE message_id=? AND status IN ('failed','cancelled')`,
+      )
+      .run(reason, timestamp, messageId);
+    return changed.changes === 1 ? this.getByMessageId(messageId) : null;
+  }
+
+  cancelJob(id: string, reason: string): JobRecord | null {
+    const timestamp = now();
+    const transaction = this.db.transaction(() => {
+      const changed = this.db
+        .query(
+          `UPDATE jobs SET status='cancelled', error=?, pid=NULL, completed_at=?, delivery_after=NULL
+           WHERE id=? AND status IN ('queued','running','delivering')`,
+        )
+        .run(reason, timestamp, id);
+      if (changed.changes !== 1) return false;
+      this.db
+        .query("UPDATE interactions SET status='orphaned', updated_at=? WHERE job_id=? AND status='pending'")
+        .run(timestamp, id);
+      return true;
+    });
+    return transaction() ? this.getJob(id) : null;
   }
 
   cancelByMessageId(messageId: string, reason = "source message deleted"): JobRecord | null {
@@ -1091,7 +1175,7 @@ export class StateStore {
 
   listJobSteeringInputs(jobId: string): SteeringInputRecord[] {
     return this.db
-      .query<SteeringInputRow, [string]>("SELECT * FROM steering_inputs WHERE job_id=? ORDER BY created_at, message_id")
+      .query<SteeringInputRow, [string]>("SELECT * FROM steering_inputs WHERE job_id=? ORDER BY created_at, rowid")
       .all(jobId)
       .map(steeringInputFromRow);
   }
@@ -1103,7 +1187,7 @@ export class StateStore {
   listPendingSteeringInputs(jobId: string): SteeringInputRecord[] {
     return this.db
       .query<SteeringInputRow, [string]>(
-        "SELECT * FROM steering_inputs WHERE job_id=? AND state='pending' ORDER BY created_at, message_id",
+        "SELECT * FROM steering_inputs WHERE job_id=? AND state='pending' ORDER BY created_at, rowid",
       )
       .all(jobId)
       .map(steeringInputFromRow);
@@ -1237,20 +1321,38 @@ export class StateStore {
       .update(`${reference.repo.toLowerCase()}#${reference.number}`)
       .digest("hex")
       .slice(0, 24);
+    const existing = this.db
+      .query<PullRequestWatchRow, [string, number]>(
+        "SELECT * FROM pull_request_watches WHERE repo=? AND pr_number=?",
+      )
+      .get(reference.repo, reference.number);
+    if (
+      existing &&
+      existing.status === "active" &&
+      (existing.conversation_key !== job.conversationKey ||
+        (existing.session_id && existing.session_id !== job.sessionId))
+    ) {
+      throw new Error(`PR watch already owned by another session: ${reference.repo}#${reference.number}`);
+    }
     this.db
       .query(
         `INSERT INTO pull_request_watches(
-          id,route_id,lock_key,conversation_key,channel_id,thread_id,author_id,repo,pr_number,url,
+          id,route_id,lock_key,conversation_key,session_id,channel_id,thread_id,author_id,repo,pr_number,url,
           status,last_observed_signal,last_wake_signal,active_job_id,wake_count,expires_at,completed_reason,created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,'active',NULL,NULL,NULL,0,?,NULL,?,?)
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',NULL,NULL,NULL,0,?,NULL,?,?)
         ON CONFLICT(repo,pr_number) DO UPDATE SET
           route_id=excluded.route_id,
           lock_key=excluded.lock_key,
           conversation_key=excluded.conversation_key,
+          session_id=excluded.session_id,
           channel_id=excluded.channel_id,
           thread_id=excluded.thread_id,
           author_id=excluded.author_id,
           url=excluded.url,
+          last_observed_signal=CASE WHEN pull_request_watches.status='active' THEN pull_request_watches.last_observed_signal ELSE NULL END,
+          last_wake_signal=CASE WHEN pull_request_watches.status='active' THEN pull_request_watches.last_wake_signal ELSE NULL END,
+          active_job_id=CASE WHEN pull_request_watches.status='active' THEN pull_request_watches.active_job_id ELSE NULL END,
+          wake_count=CASE WHEN pull_request_watches.status='active' THEN pull_request_watches.wake_count ELSE 0 END,
           status='active',
           expires_at=excluded.expires_at,
           completed_reason=NULL,
@@ -1261,6 +1363,7 @@ export class StateStore {
         job.routeId,
         job.lockKey,
         job.conversationKey,
+        job.sessionId,
         job.channelId,
         job.threadId,
         job.authorId,
@@ -1286,9 +1389,15 @@ export class StateStore {
       .map(pullRequestWatchFromRow);
   }
 
-  recordPullRequestObservation(id: string, signal: string, wakeJobId?: string): PullRequestWatchRecord | null {
+  recordPullRequestObservation(
+    id: string,
+    signal: string,
+    wakeJobId?: string,
+    wakeSignal?: string,
+  ): PullRequestWatchRecord | null {
     const timestamp = now();
     if (wakeJobId) {
+      const actionKey = wakeSignal ?? signal;
       this.db
         .query(
           `UPDATE pull_request_watches SET
@@ -1299,7 +1408,7 @@ export class StateStore {
              updated_at=?
            WHERE id=? AND status='active'`,
         )
-        .run(signal, signal, signal, wakeJobId, timestamp, id);
+        .run(signal, actionKey, actionKey, wakeJobId, timestamp, id);
     } else {
       this.db
         .query("UPDATE pull_request_watches SET last_observed_signal=?,updated_at=? WHERE id=? AND status='active'")

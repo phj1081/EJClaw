@@ -43,7 +43,11 @@ import {
   renderInteractiveQuestion,
 } from "./interactive-control";
 import { KeyedSerialQueue } from "./keyed-serial-queue";
-import { parsePullRequestWatchMarkers } from "./github-watch-policy";
+import {
+  verifyPullRequestWatchAuthorization,
+  verifyPullRequestWatchPreflight,
+  watchMarkersForSuccessfulExecution,
+} from "./github-watch-registration";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
@@ -483,6 +487,11 @@ const runtime = new JobRuntime({
   store,
   routes,
   executor: (request) => executor.run(request),
+  preflight: async (job) => {
+    const route = routes.get(job.routeId);
+    if (!route) throw new Error(`route not found: ${job.routeId}`);
+    return verifyPullRequestWatchPreflight(route.cwd, job);
+  },
   onStart: startTyping,
   onProgress: (job, event, aggregator) => {
     const board = progressBoards.get(job.id);
@@ -528,12 +537,30 @@ const runtime = new JobRuntime({
     return answer;
   },
   onFinal: async (job, execution) => {
-    const parsed = parsePullRequestWatchMarkers(execution.result);
+    const parsed = watchMarkersForSuccessfulExecution(execution);
+    const registrationWarnings: string[] = [];
+    const route = routes.get(job.routeId);
     for (const reference of parsed.references) {
-      const watch = store.upsertPullRequestWatch(job, reference);
-      console.log(`PR watch registered id=${watch.id} repo=${watch.repo} pr=${watch.number} job=${job.id}`);
+      try {
+        if (!route) throw new Error(`route not found: ${job.routeId}`);
+        const authorization = verifyPullRequestWatchAuthorization(route.cwd, reference);
+        if (!authorization.ok) {
+          registrationWarnings.push(`${reference.url}: ${authorization.reason}`);
+          console.warn(`PR watch rejected repo=${reference.repo} pr=${reference.number} reason=${authorization.reason}`);
+          continue;
+        }
+        const watch = store.upsertPullRequestWatch(job, reference);
+        console.log(`PR watch registered id=${watch.id} repo=${watch.repo} pr=${watch.number} job=${job.id}`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        registrationWarnings.push(`${reference.url}: ${reason}`);
+        console.warn(`PR watch authorization failed repo=${reference.repo} pr=${reference.number}`, reason);
+      }
     }
-    await deliverFinal(job, { ...execution, result: parsed.cleanText });
+    const result = registrationWarnings.length === 0
+      ? parsed.cleanText
+      : [parsed.cleanText, "", "⚠️ PR watcher 등록 거부:", ...registrationWarnings.map((warning) => `- ${warning}`)].join("\n");
+    await deliverFinal(job, { ...execution, result });
   },
   maxConcurrent: config.maxConcurrent,
   maxAttempts: config.maxAttempts,

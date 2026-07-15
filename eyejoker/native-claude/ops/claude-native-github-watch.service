@@ -6,9 +6,18 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 WorkingDirectory=/home/ejclaw/projects/ejclaw-native/eyejoker/native-claude
-EnvironmentFile=-/home/ejclaw/.config/claude-native/env
+Environment=HOME=/home/ejclaw
+Environment=PATH=/home/ejclaw/.bun/bin:/home/ejclaw/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CLAUDE_NATIVE_CONFIG=/home/ejclaw/.config/claude-native/routes.json
 Environment=CLAUDE_NATIVE_STATE_DB=/home/ejclaw/.local/state/claude-native/state.sqlite
+UnsetEnvironment=ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN DISCORD_BOT_TOKEN
 ExecStart=/home/ejclaw/.bun/bin/bun run src/github-watch.ts
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ejclaw/.local/state/claude-native
+RestrictSUIDSGID=true
 TimeoutStartSec=90
