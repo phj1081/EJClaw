@@ -885,14 +885,27 @@ export class StateStore {
   }
 
   cancelByMessageId(messageId: string, reason = "source message deleted"): JobRecord | null {
-    const timestamp = now();
-    const changed = this.db
-      .query(
-        `UPDATE jobs SET status='cancelled', error=?, pid=NULL, completed_at=?
-         WHERE message_id=? AND status IN ('queued','running','delivering')`,
+    const job = this.db
+      .query<JobRow, [string]>(
+        "SELECT * FROM jobs WHERE message_id=? AND status IN ('queued','running','delivering')",
       )
-      .run(reason, timestamp, messageId);
-    return changed.changes === 1 ? this.getByMessageId(messageId) : null;
+      .get(messageId);
+    if (!job) return null;
+    const timestamp = now();
+    const transaction = this.db.transaction(() => {
+      const changed = this.db
+        .query(
+          `UPDATE jobs SET status='cancelled', error=?, pid=NULL, completed_at=?
+           WHERE id=? AND status IN ('queued','running','delivering')`,
+        )
+        .run(reason, timestamp, job.id);
+      if (changed.changes !== 1) return false;
+      this.db
+        .query("UPDATE interactions SET status='orphaned', updated_at=? WHERE job_id=? AND status='pending'")
+        .run(timestamp, job.id);
+      return true;
+    });
+    return transaction() ? this.getJob(job.id) : null;
   }
 
   cancelByConversation(conversationKey: string, reason = "cancelled by user"): JobRecord[] {
@@ -902,12 +915,20 @@ export class StateStore {
       )
       .all(conversationKey);
     const timestamp = now();
-    this.db
-      .query(
-        `UPDATE jobs SET status='cancelled', error=?, pid=NULL, completed_at=?, delivery_after=NULL
-         WHERE conversation_key=? AND status IN ('queued','running','delivering')`,
-      )
-      .run(reason, timestamp, conversationKey);
+    const transaction = this.db.transaction(() => {
+      this.db
+        .query(
+          `UPDATE jobs SET status='cancelled', error=?, pid=NULL, completed_at=?, delivery_after=NULL
+           WHERE conversation_key=? AND status IN ('queued','running','delivering')`,
+        )
+        .run(reason, timestamp, conversationKey);
+      for (const row of rows) {
+        this.db
+          .query("UPDATE interactions SET status='orphaned', updated_at=? WHERE job_id=? AND status='pending'")
+          .run(timestamp, row.id);
+      }
+    });
+    transaction();
     return rows.map(fromRow);
   }
 
@@ -1064,6 +1085,13 @@ export class StateStore {
     return interactionFromRow(row);
   }
 
+  clearInteractionMessage(id: string): InteractionRecord | null {
+    this.db
+      .query("UPDATE interactions SET discord_message_id=NULL, updated_at=? WHERE id=?")
+      .run(now(), id);
+    return this.getInteraction(id);
+  }
+
   answerInteraction(id: string, answer: string): InteractionRecord {
     const answered = this.tryAnswerInteraction(id, answer);
     if (answered) return answered;
@@ -1074,7 +1102,12 @@ export class StateStore {
 
   tryAnswerInteraction(id: string, answer: string): InteractionRecord | null {
     const transaction = this.db.transaction(() => {
-      const row = this.db.query<InteractionRow, [string]>("SELECT * FROM interactions WHERE id=? AND status='pending'").get(id);
+      const row = this.db
+        .query<InteractionRow, [string]>(
+          `SELECT i.* FROM interactions i JOIN jobs j ON j.id=i.job_id
+           WHERE i.id=? AND i.status='pending' AND j.status='running'`,
+        )
+        .get(id);
       if (!row) return false;
       const timestamp = now();
       const changed = this.db
@@ -1104,6 +1137,22 @@ export class StateStore {
   getInteraction(id: string): InteractionRecord | null {
     const row = this.db.query<InteractionRow, [string]>("SELECT * FROM interactions WHERE id=?").get(id);
     return row ? interactionFromRow(row) : null;
+  }
+
+  listJobInteractions(jobId: string): InteractionRecord[] {
+    return this.db
+      .query<InteractionRow, [string]>("SELECT * FROM interactions WHERE job_id=? ORDER BY created_at, id")
+      .all(jobId)
+      .map(interactionFromRow);
+  }
+
+  listOrphanedInteractionsWithMessages(): InteractionRecord[] {
+    return this.db
+      .query<InteractionRow, []>(
+        "SELECT * FROM interactions WHERE status='orphaned' AND discord_message_id IS NOT NULL ORDER BY updated_at, id",
+      )
+      .all()
+      .map(interactionFromRow);
   }
 
   getJob(id: string): JobRecord | null {
