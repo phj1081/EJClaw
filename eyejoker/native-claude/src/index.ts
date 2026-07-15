@@ -39,6 +39,7 @@ import {
   questionButtonId,
   questionNonce,
   QuestionBroker,
+  renderAnsweredInteractiveQuestion,
   renderInteractiveQuestion,
 } from "./interactive-control";
 import { KeyedSerialQueue } from "./keyed-serial-queue";
@@ -277,6 +278,13 @@ class ProgressBoard {
     void this.queueCardEdit();
   }
 
+  resetAfterInteraction(toolUseId?: string): void {
+    if (this.closed) return;
+    this.latest.resetAfterInteraction(toolUseId);
+    this.editGate.markDirty();
+    void this.queueCardEdit();
+  }
+
   private elapsedSeconds(): number {
     return progressElapsedSeconds(this.job.startedAt, this.job.createdAt);
   }
@@ -482,7 +490,10 @@ const runtime = new JobRuntime({
   },
   onQuestion: async (job, question) => {
     const interaction = store.beginInteraction(job.id, job.conversationKey, question);
-    if (interaction.status === "answered" && interaction.answer) return interaction.answer;
+    if (interaction.status === "answered" && interaction.answer) {
+      progressBoards.get(job.id)?.resetAfterInteraction(question.toolUseId);
+      return interaction.answer;
+    }
     const answer = await questionBroker.wait(job.id, job.conversationKey, question, async () => {
       if (interaction.discordMessageId) return interaction.discordMessageId;
       const channel = await textChannel(job.channelId);
@@ -512,6 +523,7 @@ const runtime = new JobRuntime({
     }, (value) => {
       store.answerInteraction(interaction.id, value);
     });
+    progressBoards.get(job.id)?.resetAfterInteraction(question.toolUseId);
     return answer;
   },
   onFinal: async (job, execution) => {
@@ -1139,7 +1151,7 @@ client.on("interactionCreate", async (interaction) => {
       }
     }
     await interaction.update({
-      content: `${renderInteractiveQuestion(record.question)}\n\n✅ 선택: **${choice}**`,
+      content: renderAnsweredInteractiveQuestion(record.question, choice),
       components: [],
       allowedMentions: { parse: [] },
     });
