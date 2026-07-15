@@ -108,6 +108,46 @@ describe("ClaudeSdkExecutor", () => {
     expect(execution.sessionId).toBe("sdk-session");
   });
 
+  test("falls back to the same session id when a recovered SDK transcript is missing", async () => {
+    const calls: Options[] = [];
+    const factory: SdkQueryFactory = ({ prompt, options }) => {
+      calls.push(options ?? {});
+      return (async function* () {
+        await prompt[Symbol.asyncIterator]().next();
+        if (options?.resume) {
+          yield {
+            type: "result",
+            subtype: "error_during_execution",
+            duration_ms: 1,
+            duration_api_ms: 1,
+            is_error: true,
+            num_turns: 0,
+            stop_reason: null,
+            total_cost_usd: 0,
+            usage: {} as never,
+            modelUsage: {},
+            permission_denials: [],
+            errors: [`No conversation found with session ID: ${options.resume}`],
+            uuid: crypto.randomUUID(),
+            session_id: options.resume,
+          } satisfies SDKMessage;
+          return;
+        }
+        yield result(options?.sessionId);
+      })() as Query;
+    };
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const execution = await executor.run(request({ resume: true }));
+
+    expect(execution.ok).toBe(true);
+    expect(execution.result).toBe("SDK_OK");
+    expect(execution.sessionId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.resume).toBe("11111111-1111-4111-8111-111111111111");
+    expect(calls[1]?.resume).toBeUndefined();
+    expect(calls[1]?.sessionId).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
   test("applies live model and permission controls to the active SDK actor", async () => {
     let release!: () => void;
     let ready!: () => void;

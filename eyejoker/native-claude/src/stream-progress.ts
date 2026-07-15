@@ -519,8 +519,12 @@ export class StreamProgressAggregator {
     }
 
     if (type === "result") {
-      const result = typeof obj.result === "string" ? obj.result : "";
-      const isError = obj.is_error === true || obj.subtype === "error";
+      const errors = Array.isArray(obj.errors)
+        ? obj.errors.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        : [];
+      const result = typeof obj.result === "string" ? obj.result : errors.join("\n");
+      const subtype = typeof obj.subtype === "string" ? obj.subtype : "";
+      const isError = obj.is_error === true || subtype === "error" || subtype.startsWith("error_");
       this.finalResult = result;
       this.terminalSeen = true;
       this.isError = isError;

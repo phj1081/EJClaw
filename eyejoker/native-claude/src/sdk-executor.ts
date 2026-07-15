@@ -82,6 +82,12 @@ function askQuestionInput(input: Record<string, unknown>): Array<{
   });
 }
 
+function missingSessionTranscript(execution: ClaudeExecution): boolean {
+  return /no conversation found|session.*not found|conversation.*not found/i.test(
+    `${execution.result}\n${execution.stderr}`,
+  );
+}
+
 export class ClaudeSdkExecutor {
   private readonly queryFactory: SdkQueryFactory;
   private readonly claudeExecutable: string;
@@ -97,6 +103,14 @@ export class ClaudeSdkExecutor {
   }
 
   async run(request: ExecutionRequest): Promise<ClaudeExecution> {
+    const first = await this.runOnce(request, request.resume);
+    if (request.resume && !first.ok && missingSessionTranscript(first)) {
+      return this.runOnce(request, false);
+    }
+    return first;
+  }
+
+  private async runOnce(request: ExecutionRequest, resume: boolean): Promise<ClaudeExecution> {
     const mailbox = new AsyncMailbox<SDKUserMessage>();
     const abortController = new AbortController();
     const aggregator = new StreamProgressAggregator();
@@ -146,7 +160,7 @@ export class ClaudeSdkExecutor {
         env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0" },
       };
       if (request.route.fallbackModel) options.fallbackModel = request.route.fallbackModel;
-      if (request.resume) {
+      if (resume) {
         options.resume = request.sessionId;
         if (request.forkSession !== undefined) options.forkSession = request.forkSession;
       } else {
