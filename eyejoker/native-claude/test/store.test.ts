@@ -90,9 +90,10 @@ describe("durable job store", () => {
     db.cancelByMessageId("cohort-notice", "simulated delivery failure");
     expect(db.getJob(job.id)?.status).toBe("cancelled");
 
-    const replay = db.requeueTerminalByMessageId("cohort-notice", "durable notice replay");
+    const replay = db.requeueTerminalByMessageId("cohort-notice", "durable notice replay", "new notice");
     expect(replay?.id).toBe(job.id);
     expect(replay?.status).toBe("queued");
+    expect(replay?.prompt).toBe("new notice");
     expect(replay?.attempts).toBe(0);
     expect(replay?.error).toBeNull();
   });
@@ -287,6 +288,45 @@ describe("durable job store", () => {
       "SELECT status,completed_reason FROM pull_request_watches WHERE id='legacy'",
     ).get()).toEqual({ status: "completed", completed_reason: "legacy-missing-session" });
     inspected.close();
+
+    const legacyJobPath = join(tmpdir(), `native-legacy-watch-job-${crypto.randomUUID()}.sqlite`);
+    paths.push(legacyJobPath);
+    const seeded = new StateStore(legacyJobPath);
+    const legacyJobs = ["queued", "running", "delivering"].map((status) =>
+      seeded.enqueue(input("watch", `watch:legacy:${status}`, `github-watch:legacy:${status}`)));
+    seeded.close();
+    const legacyJobDb = new Database(legacyJobPath);
+    for (const [index, status] of ["queued", "running", "delivering"].entries()) {
+      legacyJobDb.query("UPDATE jobs SET status=? WHERE id=?").run(status, legacyJobs[index]!.id);
+    }
+    legacyJobDb.exec(`
+      ALTER TABLE jobs DROP COLUMN pinned_session;
+      ALTER TABLE jobs DROP COLUMN github_watch_repo;
+      ALTER TABLE jobs DROP COLUMN github_watch_number;
+      ALTER TABLE jobs DROP COLUMN expected_head_sha;
+    `);
+    legacyJobDb.close();
+
+    const migratedJobs = new StateStore(legacyJobPath);
+    for (const job of legacyJobs) {
+      expect(migratedJobs.getJob(job.id)?.status).toBe("cancelled");
+      expect(migratedJobs.getJob(job.id)?.error).toContain("legacy watcher job missing provenance");
+    }
+    const pointerCheck = new Database(legacyJobPath, { readonly: true });
+    for (const job of legacyJobs) {
+      const pointer = pointerCheck.query<{ session_id: string; has_history: number }, [string]>(
+        "SELECT session_id,has_history FROM sessions WHERE conversation_key=?",
+      ).get(job.conversationKey);
+      expect(pointer?.session_id).not.toBe(job.sessionId);
+      expect(pointer?.has_history).toBe(0);
+      expect(pointerCheck.query<{ status: string }, [string]>(
+        "SELECT status FROM session_branches WHERE session_id=?",
+      ).get(job.sessionId)?.status).toBe("archived");
+    }
+    pointerCheck.close();
+    const fresh = migratedJobs.enqueue(input("watch", legacyJobs[2]!.conversationKey, "normal-after-legacy"));
+    expect(fresh.sessionId).not.toBe(legacyJobs[2]!.sessionId);
+    migratedJobs.close();
   });
 
   test("preserves the first started_at across execution retries", () => {

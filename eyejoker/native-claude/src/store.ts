@@ -392,6 +392,64 @@ export class StateStore {
     this.ensureColumn("jobs", "github_watch_repo", "TEXT");
     this.ensureColumn("jobs", "github_watch_number", "INTEGER");
     this.ensureColumn("jobs", "expected_head_sha", "TEXT");
+    const closeLegacyWatcherJobs = this.db.transaction(() => {
+      const malformedActiveWatcher = `
+        jobs.status IN ('queued','running','delivering')
+        AND jobs.message_id LIKE 'github-watch:%'
+        AND (
+          jobs.pinned_session<>1 OR
+          jobs.github_watch_repo IS NULL OR trim(jobs.github_watch_repo)='' OR
+          jobs.github_watch_number IS NULL OR
+          jobs.expected_head_sha IS NULL OR trim(jobs.expected_head_sha)=''
+        )`;
+      this.db
+        .query(
+          `UPDATE session_branches SET status='archived'
+           WHERE status='active' AND EXISTS (
+             SELECT 1 FROM jobs
+             WHERE ${malformedActiveWatcher}
+               AND jobs.conversation_key=session_branches.conversation_key
+               AND jobs.session_id=session_branches.session_id
+           )`,
+        )
+        .run();
+      const contaminatedPointers = this.db
+        .query<{ conversation_key: string; session_id: string }, []>(
+          `SELECT DISTINCT sessions.conversation_key, sessions.session_id
+           FROM sessions JOIN jobs ON jobs.conversation_key=sessions.conversation_key
+           WHERE ${malformedActiveWatcher}
+             AND jobs.session_id=sessions.session_id`,
+        )
+        .all();
+      for (const pointer of contaminatedPointers) {
+        const quarantineSession = crypto.randomUUID();
+        const timestamp = now();
+        this.db
+          .query(
+            `UPDATE sessions
+             SET session_id=?, has_history=0, updated_at=?
+             WHERE conversation_key=? AND session_id=?`,
+          )
+          .run(quarantineSession, timestamp, pointer.conversation_key, pointer.session_id);
+        this.db
+          .query(
+            `INSERT INTO session_branches(
+               session_id,conversation_key,parent_session_id,label,status,created_at
+             ) VALUES(?,?,NULL,'legacy watcher quarantine','active',?)`,
+          )
+          .run(quarantineSession, pointer.conversation_key, timestamp);
+      }
+      this.db
+        .query(
+          `UPDATE jobs
+           SET status='cancelled', pid=NULL, delivery_after=NULL,
+               error=CASE WHEN error IS NULL OR trim(error)='' THEN 'legacy watcher job missing provenance' ELSE error END,
+               completed_at=COALESCE(completed_at, ?)
+           WHERE ${malformedActiveWatcher}`,
+        )
+        .run(now());
+    });
+    closeLegacyWatcherJobs();
     this.ensureColumn("pull_request_watches", "session_id", "TEXT NOT NULL DEFAULT ''");
     this.db
       .query(
@@ -1004,12 +1062,13 @@ export class StateStore {
     return changed.changes === 1 ? this.getByMessageId(messageId) : null;
   }
 
-  requeueTerminalByMessageId(messageId: string, reason: string): JobRecord | null {
+  requeueTerminalByMessageId(messageId: string, reason: string, prompt?: string): JobRecord | null {
     const timestamp = now();
     const changed = this.db
       .query(
         `UPDATE jobs SET
            status='queued', attempts=0, started_before=0, recovery_reason=?, pid=NULL,
+           prompt=COALESCE(?,prompt),
            result=NULL, error=NULL, final_status=NULL, delivery_attempts=0, delivery_after=NULL,
            delivery_error=NULL, delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0,
            delivery_message_ids='[]', progress_message_id=NULL, progress_text=NULL,
@@ -1017,7 +1076,7 @@ export class StateStore {
            queued_at=?, started_at=NULL, heartbeat_at=NULL, completed_at=NULL
          WHERE message_id=? AND status IN ('failed','cancelled')`,
       )
-      .run(reason, timestamp, messageId);
+      .run(reason, prompt ?? null, timestamp, messageId);
     return changed.changes === 1 ? this.getByMessageId(messageId) : null;
   }
 
@@ -1321,21 +1380,11 @@ export class StateStore {
       .update(`${reference.repo.toLowerCase()}#${reference.number}`)
       .digest("hex")
       .slice(0, 24);
-    const existing = this.db
-      .query<PullRequestWatchRow, [string, number]>(
-        "SELECT * FROM pull_request_watches WHERE repo=? AND pr_number=?",
-      )
-      .get(reference.repo, reference.number);
-    if (
-      existing &&
-      existing.status === "active" &&
-      (existing.conversation_key !== job.conversationKey ||
-        (existing.session_id && existing.session_id !== job.sessionId))
-    ) {
-      throw new Error(`PR watch already owned by another session: ${reference.repo}#${reference.number}`);
-    }
-    this.db
-      .query(
+    const row = this.db
+      .query<PullRequestWatchRow, [
+        string, string, string, string, string, string, string | null,
+        string, string, number, string, string, string, string,
+      ]>(
         `INSERT INTO pull_request_watches(
           id,route_id,lock_key,conversation_key,session_id,channel_id,thread_id,author_id,repo,pr_number,url,
           status,last_observed_signal,last_wake_signal,active_job_id,wake_count,expires_at,completed_reason,created_at,updated_at
@@ -1356,9 +1405,14 @@ export class StateStore {
           status='active',
           expires_at=excluded.expires_at,
           completed_reason=NULL,
-          updated_at=excluded.updated_at`,
+          updated_at=excluded.updated_at
+        WHERE pull_request_watches.status<>'active' OR (
+          pull_request_watches.conversation_key=excluded.conversation_key AND
+          pull_request_watches.session_id=excluded.session_id
+        )
+        RETURNING *`,
       )
-      .run(
+      .get(
         id,
         job.routeId,
         job.lockKey,
@@ -1374,7 +1428,10 @@ export class StateStore {
         timestamp,
         timestamp,
       );
-    return this.getPullRequestWatch(id)!;
+    if (!row) {
+      throw new Error(`PR watch already owned by another session: ${reference.repo}#${reference.number}`);
+    }
+    return pullRequestWatchFromRow(row);
   }
 
   getPullRequestWatch(id: string): PullRequestWatchRecord | null {

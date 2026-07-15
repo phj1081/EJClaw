@@ -99,9 +99,13 @@ describe("durable GitHub watcher executable", () => {
     store.close();
   });
 
-  test("rejects a second conversation trying to reroute an existing PR watch", () => {
-    const store = new StateStore(":memory:");
-    const enqueue = (conversationKey: string, messageId: string) => store.enqueue({
+  test("atomically rejects another connection trying to reroute an active PR watch", () => {
+    const root = join(tmpdir(), `github-watch-owner-${crypto.randomUUID()}`);
+    const dbPath = join(root, "state.sqlite");
+    mkdirSync(root, { recursive: true });
+    roots.push(root);
+    const firstStore = new StateStore(dbPath);
+    const enqueue = (store: StateStore, conversationKey: string, messageId: string) => store.enqueue({
       routeId: "repo",
       lockKey: "/tmp/repo",
       conversationKey,
@@ -113,17 +117,19 @@ describe("durable GitHub watcher executable", () => {
       attachmentPaths: [],
     });
     const reference = { repo: "owner/repo", number: 8, url: "https://github.com/owner/repo/pull/8" };
-    const first = enqueue("repo:thread-a", "source-a");
-    const second = enqueue("repo:thread-b", "source-b");
-    const firstWatch = store.upsertPullRequestWatch(first, reference);
-    expect(() => store.upsertPullRequestWatch(second, reference))
+    const first = enqueue(firstStore, "repo:thread-a", "source-a");
+    const secondStore = new StateStore(dbPath);
+    const second = enqueue(secondStore, "repo:thread-b", "source-b");
+    const firstWatch = firstStore.upsertPullRequestWatch(first, reference);
+    expect(() => secondStore.upsertPullRequestWatch(second, reference))
       .toThrow("already owned by another session");
-    store.completePullRequestWatch(firstWatch.id, "test-complete");
-    const transferred = store.upsertPullRequestWatch(second, reference);
+    firstStore.completePullRequestWatch(firstWatch.id, "test-complete");
+    const transferred = secondStore.upsertPullRequestWatch(second, reference);
     expect(transferred.sessionId).toBe(second.sessionId);
     expect(transferred.conversationKey).toBe(second.conversationKey);
     expect(transferred.wakeCount).toBe(0);
-    store.close();
+    firstStore.close();
+    secondStore.close();
   });
 
   test("bounds each gh call and exits nonzero when polling fails", () => {

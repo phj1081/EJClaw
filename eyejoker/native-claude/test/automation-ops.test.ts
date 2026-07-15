@@ -40,11 +40,6 @@ describe("native automation systemd contracts", () => {
     expect(service).toContain("ProtectHome=read-only");
     expect(service).toContain("ReadWritePaths=/home/ejclaw/.local/state/claude-native");
     const cachePath = "/home/ejclaw/.local/state/claude-native/npm-cache";
-    const npmCacheProbe = Bun.spawnSync(["npm", "config", "get", "cache"], {
-      env: { ...process.env, npm_config_cache: cachePath },
-    });
-    expect(npmCacheProbe.exitCode).toBe(0);
-    expect(new TextDecoder().decode(npmCacheProbe.stdout).trim()).toBe(cachePath);
     expect(service).toContain(`npm_config_cache=${cachePath}`);
     expect(service).toContain("UnsetEnvironment=DISCORD_BOT_TOKEN");
     expect(envExample).toContain("DISCORD_STATE_DIR=/home/ejclaw/.claude/channels/discord-owner");

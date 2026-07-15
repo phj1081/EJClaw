@@ -7,6 +7,20 @@ export interface SandboxInvocation {
   args: string[];
 }
 
+const isolatedLoopbackLauncher = "/usr/sbin/ip link set lo up; exec \"$@\"";
+const unixBridgeLauncher = [
+  "port=$1",
+  "socket_path=$2",
+  "shift 2",
+  "/usr/bin/socat \"TCP-LISTEN:${port},bind=127.0.0.1,reuseaddr,fork\" \"UNIX-CONNECT:${socket_path}\" &",
+  "bridge=$!",
+  "trap 'kill \"$bridge\" 2>/dev/null || true' EXIT INT TERM",
+  "sleep 0.05",
+  "\"$@\"",
+  "status=$?",
+  "exit $status",
+].join("\n");
+
 export function buildCohortSandboxEnvironment(
   candidate: CohortVersions,
   proxyBaseUrl: string,
@@ -93,4 +107,52 @@ export function buildBubblewrapProcessInvocation(
   }
   args.push(sandboxCommand, ...commandArgs);
   return { command: "/usr/bin/bwrap", args };
+}
+
+export function buildUnixBrokeredBubblewrapInvocation(
+  workRoot: string,
+  bunExecutable: string,
+  sandboxCommand: string,
+  commandArgs: string[],
+  environment: Record<string, string>,
+  sandboxSocketPath: string,
+  loopbackPort: number,
+): SandboxInvocation {
+  if (!sandboxSocketPath.startsWith("/work/")) {
+    throw new Error("broker socket must be inside the isolated /work mount");
+  }
+  if (!Number.isInteger(loopbackPort) || loopbackPort < 1024 || loopbackPort > 65_535) {
+    throw new Error("invalid isolated loopback port");
+  }
+  const inner = buildBubblewrapProcessInvocation(
+    workRoot,
+    bunExecutable,
+    "/bin/sh",
+    [
+      "-ceu",
+      unixBridgeLauncher,
+      "cohort-unix-bridge",
+      String(loopbackPort),
+      sandboxSocketPath,
+      sandboxCommand,
+      ...commandArgs,
+    ],
+    environment,
+    true,
+  );
+  return {
+    command: "/usr/bin/unshare",
+    args: [
+      "--user",
+      "--map-root-user",
+      "--net",
+      "--",
+      "/bin/sh",
+      "-ceu",
+      isolatedLoopbackLauncher,
+      "cohort-isolated-net",
+      inner.command,
+      ...inner.args,
+    ],
+  };
 }

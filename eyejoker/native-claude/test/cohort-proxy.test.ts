@@ -22,10 +22,12 @@ async function waitForPort(path: string): Promise<number> {
 
 describe("cohort credential proxy", () => {
   test("requires an ephemeral client capability before injecting the upstream key", async () => {
+    let upstreamHits = 0;
     const upstream = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
       fetch(request) {
+        upstreamHits += 1;
         return Response.json({
           apiKey: request.headers.get("x-api-key"),
           authorization: request.headers.get("authorization"),
@@ -65,6 +67,23 @@ describe("cohort credential proxy", () => {
         apiKey: "upstream-secret-test",
         authorization: "Bearer upstream-secret-test",
       });
+      expect(upstreamHits).toBe(1);
+
+      const oversizedBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const chunk = new Uint8Array(1024 * 1024);
+          for (let index = 0; index < 11; index += 1) controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+      const oversized = await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+        method: "POST",
+        headers: { "x-api-key": "ephemeral-client-test" },
+        body: oversizedBody,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" });
+      expect(oversized.status).toBe(413);
+      expect(upstreamHits).toBe(1);
     } finally {
       child.kill("SIGTERM");
       upstream.stop(true);
