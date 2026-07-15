@@ -109,6 +109,23 @@ describe("durable job store", () => {
     db.close();
   });
 
+  test("updates queued source messages but never rewrites an active execution", () => {
+    const db = store();
+    const queued = db.enqueue(input("cleanapo", "cleanapo:edit", "editable"));
+    expect(db.updateQueuedPrompt("editable", "수정된 요청")?.prompt).toBe("수정된 요청");
+    db.claimNext(1);
+    expect(db.updateQueuedPrompt("editable", "늦은 수정")).toBeNull();
+    expect(db.getJob(queued.id)?.prompt).toBe("수정된 요청");
+  });
+
+  test("cancels a queued or running job when its source message is deleted", () => {
+    const db = store();
+    const job = db.enqueue(input("cleanapo", "cleanapo:delete", "deletable"));
+    expect(db.cancelByMessageId("deletable")?.id).toBe(job.id);
+    expect(db.getJob(job.id)?.status).toBe("cancelled");
+    expect(db.cancelByMessageId("deletable")).toBeNull();
+  });
+
   test("forgets a temporary progress message after Discord cleanup", () => {
     const db = store();
     const job = db.enqueue(input("cleanapo", "cleanapo:one", "progress"));

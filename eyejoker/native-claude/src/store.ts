@@ -464,6 +464,28 @@ export class StateStore {
     return { retry: job.attempts < maxAttempts, job: this.getJob(id)! };
   }
 
+  updateQueuedPrompt(messageId: string, prompt: string, attachmentPaths?: string[]): JobRecord | null {
+    const changed = attachmentPaths
+      ? this.db
+          .query("UPDATE jobs SET prompt=?, attachment_paths=?, queued_at=? WHERE message_id=? AND status='queued'")
+          .run(prompt, JSON.stringify(attachmentPaths), now(), messageId)
+      : this.db
+          .query("UPDATE jobs SET prompt=?, queued_at=? WHERE message_id=? AND status='queued'")
+          .run(prompt, now(), messageId);
+    return changed.changes === 1 ? this.getByMessageId(messageId) : null;
+  }
+
+  cancelByMessageId(messageId: string, reason = "source message deleted"): JobRecord | null {
+    const timestamp = now();
+    const changed = this.db
+      .query(
+        `UPDATE jobs SET status='cancelled', error=?, pid=NULL, completed_at=?
+         WHERE message_id=? AND status IN ('queued','running','delivering')`,
+      )
+      .run(reason, timestamp, messageId);
+    return changed.changes === 1 ? this.getByMessageId(messageId) : null;
+  }
+
   cancelByConversation(conversationKey: string, reason = "cancelled by user"): JobRecord[] {
     const rows = this.db
       .query<JobRow, [string]>(

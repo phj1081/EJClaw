@@ -11,11 +11,13 @@ import {
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  appendDiscordContext,
   conversationKey,
   isReplyableMessageId,
   isSupportedMessageType,
   sanitizeAttachmentName,
   stripBotMention,
+  type DiscordContextEntry,
 } from "./bridge-utils";
 import { loadConfig, resolveRoute } from "./config";
 import { ClaudeProcessExecutor } from "./executor";
@@ -92,9 +94,10 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.MessageContent,
   ],
-  partials: [Partials.Channel],
+  partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
 });
 
 async function textChannel(id: string): Promise<GuildTextBasedChannel> {
@@ -114,9 +117,12 @@ async function validateRouteChannels(): Promise<void> {
         PermissionFlagsBits.ViewChannel,
         PermissionFlagsBits.SendMessages,
         PermissionFlagsBits.SendMessagesInThreads,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.AttachFiles,
+        PermissionFlagsBits.AddReactions,
       ];
       if (!permissions || !required.every((permission) => permissions.has(permission))) {
-        failures.push(`${route.id}: missing view/send/thread permission`);
+        failures.push(`${route.id}: missing view/send/thread/history/attach/reaction permission`);
       }
     } catch (error) {
       failures.push(`${route.id}: ${error instanceof Error ? error.message : String(error)}`);
@@ -418,6 +424,50 @@ async function downloadAttachments(messageId: string, attachments: Iterable<{
   return { paths, errors };
 }
 
+async function discordContextFor(
+  message: Message<true>,
+  includeHistory: boolean,
+): Promise<{ reply: DiscordContextEntry | null; history: DiscordContextEntry[] }> {
+  const toEntry = (item: Message): DiscordContextEntry => ({
+    id: item.id,
+    author:
+      item.author.id === client.user?.id
+        ? "Claude"
+        : (item.member?.displayName ?? item.author.globalName ?? item.author.username),
+    content: stripBotMention(item.content ?? "", client.user?.id ?? ""),
+    attachments: [...item.attachments.values()].map((attachment) => attachment.name),
+  });
+
+  let reply: DiscordContextEntry | null = null;
+  if (message.reference?.messageId) {
+    try {
+      reply = toEntry(await message.fetchReference());
+    } catch (error) {
+      console.warn(`reply context unavailable message=${message.id}`, String(error));
+    }
+  }
+
+  let history: DiscordContextEntry[] = [];
+  if (includeHistory) {
+    try {
+      const recent = await message.channel.messages.fetch({ before: message.id, limit: 20 });
+      history = [...recent.values()]
+        .filter(
+          (item) =>
+            item.id !== reply?.id &&
+            isSupportedMessageType(Number(item.type)) &&
+            (allowedUsers.has(item.author.id) || item.author.id === client.user?.id),
+        )
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .slice(-8)
+        .map(toEntry);
+    } catch (error) {
+      console.warn(`history context unavailable message=${message.id}`, String(error));
+    }
+  }
+  return { reply, history };
+}
+
 client.once("clientReady", async () => {
   try {
     await validateRouteChannels();
@@ -497,6 +547,7 @@ client.on("messageCreate", async (message) => {
       await message.reply({ content: "작업 내용을 적어줘.", allowedMentions: { parse: [] } });
       return;
     }
+    prompt = appendDiscordContext(prompt, await discordContextFor(message, !store.sessionHasHistory(key)));
 
     const job = store.enqueue({
       routeId: route.id,
@@ -517,6 +568,64 @@ client.on("messageCreate", async (message) => {
   } catch (error) {
     console.error("message handler failed", error);
     await message.reply({ content: "⛔ 작업 등록 중 오류가 났어. 로그를 확인할게.", allowedMentions: { parse: [] } }).catch(() => undefined);
+  }
+});
+
+client.on("messageUpdate", async (_oldMessage, updatedMessage) => {
+  try {
+    const job = store.getByMessageId(updatedMessage.id);
+    if (!job || !["queued", "running"].includes(job.status)) return;
+    const message = updatedMessage.partial ? await updatedMessage.fetch() : updatedMessage;
+    if (!message.inGuild() || !client.user || message.author.id !== job.authorId || !allowedUsers.has(message.author.id)) return;
+
+    const attachments = await downloadAttachments(message.id, message.attachments.values());
+    let prompt = stripBotMention(message.content ?? "", client.user.id);
+    if (!prompt && attachments.paths.length > 0) prompt = "첨부 파일을 확인하고 필요한 작업을 수행해.";
+    if (attachments.errors.length > 0) prompt += `\n\n첨부 다운로드 오류:\n${attachments.errors.join("\n")}`;
+    if (!prompt.trim()) {
+      const cancelled = store.cancelByMessageId(message.id, "source message cleared by edit");
+      if (cancelled) executor.cancel(cancelled.id);
+      return;
+    }
+    prompt = appendDiscordContext(
+      prompt,
+      await discordContextFor(message, !store.sessionHasHistory(job.conversationKey)),
+    );
+    const queued = store.updateQueuedPrompt(message.id, prompt, attachments.paths);
+    if (queued) {
+      console.log(`queued job updated id=${queued.id} message=${message.id} len=${prompt.length}`);
+      return;
+    }
+    // A running edit is forwarded by the interactive stdin controller added below.
+    console.log(`running source edited id=${job.id} message=${message.id}`);
+  } catch (error) {
+    console.error("message update handler failed", error);
+  }
+});
+
+async function cancelDeletedSource(messageId: string): Promise<void> {
+  const job = store.getByMessageId(messageId);
+  if (!job) return;
+  const cancelled = store.cancelByMessageId(messageId);
+  if (!cancelled) return;
+  executor.cancel(cancelled.id);
+  stopTyping(cancelled.id);
+  const board = progressBoards.get(cancelled.id) ?? (job.progressMessageId ? new ProgressBoard(job) : null);
+  if (board) {
+    await board.cancel();
+    await board.cleanupAfterFinalDelivery();
+  }
+  progressBoards.delete(cancelled.id);
+  console.log(`job cancelled after source deletion id=${cancelled.id} message=${messageId}`);
+}
+
+client.on("messageDelete", (message) => {
+  void cancelDeletedSource(message.id).catch((error) => console.error("message delete handler failed", error));
+});
+
+client.on("messageDeleteBulk", (messages) => {
+  for (const messageId of messages.keys()) {
+    void cancelDeletedSource(messageId).catch((error) => console.error("bulk message delete handler failed", error));
   }
 });
 
