@@ -265,9 +265,11 @@ export class ClaudeSdkExecutor {
   private permissionHandler(request: ExecutionRequest): CanUseTool {
     return async (toolName, input, context) => {
       if (toolName === "AskUserQuestion") {
-        const questions = askQuestionInput(input).map((question) => ({
+        const parsedQuestions = askQuestionInput(input);
+        const questions = parsedQuestions.map((question, index) => ({
           ...question,
-          requestId: context.requestId,
+          requestId:
+            parsedQuestions.length > 1 ? `${context.requestId}:${index}` : context.requestId,
           kind: "question" as const,
         }));
         if (questions.length === 0 || !request.onQuestion) {
