@@ -17,6 +17,8 @@ describe("native automation systemd contracts", () => {
     const timer = readFileSync(join(import.meta.dir, "..", "ops", "claude-native-cohort-verifier.timer"), "utf8");
     expect(service).toContain("src/cohort-verifier.ts");
     expect(service).toContain("PrivateTmp=true");
+    expect(service).toContain("/home/ejclaw/.bun/bin");
+    expect(service).toContain("/home/ejclaw/.hermes/node/bin");
     const verifier = readFileSync(join(import.meta.dir, "..", "src", "cohort-verifier.ts"), "utf8");
     expect(verifier).toContain('"@anthropic-ai/claude-code"');
     expect(verifier).toContain("trustedDependencies");
