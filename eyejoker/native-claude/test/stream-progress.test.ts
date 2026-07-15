@@ -42,7 +42,7 @@ describe("stream progress aggregator", () => {
     expect(snap.numTurns).toBe(2);
   });
 
-  test("renders a full progress card under Discord length limits", () => {
+  test("renders NanoClaw-style compact activity tree without diagnostic sections", () => {
     const agg = new StreamProgressAggregator();
     for (const line of sample.split("\n")) agg.ingestLine(line);
     const card = renderProgressCard({
@@ -54,11 +54,14 @@ describe("stream progress aggregator", () => {
       snapshot: agg.snapshot(),
       mode: "running",
     });
-    expect(card).toContain("작업 진행 중");
-    expect(card).toContain("cleanapo");
-    expect(card).toContain("Bash");
-    expect(card).toContain("타임라인");
-    expect(card).toContain("DONE");
+    expect(card).toContain("⏳ **작업 중** — 1분 15초");
+    expect(card).toContain("✅ **Bash**");
+    expect(card).toContain("💬 DONE");
+    expect(card).not.toContain("**요청**");
+    expect(card).not.toContain("**현재**");
+    expect(card).not.toContain("**도구**");
+    expect(card).not.toContain("**타임라인**");
+    expect(card).not.toContain("**라이브 출력**");
     expect(card.length).toBeLessThanOrEqual(1900);
   });
 

@@ -21,6 +21,7 @@ import { loadConfig, resolveRoute } from "./config";
 import { ClaudeProcessExecutor } from "./executor";
 import { formatFinalMessage, splitDiscordMessage } from "./protocol";
 import { ProgressLifecycle } from "./progress-lifecycle";
+import { progressEditDelayMs } from "./progress-edit-cadence";
 import { JobRuntime } from "./runtime";
 import {
   StreamProgressAggregator,
@@ -173,16 +174,10 @@ class ProgressBoard {
     store.setProgress(this.job.id, message.id, content);
   }
 
-  handleEvent(event: ProgressEvent, aggregator: StreamProgressAggregator): void {
+  handleEvent(_event: ProgressEvent, aggregator: StreamProgressAggregator): void {
     if (this.closed) return;
     this.latest = aggregator;
-    const force =
-      event.kind === "tool_start" ||
-      event.kind === "tool_result" ||
-      event.kind === "result" ||
-      event.kind === "status" ||
-      event.kind === "system";
-    void this.queueCardEdit(force);
+    void this.queueCardEdit();
   }
 
   private elapsedSeconds(): number {
@@ -203,10 +198,9 @@ class ProgressBoard {
     });
   }
 
-  private queueCardEdit(force: boolean): void {
+  private queueCardEdit(): void {
     if (this.closed || !this.message) return;
-    const minInterval = force ? 800 : 1500;
-    const dueIn = Math.max(0, minInterval - (Date.now() - this.lastEditAt));
+    const dueIn = progressEditDelayMs(this.lastEditAt);
     if (this.pending) return;
     this.pending = setTimeout(() => {
       this.pending = null;
