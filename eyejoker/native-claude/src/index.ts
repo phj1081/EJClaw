@@ -156,7 +156,32 @@ function steeringFallbackMessageId(kind: "add" | "edit" | "delete", messageId: s
 async function clearQuestionComponents(channelId: string, messageId: string): Promise<void> {
   const channel = await textChannel(channelId);
   const message = await channel.messages.fetch(messageId);
-  await message.edit({ components: [] });
+  await message.edit({ components: [], allowedMentions: { parse: [] } });
+}
+
+async function cleanupQuestionComponentsForJob(job: JobRecord): Promise<number> {
+  let cleaned = 0;
+  for (const interaction of store.listJobInteractions(job.id)) {
+    if (interaction.status !== "orphaned" || !interaction.discordMessageId) continue;
+    try {
+      await clearQuestionComponents(job.channelId, interaction.discordMessageId);
+      store.clearInteractionMessage(interaction.id);
+      cleaned += 1;
+    } catch (error) {
+      console.warn(`orphaned question cleanup failed job=${job.id} interaction=${interaction.id}`, String(error));
+    }
+  }
+  return cleaned;
+}
+
+async function cleanupOrphanedQuestionComponents(): Promise<number> {
+  let cleaned = 0;
+  for (const interaction of store.listOrphanedInteractionsWithMessages()) {
+    const job = store.getJob(interaction.jobId);
+    if (!job) continue;
+    cleaned += await cleanupQuestionComponentsForJob(job);
+  }
+  return cleaned;
 }
 
 async function validateRouteChannels(): Promise<void> {
@@ -576,9 +601,10 @@ client.once("clientReady", async () => {
     await validateRouteChannels();
     const recovered = runtime.recoverInterrupted("bridge service restart");
     const terminalProgressCleaned = await cleanupTerminalProgress();
+    const orphanedQuestionsCleaned = await cleanupOrphanedQuestionComponents();
     const expiredAttachmentsCleaned = cleanupExpiredAttachments();
     console.log(
-      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} terminal_progress_cleanup=${terminalProgressCleaned} attachment_cleanup=${expiredAttachmentsCleaned} state=${statePath}`,
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} terminal_progress_cleanup=${terminalProgressCleaned} orphaned_question_cleanup=${orphanedQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
       if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
@@ -629,6 +655,7 @@ client.on("messageCreate", (message) => {
       for (const job of cancelled) {
         questionBroker.cancelJob(job.id, "cancelled by user");
         executor.cancel(job.id);
+        await cleanupQuestionComponentsForJob(job);
         stopTyping(job.id);
         const board = progressBoards.get(job.id) ?? (job.progressMessageId ? new ProgressBoard(job) : null);
         if (board) {
@@ -999,6 +1026,7 @@ async function cancelDeletedSource(messageId: string): Promise<void> {
   if (!cancelled) return;
   questionBroker.cancelJob(cancelled.id, "source message deleted");
   executor.cancel(cancelled.id);
+  await cleanupQuestionComponentsForJob(cancelled);
   stopTyping(cancelled.id);
   const board = progressBoards.get(cancelled.id) ?? (job.progressMessageId ? new ProgressBoard(job) : null);
   if (board) {
@@ -1109,9 +1137,18 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.reply({ content: "이 질문을 시작한 사용자만 답할 수 있어.", ephemeral: true });
       return;
     }
+    if (record.status === "orphaned") {
+      await interaction.update({
+        content: `${renderInteractiveQuestion(record.question)}\n\n⛔ 질문 취소됨`,
+        components: [],
+        allowedMentions: { parse: [] },
+      });
+      store.clearInteractionMessage(record.id);
+      return;
+    }
     if (record.status !== "pending") {
       await interaction.reply({
-        content: record.status === "answered" ? `이미 답변됨: ${record.answer ?? "(답 없음)"}` : "만료된 질문이야.",
+        content: `이미 답변됨: ${record.answer ?? "(답 없음)"}`,
         ephemeral: true,
       });
       return;

@@ -13,7 +13,7 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 - 프로젝트(lock key)별 직렬화, 서로 다른 프로젝트는 최대 3개 병렬 실행
 - SQLite durable queue/session/interaction/steering desired state/delivery cursor와 Discord nonce reconciliation
 - 서비스 재시작 시 interrupted execution을 at-least-once로 복구하고, 질문은 logical `toolUseID`, marker answer+exact continuation, final delivery는 stable nonce로 dedupe
-- 최초 시작 시점 기준 6시간 absolute timeout·최대 시도 횟수·`!cancel`
+- 최초 시작 시점 기준 6시간 absolute timeout·최대 시도 횟수·`!cancel`; 취소된 pending 질문은 DB orphan 처리 후 Discord 버튼을 제거
 - bounded inbound streaming, credential 파일명 차단, immutable outbound spool, `MEDIA:` attachment delivery
 - 실제 SDK message metadata 기반 main/subagent model 표시
 - SDK custom Agent `fable-worker → claude-fable-5`, `gpt-worker → gpt-5.6-sol` 등록

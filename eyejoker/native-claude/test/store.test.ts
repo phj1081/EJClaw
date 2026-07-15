@@ -118,12 +118,41 @@ describe("durable job store", () => {
     expect(db.getJob(queued.id)?.prompt).toBe("수정된 요청");
   });
 
-  test("cancels a queued or running job when its source message is deleted", () => {
+  test("cancels a queued or running job and orphans its pending interaction when the source is deleted", () => {
     const db = store();
     const job = db.enqueue(input("cleanapo", "cleanapo:delete", "deletable"));
+    const interaction = db.beginInteraction(job.id, job.conversationKey, {
+      question: "계속?",
+      choices: ["예", "아니오"],
+      requestId: "delete-question",
+    });
+    db.setInteractionMessage(interaction.id, "discord-delete-question");
+
     expect(db.cancelByMessageId("deletable")?.id).toBe(job.id);
     expect(db.getJob(job.id)?.status).toBe("cancelled");
+    expect(db.getInteraction(interaction.id)?.status).toBe("orphaned");
+    expect(db.tryAnswerInteraction(interaction.id, "예")).toBeNull();
+    expect(db.listOrphanedInteractionsWithMessages().map((record) => record.id)).toEqual([interaction.id]);
     expect(db.cancelByMessageId("deletable")).toBeNull();
+  });
+
+  test("conversation cancellation orphans pending questions for every cancelled job", () => {
+    const db = store();
+    const first = db.enqueue(input("cancel", "cancel:thread", "cancel-1"));
+    const second = db.enqueue(input("cancel", "cancel:thread", "cancel-2"));
+    const firstQuestion = db.beginInteraction(first.id, first.conversationKey, {
+      question: "첫째?",
+      choices: ["예"],
+      requestId: "cancel-question-1",
+    });
+    const secondQuestion = db.beginInteraction(second.id, second.conversationKey, {
+      question: "둘째?",
+      choices: ["예"],
+      requestId: "cancel-question-2",
+    });
+    expect(db.cancelByConversation(first.conversationKey)).toHaveLength(2);
+    expect(db.getInteraction(firstQuestion.id)?.status).toBe("orphaned");
+    expect(db.getInteraction(secondQuestion.id)?.status).toBe("orphaned");
   });
 
   test("persists conversation overrides and consumes fork/reset controls once", () => {
@@ -295,6 +324,7 @@ describe("durable job store", () => {
     paths.push(path);
     const first = new StateStore(path);
     const job = first.enqueue(input("interactive", "interactive:one", "question-message"));
+    first.claimNext(1);
     const interaction = first.beginInteraction(job.id, job.conversationKey, {
       question: "배포할까?",
       choices: ["배포", "중단"],
@@ -324,6 +354,7 @@ describe("durable job store", () => {
   test("atomically persists a marker answer and its exact continuation prompt", () => {
     const db = store();
     const job = db.enqueue(input("interactive", "interactive:marker", "marker-message"));
+    db.claimNext(1);
     const interaction = db.beginInteraction(job.id, job.conversationKey, {
       question: "배포할까?",
       choices: ["배포", "중단"],
