@@ -20,8 +20,11 @@ describe("native automation systemd contracts", () => {
     expect(service).toContain("/home/ejclaw/.bun/bin");
     expect(service).toContain("/home/ejclaw/.hermes/node/bin");
     const verifier = readFileSync(join(import.meta.dir, "..", "src", "cohort-verifier.ts"), "utf8");
+    const envExample = readFileSync(join(import.meta.dir, "..", "ops", "env.example"), "utf8");
     expect(verifier).toContain('"@anthropic-ai/claude-code"');
     expect(verifier).toContain("trustedDependencies");
+    expect(envExample).toContain("DISCORD_STATE_DIR=/home/ejclaw/.claude/channels/discord-owner");
+    expect(envExample).not.toContain("discord-pilot");
     expect(timer).toContain("OnCalendar=");
     expect(timer).toContain("Persistent=true");
     expect(service).not.toContain("systemctl restart claude-native-bridge");
