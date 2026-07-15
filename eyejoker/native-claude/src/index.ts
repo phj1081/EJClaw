@@ -39,7 +39,6 @@ import {
   questionButtonId,
   questionNonce,
   QuestionBroker,
-  QUESTION_REACTIONS,
   renderInteractiveQuestion,
 } from "./interactive-control";
 import { KeyedSerialQueue } from "./keyed-serial-queue";
@@ -122,10 +121,9 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.MessageContent,
   ],
-  partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
+  partials: [Partials.Channel, Partials.Message],
 });
 
 async function textChannel(id: string): Promise<GuildTextBasedChannel> {
@@ -509,9 +507,6 @@ const runtime = new JobRuntime({
         );
         return message.id;
       }
-      for (const emoji of QUESTION_REACTIONS.slice(0, question.choices.length)) {
-        await message.react(emoji).catch((error) => console.warn(`question reaction failed id=${job.id}`, String(error)));
-      }
       console.log(`job waiting for Discord answer id=${job.id} question_message=${message.id}`);
       return message.id;
     }, (value) => {
@@ -852,18 +847,6 @@ client.on("messageCreate", (message) => {
       promptText = control.prompt;
     }
 
-    const pendingQuestionMessageId = questionBroker.messageIdForConversation(key);
-    if (questionBroker.answerConversation(key, promptText)) {
-      await message.react("👍").catch(() => undefined);
-      if (pendingQuestionMessageId) {
-        await clearQuestionComponents(message.channelId, pendingQuestionMessageId).catch((error) =>
-          console.warn("question button cleanup failed", String(error)),
-        );
-      }
-      console.log(`Discord question answered by message conversation=${key} message=${message.id}`);
-      return;
-    }
-
     const attachments = await downloadAttachments(message.id, message.attachments.values());
     let prompt = promptText;
     if (!prompt && attachments.paths.length > 0) prompt = "첨부 파일을 확인하고 필요한 작업을 수행해.";
@@ -1100,21 +1083,6 @@ client.on("messageDeleteBulk", (messages) => {
     void messageLifecycleQueue
       .run(messageId, () => handleDeletedMessage(messageId))
       .catch((error) => console.error("bulk message delete handler failed", error));
-  }
-});
-
-client.on("messageReactionAdd", async (partialReaction, user) => {
-  try {
-    if (user.bot || !allowedUsers.has(user.id)) return;
-    const reaction = partialReaction.partial ? await partialReaction.fetch() : partialReaction;
-    const emoji = reaction.emoji.name ?? "";
-    if (!questionBroker.answerReaction(reaction.message.id, emoji)) return;
-    await reaction.message.edit({ components: [] }).catch((error) =>
-      console.warn("question reaction button cleanup failed", String(error)),
-    );
-    console.log(`Discord question answered by reaction message=${reaction.message.id} user=${user.id} emoji=${emoji}`);
-  } catch (error) {
-    console.error("reaction handler failed", error);
   }
 });
 

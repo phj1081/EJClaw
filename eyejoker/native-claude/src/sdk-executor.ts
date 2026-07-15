@@ -95,21 +95,24 @@ function askQuestionInput(input: Record<string, unknown>): Array<{
   question: string;
   choices: string[];
 }> {
-  if (!Array.isArray(input.questions)) return [];
-  return input.questions.flatMap((candidate) => {
+  if (!Array.isArray(input.questions) || input.questions.length === 0) return [];
+  const parsed: Array<{ question: string; choices: string[] }> = [];
+  for (const candidate of input.questions) {
     if (!candidate || typeof candidate !== "object") return [];
     const question = (candidate as { question?: unknown }).question;
     if (typeof question !== "string" || !question.trim()) return [];
     const rawOptions = (candidate as { options?: unknown }).options;
-    const choices = Array.isArray(rawOptions)
-      ? rawOptions.flatMap((option) => {
-          if (!option || typeof option !== "object") return [];
-          const label = (option as { label?: unknown }).label;
-          return typeof label === "string" && label.trim() ? [label.trim()] : [];
-        })
-      : [];
-    return [{ question: question.trim(), choices: choices.slice(0, 4) }];
-  });
+    if (!Array.isArray(rawOptions) || rawOptions.length < 1 || rawOptions.length > 4) return [];
+    const choices: string[] = [];
+    for (const option of rawOptions) {
+      if (!option || typeof option !== "object") return [];
+      const label = (option as { label?: unknown }).label;
+      if (typeof label !== "string" || !label.trim()) return [];
+      choices.push(label.trim());
+    }
+    parsed.push({ question: question.trim(), choices });
+  }
+  return parsed;
 }
 
 function missingSessionTranscript(execution: ClaudeExecution): boolean {
@@ -413,6 +416,17 @@ export class ClaudeSdkExecutor {
   private permissionHandler(request: ExecutionRequest): CanUseTool {
     return async (toolName, input, context) => {
       if (toolName === "AskUserQuestion") {
+        const hasMultiSelect =
+          Array.isArray(input.questions) &&
+          input.questions.some(
+            (candidate) =>
+              candidate !== null &&
+              typeof candidate === "object" &&
+              (candidate as { multiSelect?: unknown }).multiSelect === true,
+          );
+        if (hasMultiSelect) {
+          return { behavior: "deny", message: "Discord 버튼은 현재 다중 선택을 지원하지 않음" };
+        }
         const parsedQuestions = askQuestionInput(input);
         const questions = parsedQuestions.map((question, index) => ({
           ...question,
