@@ -84,6 +84,22 @@ describe("Claude process executor", () => {
     expect(execution.result).toBe("OK");
   });
 
+  test("keeps the terminal result after bounded stdout diagnostics are full", async () => {
+    const binary = fakeClaude(
+      [
+        `printf '%s\\n' '{"type":"system","subtype":"init","model":"claude-fable-5","session_id":"11111111-1111-4111-8111-111111111111"}'`,
+        `python3 -c 'import json; print(json.dumps({"type":"assistant","message":{"model":"claude-fable-5","content":[{"type":"text","text":"x"*4096}]},"session_id":"11111111-1111-4111-8111-111111111111"}))'`,
+        `printf '%s\\n' '{"type":"result","subtype":"success","result":"AFTER_CAP_OK","session_id":"11111111-1111-4111-8111-111111111111","is_error":false}'`,
+      ].join("\n"),
+    );
+    const executor = new ClaudeProcessExecutor({ binary, timeoutSeconds: 10, maxOutputBytes: 256 });
+    const execution = await executor.run(request());
+    expect(execution.ok).toBe(true);
+    expect(execution.result).toBe("AFTER_CAP_OK");
+    expect(execution.sessionId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(execution.mainModel).toBe("claude-fable-5");
+  });
+
   test("escalates cancellation to SIGKILL when Claude ignores SIGTERM", async () => {
     const binary = fakeClaude(`trap '' TERM\nsleep 30`);
     let spawned!: () => void;

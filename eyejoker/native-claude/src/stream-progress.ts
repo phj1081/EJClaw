@@ -645,7 +645,7 @@ export function renderProgressCard(input: ProgressRenderInput): string {
   return lines.join("\n");
 }
 
-export function parseStreamJsonResult(stdout: string, stderr: string, exitCode: number): {
+export interface ParsedStreamResult {
   ok: boolean;
   result: string;
   sessionId: string;
@@ -653,9 +653,14 @@ export function parseStreamJsonResult(stdout: string, stderr: string, exitCode: 
   exitCode: number;
   mainModel: string;
   subagentModels: string[];
-} {
-  const aggregator = new StreamProgressAggregator();
-  for (const line of stdout.split("\n")) aggregator.ingestLine(line);
+}
+
+export function finalizeStreamJsonResult(
+  aggregator: StreamProgressAggregator,
+  fallbackStdout: string,
+  stderr: string,
+  exitCode: number,
+): ParsedStreamResult {
   const snap = aggregator.snapshot();
   const subagentModels = [...new Set(snap.subagents.map((track) => track.model).filter(Boolean))];
   if (snap.finalResult || snap.sessionId) {
@@ -669,12 +674,12 @@ export function parseStreamJsonResult(stdout: string, stderr: string, exitCode: 
       subagentModels,
     };
   }
-  // fallback for legacy single-json output
+  // Fallback for legacy single-json output and early process failures.
   try {
-    const obj = JSON.parse(stdout.trim()) as Record<string, unknown>;
+    const obj = JSON.parse(fallbackStdout.trim()) as Record<string, unknown>;
     return {
       ok: obj.is_error !== true && exitCode === 0,
-      result: String(obj.result ?? stdout).slice(0, 16000),
+      result: String(obj.result ?? fallbackStdout).slice(0, 16000),
       sessionId: typeof obj.session_id === "string" ? obj.session_id : "",
       stderr: stderr.slice(0, 8000),
       exitCode,
@@ -684,7 +689,7 @@ export function parseStreamJsonResult(stdout: string, stderr: string, exitCode: 
   } catch {
     return {
       ok: exitCode === 0,
-      result: (stdout.trim() || stderr.trim() || "(empty Claude result)").slice(0, 16000),
+      result: (fallbackStdout.trim() || stderr.trim() || "(empty Claude result)").slice(0, 16000),
       sessionId: "",
       stderr: stderr.slice(0, 8000),
       exitCode,
@@ -692,4 +697,10 @@ export function parseStreamJsonResult(stdout: string, stderr: string, exitCode: 
       subagentModels,
     };
   }
+}
+
+export function parseStreamJsonResult(stdout: string, stderr: string, exitCode: number): ParsedStreamResult {
+  const aggregator = new StreamProgressAggregator();
+  for (const line of stdout.split("\n")) aggregator.ingestLine(line);
+  return finalizeStreamJsonResult(aggregator, stdout, stderr, exitCode);
 }

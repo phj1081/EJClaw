@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { buildClaudeInvocation, parseClaudeOutput } from "./protocol";
-import { StreamProgressAggregator, type ProgressEvent } from "./stream-progress";
+import { buildClaudeInvocation } from "./protocol";
+import { finalizeStreamJsonResult, StreamProgressAggregator, type ProgressEvent } from "./stream-progress";
 import type { ClaudeExecution, ExecutionRequest } from "./types";
 
 interface ExecutorOptions {
@@ -127,7 +127,12 @@ export class ClaudeProcessExecutor {
         this.children.delete(request.job.id);
         if (lineBuffer.trim()) emitProgress(aggregator.ingestLine(lineBuffer));
         const exitCode = timedOut ? 124 : (code ?? 1);
-        const parsed = parseClaudeOutput(stdout, timedOut ? `${stderr}\njob timed out` : stderr, exitCode);
+        const parsed = finalizeStreamJsonResult(
+          aggregator,
+          stdout,
+          timedOut ? `${stderr}\njob timed out` : stderr,
+          exitCode,
+        );
         if (!parsed.sessionId) parsed.sessionId = aggregator.sessionId || request.sessionId;
         resolve(parsed);
       });
