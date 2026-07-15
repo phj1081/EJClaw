@@ -34,6 +34,8 @@ interface JobRow {
   delivery_error: string | null;
   progress_message_id: string | null;
   progress_text: string | null;
+  main_model: string | null;
+  subagent_models: string | null;
   created_at: string;
   started_at: string | null;
   heartbeat_at: string | null;
@@ -70,6 +72,8 @@ function fromRow(row: JobRow): JobRecord {
     deliveryError: row.delivery_error,
     progressMessageId: row.progress_message_id,
     progressText: row.progress_text,
+    mainModel: row.main_model,
+    subagentModels: row.subagent_models ? (JSON.parse(row.subagent_models) as string[]) : [],
     createdAt: row.created_at,
     startedAt: row.started_at,
     heartbeatAt: row.heartbeat_at,
@@ -134,6 +138,8 @@ export class StateStore {
     `);
     this.ensureColumn("jobs", "progress_message_id", "TEXT");
     this.ensureColumn("jobs", "progress_text", "TEXT");
+    this.ensureColumn("jobs", "main_model", "TEXT");
+    this.ensureColumn("jobs", "subagent_models", "TEXT");
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -290,7 +296,8 @@ export class StateStore {
       this.db
         .query(
           `UPDATE jobs SET status='delivering', final_status=?, result=?, error=?, session_id=?, pid=NULL,
-           heartbeat_at=?, delivery_attempts=0, delivery_after=?, delivery_error=NULL, recovery_reason=NULL
+           heartbeat_at=?, delivery_attempts=0, delivery_after=?, delivery_error=NULL, recovery_reason=NULL,
+           main_model=?, subagent_models=?
            WHERE id=?`,
         )
         .run(
@@ -300,6 +307,8 @@ export class StateStore {
           execution.sessionId || job.sessionId,
           timestamp,
           timestamp,
+          execution.mainModel ?? null,
+          JSON.stringify(execution.subagentModels ?? []),
           id,
         );
       this.db
@@ -362,7 +371,8 @@ export class StateStore {
         this.db
           .query(
             `UPDATE jobs SET status='delivering', final_status='failed', result=?, error=?, session_id=?,
-             delivery_attempts=0, delivery_after=?, delivery_error=NULL, pid=NULL, heartbeat_at=? WHERE id=?`,
+             delivery_attempts=0, delivery_after=?, delivery_error=NULL, pid=NULL, heartbeat_at=?,
+             main_model=?, subagent_models=? WHERE id=?`,
           )
           .run(
             execution.result,
@@ -370,6 +380,8 @@ export class StateStore {
             execution.sessionId || job.sessionId,
             timestamp,
             timestamp,
+            execution.mainModel ?? null,
+            JSON.stringify(execution.subagentModels ?? []),
             id,
           );
       }

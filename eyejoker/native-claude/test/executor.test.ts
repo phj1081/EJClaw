@@ -47,6 +47,8 @@ function request(resume = false): ExecutionRequest {
       deliveryError: null,
       progressMessageId: null,
       progressText: null,
+      mainModel: null,
+      subagentModels: [],
       createdAt: new Date().toISOString(),
       startedAt: new Date().toISOString(),
       heartbeatAt: null,

@@ -28,6 +28,8 @@ function job(status: JobRecord["status"], routeId = "cleanapo"): JobRecord {
     deliveryError: null,
     progressMessageId: null,
     progressText: null,
+    mainModel: null,
+    subagentModels: [],
     createdAt: "2026-07-15T00:00:00.000Z",
     startedAt: status === "running" ? "2026-07-15T00:00:01.000Z" : null,
     heartbeatAt: status === "running" ? "2026-07-15T00:00:02.000Z" : null,

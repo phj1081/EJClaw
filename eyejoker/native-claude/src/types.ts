@@ -75,6 +75,8 @@ export interface JobRecord {
   deliveryError: string | null;
   progressMessageId: string | null;
   progressText: string | null;
+  mainModel: string | null;
+  subagentModels: string[];
   createdAt: string;
   startedAt: string | null;
   heartbeatAt: string | null;
@@ -87,6 +89,8 @@ export interface ClaudeExecution {
   sessionId: string;
   stderr: string;
   exitCode: number;
+  mainModel?: string;
+  subagentModels?: string[];
 }
 
 export interface ExecutionRequest {

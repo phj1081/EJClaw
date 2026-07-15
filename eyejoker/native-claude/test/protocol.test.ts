@@ -83,13 +83,29 @@ describe("Claude protocol", () => {
     ).toBe(90);
   });
 
-  test("mentions owner once with a labeled human work duration", () => {
+  test("mentions owner once with work duration and actual model, without redundant success decoration", () => {
     const progress = formatProgressMessage("테스트 실행", 65);
-    const final = formatFinalMessage("216851709744513024", true, "완료", 4_328);
-    const failure = formatFinalMessage("216851709744513024", false, "실패 원인", 258);
+    const final = formatFinalMessage(
+      "216851709744513024",
+      true,
+      "완료",
+      4_328,
+      "claude-fable-5",
+      ["gpt-5.6-sol"],
+    );
+    const failure = formatFinalMessage(
+      "216851709744513024",
+      false,
+      "실패 원인",
+      258,
+      "claude-fable-5",
+      [],
+    );
     expect(progress).not.toContain("216851709744513024");
-    expect(final).toBe("<@216851709744513024> ✅ 완료 · 작업 시간 1시간 12분\n완료");
-    expect(failure).toBe("<@216851709744513024> ⛔ 실패 · 작업 시간 4분 18초\n실패 원인");
+    expect(final).toBe("<@216851709744513024> · 작업 시간 1시간 12분 · fable-5 + gpt-5.6-sol\n완료");
+    expect(final).not.toContain("✅");
+    expect(final.split("\n")[0]).not.toContain("완료");
+    expect(failure).toBe("<@216851709744513024> ⛔ 실패 · 작업 시간 4분 18초 · fable-5\n실패 원인");
     expect(final.match(/<@216851709744513024>/g)).toHaveLength(1);
   });
 

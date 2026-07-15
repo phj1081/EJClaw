@@ -1,5 +1,6 @@
 import type { ClaudeExecution, RouteConfig } from "./types";
 import { formatElapsedKorean } from "./duration";
+import { formatModelUsage } from "./model-visibility";
 import { parseStreamJsonResult } from "./stream-progress";
 
 const defaultAgents = {
@@ -87,6 +88,8 @@ export function parseClaudeOutput(stdout: string, stderr: string, exitCode: numb
     sessionId: parsed.sessionId,
     stderr: parsed.stderr,
     exitCode: parsed.exitCode,
+    mainModel: parsed.mainModel,
+    subagentModels: parsed.subagentModels,
   };
 }
 
@@ -99,10 +102,14 @@ export function formatFinalMessage(
   ok: boolean,
   body: string,
   elapsedSeconds: number,
+  mainModel?: string | null,
+  subagentModels: string[] = [],
 ): string {
   const clean = body.replace(new RegExp(`<@!?${ownerId}>`, "g"), "").trim();
-  const status = ok ? "✅ 완료" : "⛔ 실패";
-  return `<@${ownerId}> ${status} · 작업 시간 ${formatElapsedKorean(elapsedSeconds)}\n${clean || "결과 없음"}`;
+  const status = ok ? `<@${ownerId}>` : `<@${ownerId}> ⛔ 실패`;
+  const modelUsage = formatModelUsage(mainModel, subagentModels);
+  const modelSuffix = modelUsage ? ` · ${modelUsage}` : "";
+  return `${status} · 작업 시간 ${formatElapsedKorean(elapsedSeconds)}${modelSuffix}\n${clean || "결과 없음"}`;
 }
 
 export interface FinalChunkOptions {

@@ -132,19 +132,28 @@ describe("job runtime", () => {
     expect(store.getJob(queued.id)?.status).toBe("cancelled");
   });
 
-  test("persists final delivery and retries it without rerunning Claude", async () => {
+  test("persists final delivery and model telemetry across retries without rerunning Claude", async () => {
     const store = freshStore();
     let executions = 0;
     let deliveryWorks = false;
+    const deliveredModels: Array<{ mainModel: string | null | undefined; subagentModels: string[] | undefined }> = [];
     const executor: ClaudeExecutor = async (request) => {
       executions += 1;
-      return ok(request.sessionId, "artifact-ready");
+      return {
+        ...ok(request.sessionId, "artifact-ready"),
+        mainModel: "claude-fable-5",
+        subagentModels: ["gpt-5.6-sol"],
+      } as ClaudeExecution;
     };
     const runtime = new JobRuntime({
       store,
       routes: new Map([[route.id, route]]),
       executor,
-      onFinal: async () => {
+      onFinal: async (_job, execution) => {
+        deliveredModels.push({
+          mainModel: execution.mainModel,
+          subagentModels: execution.subagentModels,
+        });
         if (!deliveryWorks) throw new Error("discord unavailable");
       },
       maxConcurrent: 1,
@@ -158,6 +167,10 @@ describe("job runtime", () => {
     await runtime.runUntilIdle();
     expect(store.getJob(queued.id)?.status).toBe("completed");
     expect(executions).toBe(1);
+    expect(deliveredModels).toEqual([
+      { mainModel: "claude-fable-5", subagentModels: ["gpt-5.6-sol"] },
+      { mainModel: "claude-fable-5", subagentModels: ["gpt-5.6-sol"] },
+    ]);
   });
 
   test("a later message resumes a session even when the previous run failed", async () => {

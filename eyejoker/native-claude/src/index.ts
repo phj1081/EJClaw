@@ -31,7 +31,7 @@ import {
 } from "./stream-progress";
 import { StateStore } from "./store";
 import { formatDiscordStatus, renderStatusSnapshot } from "./status-format";
-import type { JobRecord } from "./types";
+import type { ClaudeExecution, JobRecord } from "./types";
 
 const home = process.env.HOME;
 if (!home) throw new Error("HOME is required");
@@ -187,6 +187,8 @@ class ProgressBoard {
   }
 
   private render(mode: "running" | "final" | "cancelled", ok = true): string {
+    const snapshot = this.latest.snapshot();
+    if (!snapshot.mainModel) snapshot.mainModel = routes.get(this.job.routeId)?.model ?? "";
     return renderProgressCard({
       routeId: this.job.routeId,
       attempt: this.job.attempts,
@@ -194,7 +196,7 @@ class ProgressBoard {
       elapsedSeconds: this.elapsedSeconds(),
       promptPreview: this.job.prompt,
       recoveryReason: this.job.recoveryReason,
-      snapshot: this.latest.snapshot(),
+      snapshot,
       mode,
       ok,
     });
@@ -308,10 +310,15 @@ function stopTyping(jobId: string): void {
   typingTimers.delete(jobId);
 }
 
-async function deliverFinal(job: JobRecord, ok: boolean, result: string): Promise<void> {
+async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise<void> {
   stopTyping(job.id);
   const elapsed = workElapsedSeconds(job.startedAt, job.createdAt);
-  const chunks = splitDiscordMessage(formatFinalMessage(config.ownerId, ok, result, elapsed));
+  const routeModel = routes.get(job.routeId)?.model;
+  const mainModel = execution.mainModel ?? job.mainModel ?? routeModel;
+  const subagentModels = execution.subagentModels ?? job.subagentModels;
+  const chunks = splitDiscordMessage(
+    formatFinalMessage(config.ownerId, execution.ok, execution.result, elapsed, mainModel, subagentModels),
+  );
   const channel = await textChannel(job.channelId);
   for (const [index, chunk] of chunks.entries()) {
     const options: MessageCreateOptions = buildFinalChunkOptions(config.ownerId, chunk, index);
@@ -326,7 +333,7 @@ async function deliverFinal(job: JobRecord, ok: boolean, result: string): Promis
     await board.cleanupAfterFinalDelivery();
     progressBoards.delete(job.id);
   }
-  console.log(`job final id=${job.id} route=${job.routeId} ok=${ok} elapsed=${elapsed}`);
+  console.log(`job final id=${job.id} route=${job.routeId} ok=${execution.ok} elapsed=${elapsed}`);
 }
 
 async function cleanupTerminalProgress(): Promise<number> {
@@ -348,7 +355,7 @@ const runtime = new JobRuntime({
     board.handleEvent(event, aggregator);
   },
   onFinal: async (job, execution) => {
-    await deliverFinal(job, execution.ok, execution.result);
+    await deliverFinal(job, execution);
   },
   maxConcurrent: config.maxConcurrent,
   maxAttempts: config.maxAttempts,

@@ -94,7 +94,9 @@ export class JobRuntime {
       sessionId: current.sessionId,
       stderr: current.error ?? "",
       exitCode: current.finalStatus === "completed" ? 0 : 1,
+      subagentModels: current.subagentModels,
     };
+    if (current.mainModel) execution.mainModel = current.mainModel;
     try {
       await this.onFinal(current, execution);
       this.store.markDelivered(current.id);
