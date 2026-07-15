@@ -1,0 +1,14 @@
+[Unit]
+Description=Queue the daily Maldhalla balance Native Claude job
+After=local-fs.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/EJClaw/eyejoker/native-claude
+Environment=CLAUDE_NATIVE_CONFIG=%h/.config/claude-native/routes.json
+Environment=CLAUDE_NATIVE_STATE_DB=%h/.local/state/claude-native/state.sqlite
+Environment=CLAUDE_NATIVE_SCHEDULE_KEY=maldhalla-balance-daily
+Environment=CLAUDE_NATIVE_SCHEDULE_TZ=Asia/Seoul
+ExecStart=%h/.bun/bin/bun run src/admin.ts enqueue-file maldhalla-balance %h/.config/claude-native/schedules/maldhalla-balance.prompt
+UMask=0077
+NoNewPrivileges=true
