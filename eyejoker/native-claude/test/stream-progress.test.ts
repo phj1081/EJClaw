@@ -21,10 +21,11 @@ const sample = `
 
 const subagentSample = `
 {"type":"system","subtype":"init","session_id":"sess-agent","model":"claude-fable-5"}
-{"type":"assistant","parent_tool_use_id":null,"message":{"model":"claude-fable-5","content":[{"type":"tool_use","id":"agent_1","name":"Agent","input":{"description":"교차 검증","subagent_type":"gpt-worker","prompt":"검증해"}}]},"session_id":"sess-agent"}
+{"type":"assistant","parent_tool_use_id":null,"message":{"model":"claude-fable-5","content":[{"type":"tool_use","id":"agent_1","name":"Agent","input":{"description":"GPT 교차 검증","subagent_type":"gpt-worker","prompt":"검증해"}},{"type":"tool_use","id":"agent_2","name":"Agent","input":{"description":"Fable 구현 검증","subagent_type":"fable-worker","prompt":"구현해"}}]},"session_id":"sess-agent"}
 {"type":"assistant","parent_tool_use_id":"agent_1","message":{"model":"gpt-5.6-sol","content":[{"type":"tool_use","id":"child_bash","name":"Bash","input":{"command":"echo CHILD"}}]},"session_id":"sess-agent"}
+{"type":"assistant","parent_tool_use_id":"agent_2","message":{"model":"claude-fable-5","content":[{"type":"text","text":"FABLE_CHILD"}]},"session_id":"sess-agent"}
 {"type":"user","parent_tool_use_id":"agent_1","message":{"content":[{"type":"tool_result","tool_use_id":"child_bash","content":"CHILD","is_error":false}]},"session_id":"sess-agent"}
-{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"agent_1","content":"CHILD_OK","is_error":false}]},"session_id":"sess-agent"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"agent_1","content":"GPT_CHILD_OK","is_error":false},{"type":"tool_result","tool_use_id":"agent_2","content":"FABLE_CHILD_OK","is_error":false}]},"session_id":"sess-agent"}
 {"type":"result","subtype":"success","is_error":false,"result":"PARENT_OK","session_id":"sess-agent"}
 `.trim();
 
@@ -95,8 +96,14 @@ describe("stream progress aggregator", () => {
     expect(snap.subagents).toEqual([
       expect.objectContaining({
         id: "agent_1",
-        label: "교차 검증",
+        label: "GPT 교차 검증",
         model: "gpt-5.6-sol",
+        done: true,
+      }),
+      expect.objectContaining({
+        id: "agent_2",
+        label: "Fable 구현 검증",
+        model: "claude-fable-5",
         done: true,
       }),
     ]);
@@ -111,7 +118,9 @@ describe("stream progress aggregator", () => {
       mode: "running",
     });
     expect(card).toContain("⏳ **작업 중** — 1분 15초 · fable-5");
-    expect(card).toContain("교차 검증 (gpt-5.6-sol)");
+    expect(card).toContain("GPT 교차 검증 (gpt-5.6-sol)");
+    expect(card).toContain("Fable 구현 검증");
+    expect(card).not.toContain("Fable 구현 검증 (fable-5)");
   });
 
   test("parseStreamJsonResult extracts the terminal result event", () => {

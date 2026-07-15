@@ -387,6 +387,7 @@ export class StreamProgressAggregator {
       const message = (obj.message ?? {}) as Record<string, unknown>;
       if (typeof message.model === "string") this.observeModel(agentId, message.model);
       const content = Array.isArray(message.content) ? message.content : [];
+      let emitted: ProgressEvent | null = null;
       for (const raw of content) {
         if (!raw || typeof raw !== "object") continue;
         const block = raw as Record<string, unknown>;
@@ -397,7 +398,7 @@ export class StreamProgressAggregator {
             const track = this.ensureSubagent(id, block.input);
             this.tools.delete(id);
             this.pushTimeline("tool_start", `🔄 ${track.label}`, at);
-            return this.emit({
+            emitted ??= this.emit({
               kind: "tool_start",
               phase: "tool",
               summary: `서브에이전트 실행: ${track.label}`,
@@ -407,6 +408,7 @@ export class StreamProgressAggregator {
               sessionId,
               at,
             });
+            continue;
           }
 
           const input = summarizeToolInput(name, block.input);
@@ -414,7 +416,7 @@ export class StreamProgressAggregator {
           this.openToolId = id;
           this.updateSubagentActivity(agentId, `${name}${input ? ` · ${input}` : ""}`);
           this.pushTimeline("tool_start", `🔧 ${name}${input ? ` · ${input}` : ""}`, at);
-          return this.emit({
+          emitted ??= this.emit({
             kind: "tool_start",
             phase: "tool",
             summary: `도구 실행: ${name}`,
@@ -429,7 +431,7 @@ export class StreamProgressAggregator {
           if (agentId === "main") this.liveText = block.text.slice(-4000);
           else this.updateSubagentActivity(agentId, `💬 ${block.text}`);
           this.pushTimeline("text", truncate(block.text, 120), at);
-          return this.emit({
+          emitted ??= this.emit({
             kind: "text",
             phase: "writing",
             summary: "응답 작성 중",
@@ -439,12 +441,13 @@ export class StreamProgressAggregator {
           });
         }
       }
-      return null;
+      return emitted;
     }
 
     if (type === "user") {
       const message = (obj.message ?? {}) as Record<string, unknown>;
       const content = Array.isArray(message.content) ? message.content : Array.isArray(obj.message) ? (obj.message as unknown[]) : [];
+      let emitted: ProgressEvent | null = null;
       for (const raw of content) {
         if (!raw || typeof raw !== "object") continue;
         const block = raw as Record<string, unknown>;
@@ -457,7 +460,7 @@ export class StreamProgressAggregator {
             subagent.lastActivity = "";
             this.tools.delete(id);
             this.pushTimeline("tool_result", `${isError ? "⛔" : "✅"} ${subagent.label}`, at);
-            return this.emit({
+            emitted ??= this.emit({
               kind: "tool_result",
               phase: "tool_result",
               summary: `서브에이전트 완료: ${subagent.label}`,
@@ -467,6 +470,7 @@ export class StreamProgressAggregator {
               sessionId,
               at,
             });
+            continue;
           }
           const rawContent = block.content;
           const text =
@@ -496,7 +500,7 @@ export class StreamProgressAggregator {
             `${isError ? "⛔" : "✅"} ${tool.name} 결과 · ${truncate(text, 100)}`,
             at,
           );
-          return this.emit({
+          emitted ??= this.emit({
             kind: "tool_result",
             phase: "tool_result",
             summary: `${tool.name} 결과 수신`,
@@ -509,7 +513,7 @@ export class StreamProgressAggregator {
           });
         }
       }
-      return null;
+      return emitted;
     }
 
     if (type === "result") {
