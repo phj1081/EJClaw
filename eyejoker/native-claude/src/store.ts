@@ -1781,6 +1781,19 @@ export class StateStore {
     return transaction();
   }
 
+  orphanPendingInteractionsForTerminalJobs(): number {
+    const timestamp = now();
+    return this.db
+      .query(
+        `UPDATE interactions SET status='orphaned', updated_at=?
+         WHERE status='pending' AND EXISTS (
+           SELECT 1 FROM jobs WHERE jobs.id=interactions.job_id
+             AND jobs.status IN ('completed','failed','cancelled')
+         )`,
+      )
+      .run(timestamp).changes;
+  }
+
   listSettledInteractionsWithoutMessages(): InteractionRecord[] {
     return this.db
       .query<InteractionRow, []>(

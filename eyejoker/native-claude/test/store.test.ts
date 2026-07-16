@@ -301,6 +301,29 @@ describe("durable job store", () => {
     expect(db.getJob(queued.id)?.prompt).toBe("수정된 요청");
   });
 
+  test("orphans stale pending questions owned by terminal jobs during startup migration", () => {
+    const db = store();
+    const job = db.enqueue(input("terminal", "terminal:question", "terminal-question"));
+    expect(db.claimNext(1)?.id).toBe(job.id);
+    const interaction = db.beginInteraction(job.id, job.conversationKey, {
+      question: "계속할까?",
+      choices: ["예", "아니오"],
+      requestId: "terminal-question",
+    });
+    db.setInteractionMessage(interaction.id, "1527240000000000200");
+    db.stageDelivery(
+      job.id,
+      { ok: true, result: "done", sessionId: job.sessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
+    db.markDelivered(job.id);
+
+    expect(db.orphanPendingInteractionsForTerminalJobs()).toBe(1);
+    expect(db.getInteraction(interaction.id)?.status).toBe("orphaned");
+    expect(db.listSettledInteractionsWithMessages().map((record) => record.id)).toEqual([interaction.id]);
+    expect(db.orphanPendingInteractionsForTerminalJobs()).toBe(0);
+  });
+
   test("cancels a queued or running job and orphans its pending interaction when the source is deleted", () => {
     const db = store();
     const job = db.enqueue(input("cleanapo", "cleanapo:delete", "deletable"));

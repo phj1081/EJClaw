@@ -928,6 +928,7 @@ client.once("clientReady", async () => {
     await validateRouteChannels();
     const staleConversationGatesCleared = store.clearConversationGates();
     const pendingWorkspaceCleanupRecovered = await recoverPendingWorkspaceCleanups();
+    const terminalQuestionsOrphaned = store.orphanPendingInteractionsForTerminalJobs();
     const textAnswersReconciled = store.reconcilePendingInteractionSteering();
     const recovered = runtime.recoverInterrupted("bridge service restart");
     const queuedLocksMigrated = migrateQueuedConversationLocks();
@@ -938,7 +939,7 @@ client.once("clientReady", async () => {
     const settledQuestionsCleaned = await cleanupSettledQuestionComponents();
     const expiredAttachmentsCleaned = cleanupExpiredAttachments();
     console.log(
-      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} stale_conversation_gates_cleared=${staleConversationGatesCleared} pending_workspace_cleanup_recovered=${pendingWorkspaceCleanupRecovered} text_answers_reconciled=${textAnswersReconciled} queued_lock_migrations=${queuedLocksMigrated} settled_question_card_reconcile=${settledQuestionCardsReconciled} terminal_progress_cleanup=${terminalProgressCleaned} settled_question_cleanup=${settledQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} stale_conversation_gates_cleared=${staleConversationGatesCleared} pending_workspace_cleanup_recovered=${pendingWorkspaceCleanupRecovered} terminal_questions_orphaned=${terminalQuestionsOrphaned} text_answers_reconciled=${textAnswersReconciled} queued_lock_migrations=${queuedLocksMigrated} settled_question_card_reconcile=${settledQuestionCardsReconciled} terminal_progress_cleanup=${terminalProgressCleaned} settled_question_cleanup=${settledQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
       if (queuedProgressReconcilePromise) return;
