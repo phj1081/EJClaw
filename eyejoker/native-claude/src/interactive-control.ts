@@ -47,6 +47,13 @@ export function renderAnsweredInteractiveQuestion(question: InteractiveQuestion,
   return ["❓ **Claude 질문**", question.question, "", "✅ **선택 완료**", answer].join("\n");
 }
 
+export function textAnswerForQuestion(question: InteractiveQuestion, content: string): string | null {
+  const answer = content.trim().slice(0, 4_000);
+  if (!answer) return null;
+  if (question.kind === "permission" && !question.choices.includes(answer)) return null;
+  return answer;
+}
+
 export class QuestionBroker {
   private readonly byConversation = new Map<string, PendingQuestion>();
   private readonly byMessage = new Map<string, PendingQuestion>();
@@ -103,6 +110,10 @@ export class QuestionBroker {
     return pending ? this.resolvePending(pending, answer) : false;
   }
 
+  answerConversation(conversationKey: string, answer: string): boolean {
+    const pending = this.byConversation.get(conversationKey);
+    return pending ? this.resolvePending(pending, answer) : false;
+  }
 
   cancelJob(jobId: string, reason = "question cancelled"): boolean {
     const pending = this.byJob.get(jobId);

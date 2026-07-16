@@ -282,7 +282,8 @@ describe("durable job store", () => {
     expect(db.getJob(job.id)?.status).toBe("cancelled");
     expect(db.getInteraction(interaction.id)?.status).toBe("orphaned");
     expect(db.tryAnswerInteraction(interaction.id, "예")).toBeNull();
-    expect(db.listOrphanedInteractionsWithMessages().map((record) => record.id)).toEqual([interaction.id]);
+    expect(() => db.answerInteraction(interaction.id, "예")).toThrow("interaction is not pending");
+    expect(db.listSettledInteractionsWithMessages().map((record) => record.id)).toEqual([interaction.id]);
     expect(db.cancelByMessageId("deletable")).toBeNull();
   });
 
@@ -303,6 +304,59 @@ describe("durable job store", () => {
     expect(db.cancelByConversation(first.conversationKey)).toHaveLength(2);
     expect(db.getInteraction(firstQuestion.id)?.status).toBe("orphaned");
     expect(db.getInteraction(secondQuestion.id)?.status).toBe("orphaned");
+  });
+
+  test("reconciles legacy text steering into a pending question answer without duplicate recovery steering", () => {
+    const db = store();
+    const job = db.enqueue(input("question", "question:thread", "question-source"));
+    db.claimNext(1);
+    const interaction = db.beginInteraction(job.id, job.conversationKey, {
+      question: "어떤 방식으로 진행할까?",
+      choices: ["증거 제공", "코드 하드닝"],
+      requestId: "legacy-text-question",
+      kind: "question",
+    });
+    db.beginSteeringInput({
+      messageId: "legacy-text-answer",
+      jobId: job.id,
+      conversationKey: job.conversationKey,
+      content: "수정 가능하면 바로 수정해줘",
+      sdkMessageId: "legacy-sdk-answer",
+    });
+    db.acceptSteeringInput("legacy-text-answer");
+
+    expect(db.reconcilePendingInteractionSteering()).toBe(1);
+    expect(db.getInteraction(interaction.id)).toMatchObject({
+      status: "answered",
+      answer: "수정 가능하면 바로 수정해줘",
+    });
+    expect(db.getSteeringInput("legacy-text-answer")).toBeNull();
+    expect(db.listRecoverySteeringInputs(job.id)).toEqual([]);
+    expect(db.reconcilePendingInteractionSteering()).toBe(0);
+  });
+
+  test("does not reconcile arbitrary text into a permission approval", () => {
+    const db = store();
+    const job = db.enqueue(input("permission", "permission:thread", "permission-source"));
+    db.claimNext(1);
+    const interaction = db.beginInteraction(job.id, job.conversationKey, {
+      question: "Bash를 허용할까?",
+      choices: ["이번만 허용", "거부"],
+      requestId: "legacy-permission-question",
+      kind: "permission",
+    });
+    db.beginSteeringInput({
+      messageId: "unsafe-text-answer",
+      jobId: job.id,
+      conversationKey: job.conversationKey,
+      content: "응 진행해",
+      sdkMessageId: "unsafe-sdk-answer",
+    });
+    db.acceptSteeringInput("unsafe-text-answer");
+
+    expect(db.reconcilePendingInteractionSteering()).toBe(0);
+    expect(db.getInteraction(interaction.id)?.status).toBe("pending");
+    expect(db.getSteeringInput("unsafe-text-answer")).not.toBeNull();
   });
 
   test("persists conversation overrides and consumes fork/reset controls once", () => {

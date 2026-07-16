@@ -41,6 +41,7 @@ import {
   QuestionBroker,
   renderAnsweredInteractiveQuestion,
   renderInteractiveQuestion,
+  textAnswerForQuestion,
 } from "./interactive-control";
 import { KeyedSerialQueue } from "./keyed-serial-queue";
 import {
@@ -271,30 +272,32 @@ function steeringFallbackMessageId(kind: "add" | "edit" | "delete", messageId: s
   return `steering-${kind}:${messageId}:${digest}`;
 }
 
-async function clearQuestionComponents(channelId: string, messageId: string): Promise<void> {
-  const channel = await textChannel(channelId);
-  const message = await channel.messages.fetch(messageId);
-  await message.edit({ components: [], allowedMentions: { parse: [] } });
-}
-
 async function cleanupQuestionComponentsForJob(job: JobRecord): Promise<number> {
   let cleaned = 0;
   for (const interaction of store.listJobInteractions(job.id)) {
-    if (interaction.status !== "orphaned" || !interaction.discordMessageId) continue;
+    if (interaction.status === "pending" || !interaction.discordMessageId) continue;
     try {
-      await clearQuestionComponents(job.channelId, interaction.discordMessageId);
+      const channel = await textChannel(job.channelId);
+      const message = await channel.messages.fetch(interaction.discordMessageId);
+      await message.edit({
+        ...(interaction.status === "answered" && interaction.answer
+          ? { content: renderAnsweredInteractiveQuestion(interaction.question, interaction.answer) }
+          : {}),
+        components: [],
+        allowedMentions: { parse: [] },
+      });
       store.clearInteractionMessage(interaction.id);
       cleaned += 1;
     } catch (error) {
-      console.warn(`orphaned question cleanup failed job=${job.id} interaction=${interaction.id}`, String(error));
+      console.warn(`settled question cleanup failed job=${job.id} interaction=${interaction.id}`, String(error));
     }
   }
   return cleaned;
 }
 
-async function cleanupOrphanedQuestionComponents(): Promise<number> {
+async function cleanupSettledQuestionComponents(): Promise<number> {
   let cleaned = 0;
-  for (const interaction of store.listOrphanedInteractionsWithMessages()) {
+  for (const interaction of store.listSettledInteractionsWithMessages()) {
     const job = store.getJob(interaction.jobId);
     if (!job) continue;
     cleaned += await cleanupQuestionComponentsForJob(job);
@@ -799,6 +802,7 @@ async function discordContextFor(
 client.once("clientReady", async () => {
   try {
     await validateRouteChannels();
+    const textAnswersReconciled = store.reconcilePendingInteractionSteering();
     const recovered = runtime.recoverInterrupted("bridge service restart");
     const queuedLocksMigrated = migrateQueuedConversationLocks();
     const workspaceCleanup = await cleanupConversationWorkspaces();
@@ -813,10 +817,10 @@ client.once("clientReady", async () => {
       }
     }
     const terminalProgressCleaned = await cleanupTerminalProgress();
-    const orphanedQuestionsCleaned = await cleanupOrphanedQuestionComponents();
+    const settledQuestionsCleaned = await cleanupSettledQuestionComponents();
     const expiredAttachmentsCleaned = cleanupExpiredAttachments();
     console.log(
-      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} orphaned_question_cleanup=${orphanedQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} text_answers_reconciled=${textAnswersReconciled} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} settled_question_cleanup=${settledQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
       if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
@@ -1110,6 +1114,39 @@ client.on("messageCreate", (message) => {
       .find((candidate) => candidate.conversationKey === key && candidate.status === "running");
     const steeringPrompt = rawPrompt ? promptText : `[Discord 실행 중 추가 지시 · message=${message.id}]\n${prompt}`;
     if (running) {
+      const pendingQuestion = store.pendingInteractionForJob(running.id);
+      if (pendingQuestion) {
+        const textAnswer = textAnswerForQuestion(pendingQuestion.question, promptText);
+        if (!textAnswer) {
+          await message.reply({
+            content: "권한 질문은 아래 버튼이나 표시된 선택지와 정확히 같은 문장으로 답해줘.",
+            allowedMentions: { parse: [] },
+          });
+          return;
+        }
+        const released = questionBroker.answerConversation(key, textAnswer);
+        const answered = released
+          ? store.getInteraction(pendingQuestion.id)
+          : store.tryAnswerInteraction(pendingQuestion.id, textAnswer);
+        if (!answered || answered.status !== "answered") {
+          await message.reply({ content: "질문이 이미 종료되거나 취소돼서 답변을 적용하지 않았어.", allowedMentions: { parse: [] } });
+          return;
+        }
+        if (pendingQuestion.discordMessageId) {
+          const questionChannel = await textChannel(running.channelId);
+          const questionMessage = await questionChannel.messages.fetch(pendingQuestion.discordMessageId).catch(() => null);
+          await questionMessage
+            ?.edit({
+              content: renderAnsweredInteractiveQuestion(pendingQuestion.question, textAnswer),
+              components: [],
+              allowedMentions: { parse: [] },
+            })
+            .catch((error) => console.warn(`text question cleanup failed id=${running.id}`, String(error)));
+        }
+        await message.react("👀").catch(() => undefined);
+        console.log(`job question answered by text id=${running.id} message=${message.id}`);
+        return;
+      }
       const existingSteering = store.getSteeringInput(message.id);
       if (existingSteering && existingSteering.state !== "pending") {
         await message.react("👀").catch(() => undefined);

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import type { DeliveryPlan } from "./final-delivery";
-import { markerContinuationPrompt } from "./interactive-control";
+import { markerContinuationPrompt, textAnswerForQuestion } from "./interactive-control";
 import type {
   ClaudeExecution,
   ConversationSettings,
@@ -1535,7 +1535,8 @@ export class StateStore {
     if (answered) return answered;
     const existing = this.getInteraction(id);
     if (!existing) throw new Error(`interaction not found: ${id}`);
-    return existing;
+    if (existing.status === "answered" && existing.answer === answer) return existing;
+    throw new Error(`interaction is not pending: ${id}/${existing.status}`);
   }
 
   tryAnswerInteraction(id: string, answer: string): InteractionRecord | null {
@@ -1584,10 +1585,67 @@ export class StateStore {
       .map(interactionFromRow);
   }
 
-  listOrphanedInteractionsWithMessages(): InteractionRecord[] {
+  pendingInteractionForJob(jobId: string): InteractionRecord | null {
+    const row = this.db
+      .query<InteractionRow, [string]>(
+        "SELECT * FROM interactions WHERE job_id=? AND status='pending' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
+      .get(jobId);
+    return row ? interactionFromRow(row) : null;
+  }
+
+  reconcilePendingInteractionSteering(): number {
+    const pending = this.db
+      .query<InteractionRow, []>(
+        `SELECT i.* FROM interactions i JOIN jobs j ON j.id=i.job_id
+         WHERE i.status='pending' AND j.status IN ('queued','running')
+         ORDER BY i.created_at, i.rowid`,
+      )
+      .all();
+    const transaction = this.db.transaction(() => {
+      let reconciled = 0;
+      for (const interaction of pending) {
+        const steering = this.db
+          .query<SteeringInputRow, [string, string]>(
+            `SELECT * FROM steering_inputs
+             WHERE job_id=? AND state IN ('accepted','edited') AND created_at>=?
+             ORDER BY created_at, rowid LIMIT 1`,
+          )
+          .get(interaction.job_id, interaction.created_at);
+        if (!steering) continue;
+        const question = JSON.parse(interaction.question_json) as InteractiveQuestion;
+        const answer = textAnswerForQuestion(question, steering.content);
+        if (!answer) continue;
+        const timestamp = now();
+        const changed = this.db
+          .query("UPDATE interactions SET answer=?, status='answered', updated_at=? WHERE id=? AND status='pending'")
+          .run(answer, timestamp, interaction.id);
+        if (changed.changes !== 1) continue;
+        if (question.continuation) {
+          this.db
+            .query(
+              "UPDATE jobs SET continuation_prompt=?, continuation_session_id=?, continuation_turn=?, heartbeat_at=? WHERE id=?",
+            )
+            .run(
+              markerContinuationPrompt(question, answer),
+              question.continuation.sessionId,
+              question.continuation.turn,
+              timestamp,
+              interaction.job_id,
+            );
+        }
+        this.db.query("DELETE FROM steering_inputs WHERE message_id=?").run(steering.message_id);
+        reconciled += 1;
+      }
+      return reconciled;
+    });
+    return transaction();
+  }
+
+  listSettledInteractionsWithMessages(): InteractionRecord[] {
     return this.db
       .query<InteractionRow, []>(
-        "SELECT * FROM interactions WHERE status='orphaned' AND discord_message_id IS NOT NULL ORDER BY updated_at, id",
+        "SELECT * FROM interactions WHERE status IN ('answered','orphaned') AND discord_message_id IS NOT NULL ORDER BY updated_at, id",
       )
       .all()
       .map(interactionFromRow);
