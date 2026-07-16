@@ -21,12 +21,14 @@ const route: RouteConfig = {
   permissionMode: "bypassPermissions" as const,
   requireMention: false,
   instructions: "apps/soriq만 담당",
+  memoryProject: "eyejokerdb",
 };
 
 describe("Claude protocol", () => {
-  test("forces a bounded verifiable goal instead of merely suggesting continuation", () => {
+  test("keeps the real user request in the first turn without forcing a slash goal", () => {
     const prompt = buildGoalPrompt(route, "버그 고치고 PR까지", [], null);
-    expect(prompt.startsWith("/goal ")).toBe(true);
+    expect(prompt.startsWith("/goal ")).toBe(false);
+    expect(prompt).not.toContain("\n/goal ");
     expect(prompt).toContain("버그 고치고 PR까지");
     expect(prompt).toContain("테스트");
     expect(prompt).toContain("진짜 외부 블로커");
@@ -35,7 +37,7 @@ describe("Claude protocol", () => {
     expect(prompt).toContain("MEDIA:/absolute/path");
     expect(prompt).toContain("DISCORD_QUESTION:");
     expect(prompt).toContain("PR_WATCH: https://github.com/");
-    expect(prompt.split("\n")[0]!.length).toBeLessThan(200);
+    expect(prompt).toContain("사용자 요청:\n버그 고치고 PR까지");
   });
 
   test("recovery prompt explicitly resumes existing artifacts", () => {
@@ -57,6 +59,13 @@ describe("Claude protocol", () => {
     const forked = buildClaudeInvocation(route, "hello", "session-1", true, true);
     expect(forked.args).toContain("--fork-session");
     expect(resumed.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
+    expect(resumed.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    expect(resumed.env.AGENTMEMORY_PROJECT_NAME).toBe("eyejokerdb");
+    const settingsIndex = resumed.args.indexOf("--settings");
+    expect(settingsIndex).toBeGreaterThan(-1);
+    expect(JSON.parse(resumed.args[settingsIndex + 1] ?? "{}")).toEqual({
+      enabledPlugins: { "discord@claude-plugins-official": false },
+    });
   });
 
   test("uses stream-json with partial messages for live progress", () => {

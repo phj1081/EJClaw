@@ -2,6 +2,7 @@
 import { join, resolve } from "node:path";
 import { buildScheduledJobPrompt, readSecurePromptFile, scheduleIdentity } from "./admin-utils";
 import { loadConfig } from "./config";
+import { conversationLockKey } from "./conversation-workspace";
 import { StateStore } from "./store";
 import { renderStatusSnapshot } from "./status-format";
 
@@ -25,7 +26,7 @@ function enqueue(
   if (!route) throw new Error(`unknown route: ${routeId}`);
   const job = store.enqueue({
     routeId: route.id,
-    lockKey: route.lockKey ?? route.cwd,
+    lockKey: conversationLockKey(route, identity.conversationKey),
     conversationKey: identity.conversationKey,
     channelId: route.discordChannelId,
     threadId: null,
@@ -42,11 +43,18 @@ try {
     console.log(JSON.stringify(renderStatusSnapshot(store.listActive()), null, 2));
   } else if (command === "enqueue") {
     const routeId = args.shift();
+    let conversationId = "admin";
+    if (args[0] === "--conversation") {
+      args.shift();
+      conversationId = args.shift()?.trim() ?? "";
+    }
     const prompt = args.join(" ").trim();
-    if (!routeId || !prompt) throw new Error("usage: admin.ts enqueue <route> <prompt>");
+    if (!routeId || !conversationId || !prompt) {
+      throw new Error("usage: admin.ts enqueue <route> [--conversation <id>] <prompt>");
+    }
     const id = crypto.randomUUID();
     enqueue(routeId, prompt, {
-      conversationKey: `${routeId}:synthetic:${id}`,
+      conversationKey: `${routeId}:synthetic:${conversationId}`,
       messageId: `synthetic:${id}`,
     });
   } else if (command === "enqueue-file") {

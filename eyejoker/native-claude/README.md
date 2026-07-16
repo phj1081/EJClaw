@@ -5,13 +5,13 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 ## 보장하는 것
 
 - Discord 채널/스레드 → 프로젝트와 Claude session ID/branch/checkpoint 매핑
-- 일반 요청은 `/goal` 완료 계약으로 실행하고, raw Claude slash는 wrapper 없이 전달
-- native `AskUserQuestion`·permission callback을 owner-only Discord 버튼으로만 왕복하고, 선택 완료 시 대기 문구를 제거하며 이전 progress 활동을 비운 뒤 후속 작업만 표시
+- 일반 요청은 실제 Discord 본문 전체를 첫 SDK user turn 하나로 전달하고, raw Claude slash도 wrapper 없이 전달
+- native `AskUserQuestion`은 작업 작성자의 Discord 버튼 또는 같은 conversation의 자유 text로 왕복한다. permission callback은 작업 작성자의 버튼/정확한 선택지만 허용하며, 완료 시 대기 문구와 버튼을 정리한다.
 - 실행 중 follow-up steering과 동적 model/permission 제어
 - reply/history context와 source/follow-up message edit/delete 전파
-- **30초 뒤 임시 Discord progress 카드 한 장**만 2초 cadence로 갱신하고, final delivery 성공 후 삭제
-- 프로젝트(lock key)별 직렬화, 서로 다른 프로젝트는 최대 3개 병렬 실행
-- SQLite durable queue/session/interaction/steering desired state/delivery cursor와 Discord nonce reconciliation
+- Discord 요청은 즉시 접수/대기 progress 카드 한 장을 만들고, 실행 시작 시 같은 카드를 작업 중 상태로 바꿔 2초 cadence로 갱신한 뒤 final delivery 성공 후 삭제
+- conversation worktree를 켠 route는 같은 스레드만 직렬화하고 서로 다른 스레드는 격리 Git worktree에서 최대 3개 병렬 실행; opt-out route는 기존 shared lock 유지
+- SQLite durable queue/session/interaction/steering desired state/delivery cursor와 생성 시각까지 pagination하는 Discord nonce reconciliation
 - 서비스 재시작 시 interrupted execution을 at-least-once로 복구하고, 질문은 logical `toolUseID`, marker answer+exact continuation, final delivery는 stable nonce로 dedupe
 - 최초 시작 시점 기준 6시간 absolute timeout·최대 시도 횟수·`!cancel`; 취소된 pending 질문은 DB orphan 처리 후 Discord 버튼을 제거
 - bounded inbound streaming, credential 파일명 차단, immutable outbound spool, `MEDIA:` attachment delivery
@@ -55,6 +55,8 @@ systemctl --user enable --now claude-native-cohort-verifier.timer
 systemctl --user enable --now claude-native-maldhalla-balance.timer
 ```
 
+`routes.json`에서 `conversation_worktrees=true`를 켜면 lock key가 Discord conversation 단위로 바뀌고, bridge가 private state 경로 `~/.local/state/claude-native/worktrees/`에 repository/route/conversation별 전용 detached worktree를 만든다. `worktree_ref`에는 새 conversation의 기준 ref(예: `origin/dev`)를 지정한다. 기존 session이 처음 전용 worktree로 이동할 때는 자동으로 한 번 fork하고 이후에는 같은 worktree/session을 재사용한다. 명시적 `!branch fork`는 현재 managed worktree가 clean일 때만 허용하며 source branch의 exact Git revision을 저장한다. 새 SDK branch가 현재 path를 인계하고, source branch로 돌아갈 때는 session별 별도 managed worktree를 저장 revision에서 복원하므로 branch 간 파일 트리가 섞이지 않는다. TTL/quota cleanup은 exact revision·SQLite tombstone·workspace provenance 무효화를 Git 제거보다 먼저 기록하며, 중단된 cleanup은 다음 startup에서 ingress/pump readiness barrier를 열기 전에 복구한다.
+
 ## 운영
 
 ```bash
@@ -93,7 +95,7 @@ Discord message lifecycle:
 2. Native route는 먼저 `require_mention=true`로 shadow 배치한다.
 3. 대상 채널의 NanoClaw wiring만 제거한다. 예약 task와 DB는 삭제하지 않는다.
 4. Native route를 `require_mention=false`로 전환한다.
-5. 실제 Discord 작업, `/goal`, service restart/resume, final reply를 확인한다.
+5. 실제 Discord 일반 요청의 첫 turn, service restart/resume, final reply를 확인한다.
 6. 문제면 Native route를 닫고 wiring row를 백업에서 복구한다.
 
 NanoClaw 전체 서비스 제거는 모든 예약 task가 systemd/native schedule로 이전된 뒤에만 한다.

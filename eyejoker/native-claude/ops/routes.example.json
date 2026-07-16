@@ -1,7 +1,7 @@
 {
   "owner_id": "DISCORD_OWNER_USER_ID",
   "allowed_user_ids": ["DISCORD_OWNER_USER_ID"],
-  "max_concurrent": 2,
+  "max_concurrent": 3,
   "max_attempts": 2,
   "job_timeout_seconds": 21600,
   "routes": [
@@ -10,6 +10,8 @@
       "discord_channel_id": "DISCORD_CHANNEL_ID",
       "cwd": "/home/ejclaw/projects/project-name",
       "lock_key": "project-name",
+      "conversation_worktrees": true,
+      "worktree_ref": "origin/main",
       "model": "claude-fable-5",
       "fallback_model": "gpt-5.6-sol",
       "effort": "high",

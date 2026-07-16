@@ -13,6 +13,9 @@ interface RawRoute {
   require_mention?: unknown;
   instructions?: unknown;
   mixed_agents?: unknown;
+  conversation_worktrees?: unknown;
+  worktree_ref?: unknown;
+  memory_project?: unknown;
 }
 
 interface RawConfig {
@@ -69,6 +72,11 @@ function parseRoute(raw: RawRoute): RouteConfig {
   }
   if (typeof raw.instructions === "string" && raw.instructions.trim()) route.instructions = raw.instructions.trim();
   if (typeof raw.mixed_agents === "boolean") route.mixedAgents = raw.mixed_agents;
+  if (typeof raw.conversation_worktrees === "boolean") route.conversationWorktrees = raw.conversation_worktrees;
+  if (typeof raw.worktree_ref === "string" && raw.worktree_ref.trim()) route.worktreeRef = raw.worktree_ref.trim();
+  if (typeof raw.memory_project === "string" && raw.memory_project.trim()) {
+    route.memoryProject = raw.memory_project.trim();
+  }
   return route;
 }
 
@@ -92,7 +100,7 @@ export function loadConfig(path: string): RuntimeConfig {
   return {
     ownerId,
     allowedUserIds: [...new Set(allowed)],
-    maxConcurrent: positiveInt(raw.max_concurrent, 2, "max_concurrent"),
+    maxConcurrent: positiveInt(raw.max_concurrent, 3, "max_concurrent"),
     maxAttempts: positiveInt(raw.max_attempts, 2, "max_attempts"),
     jobTimeoutSeconds: positiveInt(raw.job_timeout_seconds, 21600, "job_timeout_seconds"),
     routes,

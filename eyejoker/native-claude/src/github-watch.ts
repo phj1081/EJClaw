@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { loadConfig } from "./config";
+import { conversationLockKey } from "./conversation-workspace";
 import {
   buildPullRequestWakePrompt,
   decidePullRequestWake,
@@ -109,7 +110,7 @@ try {
       const signalId = createHash("sha256").update(actionKey).digest("hex").slice(0, 20);
       const job = store.enqueue({
         routeId: watch.routeId,
-        lockKey: watch.lockKey,
+        lockKey: conversationLockKey(route, watch.conversationKey),
         conversationKey: watch.conversationKey,
         channelId: watch.channelId,
         threadId: watch.threadId,

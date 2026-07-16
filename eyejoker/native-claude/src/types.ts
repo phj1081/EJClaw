@@ -18,6 +18,9 @@ export interface RouteConfig {
   requireMention: boolean;
   instructions?: string;
   mixedAgents?: boolean;
+  conversationWorktrees?: boolean;
+  worktreeRef?: string;
+  memoryProject?: string;
 }
 
 export interface SessionBranch {
@@ -27,6 +30,8 @@ export interface SessionBranch {
   label: string | null;
   status: "active" | "archived";
   createdAt: string;
+  workspacePath?: string | null;
+  workspaceRevision?: string | null;
 }
 
 export interface RewindOperation {
@@ -44,6 +49,7 @@ export interface RewindOperation {
   status: "previewed" | "applied";
   createdAt: string;
   updatedAt: string;
+  workspacePath?: string | null;
 }
 
 export interface ConversationSettings {
@@ -78,6 +84,7 @@ export interface EnqueueInput {
   githubWatchRepo?: string;
   githubWatchNumber?: number;
   expectedHeadSha?: string;
+  holdForProgress?: boolean;
 }
 
 export type JobStatus =
@@ -132,6 +139,9 @@ export interface JobRecord {
   deliveryMessageIds: string[];
   progressMessageId: string | null;
   progressText: string | null;
+  progressPending?: boolean;
+  workspacePath?: string | null;
+  sessionEstablishedAt?: string | null;
   mainModel: string | null;
   subagentModels: string[];
   createdAt: string;
@@ -182,6 +192,7 @@ export interface InteractionRecord {
   requestKey: string;
   question: InteractiveQuestion;
   discordMessageId: string | null;
+  discordSettledAt: string | null;
   answer: string | null;
   status: "pending" | "answered" | "orphaned";
   createdAt: string;
@@ -194,6 +205,7 @@ export interface SteeringInputRecord {
   messageId: string;
   jobId: string;
   conversationKey: string;
+  authorId: string | null;
   content: string;
   sdkMessageId: string;
   originalSdkMessageId: string;
@@ -224,6 +236,7 @@ export interface ExecutionRequest {
   onSpawn?: (pid: number) => void;
   onHeartbeat?: () => void;
   onCheckpoint?: (userMessageId: string) => void;
+  onSessionEstablished?: (sessionId: string) => void;
   onContinuation?: (prompt: string, sessionId: string, turn: number) => void;
   onQuestion?: (question: InteractiveQuestion) => Promise<string>;
   onProgress?: (
@@ -244,3 +257,4 @@ export type ProgressHook = (
   event: import("./stream-progress").ProgressEvent,
   aggregator: import("./stream-progress").StreamProgressAggregator,
 ) => Promise<void> | void;
+export type PrepareRouteHook = (route: RouteConfig, job: JobRecord) => Promise<RouteConfig>;

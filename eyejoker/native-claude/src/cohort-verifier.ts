@@ -33,6 +33,7 @@ import {
   buildUnixBrokeredBubblewrapInvocation,
 } from "./cohort-sandbox";
 import { loadConfig } from "./config";
+import { conversationLockKey } from "./conversation-workspace";
 import { StateStore } from "./store";
 
 const home = process.env.HOME;
@@ -445,11 +446,13 @@ function ensureNotice(state: CohortState): ReturnType<typeof cohortNoticeAction>
     const existing = store.getByMessageId(state.noticeMessageId);
     const action = cohortNoticeAction(existing?.status ?? null);
     const prompt = noticePrompt(state);
+    const conversationKey = `cohort-verifier:${route.id}`;
+    const lockKey = conversationLockKey(route, conversationKey);
     if (action === "enqueue") {
       store.enqueue({
         routeId: route.id,
-        lockKey: route.lockKey ?? route.cwd,
-        conversationKey: `cohort-verifier:${route.id}`,
+        lockKey,
+        conversationKey,
         channelId: route.discordChannelId,
         threadId: null,
         messageId: state.noticeMessageId,
@@ -462,9 +465,11 @@ function ensureNotice(state: CohortState): ReturnType<typeof cohortNoticeAction>
         state.noticeMessageId,
         "durable cohort notice replay",
         prompt,
+        lockKey,
       );
       if (!replay) throw new Error(`failed to requeue cohort notice: ${state.noticeMessageId}`);
     } else if (existing?.status === "queued") {
+      store.setQueuedLock(existing.id, lockKey);
       store.updateQueuedPrompt(state.noticeMessageId, prompt);
     }
     return action;

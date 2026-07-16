@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
 import type { DeliveryPlan } from "./final-delivery";
-import { markerContinuationPrompt } from "./interactive-control";
+import { markerContinuationPrompt, textAnswerForQuestion } from "./interactive-control";
 import type {
   ClaudeExecution,
   ConversationSettings,
@@ -59,6 +59,9 @@ interface JobRow {
   delivery_message_ids: string | null;
   progress_message_id: string | null;
   progress_text: string | null;
+  progress_pending: number;
+  workspace_path: string | null;
+  session_established_at: string | null;
   main_model: string | null;
   subagent_models: string | null;
   created_at: string;
@@ -74,8 +77,10 @@ interface InteractionRow {
   request_key: string;
   question_json: string;
   discord_message_id: string | null;
+  discord_settled_at: string | null;
   answer: string | null;
   status: "pending" | "answered" | "orphaned";
+  event_sequence: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -107,10 +112,12 @@ interface SteeringInputRow {
   message_id: string;
   job_id: string;
   conversation_key: string;
+  author_id: string | null;
   content: string;
   sdk_message_id: string;
   original_sdk_message_id: string | null;
   state: SteeringInputState;
+  event_sequence: number | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -121,6 +128,7 @@ function steeringInputFromRow(row: SteeringInputRow): SteeringInputRecord {
     messageId: row.message_id,
     jobId: row.job_id,
     conversationKey: row.conversation_key,
+    authorId: row.author_id,
     content: row.content,
     sdkMessageId: row.sdk_message_id,
     originalSdkMessageId: row.original_sdk_message_id ?? row.sdk_message_id,
@@ -139,11 +147,17 @@ function interactionFromRow(row: InteractionRow): InteractionRecord {
     requestKey: row.request_key,
     question: JSON.parse(row.question_json) as InteractiveQuestion,
     discordMessageId: row.discord_message_id,
+    discordSettledAt: row.discord_settled_at,
     answer: row.answer,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function discordSnowflakeIsAfter(candidate: string, anchor: string | null): boolean {
+  if (!anchor || !/^\d{16,20}$/.test(candidate) || !/^\d{16,20}$/.test(anchor)) return false;
+  return BigInt(candidate) > BigInt(anchor);
 }
 
 function pullRequestWatchFromRow(row: PullRequestWatchRow): PullRequestWatchRecord {
@@ -213,6 +227,9 @@ function fromRow(row: JobRow): JobRecord {
     deliveryMessageIds: row.delivery_message_ids ? (JSON.parse(row.delivery_message_ids) as string[]) : [],
     progressMessageId: row.progress_message_id,
     progressText: row.progress_text,
+    progressPending: row.progress_pending === 1,
+    workspacePath: row.workspace_path,
+    sessionEstablishedAt: row.session_established_at,
     mainModel: row.main_model,
     subagentModels: row.subagent_models ? (JSON.parse(row.subagent_models) as string[]) : [],
     createdAt: row.created_at,
@@ -249,7 +266,9 @@ export class StateStore {
         parent_session_id TEXT,
         label TEXT,
         status TEXT NOT NULL CHECK(status IN ('active','archived')),
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        workspace_path TEXT,
+        workspace_revision TEXT
       );
       CREATE INDEX IF NOT EXISTS session_branches_conversation_idx
         ON session_branches(conversation_key, status, created_at);
@@ -271,6 +290,15 @@ export class StateStore {
         status TEXT NOT NULL CHECK(status IN ('previewed','applied')),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS workspace_cleanup_tombstones (
+        workspace_path TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS conversation_gates (
+        conversation_key TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS conversation_settings (
         conversation_key TEXT PRIMARY KEY,
@@ -307,6 +335,7 @@ export class StateStore {
         delivery_attempts INTEGER NOT NULL DEFAULT 0,
         delivery_after TEXT,
         delivery_error TEXT,
+        progress_pending INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         queued_at TEXT NOT NULL,
         started_at TEXT,
@@ -317,6 +346,9 @@ export class StateStore {
       CREATE INDEX IF NOT EXISTS jobs_status_created_idx ON jobs(status, created_at);
       CREATE INDEX IF NOT EXISTS jobs_lock_status_idx ON jobs(lock_key, status);
       CREATE INDEX IF NOT EXISTS jobs_delivery_idx ON jobs(status, delivery_after);
+      CREATE TABLE IF NOT EXISTS event_sequences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT
+      );
       CREATE TABLE IF NOT EXISTS interactions (
         id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL,
@@ -324,8 +356,10 @@ export class StateStore {
         request_key TEXT NOT NULL,
         question_json TEXT NOT NULL,
         discord_message_id TEXT,
+        discord_settled_at TEXT,
         answer TEXT,
         status TEXT NOT NULL CHECK(status IN ('pending','answered','orphaned')),
+        event_sequence INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         UNIQUE(job_id, request_key),
@@ -336,10 +370,12 @@ export class StateStore {
         message_id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL,
         conversation_key TEXT NOT NULL,
+        author_id TEXT,
         content TEXT NOT NULL,
         sdk_message_id TEXT NOT NULL,
         original_sdk_message_id TEXT,
         state TEXT NOT NULL CHECK(state IN ('pending','accepted','edited','deleted')),
+        event_sequence INTEGER,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         deleted_at TEXT,
@@ -392,6 +428,10 @@ export class StateStore {
     this.ensureColumn("jobs", "github_watch_repo", "TEXT");
     this.ensureColumn("jobs", "github_watch_number", "INTEGER");
     this.ensureColumn("jobs", "expected_head_sha", "TEXT");
+    this.ensureColumn("interactions", "event_sequence", "INTEGER");
+    this.ensureColumn("interactions", "discord_settled_at", "TEXT");
+    this.ensureColumn("steering_inputs", "event_sequence", "INTEGER");
+    this.ensureColumn("steering_inputs", "author_id", "TEXT");
     const closeLegacyWatcherJobs = this.db.transaction(() => {
       const malformedActiveWatcher = `
         jobs.status IN ('queued','running','delivering')
@@ -450,6 +490,22 @@ export class StateStore {
         .run(now());
     });
     closeLegacyWatcherJobs();
+    this.ensureColumn("sessions", "workspace_path", "TEXT");
+    this.ensureColumn("session_branches", "workspace_path", "TEXT");
+    this.ensureColumn("session_branches", "workspace_revision", "TEXT");
+    this.ensureColumn("jobs", "workspace_path", "TEXT");
+    this.ensureColumn("jobs", "session_established_at", "TEXT");
+    this.ensureColumn("jobs", "progress_pending", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("rewind_operations", "workspace_path", "TEXT");
+    this.db.exec(`
+      UPDATE session_branches
+      SET workspace_path=(
+        SELECT sessions.workspace_path FROM sessions
+        WHERE sessions.conversation_key=session_branches.conversation_key
+          AND sessions.session_id=session_branches.session_id
+      )
+      WHERE workspace_path IS NULL AND status='active';
+    `);
     this.ensureColumn("pull_request_watches", "session_id", "TEXT NOT NULL DEFAULT ''");
     this.db
       .query(
@@ -473,20 +529,39 @@ export class StateStore {
     previousSessionId: string,
     nextSessionId: string,
     timestamp: string,
+    workspacePath?: string,
+    explicitFork = false,
   ): void {
     if (nextSessionId !== previousSessionId) {
+      if (explicitFork) {
+        this.db
+          .query("UPDATE session_branches SET workspace_path=NULL WHERE conversation_key=? AND session_id=?")
+          .run(conversationKey, previousSessionId);
+      }
       this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
       this.db
         .query(
-          `INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at)
-           VALUES(?,?,?,'fork','active',?)
-           ON CONFLICT(session_id) DO UPDATE SET status='active'`,
+          `INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at,workspace_path,workspace_revision)
+           VALUES(?,?,?,'fork','active',?,?,NULL)
+           ON CONFLICT(session_id) DO UPDATE SET status='active', workspace_path=excluded.workspace_path,
+             workspace_revision=NULL`,
         )
-        .run(nextSessionId, conversationKey, previousSessionId, timestamp);
+        .run(nextSessionId, conversationKey, previousSessionId, timestamp, workspacePath ?? null);
     }
-    this.db
-      .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
-      .run(nextSessionId, timestamp, conversationKey);
+    if (workspacePath) {
+      this.db
+        .query("UPDATE session_branches SET workspace_path=? WHERE session_id=? AND conversation_key=?")
+        .run(workspacePath, nextSessionId, conversationKey);
+      this.db
+        .query(
+          "UPDATE sessions SET session_id=?, has_history=1, workspace_path=?, updated_at=? WHERE conversation_key=?",
+        )
+        .run(nextSessionId, workspacePath, timestamp, conversationKey);
+    } else {
+      this.db
+        .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
+        .run(nextSessionId, timestamp, conversationKey);
+    }
   }
 
   enqueue(input: EnqueueInput, replacePendingSteeringMessageId?: string): JobRecord {
@@ -533,13 +608,13 @@ export class StateStore {
           `INSERT INTO jobs(
             id,route_id,lock_key,conversation_key,channel_id,thread_id,message_id,author_id,prompt,raw_prompt,
             attachment_paths,status,session_id,pinned_session,github_watch_repo,github_watch_number,expected_head_sha,
-            created_at,queued_at
-          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            progress_pending,created_at,queued_at
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           jobId,
           input.routeId,
-          input.lockKey ?? input.routeId,
+          input.lockKey ?? input.conversationKey,
           input.conversationKey,
           input.channelId,
           input.threadId,
@@ -554,6 +629,7 @@ export class StateStore {
           input.githubWatchRepo ?? null,
           input.githubWatchNumber ?? null,
           input.expectedHeadSha ?? null,
+          input.holdForProgress ? 1 : 0,
           timestamp,
           timestamp,
         );
@@ -573,7 +649,10 @@ export class StateStore {
     const row = this.db
       .query<JobRow, []>(
         `SELECT q.* FROM jobs q
-         WHERE q.status='queued'
+         WHERE q.status='queued' AND q.progress_pending=0
+           AND NOT EXISTS (
+             SELECT 1 FROM conversation_gates gate WHERE gate.conversation_key=q.conversation_key
+           )
            AND NOT EXISTS (
              SELECT 1 FROM jobs active WHERE active.status='running' AND active.lock_key=q.lock_key
            )
@@ -585,7 +664,10 @@ export class StateStore {
     const changed = this.db
       .query(
         `UPDATE jobs SET status='running', attempts=attempts+1, started_at=COALESCE(started_at,?), heartbeat_at=?, pid=NULL
-         WHERE id=? AND status='queued'`,
+         WHERE id=? AND status='queued' AND progress_pending=0
+           AND NOT EXISTS (
+             SELECT 1 FROM conversation_gates gate WHERE gate.conversation_key=jobs.conversation_key
+           )`,
       )
       .run(timestamp, timestamp, row.id);
     return changed.changes === 1 ? this.getJob(row.id) : null;
@@ -619,6 +701,45 @@ export class StateStore {
     });
     tx();
     return rows.length;
+  }
+
+  acquireConversationGate(conversationKey: string, kind: string): boolean {
+    const tx = this.db.transaction(() => {
+      const active = this.db
+        .query<{ count: number }, [string]>(
+          "SELECT count(*) AS count FROM jobs WHERE conversation_key=? AND status IN ('queued','running','delivering')",
+        )
+        .get(conversationKey);
+      if ((active?.count ?? 0) > 0) return false;
+      return (
+        this.db
+          .query("INSERT OR IGNORE INTO conversation_gates(conversation_key,kind,created_at) VALUES(?,?,?)")
+          .run(conversationKey, kind, now()).changes === 1
+      );
+    });
+    return tx();
+  }
+
+  releaseConversationGate(conversationKey: string, kind: string): boolean {
+    return (
+      this.db
+        .query("DELETE FROM conversation_gates WHERE conversation_key=? AND kind=?")
+        .run(conversationKey, kind).changes === 1
+    );
+  }
+
+  clearConversationGates(): number {
+    return this.db.query("DELETE FROM conversation_gates").run().changes;
+  }
+
+  hasConversationGate(conversationKey: string): boolean {
+    return Boolean(
+      this.db
+        .query<{ present: number }, [string]>(
+          "SELECT 1 AS present FROM conversation_gates WHERE conversation_key=? LIMIT 1",
+        )
+        .get(conversationKey),
+    );
   }
 
   getConversationSettings(conversationKey: string): ConversationSettings {
@@ -667,20 +788,11 @@ export class StateStore {
       .run(conversationKey, timestamp);
   }
 
-  consumeFork(conversationKey: string): boolean {
-    const tx = this.db.transaction(() => {
-      const row = this.db
-        .query<{ fork_next: number }, [string]>(
-          "SELECT fork_next FROM conversation_settings WHERE conversation_key=?",
-        )
-        .get(conversationKey);
-      if (row?.fork_next !== 1) return false;
-      this.db
-        .query("UPDATE conversation_settings SET fork_next=0, updated_at=? WHERE conversation_key=?")
-        .run(now(), conversationKey);
-      return true;
-    });
-    return tx();
+  forkRequested(conversationKey: string): boolean {
+    const row = this.db
+      .query<{ fork_next: number }, [string]>("SELECT fork_next FROM conversation_settings WHERE conversation_key=?")
+      .get(conversationKey);
+    return row?.fork_next === 1;
   }
 
   resetSession(conversationKey: string, routeId = "reset"): string {
@@ -691,7 +803,8 @@ export class StateStore {
         .query(
           `INSERT INTO sessions(conversation_key, route_id, session_id, has_history, created_at, updated_at)
            VALUES(?,?,?,0,?,?)
-           ON CONFLICT(conversation_key) DO UPDATE SET session_id=excluded.session_id, has_history=0, updated_at=excluded.updated_at`,
+           ON CONFLICT(conversation_key) DO UPDATE SET session_id=excluded.session_id, has_history=0,
+             workspace_path=NULL, updated_at=excluded.updated_at`,
         )
         .run(conversationKey, routeId, sessionId, timestamp, timestamp);
       this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
@@ -700,6 +813,9 @@ export class StateStore {
           "INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at) VALUES(?,?,NULL,'reset','active',?)",
         )
         .run(sessionId, conversationKey, timestamp);
+      this.db
+        .query("UPDATE conversation_settings SET fork_next=0, updated_at=? WHERE conversation_key=?")
+        .run(timestamp, conversationKey);
     });
     tx();
     return sessionId;
@@ -715,6 +831,8 @@ export class StateStore {
           label: string | null;
           status: "active" | "archived";
           created_at: string;
+          workspace_path: string | null;
+          workspace_revision: string | null;
         },
         [string]
       >("SELECT * FROM session_branches WHERE conversation_key=? ORDER BY created_at DESC")
@@ -726,7 +844,22 @@ export class StateStore {
         label: row.label,
         status: row.status,
         createdAt: row.created_at,
+        workspacePath: row.workspace_path,
+        workspaceRevision: row.workspace_revision,
       }));
+  }
+
+  sessionBranchForSession(conversationKey: string, sessionId: string): SessionBranch | null {
+    return this.listSessionBranches(conversationKey).find((branch) => branch.sessionId === sessionId) ?? null;
+  }
+
+  setSessionBranchRevision(conversationKey: string, sessionId: string, revision: string): boolean {
+    if (!revision.trim()) throw new Error("workspace revision is empty");
+    return (
+      this.db
+        .query("UPDATE session_branches SET workspace_revision=? WHERE conversation_key=? AND session_id=?")
+        .run(revision, conversationKey, sessionId).changes === 1
+    );
   }
 
   useSessionBranch(conversationKey: string, sessionPrefix: string): SessionBranch {
@@ -738,8 +871,8 @@ export class StateStore {
       this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
       this.db.query("UPDATE session_branches SET status='active' WHERE session_id=?").run(selected.sessionId);
       this.db
-        .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
-        .run(selected.sessionId, timestamp, conversationKey);
+        .query("UPDATE sessions SET session_id=?, has_history=1, workspace_path=?, updated_at=? WHERE conversation_key=?")
+        .run(selected.sessionId, selected.workspacePath ?? null, timestamp, conversationKey);
     });
     tx();
     return { ...selected, status: "active" };
@@ -781,15 +914,17 @@ export class StateStore {
     sessionId: string,
     checkpoint: string,
     preview: RewindOperation["preview"],
+    workspacePath?: string,
   ): RewindOperation {
     const id = crypto.randomUUID();
     const timestamp = now();
     this.db
       .query(
-        `INSERT INTO rewind_operations(id,conversation_key,session_id,checkpoint,preview_json,status,created_at,updated_at)
-         VALUES(?,?,?,?,?,'previewed',?,?)`,
+        `INSERT INTO rewind_operations(
+           id,conversation_key,session_id,checkpoint,preview_json,status,created_at,updated_at,workspace_path
+         ) VALUES(?,?,?,?,?,'previewed',?,?,?)`,
       )
-      .run(id, conversationKey, sessionId, checkpoint, JSON.stringify(preview), timestamp, timestamp);
+      .run(id, conversationKey, sessionId, checkpoint, JSON.stringify(preview), timestamp, timestamp, workspacePath ?? null);
     return this.getRewindOperation(conversationKey, id)!;
   }
 
@@ -805,6 +940,7 @@ export class StateStore {
           status: "previewed" | "applied";
           created_at: string;
           updated_at: string;
+          workspace_path: string | null;
         },
         [string, string]
       >("SELECT * FROM rewind_operations WHERE conversation_key=? AND id LIKE ? ORDER BY created_at DESC LIMIT 2")
@@ -820,6 +956,7 @@ export class StateStore {
       status: row.status,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      workspacePath: row.workspace_path,
     };
   }
 
@@ -838,6 +975,217 @@ export class StateStore {
     return row?.has_history === 1;
   }
 
+  markSessionHistory(conversationKey: string): void {
+    this.db
+      .query("UPDATE sessions SET has_history=1, updated_at=? WHERE conversation_key=?")
+      .run(now(), conversationKey);
+  }
+
+  sessionWorkspace(conversationKey: string): string | null {
+    const row = this.db
+      .query<{ workspace_path: string | null }, [string]>(
+        "SELECT workspace_path FROM sessions WHERE conversation_key=?",
+      )
+      .get(conversationKey);
+    return row?.workspace_path ?? null;
+  }
+
+  sessionWorkspaceForSession(conversationKey: string, sessionId: string): string | null {
+    const row = this.db
+      .query<{ workspace_path: string | null }, [string, string]>(
+        "SELECT workspace_path FROM session_branches WHERE conversation_key=? AND session_id=?",
+      )
+      .get(conversationKey, sessionId);
+    return row?.workspace_path ?? null;
+  }
+
+  bindPreparedWorkspace(id: string, workspacePath: string): boolean {
+    if (!workspacePath.trim()) throw new Error("prepared workspace path is empty");
+    return (
+      this.db
+        .query(
+          "UPDATE jobs SET workspace_path=?, heartbeat_at=? WHERE id=? AND status='running'",
+        )
+        .run(workspacePath, now(), id).changes === 1
+    );
+  }
+
+  establishExecutionSession(
+    id: string,
+    establishedSessionId: string,
+    workspacePath: string,
+    explicitFork = false,
+    acknowledgeRequestedFork = false,
+  ): JobRecord {
+    if (!establishedSessionId.trim()) throw new Error("established session id is empty");
+    const job = this.getJob(id);
+    if (!job) throw new Error(`job not found: ${id}`);
+    const sourceSessionId = job.continuationSessionId ?? job.sessionId;
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      if (acknowledgeRequestedFork) {
+        const fork = this.db
+          .query<{ fork_next: number }, [string]>(
+            "SELECT fork_next FROM conversation_settings WHERE conversation_key=?",
+          )
+          .get(job.conversationKey);
+        if (fork?.fork_next === 1) {
+          if (establishedSessionId === sourceSessionId) {
+            throw new Error(`explicit fork did not establish a child session: ${sourceSessionId}`);
+          }
+          const acknowledged = this.db
+            .query(
+              "UPDATE conversation_settings SET fork_next=0, updated_at=? WHERE conversation_key=? AND fork_next=1",
+            )
+            .run(timestamp, job.conversationKey).changes;
+          if (acknowledged !== 1) throw new Error(`explicit fork acknowledgement lost: ${job.conversationKey}`);
+        }
+      }
+      if (job.pinnedSession) {
+        if (establishedSessionId === sourceSessionId) {
+          this.db
+            .query("UPDATE session_branches SET workspace_path=? WHERE conversation_key=? AND session_id=?")
+            .run(workspacePath, job.conversationKey, sourceSessionId);
+        } else {
+          this.db
+            .query(
+              `INSERT INTO session_branches(
+                 session_id,conversation_key,parent_session_id,label,status,created_at,workspace_path
+               ) VALUES(?,?,?,'pinned fork','archived',?,?)
+               ON CONFLICT(session_id) DO UPDATE SET workspace_path=excluded.workspace_path`,
+            )
+            .run(establishedSessionId, job.conversationKey, sourceSessionId, timestamp, workspacePath);
+        }
+      } else {
+        this.activateSessionBranch(
+          job.conversationKey,
+          sourceSessionId,
+          establishedSessionId,
+          timestamp,
+          workspacePath,
+          explicitFork,
+        );
+      }
+      this.db
+        .query(
+          `UPDATE jobs SET session_id=?,
+             continuation_session_id=CASE WHEN continuation_session_id IS NULL THEN NULL ELSE ? END,
+             workspace_path=?, session_established_at=?, heartbeat_at=?
+           WHERE id=? AND status='running'`,
+        )
+        .run(establishedSessionId, establishedSessionId, workspacePath, timestamp, timestamp, id);
+      this.db
+        .query("UPDATE session_checkpoints SET session_id=? WHERE job_id=?")
+        .run(establishedSessionId, id);
+      this.db
+        .query(
+          `UPDATE pull_request_watches SET session_id=?, updated_at=?
+           WHERE status='active' AND conversation_key=? AND session_id IN (?,?)`,
+        )
+        .run(establishedSessionId, timestamp, job.conversationKey, sourceSessionId, job.sessionId);
+    });
+    tx();
+    return this.getJob(id)!;
+  }
+
+  beginWorkspaceCleanup(path: string, revision: string): void {
+    if (!revision.trim()) throw new Error("workspace cleanup revision is empty");
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO workspace_cleanup_tombstones(workspace_path,created_at) VALUES(?,?)
+           ON CONFLICT(workspace_path) DO NOTHING`,
+        )
+        .run(path, timestamp);
+      this.db.query("UPDATE sessions SET workspace_path=NULL, updated_at=? WHERE workspace_path=?").run(timestamp, path);
+      this.db
+        .query("UPDATE session_branches SET workspace_path=NULL, workspace_revision=? WHERE workspace_path=?")
+        .run(revision, path);
+      this.db.query("UPDATE jobs SET workspace_path=NULL WHERE workspace_path=?").run(path);
+      this.db.query("UPDATE rewind_operations SET workspace_path=NULL WHERE workspace_path=?").run(path);
+    });
+    tx();
+  }
+
+  finishWorkspaceCleanup(path: string): void {
+    this.db.query("DELETE FROM workspace_cleanup_tombstones WHERE workspace_path=?").run(path);
+  }
+
+  pendingWorkspaceCleanups(): string[] {
+    return this.db
+      .query<{ workspace_path: string }, []>(
+        "SELECT workspace_path FROM workspace_cleanup_tombstones ORDER BY created_at, workspace_path",
+      )
+      .all()
+      .map((row) => row.workspace_path);
+  }
+
+  activeWorkspacePaths(): string[] {
+    const rows = this.db
+      .query<{ workspace_path: string }, []>(
+        `SELECT DISTINCT workspace_path FROM jobs
+         WHERE status IN ('queued','running','delivering') AND workspace_path IS NOT NULL
+         UNION
+         SELECT DISTINCT sessions.workspace_path
+         FROM sessions JOIN jobs ON jobs.conversation_key=sessions.conversation_key
+         WHERE jobs.status IN ('queued','running','delivering') AND sessions.workspace_path IS NOT NULL`,
+      )
+      .all();
+    return rows.map((row) => row.workspace_path);
+  }
+
+  setSessionWorkspace(conversationKey: string, workspacePath: string): void {
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .query("UPDATE sessions SET workspace_path=?, updated_at=? WHERE conversation_key=?")
+        .run(workspacePath, timestamp, conversationKey);
+      this.db
+        .query("UPDATE session_branches SET workspace_path=? WHERE conversation_key=? AND status='active'")
+        .run(workspacePath, conversationKey);
+    });
+    tx();
+  }
+
+  migrateConversationLocks(resolve: (routeId: string, conversationKey: string) => string | null): {
+    jobs: number;
+    watches: number;
+  } {
+    const tx = this.db.transaction(() => {
+      let jobs = 0;
+      let watches = 0;
+      const queued = this.db
+        .query<{ id: string; route_id: string; conversation_key: string; lock_key: string }, []>(
+          "SELECT id,route_id,conversation_key,lock_key FROM jobs WHERE status='queued'",
+        )
+        .all();
+      for (const row of queued) {
+        const target = resolve(row.route_id, row.conversation_key);
+        if (!target || target === row.lock_key) continue;
+        jobs += this.db.query("UPDATE jobs SET lock_key=? WHERE id=? AND status='queued'").run(target, row.id).changes;
+      }
+      const activeWatches = this.db
+        .query<{ id: string; route_id: string; conversation_key: string; lock_key: string }, []>(
+          "SELECT id,route_id,conversation_key,lock_key FROM pull_request_watches WHERE status='active'",
+        )
+        .all();
+      for (const row of activeWatches) {
+        const target = resolve(row.route_id, row.conversation_key);
+        if (!target || target === row.lock_key) continue;
+        watches += this.db
+          .query("UPDATE pull_request_watches SET lock_key=?, updated_at=? WHERE id=? AND status='active'")
+          .run(target, now(), row.id).changes;
+      }
+      return { jobs, watches };
+    });
+    return tx();
+  }
+
+  setQueuedLock(id: string, lockKey: string): boolean {
+    return this.db.query("UPDATE jobs SET lock_key=? WHERE id=? AND status='queued'").run(lockKey, id).changes === 1;
+  }
+
   setPid(id: string, pid: number): void {
     this.db.query("UPDATE jobs SET pid=?, heartbeat_at=? WHERE id=? AND status='running'").run(pid, now(), id);
   }
@@ -846,13 +1194,36 @@ export class StateStore {
     this.db.query("UPDATE jobs SET heartbeat_at=? WHERE id=? AND status='running'").run(now(), id);
   }
 
-  setProgress(id: string, progressMessageId: string, progressText: string): void {
-    this.db
-      .query(
-        `UPDATE jobs SET progress_message_id=?, progress_text=?, heartbeat_at=?
-         WHERE id=? AND status IN ('running','delivering','completed','failed','cancelled')`,
-      )
-      .run(progressMessageId, progressText.slice(0, 4000), now(), id);
+  setProgress(id: string, progressMessageId: string, progressText: string): boolean {
+    return (
+      this.db
+        .query(
+          `UPDATE jobs SET progress_message_id=?, progress_text=?, heartbeat_at=?
+           WHERE id=? AND status IN ('queued','running','delivering')`,
+        )
+        .run(progressMessageId, progressText.slice(0, 4000), now(), id).changes === 1
+    );
+  }
+
+  acknowledgeQueuedProgress(id: string, progressMessageId: string, progressText: string): boolean {
+    return (
+      this.db
+        .query(
+          `UPDATE jobs SET progress_message_id=?, progress_text=?, progress_pending=0, heartbeat_at=?
+           WHERE id=? AND status='queued'`,
+        )
+        .run(progressMessageId, progressText.slice(0, 4000), now(), id).changes === 1
+    );
+  }
+
+  releaseProgressHold(id: string): boolean {
+    return (
+      this.db
+        .query(
+          "UPDATE jobs SET progress_pending=0 WHERE id=? AND status='queued' AND progress_pending=1 AND progress_message_id IS NOT NULL",
+        )
+        .run(id).changes === 1
+    );
   }
 
   clearProgress(id: string): void {
@@ -899,24 +1270,29 @@ export class StateStore {
     return tx();
   }
 
-  markDeliveryChunk(id: string, index: number, messageId: string): void {
+  markDeliveryChunk(id: string, index: number, messageId: string): boolean {
     const tx = this.db.transaction(() => {
       const row = this.db
-        .query<{ delivery_cursor: number | null; delivery_message_ids: string | null }, [string]>(
-          "SELECT delivery_cursor, delivery_message_ids FROM jobs WHERE id=?",
+        .query<{ status: JobStatus; delivery_cursor: number | null; delivery_message_ids: string | null }, [string]>(
+          "SELECT status, delivery_cursor, delivery_message_ids FROM jobs WHERE id=?",
         )
         .get(id);
       if (!row) throw new Error(`unknown job: ${id}`);
+      if (row.status !== "delivering") return false;
       const cursor = row.delivery_cursor ?? 0;
-      if (cursor > index) return;
-      if (cursor !== index) throw new Error(`delivery cursor mismatch: expected ${cursor}, got ${index}`);
       const messageIds = row.delivery_message_ids ? (JSON.parse(row.delivery_message_ids) as string[]) : [];
+      if (cursor > index) return messageIds[index] === messageId;
+      if (cursor !== index) throw new Error(`delivery cursor mismatch: expected ${cursor}, got ${index}`);
       messageIds[index] = messageId;
-      this.db
-        .query("UPDATE jobs SET delivery_cursor=?, delivery_message_ids=? WHERE id=?")
-        .run(index + 1, JSON.stringify(messageIds), id);
+      return (
+        this.db
+          .query(
+            "UPDATE jobs SET delivery_cursor=?, delivery_message_ids=? WHERE id=? AND status='delivering'",
+          )
+          .run(index + 1, JSON.stringify(messageIds), id).changes === 1
+      );
     });
-    tx();
+    return tx();
   }
 
   listTerminalProgress(): JobRecord[] {
@@ -928,7 +1304,12 @@ export class StateStore {
       .map(fromRow);
   }
 
-  stageDelivery(id: string, execution: ClaudeExecution, finalStatus: FinalStatus): JobRecord {
+  stageDelivery(
+    id: string,
+    execution: ClaudeExecution,
+    finalStatus: FinalStatus,
+    workspacePath?: string,
+  ): JobRecord {
     const job = this.getJob(id);
     if (!job) throw new Error(`job not found: ${id}`);
     const timestamp = now();
@@ -960,6 +1341,7 @@ export class StateStore {
           job.sessionId,
           execution.sessionId || job.sessionId,
           timestamp,
+          workspacePath,
         );
       }
       this.db
@@ -1002,34 +1384,27 @@ export class StateStore {
     return this.getJob(id)!;
   }
 
-  retryOrFail(id: string, execution: ClaudeExecution, maxAttempts: number): { retry: boolean; job: JobRecord } {
+  retryOrFail(
+    id: string,
+    execution: ClaudeExecution,
+    maxAttempts: number,
+  ): { retry: boolean; job: JobRecord } {
     const job = this.getJob(id);
     if (!job) throw new Error(`job not found: ${id}`);
     const timestamp = now();
     const error = executionError(execution);
     const tx = this.db.transaction(() => {
-      if (!job.pinnedSession) {
-        this.activateSessionBranch(
-          job.conversationKey,
-          job.sessionId,
-          execution.sessionId || job.sessionId,
-          timestamp,
-        );
-      }
-      this.db
-        .query("UPDATE session_checkpoints SET session_id=? WHERE job_id=?")
-        .run(execution.sessionId || job.sessionId, job.id);
       if (job.attempts < maxAttempts) {
         this.db
           .query(
-            `UPDATE jobs SET status='queued', session_id=?, started_before=1,
+            `UPDATE jobs SET status='queued', started_before=1,
              recovery_reason='previous execution failed', error=?, queued_at=?, pid=NULL WHERE id=?`,
           )
-          .run(execution.sessionId || job.sessionId, error, timestamp, id);
+          .run(error, timestamp, id);
       } else {
         this.db
           .query(
-            `UPDATE jobs SET status='delivering', final_status='failed', result=?, error=?, session_id=?,
+            `UPDATE jobs SET status='delivering', final_status='failed', result=?, error=?,
              delivery_attempts=0, delivery_after=?, delivery_error=NULL, pid=NULL, heartbeat_at=?,
              delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0, delivery_message_ids='[]',
              continuation_prompt=NULL, continuation_session_id=NULL, continuation_turn=0,
@@ -1038,7 +1413,6 @@ export class StateStore {
           .run(
             execution.result,
             error,
-            execution.sessionId || job.sessionId,
             timestamp,
             timestamp,
             execution.mainModel ?? null,
@@ -1062,13 +1436,18 @@ export class StateStore {
     return changed.changes === 1 ? this.getByMessageId(messageId) : null;
   }
 
-  requeueTerminalByMessageId(messageId: string, reason: string, prompt?: string): JobRecord | null {
+  requeueTerminalByMessageId(
+    messageId: string,
+    reason: string,
+    prompt?: string,
+    lockKey?: string,
+  ): JobRecord | null {
     const timestamp = now();
     const changed = this.db
       .query(
         `UPDATE jobs SET
            status='queued', attempts=0, started_before=0, recovery_reason=?, pid=NULL,
-           prompt=COALESCE(?,prompt),
+           prompt=COALESCE(?,prompt), lock_key=COALESCE(?,lock_key),
            result=NULL, error=NULL, final_status=NULL, delivery_attempts=0, delivery_after=NULL,
            delivery_error=NULL, delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0,
            delivery_message_ids='[]', progress_message_id=NULL, progress_text=NULL,
@@ -1076,7 +1455,7 @@ export class StateStore {
            queued_at=?, started_at=NULL, heartbeat_at=NULL, completed_at=NULL
          WHERE message_id=? AND status IN ('failed','cancelled')`,
       )
-      .run(reason, prompt ?? null, timestamp, messageId);
+      .run(reason, prompt ?? null, lockKey ?? null, timestamp, messageId);
     return changed.changes === 1 ? this.getByMessageId(messageId) : null;
   }
 
@@ -1150,26 +1529,35 @@ export class StateStore {
     messageId: string;
     jobId: string;
     conversationKey: string;
+    authorId?: string;
     content: string;
     sdkMessageId: string;
   }): SteeringInputRecord {
+    const authorId = input.authorId ?? this.getJob(input.jobId)?.authorId;
+    if (!authorId) throw new Error(`steering job author not found: ${input.jobId}`);
     const timestamp = now();
-    this.db
-      .query(
-        `INSERT OR IGNORE INTO steering_inputs(
-          message_id,job_id,conversation_key,content,sdk_message_id,original_sdk_message_id,state,created_at,updated_at
-        ) VALUES(?,?,?,?,?,?,'pending',?,?)`,
-      )
-      .run(
-        input.messageId,
-        input.jobId,
-        input.conversationKey,
-        input.content,
-        input.sdkMessageId,
-        input.sdkMessageId,
-        timestamp,
-        timestamp,
-      );
+    const insert = this.db.transaction(() => {
+      const sequence = Number(this.db.query("INSERT INTO event_sequences DEFAULT VALUES").run().lastInsertRowid);
+      this.db
+        .query(
+          `INSERT OR IGNORE INTO steering_inputs(
+            message_id,job_id,conversation_key,author_id,content,sdk_message_id,original_sdk_message_id,state,event_sequence,created_at,updated_at
+          ) VALUES(?,?,?,?,?,?,?,'pending',?,?,?)`,
+        )
+        .run(
+          input.messageId,
+          input.jobId,
+          input.conversationKey,
+          authorId,
+          input.content,
+          input.sdkMessageId,
+          input.sdkMessageId,
+          sequence,
+          timestamp,
+          timestamp,
+        );
+    });
+    insert();
     const record = this.getSteeringInput(input.messageId);
     if (!record) throw new Error(`steering input not found after insert: ${input.messageId}`);
     return record;
@@ -1276,13 +1664,17 @@ export class StateStore {
       .digest("hex");
     const requestKey = question.requestId ?? `fingerprint:${fingerprint}`;
     const timestamp = now();
-    this.db
-      .query(
-        `INSERT OR IGNORE INTO interactions(
-          id,job_id,conversation_key,request_key,question_json,status,created_at,updated_at
-        ) VALUES(?,?,?,?,?,'pending',?,?)`,
-      )
-      .run(crypto.randomUUID(), jobId, conversationKey, requestKey, JSON.stringify(question), timestamp, timestamp);
+    const insert = this.db.transaction(() => {
+      const sequence = Number(this.db.query("INSERT INTO event_sequences DEFAULT VALUES").run().lastInsertRowid);
+      this.db
+        .query(
+          `INSERT OR IGNORE INTO interactions(
+            id,job_id,conversation_key,request_key,question_json,status,event_sequence,created_at,updated_at
+          ) VALUES(?,?,?,?,?,'pending',?,?,?)`,
+        )
+        .run(crypto.randomUUID(), jobId, conversationKey, requestKey, JSON.stringify(question), sequence, timestamp, timestamp);
+    });
+    insert();
     const row = this.db
       .query<InteractionRow, [string, string]>("SELECT * FROM interactions WHERE job_id=? AND request_key=?")
       .get(jobId, requestKey);
@@ -1299,11 +1691,15 @@ export class StateStore {
     return interactionFromRow(row);
   }
 
-  clearInteractionMessage(id: string): InteractionRecord | null {
-    this.db
-      .query("UPDATE interactions SET discord_message_id=NULL, updated_at=? WHERE id=?")
-      .run(now(), id);
-    return this.getInteraction(id);
+  markInteractionCardSettled(id: string, messageId: string | null): InteractionRecord | null {
+    const timestamp = now();
+    const changed = this.db
+      .query(
+        `UPDATE interactions SET discord_message_id=COALESCE(?,discord_message_id), discord_settled_at=?, updated_at=?
+         WHERE id=? AND status IN ('answered','orphaned') AND discord_settled_at IS NULL`,
+      )
+      .run(messageId, timestamp, timestamp, id);
+    return changed.changes === 1 ? this.getInteraction(id) : null;
   }
 
   answerInteraction(id: string, answer: string): InteractionRecord {
@@ -1311,7 +1707,8 @@ export class StateStore {
     if (answered) return answered;
     const existing = this.getInteraction(id);
     if (!existing) throw new Error(`interaction not found: ${id}`);
-    return existing;
+    if (existing.status === "answered" && existing.answer === answer) return existing;
+    throw new Error(`interaction is not pending: ${id}/${existing.status}`);
   }
 
   tryAnswerInteraction(id: string, answer: string): InteractionRecord | null {
@@ -1360,10 +1757,103 @@ export class StateStore {
       .map(interactionFromRow);
   }
 
-  listOrphanedInteractionsWithMessages(): InteractionRecord[] {
+  pendingInteractionForJob(jobId: string): InteractionRecord | null {
+    const row = this.db
+      .query<InteractionRow, [string]>(
+        "SELECT * FROM interactions WHERE job_id=? AND status='pending' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+      )
+      .get(jobId);
+    return row ? interactionFromRow(row) : null;
+  }
+
+  reconcilePendingInteractionSteering(): number {
+    const pending = this.db
+      .query<InteractionRow, []>(
+        `SELECT i.* FROM interactions i JOIN jobs j ON j.id=i.job_id
+         WHERE i.status='pending' AND j.status IN ('queued','running')
+         ORDER BY i.created_at, i.rowid`,
+      )
+      .all();
+    const transaction = this.db.transaction(() => {
+      let reconciled = 0;
+      for (const interaction of pending) {
+        const job = this.getJob(interaction.job_id);
+        if (!job) continue;
+        const steeringRows = this.db
+          .query<SteeringInputRow, [string]>(
+            `SELECT * FROM steering_inputs
+             WHERE job_id=? AND state IN ('accepted','edited')
+             ORDER BY event_sequence IS NULL, event_sequence, created_at, rowid`,
+          )
+          .all(interaction.job_id);
+        const steering = steeringRows.find(
+          (candidate) =>
+            candidate.author_id === job.authorId &&
+            (interaction.event_sequence !== null && candidate.event_sequence !== null
+              ? candidate.event_sequence > interaction.event_sequence
+              : discordSnowflakeIsAfter(candidate.message_id, interaction.discord_message_id)),
+        );
+        if (!steering) continue;
+        const question = JSON.parse(interaction.question_json) as InteractiveQuestion;
+        if (question.kind === "permission") continue;
+        const answer = textAnswerForQuestion(question, steering.content);
+        if (!answer) continue;
+        const timestamp = now();
+        const changed = this.db
+          .query("UPDATE interactions SET answer=?, status='answered', updated_at=? WHERE id=? AND status='pending'")
+          .run(answer, timestamp, interaction.id);
+        if (changed.changes !== 1) continue;
+        if (question.continuation) {
+          this.db
+            .query(
+              "UPDATE jobs SET continuation_prompt=?, continuation_session_id=?, continuation_turn=?, heartbeat_at=? WHERE id=?",
+            )
+            .run(
+              markerContinuationPrompt(question, answer),
+              question.continuation.sessionId,
+              question.continuation.turn,
+              timestamp,
+              interaction.job_id,
+            );
+        }
+        this.db.query("DELETE FROM steering_inputs WHERE message_id=?").run(steering.message_id);
+        reconciled += 1;
+      }
+      return reconciled;
+    });
+    return transaction();
+  }
+
+  orphanPendingInteractionsForTerminalJobs(): number {
+    const timestamp = now();
+    return this.db
+      .query(
+        `UPDATE interactions SET status='orphaned', updated_at=?
+         WHERE status='pending' AND EXISTS (
+           SELECT 1 FROM jobs WHERE jobs.id=interactions.job_id
+             AND jobs.status IN ('completed','failed','cancelled')
+         )`,
+      )
+      .run(timestamp).changes;
+  }
+
+  listSettledInteractionsWithoutMessages(): InteractionRecord[] {
     return this.db
       .query<InteractionRow, []>(
-        "SELECT * FROM interactions WHERE status='orphaned' AND discord_message_id IS NOT NULL ORDER BY updated_at, id",
+        `SELECT * FROM interactions
+         WHERE status IN ('answered','orphaned') AND discord_settled_at IS NULL AND discord_message_id IS NULL
+         ORDER BY updated_at, id`,
+      )
+      .all()
+      .map(interactionFromRow);
+  }
+
+  listSettledInteractionsWithMessages(): InteractionRecord[] {
+    return this.db
+      .query<InteractionRow, []>(
+        `SELECT * FROM interactions
+         WHERE status IN ('answered','orphaned') AND discord_settled_at IS NULL AND discord_message_id IS NOT NULL
+         ORDER BY updated_at, id`,
       )
       .all()
       .map(interactionFromRow);
@@ -1502,8 +1992,12 @@ export class StateStore {
     return Boolean(
       this.db
         .query<{ found: number }, [string]>(
-          `SELECT 1 AS found FROM jobs WHERE status='queued'
-           OR (status='delivering' AND (delivery_after IS NULL OR delivery_after<=?)) LIMIT 1`,
+          `SELECT 1 AS found FROM jobs q WHERE (
+             q.status='queued' AND q.progress_pending=0
+             AND NOT EXISTS (
+               SELECT 1 FROM conversation_gates gate WHERE gate.conversation_key=q.conversation_key
+             )
+           ) OR (q.status='delivering' AND (q.delivery_after IS NULL OR q.delivery_after<=?)) LIMIT 1`,
         )
         .get(now()),
     );

@@ -40,6 +40,12 @@ export interface SteeringMutationResult {
 
 type SdkUuid = NonNullable<SDKUserMessage["uuid"]>;
 
+const nativeSessionSettings = {
+  enabledPlugins: {
+    "discord@claude-plugins-official": false,
+  },
+} as const;
+
 function sdkUserMessage(content: string, uuid: SdkUuid = crypto.randomUUID()): SDKUserMessage {
   return {
     type: "user",
@@ -51,12 +57,7 @@ function sdkUserMessage(content: string, uuid: SdkUuid = crypto.randomUUID()): S
 }
 
 export function splitInitialSdkMessages(prompt: string): string[] {
-  if (!prompt.startsWith("/goal ")) return [prompt];
-  const newline = prompt.indexOf("\n");
-  if (newline < 0) return [prompt];
-  const command = prompt.slice(0, newline).trimEnd();
-  const task = prompt.slice(newline + 1).trimStart();
-  return task ? [command, task] : [command];
+  return [prompt];
 }
 
 function normalizeLocalCommandFailure(execution: ClaudeExecution): ClaudeExecution {
@@ -223,13 +224,21 @@ export class ClaudeSdkExecutor {
         pathToClaudeCodeExecutable: this.claudeExecutable,
         tools: { type: "preset", preset: "claude_code" },
         systemPrompt: { type: "preset", preset: "claude_code" },
+        settings: nativeSessionSettings,
         includePartialMessages: true,
         includeHookEvents: true,
         forwardSubagentText: true,
         enableFileCheckpointing: true,
         ...(request.route.mixedAgents === false ? {} : { agents: defaultAgents }),
         canUseTool,
-        env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0" },
+        env: {
+          ...process.env,
+          CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0",
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+          ...(request.route.memoryProject
+            ? { AGENTMEMORY_PROJECT_NAME: request.route.memoryProject }
+            : {}),
+        },
       };
       if (request.route.fallbackModel) options.fallbackModel = request.route.fallbackModel;
       if (resume) {
@@ -242,17 +251,46 @@ export class ClaudeSdkExecutor {
       const actor: SdkActor = { query, mailbox, abortController };
       if (request.onCheckpoint) actor.onCheckpoint = request.onCheckpoint;
       this.actors.set(request.job.id, actor);
-      for (const content of splitInitialSdkMessages(request.prompt)) {
-        const initialMessage = sdkUserMessage(content);
-        if (initialMessage.uuid) request.onCheckpoint?.(initialMessage.uuid);
-        mailbox.push(initialMessage);
-      }
 
-      for await (const message of query) {
+      const ingest = (message: SDKMessage): void => {
         request.onHeartbeat?.();
-        const event = aggregator.ingestLine(JSON.stringify(message satisfies SDKMessage));
+        const event = aggregator.ingestLine(JSON.stringify(message));
         if (event) request.onProgress?.(event, aggregator);
         if (message.type === "result") mailbox.close();
+      };
+
+      if (request.onSessionEstablished) {
+        const iterator = query[Symbol.asyncIterator]();
+        let initialized = false;
+        while (!initialized) {
+          const next = await iterator.next();
+          if (next.done) throw new Error("SDK stream ended before system init");
+          const message = next.value;
+          ingest(message);
+          if (message.type === "system" && message.subtype === "init") {
+            request.onSessionEstablished(message.session_id);
+            initialized = true;
+          } else if (message.type === "result") {
+            throw new Error("SDK returned a result before system init");
+          }
+        }
+        for (const content of splitInitialSdkMessages(request.prompt)) {
+          const initialMessage = sdkUserMessage(content);
+          if (initialMessage.uuid) request.onCheckpoint?.(initialMessage.uuid);
+          mailbox.push(initialMessage);
+        }
+        while (true) {
+          const next = await iterator.next();
+          if (next.done) break;
+          ingest(next.value);
+        }
+      } else {
+        for (const content of splitInitialSdkMessages(request.prompt)) {
+          const initialMessage = sdkUserMessage(content);
+          if (initialMessage.uuid) request.onCheckpoint?.(initialMessage.uuid);
+          mailbox.push(initialMessage);
+        }
+        for await (const message of query) ingest(message);
       }
     } catch (error) {
       thrown = error;
@@ -380,6 +418,7 @@ export class ClaudeSdkExecutor {
     sessionId: string,
     userMessageId: string,
     dryRun: boolean,
+    memoryProject?: string,
   ): Promise<RewindFilesResult> {
     const mailbox = new AsyncMailbox<SDKUserMessage>();
     const abortController = new AbortController();
@@ -393,9 +432,15 @@ export class ClaudeSdkExecutor {
         pathToClaudeCodeExecutable: this.claudeExecutable,
         tools: { type: "preset", preset: "claude_code" },
         systemPrompt: { type: "preset", preset: "claude_code" },
+        settings: nativeSessionSettings,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0" },
+        env: {
+          ...process.env,
+          CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0",
+          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+          ...(memoryProject ? { AGENTMEMORY_PROJECT_NAME: memoryProject } : {}),
+        },
       },
     });
     const timeout = setTimeout(() => {

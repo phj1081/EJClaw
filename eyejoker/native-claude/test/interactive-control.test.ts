@@ -7,6 +7,8 @@ import {
   QuestionBroker,
   renderAnsweredInteractiveQuestion,
   renderInteractiveQuestion,
+  renderOrphanedInteractiveQuestion,
+  textAnswerForQuestion,
 } from "../src/interactive-control";
 
 describe("interactive Discord control protocol", () => {
@@ -24,7 +26,7 @@ describe("interactive Discord control protocol", () => {
     expect(parseInteractiveQuestion('DISCORD_QUESTION:{"question":"open","choices":[]}')).toBeNull();
   });
 
-  test("exposes only Discord button settlement for pending questions", async () => {
+  test("settles pending questions by Discord button or same-conversation text", async () => {
     const broker = new QuestionBroker();
     const waiting = broker.wait(
       "job-1",
@@ -34,11 +36,38 @@ describe("interactive Discord control protocol", () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(broker.hasPending("route:thread")).toBe(true);
-    expect((broker as unknown as { answerConversation?: unknown }).answerConversation).toBeUndefined();
-    expect((broker as unknown as { answerReaction?: unknown }).answerReaction).toBeUndefined();
+    expect(broker.answerConversation("route:other", "B")).toBe(false);
     expect(broker.answerMessage("discord-question-1", "B")).toBe(true);
     expect(await waiting).toBe("B");
     expect(broker.hasPending("route:thread")).toBe(false);
+
+    const textWaiting = broker.wait(
+      "job-2",
+      "route:text",
+      { question: "어떻게 할까?", choices: ["A", "B"] },
+      async () => "discord-question-2",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(broker.answerConversation("route:text", "가능하면 수정해줘")).toBe(true);
+    expect(await textWaiting).toBe("가능하면 수정해줘");
+  });
+
+  test("allows free text for normal questions but requires an exact permission choice", () => {
+    expect(textAnswerForQuestion({ question: "방법?", choices: ["A", "B"], kind: "question" }, " 다른 방법 ")).toBe(
+      "다른 방법",
+    );
+    expect(
+      textAnswerForQuestion(
+        { question: "허용?", choices: ["이번만 허용", "거부"], kind: "permission" },
+        "응, 허용해",
+      ),
+    ).toBeNull();
+    expect(
+      textAnswerForQuestion(
+        { question: "허용?", choices: ["이번만 허용", "거부"], kind: "permission" },
+        "이번만 허용",
+      ),
+    ).toBe("이번만 허용");
   });
 
   test("persists an answer synchronously before releasing the waiting SDK callback", async () => {
@@ -101,12 +130,23 @@ describe("interactive Discord control protocol", () => {
     expect(rendered).not.toContain("아래 버튼으로 선택해줘.");
   });
 
-  test("does not register text or reaction fallback handlers in the Discord bridge", async () => {
+  test("renders an orphaned question without live controls", () => {
+    expect(renderOrphanedInteractiveQuestion({ question: "계속할까?", choices: ["예", "아니오"] })).toBe(
+      "❓ **Claude 질문**\n계속할까?\n\n🚫 **질문 종료됨**",
+    );
+  });
+
+  test("registers same-conversation text settlement without a reaction fallback", async () => {
     const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
-    expect(source).not.toContain("questionBroker.answerConversation");
+    expect(source).toContain("questionBroker.answerConversation(key, textAnswer)");
+    expect(source).toContain("textAnswerForQuestion(pendingQuestion.question, promptText)");
+    expect(source).toContain("message.author.id !== running.authorId");
+    expect(source).toContain("reconcileQuestionCard(job, interaction, question, false)");
+    expect(source).toContain("reconcileQuestionCard(running, answered, answered.question, false)");
+    expect(source).toContain("store.markInteractionCardSettled(interaction.id, message.id)");
+    expect(source).toContain("reconcileSettledQuestionCardsWithoutAck()");
+    expect(source).not.toContain("questionBroker.answerReaction");
     expect(source).not.toContain('client.on("messageReactionAdd"');
-    expect(source).not.toContain("question reaction failed");
-    expect(source).toContain('message.react("👀")');
     expect(source).toContain("progressBoards.get(job.id)?.resetAfterInteraction(question.toolUseId)");
   });
 });

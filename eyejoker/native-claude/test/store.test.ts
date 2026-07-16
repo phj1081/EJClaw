@@ -30,17 +30,158 @@ function input(routeId: string, conversationKey: string, messageId: string) {
 }
 
 describe("durable job store", () => {
-  test("serializes jobs per project while allowing another project", () => {
+  test("runs different conversations in one route concurrently but serializes one conversation", () => {
     const db = store();
     db.enqueue(input("cleanapo", "cleanapo:one", "m1"));
     db.enqueue(input("cleanapo", "cleanapo:two", "m2"));
-    db.enqueue(input("crawler", "crawler:one", "m3"));
+    db.enqueue(input("cleanapo", "cleanapo:one", "m3"));
 
     const first = db.claimNext(2);
     expect(first?.routeId).toBe("cleanapo");
     const second = db.claimNext(2);
-    expect(second?.routeId).toBe("crawler");
+    expect(second?.routeId).toBe("cleanapo");
+    expect(new Set([first?.conversationKey, second?.conversationKey])).toEqual(
+      new Set(["cleanapo:one", "cleanapo:two"]),
+    );
     expect(db.claimNext(2)).toBeNull();
+  });
+
+  test("keeps an explicit shared lock available for routes that opt out of conversation worktrees", () => {
+    const db = store();
+    db.enqueue({ ...input("legacy", "legacy:one", "legacy-1"), lockKey: "legacy-shared" });
+    db.enqueue({ ...input("legacy", "legacy:two", "legacy-2"), lockKey: "legacy-shared" });
+
+    expect(db.claimNext(2)?.messageId).toBe("legacy-1");
+    expect(db.claimNext(2)).toBeNull();
+  });
+
+  test("migrates only queued jobs from a legacy route lock", () => {
+    const db = store();
+    const running = db.enqueue({ ...input("cleanapo", "cleanapo:one", "legacy-running"), lockKey: "cleanapo" });
+    const queued = db.enqueue({ ...input("cleanapo", "cleanapo:two", "legacy-queued"), lockKey: "cleanapo" });
+    db.claimNext(2);
+
+    expect(db.setQueuedLock(running.id, running.conversationKey)).toBe(false);
+    expect(db.setQueuedLock(queued.id, queued.conversationKey)).toBe(true);
+    expect(db.getJob(running.id)?.lockKey).toBe("cleanapo");
+    expect(db.getJob(queued.id)?.lockKey).toBe("cleanapo:two");
+  });
+
+  test("atomically migrates active watcher locks with queued jobs", () => {
+    const db = store();
+    const conversationKey = "cleanapo:watch-thread";
+    const origin = db.enqueue({ ...input("cleanapo", conversationKey, "watch-origin"), lockKey: "cleanapo" });
+    db.cancelJob(origin.id, "seed watch");
+    db.upsertPullRequestWatch(
+      { ...origin, lockKey: "cleanapo" },
+      { repo: "owner/repo", number: 17, url: "https://github.com/owner/repo/pull/17" },
+    );
+    const normal = db.enqueue({ ...input("cleanapo", conversationKey, "normal-thread-job"), lockKey: conversationKey });
+
+    expect(db.migrateConversationLocks((_routeId, key) => key)).toEqual({ jobs: 0, watches: 1 });
+    const watch = db.listActivePullRequestWatches()[0]!;
+    expect(watch.lockKey).toBe(conversationKey);
+    db.enqueue({
+      ...input("cleanapo", conversationKey, "watch-wake"),
+      lockKey: watch.lockKey,
+      sessionId: watch.sessionId,
+      pinnedSession: true,
+    });
+
+    expect(db.claimNext(2)?.id).toBe(normal.id);
+    expect(db.claimNext(2)).toBeNull();
+  });
+
+  test("holds a queued job until the durable progress card is acknowledged", () => {
+    const db = store();
+    const queued = db.enqueue({
+      ...input("cleanapo", "cleanapo:queued", "queued-card"),
+      holdForProgress: true,
+    });
+
+    expect(queued.progressPending).toBe(true);
+    expect(db.hasRunnable()).toBe(false);
+    expect(db.claimNext(1)).toBeNull();
+    expect(db.acknowledgeQueuedProgress(queued.id, "discord-progress", "⏳ 대기 중")).toBe(true);
+
+    expect(db.getJob(queued.id)).toMatchObject({
+      status: "queued",
+      progressMessageId: "discord-progress",
+      progressText: "⏳ 대기 중",
+      progressPending: false,
+    });
+    expect(db.claimNext(1)?.id).toBe(queued.id);
+  });
+
+  test("supports an explicit release only after progress is known by another durable path", () => {
+    const db = store();
+    const queued = db.enqueue({
+      ...input("cleanapo", "cleanapo:queued-fallback", "queued-fallback"),
+      holdForProgress: true,
+    });
+    expect(db.releaseProgressHold(queued.id)).toBe(false);
+    expect(db.setProgress(queued.id, "known-progress", "⏳ 대기 중")).toBe(true);
+    expect(db.releaseProgressHold(queued.id)).toBe(true);
+    expect(db.releaseProgressHold(queued.id)).toBe(false);
+    expect(db.claimNext(1)?.id).toBe(queued.id);
+  });
+
+  test("rejects a delayed progress ACK after cancellation", () => {
+    const db = store();
+    const queued = db.enqueue({
+      ...input("cleanapo", "cleanapo:queued-cancel", "queued-cancel"),
+      holdForProgress: true,
+    });
+    expect(db.cancelJob(queued.id, "cancel during Discord send")?.status).toBe("cancelled");
+    expect(db.acknowledgeQueuedProgress(queued.id, "orphan-card", "⏳ 대기 중")).toBe(false);
+    expect(db.setProgress(queued.id, "orphan-card", "⏳ 대기 중")).toBe(false);
+    expect(db.getJob(queued.id)?.progressMessageId).toBeNull();
+  });
+
+  test("protects a prepared workspace before SDK init without binding the session", () => {
+    const db = store();
+    const job = db.enqueue(input("cleanapo", "cleanapo:prepared", "prepared-workspace"));
+    expect(db.claimNext(1)?.id).toBe(job.id);
+    expect(db.bindPreparedWorkspace(job.id, "/tmp/prepared-workspace")).toBe(true);
+    expect(db.getJob(job.id)?.workspacePath).toBe("/tmp/prepared-workspace");
+    expect(db.activeWorkspacePaths()).toContain("/tmp/prepared-workspace");
+    expect(db.sessionWorkspaceForSession(job.conversationKey, job.sessionId)).toBeNull();
+  });
+
+  test("tracks the workspace bound to a conversation session", () => {
+    const db = store();
+    db.enqueue(input("cleanapo", "cleanapo:workspace", "workspace-message"));
+
+    expect(db.sessionWorkspace("cleanapo:workspace")).toBeNull();
+    db.setSessionWorkspace("cleanapo:workspace", "/tmp/worktree-a");
+    expect(db.sessionWorkspace("cleanapo:workspace")).toBe("/tmp/worktree-a");
+  });
+
+  test("adds workspace binding to an existing sessions schema", () => {
+    const path = join(tmpdir(), `native-legacy-session-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE sessions (
+        conversation_key TEXT PRIMARY KEY,
+        route_id TEXT NOT NULL,
+        session_id TEXT NOT NULL UNIQUE,
+        has_history INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    legacy.close();
+
+    const migrated = new StateStore(path);
+    const inspected = new Database(path, { readonly: true });
+    const columns = inspected
+      .query<{ name: string }, []>("PRAGMA table_info(sessions)")
+      .all()
+      .map((column: { name: string }) => column.name);
+    expect(columns).toContain("workspace_path");
+    inspected.close();
+    migrated.close();
   });
 
   test("persists one Claude session per Discord thread", () => {
@@ -90,9 +231,15 @@ describe("durable job store", () => {
     db.cancelByMessageId("cohort-notice", "simulated delivery failure");
     expect(db.getJob(job.id)?.status).toBe("cancelled");
 
-    const replay = db.requeueTerminalByMessageId("cohort-notice", "durable notice replay", "new notice");
+    const replay = db.requeueTerminalByMessageId(
+      "cohort-notice",
+      "durable notice replay",
+      "new notice",
+      "notice:conversation-lock",
+    );
     expect(replay?.id).toBe(job.id);
     expect(replay?.status).toBe("queued");
+    expect(replay?.lockKey).toBe("notice:conversation-lock");
     expect(replay?.prompt).toBe("new notice");
     expect(replay?.attempts).toBe(0);
     expect(replay?.error).toBeNull();
@@ -101,6 +248,12 @@ describe("durable job store", () => {
   test("persists final chunks, cursor and accepted message ids across restarts", () => {
     const db = store();
     const job = db.enqueue(input("delivery", "delivery:one", "delivery-message"));
+    expect(db.claimNext(1)?.id).toBe(job.id);
+    db.stageDelivery(
+      job.id,
+      { ok: true, result: "done", sessionId: job.sessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
 
     const files = [{ path: "/tmp/result.png", name: "result.png" }];
     expect(db.prepareDelivery(job.id, ["one", "two"], files)).toEqual({
@@ -109,7 +262,7 @@ describe("durable job store", () => {
       messageIds: [],
       files,
     });
-    db.markDeliveryChunk(job.id, 0, "discord-1");
+    expect(db.markDeliveryChunk(job.id, 0, "discord-1")).toBe(true);
 
     const reopened = db.prepareDelivery(job.id, ["different"], []);
     expect(reopened).toEqual({
@@ -124,6 +277,21 @@ describe("durable job store", () => {
     db.close();
   });
 
+  test("rejects final delivery ACKs after cancellation wins", () => {
+    const db = store();
+    const job = db.enqueue(input("delivery", "delivery:cancel-race", "delivery-cancel-race"));
+    expect(db.claimNext(1)?.id).toBe(job.id);
+    db.stageDelivery(
+      job.id,
+      { ok: true, result: "done", sessionId: job.sessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
+    db.prepareDelivery(job.id, ["one"], []);
+    expect(db.cancelJob(job.id, "cancel won")?.status).toBe("cancelled");
+    expect(db.markDeliveryChunk(job.id, 0, "late-final")).toBe(false);
+    expect(db.getJob(job.id)?.deliveryCursor).toBe(0);
+  });
+
   test("updates queued source messages but never rewrites an active execution", () => {
     const db = store();
     const queued = db.enqueue(input("cleanapo", "cleanapo:edit", "editable"));
@@ -131,6 +299,29 @@ describe("durable job store", () => {
     db.claimNext(1);
     expect(db.updateQueuedPrompt("editable", "늦은 수정")).toBeNull();
     expect(db.getJob(queued.id)?.prompt).toBe("수정된 요청");
+  });
+
+  test("orphans stale pending questions owned by terminal jobs during startup migration", () => {
+    const db = store();
+    const job = db.enqueue(input("terminal", "terminal:question", "terminal-question"));
+    expect(db.claimNext(1)?.id).toBe(job.id);
+    const interaction = db.beginInteraction(job.id, job.conversationKey, {
+      question: "계속할까?",
+      choices: ["예", "아니오"],
+      requestId: "terminal-question",
+    });
+    db.setInteractionMessage(interaction.id, "1527240000000000200");
+    db.stageDelivery(
+      job.id,
+      { ok: true, result: "done", sessionId: job.sessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
+    db.markDelivered(job.id);
+
+    expect(db.orphanPendingInteractionsForTerminalJobs()).toBe(1);
+    expect(db.getInteraction(interaction.id)?.status).toBe("orphaned");
+    expect(db.listSettledInteractionsWithMessages().map((record) => record.id)).toEqual([interaction.id]);
+    expect(db.orphanPendingInteractionsForTerminalJobs()).toBe(0);
   });
 
   test("cancels a queued or running job and orphans its pending interaction when the source is deleted", () => {
@@ -147,7 +338,13 @@ describe("durable job store", () => {
     expect(db.getJob(job.id)?.status).toBe("cancelled");
     expect(db.getInteraction(interaction.id)?.status).toBe("orphaned");
     expect(db.tryAnswerInteraction(interaction.id, "예")).toBeNull();
-    expect(db.listOrphanedInteractionsWithMessages().map((record) => record.id)).toEqual([interaction.id]);
+    expect(() => db.answerInteraction(interaction.id, "예")).toThrow("interaction is not pending");
+    expect(db.listSettledInteractionsWithMessages().map((record) => record.id)).toEqual([interaction.id]);
+    const settled = db.markInteractionCardSettled(interaction.id, "discord-delete-question");
+    expect(settled?.discordSettledAt).not.toBeNull();
+    expect(db.listSettledInteractionsWithMessages()).toEqual([]);
+    expect(db.listSettledInteractionsWithoutMessages()).toEqual([]);
+    expect(db.markInteractionCardSettled(interaction.id, "discord-delete-question")).toBeNull();
     expect(db.cancelByMessageId("deletable")).toBeNull();
   });
 
@@ -170,6 +367,173 @@ describe("durable job store", () => {
     expect(db.getInteraction(secondQuestion.id)?.status).toBe("orphaned");
   });
 
+  test("reconciles legacy text steering into a pending question answer without duplicate recovery steering", () => {
+    const db = store();
+    const job = db.enqueue(input("question", "question:thread", "question-source"));
+    db.claimNext(1);
+    const interaction = db.beginInteraction(job.id, job.conversationKey, {
+      question: "어떤 방식으로 진행할까?",
+      choices: ["증거 제공", "코드 하드닝"],
+      requestId: "legacy-text-question",
+      kind: "question",
+    });
+    db.beginSteeringInput({
+      messageId: "legacy-text-answer",
+      jobId: job.id,
+      conversationKey: job.conversationKey,
+      content: "수정 가능하면 바로 수정해줘",
+      sdkMessageId: "legacy-sdk-answer",
+    });
+    db.acceptSteeringInput("legacy-text-answer");
+
+    expect(db.reconcilePendingInteractionSteering()).toBe(1);
+    expect(db.getInteraction(interaction.id)).toMatchObject({
+      status: "answered",
+      answer: "수정 가능하면 바로 수정해줘",
+    });
+    expect(db.getSteeringInput("legacy-text-answer")).toBeNull();
+    expect(db.listSettledInteractionsWithoutMessages().map((record) => record.id)).toContain(interaction.id);
+    expect(db.listRecoverySteeringInputs(job.id)).toEqual([]);
+    expect(db.reconcilePendingInteractionSteering()).toBe(0);
+  });
+
+  test("never consumes steering that was accepted before the question event", () => {
+    const db = store();
+    const queued = db.enqueue(input("legacy", "legacy:pre-question", "pre-question"));
+    expect(db.claimNext(1)?.id).toBe(queued.id);
+    db.beginSteeringInput({
+      messageId: "1527240000000000001",
+      jobId: queued.id,
+      conversationKey: queued.conversationKey,
+      content: "질문 전 지시",
+      sdkMessageId: "sdk-pre-question",
+    });
+    db.acceptSteeringInput("1527240000000000001");
+    const interaction = db.beginInteraction(queued.id, queued.conversationKey, {
+      question: "계속할까?",
+      choices: ["예", "아니오"],
+      requestId: "after-steering",
+    });
+    db.setInteractionMessage(interaction.id, "1527240000000000002");
+
+    expect(db.reconcilePendingInteractionSteering()).toBe(0);
+    expect(db.getInteraction(interaction.id)?.status).toBe("pending");
+    expect(db.getSteeringInput("1527240000000000001")?.state).toBe("accepted");
+  });
+
+  test("reconciles sequence-less rows with author provenance only when Discord snowflakes prove ordering", () => {
+    const path = join(tmpdir(), `native-state-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const seeded = new StateStore(path);
+    const queued = seeded.enqueue(input("legacy", "legacy:snowflake-order", "legacy-snowflake-order"));
+    expect(seeded.claimNext(1)?.id).toBe(queued.id);
+    const interaction = seeded.beginInteraction(queued.id, queued.conversationKey, {
+      question: "언제 진행할까?",
+      choices: [],
+      requestId: "legacy-snowflake",
+    });
+    seeded.setInteractionMessage(interaction.id, "1527240000000000100");
+    seeded.beginSteeringInput({
+      messageId: "1527240000000000101",
+      jobId: queued.id,
+      conversationKey: queued.conversationKey,
+      content: "지금",
+      sdkMessageId: "legacy-sdk-answer",
+    });
+    seeded.acceptSteeringInput("1527240000000000101");
+    seeded.close();
+
+    const legacy = new Database(path);
+    legacy.query("UPDATE interactions SET event_sequence=NULL, created_at=? WHERE id=?").run(
+      "2026-07-16T00:00:00.000Z",
+      interaction.id,
+    );
+    legacy.query("UPDATE steering_inputs SET event_sequence=NULL, created_at=? WHERE message_id=?").run(
+      "2026-07-16T00:00:00.000Z",
+      "1527240000000000101",
+    );
+    legacy.close();
+
+    const reopened = new StateStore(path);
+    expect(reopened.reconcilePendingInteractionSteering()).toBe(1);
+    expect(reopened.getInteraction(interaction.id)?.answer).toBe("지금");
+    expect(reopened.getSteeringInput("1527240000000000101")).toBeNull();
+    reopened.close();
+  });
+
+  test("never reconciles a normal legacy steering row without author provenance", () => {
+    const path = join(tmpdir(), `native-state-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const seeded = new StateStore(path);
+    const queued = seeded.enqueue(input("legacy", "legacy:missing-author", "legacy-missing-author"));
+    expect(seeded.claimNext(1)?.id).toBe(queued.id);
+    const interaction = seeded.beginInteraction(queued.id, queued.conversationKey, {
+      question: "어떻게 진행할까?",
+      choices: [],
+      requestId: "legacy-missing-author",
+    });
+    seeded.setInteractionMessage(interaction.id, "1527240000000000200");
+    seeded.beginSteeringInput({
+      messageId: "1527240000000000201",
+      jobId: queued.id,
+      conversationKey: queued.conversationKey,
+      content: "지금 진행",
+      sdkMessageId: "legacy-missing-author-sdk",
+    });
+    seeded.acceptSteeringInput("1527240000000000201");
+    seeded.close();
+
+    const legacy = new Database(path);
+    legacy.query("UPDATE interactions SET event_sequence=NULL WHERE id=?").run(interaction.id);
+    legacy.query("UPDATE steering_inputs SET event_sequence=NULL, author_id=NULL WHERE message_id=?")
+      .run("1527240000000000201");
+    legacy.close();
+
+    const reopened = new StateStore(path);
+    expect(reopened.reconcilePendingInteractionSteering()).toBe(0);
+    expect(reopened.getInteraction(interaction.id)?.status).toBe("pending");
+    expect(reopened.getSteeringInput("1527240000000000201")?.state).toBe("accepted");
+    reopened.close();
+  });
+
+  test("never reconciles steering text into a permission approval", () => {
+    const db = store();
+    const job = db.enqueue(input("permission", "permission:thread", "permission-source"));
+    db.claimNext(1);
+    const interaction = db.beginInteraction(job.id, job.conversationKey, {
+      question: "Bash를 허용할까?",
+      choices: ["이번만 허용", "거부"],
+      requestId: "legacy-permission-question",
+      kind: "permission",
+    });
+    db.beginSteeringInput({
+      messageId: "unsafe-text-answer",
+      jobId: job.id,
+      conversationKey: job.conversationKey,
+      content: "이번만 허용",
+      sdkMessageId: "unsafe-sdk-answer",
+    });
+    db.acceptSteeringInput("unsafe-text-answer");
+
+    expect(db.reconcilePendingInteractionSteering()).toBe(0);
+    expect(db.getInteraction(interaction.id)?.status).toBe("pending");
+    expect(db.getSteeringInput("unsafe-text-answer")).not.toBeNull();
+  });
+
+  test("blocks job claims behind a durable conversation gate", () => {
+    const db = store();
+    const conversationKey = "cleanapo:rewind-gate";
+    expect(db.acquireConversationGate(conversationKey, "rewind:op-1")).toBe(true);
+    expect(db.hasConversationGate(conversationKey)).toBe(true);
+    const gated = db.enqueue(input("cleanapo", conversationKey, "gated-job"));
+    expect(db.hasRunnable()).toBe(false);
+    expect(db.claimNext(1)).toBeNull();
+    expect(db.acquireConversationGate(conversationKey, "rewind:op-2")).toBe(false);
+    expect(db.releaseConversationGate(conversationKey, "rewind:op-1")).toBe(true);
+    expect(db.claimNext(1)?.id).toBe(gated.id);
+    expect(db.acquireConversationGate(conversationKey, "rewind:op-3")).toBe(false);
+  });
+
   test("persists conversation overrides and consumes fork/reset controls once", () => {
     const db = store();
     const first = db.enqueue(input("cleanapo", "cleanapo:controls", "controls-1"));
@@ -183,9 +547,9 @@ describe("durable job store", () => {
       forkNext: false,
     });
     db.requestFork("cleanapo:controls");
-    expect(db.consumeFork("cleanapo:controls")).toBe(true);
-    expect(db.consumeFork("cleanapo:controls")).toBe(false);
+    expect(db.forkRequested("cleanapo:controls")).toBe(true);
     const reset = db.resetSession("cleanapo:controls");
+    expect(db.forkRequested("cleanapo:controls")).toBe(false);
     expect(reset).not.toBe(first.sessionId);
     expect(db.sessionHasHistory("cleanapo:controls")).toBe(false);
   });
@@ -194,19 +558,58 @@ describe("durable job store", () => {
     const db = store();
     const original = db.enqueue(input("branches", "branches:one", "branch-message"));
     const running = db.claimNext(1)!;
+    db.setSessionWorkspace(original.conversationKey, "/tmp/original-workspace");
     const forkedSessionId = crypto.randomUUID();
     db.stageDelivery(
       running.id,
       { ok: true, result: "forked", sessionId: forkedSessionId, stderr: "", exitCode: 0 },
       "completed",
+      "/tmp/forked-workspace",
     );
     const branches = db.listSessionBranches(original.conversationKey);
     expect(branches.map((branch) => branch.sessionId).sort()).toEqual([original.sessionId, forkedSessionId].sort());
-    expect(branches.find((branch) => branch.sessionId === forkedSessionId)?.status).toBe("active");
+    expect(branches.find((branch) => branch.sessionId === forkedSessionId)).toMatchObject({
+      status: "active",
+      workspacePath: "/tmp/forked-workspace",
+    });
 
     db.useSessionBranch(original.conversationKey, original.sessionId.slice(0, 8));
+    expect(db.sessionWorkspace(original.conversationKey)).toBe("/tmp/original-workspace");
     const followup = db.enqueue(input("branches", "branches:one", "branch-followup"));
     expect(followup.sessionId).toBe(original.sessionId);
+  });
+
+  test("hands the current workspace to an explicit fork while preserving the source revision", () => {
+    const db = store();
+    const original = db.enqueue(input("branches", "branches:isolated", "branch-isolated"));
+    const running = db.claimNext(1)!;
+    const workspace = "/tmp/managed-branch-workspace";
+    const revision = "3333333333333333333333333333333333333333";
+    db.setSessionWorkspace(original.conversationKey, workspace);
+    expect(db.setSessionBranchRevision(original.conversationKey, original.sessionId, revision)).toBe(true);
+    const forkedSessionId = crypto.randomUUID();
+    db.requestFork(original.conversationKey);
+    expect(() => db.establishExecutionSession(running.id, original.sessionId, workspace, true, true)).toThrow(
+      "explicit fork did not establish a child session",
+    );
+    expect(db.forkRequested(original.conversationKey)).toBe(true);
+    expect(db.sessionBranchForSession(original.conversationKey, original.sessionId)).toMatchObject({
+      status: "active",
+      workspacePath: workspace,
+      workspaceRevision: revision,
+    });
+    db.establishExecutionSession(running.id, forkedSessionId, workspace, true, true);
+    expect(db.forkRequested(original.conversationKey)).toBe(false);
+
+    const source = db.sessionBranchForSession(original.conversationKey, original.sessionId);
+    const forked = db.sessionBranchForSession(original.conversationKey, forkedSessionId);
+    expect(source).toMatchObject({ status: "archived", workspacePath: null, workspaceRevision: revision });
+    expect(forked).toMatchObject({ status: "active", workspacePath: workspace, workspaceRevision: null });
+
+    db.useSessionBranch(original.conversationKey, original.sessionId.slice(0, 8));
+    expect(db.sessionWorkspace(original.conversationKey)).toBeNull();
+    expect(db.enqueue(input("branches", original.conversationKey, "branch-isolated-followup")).sessionId)
+      .toBe(original.sessionId);
   });
 
   test("uses a pinned historical session without changing the active conversation pointer", () => {
@@ -354,10 +757,51 @@ describe("durable job store", () => {
       filesChanged: ["src/a.ts"],
       insertions: 1,
       deletions: 2,
+    }, "/tmp/rewind-workspace");
+    expect(db.getRewindOperation(job.conversationKey, operation.id.slice(0, 8))).toMatchObject({
+      checkpoint,
+      workspacePath: "/tmp/rewind-workspace",
     });
-    expect(db.getRewindOperation(job.conversationKey, operation.id.slice(0, 8))?.checkpoint).toBe(checkpoint);
     expect(db.markRewindApplied(operation.id)).toBe(true);
     expect(db.markRewindApplied(operation.id)).toBe(false);
+  });
+
+  test("persists a cleanup tombstone before invalidating all workspace provenance", () => {
+    const path = join(tmpdir(), `native-cleanup-tombstone-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const workspacePath = "/tmp/managed-conversation-workspace";
+    const first = new StateStore(path);
+    const queued = first.enqueue(input("cleanup", "cleanup:one", "cleanup-message"));
+    const running = first.claimNext(1)!;
+    first.establishExecutionSession(running.id, queued.sessionId, workspacePath);
+    const checkpoint = crypto.randomUUID();
+    first.recordSessionCheckpoint(running.id, checkpoint);
+    const rewind = first.createRewindOperation(
+      running.conversationKey,
+      queued.sessionId,
+      checkpoint,
+      { canRewind: true, filesChanged: ["src/a.ts"], insertions: 1, deletions: 0 },
+      workspacePath,
+    );
+    expect(first.activeWorkspacePaths()).toContain(workspacePath);
+
+    first.beginWorkspaceCleanup(workspacePath, "2222222222222222222222222222222222222222");
+    expect(first.pendingWorkspaceCleanups()).toEqual([workspacePath]);
+    expect(first.getJob(running.id)?.workspacePath).toBeNull();
+    expect(first.sessionWorkspace(running.conversationKey)).toBeNull();
+    expect(first.listSessionBranches(running.conversationKey)[0]).toMatchObject({
+      workspacePath: null,
+      workspaceRevision: "2222222222222222222222222222222222222222",
+    });
+    expect(first.getRewindOperation(running.conversationKey, rewind.id)?.workspacePath).toBeNull();
+    first.close();
+
+    const reopened = new StateStore(path);
+    expect(reopened.pendingWorkspaceCleanups()).toEqual([workspacePath]);
+    expect(reopened.sessionWorkspace(running.conversationKey)).toBeNull();
+    reopened.finishWorkspaceCleanup(workspacePath);
+    expect(reopened.pendingWorkspaceCleanups()).toEqual([]);
+    reopened.close();
   });
 
   test("persists follow-up steering message lifecycle across restart", () => {

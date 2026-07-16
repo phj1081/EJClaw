@@ -30,6 +30,14 @@ describe("Discord Claude controls", () => {
     });
   });
 
+  test("gates rewind preview and apply against same-conversation execution", async () => {
+    const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
+    expect(source).toContain("`rewind-preview:${message.id}`");
+    expect(source).toContain("`rewind:${control.operationId}`");
+    expect(source.match(/store\.acquireConversationGate\(key, gateKind\)/g)).toHaveLength(2);
+    expect(source.match(/store\.releaseConversationGate\(key, gateKind\)/g)).toHaveLength(2);
+  });
+
   test("leaves normal prompts untouched", () => {
     expect(parseControlCommand("버그 고쳐줘")).toBeNull();
   });
