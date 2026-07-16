@@ -42,7 +42,12 @@ describe("native automation systemd contracts", () => {
     const cachePath = "/home/ejclaw/.local/state/claude-native/npm-cache";
     expect(service).toContain(`npm_config_cache=${cachePath}`);
     expect(service).toContain("UnsetEnvironment=DISCORD_BOT_TOKEN");
+    expect(service).not.toContain("CLAUDE_NATIVE_COHORT_CHANNEL_ID");
+    expect(service).not.toContain("CLAUDE_NATIVE_COHORT_ROUTE");
+    expect(verifier).toContain("enqueueSystemNotice");
+    expect(verifier).not.toContain("conversationLockKey");
     expect(envExample).toContain("DISCORD_STATE_DIR=/home/ejclaw/.claude/channels/discord-owner");
+    expect(envExample).toContain("CLAUDE_NATIVE_COHORT_CHANNEL_ID=");
     expect(envExample).not.toContain("discord-pilot");
     expect(timer).toContain("OnCalendar=");
     expect(timer).toContain("Persistent=true");

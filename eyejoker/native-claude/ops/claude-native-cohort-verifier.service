@@ -10,7 +10,6 @@ EnvironmentFile=-/home/ejclaw/.config/claude-native/env
 UnsetEnvironment=DISCORD_BOT_TOKEN
 Environment=PATH=/home/ejclaw/.bun/bin:/home/ejclaw/.hermes/node/bin:/home/ejclaw/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=npm_config_cache=/home/ejclaw/.local/state/claude-native/npm-cache
-Environment=CLAUDE_NATIVE_COHORT_ROUTE=native-pilot
 ExecStart=/home/ejclaw/.bun/bin/bun run src/cohort-verifier.ts
 UMask=0077
 NoNewPrivileges=true

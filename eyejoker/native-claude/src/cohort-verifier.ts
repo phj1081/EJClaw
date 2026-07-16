@@ -33,7 +33,6 @@ import {
   buildUnixBrokeredBubblewrapInvocation,
 } from "./cohort-sandbox";
 import { loadConfig } from "./config";
-import { conversationLockKey } from "./conversation-workspace";
 import { StateStore } from "./store";
 
 const home = process.env.HOME;
@@ -428,51 +427,29 @@ function runCandidate(
   }
 }
 
-function noticePrompt(result: CohortResult): string {
-  return [
-    "정기 Claude Code/Agent SDK cohort verifier의 결정적 결과다. production 코드·패키지·서비스는 절대 변경하지 말고 아래 내용을 한국어로 간결하게 그대로 보고해.",
-    "",
-    renderCohortNotice(result),
-  ].join("\n");
-}
-
 function ensureNotice(state: CohortState): ReturnType<typeof cohortNoticeAction> {
   const config = loadConfig(configPath);
-  const routeId = process.env.CLAUDE_NATIVE_COHORT_ROUTE ?? config.routes[0]!.id;
-  const route = config.routes.find((candidate) => candidate.id === routeId);
-  if (!route) throw new Error(`unknown cohort notice route: ${routeId}`);
+  const channelId = process.env.CLAUDE_NATIVE_COHORT_CHANNEL_ID?.trim();
+  if (!channelId || !/^\d{17,20}$/.test(channelId)) {
+    throw new Error("CLAUDE_NATIVE_COHORT_CHANNEL_ID must be a Discord channel snowflake");
+  }
+  const result = renderCohortNotice(state);
   const store = new StateStore(stateDb);
   try {
-    const existing = store.getByMessageId(state.noticeMessageId);
-    const action = cohortNoticeAction(existing?.status ?? null);
-    const prompt = noticePrompt(state);
-    const conversationKey = `cohort-verifier:${route.id}`;
-    const lockKey = conversationLockKey(route, conversationKey);
-    if (action === "enqueue") {
-      store.enqueue({
-        routeId: route.id,
-        lockKey,
-        conversationKey,
-        channelId: route.discordChannelId,
+    return store.enqueueSystemNotice(
+      {
+        routeId: "system-notice",
+        lockKey: "system:cohort-verifier",
+        conversationKey: "system:cohort-verifier",
+        channelId,
         threadId: null,
         messageId: state.noticeMessageId,
         authorId: config.ownerId,
-        prompt,
+        prompt: result,
         attachmentPaths: [],
-      });
-    } else if (action === "requeue") {
-      const replay = store.requeueTerminalByMessageId(
-        state.noticeMessageId,
-        "durable cohort notice replay",
-        prompt,
-        lockKey,
-      );
-      if (!replay) throw new Error(`failed to requeue cohort notice: ${state.noticeMessageId}`);
-    } else if (existing?.status === "queued") {
-      store.setQueuedLock(existing.id, lockKey);
-      store.updateQueuedPrompt(state.noticeMessageId, prompt);
-    }
-    return action;
+      },
+      result,
+    ).action;
   } finally {
     store.close();
   }

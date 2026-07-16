@@ -136,6 +136,45 @@ describe("job runtime", () => {
     expect(env.delivered).toEqual(["one", "two"]);
   });
 
+  test("delivers a system notice without a configured route or executor call", async () => {
+    const store = freshStore();
+    let executorCalls = 0;
+    const delivered: string[] = [];
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map(),
+      executor: async () => {
+        executorCalls += 1;
+        throw new Error("system notice must bypass the executor");
+      },
+      onFinal: async (_job, execution) => {
+        delivered.push(execution.result);
+      },
+      maxConcurrent: 1,
+      maxAttempts: 1,
+    });
+    const notice = store.enqueueSystemNotice(
+      {
+        routeId: "system-notice",
+        lockKey: "system:cohort-verifier",
+        conversationKey: "system:cohort-verifier",
+        channelId: "123456789012345678",
+        threadId: null,
+        messageId: "cohort-runtime-direct",
+        authorId: "owner",
+        prompt: "cohort available",
+        attachmentPaths: [],
+      },
+      "cohort available",
+    );
+
+    await runtime.runUntilIdle();
+
+    expect(executorCalls).toBe(0);
+    expect(delivered).toEqual(["cohort available"]);
+    expect(store.getJob(notice.job.id)?.status).toBe("completed");
+  });
+
   test("wakes a running pump to fill free capacity from later ingress", async () => {
     const store = freshStore();
     let releaseFirst!: () => void;
