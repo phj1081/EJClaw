@@ -26,10 +26,18 @@ describe("Discord bridge helpers", () => {
     expect(stripBotMention("<@123> 작업해 <@999>", "123")).toBe("작업해 <@999>");
   });
 
-  test("does not reply to synthetic or scheduled non-Discord ids", () => {
-    expect(isReplyableMessageId("123456789012345678")).toBe(true);
+  test("uses a Discord snowflake allowlist for reply references", () => {
+    expect(isReplyableMessageId("12345678901234567")).toBe(true);
+    expect(isReplyableMessageId("12345678901234567890")).toBe(true);
+    expect(isReplyableMessageId("1234567890123456")).toBe(false);
+    expect(isReplyableMessageId("123456789012345678901")).toBe(false);
+    expect(isReplyableMessageId("0".repeat(18))).toBe(false);
     expect(isReplyableMessageId("synthetic:test")).toBe(false);
     expect(isReplyableMessageId("scheduled:daily:2026-07-15")).toBe(false);
+    expect(isReplyableMessageId("github-watch:watch:signal")).toBe(false);
+    expect(isReplyableMessageId("cohort-verifier:notice")).toBe(false);
+    expect(isReplyableMessageId("steering-edit:message:1")).toBe(false);
+    expect(isReplyableMessageId("steering-delete:message:1")).toBe(false);
   });
 
   test("adds explicit reply and bounded recent history as quoted Discord context", () => {

@@ -795,22 +795,6 @@ export class StateStore {
     return row?.fork_next === 1;
   }
 
-  consumeFork(conversationKey: string): boolean {
-    const tx = this.db.transaction(() => {
-      const row = this.db
-        .query<{ fork_next: number }, [string]>(
-          "SELECT fork_next FROM conversation_settings WHERE conversation_key=?",
-        )
-        .get(conversationKey);
-      if (row?.fork_next !== 1) return false;
-      this.db
-        .query("UPDATE conversation_settings SET fork_next=0, updated_at=? WHERE conversation_key=?")
-        .run(now(), conversationKey);
-      return true;
-    });
-    return tx();
-  }
-
   resetSession(conversationKey: string, routeId = "reset"): string {
     const sessionId = crypto.randomUUID();
     const timestamp = now();
@@ -829,6 +813,9 @@ export class StateStore {
           "INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at) VALUES(?,?,NULL,'reset','active',?)",
         )
         .run(sessionId, conversationKey, timestamp);
+      this.db
+        .query("UPDATE conversation_settings SET fork_next=0, updated_at=? WHERE conversation_key=?")
+        .run(timestamp, conversationKey);
     });
     tx();
     return sessionId;
@@ -1028,6 +1015,7 @@ export class StateStore {
     establishedSessionId: string,
     workspacePath: string,
     explicitFork = false,
+    acknowledgeRequestedFork = false,
   ): JobRecord {
     if (!establishedSessionId.trim()) throw new Error("established session id is empty");
     const job = this.getJob(id);
@@ -1035,6 +1023,24 @@ export class StateStore {
     const sourceSessionId = job.continuationSessionId ?? job.sessionId;
     const timestamp = now();
     const tx = this.db.transaction(() => {
+      if (acknowledgeRequestedFork) {
+        const fork = this.db
+          .query<{ fork_next: number }, [string]>(
+            "SELECT fork_next FROM conversation_settings WHERE conversation_key=?",
+          )
+          .get(job.conversationKey);
+        if (fork?.fork_next === 1) {
+          if (establishedSessionId === sourceSessionId) {
+            throw new Error(`explicit fork did not establish a child session: ${sourceSessionId}`);
+          }
+          const acknowledged = this.db
+            .query(
+              "UPDATE conversation_settings SET fork_next=0, updated_at=? WHERE conversation_key=? AND fork_next=1",
+            )
+            .run(timestamp, job.conversationKey).changes;
+          if (acknowledged !== 1) throw new Error(`explicit fork acknowledgement lost: ${job.conversationKey}`);
+        }
+      }
       if (job.pinnedSession) {
         if (establishedSessionId === sourceSessionId) {
           this.db

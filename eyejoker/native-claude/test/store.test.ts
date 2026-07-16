@@ -547,9 +547,9 @@ describe("durable job store", () => {
       forkNext: false,
     });
     db.requestFork("cleanapo:controls");
-    expect(db.consumeFork("cleanapo:controls")).toBe(true);
-    expect(db.consumeFork("cleanapo:controls")).toBe(false);
+    expect(db.forkRequested("cleanapo:controls")).toBe(true);
     const reset = db.resetSession("cleanapo:controls");
+    expect(db.forkRequested("cleanapo:controls")).toBe(false);
     expect(reset).not.toBe(first.sessionId);
     expect(db.sessionHasHistory("cleanapo:controls")).toBe(false);
   });
@@ -588,7 +588,18 @@ describe("durable job store", () => {
     db.setSessionWorkspace(original.conversationKey, workspace);
     expect(db.setSessionBranchRevision(original.conversationKey, original.sessionId, revision)).toBe(true);
     const forkedSessionId = crypto.randomUUID();
-    db.establishExecutionSession(running.id, forkedSessionId, workspace, true);
+    db.requestFork(original.conversationKey);
+    expect(() => db.establishExecutionSession(running.id, original.sessionId, workspace, true, true)).toThrow(
+      "explicit fork did not establish a child session",
+    );
+    expect(db.forkRequested(original.conversationKey)).toBe(true);
+    expect(db.sessionBranchForSession(original.conversationKey, original.sessionId)).toMatchObject({
+      status: "active",
+      workspacePath: workspace,
+      workspaceRevision: revision,
+    });
+    db.establishExecutionSession(running.id, forkedSessionId, workspace, true, true);
+    expect(db.forkRequested(original.conversationKey)).toBe(false);
 
     const source = db.sessionBranchForSession(original.conversationKey, original.sessionId);
     const forked = db.sessionBranchForSession(original.conversationKey, forkedSessionId);

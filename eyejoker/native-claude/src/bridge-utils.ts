@@ -36,7 +36,7 @@ export function conversationKey(route: { id: string }, actualChannelId: string):
 }
 
 export function isReplyableMessageId(messageId: string): boolean {
-  return !messageId.startsWith("synthetic:") && !messageId.startsWith("scheduled:");
+  return /^[1-9]\d{16,19}$/.test(messageId);
 }
 
 export function isSupportedMessageType(type: number): boolean {

@@ -198,7 +198,7 @@ export class JobRuntime {
       resume &&
       sessionWorkspace !== effectiveRoute.cwd &&
       (effectiveRoute.conversationWorktrees === true || sessionWorkspace !== null);
-    const requestedFork = resume && this.store.consumeFork(job.conversationKey);
+    const requestedFork = resume && this.store.forkRequested(job.conversationKey);
     const preserveSourceBranch =
       requestedFork &&
       Boolean(this.store.sessionBranchForSession(job.conversationKey, sourceSessionId)?.workspaceRevision);
@@ -243,7 +243,13 @@ export class JobRuntime {
         onHeartbeat: () => this.store.heartbeat(job.id),
         onCheckpoint: (userMessageId) => this.store.recordSessionCheckpoint(job.id, userMessageId),
         onSessionEstablished: (sessionId) =>
-          this.store.establishExecutionSession(job.id, sessionId, effectiveRoute.cwd, preserveSourceBranch),
+          this.store.establishExecutionSession(
+            job.id,
+            sessionId,
+            effectiveRoute.cwd,
+            preserveSourceBranch,
+            requestedFork,
+          ),
         onContinuation: (continuationPrompt, continuationSessionId, continuationTurn) =>
           this.store.stageContinuation(job.id, continuationPrompt, continuationSessionId, continuationTurn),
         ...(this.onQuestion

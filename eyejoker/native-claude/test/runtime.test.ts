@@ -174,6 +174,60 @@ describe("job runtime", () => {
     });
   });
 
+  test("keeps an explicit fork reserved across pre-init failure and acknowledges only the child init", async () => {
+    const store = freshStore();
+    const managedPath = "/tmp/managed-explicit-fork-retry";
+    const managedRoute = { ...route, cwd: managedPath, conversationWorktrees: true };
+    const original = enqueue(store, "explicit-fork-retry");
+    store.setSessionWorkspace(original.conversationKey, managedPath);
+    store.setSessionBranchRevision(
+      original.conversationKey,
+      original.sessionId,
+      "5555555555555555555555555555555555555555",
+    );
+    store.markSessionHistory(original.conversationKey);
+    store.requestFork(original.conversationKey);
+    const childSessionId = crypto.randomUUID();
+    const forks: Array<boolean | undefined> = [];
+    let attempt = 0;
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, managedRoute]]),
+      executor: async (request) => {
+        attempt += 1;
+        forks.push(request.forkSession);
+        expect(store.forkRequested(original.conversationKey)).toBe(true);
+        if (attempt === 1) {
+          return {
+            ok: false,
+            result: "pre-init timeout",
+            sessionId: request.sessionId,
+            stderr: "timeout",
+            exitCode: 124,
+          };
+        }
+        request.onSessionEstablished?.(childSessionId);
+        expect(store.forkRequested(original.conversationKey)).toBe(false);
+        return ok(childSessionId);
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 1,
+      maxAttempts: 2,
+    });
+
+    await runtime.runUntilIdle();
+    expect(forks).toEqual([true, true]);
+    expect(store.forkRequested(original.conversationKey)).toBe(false);
+    expect(store.sessionBranchForSession(original.conversationKey, original.sessionId)).toMatchObject({
+      workspacePath: null,
+      workspaceRevision: "5555555555555555555555555555555555555555",
+    });
+    expect(store.sessionBranchForSession(original.conversationKey, childSessionId)).toMatchObject({
+      workspacePath: managedPath,
+      status: "active",
+    });
+  });
+
   test("forks an existing session once when moving it into a conversation worktree", async () => {
     const store = freshStore();
     const seen: Array<{ cwd: string; resume: boolean; forkSession: boolean | undefined }> = [];
