@@ -39,11 +39,6 @@
    "path": "/home/ejclaw/.config/nanoclaw/shared-claude",
    "allowReadWrite": false,
    "description": "Shared agent instructions (managed by Hermes)"
-  },
-  {
-   "path": "/home/ejclaw/projects/agent-trees",
-   "allowReadWrite": true,
-   "description": "Per-agent-group isolated clones of the eyejokerdb monorepo"
   }
  ],
  "blockedPatterns": [],
