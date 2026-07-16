@@ -278,6 +278,10 @@ export class StateStore {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS workspace_cleanup_tombstones (
+        workspace_path TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS conversation_settings (
         conversation_key TEXT PRIMARY KEY,
         model TEXT,
@@ -957,6 +961,36 @@ export class StateStore {
     return this.getJob(id)!;
   }
 
+  beginWorkspaceCleanup(path: string): void {
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .query(
+          `INSERT INTO workspace_cleanup_tombstones(workspace_path,created_at) VALUES(?,?)
+           ON CONFLICT(workspace_path) DO NOTHING`,
+        )
+        .run(path, timestamp);
+      this.db.query("UPDATE sessions SET workspace_path=NULL, updated_at=? WHERE workspace_path=?").run(timestamp, path);
+      this.db.query("UPDATE session_branches SET workspace_path=NULL WHERE workspace_path=?").run(path);
+      this.db.query("UPDATE jobs SET workspace_path=NULL WHERE workspace_path=?").run(path);
+      this.db.query("UPDATE rewind_operations SET workspace_path=NULL WHERE workspace_path=?").run(path);
+    });
+    tx();
+  }
+
+  finishWorkspaceCleanup(path: string): void {
+    this.db.query("DELETE FROM workspace_cleanup_tombstones WHERE workspace_path=?").run(path);
+  }
+
+  pendingWorkspaceCleanups(): string[] {
+    return this.db
+      .query<{ workspace_path: string }, []>(
+        "SELECT workspace_path FROM workspace_cleanup_tombstones ORDER BY created_at, workspace_path",
+      )
+      .all()
+      .map((row) => row.workspace_path);
+  }
+
   activeWorkspacePaths(): string[] {
     const rows = this.db
       .query<{ workspace_path: string }, []>(
@@ -1614,6 +1648,7 @@ export class StateStore {
           .get(interaction.job_id, interaction.created_at);
         if (!steering) continue;
         const question = JSON.parse(interaction.question_json) as InteractiveQuestion;
+        if (question.kind === "permission") continue;
         const answer = textAnswerForQuestion(question, steering.content);
         if (!answer) continue;
         const timestamp = now();

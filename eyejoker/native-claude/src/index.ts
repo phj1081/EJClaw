@@ -51,6 +51,7 @@ import {
 } from "./github-watch-registration";
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
+import { findBotMessageByNonce, type ReconcileMessageFetcher } from "./discord-reconcile";
 import { JobRuntime } from "./runtime";
 import { ConversationWorkspaceManager, conversationLockKey } from "./conversation-workspace";
 import { progressNonce, renderQueuedProgress } from "./queued-progress";
@@ -145,6 +146,16 @@ function cleanupExpiredAttachments(): number {
   return inboundDeleted.length + outboundDeleted.length;
 }
 
+async function recoverPendingWorkspaceCleanups(): Promise<number> {
+  let recovered = 0;
+  for (const path of store.pendingWorkspaceCleanups()) {
+    await workspaceManager.recoverPendingCleanup(path);
+    store.finishWorkspaceCleanup(path);
+    recovered += 1;
+  }
+  return recovered;
+}
+
 async function cleanupConversationWorkspaces(): Promise<{ removed: number; skipped: number }> {
   if (workspaceCleanupPromise) return workspaceCleanupPromise;
   const pending = (async () => {
@@ -153,8 +164,9 @@ async function cleanupConversationWorkspaces(): Promise<{ removed: number; skipp
       ttlMs: worktreeTtlMs,
       maxTotal: worktreeMaxTotal,
       maxPerRepository: worktreeMaxPerRepository,
+      beforeRemove: (path) => store.beginWorkspaceCleanup(path),
+      afterRemove: (path) => store.finishWorkspaceCleanup(path),
     });
-    store.invalidateWorkspacePaths(cleanup.removed);
     return { removed: cleanup.removed.length, skipped: cleanup.skipped.length };
   })();
   workspaceCleanupPromise = pending;
@@ -223,9 +235,13 @@ async function postQueuedProgress(job: JobRecord): Promise<void> {
     if (isReplyableMessageId(current.messageId)) {
       options.reply = { messageReference: current.messageId, failIfNotExists: false };
     }
-    const recent = await channel.messages.fetch({ limit: 100, cache: false });
-    let message = [...recent.values()].find(
-      (candidate) => candidate.author.id === client.user?.id && String(candidate.nonce ?? "") === nonce,
+    const botUserId = client.user?.id;
+    if (!botUserId) throw new Error("Discord client user is unavailable");
+    let message = await findBotMessageByNonce<Message>(
+      channel.messages as unknown as ReconcileMessageFetcher<Message>,
+      botUserId,
+      nonce,
+      Date.parse(current.createdAt),
     );
     if (!message) message = await channel.send(options);
 
@@ -589,7 +605,8 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
   );
   const plan = store.prepareDelivery(job.id, renderedChunks, deliveryFiles);
   const channel = await textChannel(job.channelId);
-  let recentForReconcile: Message[] | null = null;
+  const botUserId = client.user?.id;
+  if (!botUserId) throw new Error("Discord client user is unavailable");
   await deliverPendingChunks(
     job.id,
     plan,
@@ -607,15 +624,13 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
       store.markDeliveryChunk(job.id, index, messageId);
     },
     async (_index, nonce) => {
-      if (!recentForReconcile) {
-        const fetched = await channel.messages.fetch({ limit: 100, cache: false });
-        recentForReconcile = [...fetched.values()];
-      }
-      return (
-        recentForReconcile.find(
-          (message) => message.author.id === client.user?.id && message.nonce !== null && String(message.nonce) === nonce,
-        )?.id ?? null
+      const reconciled = await findBotMessageByNonce<Message>(
+        channel.messages as unknown as ReconcileMessageFetcher<Message>,
+        botUserId,
+        nonce,
+        Date.parse(job.createdAt),
       );
+      return reconciled?.id ?? null;
     },
   );
 
@@ -671,9 +686,13 @@ const runtime = new JobRuntime({
       if (interaction.discordMessageId) return interaction.discordMessageId;
       const channel = await textChannel(job.channelId);
       const nonce = questionNonce(interaction.id);
-      const recent = await channel.messages.fetch({ limit: 100, cache: false });
-      let message = [...recent.values()].find(
-        (candidate) => candidate.author.id === client.user?.id && String(candidate.nonce ?? "") === nonce,
+      const botUserId = client.user?.id;
+      if (!botUserId) throw new Error("Discord client user is unavailable");
+      let message = await findBotMessageByNonce<Message>(
+        channel.messages as unknown as ReconcileMessageFetcher<Message>,
+        botUserId,
+        nonce,
+        Date.parse(interaction.createdAt),
       );
       if (!message) {
         message = await channel.send({
@@ -802,6 +821,7 @@ async function discordContextFor(
 client.once("clientReady", async () => {
   try {
     await validateRouteChannels();
+    const pendingWorkspaceCleanupRecovered = await recoverPendingWorkspaceCleanups();
     const textAnswersReconciled = store.reconcilePendingInteractionSteering();
     const recovered = runtime.recoverInterrupted("bridge service restart");
     const queuedLocksMigrated = migrateQueuedConversationLocks();
@@ -820,7 +840,7 @@ client.once("clientReady", async () => {
     const settledQuestionsCleaned = await cleanupSettledQuestionComponents();
     const expiredAttachmentsCleaned = cleanupExpiredAttachments();
     console.log(
-      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} text_answers_reconciled=${textAnswersReconciled} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} settled_question_cleanup=${settledQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} pending_workspace_cleanup_recovered=${pendingWorkspaceCleanupRecovered} text_answers_reconciled=${textAnswersReconciled} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} settled_question_cleanup=${settledQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
       if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
@@ -1116,6 +1136,13 @@ client.on("messageCreate", (message) => {
     if (running) {
       const pendingQuestion = store.pendingInteractionForJob(running.id);
       if (pendingQuestion) {
+        if (message.author.id !== running.authorId) {
+          await message.reply({
+            content: "이 질문은 작업을 시작한 사용자만 답할 수 있어.",
+            allowedMentions: { parse: [] },
+          });
+          return;
+        }
         const textAnswer = textAnswerForQuestion(pendingQuestion.question, promptText);
         if (!textAnswer) {
           await message.reply({

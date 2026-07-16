@@ -97,6 +97,8 @@ export interface WorkspaceCleanupOptions {
   maxTotal?: number;
   maxPerRepository?: number;
   nowMs?: number;
+  beforeRemove?: (path: string) => void | Promise<void>;
+  afterRemove?: (path: string) => void | Promise<void>;
 }
 
 export interface WorkspaceCleanupResult {
@@ -265,7 +267,11 @@ export class ConversationWorkspaceManager {
     };
   }
 
-  private async removeIfSafe(candidate: ManagedCandidate): Promise<string | null> {
+  private async removeIfSafe(
+    candidate: ManagedCandidate,
+    beforeRemove?: (path: string) => void | Promise<void>,
+    afterRemove?: (path: string) => void | Promise<void>,
+  ): Promise<string | null> {
     this.assertManagedPath(candidate.path);
     if (statSync(candidate.path).mtimeMs > candidate.lastUsedMs) {
       throw new Error("workspace was touched after cleanup scan");
@@ -286,11 +292,33 @@ export class ConversationWorkspaceManager {
     if (!target) throw new Error("worktree is not registered");
     const admin = entries.find((entry) => resolve(entry.path) !== resolve(candidate.path) && existsSync(entry.path));
     if (!admin) throw new Error("no surviving Git worktree can administer removal");
+    await beforeRemove?.(candidate.path);
     if (target.locked) {
       await git(admin.path, ["worktree", "unlock", "--", candidate.path], this.gitTimeoutMs);
     }
     await git(admin.path, ["worktree", "remove", "--", candidate.path], this.gitTimeoutMs);
+    await afterRemove?.(candidate.path);
     return candidate.path;
+  }
+
+  async recoverPendingCleanup(path: string): Promise<void> {
+    const absolute = resolve(path);
+    if (!existsSync(absolute)) return;
+    this.assertManagedPath(absolute);
+    const commonDirRaw = await git(
+      absolute,
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      this.gitTimeoutMs,
+    );
+    const commonDir = absoluteGitPath(absolute, commonDirRaw);
+    const repositoryBucket = relative(this.workspaceRoot, absolute).split(sep)[0];
+    if (!repositoryBucket) throw new Error(`cannot determine managed repository bucket: ${absolute}`);
+    const candidate: ManagedCandidate = {
+      path: absolute,
+      repositoryBucket,
+      lastUsedMs: statSync(absolute).mtimeMs,
+    };
+    await this.repositoryQueue.run(commonDir, () => this.removeIfSafe(candidate));
   }
 
   async cleanup(options: WorkspaceCleanupOptions = {}): Promise<WorkspaceCleanupResult> {
@@ -326,7 +354,9 @@ export class ConversationWorkspaceManager {
           this.gitTimeoutMs,
         );
         const commonDir = absoluteGitPath(candidate.path, commonDirRaw);
-        const removedPath = await this.repositoryQueue.run(commonDir, () => this.removeIfSafe(candidate));
+        const removedPath = await this.repositoryQueue.run(commonDir, () =>
+          this.removeIfSafe(candidate, options.beforeRemove, options.afterRemove),
+        );
         if (!removedPath) continue;
         removed.push(removedPath);
         total -= 1;

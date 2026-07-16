@@ -133,6 +133,7 @@ describe("interactive Discord control protocol", () => {
     const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
     expect(source).toContain("questionBroker.answerConversation(key, textAnswer)");
     expect(source).toContain("textAnswerForQuestion(pendingQuestion.question, promptText)");
+    expect(source).toContain("message.author.id !== running.authorId");
     expect(source).not.toContain("questionBroker.answerReaction");
     expect(source).not.toContain('client.on("messageReactionAdd"');
     expect(source).toContain("progressBoards.get(job.id)?.resetAfterInteraction(question.toolUseId)");

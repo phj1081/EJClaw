@@ -177,16 +177,51 @@ describe("conversation workspaces", () => {
     utimesSync(first.cwd, old, old);
     utimesSync(second.cwd, old, old);
 
+    const lifecycle: string[] = [];
     const cleanup = await manager.cleanup({
       protectedPaths: [second.cwd],
       ttlMs: 1,
       nowMs: Date.now(),
+      beforeRemove: (path) => {
+        lifecycle.push(`before:${path}:${existsSync(path)}`);
+      },
+      afterRemove: (path) => {
+        lifecycle.push(`after:${path}:${existsSync(path)}`);
+      },
     });
 
     expect(cleanup.removed).toEqual([first.cwd]);
+    expect(lifecycle).toEqual([`before:${first.cwd}:true`, `after:${first.cwd}:false`]);
     expect(cleanup.skipped).toContainEqual({ path: second.cwd, reason: "active job protects workspace" });
     expect(existsSync(first.cwd)).toBe(false);
     expect(existsSync(second.cwd)).toBe(true);
+  });
+
+  test("recovers a tombstoned cleanup interrupted before Git removal", async () => {
+    const { route } = fixture();
+    const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);
+    roots.push(workspaceRoot);
+    const manager = new ConversationWorkspaceManager(workspaceRoot);
+    const prepared = await manager.prepare(route, job("eyejokerdb-dev:cleanup-crash", "cleanup-crash"));
+    const old = new Date(Date.now() - 10_000);
+    utimesSync(prepared.cwd, old, old);
+
+    const interrupted = await manager.cleanup({
+      ttlMs: 1,
+      nowMs: Date.now(),
+      beforeRemove: () => {
+        throw new Error("simulated crash after durable tombstone");
+      },
+    });
+    expect(interrupted.removed).toEqual([]);
+    expect(interrupted.skipped).toContainEqual({
+      path: prepared.cwd,
+      reason: "simulated crash after durable tombstone",
+    });
+    expect(existsSync(prepared.cwd)).toBe(true);
+
+    await manager.recoverPendingCleanup(prepared.cwd);
+    expect(existsSync(prepared.cwd)).toBe(false);
   });
 
   test("serializes cleanup with prepare and refuses a workspace touched after its scan", async () => {

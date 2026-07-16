@@ -335,7 +335,7 @@ describe("durable job store", () => {
     expect(db.reconcilePendingInteractionSteering()).toBe(0);
   });
 
-  test("does not reconcile arbitrary text into a permission approval", () => {
+  test("never reconciles legacy steering without author provenance into a permission approval", () => {
     const db = store();
     const job = db.enqueue(input("permission", "permission:thread", "permission-source"));
     db.claimNext(1);
@@ -349,7 +349,7 @@ describe("durable job store", () => {
       messageId: "unsafe-text-answer",
       jobId: job.id,
       conversationKey: job.conversationKey,
-      content: "응 진행해",
+      content: "이번만 허용",
       sdkMessageId: "unsafe-sdk-answer",
     });
     db.acceptSteeringInput("unsafe-text-answer");
@@ -556,6 +556,41 @@ describe("durable job store", () => {
     });
     expect(db.markRewindApplied(operation.id)).toBe(true);
     expect(db.markRewindApplied(operation.id)).toBe(false);
+  });
+
+  test("persists a cleanup tombstone before invalidating all workspace provenance", () => {
+    const path = join(tmpdir(), `native-cleanup-tombstone-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const workspacePath = "/tmp/managed-conversation-workspace";
+    const first = new StateStore(path);
+    const queued = first.enqueue(input("cleanup", "cleanup:one", "cleanup-message"));
+    const running = first.claimNext(1)!;
+    first.establishExecutionSession(running.id, queued.sessionId, workspacePath);
+    const checkpoint = crypto.randomUUID();
+    first.recordSessionCheckpoint(running.id, checkpoint);
+    const rewind = first.createRewindOperation(
+      running.conversationKey,
+      queued.sessionId,
+      checkpoint,
+      { canRewind: true, filesChanged: ["src/a.ts"], insertions: 1, deletions: 0 },
+      workspacePath,
+    );
+    expect(first.activeWorkspacePaths()).toContain(workspacePath);
+
+    first.beginWorkspaceCleanup(workspacePath);
+    expect(first.pendingWorkspaceCleanups()).toEqual([workspacePath]);
+    expect(first.getJob(running.id)?.workspacePath).toBeNull();
+    expect(first.sessionWorkspace(running.conversationKey)).toBeNull();
+    expect(first.listSessionBranches(running.conversationKey)[0]?.workspacePath).toBeNull();
+    expect(first.getRewindOperation(running.conversationKey, rewind.id)?.workspacePath).toBeNull();
+    first.close();
+
+    const reopened = new StateStore(path);
+    expect(reopened.pendingWorkspaceCleanups()).toEqual([workspacePath]);
+    expect(reopened.sessionWorkspace(running.conversationKey)).toBeNull();
+    reopened.finishWorkspaceCleanup(workspacePath);
+    expect(reopened.pendingWorkspaceCleanups()).toEqual([]);
+    reopened.close();
   });
 
   test("persists follow-up steering message lifecycle across restart", () => {

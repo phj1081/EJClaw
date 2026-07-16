@@ -167,6 +167,37 @@ describe("job runtime", () => {
     expect(store.sessionWorkspace(first.conversationKey)).toBe("/tmp/conversation-worktree");
   });
 
+  test("forks after a tombstoned workspace is recreated at the same deterministic path", async () => {
+    const store = freshStore();
+    const deterministicPath = "/tmp/conversation-worktree";
+    const seen: Array<{ cwd: string; resume: boolean; forkSession: boolean | undefined }> = [];
+    const movedRoute = { ...route, conversationWorktrees: true };
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, movedRoute]]),
+      prepareRoute: async (baseRoute) => ({ ...baseRoute, cwd: deterministicPath }),
+      executor: async (request) => {
+        seen.push({ cwd: request.route.cwd, resume: request.resume, forkSession: request.forkSession });
+        request.onSessionEstablished?.("recreated-session");
+        return ok("recreated-session");
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 1,
+      maxAttempts: 1,
+    });
+
+    const queued = enqueue(store, "workspace-recreated");
+    store.setSessionWorkspace(queued.conversationKey, deterministicPath);
+    store.markSessionHistory(queued.conversationKey);
+    store.beginWorkspaceCleanup(deterministicPath);
+    store.finishWorkspaceCleanup(deterministicPath);
+    expect(store.sessionWorkspace(queued.conversationKey)).toBeNull();
+
+    await runtime.runUntilIdle();
+    expect(seen).toEqual([{ cwd: deterministicPath, resume: true, forkSession: true }]);
+    expect(store.sessionWorkspace(queued.conversationKey)).toBe(deterministicPath);
+  });
+
   test("keeps workspace migration pending until a forked SDK session is established", async () => {
     const store = freshStore();
     const forks: Array<boolean | undefined> = [];
