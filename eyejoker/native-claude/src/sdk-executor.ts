@@ -259,25 +259,44 @@ export class ClaudeSdkExecutor {
         if (message.type === "result") mailbox.close();
       };
 
+      const queueInitialPrompt = (): void => {
+        for (const content of splitInitialSdkMessages(request.prompt)) {
+          const initialMessage = sdkUserMessage(content);
+          if (initialMessage.uuid) request.onCheckpoint?.(initialMessage.uuid);
+          if (!mailbox.push(initialMessage)) throw new Error("SDK input mailbox closed before initial prompt");
+        }
+      };
+
       if (request.onSessionEstablished) {
+        // Streaming-input Claude Code does not emit system/init until it has read the first input.
+        // Queue that input first, then allow only init prelude lifecycle events until durable establishment succeeds.
+        queueInitialPrompt();
         const iterator = query[Symbol.asyncIterator]();
         let initialized = false;
         while (!initialized) {
           const next = await iterator.next();
           if (next.done) throw new Error("SDK stream ended before system init");
           const message = next.value;
-          ingest(message);
           if (message.type === "system" && message.subtype === "init") {
+            ingest(message);
             request.onSessionEstablished(message.session_id);
             initialized = true;
+          } else if (
+            message.type === "system" &&
+            (message.subtype === "hook_started" ||
+              message.subtype === "hook_progress" ||
+              message.subtype === "hook_response")
+          ) {
+            ingest(message);
+          } else if ((message as unknown as { type: string }).type === "command_lifecycle") {
+            ingest(message);
           } else if (message.type === "result") {
+            ingest(message);
             throw new Error("SDK returned a result before system init");
+          } else {
+            const subtype = "subtype" in message ? String(message.subtype) : "unknown";
+            throw new Error(`SDK emitted ${message.type}/${subtype} before system init`);
           }
-        }
-        for (const content of splitInitialSdkMessages(request.prompt)) {
-          const initialMessage = sdkUserMessage(content);
-          if (initialMessage.uuid) request.onCheckpoint?.(initialMessage.uuid);
-          mailbox.push(initialMessage);
         }
         while (true) {
           const next = await iterator.next();
@@ -285,11 +304,7 @@ export class ClaudeSdkExecutor {
           ingest(next.value);
         }
       } else {
-        for (const content of splitInitialSdkMessages(request.prompt)) {
-          const initialMessage = sdkUserMessage(content);
-          if (initialMessage.uuid) request.onCheckpoint?.(initialMessage.uuid);
-          mailbox.push(initialMessage);
-        }
+        queueInitialPrompt();
         for await (const message of query) ingest(message);
       }
     } catch (error) {
