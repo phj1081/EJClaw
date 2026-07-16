@@ -13,6 +13,8 @@ import type {
 } from "./types";
 import { StateStore } from "./store";
 
+const PUMP_RECOVERY_DELAYS_MS = [25, 50, 100, 200, 200] as const;
+
 interface RuntimeOptions {
   store: StateStore;
   routes: Map<string, RouteConfig>;
@@ -42,6 +44,10 @@ export class JobRuntime {
   private readonly maxAttempts: number;
   private readonly deliveryRetryMs: number;
   private pumpPromise: Promise<void> | null = null;
+  private pumpWake: (() => void) | null = null;
+  private pumpRequestVersion = 0;
+  private pumpRecoveryAttempt = 0;
+  private pumpRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: RuntimeOptions) {
     this.store = options.store;
@@ -63,13 +69,98 @@ export class JobRuntime {
   }
 
   runUntilIdle(): Promise<void> {
+    this.pumpRequestVersion += 1;
     if (!this.pumpPromise) {
-      this.pumpPromise = this.pump().finally(() => {
-        this.pumpPromise = null;
-        if (this.store.hasQueued()) queueMicrotask(() => void this.runUntilIdle());
+      if (this.pumpRecoveryTimer) {
+        clearTimeout(this.pumpRecoveryTimer);
+        this.pumpRecoveryTimer = null;
+      }
+      let resolvePump!: () => void;
+      let rejectPump!: (error: unknown) => void;
+      const promise = new Promise<void>((resolve, reject) => {
+        resolvePump = resolve;
+        rejectPump = reject;
       });
+      this.pumpPromise = promise;
+      queueMicrotask(() => {
+        void this.drivePump(promise, resolvePump, rejectPump);
+      });
+    } else {
+      this.pumpWake?.();
     }
     return this.pumpPromise;
+  }
+
+  private async drivePump(
+    promise: Promise<void>,
+    resolvePump: () => void,
+    rejectPump: (error: unknown) => void,
+  ): Promise<void> {
+    try {
+      while (true) {
+        const requestVersion = this.pumpRequestVersion;
+        await this.pump();
+        if (this.pumpRequestVersion !== requestVersion) continue;
+        if (this.pumpPromise !== promise) {
+          rejectPump(new Error("runtime pump ownership changed before settlement"));
+          return;
+        }
+        this.pumpPromise = null;
+        this.pumpWake = null;
+        this.pumpRecoveryAttempt = 0;
+        resolvePump();
+        return;
+      }
+    } catch (error) {
+      if (this.pumpPromise === promise) {
+        this.pumpPromise = null;
+        this.pumpWake = null;
+      }
+      rejectPump(error);
+      this.schedulePumpRecovery();
+    }
+  }
+
+  private schedulePumpRecovery(): void {
+    if (this.pumpRecoveryTimer) return;
+    const delay = PUMP_RECOVERY_DELAYS_MS[this.pumpRecoveryAttempt];
+    if (delay === undefined) {
+      console.error(`pump recovery exhausted attempts=${this.pumpRecoveryAttempt}`);
+      return;
+    }
+    this.pumpRecoveryAttempt += 1;
+    this.pumpRecoveryTimer = setTimeout(() => {
+      this.pumpRecoveryTimer = null;
+      let runnable = false;
+      try {
+        runnable = this.store.hasRunnable();
+      } catch (error) {
+        console.error("pump recovery check failed", error instanceof Error ? error.message : String(error));
+        this.schedulePumpRecovery();
+        return;
+      }
+      if (!runnable) {
+        this.pumpRecoveryAttempt = 0;
+        return;
+      }
+      void this.runUntilIdle().catch((error) =>
+        console.error("pump recovery failed", error instanceof Error ? error.message : String(error)),
+      );
+    }, delay);
+    this.pumpRecoveryTimer.unref?.();
+  }
+
+  private async waitForActiveOrWake(active: Set<Promise<void>>): Promise<void> {
+    let wake!: () => void;
+    const wakePromise = new Promise<void>((resolve) => {
+      wake = resolve;
+    });
+    this.pumpWake = wake;
+    try {
+      await Promise.race([...active, wakePromise]);
+    } finally {
+      if (this.pumpWake === wake) this.pumpWake = null;
+    }
   }
 
   private async pump(): Promise<void> {
@@ -93,7 +184,7 @@ export class JobRuntime {
         active.add(task);
       }
       if (active.size === 0) return;
-      await Promise.race(active);
+      await this.waitForActiveOrWake(active);
     }
   }
 

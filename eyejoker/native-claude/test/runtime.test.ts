@@ -67,12 +67,12 @@ function setup(executions: ClaudeExecution[]) {
   return { store, runtime, calls, delivered };
 }
 
-function enqueue(store: StateStore, id: string) {
+function enqueue(store: StateStore, id: string, thread = "thread") {
   return store.enqueue({
     routeId: route.id,
-    conversationKey: `${route.id}:thread`,
-    channelId: "thread",
-    threadId: "thread",
+    conversationKey: `${route.id}:${thread}`,
+    channelId: thread,
+    threadId: thread,
     messageId: id,
     authorId: "owner",
     prompt: `task-${id}`,
@@ -134,6 +134,224 @@ describe("job runtime", () => {
     await env.runtime.runUntilIdle();
     expect(env.calls.map((x) => x.resume)).toEqual([false, true]);
     expect(env.delivered).toEqual(["one", "two"]);
+  });
+
+  test("wakes a running pump to fill free capacity from later ingress", async () => {
+    const store = freshStore();
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    let markSecondStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const secondStarted = new Promise<void>((resolve) => {
+      markSecondStarted = resolve;
+    });
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, route]]),
+      executor: async (request) => {
+        if (request.job.messageId === "first") {
+          markFirstStarted();
+          request.onSessionEstablished?.(request.sessionId);
+          await firstGate;
+        } else if (request.job.messageId === "second") {
+          markSecondStarted();
+          request.onSessionEstablished?.(request.sessionId);
+        }
+        return ok(request.sessionId);
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 2,
+      maxAttempts: 1,
+    });
+
+    enqueue(store, "first", "thread-one");
+    const initialPump = runtime.runUntilIdle();
+    const firstFilled = await Promise.race([
+      firstStarted.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 2_000)),
+    ]);
+    enqueue(store, "second", "thread-two");
+    const resumedPump = runtime.runUntilIdle();
+    const secondFilledBeforeFirstFinished = await Promise.race([
+      secondStarted.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 500)),
+    ]);
+    releaseFirst();
+    const drained = await Promise.race([
+      Promise.all([initialPump, resumedPump]).then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 2_000)),
+    ]);
+
+    expect(firstFilled).toBe(true);
+    expect(secondFilledBeforeFirstFinished).toBe(true);
+    expect(drained).toBe(true);
+    expect(store.listJobs().map((job) => job.status)).toEqual(["completed", "completed"]);
+  });
+
+  test("does not spin the pump for a progress-held queued job", async () => {
+    const store = freshStore();
+    const originalHasQueued = store.hasQueued.bind(store);
+    let hasQueuedChecks = 0;
+    store.hasQueued = () => {
+      hasQueuedChecks += 1;
+      return hasQueuedChecks < 100 && originalHasQueued();
+    };
+    let executorCalls = 0;
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, route]]),
+      executor: async (request) => {
+        executorCalls += 1;
+        return ok(request.sessionId);
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 2,
+      maxAttempts: 1,
+    });
+    store.enqueue({
+      routeId: route.id,
+      conversationKey: `${route.id}:held-thread`,
+      channelId: "held-thread",
+      threadId: "held-thread",
+      messageId: "held-progress",
+      authorId: "owner",
+      prompt: "held",
+      attachmentPaths: [],
+      holdForProgress: true,
+    });
+
+    await runtime.runUntilIdle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(executorCalls).toBe(0);
+    expect(store.getByMessageId("held-progress")?.status).toBe("queued");
+    expect(hasQueuedChecks).toBe(0);
+  });
+
+  test("keeps a boundary ingress attached to the same drain promise", async () => {
+    const store = freshStore();
+    let runtime!: JobRuntime;
+    let latePump: Promise<void> | null = null;
+    let injected = false;
+    const originalClaimNext = store.claimNext.bind(store);
+    store.claimNext = (maxConcurrent) => {
+      const claimed = originalClaimNext(maxConcurrent);
+      if (!claimed && !injected) {
+        injected = true;
+        enqueue(store, "boundary-second", "boundary-thread-two");
+        latePump = runtime.runUntilIdle();
+      }
+      return claimed;
+    };
+    runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, route]]),
+      executor: async (request) => {
+        request.onSessionEstablished?.(request.sessionId);
+        if (request.job.messageId === "boundary-second") {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return ok(request.sessionId);
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 2,
+      maxAttempts: 1,
+    });
+
+    enqueue(store, "boundary-first", "boundary-thread-one");
+    const initialPump = runtime.runUntilIdle();
+    await initialPump;
+    const statusWhenReturned = store.getByMessageId("boundary-second")?.status;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await runtime.runUntilIdle();
+
+    expect(injected).toBe(true);
+    expect(latePump as Promise<void> | null).toBe(initialPump);
+    expect(statusWhenReturned).toBe("completed");
+    expect(store.getByMessageId("boundary-second")?.status).toBe("completed");
+  });
+
+  test("restarts runnable work after a pump failure without hiding the rejected drain", async () => {
+    const store = freshStore();
+    const originalClaimNext = store.claimNext.bind(store);
+    let failClaim = true;
+    store.claimNext = (maxConcurrent) => {
+      if (failClaim) {
+        failClaim = false;
+        throw new Error("injected claim failure");
+      }
+      return originalClaimNext(maxConcurrent);
+    };
+    let executorCalls = 0;
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, route]]),
+      executor: async (request) => {
+        executorCalls += 1;
+        request.onSessionEstablished?.(request.sessionId);
+        return ok(request.sessionId);
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 2,
+      maxAttempts: 1,
+    });
+    enqueue(store, "pump-recovery", "pump-recovery-thread");
+
+    await expect(runtime.runUntilIdle()).rejects.toThrow("injected claim failure");
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (store.getByMessageId("pump-recovery")?.status === "completed") break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(executorCalls).toBe(1);
+    expect(store.getByMessageId("pump-recovery")?.status).toBe("completed");
+  });
+
+  test("bounds recovery query failures without unhandled process errors", async () => {
+    const store = freshStore();
+    store.claimNext = () => {
+      throw new Error("injected claim failure");
+    };
+    let recoveryChecks = 0;
+    store.hasRunnable = () => {
+      recoveryChecks += 1;
+      throw new Error("recovery query failed");
+    };
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, route]]),
+      executor: async (request) => ok(request.sessionId),
+      onFinal: async () => undefined,
+      maxConcurrent: 2,
+      maxAttempts: 1,
+    });
+    enqueue(store, "pump-recovery-query", "pump-recovery-query-thread");
+    const unhandled: unknown[] = [];
+    const uncaught: Error[] = [];
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    const onUncaught = (error: Error) => uncaught.push(error);
+    const originalConsoleError = console.error;
+    process.on("unhandledRejection", onUnhandled);
+    process.on("uncaughtException", onUncaught);
+    console.error = () => undefined;
+    try {
+      await expect(runtime.runUntilIdle()).rejects.toThrow("injected claim failure");
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    } finally {
+      console.error = originalConsoleError;
+      process.off("unhandledRejection", onUnhandled);
+      process.off("uncaughtException", onUncaught);
+    }
+
+    expect(recoveryChecks).toBe(5);
+    expect(unhandled).toEqual([]);
+    expect(uncaught).toEqual([]);
+    expect(store.getByMessageId("pump-recovery-query")?.status).toBe("queued");
   });
 
   test("hands the managed workspace to an explicit SDK fork and detaches the source branch path", async () => {
