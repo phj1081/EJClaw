@@ -1,6 +1,6 @@
 # Native Claude Code Runtime
 
-NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Discord를 `@anthropic-ai/claude-agent-sdk` streaming 세션에 연결하는 durable 운영 런타임이다. SDK `0.3.201`과 Claude Code `2.1.201`을 같은 cohort로 고정하고 시작 시 버전을 검증한다.
+NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Discord를 `@anthropic-ai/claude-agent-sdk` streaming 세션에 연결하는 durable 운영 런타임이다. SDK `0.3.210`과 Claude Code `2.1.210`을 같은 cohort로 고정하고 시작 시 버전을 검증한다.
 
 ## 보장하는 것
 
