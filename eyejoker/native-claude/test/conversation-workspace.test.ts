@@ -166,6 +166,30 @@ describe("conversation workspaces", () => {
     );
   });
 
+  test("restores the exact clean reachable revision after cleanup", async () => {
+    const { route } = fixture();
+    const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);
+    roots.push(workspaceRoot);
+    const manager = new ConversationWorkspaceManager(workspaceRoot);
+    const currentJob = job("eyejokerdb-dev:thread-revision", "thread-revision");
+    const prepared = await manager.prepare(route, currentJob);
+    git(prepared.cwd, "switch", "-c", "conversation-feature");
+    writeFileSync(join(prepared.cwd, "README.md"), "conversation revision\n");
+    git(prepared.cwd, "add", "README.md");
+    git(prepared.cwd, "commit", "-m", "conversation revision");
+    const revision = git(prepared.cwd, "rev-parse", "HEAD");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(prepared.cwd, old, old);
+
+    const cleanup = await manager.cleanup({ ttlMs: 1, nowMs: Date.now() });
+    expect(cleanup.removed).toEqual([prepared.cwd]);
+    expect(existsSync(prepared.cwd)).toBe(false);
+
+    const recreated = await manager.prepare(route, currentJob);
+    expect(git(recreated.cwd, "rev-parse", "HEAD")).toBe(revision);
+    expect(Bun.file(join(recreated.cwd, "README.md")).text()).resolves.toBe("conversation revision\n");
+  });
+
   test("removes only expired clean reachable worktrees and protects active paths", async () => {
     const { route } = fixture();
     const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);

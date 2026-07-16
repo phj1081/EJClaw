@@ -138,6 +138,16 @@ describe("durable job store", () => {
     expect(db.getJob(queued.id)?.progressMessageId).toBeNull();
   });
 
+  test("protects a prepared workspace before SDK init without binding the session", () => {
+    const db = store();
+    const job = db.enqueue(input("cleanapo", "cleanapo:prepared", "prepared-workspace"));
+    expect(db.claimNext(1)?.id).toBe(job.id);
+    expect(db.bindPreparedWorkspace(job.id, "/tmp/prepared-workspace")).toBe(true);
+    expect(db.getJob(job.id)?.workspacePath).toBe("/tmp/prepared-workspace");
+    expect(db.activeWorkspacePaths()).toContain("/tmp/prepared-workspace");
+    expect(db.sessionWorkspaceForSession(job.conversationKey, job.sessionId)).toBeNull();
+  });
+
   test("tracks the workspace bound to a conversation session", () => {
     const db = store();
     db.enqueue(input("cleanapo", "cleanapo:workspace", "workspace-message"));
@@ -238,6 +248,12 @@ describe("durable job store", () => {
   test("persists final chunks, cursor and accepted message ids across restarts", () => {
     const db = store();
     const job = db.enqueue(input("delivery", "delivery:one", "delivery-message"));
+    expect(db.claimNext(1)?.id).toBe(job.id);
+    db.stageDelivery(
+      job.id,
+      { ok: true, result: "done", sessionId: job.sessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
 
     const files = [{ path: "/tmp/result.png", name: "result.png" }];
     expect(db.prepareDelivery(job.id, ["one", "two"], files)).toEqual({
@@ -246,7 +262,7 @@ describe("durable job store", () => {
       messageIds: [],
       files,
     });
-    db.markDeliveryChunk(job.id, 0, "discord-1");
+    expect(db.markDeliveryChunk(job.id, 0, "discord-1")).toBe(true);
 
     const reopened = db.prepareDelivery(job.id, ["different"], []);
     expect(reopened).toEqual({
@@ -259,6 +275,21 @@ describe("durable job store", () => {
     expect(db.getJob(job.id)?.deliveryMessageIds).toEqual(["discord-1"]);
     expect(db.getJob(job.id)?.deliveryFiles).toEqual(files);
     db.close();
+  });
+
+  test("rejects final delivery ACKs after cancellation wins", () => {
+    const db = store();
+    const job = db.enqueue(input("delivery", "delivery:cancel-race", "delivery-cancel-race"));
+    expect(db.claimNext(1)?.id).toBe(job.id);
+    db.stageDelivery(
+      job.id,
+      { ok: true, result: "done", sessionId: job.sessionId, stderr: "", exitCode: 0 },
+      "completed",
+    );
+    db.prepareDelivery(job.id, ["one"], []);
+    expect(db.cancelJob(job.id, "cancel won")?.status).toBe("cancelled");
+    expect(db.markDeliveryChunk(job.id, 0, "late-final")).toBe(false);
+    expect(db.getJob(job.id)?.deliveryCursor).toBe(0);
   });
 
   test("updates queued source messages but never rewrites an active execution", () => {
@@ -286,6 +317,11 @@ describe("durable job store", () => {
     expect(db.tryAnswerInteraction(interaction.id, "예")).toBeNull();
     expect(() => db.answerInteraction(interaction.id, "예")).toThrow("interaction is not pending");
     expect(db.listSettledInteractionsWithMessages().map((record) => record.id)).toEqual([interaction.id]);
+    const settled = db.markInteractionCardSettled(interaction.id, "discord-delete-question");
+    expect(settled?.discordSettledAt).not.toBeNull();
+    expect(db.listSettledInteractionsWithMessages()).toEqual([]);
+    expect(db.listSettledInteractionsWithoutMessages()).toEqual([]);
+    expect(db.markInteractionCardSettled(interaction.id, "discord-delete-question")).toBeNull();
     expect(db.cancelByMessageId("deletable")).toBeNull();
   });
 
@@ -333,8 +369,73 @@ describe("durable job store", () => {
       answer: "수정 가능하면 바로 수정해줘",
     });
     expect(db.getSteeringInput("legacy-text-answer")).toBeNull();
+    expect(db.listSettledInteractionsWithoutMessages().map((record) => record.id)).toContain(interaction.id);
     expect(db.listRecoverySteeringInputs(job.id)).toEqual([]);
     expect(db.reconcilePendingInteractionSteering()).toBe(0);
+  });
+
+  test("never consumes steering that was accepted before the question event", () => {
+    const db = store();
+    const queued = db.enqueue(input("legacy", "legacy:pre-question", "pre-question"));
+    expect(db.claimNext(1)?.id).toBe(queued.id);
+    db.beginSteeringInput({
+      messageId: "1527240000000000001",
+      jobId: queued.id,
+      conversationKey: queued.conversationKey,
+      content: "질문 전 지시",
+      sdkMessageId: "sdk-pre-question",
+    });
+    db.acceptSteeringInput("1527240000000000001");
+    const interaction = db.beginInteraction(queued.id, queued.conversationKey, {
+      question: "계속할까?",
+      choices: ["예", "아니오"],
+      requestId: "after-steering",
+    });
+    db.setInteractionMessage(interaction.id, "1527240000000000002");
+
+    expect(db.reconcilePendingInteractionSteering()).toBe(0);
+    expect(db.getInteraction(interaction.id)?.status).toBe("pending");
+    expect(db.getSteeringInput("1527240000000000001")?.state).toBe("accepted");
+  });
+
+  test("reconciles pre-migration rows only when Discord snowflakes prove the steering came later", () => {
+    const path = join(tmpdir(), `native-state-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const seeded = new StateStore(path);
+    const queued = seeded.enqueue(input("legacy", "legacy:snowflake-order", "legacy-snowflake-order"));
+    expect(seeded.claimNext(1)?.id).toBe(queued.id);
+    const interaction = seeded.beginInteraction(queued.id, queued.conversationKey, {
+      question: "언제 진행할까?",
+      choices: [],
+      requestId: "legacy-snowflake",
+    });
+    seeded.setInteractionMessage(interaction.id, "1527240000000000100");
+    seeded.beginSteeringInput({
+      messageId: "1527240000000000101",
+      jobId: queued.id,
+      conversationKey: queued.conversationKey,
+      content: "지금",
+      sdkMessageId: "legacy-sdk-answer",
+    });
+    seeded.acceptSteeringInput("1527240000000000101");
+    seeded.close();
+
+    const legacy = new Database(path);
+    legacy.query("UPDATE interactions SET event_sequence=NULL, created_at=? WHERE id=?").run(
+      "2026-07-16T00:00:00.000Z",
+      interaction.id,
+    );
+    legacy.query("UPDATE steering_inputs SET event_sequence=NULL, created_at=? WHERE message_id=?").run(
+      "2026-07-16T00:00:00.000Z",
+      "1527240000000000101",
+    );
+    legacy.close();
+
+    const reopened = new StateStore(path);
+    expect(reopened.reconcilePendingInteractionSteering()).toBe(1);
+    expect(reopened.getInteraction(interaction.id)?.answer).toBe("지금");
+    expect(reopened.getSteeringInput("1527240000000000101")).toBeNull();
+    reopened.close();
   });
 
   test("never reconciles legacy steering without author provenance into a permission approval", () => {
@@ -359,6 +460,20 @@ describe("durable job store", () => {
     expect(db.reconcilePendingInteractionSteering()).toBe(0);
     expect(db.getInteraction(interaction.id)?.status).toBe("pending");
     expect(db.getSteeringInput("unsafe-text-answer")).not.toBeNull();
+  });
+
+  test("blocks job claims behind a durable conversation gate", () => {
+    const db = store();
+    const conversationKey = "cleanapo:rewind-gate";
+    expect(db.acquireConversationGate(conversationKey, "rewind:op-1")).toBe(true);
+    expect(db.hasConversationGate(conversationKey)).toBe(true);
+    const gated = db.enqueue(input("cleanapo", conversationKey, "gated-job"));
+    expect(db.hasRunnable()).toBe(false);
+    expect(db.claimNext(1)).toBeNull();
+    expect(db.acquireConversationGate(conversationKey, "rewind:op-2")).toBe(false);
+    expect(db.releaseConversationGate(conversationKey, "rewind:op-1")).toBe(true);
+    expect(db.claimNext(1)?.id).toBe(gated.id);
+    expect(db.acquireConversationGate(conversationKey, "rewind:op-3")).toBe(false);
   });
 
   test("persists conversation overrides and consumes fork/reset controls once", () => {

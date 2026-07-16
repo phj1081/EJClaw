@@ -41,6 +41,7 @@ import {
   QuestionBroker,
   renderAnsweredInteractiveQuestion,
   renderInteractiveQuestion,
+  renderOrphanedInteractiveQuestion,
   textAnswerForQuestion,
 } from "./interactive-control";
 import { KeyedSerialQueue } from "./keyed-serial-queue";
@@ -62,7 +63,7 @@ import {
 } from "./stream-progress";
 import { StateStore } from "./store";
 import { formatDiscordStatus, renderStatusSnapshot } from "./status-format";
-import type { ClaudeExecution, JobRecord } from "./types";
+import type { ClaudeExecution, InteractionRecord, InteractiveQuestion, JobRecord } from "./types";
 
 const home = process.env.HOME;
 if (!home) throw new Error("HOME is required");
@@ -284,13 +285,67 @@ function questionComponents(interactionId: string, choices: string[]): ActionRow
   ];
 }
 
+async function reconcileQuestionCard(
+  job: JobRecord,
+  interaction: InteractionRecord,
+  question: InteractiveQuestion,
+  sendIfPending: boolean,
+): Promise<Message | null> {
+  if (interaction.discordSettledAt) return null;
+  const channel = await textChannel(job.channelId);
+  const botUserId = client.user?.id;
+  if (!botUserId) throw new Error("Discord client user is unavailable");
+  let message: Message | null = null;
+  if (interaction.discordMessageId) {
+    message = await channel.messages.fetch(interaction.discordMessageId);
+  } else {
+    message = await findBotMessageByNonce<Message>(
+      channel.messages as unknown as ReconcileMessageFetcher<Message>,
+      botUserId,
+      questionNonce(interaction.id),
+      Date.parse(interaction.createdAt),
+    );
+  }
+
+  const beforeSend = store.getInteraction(interaction.id);
+  if (!message && sendIfPending && beforeSend?.status === "pending") {
+    message = await channel.send({
+      content: renderInteractiveQuestion(question),
+      components: questionComponents(interaction.id, question.choices),
+      allowedMentions: { parse: [] },
+      nonce: questionNonce(interaction.id),
+      enforceNonce: true,
+    });
+  }
+  if (!message) return null;
+
+  store.setInteractionMessage(interaction.id, message.id);
+  const latest = store.getInteraction(interaction.id);
+  if (latest?.status === "answered" && latest.answer) {
+    await message.edit({
+      content: renderAnsweredInteractiveQuestion(question, latest.answer),
+      components: [],
+      allowedMentions: { parse: [] },
+    });
+    store.markInteractionCardSettled(interaction.id, message.id);
+  } else if (latest?.status === "orphaned") {
+    await message.edit({
+      content: renderOrphanedInteractiveQuestion(question),
+      components: [],
+      allowedMentions: { parse: [] },
+    });
+    store.markInteractionCardSettled(interaction.id, message.id);
+  }
+  return message;
+}
+
 function steeringFallbackMessageId(kind: "add" | "edit" | "delete", messageId: string, content = ""): string {
   const digest = createHash("sha256").update(`${kind}:${messageId}:${content}`).digest("hex").slice(0, 24);
   return `steering-${kind}:${messageId}:${digest}`;
 }
 
 async function reconcileHeldQueuedProgress(): Promise<void> {
-  if (queuedProgressReconcilePromise) return queuedProgressReconcilePromise;
+  if (queuedProgressReconcilePromise) return;
   const pending = (async () => {
     for (const job of store.listActive()) {
       if (job.status !== "queued" || !job.progressPending || !isReplyableMessageId(job.messageId)) continue;
@@ -315,24 +370,45 @@ async function reconcileHeldQueuedProgress(): Promise<void> {
 async function cleanupQuestionComponentsForJob(job: JobRecord): Promise<number> {
   let cleaned = 0;
   for (const interaction of store.listJobInteractions(job.id)) {
-    if (interaction.status === "pending" || !interaction.discordMessageId) continue;
+    if (interaction.status === "pending" || interaction.discordSettledAt || !interaction.discordMessageId) continue;
     try {
       const channel = await textChannel(job.channelId);
       const message = await channel.messages.fetch(interaction.discordMessageId);
       await message.edit({
         ...(interaction.status === "answered" && interaction.answer
           ? { content: renderAnsweredInteractiveQuestion(interaction.question, interaction.answer) }
-          : {}),
+          : interaction.status === "orphaned"
+            ? { content: renderOrphanedInteractiveQuestion(interaction.question) }
+            : {}),
         components: [],
         allowedMentions: { parse: [] },
       });
-      store.clearInteractionMessage(interaction.id);
+      store.markInteractionCardSettled(interaction.id, message.id);
       cleaned += 1;
     } catch (error) {
       console.warn(`settled question cleanup failed job=${job.id} interaction=${interaction.id}`, String(error));
     }
   }
   return cleaned;
+}
+
+async function reconcileSettledQuestionCardsWithoutAck(): Promise<number> {
+  let reconciled = 0;
+  for (const interaction of store.listSettledInteractionsWithoutMessages()) {
+    const job = store.getJob(interaction.jobId);
+    if (!job) continue;
+    try {
+      const message = await reconcileQuestionCard(job, interaction, interaction.question, false);
+      if (message) {
+        reconciled += 1;
+      } else if (store.markInteractionCardSettled(interaction.id, null)) {
+        reconciled += 1;
+      }
+    } catch (error) {
+      console.warn(`settled question reconciliation failed job=${job.id} interaction=${interaction.id}`, String(error));
+    }
+  }
+  return reconciled;
 }
 
 async function cleanupSettledQuestionComponents(): Promise<number> {
@@ -615,62 +691,83 @@ async function cancelJobLifecycle(jobId: string, reason: string): Promise<JobRec
 }
 
 async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise<void> {
-  stopTyping(job.id);
-  const elapsed = workElapsedSeconds(job.startedAt, job.createdAt);
-  const routeModel = routes.get(job.routeId)?.model;
-  const mainModel = execution.mainModel ?? job.mainModel ?? routeModel;
-  const subagentModels = execution.subagentModels ?? job.subagentModels;
-  const artifacts = extractOutboundArtifacts(execution.result);
-  const deliveryFiles = job.deliveryChunks
-    ? job.deliveryFiles
-    : spoolOutboundArtifacts(job.id, artifacts.files, outboundRoot);
-  const renderedChunks = splitDiscordMessage(
-    formatFinalMessage(config.ownerId, execution.ok, artifacts.body, elapsed, mainModel, subagentModels),
-  );
-  const plan = store.prepareDelivery(job.id, renderedChunks, deliveryFiles);
-  const channel = await textChannel(job.channelId);
-  const botUserId = client.user?.id;
-  if (!botUserId) throw new Error("Discord client user is unavailable");
-  await deliverPendingChunks(
-    job.id,
-    plan,
-    async (index, chunk, nonce, files) => {
-      const options: MessageCreateOptions = {
-        ...buildFinalChunkOptions(config.ownerId, chunk, index),
-        nonce,
-        enforceNonce: true,
-        files: files.map((file) => ({ attachment: file.path, name: file.name })),
-      };
-      const sent = await channel.send(options);
-      return sent.id;
-    },
-    async (index, messageId) => {
-      store.markDeliveryChunk(job.id, index, messageId);
-    },
-    async (_index, nonce) => {
-      const reconciled = await findBotMessageByNonce<Message>(
-        channel.messages as unknown as ReconcileMessageFetcher<Message>,
-        botUserId,
-        nonce,
-        Date.parse(job.createdAt),
-      );
-      return reconciled?.id ?? null;
-    },
-  );
-
-  // Match the old NanoClaw contract: a temporary card only disappears after
-  // the real user-facing result has been accepted by Discord. Cleanup is
-  // best-effort and must never cause a duplicate final delivery retry.
   await progressLifecycleQueue.run(job.id, async () => {
-    const latest = store.getJob(job.id) ?? job;
-    const board = progressBoards.get(job.id) ?? (latest.progressMessageId ? new ProgressBoard(latest) : null);
-    if (board) {
-      await board.cleanupAfterFinalDelivery();
-      progressBoards.delete(job.id);
+    const deliveryJob = store.getJob(job.id);
+    if (!deliveryJob || deliveryJob.status !== "delivering") return;
+    const assertDelivering = (): void => {
+      if (store.getJob(job.id)?.status !== "delivering") {
+        throw new Error(`final delivery lost delivering state: ${job.id}`);
+      }
+    };
+
+    stopTyping(job.id);
+    const elapsed = workElapsedSeconds(deliveryJob.startedAt, deliveryJob.createdAt);
+    const routeModel = routes.get(deliveryJob.routeId)?.model;
+    const mainModel = execution.mainModel ?? deliveryJob.mainModel ?? routeModel;
+    const subagentModels = execution.subagentModels ?? deliveryJob.subagentModels;
+    const artifacts = extractOutboundArtifacts(execution.result);
+    const deliveryFiles = deliveryJob.deliveryChunks
+      ? deliveryJob.deliveryFiles
+      : spoolOutboundArtifacts(deliveryJob.id, artifacts.files, outboundRoot);
+    const renderedChunks = splitDiscordMessage(
+      formatFinalMessage(config.ownerId, execution.ok, artifacts.body, elapsed, mainModel, subagentModels),
+    );
+    assertDelivering();
+    const plan = store.prepareDelivery(deliveryJob.id, renderedChunks, deliveryFiles);
+    const channel = await textChannel(deliveryJob.channelId);
+    const botUserId = client.user?.id;
+    if (!botUserId) throw new Error("Discord client user is unavailable");
+    await deliverPendingChunks(
+      deliveryJob.id,
+      plan,
+      async (index, chunk, nonce, files) => {
+        assertDelivering();
+        const options: MessageCreateOptions = {
+          ...buildFinalChunkOptions(config.ownerId, chunk, index),
+          nonce,
+          enforceNonce: true,
+          files: files.map((file) => ({ attachment: file.path, name: file.name })),
+        };
+        const sent = await channel.send(options);
+        return sent.id;
+      },
+      async (index, messageId) => {
+        assertDelivering();
+        if (!store.markDeliveryChunk(deliveryJob.id, index, messageId)) {
+          throw new Error(`final delivery ACK rejected: ${deliveryJob.id}:${index}`);
+        }
+      },
+      async (_index, nonce) => {
+        assertDelivering();
+        const reconciled = await findBotMessageByNonce<Message>(
+          channel.messages as unknown as ReconcileMessageFetcher<Message>,
+          botUserId,
+          nonce,
+          Date.parse(deliveryJob.createdAt),
+        );
+        return reconciled?.id ?? null;
+      },
+    );
+
+    // Match the old NanoClaw contract: a temporary card only disappears after
+    // the real user-facing result has been accepted by Discord. Cleanup is
+    // best-effort and must never cause a duplicate final delivery retry.
+    const delivered = store.markDelivered(deliveryJob.id);
+    if (!delivered || delivered.status === "delivering" || delivered.status === "cancelled") {
+      throw new Error(`final delivery completion rejected: ${deliveryJob.id}`);
     }
+    const board = progressBoards.get(deliveryJob.id) ?? (delivered.progressMessageId ? new ProgressBoard(delivered) : null);
+    if (board) {
+      await board.cleanupAfterFinalDelivery().catch((error) =>
+        console.warn(`terminal progress cleanup failed id=${deliveryJob.id}`, String(error)),
+      );
+      progressBoards.delete(deliveryJob.id);
+    }
+    removeOutboundSpool(deliveryJob.id, outboundRoot);
+    console.log(
+      `job final id=${deliveryJob.id} route=${deliveryJob.routeId} ok=${execution.ok} elapsed=${elapsed}`,
+    );
   });
-  removeOutboundSpool(job.id, outboundRoot);
-  console.log(`job final id=${job.id} route=${job.routeId} ok=${execution.ok} elapsed=${elapsed}`);
 }
 
 async function cleanupTerminalProgress(): Promise<number> {
@@ -687,7 +784,11 @@ const runtime = new JobRuntime({
   executor: (request) => executor.run(request),
   prepareRoute: async (route, job) => {
     await cleanupConversationWorkspaces();
-    return workspaceManager.prepare(route, job);
+    return workspaceManager.prepare(route, job, (workspacePath) => {
+      if (!store.bindPreparedWorkspace(job.id, workspacePath)) {
+        throw new Error(`job left running state before workspace reservation: ${job.id}`);
+      }
+    });
   },
   preflight: async (job) => {
     const route = routes.get(job.routeId);
@@ -703,38 +804,18 @@ const runtime = new JobRuntime({
   onQuestion: async (job, question) => {
     const interaction = store.beginInteraction(job.id, job.conversationKey, question);
     if (interaction.status === "answered" && interaction.answer) {
+      await reconcileQuestionCard(job, interaction, question, false);
       progressBoards.get(job.id)?.resetAfterInteraction(question.toolUseId);
       return interaction.answer;
     }
+    if (interaction.status === "orphaned") throw new Error(`question interaction already closed: ${interaction.id}`);
     const answer = await questionBroker.wait(job.id, job.conversationKey, question, async () => {
-      if (interaction.discordMessageId) return interaction.discordMessageId;
-      const channel = await textChannel(job.channelId);
-      const nonce = questionNonce(interaction.id);
-      const botUserId = client.user?.id;
-      if (!botUserId) throw new Error("Discord client user is unavailable");
-      let message = await findBotMessageByNonce<Message>(
-        channel.messages as unknown as ReconcileMessageFetcher<Message>,
-        botUserId,
-        nonce,
-        Date.parse(interaction.createdAt),
-      );
-      if (!message) {
-        message = await channel.send({
-          content: renderInteractiveQuestion(question),
-          components: questionComponents(interaction.id, question.choices),
-          allowedMentions: { parse: [] },
-          nonce,
-          enforceNonce: true,
-        });
+      const latest = store.getInteraction(interaction.id) ?? interaction;
+      const message = await reconcileQuestionCard(job, latest, question, true);
+      if (!message) throw new Error(`pending question has no durable Discord card: ${interaction.id}`);
+      if (store.getInteraction(interaction.id)?.status === "pending") {
+        console.log(`job waiting for Discord answer id=${job.id} question_message=${message.id}`);
       }
-      store.setInteractionMessage(interaction.id, message.id);
-      if (store.getInteraction(interaction.id)?.status === "answered") {
-        await message.edit({ components: [], allowedMentions: { parse: [] } }).catch((error) =>
-          console.warn(`answered question cleanup failed id=${job.id}`, String(error)),
-        );
-        return message.id;
-      }
-      console.log(`job waiting for Discord answer id=${job.id} question_message=${message.id}`);
       return message.id;
     }, (value) => {
       store.answerInteraction(interaction.id, value);
@@ -845,19 +926,22 @@ async function discordContextFor(
 client.once("clientReady", async () => {
   try {
     await validateRouteChannels();
+    const staleConversationGatesCleared = store.clearConversationGates();
     const pendingWorkspaceCleanupRecovered = await recoverPendingWorkspaceCleanups();
     const textAnswersReconciled = store.reconcilePendingInteractionSteering();
     const recovered = runtime.recoverInterrupted("bridge service restart");
     const queuedLocksMigrated = migrateQueuedConversationLocks();
     const workspaceCleanup = await cleanupConversationWorkspaces();
     await reconcileHeldQueuedProgress();
+    const settledQuestionCardsReconciled = await reconcileSettledQuestionCardsWithoutAck();
     const terminalProgressCleaned = await cleanupTerminalProgress();
     const settledQuestionsCleaned = await cleanupSettledQuestionComponents();
     const expiredAttachmentsCleaned = cleanupExpiredAttachments();
     console.log(
-      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} pending_workspace_cleanup_recovered=${pendingWorkspaceCleanupRecovered} text_answers_reconciled=${textAnswersReconciled} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} settled_question_cleanup=${settledQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} stale_conversation_gates_cleared=${staleConversationGatesCleared} pending_workspace_cleanup_recovered=${pendingWorkspaceCleanupRecovered} text_answers_reconciled=${textAnswersReconciled} queued_lock_migrations=${queuedLocksMigrated} settled_question_card_reconcile=${settledQuestionCardsReconciled} terminal_progress_cleanup=${terminalProgressCleaned} settled_question_cleanup=${settledQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
+      if (queuedProgressReconcilePromise) return;
       void reconcileHeldQueuedProgress()
         .then(() => {
           if (store.hasRunnable()) return runtime.runUntilIdle();
@@ -1017,11 +1101,13 @@ client.on("messageCreate", (message) => {
       return;
     }
     if (control?.kind === "rewindPreview") {
-      if (store.listActive().some((job) => job.conversationKey === key)) {
-        await message.reply({ content: "active job이 끝난 뒤 rewind preview를 실행해줘.", allowedMentions: { parse: [] } });
+      const gateKind = `rewind-preview:${message.id}`;
+      if (!store.acquireConversationGate(key, gateKind)) {
+        await message.reply({ content: "active job 또는 다른 conversation 작업이 끝난 뒤 rewind preview를 실행해줘.", allowedMentions: { parse: [] } });
         return;
       }
-      const matches = store
+      try {
+        const matches = store
         .listSessionCheckpoints(key)
         .filter((checkpoint) => checkpoint.userMessageId.startsWith(control.checkpoint));
       if (matches.length !== 1) {
@@ -1039,9 +1125,8 @@ client.on("messageCreate", (message) => {
         await message.reply({ content: "이 session의 workspace provenance가 없어서 rewind할 수 없어.", allowedMentions: { parse: [] } });
         return;
       }
-      try {
-        if (route.conversationWorktrees) await workspaceManager.validate(route, rewindWorkspace);
-        const preview = await executor.rewindSession(
+      if (route.conversationWorktrees) await workspaceManager.validate(route, rewindWorkspace);
+      const preview = await executor.rewindSession(
           rewindWorkspace,
           checkpoint.sessionId,
           checkpoint.userMessageId,
@@ -1066,53 +1151,60 @@ client.on("messageCreate", (message) => {
         });
       } catch (error) {
         await message.reply({ content: `rewind preview 실패: ${error instanceof Error ? error.message : String(error)}`, allowedMentions: { parse: [] } });
+      } finally {
+        store.releaseConversationGate(key, gateKind);
       }
       return;
     }
     if (control?.kind === "rewindApply") {
-      if (store.listActive().some((job) => job.conversationKey === key)) {
-        await message.reply({ content: "active job이 끝난 뒤 rewind apply를 실행해줘.", allowedMentions: { parse: [] } });
-        return;
-      }
-      const operation = store.getRewindOperation(key, control.operationId);
-      const activeBranch = store.listSessionBranches(key).find((branch) => branch.status === "active");
-      if (!operation || operation.status !== "previewed") {
-        await message.reply({ content: "유효한 preview operation이 아냐.", allowedMentions: { parse: [] } });
-        return;
-      }
-      if (Date.now() - Date.parse(operation.createdAt) > 15 * 60 * 1_000) {
-        await message.reply({ content: "preview가 15분을 지나 만료됐어. 다시 preview해줘.", allowedMentions: { parse: [] } });
-        return;
-      }
-      if (!activeBranch || activeBranch.sessionId !== operation.sessionId) {
-        await message.reply({ content: "preview 이후 active branch가 바뀌어서 적용하지 않았어.", allowedMentions: { parse: [] } });
-        return;
-      }
-      if (!operation.workspacePath || activeBranch.workspacePath !== operation.workspacePath) {
-        await message.reply({ content: "preview 이후 session workspace가 바뀌어서 적용하지 않았어.", allowedMentions: { parse: [] } });
-        return;
-      }
-      if (!store.markRewindApplied(operation.id)) {
-        await message.reply({ content: "operation이 이미 소비됐어.", allowedMentions: { parse: [] } });
+      const gateKind = `rewind:${control.operationId}`;
+      if (!store.acquireConversationGate(key, gateKind)) {
+        await message.reply({ content: "active job 또는 다른 conversation 작업이 끝난 뒤 rewind apply를 실행해줘.", allowedMentions: { parse: [] } });
         return;
       }
       try {
-        if (route.conversationWorktrees) await workspaceManager.validate(route, operation.workspacePath);
-        const applied = await executor.rewindSession(
-          operation.workspacePath,
-          operation.sessionId,
-          operation.checkpoint,
-          false,
-          route.memoryProject,
-        );
-        await message.reply({
-          content: applied.canRewind
-            ? `rewind 적용됨 · files=${applied.filesChanged?.length ?? operation.preview.filesChanged?.length ?? 0}`
-            : `rewind 적용 실패: ${applied.error ?? "원인 없음"}`,
-          allowedMentions: { parse: [] },
-        });
-      } catch (error) {
-        await message.reply({ content: `rewind 적용 실패: ${error instanceof Error ? error.message : String(error)} · 다시 preview가 필요해.`, allowedMentions: { parse: [] } });
+        const operation = store.getRewindOperation(key, control.operationId);
+        const activeBranch = store.listSessionBranches(key).find((branch) => branch.status === "active");
+        if (!operation || operation.status !== "previewed") {
+          await message.reply({ content: "유효한 preview operation이 아냐.", allowedMentions: { parse: [] } });
+          return;
+        }
+        if (Date.now() - Date.parse(operation.createdAt) > 15 * 60 * 1_000) {
+          await message.reply({ content: "preview가 15분을 지나 만료됐어. 다시 preview해줘.", allowedMentions: { parse: [] } });
+          return;
+        }
+        if (!activeBranch || activeBranch.sessionId !== operation.sessionId) {
+          await message.reply({ content: "preview 이후 active branch가 바뀌어서 적용하지 않았어.", allowedMentions: { parse: [] } });
+          return;
+        }
+        if (!operation.workspacePath || activeBranch.workspacePath !== operation.workspacePath) {
+          await message.reply({ content: "preview 이후 session workspace가 바뀌어서 적용하지 않았어.", allowedMentions: { parse: [] } });
+          return;
+        }
+        if (!store.markRewindApplied(operation.id)) {
+          await message.reply({ content: "operation이 이미 소비됐어.", allowedMentions: { parse: [] } });
+          return;
+        }
+        try {
+          if (route.conversationWorktrees) await workspaceManager.validate(route, operation.workspacePath);
+          const applied = await executor.rewindSession(
+            operation.workspacePath,
+            operation.sessionId,
+            operation.checkpoint,
+            false,
+            route.memoryProject,
+          );
+          await message.reply({
+            content: applied.canRewind
+              ? `rewind 적용됨 · files=${applied.filesChanged?.length ?? operation.preview.filesChanged?.length ?? 0}`
+              : `rewind 적용 실패: ${applied.error ?? "원인 없음"}`,
+            allowedMentions: { parse: [] },
+          });
+        } catch (error) {
+          await message.reply({ content: `rewind 적용 실패: ${error instanceof Error ? error.message : String(error)} · 다시 preview가 필요해.`, allowedMentions: { parse: [] } });
+        }
+      } finally {
+        store.releaseConversationGate(key, gateKind);
       }
       return;
     }
@@ -1178,17 +1270,9 @@ client.on("messageCreate", (message) => {
           await message.reply({ content: "질문이 이미 종료되거나 취소돼서 답변을 적용하지 않았어.", allowedMentions: { parse: [] } });
           return;
         }
-        if (pendingQuestion.discordMessageId) {
-          const questionChannel = await textChannel(running.channelId);
-          const questionMessage = await questionChannel.messages.fetch(pendingQuestion.discordMessageId).catch(() => null);
-          await questionMessage
-            ?.edit({
-              content: renderAnsweredInteractiveQuestion(pendingQuestion.question, textAnswer),
-              components: [],
-              allowedMentions: { parse: [] },
-            })
-            .catch((error) => console.warn(`text question cleanup failed id=${running.id}`, String(error)));
-        }
+        await reconcileQuestionCard(running, answered, answered.question, false).catch((error) =>
+          console.warn(`text question reconciliation failed id=${running.id}`, String(error)),
+        );
         await message.react("👀").catch(() => undefined);
         console.log(`job question answered by text id=${running.id} message=${message.id}`);
         return;
@@ -1433,7 +1517,7 @@ client.on("interactionCreate", async (interaction) => {
         components: [],
         allowedMentions: { parse: [] },
       });
-      store.clearInteractionMessage(record.id);
+      store.markInteractionCardSettled(record.id, interaction.message.id);
       return;
     }
     if (record.status !== "pending") {
@@ -1465,6 +1549,7 @@ client.on("interactionCreate", async (interaction) => {
       components: [],
       allowedMentions: { parse: [] },
     });
+    store.markInteractionCardSettled(record.id, interaction.message.id);
     console.log(`Discord question answered by button interaction=${record.id} user=${interaction.user.id} choice=${parsed.choiceIndex}`);
   } catch (error) {
     console.error("button interaction handler failed", error);

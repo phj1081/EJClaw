@@ -191,6 +191,7 @@ export interface InteractionRecord {
   requestKey: string;
   question: InteractiveQuestion;
   discordMessageId: string | null;
+  discordSettledAt: string | null;
   answer: string | null;
   status: "pending" | "answered" | "orphaned";
   createdAt: string;

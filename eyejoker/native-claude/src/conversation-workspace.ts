@@ -53,8 +53,12 @@ async function git(cwd: string, args: string[], timeoutMs: number): Promise<stri
   return stdout.trim();
 }
 
-function absoluteGitPath(cwd: string, value: string): string {
-  return realpathSync(resolve(cwd, value));
+function workspaceRestoreRef(workspacePath: string): string {
+  return `refs/claude-native/workspaces/${safeSegment(resolve(workspacePath))}`;
+}
+
+function absoluteGitPath(worktreePath: string, rawPath: string): string {
+  return realpathSync(resolve(worktreePath, rawPath));
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -208,7 +212,11 @@ export class ConversationWorkspaceManager {
     }
   }
 
-  async prepare(route: RouteConfig, job: JobRecord): Promise<RouteConfig> {
+  async prepare(
+    route: RouteConfig,
+    job: JobRecord,
+    onPrepared?: (workspacePath: string) => void | Promise<void>,
+  ): Promise<RouteConfig> {
     if (!route.conversationWorktrees) return route;
 
     const repository = await this.repositoryIdentity(route);
@@ -226,17 +234,28 @@ export class ConversationWorkspaceManager {
         await this.validate(route, workspacePath);
         const used = new Date();
         utimesSync(workspacePath, used, used);
+        await onPrepared?.(workspacePath);
         return;
       }
 
       this.assertCapacity(repositoryBucket, workspacePath);
       mkdirSync(resolve(workspacePath, ".."), { recursive: true, mode: 0o700 });
       const baseRef = route.worktreeRef ?? "HEAD";
-      const commit = await git(
-        route.cwd,
-        ["rev-parse", "--verify", "--end-of-options", `${baseRef}^{commit}`],
-        this.gitTimeoutMs,
-      );
+      const restoreRef = workspaceRestoreRef(workspacePath);
+      let commit: string;
+      try {
+        commit = await git(
+          route.cwd,
+          ["rev-parse", "--verify", "--end-of-options", `${restoreRef}^{commit}`],
+          this.gitTimeoutMs,
+        );
+      } catch {
+        commit = await git(
+          route.cwd,
+          ["rev-parse", "--verify", "--end-of-options", `${baseRef}^{commit}`],
+          this.gitTimeoutMs,
+        );
+      }
       await git(
         route.cwd,
         [
@@ -253,6 +272,7 @@ export class ConversationWorkspaceManager {
         this.gitTimeoutMs,
       );
       await this.validate(route, workspacePath);
+      await onPrepared?.(workspacePath);
     });
 
     const workspaceInstruction =
@@ -292,6 +312,12 @@ export class ConversationWorkspaceManager {
     if (!target) throw new Error("worktree is not registered");
     const admin = entries.find((entry) => resolve(entry.path) !== resolve(candidate.path) && existsSync(entry.path));
     if (!admin) throw new Error("no surviving Git worktree can administer removal");
+    const revision = await git(candidate.path, ["rev-parse", "--verify", "HEAD^{commit}"], this.gitTimeoutMs);
+    await git(
+      candidate.path,
+      ["update-ref", workspaceRestoreRef(candidate.path), revision],
+      this.gitTimeoutMs,
+    );
     await beforeRemove?.(candidate.path);
     if (target.locked) {
       await git(admin.path, ["worktree", "unlock", "--", candidate.path], this.gitTimeoutMs);

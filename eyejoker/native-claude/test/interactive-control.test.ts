@@ -7,6 +7,7 @@ import {
   QuestionBroker,
   renderAnsweredInteractiveQuestion,
   renderInteractiveQuestion,
+  renderOrphanedInteractiveQuestion,
   textAnswerForQuestion,
 } from "../src/interactive-control";
 
@@ -129,11 +130,21 @@ describe("interactive Discord control protocol", () => {
     expect(rendered).not.toContain("아래 버튼으로 선택해줘.");
   });
 
+  test("renders an orphaned question without live controls", () => {
+    expect(renderOrphanedInteractiveQuestion({ question: "계속할까?", choices: ["예", "아니오"] })).toBe(
+      "❓ **Claude 질문**\n계속할까?\n\n🚫 **질문 종료됨**",
+    );
+  });
+
   test("registers same-conversation text settlement without a reaction fallback", async () => {
     const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
     expect(source).toContain("questionBroker.answerConversation(key, textAnswer)");
     expect(source).toContain("textAnswerForQuestion(pendingQuestion.question, promptText)");
     expect(source).toContain("message.author.id !== running.authorId");
+    expect(source).toContain("reconcileQuestionCard(job, interaction, question, false)");
+    expect(source).toContain("reconcileQuestionCard(running, answered, answered.question, false)");
+    expect(source).toContain("store.markInteractionCardSettled(interaction.id, message.id)");
+    expect(source).toContain("reconcileSettledQuestionCardsWithoutAck()");
     expect(source).not.toContain("questionBroker.answerReaction");
     expect(source).not.toContain('client.on("messageReactionAdd"');
     expect(source).toContain("progressBoards.get(job.id)?.resetAfterInteraction(question.toolUseId)");

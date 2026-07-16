@@ -23,6 +23,8 @@ describe("queued progress", () => {
   test("keeps a queued job held on uncertain remote reconciliation and retries it from the pump", async () => {
     const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
     expect(source).toContain("async function reconcileHeldQueuedProgress()");
+    expect(source).toContain("if (queuedProgressReconcilePromise) return;");
+    expect(source).not.toContain("return queuedProgressReconcilePromise");
     expect(source).toContain('job.status !== "queued" || !job.progressPending');
     expect(source).toContain("await reconcileHeldQueuedProgress();");
     const enqueueHandler = source.slice(

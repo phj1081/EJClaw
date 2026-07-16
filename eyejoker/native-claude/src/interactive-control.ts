@@ -47,6 +47,10 @@ export function renderAnsweredInteractiveQuestion(question: InteractiveQuestion,
   return ["❓ **Claude 질문**", question.question, "", "✅ **선택 완료**", answer].join("\n");
 }
 
+export function renderOrphanedInteractiveQuestion(question: InteractiveQuestion): string {
+  return ["❓ **Claude 질문**", question.question, "", "🚫 **질문 종료됨**"].join("\n");
+}
+
 export function textAnswerForQuestion(question: InteractiveQuestion, content: string): string | null {
   const answer = content.trim().slice(0, 4_000);
   if (!answer) return null;
