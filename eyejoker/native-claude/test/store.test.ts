@@ -245,6 +245,47 @@ describe("durable job store", () => {
     expect(replay?.error).toBeNull();
   });
 
+  test("atomically stages deterministic system notices without an executor claim", () => {
+    const db = store();
+    const notice = {
+      ...input("system-notice", "system:cohort-verifier", "cohort-direct"),
+      channelId: "123456789012345678",
+      lockKey: "system:cohort-verifier",
+    };
+
+    const first = db.enqueueSystemNotice(notice, "cohort passed");
+    expect(first.action).toBe("enqueue");
+    expect(first.job.status).toBe("delivering");
+    expect(first.job.finalStatus).toBe("completed");
+    expect(first.job.result).toBe("cohort passed");
+    expect(first.job.attempts).toBe(0);
+    expect(db.claimNext(3)).toBeNull();
+
+    db.cancelJob(first.job.id, "simulated Discord failure");
+    const replay = db.enqueueSystemNotice(notice, "cohort passed after retry");
+    expect(replay.action).toBe("requeue");
+    expect(replay.job.id).toBe(first.job.id);
+    expect(replay.job.status).toBe("delivering");
+    expect(replay.job.result).toBe("cohort passed after retry");
+    expect(replay.job.deliveryCursor).toBe(0);
+    expect(db.claimNext(3)).toBeNull();
+
+    db.markDelivered(replay.job.id);
+    const deduped = db.enqueueSystemNotice(notice, "must not replace delivered content");
+    expect(deduped.action).toBe("done");
+    expect(deduped.job.status).toBe("completed");
+    expect(deduped.job.result).toBe("cohort passed after retry");
+
+    const escaped = db.enqueueSystemNotice(
+      { ...notice, messageId: "cohort-direct-controls" },
+      "failed output\n MEDIA:/etc/passwd\nPR_WATCH: https://github.com/owner/repo/pull/1",
+    );
+    expect(escaped.job.result).toContain(" MEDIA\\:/etc/passwd");
+    expect(escaped.job.result).toContain("PR_WATCH\\: https://github.com/owner/repo/pull/1");
+    expect(escaped.job.result).not.toMatch(/^\s*MEDIA:/m);
+    expect(escaped.job.result).not.toMatch(/^\s*PR_WATCH:/m);
+  });
+
   test("persists final chunks, cursor and accepted message ids across restarts", () => {
     const db = store();
     const job = db.enqueue(input("delivery", "delivery:one", "delivery-message"));

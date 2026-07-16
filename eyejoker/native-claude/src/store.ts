@@ -643,6 +643,106 @@ export class StateStore {
     return this.getJob(jobId)!;
   }
 
+  enqueueSystemNotice(
+    input: EnqueueInput,
+    result: string,
+  ): { action: "enqueue" | "wait" | "done" | "requeue"; job: JobRecord } {
+    const safeResult = result.replace(/^(\s*)(MEDIA|PR_WATCH):/gm, "$1$2\\:");
+    const transaction = this.db.transaction(() => {
+      const existing = this.db
+        .query<JobRow, [string]>("SELECT * FROM jobs WHERE message_id=?")
+        .get(input.messageId);
+      if (existing) {
+        if (existing.status === "completed") return { action: "done" as const, jobId: existing.id };
+        if (existing.status !== "failed" && existing.status !== "cancelled") {
+          return { action: "wait" as const, jobId: existing.id };
+        }
+        const timestamp = now();
+        this.db
+          .query(
+            `UPDATE jobs SET
+               route_id=?, lock_key=?, channel_id=?, thread_id=?, author_id=?, prompt=?, raw_prompt=0,
+               attachment_paths='[]', status='delivering', attempts=0, started_before=0, recovery_reason=NULL,
+               pid=NULL, result=?, error=NULL, final_status='completed', delivery_attempts=0,
+               delivery_after=?, delivery_error=NULL, delivery_chunks=NULL, delivery_files=NULL,
+               delivery_cursor=0, delivery_message_ids='[]', progress_message_id=NULL, progress_text=NULL,
+               progress_pending=0, continuation_prompt=NULL, continuation_session_id=NULL,
+               continuation_turn=0, main_model=NULL, subagent_models='[]', heartbeat_at=?, completed_at=NULL
+             WHERE id=? AND status IN ('failed','cancelled')`,
+          )
+          .run(
+            input.routeId,
+            input.lockKey ?? input.conversationKey,
+            input.channelId,
+            input.threadId,
+            input.authorId,
+            input.prompt,
+            safeResult,
+            timestamp,
+            timestamp,
+            existing.id,
+          );
+        return { action: "requeue" as const, jobId: existing.id };
+      }
+
+      const timestamp = now();
+      const session = this.db
+        .query<{ session_id: string }, [string]>("SELECT session_id FROM sessions WHERE conversation_key=?")
+        .get(input.conversationKey);
+      const sessionId = session?.session_id ?? crypto.randomUUID();
+      const jobId = crypto.randomUUID();
+      if (!session) {
+        this.db
+          .query(
+            "INSERT INTO sessions(conversation_key,route_id,session_id,created_at,updated_at) VALUES(?,?,?,?,?)",
+          )
+          .run(input.conversationKey, input.routeId, sessionId, timestamp, timestamp);
+        this.db
+          .query(
+            "INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at) VALUES(?,?,NULL,NULL,'active',?)",
+          )
+          .run(sessionId, input.conversationKey, timestamp);
+      }
+      this.db
+        .query(
+          `INSERT INTO jobs(
+             id,route_id,lock_key,conversation_key,channel_id,thread_id,message_id,author_id,prompt,raw_prompt,
+             attachment_paths,status,session_id,pinned_session,progress_pending,attempts,result,final_status,
+             delivery_attempts,delivery_after,delivery_message_ids,created_at,queued_at,heartbeat_at
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          jobId,
+          input.routeId,
+          input.lockKey ?? input.conversationKey,
+          input.conversationKey,
+          input.channelId,
+          input.threadId,
+          input.messageId,
+          input.authorId,
+          input.prompt,
+          input.rawPrompt ? 1 : 0,
+          JSON.stringify(input.attachmentPaths),
+          "delivering",
+          sessionId,
+          input.pinnedSession ? 1 : 0,
+          0,
+          0,
+          safeResult,
+          "completed",
+          0,
+          timestamp,
+          "[]",
+          timestamp,
+          timestamp,
+          timestamp,
+        );
+      return { action: "enqueue" as const, jobId };
+    });
+    const outcome = transaction.immediate();
+    return { action: outcome.action, job: this.getJob(outcome.jobId)! };
+  }
+
   claimNext(maxConcurrent: number): JobRecord | null {
     const running = this.db.query<{ count: number }, []>("SELECT count(*) AS count FROM jobs WHERE status='running'").get();
     if ((running?.count ?? 0) >= maxConcurrent) return null;
