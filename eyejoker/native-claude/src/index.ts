@@ -62,6 +62,8 @@ import {
   type ProgressEvent,
 } from "./stream-progress";
 import { StateStore } from "./store";
+import { StartupBarrier } from "./startup-barrier";
+import { prepareConversationRoute } from "./workspace-route";
 import { formatDiscordStatus, renderStatusSnapshot } from "./status-format";
 import type { ClaudeExecution, InteractionRecord, InteractiveQuestion, JobRecord } from "./types";
 
@@ -166,7 +168,7 @@ async function cleanupConversationWorkspaces(): Promise<{ removed: number; skipp
       ttlMs: worktreeTtlMs,
       maxTotal: worktreeMaxTotal,
       maxPerRepository: worktreeMaxPerRepository,
-      beforeRemove: (path) => store.beginWorkspaceCleanup(path),
+      beforeRemove: (path, revision) => store.beginWorkspaceCleanup(path, revision),
       afterRemove: (path) => store.finishWorkspaceCleanup(path),
     });
     return { removed: cleanup.removed.length, skipped: cleanup.skipped.length };
@@ -187,6 +189,7 @@ function migrateQueuedConversationLocks(): number {
   return migrated.jobs + migrated.watches;
 }
 
+const startupBarrier = new StartupBarrier();
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -782,14 +785,16 @@ const runtime = new JobRuntime({
   store,
   routes,
   executor: (request) => executor.run(request),
-  prepareRoute: async (route, job) => {
-    await cleanupConversationWorkspaces();
-    return workspaceManager.prepare(route, job, (workspacePath) => {
-      if (!store.bindPreparedWorkspace(job.id, workspacePath)) {
-        throw new Error(`job left running state before workspace reservation: ${job.id}`);
-      }
-    });
-  },
+  prepareRoute: (route, job) =>
+    prepareConversationRoute({
+      route,
+      job,
+      store,
+      workspaceManager,
+      cleanup: async () => {
+        await cleanupConversationWorkspaces();
+      },
+    }),
   preflight: async (job) => {
     const route = routes.get(job.routeId);
     if (!route) throw new Error(`route not found: ${job.routeId}`);
@@ -969,8 +974,10 @@ client.once("clientReady", async () => {
         .catch((error) => console.warn("workspace cleanup failed", String(error)));
     }, 6 * 60 * 60 * 1_000);
     workspaceCleanupTimer.unref();
+    startupBarrier.ready();
     void runtime.runUntilIdle().catch((error) => console.error("startup pump failed", error));
   } catch (error) {
+    startupBarrier.fail(error);
     console.error("native bridge startup validation failed", error);
     client.destroy();
     setTimeout(() => process.exit(1), 100).unref();
@@ -980,6 +987,7 @@ client.once("clientReady", async () => {
 client.on("messageCreate", (message) => {
   void messageLifecycleQueue.run(message.id, async () => {
     try {
+    await startupBarrier.wait();
     if (!message.inGuild() || !client.user) return;
     if (message.author.id === client.user.id) return;
     if (!isSupportedMessageType(Number(message.type))) return;
@@ -1289,6 +1297,7 @@ client.on("messageCreate", (message) => {
         messageId: message.id,
         jobId: running.id,
         conversationKey: key,
+        authorId: message.author.id,
         content: steeringContent,
         sdkMessageId,
       });
@@ -1335,6 +1344,7 @@ client.on("messageCreate", (message) => {
 client.on("messageUpdate", (_oldMessage, updatedMessage) => {
   void messageLifecycleQueue.run(updatedMessage.id, async () => {
     try {
+    await startupBarrier.wait();
     const sourceJob = store.getByMessageId(updatedMessage.id);
     const steering = sourceJob ? null : store.getSteeringInput(updatedMessage.id);
     const job = sourceJob ?? (steering ? store.getJob(steering.jobId) : null);
@@ -1481,19 +1491,26 @@ async function handleDeletedMessage(messageId: string): Promise<void> {
 
 client.on("messageDelete", (message) => {
   void messageLifecycleQueue
-    .run(message.id, () => handleDeletedMessage(message.id))
+    .run(message.id, async () => {
+      await startupBarrier.wait();
+      await handleDeletedMessage(message.id);
+    })
     .catch((error) => console.error("message delete handler failed", error));
 });
 
 client.on("messageDeleteBulk", (messages) => {
   for (const messageId of messages.keys()) {
     void messageLifecycleQueue
-      .run(messageId, () => handleDeletedMessage(messageId))
+      .run(messageId, async () => {
+        await startupBarrier.wait();
+        await handleDeletedMessage(messageId);
+      })
       .catch((error) => console.error("bulk message delete handler failed", error));
   }
 });
 
 client.on("interactionCreate", async (interaction) => {
+  await startupBarrier.wait();
   if (!interaction.isButton()) return;
   const parsed = parseQuestionButtonId(interaction.customId);
   if (!parsed) return;

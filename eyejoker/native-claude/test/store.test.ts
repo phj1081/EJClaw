@@ -421,7 +421,7 @@ describe("durable job store", () => {
     expect(db.getSteeringInput("1527240000000000001")?.state).toBe("accepted");
   });
 
-  test("reconciles pre-migration rows only when Discord snowflakes prove the steering came later", () => {
+  test("reconciles sequence-less rows with author provenance only when Discord snowflakes prove ordering", () => {
     const path = join(tmpdir(), `native-state-${crypto.randomUUID()}.sqlite`);
     paths.push(path);
     const seeded = new StateStore(path);
@@ -461,7 +461,42 @@ describe("durable job store", () => {
     reopened.close();
   });
 
-  test("never reconciles legacy steering without author provenance into a permission approval", () => {
+  test("never reconciles a normal legacy steering row without author provenance", () => {
+    const path = join(tmpdir(), `native-state-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const seeded = new StateStore(path);
+    const queued = seeded.enqueue(input("legacy", "legacy:missing-author", "legacy-missing-author"));
+    expect(seeded.claimNext(1)?.id).toBe(queued.id);
+    const interaction = seeded.beginInteraction(queued.id, queued.conversationKey, {
+      question: "어떻게 진행할까?",
+      choices: [],
+      requestId: "legacy-missing-author",
+    });
+    seeded.setInteractionMessage(interaction.id, "1527240000000000200");
+    seeded.beginSteeringInput({
+      messageId: "1527240000000000201",
+      jobId: queued.id,
+      conversationKey: queued.conversationKey,
+      content: "지금 진행",
+      sdkMessageId: "legacy-missing-author-sdk",
+    });
+    seeded.acceptSteeringInput("1527240000000000201");
+    seeded.close();
+
+    const legacy = new Database(path);
+    legacy.query("UPDATE interactions SET event_sequence=NULL WHERE id=?").run(interaction.id);
+    legacy.query("UPDATE steering_inputs SET event_sequence=NULL, author_id=NULL WHERE message_id=?")
+      .run("1527240000000000201");
+    legacy.close();
+
+    const reopened = new StateStore(path);
+    expect(reopened.reconcilePendingInteractionSteering()).toBe(0);
+    expect(reopened.getInteraction(interaction.id)?.status).toBe("pending");
+    expect(reopened.getSteeringInput("1527240000000000201")?.state).toBe("accepted");
+    reopened.close();
+  });
+
+  test("never reconciles steering text into a permission approval", () => {
     const db = store();
     const job = db.enqueue(input("permission", "permission:thread", "permission-source"));
     db.claimNext(1);
@@ -542,6 +577,28 @@ describe("durable job store", () => {
     expect(db.sessionWorkspace(original.conversationKey)).toBe("/tmp/original-workspace");
     const followup = db.enqueue(input("branches", "branches:one", "branch-followup"));
     expect(followup.sessionId).toBe(original.sessionId);
+  });
+
+  test("hands the current workspace to an explicit fork while preserving the source revision", () => {
+    const db = store();
+    const original = db.enqueue(input("branches", "branches:isolated", "branch-isolated"));
+    const running = db.claimNext(1)!;
+    const workspace = "/tmp/managed-branch-workspace";
+    const revision = "3333333333333333333333333333333333333333";
+    db.setSessionWorkspace(original.conversationKey, workspace);
+    expect(db.setSessionBranchRevision(original.conversationKey, original.sessionId, revision)).toBe(true);
+    const forkedSessionId = crypto.randomUUID();
+    db.establishExecutionSession(running.id, forkedSessionId, workspace, true);
+
+    const source = db.sessionBranchForSession(original.conversationKey, original.sessionId);
+    const forked = db.sessionBranchForSession(original.conversationKey, forkedSessionId);
+    expect(source).toMatchObject({ status: "archived", workspacePath: null, workspaceRevision: revision });
+    expect(forked).toMatchObject({ status: "active", workspacePath: workspace, workspaceRevision: null });
+
+    db.useSessionBranch(original.conversationKey, original.sessionId.slice(0, 8));
+    expect(db.sessionWorkspace(original.conversationKey)).toBeNull();
+    expect(db.enqueue(input("branches", original.conversationKey, "branch-isolated-followup")).sessionId)
+      .toBe(original.sessionId);
   });
 
   test("uses a pinned historical session without changing the active conversation pointer", () => {
@@ -717,11 +774,14 @@ describe("durable job store", () => {
     );
     expect(first.activeWorkspacePaths()).toContain(workspacePath);
 
-    first.beginWorkspaceCleanup(workspacePath);
+    first.beginWorkspaceCleanup(workspacePath, "2222222222222222222222222222222222222222");
     expect(first.pendingWorkspaceCleanups()).toEqual([workspacePath]);
     expect(first.getJob(running.id)?.workspacePath).toBeNull();
     expect(first.sessionWorkspace(running.conversationKey)).toBeNull();
-    expect(first.listSessionBranches(running.conversationKey)[0]?.workspacePath).toBeNull();
+    expect(first.listSessionBranches(running.conversationKey)[0]).toMatchObject({
+      workspacePath: null,
+      workspaceRevision: "2222222222222222222222222222222222222222",
+    });
     expect(first.getRewindOperation(running.conversationKey, rewind.id)?.workspacePath).toBeNull();
     first.close();
 

@@ -112,6 +112,7 @@ interface SteeringInputRow {
   message_id: string;
   job_id: string;
   conversation_key: string;
+  author_id: string | null;
   content: string;
   sdk_message_id: string;
   original_sdk_message_id: string | null;
@@ -127,6 +128,7 @@ function steeringInputFromRow(row: SteeringInputRow): SteeringInputRecord {
     messageId: row.message_id,
     jobId: row.job_id,
     conversationKey: row.conversation_key,
+    authorId: row.author_id,
     content: row.content,
     sdkMessageId: row.sdk_message_id,
     originalSdkMessageId: row.original_sdk_message_id ?? row.sdk_message_id,
@@ -264,7 +266,9 @@ export class StateStore {
         parent_session_id TEXT,
         label TEXT,
         status TEXT NOT NULL CHECK(status IN ('active','archived')),
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        workspace_path TEXT,
+        workspace_revision TEXT
       );
       CREATE INDEX IF NOT EXISTS session_branches_conversation_idx
         ON session_branches(conversation_key, status, created_at);
@@ -366,6 +370,7 @@ export class StateStore {
         message_id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL,
         conversation_key TEXT NOT NULL,
+        author_id TEXT,
         content TEXT NOT NULL,
         sdk_message_id TEXT NOT NULL,
         original_sdk_message_id TEXT,
@@ -426,6 +431,7 @@ export class StateStore {
     this.ensureColumn("interactions", "event_sequence", "INTEGER");
     this.ensureColumn("interactions", "discord_settled_at", "TEXT");
     this.ensureColumn("steering_inputs", "event_sequence", "INTEGER");
+    this.ensureColumn("steering_inputs", "author_id", "TEXT");
     const closeLegacyWatcherJobs = this.db.transaction(() => {
       const malformedActiveWatcher = `
         jobs.status IN ('queued','running','delivering')
@@ -486,6 +492,7 @@ export class StateStore {
     closeLegacyWatcherJobs();
     this.ensureColumn("sessions", "workspace_path", "TEXT");
     this.ensureColumn("session_branches", "workspace_path", "TEXT");
+    this.ensureColumn("session_branches", "workspace_revision", "TEXT");
     this.ensureColumn("jobs", "workspace_path", "TEXT");
     this.ensureColumn("jobs", "session_established_at", "TEXT");
     this.ensureColumn("jobs", "progress_pending", "INTEGER NOT NULL DEFAULT 0");
@@ -523,14 +530,21 @@ export class StateStore {
     nextSessionId: string,
     timestamp: string,
     workspacePath?: string,
+    explicitFork = false,
   ): void {
     if (nextSessionId !== previousSessionId) {
+      if (explicitFork) {
+        this.db
+          .query("UPDATE session_branches SET workspace_path=NULL WHERE conversation_key=? AND session_id=?")
+          .run(conversationKey, previousSessionId);
+      }
       this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
       this.db
         .query(
-          `INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at,workspace_path)
-           VALUES(?,?,?,'fork','active',?,?)
-           ON CONFLICT(session_id) DO UPDATE SET status='active', workspace_path=excluded.workspace_path`,
+          `INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at,workspace_path,workspace_revision)
+           VALUES(?,?,?,'fork','active',?,?,NULL)
+           ON CONFLICT(session_id) DO UPDATE SET status='active', workspace_path=excluded.workspace_path,
+             workspace_revision=NULL`,
         )
         .run(nextSessionId, conversationKey, previousSessionId, timestamp, workspacePath ?? null);
     }
@@ -774,6 +788,13 @@ export class StateStore {
       .run(conversationKey, timestamp);
   }
 
+  forkRequested(conversationKey: string): boolean {
+    const row = this.db
+      .query<{ fork_next: number }, [string]>("SELECT fork_next FROM conversation_settings WHERE conversation_key=?")
+      .get(conversationKey);
+    return row?.fork_next === 1;
+  }
+
   consumeFork(conversationKey: string): boolean {
     const tx = this.db.transaction(() => {
       const row = this.db
@@ -824,6 +845,7 @@ export class StateStore {
           status: "active" | "archived";
           created_at: string;
           workspace_path: string | null;
+          workspace_revision: string | null;
         },
         [string]
       >("SELECT * FROM session_branches WHERE conversation_key=? ORDER BY created_at DESC")
@@ -836,7 +858,21 @@ export class StateStore {
         status: row.status,
         createdAt: row.created_at,
         workspacePath: row.workspace_path,
+        workspaceRevision: row.workspace_revision,
       }));
+  }
+
+  sessionBranchForSession(conversationKey: string, sessionId: string): SessionBranch | null {
+    return this.listSessionBranches(conversationKey).find((branch) => branch.sessionId === sessionId) ?? null;
+  }
+
+  setSessionBranchRevision(conversationKey: string, sessionId: string, revision: string): boolean {
+    if (!revision.trim()) throw new Error("workspace revision is empty");
+    return (
+      this.db
+        .query("UPDATE session_branches SET workspace_revision=? WHERE conversation_key=? AND session_id=?")
+        .run(revision, conversationKey, sessionId).changes === 1
+    );
   }
 
   useSessionBranch(conversationKey: string, sessionPrefix: string): SessionBranch {
@@ -987,7 +1023,12 @@ export class StateStore {
     );
   }
 
-  establishExecutionSession(id: string, establishedSessionId: string, workspacePath: string): JobRecord {
+  establishExecutionSession(
+    id: string,
+    establishedSessionId: string,
+    workspacePath: string,
+    explicitFork = false,
+  ): JobRecord {
     if (!establishedSessionId.trim()) throw new Error("established session id is empty");
     const job = this.getJob(id);
     if (!job) throw new Error(`job not found: ${id}`);
@@ -1016,6 +1057,7 @@ export class StateStore {
           establishedSessionId,
           timestamp,
           workspacePath,
+          explicitFork,
         );
       }
       this.db
@@ -1040,7 +1082,8 @@ export class StateStore {
     return this.getJob(id)!;
   }
 
-  beginWorkspaceCleanup(path: string): void {
+  beginWorkspaceCleanup(path: string, revision: string): void {
+    if (!revision.trim()) throw new Error("workspace cleanup revision is empty");
     const timestamp = now();
     const tx = this.db.transaction(() => {
       this.db
@@ -1050,7 +1093,9 @@ export class StateStore {
         )
         .run(path, timestamp);
       this.db.query("UPDATE sessions SET workspace_path=NULL, updated_at=? WHERE workspace_path=?").run(timestamp, path);
-      this.db.query("UPDATE session_branches SET workspace_path=NULL WHERE workspace_path=?").run(path);
+      this.db
+        .query("UPDATE session_branches SET workspace_path=NULL, workspace_revision=? WHERE workspace_path=?")
+        .run(revision, path);
       this.db.query("UPDATE jobs SET workspace_path=NULL WHERE workspace_path=?").run(path);
       this.db.query("UPDATE rewind_operations SET workspace_path=NULL WHERE workspace_path=?").run(path);
     });
@@ -1082,22 +1127,6 @@ export class StateStore {
       )
       .all();
     return rows.map((row) => row.workspace_path);
-  }
-
-  invalidateWorkspacePaths(paths: string[]): number {
-    if (paths.length === 0) return 0;
-    const placeholders = paths.map(() => "?").join(",");
-    const timestamp = now();
-    const tx = this.db.transaction(() => {
-      const sessions = this.db
-        .query(`UPDATE sessions SET workspace_path=NULL, updated_at=? WHERE workspace_path IN (${placeholders})`)
-        .run(timestamp, ...paths).changes;
-      this.db.query(`UPDATE session_branches SET workspace_path=NULL WHERE workspace_path IN (${placeholders})`).run(...paths);
-      this.db.query(`UPDATE jobs SET workspace_path=NULL WHERE workspace_path IN (${placeholders})`).run(...paths);
-      this.db.query(`UPDATE rewind_operations SET workspace_path=NULL WHERE workspace_path IN (${placeholders})`).run(...paths);
-      return sessions;
-    });
-    return tx();
   }
 
   setSessionWorkspace(conversationKey: string, workspacePath: string): void {
@@ -1494,22 +1523,26 @@ export class StateStore {
     messageId: string;
     jobId: string;
     conversationKey: string;
+    authorId?: string;
     content: string;
     sdkMessageId: string;
   }): SteeringInputRecord {
+    const authorId = input.authorId ?? this.getJob(input.jobId)?.authorId;
+    if (!authorId) throw new Error(`steering job author not found: ${input.jobId}`);
     const timestamp = now();
     const insert = this.db.transaction(() => {
       const sequence = Number(this.db.query("INSERT INTO event_sequences DEFAULT VALUES").run().lastInsertRowid);
       this.db
         .query(
           `INSERT OR IGNORE INTO steering_inputs(
-            message_id,job_id,conversation_key,content,sdk_message_id,original_sdk_message_id,state,event_sequence,created_at,updated_at
-          ) VALUES(?,?,?,?,?,?,'pending',?,?,?)`,
+            message_id,job_id,conversation_key,author_id,content,sdk_message_id,original_sdk_message_id,state,event_sequence,created_at,updated_at
+          ) VALUES(?,?,?,?,?,?,?,'pending',?,?,?)`,
         )
         .run(
           input.messageId,
           input.jobId,
           input.conversationKey,
+          authorId,
           input.content,
           input.sdkMessageId,
           input.sdkMessageId,
@@ -1738,6 +1771,8 @@ export class StateStore {
     const transaction = this.db.transaction(() => {
       let reconciled = 0;
       for (const interaction of pending) {
+        const job = this.getJob(interaction.job_id);
+        if (!job) continue;
         const steeringRows = this.db
           .query<SteeringInputRow, [string]>(
             `SELECT * FROM steering_inputs
@@ -1745,10 +1780,12 @@ export class StateStore {
              ORDER BY event_sequence IS NULL, event_sequence, created_at, rowid`,
           )
           .all(interaction.job_id);
-        const steering = steeringRows.find((candidate) =>
-          interaction.event_sequence !== null && candidate.event_sequence !== null
-            ? candidate.event_sequence > interaction.event_sequence
-            : discordSnowflakeIsAfter(candidate.message_id, interaction.discord_message_id),
+        const steering = steeringRows.find(
+          (candidate) =>
+            candidate.author_id === job.authorId &&
+            (interaction.event_sequence !== null && candidate.event_sequence !== null
+              ? candidate.event_sequence > interaction.event_sequence
+              : discordSnowflakeIsAfter(candidate.message_id, interaction.discord_message_id)),
         );
         if (!steering) continue;
         const question = JSON.parse(interaction.question_json) as InteractiveQuestion;

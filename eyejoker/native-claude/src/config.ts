@@ -100,7 +100,7 @@ export function loadConfig(path: string): RuntimeConfig {
   return {
     ownerId,
     allowedUserIds: [...new Set(allowed)],
-    maxConcurrent: positiveInt(raw.max_concurrent, 2, "max_concurrent"),
+    maxConcurrent: positiveInt(raw.max_concurrent, 3, "max_concurrent"),
     maxAttempts: positiveInt(raw.max_attempts, 2, "max_attempts"),
     jobTimeoutSeconds: positiveInt(raw.job_timeout_seconds, 21600, "job_timeout_seconds"),
     routes,

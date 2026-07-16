@@ -190,6 +190,32 @@ describe("conversation workspaces", () => {
     expect(Bun.file(join(recreated.cwd, "README.md")).text()).resolves.toBe("conversation revision\n");
   });
 
+  test("restores a source session revision into a distinct branch workspace and rejects dirty fork capture", async () => {
+    const { route } = fixture();
+    const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);
+    roots.push(workspaceRoot);
+    const manager = new ConversationWorkspaceManager(workspaceRoot);
+    const branchJob = job("eyejokerdb-dev:branch-thread", "branch-thread");
+    const prepared = await manager.prepare(route, branchJob);
+    const sourceRevision = git(prepared.cwd, "rev-parse", "HEAD");
+
+    git(prepared.cwd, "checkout", "-b", "fork-change");
+    writeFileSync(join(prepared.cwd, "fork-only.txt"), "fork branch\n");
+    git(prepared.cwd, "add", "fork-only.txt");
+    git(prepared.cwd, "commit", "-m", "fork change");
+
+    const restored = await manager.prepare(route, branchJob, undefined, {
+      identity: `${branchJob.threadId}:session:source-session`,
+      baseRef: sourceRevision,
+    });
+    expect(restored.cwd).not.toBe(prepared.cwd);
+    expect(git(restored.cwd, "rev-parse", "HEAD")).toBe(sourceRevision);
+    expect(existsSync(join(restored.cwd, "fork-only.txt"))).toBe(false);
+
+    writeFileSync(join(restored.cwd, "dirty.txt"), "dirty\n");
+    await expect(manager.captureCleanRevision(route, restored.cwd)).rejects.toThrow(/dirty/);
+  });
+
   test("removes only expired clean reachable worktrees and protects active paths", async () => {
     const { route } = fixture();
     const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);

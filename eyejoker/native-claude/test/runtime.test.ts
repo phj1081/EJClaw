@@ -136,6 +136,44 @@ describe("job runtime", () => {
     expect(env.delivered).toEqual(["one", "two"]);
   });
 
+  test("hands the managed workspace to an explicit SDK fork and detaches the source branch path", async () => {
+    const store = freshStore();
+    const managedPath = "/tmp/managed-explicit-fork";
+    const managedRoute = { ...route, cwd: managedPath, conversationWorktrees: true };
+    const original = enqueue(store, "explicit-fork");
+    store.setSessionWorkspace(original.conversationKey, managedPath);
+    store.setSessionBranchRevision(
+      original.conversationKey,
+      original.sessionId,
+      "4444444444444444444444444444444444444444",
+    );
+    store.markSessionHistory(original.conversationKey);
+    store.requestFork(original.conversationKey);
+    const forkedSessionId = crypto.randomUUID();
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, managedRoute]]),
+      executor: async (request) => {
+        expect(request.forkSession).toBe(true);
+        request.onSessionEstablished?.(forkedSessionId);
+        return ok(forkedSessionId);
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 1,
+      maxAttempts: 1,
+    });
+
+    await runtime.runUntilIdle();
+    expect(store.sessionBranchForSession(original.conversationKey, original.sessionId)).toMatchObject({
+      workspacePath: null,
+      workspaceRevision: "4444444444444444444444444444444444444444",
+    });
+    expect(store.sessionBranchForSession(original.conversationKey, forkedSessionId)).toMatchObject({
+      workspacePath: managedPath,
+      status: "active",
+    });
+  });
+
   test("forks an existing session once when moving it into a conversation worktree", async () => {
     const store = freshStore();
     const seen: Array<{ cwd: string; resume: boolean; forkSession: boolean | undefined }> = [];
@@ -189,7 +227,7 @@ describe("job runtime", () => {
     const queued = enqueue(store, "workspace-recreated");
     store.setSessionWorkspace(queued.conversationKey, deterministicPath);
     store.markSessionHistory(queued.conversationKey);
-    store.beginWorkspaceCleanup(deterministicPath);
+    store.beginWorkspaceCleanup(deterministicPath, "1111111111111111111111111111111111111111");
     store.finishWorkspaceCleanup(deterministicPath);
     expect(store.sessionWorkspace(queued.conversationKey)).toBeNull();
 

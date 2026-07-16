@@ -199,6 +199,9 @@ export class JobRuntime {
       sessionWorkspace !== effectiveRoute.cwd &&
       (effectiveRoute.conversationWorktrees === true || sessionWorkspace !== null);
     const requestedFork = resume && this.store.consumeFork(job.conversationKey);
+    const preserveSourceBranch =
+      requestedFork &&
+      Boolean(this.store.sessionBranchForSession(job.conversationKey, sourceSessionId)?.workspaceRevision);
     const forkSession = resume && (workspaceMoved || requestedFork);
     const recoverySteering = job.recoveryReason ? this.store.listRecoverySteeringInputs(job.id) : [];
     const taskPrompt =
@@ -240,7 +243,7 @@ export class JobRuntime {
         onHeartbeat: () => this.store.heartbeat(job.id),
         onCheckpoint: (userMessageId) => this.store.recordSessionCheckpoint(job.id, userMessageId),
         onSessionEstablished: (sessionId) =>
-          this.store.establishExecutionSession(job.id, sessionId, effectiveRoute.cwd),
+          this.store.establishExecutionSession(job.id, sessionId, effectiveRoute.cwd, preserveSourceBranch),
         onContinuation: (continuationPrompt, continuationSessionId, continuationTurn) =>
           this.store.stageContinuation(job.id, continuationPrompt, continuationSessionId, continuationTurn),
         ...(this.onQuestion

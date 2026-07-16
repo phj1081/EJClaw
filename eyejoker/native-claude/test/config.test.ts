@@ -54,6 +54,14 @@ describe("route config", () => {
     expect(resolveRoute(config, "999", null)).toBeNull();
   });
 
+  test("defaults concurrency to three when config omits it", () => {
+    const { configPath } = fixture();
+    const raw = JSON.parse(readFileSync(configPath, "utf8"));
+    delete raw.max_concurrent;
+    writeFileSync(configPath, JSON.stringify(raw));
+    expect(loadConfig(configPath).maxConcurrent).toBe(3);
+  });
+
   test("rejects duplicate channel mappings and missing project directories", () => {
     const { configPath } = fixture();
     const raw = JSON.parse(readFileSync(configPath, "utf8"));

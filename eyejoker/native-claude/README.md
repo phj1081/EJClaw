@@ -55,7 +55,7 @@ systemctl --user enable --now claude-native-cohort-verifier.timer
 systemctl --user enable --now claude-native-maldhalla-balance.timer
 ```
 
-`routes.json`에서 `conversation_worktrees=true`를 켜면 lock key가 Discord conversation 단위로 바뀌고, bridge가 private state 경로 `~/.local/state/claude-native/worktrees/`에 repository/route/conversation별 전용 detached worktree를 만든다. `worktree_ref`에는 새 conversation의 기준 ref(예: `origin/dev`)를 지정한다. 기존 session이 처음 전용 worktree로 이동할 때는 자동으로 한 번 fork하고 이후에는 같은 worktree/session을 재사용한다. TTL/quota cleanup은 SQLite tombstone과 workspace provenance 무효화를 Git 제거보다 먼저 기록하며, 중단된 cleanup은 다음 startup에서 pump 시작 전에 복구한다.
+`routes.json`에서 `conversation_worktrees=true`를 켜면 lock key가 Discord conversation 단위로 바뀌고, bridge가 private state 경로 `~/.local/state/claude-native/worktrees/`에 repository/route/conversation별 전용 detached worktree를 만든다. `worktree_ref`에는 새 conversation의 기준 ref(예: `origin/dev`)를 지정한다. 기존 session이 처음 전용 worktree로 이동할 때는 자동으로 한 번 fork하고 이후에는 같은 worktree/session을 재사용한다. 명시적 `!branch fork`는 현재 managed worktree가 clean일 때만 허용하며 source branch의 exact Git revision을 저장한다. 새 SDK branch가 현재 path를 인계하고, source branch로 돌아갈 때는 session별 별도 managed worktree를 저장 revision에서 복원하므로 branch 간 파일 트리가 섞이지 않는다. TTL/quota cleanup은 exact revision·SQLite tombstone·workspace provenance 무효화를 Git 제거보다 먼저 기록하며, 중단된 cleanup은 다음 startup에서 ingress/pump readiness barrier를 열기 전에 복구한다.
 
 ## 운영
 

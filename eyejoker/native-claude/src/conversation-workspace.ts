@@ -95,13 +95,19 @@ interface ManagedCandidate {
   lastUsedMs: number;
 }
 
+export interface WorkspacePrepareOptions {
+  workspacePath?: string;
+  identity?: string;
+  baseRef?: string;
+}
+
 export interface WorkspaceCleanupOptions {
   protectedPaths?: Iterable<string>;
   ttlMs?: number;
   maxTotal?: number;
   maxPerRepository?: number;
   nowMs?: number;
-  beforeRemove?: (path: string) => void | Promise<void>;
+  beforeRemove?: (path: string, revision: string) => void | Promise<void>;
   afterRemove?: (path: string) => void | Promise<void>;
 }
 
@@ -212,22 +218,45 @@ export class ConversationWorkspaceManager {
     }
   }
 
+  isManagedWorkspacePath(path: string): boolean {
+    const candidate = resolve(path);
+    const relativePath = relative(this.workspaceRoot, candidate);
+    return Boolean(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath);
+  }
+
+  async captureCleanRevision(route: RouteConfig, workspacePath: string): Promise<string> {
+    const repository = await this.repositoryIdentity(route);
+    return this.repositoryQueue.run(repository.commonDir, async () => {
+      await this.validate(route, workspacePath);
+      const status = await git(workspacePath, ["status", "--porcelain", "--untracked-files=all"], this.gitTimeoutMs);
+      if (status) throw new Error("현재 branch workspace가 dirty라 fork할 수 없어. 먼저 commit 또는 정리해줘.");
+      return git(workspacePath, ["rev-parse", "--verify", "HEAD^{commit}"], this.gitTimeoutMs);
+    });
+  }
+
   async prepare(
     route: RouteConfig,
     job: JobRecord,
     onPrepared?: (workspacePath: string) => void | Promise<void>,
+    options: WorkspacePrepareOptions = {},
   ): Promise<RouteConfig> {
     if (!route.conversationWorktrees) return route;
 
     const repository = await this.repositoryIdentity(route);
-    const identity = job.threadId ?? job.conversationKey;
-    const workspacePath = conversationWorkspacePath(
+    const identity = options.identity ?? job.threadId ?? job.conversationKey;
+    const defaultWorkspacePath = conversationWorkspacePath(
       this.workspaceRoot,
       repository.commonDir,
       route.id,
       identity,
     );
     const repositoryBucket = safeSegment(repository.commonDir);
+    const routeWorkspaceRoot = join(this.workspaceRoot, repositoryBucket, safeSegment(route.id));
+    const workspacePath = resolve(options.workspacePath ?? defaultWorkspacePath);
+    const relativePath = relative(routeWorkspaceRoot, workspacePath);
+    if (!relativePath || relativePath.startsWith(`..${sep}`) || relativePath === ".." || isAbsolute(relativePath)) {
+      throw new Error(`workspace path is outside the managed route root: ${workspacePath}`);
+    }
 
     await this.repositoryQueue.run(repository.commonDir, async () => {
       if (existsSync(workspacePath)) {
@@ -240,7 +269,7 @@ export class ConversationWorkspaceManager {
 
       this.assertCapacity(repositoryBucket, workspacePath);
       mkdirSync(resolve(workspacePath, ".."), { recursive: true, mode: 0o700 });
-      const baseRef = route.worktreeRef ?? "HEAD";
+      const baseRef = options.baseRef ?? route.worktreeRef ?? "HEAD";
       const restoreRef = workspaceRestoreRef(workspacePath);
       let commit: string;
       try {
@@ -289,7 +318,7 @@ export class ConversationWorkspaceManager {
 
   private async removeIfSafe(
     candidate: ManagedCandidate,
-    beforeRemove?: (path: string) => void | Promise<void>,
+    beforeRemove?: (path: string, revision: string) => void | Promise<void>,
     afterRemove?: (path: string) => void | Promise<void>,
   ): Promise<string | null> {
     this.assertManagedPath(candidate.path);
@@ -318,7 +347,7 @@ export class ConversationWorkspaceManager {
       ["update-ref", workspaceRestoreRef(candidate.path), revision],
       this.gitTimeoutMs,
     );
-    await beforeRemove?.(candidate.path);
+    await beforeRemove?.(candidate.path, revision);
     if (target.locked) {
       await git(admin.path, ["worktree", "unlock", "--", candidate.path], this.gitTimeoutMs);
     }

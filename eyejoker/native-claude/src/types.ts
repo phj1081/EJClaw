@@ -31,6 +31,7 @@ export interface SessionBranch {
   status: "active" | "archived";
   createdAt: string;
   workspacePath?: string | null;
+  workspaceRevision?: string | null;
 }
 
 export interface RewindOperation {
@@ -204,6 +205,7 @@ export interface SteeringInputRecord {
   messageId: string;
   jobId: string;
   conversationKey: string;
+  authorId: string | null;
   content: string;
   sdkMessageId: string;
   originalSdkMessageId: string;
