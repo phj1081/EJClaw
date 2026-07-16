@@ -152,23 +152,55 @@ describe("ClaudeSdkExecutor", () => {
     expect(execution.sessionId).toBe("sdk-session");
   });
 
-  test("persists system init before the first user prompt is consumed", async () => {
+  test("feeds the initial SDK input to unlock init and persists init before later events", async () => {
     const order: string[] = [];
     const factory: SdkQueryFactory = ({ prompt }) =>
       (async function* () {
+        const first = await prompt[Symbol.asyncIterator]().next();
+        order.push(`prompt-consumed:${String(first.value?.message.content)}`);
+        order.push("hook-started");
+        yield { type: "system", subtype: "hook_started" } as unknown as SDKMessage;
+        order.push("hook-response");
+        yield { type: "system", subtype: "hook_response" } as unknown as SDKMessage;
+        order.push("command-lifecycle");
+        yield { type: "command_lifecycle" } as unknown as SDKMessage;
         order.push("init-emitted");
         yield init("forked-session");
-        const first = await prompt[Symbol.asyncIterator]().next();
-        order.push(`prompt:${String(first.value?.message.content)}`);
+        order.push("result-emitted");
         yield result("forked-session");
       })() as Query;
-    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 1 });
     const execution = await executor.run(
       request({ onSessionEstablished: (sessionId) => order.push(`persist:${sessionId}`) }),
     );
 
     expect(execution.ok).toBe(true);
-    expect(order).toEqual(["init-emitted", "persist:forked-session", "prompt:SDK TASK"]);
+    expect(order).toEqual([
+      "prompt-consumed:SDK TASK",
+      "hook-started",
+      "hook-response",
+      "command-lifecycle",
+      "init-emitted",
+      "persist:forked-session",
+      "result-emitted",
+    ]);
+  });
+
+  test("fails closed when any SDK event arrives before system init", async () => {
+    let established = false;
+    const factory: SdkQueryFactory = ({ prompt }) =>
+      (async function* () {
+        await prompt[Symbol.asyncIterator]().next();
+        yield { type: "stream_event" } as unknown as SDKMessage;
+      })() as Query;
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const execution = await executor.run(
+      request({ onSessionEstablished: () => { established = true; } }),
+    );
+
+    expect(execution.ok).toBe(false);
+    expect(execution.stderr).toContain("SDK emitted stream_event/unknown before system init");
+    expect(established).toBe(false);
   });
 
   test("streams the complete initial request as one SDK turn", async () => {
