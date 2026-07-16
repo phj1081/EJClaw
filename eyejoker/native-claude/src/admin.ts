@@ -43,11 +43,18 @@ try {
     console.log(JSON.stringify(renderStatusSnapshot(store.listActive()), null, 2));
   } else if (command === "enqueue") {
     const routeId = args.shift();
+    let conversationId = "admin";
+    if (args[0] === "--conversation") {
+      args.shift();
+      conversationId = args.shift()?.trim() ?? "";
+    }
     const prompt = args.join(" ").trim();
-    if (!routeId || !prompt) throw new Error("usage: admin.ts enqueue <route> <prompt>");
+    if (!routeId || !conversationId || !prompt) {
+      throw new Error("usage: admin.ts enqueue <route> [--conversation <id>] <prompt>");
+    }
     const id = crypto.randomUUID();
     enqueue(routeId, prompt, {
-      conversationKey: `${routeId}:synthetic:${id}`,
+      conversationKey: `${routeId}:synthetic:${conversationId}`,
       messageId: `synthetic:${id}`,
     });
   } else if (command === "enqueue-file") {

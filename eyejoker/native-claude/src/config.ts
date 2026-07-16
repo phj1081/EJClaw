@@ -15,6 +15,7 @@ interface RawRoute {
   mixed_agents?: unknown;
   conversation_worktrees?: unknown;
   worktree_ref?: unknown;
+  memory_project?: unknown;
 }
 
 interface RawConfig {
@@ -73,6 +74,9 @@ function parseRoute(raw: RawRoute): RouteConfig {
   if (typeof raw.mixed_agents === "boolean") route.mixedAgents = raw.mixed_agents;
   if (typeof raw.conversation_worktrees === "boolean") route.conversationWorktrees = raw.conversation_worktrees;
   if (typeof raw.worktree_ref === "string" && raw.worktree_ref.trim()) route.worktreeRef = raw.worktree_ref.trim();
+  if (typeof raw.memory_project === "string" && raw.memory_project.trim()) {
+    route.memoryProject = raw.memory_project.trim();
+  }
   return route;
 }
 

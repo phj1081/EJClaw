@@ -67,17 +67,73 @@ describe("durable job store", () => {
     expect(db.getJob(queued.id)?.lockKey).toBe("cleanapo:two");
   });
 
-  test("persists a queued progress card before execution starts", () => {
+  test("atomically migrates active watcher locks with queued jobs", () => {
     const db = store();
-    const queued = db.enqueue(input("cleanapo", "cleanapo:queued", "queued-card"));
+    const conversationKey = "cleanapo:watch-thread";
+    const origin = db.enqueue({ ...input("cleanapo", conversationKey, "watch-origin"), lockKey: "cleanapo" });
+    db.cancelJob(origin.id, "seed watch");
+    db.upsertPullRequestWatch(
+      { ...origin, lockKey: "cleanapo" },
+      { repo: "owner/repo", number: 17, url: "https://github.com/owner/repo/pull/17" },
+    );
+    const normal = db.enqueue({ ...input("cleanapo", conversationKey, "normal-thread-job"), lockKey: conversationKey });
 
-    db.setProgress(queued.id, "discord-progress", "⏳ 대기 중");
+    expect(db.migrateConversationLocks((_routeId, key) => key)).toEqual({ jobs: 0, watches: 1 });
+    const watch = db.listActivePullRequestWatches()[0]!;
+    expect(watch.lockKey).toBe(conversationKey);
+    db.enqueue({
+      ...input("cleanapo", conversationKey, "watch-wake"),
+      lockKey: watch.lockKey,
+      sessionId: watch.sessionId,
+      pinnedSession: true,
+    });
+
+    expect(db.claimNext(2)?.id).toBe(normal.id);
+    expect(db.claimNext(2)).toBeNull();
+  });
+
+  test("holds a queued job until the durable progress card is acknowledged", () => {
+    const db = store();
+    const queued = db.enqueue({
+      ...input("cleanapo", "cleanapo:queued", "queued-card"),
+      holdForProgress: true,
+    });
+
+    expect(queued.progressPending).toBe(true);
+    expect(db.hasRunnable()).toBe(false);
+    expect(db.claimNext(1)).toBeNull();
+    expect(db.acknowledgeQueuedProgress(queued.id, "discord-progress", "⏳ 대기 중")).toBe(true);
 
     expect(db.getJob(queued.id)).toMatchObject({
       status: "queued",
       progressMessageId: "discord-progress",
       progressText: "⏳ 대기 중",
+      progressPending: false,
     });
+    expect(db.claimNext(1)?.id).toBe(queued.id);
+  });
+
+  test("releases a progress hold after Discord progress delivery fails", () => {
+    const db = store();
+    const queued = db.enqueue({
+      ...input("cleanapo", "cleanapo:queued-fallback", "queued-fallback"),
+      holdForProgress: true,
+    });
+    expect(db.releaseProgressHold(queued.id)).toBe(true);
+    expect(db.releaseProgressHold(queued.id)).toBe(false);
+    expect(db.claimNext(1)?.id).toBe(queued.id);
+  });
+
+  test("rejects a delayed progress ACK after cancellation", () => {
+    const db = store();
+    const queued = db.enqueue({
+      ...input("cleanapo", "cleanapo:queued-cancel", "queued-cancel"),
+      holdForProgress: true,
+    });
+    expect(db.cancelJob(queued.id, "cancel during Discord send")?.status).toBe("cancelled");
+    expect(db.acknowledgeQueuedProgress(queued.id, "orphan-card", "⏳ 대기 중")).toBe(false);
+    expect(db.setProgress(queued.id, "orphan-card", "⏳ 대기 중")).toBe(false);
+    expect(db.getJob(queued.id)?.progressMessageId).toBeNull();
   });
 
   test("tracks the workspace bound to a conversation session", () => {
@@ -163,9 +219,15 @@ describe("durable job store", () => {
     db.cancelByMessageId("cohort-notice", "simulated delivery failure");
     expect(db.getJob(job.id)?.status).toBe("cancelled");
 
-    const replay = db.requeueTerminalByMessageId("cohort-notice", "durable notice replay", "new notice");
+    const replay = db.requeueTerminalByMessageId(
+      "cohort-notice",
+      "durable notice replay",
+      "new notice",
+      "notice:conversation-lock",
+    );
     expect(replay?.id).toBe(job.id);
     expect(replay?.status).toBe("queued");
+    expect(replay?.lockKey).toBe("notice:conversation-lock");
     expect(replay?.prompt).toBe("new notice");
     expect(replay?.attempts).toBe(0);
     expect(replay?.error).toBeNull();
@@ -267,17 +329,23 @@ describe("durable job store", () => {
     const db = store();
     const original = db.enqueue(input("branches", "branches:one", "branch-message"));
     const running = db.claimNext(1)!;
+    db.setSessionWorkspace(original.conversationKey, "/tmp/original-workspace");
     const forkedSessionId = crypto.randomUUID();
     db.stageDelivery(
       running.id,
       { ok: true, result: "forked", sessionId: forkedSessionId, stderr: "", exitCode: 0 },
       "completed",
+      "/tmp/forked-workspace",
     );
     const branches = db.listSessionBranches(original.conversationKey);
     expect(branches.map((branch) => branch.sessionId).sort()).toEqual([original.sessionId, forkedSessionId].sort());
-    expect(branches.find((branch) => branch.sessionId === forkedSessionId)?.status).toBe("active");
+    expect(branches.find((branch) => branch.sessionId === forkedSessionId)).toMatchObject({
+      status: "active",
+      workspacePath: "/tmp/forked-workspace",
+    });
 
     db.useSessionBranch(original.conversationKey, original.sessionId.slice(0, 8));
+    expect(db.sessionWorkspace(original.conversationKey)).toBe("/tmp/original-workspace");
     const followup = db.enqueue(input("branches", "branches:one", "branch-followup"));
     expect(followup.sessionId).toBe(original.sessionId);
   });
@@ -427,8 +495,11 @@ describe("durable job store", () => {
       filesChanged: ["src/a.ts"],
       insertions: 1,
       deletions: 2,
+    }, "/tmp/rewind-workspace");
+    expect(db.getRewindOperation(job.conversationKey, operation.id.slice(0, 8))).toMatchObject({
+      checkpoint,
+      workspacePath: "/tmp/rewind-workspace",
     });
-    expect(db.getRewindOperation(job.conversationKey, operation.id.slice(0, 8))?.checkpoint).toBe(checkpoint);
     expect(db.markRewindApplied(operation.id)).toBe(true);
     expect(db.markRewindApplied(operation.id)).toBe(false);
   });

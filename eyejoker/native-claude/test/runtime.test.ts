@@ -33,11 +33,24 @@ function ok(sessionId: string, result = "done"): ClaudeExecution {
 
 function setup(executions: ClaudeExecution[]) {
   const store = freshStore();
-  const calls: Array<{ resume: boolean; prompt: string; sessionId: string }> = [];
-  const executor = async (request: { resume: boolean; prompt: string; sessionId: string }) => {
-    calls.push(request);
+  const calls: Array<{
+    resume: boolean;
+    prompt: string;
+    sessionId: string;
+    forkSession: boolean | undefined;
+    continuationTurn: number | undefined;
+  }> = [];
+  const executor: ClaudeExecutor = async (request) => {
+    calls.push({
+      resume: request.resume,
+      prompt: request.prompt,
+      sessionId: request.sessionId,
+      forkSession: request.forkSession,
+      continuationTurn: request.continuationTurn,
+    });
     const next = executions.shift();
     if (!next) throw new Error("no fake execution");
+    request.onSessionEstablished?.(next.sessionId);
     return next;
   };
   const delivered: string[] = [];
@@ -152,6 +165,90 @@ describe("job runtime", () => {
       { cwd: "/tmp/conversation-worktree", resume: true, forkSession: false },
     ]);
     expect(store.sessionWorkspace(first.conversationKey)).toBe("/tmp/conversation-worktree");
+  });
+
+  test("keeps workspace migration pending until a forked SDK session is established", async () => {
+    const store = freshStore();
+    const forks: Array<boolean | undefined> = [];
+    let attempt = 0;
+    const movedRoute = { ...route, conversationWorktrees: true };
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, movedRoute]]),
+      prepareRoute: async (baseRoute) => ({ ...baseRoute, cwd: "/tmp/conversation-worktree" }),
+      executor: async (request) => {
+        attempt += 1;
+        forks.push(request.forkSession);
+        if (attempt === 1) {
+          return { ok: false, result: "pre-init timeout", sessionId: request.sessionId, stderr: "timeout", exitCode: 124 };
+        }
+        request.onSessionEstablished?.("forked-session");
+        return ok("forked-session");
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 1,
+      maxAttempts: 2,
+    });
+
+    const first = enqueue(store, "workspace-init-failure");
+    store.setSessionWorkspace(first.conversationKey, "/tmp/original-checkout");
+    store.markSessionHistory(first.conversationKey);
+    await runtime.runUntilIdle();
+
+    expect(forks).toEqual([true, true]);
+    expect(store.sessionWorkspace(first.conversationKey)).toBe("/tmp/conversation-worktree");
+    expect(store.listSessionBranches(first.conversationKey).find((branch) => branch.status === "active")).toMatchObject({
+      sessionId: "forked-session",
+      workspacePath: "/tmp/conversation-worktree",
+    });
+  });
+
+  test("forks a pinned legacy session when its workspace moves", async () => {
+    const store = freshStore();
+    const movedRoute = { ...route, conversationWorktrees: true };
+    const original = enqueue(store, "pinned-origin");
+    store.setSessionWorkspace(original.conversationKey, "/tmp/original-checkout");
+    store.markSessionHistory(original.conversationKey);
+    store.cancelJob(original.id, "seed only");
+    let seenFork: boolean | undefined;
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, movedRoute]]),
+      prepareRoute: async (baseRoute) => ({ ...baseRoute, cwd: "/tmp/conversation-worktree" }),
+      executor: async (request) => {
+        seenFork = request.forkSession;
+        request.onSessionEstablished?.("pinned-fork");
+        return ok("pinned-fork");
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 1,
+      maxAttempts: 1,
+    });
+    store.enqueue({
+      routeId: route.id,
+      conversationKey: original.conversationKey,
+      channelId: "thread",
+      threadId: "thread",
+      messageId: "pinned-wake",
+      authorId: "owner",
+      prompt: "watcher wake",
+      attachmentPaths: [],
+      sessionId: original.sessionId,
+      pinnedSession: true,
+    });
+
+    await runtime.runUntilIdle();
+
+    expect(seenFork).toBe(true);
+    expect(store.sessionWorkspace(original.conversationKey)).toBe("/tmp/original-checkout");
+    expect(store.getByMessageId("pinned-wake")).toMatchObject({
+      sessionId: "pinned-fork",
+      workspacePath: "/tmp/conversation-worktree",
+    });
+    expect(store.listSessionBranches(original.conversationKey).find((branch) => branch.sessionId === "pinned-fork")).toMatchObject({
+      status: "archived",
+      workspacePath: "/tmp/conversation-worktree",
+    });
   });
 
   test("does not fork a legacy shared-checkout session only because workspace metadata is absent", async () => {
@@ -341,6 +438,7 @@ describe("job runtime", () => {
     const resumeModes: boolean[] = [];
     const executor: ClaudeExecutor = async (request) => {
       resumeModes.push(request.resume);
+      request.onSessionEstablished?.(request.sessionId);
       return request.job.messageId === "failed-first"
         ? { ok: false, result: "failed", sessionId: request.sessionId, stderr: "", exitCode: 1 }
         : ok(request.sessionId);

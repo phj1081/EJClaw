@@ -31,6 +31,7 @@ function fixture() {
           require_mention: false,
           conversation_worktrees: true,
           worktree_ref: "origin/dev",
+          memory_project: "eyejokerdb",
         },
       ],
     }),
@@ -47,6 +48,7 @@ describe("route config", () => {
     expect(config.routes[0]?.fallbackModel).toBe("gpt-5.6-sol");
     expect(config.routes[0]?.conversationWorktrees).toBe(true);
     expect(config.routes[0]?.worktreeRef).toBe("origin/dev");
+    expect(config.routes[0]?.memoryProject).toBe("eyejokerdb");
     expect(resolveRoute(config, "thread-7", "100")?.id).toBe("cleanapo");
     expect(resolveRoute(config, "100", null)?.id).toBe("cleanapo");
     expect(resolveRoute(config, "999", null)).toBeNull();

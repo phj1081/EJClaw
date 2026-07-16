@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -126,5 +126,123 @@ describe("conversation workspaces", () => {
     expect(git(first.cwd, "rev-parse", "--git-common-dir")).toContain(join(root, ".git"));
     expect(git(second.cwd, "status", "--porcelain")).toBe("");
     expect(git(root, "status", "--porcelain")).toBe("");
+  });
+
+  test("resolves HEAD and configured refs from the route worktree", async () => {
+    const { root, route } = fixture();
+    const routeWorktree = join(tmpdir(), `route-worktree-${crypto.randomUUID()}`);
+    const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);
+    roots.push(routeWorktree, workspaceRoot);
+    git(root, "worktree", "add", "--detach", routeWorktree, "HEAD");
+    writeFileSync(join(routeWorktree, "README.md"), "route head\n");
+    git(routeWorktree, "add", "README.md");
+    git(routeWorktree, "commit", "-m", "route head");
+    const routeHead = git(routeWorktree, "rev-parse", "HEAD");
+
+    writeFileSync(join(root, "README.md"), "primary head\n");
+    git(root, "add", "README.md");
+    git(root, "commit", "-m", "primary head");
+    expect(git(root, "rev-parse", "HEAD")).not.toBe(routeHead);
+
+    const manager = new ConversationWorkspaceManager(workspaceRoot);
+    const prepared = await manager.prepare(
+      { ...route, cwd: routeWorktree, worktreeRef: "HEAD" },
+      job("eyejokerdb-dev:route-head", "route-head"),
+    );
+    expect(git(prepared.cwd, "rev-parse", "HEAD")).toBe(routeHead);
+  });
+
+  test("rejects a pre-created symlink at the deterministic workspace path", async () => {
+    const { root, route } = fixture();
+    const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);
+    roots.push(workspaceRoot);
+    const expected = conversationWorkspacePath(workspaceRoot, join(root, ".git"), route.id, "thread-symlink");
+    mkdirSync(join(expected, ".."), { recursive: true });
+    symlinkSync(root, expected, "dir");
+
+    const manager = new ConversationWorkspaceManager(workspaceRoot);
+    await expect(manager.prepare(route, job("eyejokerdb-dev:thread-symlink", "thread-symlink"))).rejects.toThrow(
+      "symlink",
+    );
+  });
+
+  test("removes only expired clean reachable worktrees and protects active paths", async () => {
+    const { route } = fixture();
+    const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);
+    roots.push(workspaceRoot);
+    const manager = new ConversationWorkspaceManager(workspaceRoot);
+    const first = await manager.prepare(route, job("eyejokerdb-dev:cleanup-a", "cleanup-a"));
+    const second = await manager.prepare(route, job("eyejokerdb-dev:cleanup-b", "cleanup-b"));
+    const old = new Date(1_000);
+    utimesSync(first.cwd, old, old);
+    utimesSync(second.cwd, old, old);
+
+    const cleanup = await manager.cleanup({
+      protectedPaths: [second.cwd],
+      ttlMs: 1,
+      nowMs: Date.now(),
+    });
+
+    expect(cleanup.removed).toEqual([first.cwd]);
+    expect(cleanup.skipped).toContainEqual({ path: second.cwd, reason: "active job protects workspace" });
+    expect(existsSync(first.cwd)).toBe(false);
+    expect(existsSync(second.cwd)).toBe(true);
+  });
+
+  test("serializes cleanup with prepare and refuses a workspace touched after its scan", async () => {
+    const { root, route } = fixture();
+    const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);
+    roots.push(workspaceRoot);
+    const manager = new ConversationWorkspaceManager(workspaceRoot);
+    const prepared = await manager.prepare(route, job("eyejokerdb-dev:cleanup-race", "cleanup-race"));
+    const old = new Date(1_000);
+    utimesSync(prepared.cwd, old, old);
+
+    const internal = manager as unknown as {
+      repositoryQueue: {
+        run<T>(key: string, task: () => Promise<T> | T): Promise<T>;
+      };
+    };
+    const originalRun = internal.repositoryQueue.run.bind(internal.repositoryQueue);
+    let cleanupQueueKey = "";
+    internal.repositoryQueue.run = async <T>(key: string, task: () => Promise<T> | T): Promise<T> => {
+      cleanupQueueKey = key;
+      const touched = new Date();
+      utimesSync(prepared.cwd, touched, touched);
+      return originalRun(key, task);
+    };
+
+    const cleanup = await manager.cleanup({ ttlMs: 1, nowMs: Date.now() });
+    expect(cleanup.removed).toEqual([]);
+    expect(cleanup.skipped).toContainEqual({
+      path: prepared.cwd,
+      reason: "workspace was touched after cleanup scan",
+    });
+    expect(cleanupQueueKey).toBe(join(root, ".git"));
+    expect(existsSync(prepared.cwd)).toBe(true);
+  });
+
+  test("skips dirty worktrees and frees quota through safe cleanup", async () => {
+    const { route } = fixture();
+    const workspaceRoot = join(tmpdir(), `managed-conversation-workspaces-${crypto.randomUUID()}`);
+    roots.push(workspaceRoot);
+    const manager = new ConversationWorkspaceManager(workspaceRoot, 120_000, {
+      maxTotal: 2,
+      maxPerRepository: 2,
+    });
+    const first = await manager.prepare(route, job("eyejokerdb-dev:quota-a", "quota-a"));
+    const dirty = await manager.prepare(route, job("eyejokerdb-dev:quota-b", "quota-b"));
+    writeFileSync(join(dirty.cwd, "UNTRACKED.txt"), "keep me\n");
+    await expect(manager.prepare(route, job("eyejokerdb-dev:quota-c", "quota-c"))).rejects.toThrow("quota");
+
+    const old = new Date(1_000);
+    utimesSync(first.cwd, old, old);
+    utimesSync(dirty.cwd, old, old);
+    const cleanup = await manager.cleanup({ ttlMs: 1, nowMs: Date.now(), maxTotal: 2, maxPerRepository: 2 });
+    expect(cleanup.removed).toEqual([first.cwd]);
+    expect(cleanup.skipped.find((entry) => entry.path === dirty.cwd)?.reason).toContain("dirty");
+
+    const third = await manager.prepare(route, job("eyejokerdb-dev:quota-c", "quota-c"));
+    expect(existsSync(third.cwd)).toBe(true);
   });
 });

@@ -20,6 +20,7 @@ export interface RouteConfig {
   mixedAgents?: boolean;
   conversationWorktrees?: boolean;
   worktreeRef?: string;
+  memoryProject?: string;
 }
 
 export interface SessionBranch {
@@ -29,6 +30,7 @@ export interface SessionBranch {
   label: string | null;
   status: "active" | "archived";
   createdAt: string;
+  workspacePath?: string | null;
 }
 
 export interface RewindOperation {
@@ -46,6 +48,7 @@ export interface RewindOperation {
   status: "previewed" | "applied";
   createdAt: string;
   updatedAt: string;
+  workspacePath?: string | null;
 }
 
 export interface ConversationSettings {
@@ -80,6 +83,7 @@ export interface EnqueueInput {
   githubWatchRepo?: string;
   githubWatchNumber?: number;
   expectedHeadSha?: string;
+  holdForProgress?: boolean;
 }
 
 export type JobStatus =
@@ -134,6 +138,9 @@ export interface JobRecord {
   deliveryMessageIds: string[];
   progressMessageId: string | null;
   progressText: string | null;
+  progressPending?: boolean;
+  workspacePath?: string | null;
+  sessionEstablishedAt?: string | null;
   mainModel: string | null;
   subagentModels: string[];
   createdAt: string;
@@ -226,6 +233,7 @@ export interface ExecutionRequest {
   onSpawn?: (pid: number) => void;
   onHeartbeat?: () => void;
   onCheckpoint?: (userMessageId: string) => void;
+  onSessionEstablished?: (sessionId: string) => void;
   onContinuation?: (prompt: string, sessionId: string, turn: number) => void;
   onQuestion?: (question: InteractiveQuestion) => Promise<string>;
   onProgress?: (

@@ -63,6 +63,7 @@ function request(overrides: Partial<ExecutionRequest> = {}): ExecutionRequest {
       permissionMode: "bypassPermissions",
       effort: "high",
       requireMention: false,
+      memoryProject: "eyejokerdb",
     },
     prompt: "SDK TASK",
     sessionId: "11111111-1111-4111-8111-111111111111",
@@ -88,6 +89,27 @@ function result(sessionId = "sdk-session"): SDKMessage {
     permission_denials: [],
     uuid: crypto.randomUUID(),
   };
+}
+
+function init(sessionId = "sdk-session"): SDKMessage {
+  return {
+    type: "system",
+    subtype: "init",
+    agents: [],
+    apiKeySource: "none",
+    claude_code_version: "2.1.210",
+    cwd: "/tmp",
+    tools: [],
+    mcp_servers: [],
+    model: "claude-fable-5",
+    permissionMode: "bypassPermissions",
+    slash_commands: [],
+    output_style: "default",
+    skills: [],
+    plugins: [],
+    uuid: crypto.randomUUID(),
+    session_id: sessionId,
+  } as unknown as SDKMessage;
 }
 
 describe("ClaudeSdkExecutor", () => {
@@ -120,12 +142,36 @@ describe("ClaudeSdkExecutor", () => {
     expect(options?.agents?.["fable-worker"]?.model).toBe("claude-fable-5");
     expect(options?.agents?.["gpt-worker"]?.model).toBe("gpt-5.6-sol");
     expect(options?.pathToClaudeCodeExecutable).toBe("/home/ejclaw/.hermes/node/bin/claude");
+    expect(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
+    expect(options?.env?.AGENTMEMORY_PROJECT_NAME).toBe("eyejokerdb");
+    expect(options?.settings).toEqual({
+      enabledPlugins: { "discord@claude-plugins-official": false },
+    });
     expect(execution.ok).toBe(true);
     expect(execution.result).toBe("SDK_OK");
     expect(execution.sessionId).toBe("sdk-session");
   });
 
-  test("streams a long autonomous goal command and task as separate SDK user messages", async () => {
+  test("persists system init before the first user prompt is consumed", async () => {
+    const order: string[] = [];
+    const factory: SdkQueryFactory = ({ prompt }) =>
+      (async function* () {
+        order.push("init-emitted");
+        yield init("forked-session");
+        const first = await prompt[Symbol.asyncIterator]().next();
+        order.push(`prompt:${String(first.value?.message.content)}`);
+        yield result("forked-session");
+      })() as Query;
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    const execution = await executor.run(
+      request({ onSessionEstablished: (sessionId) => order.push(`persist:${sessionId}`) }),
+    );
+
+    expect(execution.ok).toBe(true);
+    expect(order).toEqual(["init-emitted", "persist:forked-session", "prompt:SDK TASK"]);
+  });
+
+  test("streams the complete initial request as one SDK turn", async () => {
     const task = `사용자 요청:\n${"긴 Discord context와 요청 ".repeat(220)}`;
     const autonomousPrompt = `/goal 짧고 검증 가능한 완료 조건\n\n${task}`;
     const messages: SDKUserMessage[] = [];
@@ -133,7 +179,6 @@ describe("ClaudeSdkExecutor", () => {
     const factory: SdkQueryFactory = ({ prompt }) =>
       (async function* () {
         const iterator = prompt[Symbol.asyncIterator]();
-        messages.push((await iterator.next()).value!);
         messages.push((await iterator.next()).value!);
         yield result();
       })() as Query;
@@ -143,14 +188,10 @@ describe("ClaudeSdkExecutor", () => {
     );
 
     expect(execution.ok).toBe(true);
-    expect(splitInitialSdkMessages(autonomousPrompt)).toEqual(["/goal 짧고 검증 가능한 완료 조건", task]);
-    expect(messages.map((message) => message.message.content)).toEqual([
-      "/goal 짧고 검증 가능한 완료 조건",
-      task,
-    ]);
-    expect(String(messages[0]?.message.content).length).toBeLessThan(4_000);
-    expect(String(messages[1]?.message.content).length).toBeGreaterThan(4_000);
-    expect(checkpoints).toHaveLength(2);
+    expect(splitInitialSdkMessages(autonomousPrompt)).toEqual([autonomousPrompt]);
+    expect(messages.map((message) => message.message.content)).toEqual([autonomousPrompt]);
+    expect(String(messages[0]?.message.content)).toContain(task);
+    expect(checkpoints).toHaveLength(1);
   });
 
   test("fails closed when a local goal command error arrives as an SDK success result", async () => {

@@ -59,6 +59,9 @@ interface JobRow {
   delivery_message_ids: string | null;
   progress_message_id: string | null;
   progress_text: string | null;
+  progress_pending: number;
+  workspace_path: string | null;
+  session_established_at: string | null;
   main_model: string | null;
   subagent_models: string | null;
   created_at: string;
@@ -213,6 +216,9 @@ function fromRow(row: JobRow): JobRecord {
     deliveryMessageIds: row.delivery_message_ids ? (JSON.parse(row.delivery_message_ids) as string[]) : [],
     progressMessageId: row.progress_message_id,
     progressText: row.progress_text,
+    progressPending: row.progress_pending === 1,
+    workspacePath: row.workspace_path,
+    sessionEstablishedAt: row.session_established_at,
     mainModel: row.main_model,
     subagentModels: row.subagent_models ? (JSON.parse(row.subagent_models) as string[]) : [],
     createdAt: row.created_at,
@@ -307,6 +313,7 @@ export class StateStore {
         delivery_attempts INTEGER NOT NULL DEFAULT 0,
         delivery_after TEXT,
         delivery_error TEXT,
+        progress_pending INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         queued_at TEXT NOT NULL,
         started_at TEXT,
@@ -450,8 +457,22 @@ export class StateStore {
         .run(now());
     });
     closeLegacyWatcherJobs();
-    this.ensureColumn("pull_request_watches", "session_id", "TEXT NOT NULL DEFAULT ''");
     this.ensureColumn("sessions", "workspace_path", "TEXT");
+    this.ensureColumn("session_branches", "workspace_path", "TEXT");
+    this.ensureColumn("jobs", "workspace_path", "TEXT");
+    this.ensureColumn("jobs", "session_established_at", "TEXT");
+    this.ensureColumn("jobs", "progress_pending", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("rewind_operations", "workspace_path", "TEXT");
+    this.db.exec(`
+      UPDATE session_branches
+      SET workspace_path=(
+        SELECT sessions.workspace_path FROM sessions
+        WHERE sessions.conversation_key=session_branches.conversation_key
+          AND sessions.session_id=session_branches.session_id
+      )
+      WHERE workspace_path IS NULL AND status='active';
+    `);
+    this.ensureColumn("pull_request_watches", "session_id", "TEXT NOT NULL DEFAULT ''");
     this.db
       .query(
         `UPDATE pull_request_watches
@@ -480,13 +501,16 @@ export class StateStore {
       this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
       this.db
         .query(
-          `INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at)
-           VALUES(?,?,?,'fork','active',?)
-           ON CONFLICT(session_id) DO UPDATE SET status='active'`,
+          `INSERT INTO session_branches(session_id,conversation_key,parent_session_id,label,status,created_at,workspace_path)
+           VALUES(?,?,?,'fork','active',?,?)
+           ON CONFLICT(session_id) DO UPDATE SET status='active', workspace_path=excluded.workspace_path`,
         )
-        .run(nextSessionId, conversationKey, previousSessionId, timestamp);
+        .run(nextSessionId, conversationKey, previousSessionId, timestamp, workspacePath ?? null);
     }
     if (workspacePath) {
+      this.db
+        .query("UPDATE session_branches SET workspace_path=? WHERE session_id=? AND conversation_key=?")
+        .run(workspacePath, nextSessionId, conversationKey);
       this.db
         .query(
           "UPDATE sessions SET session_id=?, has_history=1, workspace_path=?, updated_at=? WHERE conversation_key=?",
@@ -543,8 +567,8 @@ export class StateStore {
           `INSERT INTO jobs(
             id,route_id,lock_key,conversation_key,channel_id,thread_id,message_id,author_id,prompt,raw_prompt,
             attachment_paths,status,session_id,pinned_session,github_watch_repo,github_watch_number,expected_head_sha,
-            created_at,queued_at
-          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            progress_pending,created_at,queued_at
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           jobId,
@@ -564,6 +588,7 @@ export class StateStore {
           input.githubWatchRepo ?? null,
           input.githubWatchNumber ?? null,
           input.expectedHeadSha ?? null,
+          input.holdForProgress ? 1 : 0,
           timestamp,
           timestamp,
         );
@@ -583,7 +608,7 @@ export class StateStore {
     const row = this.db
       .query<JobRow, []>(
         `SELECT q.* FROM jobs q
-         WHERE q.status='queued'
+         WHERE q.status='queued' AND q.progress_pending=0
            AND NOT EXISTS (
              SELECT 1 FROM jobs active WHERE active.status='running' AND active.lock_key=q.lock_key
            )
@@ -595,7 +620,7 @@ export class StateStore {
     const changed = this.db
       .query(
         `UPDATE jobs SET status='running', attempts=attempts+1, started_at=COALESCE(started_at,?), heartbeat_at=?, pid=NULL
-         WHERE id=? AND status='queued'`,
+         WHERE id=? AND status='queued' AND progress_pending=0`,
       )
       .run(timestamp, timestamp, row.id);
     return changed.changes === 1 ? this.getJob(row.id) : null;
@@ -701,7 +726,8 @@ export class StateStore {
         .query(
           `INSERT INTO sessions(conversation_key, route_id, session_id, has_history, created_at, updated_at)
            VALUES(?,?,?,0,?,?)
-           ON CONFLICT(conversation_key) DO UPDATE SET session_id=excluded.session_id, has_history=0, updated_at=excluded.updated_at`,
+           ON CONFLICT(conversation_key) DO UPDATE SET session_id=excluded.session_id, has_history=0,
+             workspace_path=NULL, updated_at=excluded.updated_at`,
         )
         .run(conversationKey, routeId, sessionId, timestamp, timestamp);
       this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
@@ -725,6 +751,7 @@ export class StateStore {
           label: string | null;
           status: "active" | "archived";
           created_at: string;
+          workspace_path: string | null;
         },
         [string]
       >("SELECT * FROM session_branches WHERE conversation_key=? ORDER BY created_at DESC")
@@ -736,6 +763,7 @@ export class StateStore {
         label: row.label,
         status: row.status,
         createdAt: row.created_at,
+        workspacePath: row.workspace_path,
       }));
   }
 
@@ -748,8 +776,8 @@ export class StateStore {
       this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
       this.db.query("UPDATE session_branches SET status='active' WHERE session_id=?").run(selected.sessionId);
       this.db
-        .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
-        .run(selected.sessionId, timestamp, conversationKey);
+        .query("UPDATE sessions SET session_id=?, has_history=1, workspace_path=?, updated_at=? WHERE conversation_key=?")
+        .run(selected.sessionId, selected.workspacePath ?? null, timestamp, conversationKey);
     });
     tx();
     return { ...selected, status: "active" };
@@ -791,15 +819,17 @@ export class StateStore {
     sessionId: string,
     checkpoint: string,
     preview: RewindOperation["preview"],
+    workspacePath?: string,
   ): RewindOperation {
     const id = crypto.randomUUID();
     const timestamp = now();
     this.db
       .query(
-        `INSERT INTO rewind_operations(id,conversation_key,session_id,checkpoint,preview_json,status,created_at,updated_at)
-         VALUES(?,?,?,?,?,'previewed',?,?)`,
+        `INSERT INTO rewind_operations(
+           id,conversation_key,session_id,checkpoint,preview_json,status,created_at,updated_at,workspace_path
+         ) VALUES(?,?,?,?,?,'previewed',?,?,?)`,
       )
-      .run(id, conversationKey, sessionId, checkpoint, JSON.stringify(preview), timestamp, timestamp);
+      .run(id, conversationKey, sessionId, checkpoint, JSON.stringify(preview), timestamp, timestamp, workspacePath ?? null);
     return this.getRewindOperation(conversationKey, id)!;
   }
 
@@ -815,6 +845,7 @@ export class StateStore {
           status: "previewed" | "applied";
           created_at: string;
           updated_at: string;
+          workspace_path: string | null;
         },
         [string, string]
       >("SELECT * FROM rewind_operations WHERE conversation_key=? AND id LIKE ? ORDER BY created_at DESC LIMIT 2")
@@ -830,6 +861,7 @@ export class StateStore {
       status: row.status,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      workspacePath: row.workspace_path,
     };
   }
 
@@ -863,10 +895,143 @@ export class StateStore {
     return row?.workspace_path ?? null;
   }
 
+  sessionWorkspaceForSession(conversationKey: string, sessionId: string): string | null {
+    const row = this.db
+      .query<{ workspace_path: string | null }, [string, string]>(
+        "SELECT workspace_path FROM session_branches WHERE conversation_key=? AND session_id=?",
+      )
+      .get(conversationKey, sessionId);
+    return row?.workspace_path ?? null;
+  }
+
+  establishExecutionSession(id: string, establishedSessionId: string, workspacePath: string): JobRecord {
+    if (!establishedSessionId.trim()) throw new Error("established session id is empty");
+    const job = this.getJob(id);
+    if (!job) throw new Error(`job not found: ${id}`);
+    const sourceSessionId = job.continuationSessionId ?? job.sessionId;
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      if (job.pinnedSession) {
+        if (establishedSessionId === sourceSessionId) {
+          this.db
+            .query("UPDATE session_branches SET workspace_path=? WHERE conversation_key=? AND session_id=?")
+            .run(workspacePath, job.conversationKey, sourceSessionId);
+        } else {
+          this.db
+            .query(
+              `INSERT INTO session_branches(
+                 session_id,conversation_key,parent_session_id,label,status,created_at,workspace_path
+               ) VALUES(?,?,?,'pinned fork','archived',?,?)
+               ON CONFLICT(session_id) DO UPDATE SET workspace_path=excluded.workspace_path`,
+            )
+            .run(establishedSessionId, job.conversationKey, sourceSessionId, timestamp, workspacePath);
+        }
+      } else {
+        this.activateSessionBranch(
+          job.conversationKey,
+          sourceSessionId,
+          establishedSessionId,
+          timestamp,
+          workspacePath,
+        );
+      }
+      this.db
+        .query(
+          `UPDATE jobs SET session_id=?,
+             continuation_session_id=CASE WHEN continuation_session_id IS NULL THEN NULL ELSE ? END,
+             workspace_path=?, session_established_at=?, heartbeat_at=?
+           WHERE id=? AND status='running'`,
+        )
+        .run(establishedSessionId, establishedSessionId, workspacePath, timestamp, timestamp, id);
+      this.db
+        .query("UPDATE session_checkpoints SET session_id=? WHERE job_id=?")
+        .run(establishedSessionId, id);
+      this.db
+        .query(
+          `UPDATE pull_request_watches SET session_id=?, updated_at=?
+           WHERE status='active' AND conversation_key=? AND session_id IN (?,?)`,
+        )
+        .run(establishedSessionId, timestamp, job.conversationKey, sourceSessionId, job.sessionId);
+    });
+    tx();
+    return this.getJob(id)!;
+  }
+
+  activeWorkspacePaths(): string[] {
+    const rows = this.db
+      .query<{ workspace_path: string }, []>(
+        `SELECT DISTINCT workspace_path FROM jobs
+         WHERE status IN ('queued','running','delivering') AND workspace_path IS NOT NULL
+         UNION
+         SELECT DISTINCT sessions.workspace_path
+         FROM sessions JOIN jobs ON jobs.conversation_key=sessions.conversation_key
+         WHERE jobs.status IN ('queued','running','delivering') AND sessions.workspace_path IS NOT NULL`,
+      )
+      .all();
+    return rows.map((row) => row.workspace_path);
+  }
+
+  invalidateWorkspacePaths(paths: string[]): number {
+    if (paths.length === 0) return 0;
+    const placeholders = paths.map(() => "?").join(",");
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      const sessions = this.db
+        .query(`UPDATE sessions SET workspace_path=NULL, updated_at=? WHERE workspace_path IN (${placeholders})`)
+        .run(timestamp, ...paths).changes;
+      this.db.query(`UPDATE session_branches SET workspace_path=NULL WHERE workspace_path IN (${placeholders})`).run(...paths);
+      this.db.query(`UPDATE jobs SET workspace_path=NULL WHERE workspace_path IN (${placeholders})`).run(...paths);
+      this.db.query(`UPDATE rewind_operations SET workspace_path=NULL WHERE workspace_path IN (${placeholders})`).run(...paths);
+      return sessions;
+    });
+    return tx();
+  }
+
   setSessionWorkspace(conversationKey: string, workspacePath: string): void {
-    this.db
-      .query("UPDATE sessions SET workspace_path=?, updated_at=? WHERE conversation_key=?")
-      .run(workspacePath, now(), conversationKey);
+    const timestamp = now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .query("UPDATE sessions SET workspace_path=?, updated_at=? WHERE conversation_key=?")
+        .run(workspacePath, timestamp, conversationKey);
+      this.db
+        .query("UPDATE session_branches SET workspace_path=? WHERE conversation_key=? AND status='active'")
+        .run(workspacePath, conversationKey);
+    });
+    tx();
+  }
+
+  migrateConversationLocks(resolve: (routeId: string, conversationKey: string) => string | null): {
+    jobs: number;
+    watches: number;
+  } {
+    const tx = this.db.transaction(() => {
+      let jobs = 0;
+      let watches = 0;
+      const queued = this.db
+        .query<{ id: string; route_id: string; conversation_key: string; lock_key: string }, []>(
+          "SELECT id,route_id,conversation_key,lock_key FROM jobs WHERE status='queued'",
+        )
+        .all();
+      for (const row of queued) {
+        const target = resolve(row.route_id, row.conversation_key);
+        if (!target || target === row.lock_key) continue;
+        jobs += this.db.query("UPDATE jobs SET lock_key=? WHERE id=? AND status='queued'").run(target, row.id).changes;
+      }
+      const activeWatches = this.db
+        .query<{ id: string; route_id: string; conversation_key: string; lock_key: string }, []>(
+          "SELECT id,route_id,conversation_key,lock_key FROM pull_request_watches WHERE status='active'",
+        )
+        .all();
+      for (const row of activeWatches) {
+        const target = resolve(row.route_id, row.conversation_key);
+        if (!target || target === row.lock_key) continue;
+        watches += this.db
+          .query("UPDATE pull_request_watches SET lock_key=?, updated_at=? WHERE id=? AND status='active'")
+          .run(target, now(), row.id).changes;
+      }
+      return { jobs, watches };
+    });
+    return tx();
   }
 
   setQueuedLock(id: string, lockKey: string): boolean {
@@ -881,13 +1046,34 @@ export class StateStore {
     this.db.query("UPDATE jobs SET heartbeat_at=? WHERE id=? AND status='running'").run(now(), id);
   }
 
-  setProgress(id: string, progressMessageId: string, progressText: string): void {
-    this.db
-      .query(
-        `UPDATE jobs SET progress_message_id=?, progress_text=?, heartbeat_at=?
-         WHERE id=? AND status IN ('queued','running','delivering','completed','failed','cancelled')`,
-      )
-      .run(progressMessageId, progressText.slice(0, 4000), now(), id);
+  setProgress(id: string, progressMessageId: string, progressText: string): boolean {
+    return (
+      this.db
+        .query(
+          `UPDATE jobs SET progress_message_id=?, progress_text=?, heartbeat_at=?
+           WHERE id=? AND status IN ('queued','running','delivering')`,
+        )
+        .run(progressMessageId, progressText.slice(0, 4000), now(), id).changes === 1
+    );
+  }
+
+  acknowledgeQueuedProgress(id: string, progressMessageId: string, progressText: string): boolean {
+    return (
+      this.db
+        .query(
+          `UPDATE jobs SET progress_message_id=?, progress_text=?, progress_pending=0, heartbeat_at=?
+           WHERE id=? AND status='queued'`,
+        )
+        .run(progressMessageId, progressText.slice(0, 4000), now(), id).changes === 1
+    );
+  }
+
+  releaseProgressHold(id: string): boolean {
+    return (
+      this.db
+        .query("UPDATE jobs SET progress_pending=0 WHERE id=? AND status='queued' AND progress_pending=1")
+        .run(id).changes === 1
+    );
   }
 
   clearProgress(id: string): void {
@@ -1047,36 +1233,23 @@ export class StateStore {
     id: string,
     execution: ClaudeExecution,
     maxAttempts: number,
-    workspacePath?: string,
   ): { retry: boolean; job: JobRecord } {
     const job = this.getJob(id);
     if (!job) throw new Error(`job not found: ${id}`);
     const timestamp = now();
     const error = executionError(execution);
     const tx = this.db.transaction(() => {
-      if (!job.pinnedSession) {
-        this.activateSessionBranch(
-          job.conversationKey,
-          job.sessionId,
-          execution.sessionId || job.sessionId,
-          timestamp,
-          workspacePath,
-        );
-      }
-      this.db
-        .query("UPDATE session_checkpoints SET session_id=? WHERE job_id=?")
-        .run(execution.sessionId || job.sessionId, job.id);
       if (job.attempts < maxAttempts) {
         this.db
           .query(
-            `UPDATE jobs SET status='queued', session_id=?, started_before=1,
+            `UPDATE jobs SET status='queued', started_before=1,
              recovery_reason='previous execution failed', error=?, queued_at=?, pid=NULL WHERE id=?`,
           )
-          .run(execution.sessionId || job.sessionId, error, timestamp, id);
+          .run(error, timestamp, id);
       } else {
         this.db
           .query(
-            `UPDATE jobs SET status='delivering', final_status='failed', result=?, error=?, session_id=?,
+            `UPDATE jobs SET status='delivering', final_status='failed', result=?, error=?,
              delivery_attempts=0, delivery_after=?, delivery_error=NULL, pid=NULL, heartbeat_at=?,
              delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0, delivery_message_ids='[]',
              continuation_prompt=NULL, continuation_session_id=NULL, continuation_turn=0,
@@ -1085,7 +1258,6 @@ export class StateStore {
           .run(
             execution.result,
             error,
-            execution.sessionId || job.sessionId,
             timestamp,
             timestamp,
             execution.mainModel ?? null,
@@ -1109,13 +1281,18 @@ export class StateStore {
     return changed.changes === 1 ? this.getByMessageId(messageId) : null;
   }
 
-  requeueTerminalByMessageId(messageId: string, reason: string, prompt?: string): JobRecord | null {
+  requeueTerminalByMessageId(
+    messageId: string,
+    reason: string,
+    prompt?: string,
+    lockKey?: string,
+  ): JobRecord | null {
     const timestamp = now();
     const changed = this.db
       .query(
         `UPDATE jobs SET
            status='queued', attempts=0, started_before=0, recovery_reason=?, pid=NULL,
-           prompt=COALESCE(?,prompt),
+           prompt=COALESCE(?,prompt), lock_key=COALESCE(?,lock_key),
            result=NULL, error=NULL, final_status=NULL, delivery_attempts=0, delivery_after=NULL,
            delivery_error=NULL, delivery_chunks=NULL, delivery_files=NULL, delivery_cursor=0,
            delivery_message_ids='[]', progress_message_id=NULL, progress_text=NULL,
@@ -1123,7 +1300,7 @@ export class StateStore {
            queued_at=?, started_at=NULL, heartbeat_at=NULL, completed_at=NULL
          WHERE message_id=? AND status IN ('failed','cancelled')`,
       )
-      .run(reason, prompt ?? null, timestamp, messageId);
+      .run(reason, prompt ?? null, lockKey ?? null, timestamp, messageId);
     return changed.changes === 1 ? this.getByMessageId(messageId) : null;
   }
 
@@ -1549,7 +1726,7 @@ export class StateStore {
     return Boolean(
       this.db
         .query<{ found: number }, [string]>(
-          `SELECT 1 AS found FROM jobs WHERE status='queued'
+          `SELECT 1 AS found FROM jobs WHERE (status='queued' AND progress_pending=0)
            OR (status='delivering' AND (delivery_after IS NULL OR delivery_after<=?)) LIMIT 1`,
         )
         .get(now()),

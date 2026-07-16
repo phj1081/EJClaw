@@ -102,7 +102,22 @@ const executor = new ClaudeSdkExecutor({
   claudeExecutable,
   timeoutSeconds: config.jobTimeoutSeconds,
 });
-const workspaceManager = new ConversationWorkspaceManager(join(stateDir, "worktrees"));
+const worktreeTtlMs = 30 * 24 * 60 * 60 * 1_000;
+const worktreeMaxTotal = Number.parseInt(process.env.CLAUDE_NATIVE_WORKTREE_MAX_TOTAL ?? "256", 10);
+const worktreeMaxPerRepository = Number.parseInt(
+  process.env.CLAUDE_NATIVE_WORKTREE_MAX_PER_REPOSITORY ?? "64",
+  10,
+);
+if (!Number.isInteger(worktreeMaxTotal) || worktreeMaxTotal < 1) {
+  throw new Error("CLAUDE_NATIVE_WORKTREE_MAX_TOTAL must be a positive integer");
+}
+if (!Number.isInteger(worktreeMaxPerRepository) || worktreeMaxPerRepository < 1) {
+  throw new Error("CLAUDE_NATIVE_WORKTREE_MAX_PER_REPOSITORY must be a positive integer");
+}
+const workspaceManager = new ConversationWorkspaceManager(join(stateDir, "worktrees"), 120_000, {
+  maxTotal: worktreeMaxTotal,
+  maxPerRepository: worktreeMaxPerRepository,
+});
 const typingTimers = new Map<string, ReturnType<typeof setInterval>>();
 const progressBoards = new Map<string, ProgressBoard>();
 const questionBroker = new QuestionBroker();
@@ -113,6 +128,8 @@ const outboundRoot = join(stateDir, "outbound");
 const attachmentTtlMs = 7 * 24 * 60 * 60 * 1_000;
 let queuePoll: ReturnType<typeof setInterval> | null = null;
 let attachmentCleanupTimer: ReturnType<typeof setInterval> | null = null;
+let workspaceCleanupTimer: ReturnType<typeof setInterval> | null = null;
+let workspaceCleanupPromise: Promise<{ removed: number; skipped: number }> | null = null;
 
 function cleanupExpiredAttachments(): number {
   const active = store.listActive();
@@ -127,16 +144,32 @@ function cleanupExpiredAttachments(): number {
   return inboundDeleted.length + outboundDeleted.length;
 }
 
-function migrateQueuedConversationLocks(): number {
-  let migrated = 0;
-  for (const job of store.listActive()) {
-    if (job.status !== "queued") continue;
-    const route = routes.get(job.routeId);
-    if (!route) continue;
-    const target = conversationLockKey(route, job.conversationKey);
-    if (target !== job.lockKey && store.setQueuedLock(job.id, target)) migrated += 1;
+async function cleanupConversationWorkspaces(): Promise<{ removed: number; skipped: number }> {
+  if (workspaceCleanupPromise) return workspaceCleanupPromise;
+  const pending = (async () => {
+    const cleanup = await workspaceManager.cleanup({
+      protectedPaths: store.activeWorkspacePaths(),
+      ttlMs: worktreeTtlMs,
+      maxTotal: worktreeMaxTotal,
+      maxPerRepository: worktreeMaxPerRepository,
+    });
+    store.invalidateWorkspacePaths(cleanup.removed);
+    return { removed: cleanup.removed.length, skipped: cleanup.skipped.length };
+  })();
+  workspaceCleanupPromise = pending;
+  try {
+    return await pending;
+  } finally {
+    workspaceCleanupPromise = null;
   }
-  return migrated;
+}
+
+function migrateQueuedConversationLocks(): number {
+  const migrated = store.migrateConversationLocks((routeId, key) => {
+    const route = routes.get(routeId);
+    return route ? conversationLockKey(route, key) : null;
+  });
+  return migrated.jobs + migrated.watches;
 }
 
 const client = new Client({
@@ -157,7 +190,11 @@ async function textChannel(id: string): Promise<GuildTextBasedChannel> {
 async function postQueuedProgress(job: JobRecord): Promise<void> {
   await progressLifecycleQueue.run(job.id, async () => {
     const current = store.getJob(job.id);
-    if (!current || current.status !== "queued" || current.progressMessageId) return;
+    if (!current || current.status !== "queued") return;
+    if (current.progressMessageId) {
+      store.releaseProgressHold(current.id);
+      return;
+    }
 
     const active = store.listActive();
     const running = active.filter((candidate) => candidate.status === "running").length;
@@ -175,30 +212,43 @@ async function postQueuedProgress(job: JobRecord): Promise<void> {
       prompt: current.prompt,
     });
     const channel = await textChannel(current.channelId);
+    const nonce = progressNonce(current.id);
     const options: MessageCreateOptions = {
       content,
       allowedMentions: { parse: [] },
-      nonce: progressNonce(current.id),
+      nonce,
       enforceNonce: true,
     };
     if (isReplyableMessageId(current.messageId)) {
       options.reply = { messageReference: current.messageId, failIfNotExists: false };
     }
-    const message = await channel.send(options);
+    const recent = await channel.messages.fetch({ limit: 100, cache: false });
+    let message = [...recent.values()].find(
+      (candidate) => candidate.author.id === client.user?.id && String(candidate.nonce ?? "") === nonce,
+    );
+    if (!message) message = await channel.send(options);
+
     const latest = store.getJob(current.id);
     if (!latest) {
       await message.delete().catch(() => undefined);
       return;
     }
     if (latest.progressMessageId) {
+      store.releaseProgressHold(latest.id);
       if (latest.progressMessageId !== message.id) await message.delete().catch(() => undefined);
+      return;
+    }
+    if (latest.status !== "queued") {
+      await message.delete().catch(() => undefined);
       return;
     }
     const queuedMessage =
       message.content === content
         ? message
         : await message.edit({ content, allowedMentions: { parse: [] } });
-    store.setProgress(current.id, queuedMessage.id, content);
+    if (!store.acknowledgeQueuedProgress(current.id, queuedMessage.id, content)) {
+      await queuedMessage.delete().catch(() => undefined);
+    }
   });
 }
 
@@ -296,9 +346,9 @@ class ProgressBoard {
     });
   }
 
-  async start(): Promise<void> {
+  async start(immediate = false): Promise<void> {
     if (this.closed || this.message || this.visibleTimer) return;
-    if (this.lifecycle.existingMessageId() || this.lifecycle.isDue()) {
+    if (immediate || this.lifecycle.existingMessageId() || this.lifecycle.isDue()) {
       await this.openCard();
       return;
     }
@@ -311,6 +361,7 @@ class ProgressBoard {
 
   private async openCard(): Promise<void> {
     if (this.closed || this.message) return;
+    if (store.getJob(this.job.id)?.status !== "running") return;
     const channel = await textChannel(this.job.channelId);
     const content = this.render("running");
     const options: MessageCreateOptions = {
@@ -342,7 +393,11 @@ class ProgressBoard {
     this.lifecycle.recordPosted(message.id);
     this.lastCard = content;
     this.editGate.recordEdit();
-    store.setProgress(this.job.id, message.id, content);
+    if (!store.setProgress(this.job.id, message.id, content)) {
+      this.closed = true;
+      await message.delete().catch(() => undefined);
+      this.message = null;
+    }
   }
 
   handleEvent(_event: ProgressEvent, aggregator: StreamProgressAggregator): void {
@@ -463,24 +518,30 @@ class ProgressBoard {
 }
 
 async function startTyping(job: JobRecord): Promise<void> {
-  stopTyping(job.id);
-  const channel = await textChannel(job.channelId);
-  await channel.sendTyping();
-  const timer = setInterval(() => {
-    void channel.sendTyping().catch((error) => console.warn("typing failed", job.routeId, String(error)));
-  }, 8_000);
-  timer.unref();
-  typingTimers.set(job.id, timer);
-  console.log(`job start id=${job.id} route=${job.routeId} attempt=${job.attempts}`);
-
   await progressLifecycleQueue.run(job.id, async () => {
-    const latestJob = store.getJob(job.id) ?? job;
+    stopTyping(job.id);
+    const current = store.getJob(job.id);
+    if (!current || current.status !== "running") return;
+    const channel = await textChannel(current.channelId);
+    await channel.sendTyping();
+    if (store.getJob(job.id)?.status !== "running") return;
+    const timer = setInterval(() => {
+      if (store.getJob(job.id)?.status !== "running") {
+        stopTyping(job.id);
+        return;
+      }
+      void channel.sendTyping().catch((error) => console.warn("typing failed", current.routeId, String(error)));
+    }, 8_000);
+    timer.unref();
+    typingTimers.set(job.id, timer);
+    console.log(`job start id=${job.id} route=${current.routeId} attempt=${current.attempts}`);
+
     let board = progressBoards.get(job.id);
     if (!board) {
-      board = new ProgressBoard(latestJob);
+      board = new ProgressBoard(current);
       progressBoards.set(job.id, board);
     }
-    await board.start();
+    await board.start(true);
   });
 }
 
@@ -488,6 +549,26 @@ function stopTyping(jobId: string): void {
   const timer = typingTimers.get(jobId);
   if (timer) clearInterval(timer);
   typingTimers.delete(jobId);
+}
+
+async function cancelJobLifecycle(jobId: string, reason: string): Promise<JobRecord | null> {
+  return progressLifecycleQueue.run(jobId, async () => {
+    const before = store.getJob(jobId);
+    if (!before) return null;
+    const cancelled = store.cancelJob(jobId, reason);
+    if (!cancelled) return null;
+    questionBroker.cancelJob(cancelled.id, reason);
+    executor.cancel(cancelled.id);
+    await cleanupQuestionComponentsForJob(cancelled);
+    stopTyping(cancelled.id);
+    const board = progressBoards.get(cancelled.id) ?? (before.progressMessageId ? new ProgressBoard(before) : null);
+    if (board) {
+      await board.cancel();
+      await board.cleanupAfterFinalDelivery();
+    }
+    progressBoards.delete(cancelled.id);
+    return cancelled;
+  });
 }
 
 async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise<void> {
@@ -538,11 +619,14 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
   // Match the old NanoClaw contract: a temporary card only disappears after
   // the real user-facing result has been accepted by Discord. Cleanup is
   // best-effort and must never cause a duplicate final delivery retry.
-  const board = progressBoards.get(job.id) ?? (job.progressMessageId ? new ProgressBoard(job) : null);
-  if (board) {
-    await board.cleanupAfterFinalDelivery();
-    progressBoards.delete(job.id);
-  }
+  await progressLifecycleQueue.run(job.id, async () => {
+    const latest = store.getJob(job.id) ?? job;
+    const board = progressBoards.get(job.id) ?? (latest.progressMessageId ? new ProgressBoard(latest) : null);
+    if (board) {
+      await board.cleanupAfterFinalDelivery();
+      progressBoards.delete(job.id);
+    }
+  });
   removeOutboundSpool(job.id, outboundRoot);
   console.log(`job final id=${job.id} route=${job.routeId} ok=${execution.ok} elapsed=${elapsed}`);
 }
@@ -550,7 +634,7 @@ async function deliverFinal(job: JobRecord, execution: ClaudeExecution): Promise
 async function cleanupTerminalProgress(): Promise<number> {
   const terminal = store.listTerminalProgress();
   for (const job of terminal) {
-    await new ProgressBoard(job).cleanupAfterFinalDelivery();
+    await progressLifecycleQueue.run(job.id, () => new ProgressBoard(job).cleanupAfterFinalDelivery());
   }
   return terminal.length;
 }
@@ -559,7 +643,10 @@ const runtime = new JobRuntime({
   store,
   routes,
   executor: (request) => executor.run(request),
-  prepareRoute: (route, job) => workspaceManager.prepare(route, job),
+  prepareRoute: async (route, job) => {
+    await cleanupConversationWorkspaces();
+    return workspaceManager.prepare(route, job);
+  },
   preflight: async (job) => {
     const route = routes.get(job.routeId);
     if (!route) throw new Error(`route not found: ${job.routeId}`);
@@ -714,17 +801,22 @@ client.once("clientReady", async () => {
     await validateRouteChannels();
     const recovered = runtime.recoverInterrupted("bridge service restart");
     const queuedLocksMigrated = migrateQueuedConversationLocks();
+    const workspaceCleanup = await cleanupConversationWorkspaces();
     for (const job of store.listActive()) {
-      if (job.status !== "queued" || job.progressMessageId || !isReplyableMessageId(job.messageId)) continue;
-      await postQueuedProgress(job).catch((error) =>
-        console.warn(`startup queued progress failed id=${job.id}`, error instanceof Error ? error.message : String(error)),
-      );
+      if (job.status !== "queued" || !isReplyableMessageId(job.messageId)) continue;
+      try {
+        if (!job.progressMessageId) await postQueuedProgress(job);
+      } catch (error) {
+        console.warn(`startup queued progress failed id=${job.id}`, error instanceof Error ? error.message : String(error));
+      } finally {
+        store.releaseProgressHold(job.id);
+      }
     }
     const terminalProgressCleaned = await cleanupTerminalProgress();
     const orphanedQuestionsCleaned = await cleanupOrphanedQuestionComponents();
     const expiredAttachmentsCleaned = cleanupExpiredAttachments();
     console.log(
-      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} orphaned_question_cleanup=${orphanedQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} state=${statePath}`,
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} orphaned_question_cleanup=${orphanedQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
       if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
@@ -739,6 +831,16 @@ client.once("clientReady", async () => {
       }
     }, 6 * 60 * 60 * 1_000);
     attachmentCleanupTimer.unref();
+    workspaceCleanupTimer = setInterval(() => {
+      void cleanupConversationWorkspaces()
+        .then((cleanup) => {
+          if (cleanup.removed > 0 || cleanup.skipped > 0) {
+            console.log(`workspace cleanup removed=${cleanup.removed} skipped=${cleanup.skipped}`);
+          }
+        })
+        .catch((error) => console.warn("workspace cleanup failed", String(error)));
+    }, 6 * 60 * 60 * 1_000);
+    workspaceCleanupTimer.unref();
     void runtime.runUntilIdle().catch((error) => console.error("startup pump failed", error));
   } catch (error) {
     console.error("native bridge startup validation failed", error);
@@ -770,25 +872,13 @@ client.on("messageCreate", (message) => {
       return;
     }
     if (promptText === "!cancel") {
-      const cancelled = store.cancelByConversation(key);
-      const boards = new Map<string, ProgressBoard>();
-      for (const job of cancelled) {
-        questionBroker.cancelJob(job.id, "cancelled by user");
-        executor.cancel(job.id);
-        await cleanupQuestionComponentsForJob(job);
-        stopTyping(job.id);
-        const board = progressBoards.get(job.id) ?? (job.progressMessageId ? new ProgressBoard(job) : null);
-        if (board) {
-          await board.cancel();
-          boards.set(job.id, board);
-        }
+      const candidates = store.listActive().filter((job) => job.conversationKey === key);
+      const cancelled: JobRecord[] = [];
+      for (const candidate of candidates) {
+        const result = await cancelJobLifecycle(candidate.id, "cancelled by user");
+        if (result) cancelled.push(result);
       }
       await message.reply({ content: `중지 요청 ${cancelled.length}건 처리`, allowedMentions: { parse: [] } });
-      for (const job of cancelled) {
-        const board = boards.get(job.id);
-        if (board) await board.cleanupAfterFinalDelivery();
-        progressBoards.delete(job.id);
-      }
       return;
     }
 
@@ -901,18 +991,31 @@ client.on("messageCreate", (message) => {
         await message.reply({ content: "checkpoint가 현재 active branch 소속이 아냐.", allowedMentions: { parse: [] } });
         return;
       }
+      const rewindWorkspace = activeBranch.workspacePath;
+      if (!rewindWorkspace) {
+        await message.reply({ content: "이 session의 workspace provenance가 없어서 rewind할 수 없어.", allowedMentions: { parse: [] } });
+        return;
+      }
       try {
+        if (route.conversationWorktrees) await workspaceManager.validate(route, rewindWorkspace);
         const preview = await executor.rewindSession(
-          store.sessionWorkspace(key) ?? route.cwd,
+          rewindWorkspace,
           checkpoint.sessionId,
           checkpoint.userMessageId,
           true,
+          route.memoryProject,
         );
         if (!preview.canRewind) {
           await message.reply({ content: `rewind 불가: ${preview.error ?? "원인 없음"}`, allowedMentions: { parse: [] } });
           return;
         }
-        const operation = store.createRewindOperation(key, checkpoint.sessionId, checkpoint.userMessageId, preview);
+        const operation = store.createRewindOperation(
+          key,
+          checkpoint.sessionId,
+          checkpoint.userMessageId,
+          preview,
+          rewindWorkspace,
+        );
         const files = preview.filesChanged?.slice(0, 15).join("\n") || "변경 파일 정보 없음";
         await message.reply({
           content: `rewind preview · op=${operation.id}\ninsertions=${preview.insertions ?? 0} deletions=${preview.deletions ?? 0}\n${files}\n\n적용: !rewind apply ${operation.id}`,
@@ -942,16 +1045,22 @@ client.on("messageCreate", (message) => {
         await message.reply({ content: "preview 이후 active branch가 바뀌어서 적용하지 않았어.", allowedMentions: { parse: [] } });
         return;
       }
+      if (!operation.workspacePath || activeBranch.workspacePath !== operation.workspacePath) {
+        await message.reply({ content: "preview 이후 session workspace가 바뀌어서 적용하지 않았어.", allowedMentions: { parse: [] } });
+        return;
+      }
       if (!store.markRewindApplied(operation.id)) {
         await message.reply({ content: "operation이 이미 소비됐어.", allowedMentions: { parse: [] } });
         return;
       }
       try {
+        if (route.conversationWorktrees) await workspaceManager.validate(route, operation.workspacePath);
         const applied = await executor.rewindSession(
-          store.sessionWorkspace(key) ?? route.cwd,
+          operation.workspacePath,
           operation.sessionId,
           operation.checkpoint,
           false,
+          route.memoryProject,
         );
         await message.reply({
           content: applied.canRewind
@@ -1036,11 +1145,16 @@ client.on("messageCreate", (message) => {
       prompt,
       rawPrompt,
       attachmentPaths: attachments.paths,
+      holdForProgress: true,
     }, pendingSteeringFallback ? message.id : undefined);
     await message.react("👀").catch(() => undefined);
-    await postQueuedProgress(job).catch((error) =>
-      console.warn(`queued progress failed id=${job.id}`, error instanceof Error ? error.message : String(error)),
-    );
+    try {
+      await postQueuedProgress(job);
+    } catch (error) {
+      console.warn(`queued progress failed id=${job.id}`, error instanceof Error ? error.message : String(error));
+    } finally {
+      store.releaseProgressHold(job.id);
+    }
     console.log(
       `job queued id=${job.id} route=${route.id} channel=${message.channelId} author=${message.author.id} len=${prompt.length}`,
     );
@@ -1116,8 +1230,7 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
     }
 
     if (!basePrompt.trim()) {
-      const cancelled = store.cancelByMessageId(message.id, "source message cleared by edit");
-      if (cancelled) executor.cancel(cancelled.id);
+      await cancelJobLifecycle(job.id, "source message cleared by edit");
       return;
     }
     const prompt = appendDiscordContext(
@@ -1143,18 +1256,8 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
 async function cancelDeletedSource(messageId: string): Promise<void> {
   const job = store.getByMessageId(messageId);
   if (!job) return;
-  const cancelled = store.cancelByMessageId(messageId);
+  const cancelled = await cancelJobLifecycle(job.id, "source message deleted");
   if (!cancelled) return;
-  questionBroker.cancelJob(cancelled.id, "source message deleted");
-  executor.cancel(cancelled.id);
-  await cleanupQuestionComponentsForJob(cancelled);
-  stopTyping(cancelled.id);
-  const board = progressBoards.get(cancelled.id) ?? (job.progressMessageId ? new ProgressBoard(job) : null);
-  if (board) {
-    await board.cancel();
-    await board.cleanupAfterFinalDelivery();
-  }
-  progressBoards.delete(cancelled.id);
   console.log(`job cancelled after source deletion id=${cancelled.id} message=${messageId}`);
 }
 
@@ -1301,6 +1404,7 @@ function stop(signal: string): void {
   for (const timer of typingTimers.values()) clearInterval(timer);
   if (queuePoll) clearInterval(queuePoll);
   if (attachmentCleanupTimer) clearInterval(attachmentCleanupTimer);
+  if (workspaceCleanupTimer) clearInterval(workspaceCleanupTimer);
   client.destroy();
   store.close();
   process.exit(0);

@@ -191,14 +191,15 @@ export class JobRuntime {
       effort: settings.effort ?? preparedRoute.effort,
     };
     const hasContinuation = Boolean(job.continuationPrompt && job.continuationSessionId);
+    const sourceSessionId = job.continuationSessionId ?? job.sessionId;
     const resume = hasContinuation || job.pinnedSession || job.startedBefore || this.store.sessionHasHistory(job.conversationKey);
-    const sessionWorkspace = this.store.sessionWorkspace(job.conversationKey);
+    const sessionWorkspace = this.store.sessionWorkspaceForSession(job.conversationKey, sourceSessionId);
     const workspaceMoved =
       resume &&
       sessionWorkspace !== effectiveRoute.cwd &&
       (effectiveRoute.conversationWorktrees === true || sessionWorkspace !== null);
-    const requestedFork = hasContinuation || job.pinnedSession ? false : resume && this.store.consumeFork(job.conversationKey);
-    const forkSession = hasContinuation || job.pinnedSession ? false : resume && (workspaceMoved || requestedFork);
+    const requestedFork = resume && this.store.consumeFork(job.conversationKey);
+    const forkSession = resume && (workspaceMoved || requestedFork);
     const recoverySteering = job.recoveryReason ? this.store.listRecoverySteeringInputs(job.id) : [];
     const taskPrompt =
       recoverySteering.length === 0
@@ -226,19 +227,20 @@ export class JobRuntime {
         ? job.prompt
         : buildGoalPrompt(effectiveRoute, taskPrompt, job.attachmentPaths, job.recoveryReason);
     let execution: ClaudeExecution;
-    let executorReturned = false;
     try {
       execution = await this.executor({
         job,
         route: effectiveRoute,
         prompt,
-        sessionId: job.continuationSessionId ?? job.sessionId,
+        sessionId: sourceSessionId,
         resume,
         forkSession,
         continuationTurn: job.continuationTurn,
         onSpawn: (pid) => this.store.setPid(job.id, pid),
         onHeartbeat: () => this.store.heartbeat(job.id),
         onCheckpoint: (userMessageId) => this.store.recordSessionCheckpoint(job.id, userMessageId),
+        onSessionEstablished: (sessionId) =>
+          this.store.establishExecutionSession(job.id, sessionId, effectiveRoute.cwd),
         onContinuation: (continuationPrompt, continuationSessionId, continuationTurn) =>
           this.store.stageContinuation(job.id, continuationPrompt, continuationSessionId, continuationTurn),
         ...(this.onQuestion
@@ -255,12 +257,11 @@ export class JobRuntime {
           );
         },
       });
-      executorReturned = true;
     } catch (error) {
       execution = {
         ok: false,
         result: error instanceof Error ? error.message : String(error),
-        sessionId: job.sessionId,
+        sessionId: sourceSessionId,
         stderr: "executor threw",
         exitCode: 1,
       };
@@ -273,11 +274,6 @@ export class JobRuntime {
       this.store.stageDelivery(job.id, execution, "completed", effectiveRoute.cwd);
       return;
     }
-    this.store.retryOrFail(
-      job.id,
-      execution,
-      this.maxAttempts,
-      executorReturned && !job.pinnedSession ? effectiveRoute.cwd : undefined,
-    );
+    this.store.retryOrFail(job.id, execution, this.maxAttempts);
   }
 }
