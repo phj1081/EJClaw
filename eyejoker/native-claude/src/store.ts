@@ -1105,7 +1105,9 @@ export class StateStore {
   releaseProgressHold(id: string): boolean {
     return (
       this.db
-        .query("UPDATE jobs SET progress_pending=0 WHERE id=? AND status='queued' AND progress_pending=1")
+        .query(
+          "UPDATE jobs SET progress_pending=0 WHERE id=? AND status='queued' AND progress_pending=1 AND progress_message_id IS NOT NULL",
+        )
         .run(id).changes === 1
     );
   }

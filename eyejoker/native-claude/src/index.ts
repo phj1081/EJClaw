@@ -132,6 +132,7 @@ let queuePoll: ReturnType<typeof setInterval> | null = null;
 let attachmentCleanupTimer: ReturnType<typeof setInterval> | null = null;
 let workspaceCleanupTimer: ReturnType<typeof setInterval> | null = null;
 let workspaceCleanupPromise: Promise<{ removed: number; skipped: number }> | null = null;
+let queuedProgressReconcilePromise: Promise<void> | null = null;
 
 function cleanupExpiredAttachments(): number {
   const active = store.listActive();
@@ -286,6 +287,29 @@ function questionComponents(interactionId: string, choices: string[]): ActionRow
 function steeringFallbackMessageId(kind: "add" | "edit" | "delete", messageId: string, content = ""): string {
   const digest = createHash("sha256").update(`${kind}:${messageId}:${content}`).digest("hex").slice(0, 24);
   return `steering-${kind}:${messageId}:${digest}`;
+}
+
+async function reconcileHeldQueuedProgress(): Promise<void> {
+  if (queuedProgressReconcilePromise) return queuedProgressReconcilePromise;
+  const pending = (async () => {
+    for (const job of store.listActive()) {
+      if (job.status !== "queued" || !job.progressPending || !isReplyableMessageId(job.messageId)) continue;
+      try {
+        await postQueuedProgress(job);
+      } catch (error) {
+        console.warn(
+          `held queued progress reconciliation failed id=${job.id}`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+  })();
+  queuedProgressReconcilePromise = pending;
+  try {
+    await pending;
+  } finally {
+    queuedProgressReconcilePromise = null;
+  }
 }
 
 async function cleanupQuestionComponentsForJob(job: JobRecord): Promise<number> {
@@ -826,16 +850,7 @@ client.once("clientReady", async () => {
     const recovered = runtime.recoverInterrupted("bridge service restart");
     const queuedLocksMigrated = migrateQueuedConversationLocks();
     const workspaceCleanup = await cleanupConversationWorkspaces();
-    for (const job of store.listActive()) {
-      if (job.status !== "queued" || !isReplyableMessageId(job.messageId)) continue;
-      try {
-        if (!job.progressMessageId) await postQueuedProgress(job);
-      } catch (error) {
-        console.warn(`startup queued progress failed id=${job.id}`, error instanceof Error ? error.message : String(error));
-      } finally {
-        store.releaseProgressHold(job.id);
-      }
-    }
+    await reconcileHeldQueuedProgress();
     const terminalProgressCleaned = await cleanupTerminalProgress();
     const settledQuestionsCleaned = await cleanupSettledQuestionComponents();
     const expiredAttachmentsCleaned = cleanupExpiredAttachments();
@@ -843,7 +858,11 @@ client.once("clientReady", async () => {
       `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} pending_workspace_cleanup_recovered=${pendingWorkspaceCleanupRecovered} text_answers_reconciled=${textAnswersReconciled} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} settled_question_cleanup=${settledQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} workspace_cleanup=${workspaceCleanup.removed} workspace_cleanup_skipped=${workspaceCleanup.skipped} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
-      if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
+      void reconcileHeldQueuedProgress()
+        .then(() => {
+          if (store.hasRunnable()) return runtime.runUntilIdle();
+        })
+        .catch((error) => console.error("queue reconciliation failed", error));
     }, 2_000);
     queuePoll.unref();
     attachmentCleanupTimer = setInterval(() => {
@@ -1215,9 +1234,7 @@ client.on("messageCreate", (message) => {
     try {
       await postQueuedProgress(job);
     } catch (error) {
-      console.warn(`queued progress failed id=${job.id}`, error instanceof Error ? error.message : String(error));
-    } finally {
-      store.releaseProgressHold(job.id);
+      console.warn(`queued progress held for reconciliation id=${job.id}`, error instanceof Error ? error.message : String(error));
     }
     console.log(
       `job queued id=${job.id} route=${route.id} channel=${message.channelId} author=${message.author.id} len=${prompt.length}`,

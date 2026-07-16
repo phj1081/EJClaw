@@ -113,12 +113,14 @@ describe("durable job store", () => {
     expect(db.claimNext(1)?.id).toBe(queued.id);
   });
 
-  test("releases a progress hold after Discord progress delivery fails", () => {
+  test("supports an explicit release only after progress is known by another durable path", () => {
     const db = store();
     const queued = db.enqueue({
       ...input("cleanapo", "cleanapo:queued-fallback", "queued-fallback"),
       holdForProgress: true,
     });
+    expect(db.releaseProgressHold(queued.id)).toBe(false);
+    expect(db.setProgress(queued.id, "known-progress", "⏳ 대기 중")).toBe(true);
     expect(db.releaseProgressHold(queued.id)).toBe(true);
     expect(db.releaseProgressHold(queued.id)).toBe(false);
     expect(db.claimNext(1)?.id).toBe(queued.id);

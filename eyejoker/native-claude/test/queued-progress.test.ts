@@ -20,6 +20,19 @@ describe("queued progress", () => {
     ).toBe("⏳ **대기 중** — 동시 작업 3/3\n└ 빈 자리 생기면 자동 시작 · 멤버십 점검");
   });
 
+  test("keeps a queued job held on uncertain remote reconciliation and retries it from the pump", async () => {
+    const source = await Bun.file(new URL("../src/index.ts", import.meta.url)).text();
+    expect(source).toContain("async function reconcileHeldQueuedProgress()");
+    expect(source).toContain('job.status !== "queued" || !job.progressPending');
+    expect(source).toContain("await reconcileHeldQueuedProgress();");
+    const enqueueHandler = source.slice(
+      source.indexOf("const job = store.enqueue({"),
+      source.indexOf('client.on("messageUpdate"'),
+    );
+    expect(enqueueHandler).toContain("queued progress held for reconciliation");
+    expect(enqueueHandler).not.toContain("store.releaseProgressHold(job.id)");
+  });
+
   test("explains same-thread serialization", () => {
     expect(
       renderQueuedProgress({
