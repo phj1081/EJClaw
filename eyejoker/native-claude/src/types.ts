@@ -18,6 +18,8 @@ export interface RouteConfig {
   requireMention: boolean;
   instructions?: string;
   mixedAgents?: boolean;
+  conversationWorktrees?: boolean;
+  worktreeRef?: string;
 }
 
 export interface SessionBranch {
@@ -244,3 +246,4 @@ export type ProgressHook = (
   event: import("./stream-progress").ProgressEvent,
   aggregator: import("./stream-progress").StreamProgressAggregator,
 ) => Promise<void> | void;
+export type PrepareRouteHook = (route: RouteConfig, job: JobRecord) => Promise<RouteConfig>;

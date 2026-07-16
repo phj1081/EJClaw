@@ -451,6 +451,7 @@ export class StateStore {
     });
     closeLegacyWatcherJobs();
     this.ensureColumn("pull_request_watches", "session_id", "TEXT NOT NULL DEFAULT ''");
+    this.ensureColumn("sessions", "workspace_path", "TEXT");
     this.db
       .query(
         `UPDATE pull_request_watches
@@ -473,6 +474,7 @@ export class StateStore {
     previousSessionId: string,
     nextSessionId: string,
     timestamp: string,
+    workspacePath?: string,
   ): void {
     if (nextSessionId !== previousSessionId) {
       this.db.query("UPDATE session_branches SET status='archived' WHERE conversation_key=?").run(conversationKey);
@@ -484,9 +486,17 @@ export class StateStore {
         )
         .run(nextSessionId, conversationKey, previousSessionId, timestamp);
     }
-    this.db
-      .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
-      .run(nextSessionId, timestamp, conversationKey);
+    if (workspacePath) {
+      this.db
+        .query(
+          "UPDATE sessions SET session_id=?, has_history=1, workspace_path=?, updated_at=? WHERE conversation_key=?",
+        )
+        .run(nextSessionId, workspacePath, timestamp, conversationKey);
+    } else {
+      this.db
+        .query("UPDATE sessions SET session_id=?, has_history=1, updated_at=? WHERE conversation_key=?")
+        .run(nextSessionId, timestamp, conversationKey);
+    }
   }
 
   enqueue(input: EnqueueInput, replacePendingSteeringMessageId?: string): JobRecord {
@@ -539,7 +549,7 @@ export class StateStore {
         .run(
           jobId,
           input.routeId,
-          input.lockKey ?? input.routeId,
+          input.lockKey ?? input.conversationKey,
           input.conversationKey,
           input.channelId,
           input.threadId,
@@ -838,6 +848,31 @@ export class StateStore {
     return row?.has_history === 1;
   }
 
+  markSessionHistory(conversationKey: string): void {
+    this.db
+      .query("UPDATE sessions SET has_history=1, updated_at=? WHERE conversation_key=?")
+      .run(now(), conversationKey);
+  }
+
+  sessionWorkspace(conversationKey: string): string | null {
+    const row = this.db
+      .query<{ workspace_path: string | null }, [string]>(
+        "SELECT workspace_path FROM sessions WHERE conversation_key=?",
+      )
+      .get(conversationKey);
+    return row?.workspace_path ?? null;
+  }
+
+  setSessionWorkspace(conversationKey: string, workspacePath: string): void {
+    this.db
+      .query("UPDATE sessions SET workspace_path=?, updated_at=? WHERE conversation_key=?")
+      .run(workspacePath, now(), conversationKey);
+  }
+
+  setQueuedLock(id: string, lockKey: string): boolean {
+    return this.db.query("UPDATE jobs SET lock_key=? WHERE id=? AND status='queued'").run(lockKey, id).changes === 1;
+  }
+
   setPid(id: string, pid: number): void {
     this.db.query("UPDATE jobs SET pid=?, heartbeat_at=? WHERE id=? AND status='running'").run(pid, now(), id);
   }
@@ -850,7 +885,7 @@ export class StateStore {
     this.db
       .query(
         `UPDATE jobs SET progress_message_id=?, progress_text=?, heartbeat_at=?
-         WHERE id=? AND status IN ('running','delivering','completed','failed','cancelled')`,
+         WHERE id=? AND status IN ('queued','running','delivering','completed','failed','cancelled')`,
       )
       .run(progressMessageId, progressText.slice(0, 4000), now(), id);
   }
@@ -928,7 +963,12 @@ export class StateStore {
       .map(fromRow);
   }
 
-  stageDelivery(id: string, execution: ClaudeExecution, finalStatus: FinalStatus): JobRecord {
+  stageDelivery(
+    id: string,
+    execution: ClaudeExecution,
+    finalStatus: FinalStatus,
+    workspacePath?: string,
+  ): JobRecord {
     const job = this.getJob(id);
     if (!job) throw new Error(`job not found: ${id}`);
     const timestamp = now();
@@ -960,6 +1000,7 @@ export class StateStore {
           job.sessionId,
           execution.sessionId || job.sessionId,
           timestamp,
+          workspacePath,
         );
       }
       this.db
@@ -1002,7 +1043,12 @@ export class StateStore {
     return this.getJob(id)!;
   }
 
-  retryOrFail(id: string, execution: ClaudeExecution, maxAttempts: number): { retry: boolean; job: JobRecord } {
+  retryOrFail(
+    id: string,
+    execution: ClaudeExecution,
+    maxAttempts: number,
+    workspacePath?: string,
+  ): { retry: boolean; job: JobRecord } {
     const job = this.getJob(id);
     if (!job) throw new Error(`job not found: ${id}`);
     const timestamp = now();
@@ -1014,6 +1060,7 @@ export class StateStore {
           job.sessionId,
           execution.sessionId || job.sessionId,
           timestamp,
+          workspacePath,
         );
       }
       this.db

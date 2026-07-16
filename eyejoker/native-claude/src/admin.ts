@@ -2,6 +2,7 @@
 import { join, resolve } from "node:path";
 import { buildScheduledJobPrompt, readSecurePromptFile, scheduleIdentity } from "./admin-utils";
 import { loadConfig } from "./config";
+import { conversationLockKey } from "./conversation-workspace";
 import { StateStore } from "./store";
 import { renderStatusSnapshot } from "./status-format";
 
@@ -25,7 +26,7 @@ function enqueue(
   if (!route) throw new Error(`unknown route: ${routeId}`);
   const job = store.enqueue({
     routeId: route.id,
-    lockKey: route.lockKey ?? route.cwd,
+    lockKey: conversationLockKey(route, identity.conversationKey),
     conversationKey: identity.conversationKey,
     channelId: route.discordChannelId,
     threadId: null,

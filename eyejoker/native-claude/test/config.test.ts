@@ -29,6 +29,8 @@ function fixture() {
           effort: "high",
           permission_mode: "bypassPermissions",
           require_mention: false,
+          conversation_worktrees: true,
+          worktree_ref: "origin/dev",
         },
       ],
     }),
@@ -43,6 +45,8 @@ describe("route config", () => {
     const config = loadConfig(configPath);
     expect(config.routes[0]?.cwd).toBe(project);
     expect(config.routes[0]?.fallbackModel).toBe("gpt-5.6-sol");
+    expect(config.routes[0]?.conversationWorktrees).toBe(true);
+    expect(config.routes[0]?.worktreeRef).toBe("origin/dev");
     expect(resolveRoute(config, "thread-7", "100")?.id).toBe("cleanapo");
     expect(resolveRoute(config, "100", null)?.id).toBe("cleanapo");
     expect(resolveRoute(config, "999", null)).toBeNull();

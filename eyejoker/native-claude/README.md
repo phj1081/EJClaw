@@ -9,8 +9,8 @@ NanoClaw의 agent/container/work-run 계층을 다시 구현하지 않고, Disco
 - native `AskUserQuestion`·permission callback을 owner-only Discord 버튼으로만 왕복하고, 선택 완료 시 대기 문구를 제거하며 이전 progress 활동을 비운 뒤 후속 작업만 표시
 - 실행 중 follow-up steering과 동적 model/permission 제어
 - reply/history context와 source/follow-up message edit/delete 전파
-- **30초 뒤 임시 Discord progress 카드 한 장**만 2초 cadence로 갱신하고, final delivery 성공 후 삭제
-- 프로젝트(lock key)별 직렬화, 서로 다른 프로젝트는 최대 3개 병렬 실행
+- Discord 요청은 즉시 접수/대기 progress 카드 한 장을 만들고, 실행 시작 시 같은 카드를 작업 중 상태로 바꿔 2초 cadence로 갱신한 뒤 final delivery 성공 후 삭제
+- conversation worktree를 켠 route는 같은 스레드만 직렬화하고 서로 다른 스레드는 격리 Git worktree에서 최대 3개 병렬 실행; opt-out route는 기존 shared lock 유지
 - SQLite durable queue/session/interaction/steering desired state/delivery cursor와 Discord nonce reconciliation
 - 서비스 재시작 시 interrupted execution을 at-least-once로 복구하고, 질문은 logical `toolUseID`, marker answer+exact continuation, final delivery는 stable nonce로 dedupe
 - 최초 시작 시점 기준 6시간 absolute timeout·최대 시도 횟수·`!cancel`; 취소된 pending 질문은 DB orphan 처리 후 Discord 버튼을 제거
@@ -54,6 +54,8 @@ systemctl --user enable --now claude-native-github-watch.timer
 systemctl --user enable --now claude-native-cohort-verifier.timer
 systemctl --user enable --now claude-native-maldhalla-balance.timer
 ```
+
+`routes.json`에서 `conversation_worktrees=true`를 켜면 lock key가 Discord conversation 단위로 바뀌고, bridge가 private state 경로 `~/.local/state/claude-native/worktrees/`에 repository/route/conversation별 전용 detached worktree를 만든다. `worktree_ref`에는 새 conversation의 기준 ref(예: `origin/dev`)를 지정한다. 기존 session이 처음 전용 worktree로 이동할 때는 자동으로 한 번 fork하고 이후에는 같은 worktree/session을 재사용한다.
 
 ## 운영
 

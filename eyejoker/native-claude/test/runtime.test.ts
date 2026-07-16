@@ -123,6 +123,60 @@ describe("job runtime", () => {
     expect(env.delivered).toEqual(["one", "two"]);
   });
 
+  test("forks an existing session once when moving it into a conversation worktree", async () => {
+    const store = freshStore();
+    const seen: Array<{ cwd: string; resume: boolean; forkSession: boolean | undefined }> = [];
+    const movedRoute = { ...route, conversationWorktrees: true };
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, movedRoute]]),
+      prepareRoute: async (baseRoute) => ({ ...baseRoute, cwd: "/tmp/conversation-worktree" }),
+      executor: async (request) => {
+        seen.push({ cwd: request.route.cwd, resume: request.resume, forkSession: request.forkSession });
+        return ok(request.sessionId);
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 1,
+      maxAttempts: 1,
+    });
+
+    const first = enqueue(store, "workspace-first");
+    store.setSessionWorkspace(first.conversationKey, "/tmp/original-checkout");
+    store.markSessionHistory(first.conversationKey);
+    await runtime.runUntilIdle();
+    enqueue(store, "workspace-second");
+    await runtime.runUntilIdle();
+
+    expect(seen).toEqual([
+      { cwd: "/tmp/conversation-worktree", resume: true, forkSession: true },
+      { cwd: "/tmp/conversation-worktree", resume: true, forkSession: false },
+    ]);
+    expect(store.sessionWorkspace(first.conversationKey)).toBe("/tmp/conversation-worktree");
+  });
+
+  test("does not fork a legacy shared-checkout session only because workspace metadata is absent", async () => {
+    const store = freshStore();
+    const seen: Array<{ resume: boolean; forkSession: boolean | undefined }> = [];
+    const runtime = new JobRuntime({
+      store,
+      routes: new Map([[route.id, route]]),
+      executor: async (request) => {
+        seen.push({ resume: request.resume, forkSession: request.forkSession });
+        return ok(request.sessionId);
+      },
+      onFinal: async () => undefined,
+      maxConcurrent: 1,
+      maxAttempts: 1,
+    });
+
+    const job = enqueue(store, "legacy-shared-workspace");
+    store.markSessionHistory(job.conversationKey);
+    await runtime.runUntilIdle();
+
+    expect(seen).toEqual([{ resume: true, forkSession: false }]);
+    expect(store.sessionWorkspace(job.conversationKey)).toBe(route.cwd);
+  });
+
   test("startup recovery resumes the interrupted session and preserves the original request", async () => {
     const env = setup([
       { ok: true, result: "recovered", sessionId: "session-a", stderr: "", exitCode: 0 },

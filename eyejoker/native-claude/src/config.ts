@@ -13,6 +13,8 @@ interface RawRoute {
   require_mention?: unknown;
   instructions?: unknown;
   mixed_agents?: unknown;
+  conversation_worktrees?: unknown;
+  worktree_ref?: unknown;
 }
 
 interface RawConfig {
@@ -69,6 +71,8 @@ function parseRoute(raw: RawRoute): RouteConfig {
   }
   if (typeof raw.instructions === "string" && raw.instructions.trim()) route.instructions = raw.instructions.trim();
   if (typeof raw.mixed_agents === "boolean") route.mixedAgents = raw.mixed_agents;
+  if (typeof raw.conversation_worktrees === "boolean") route.conversationWorktrees = raw.conversation_worktrees;
+  if (typeof raw.worktree_ref === "string" && raw.worktree_ref.trim()) route.worktreeRef = raw.worktree_ref.trim();
   return route;
 }
 

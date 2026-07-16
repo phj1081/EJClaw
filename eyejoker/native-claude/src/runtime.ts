@@ -5,6 +5,7 @@ import type {
   FinalHook,
   JobRecord,
   PreflightHook,
+  PrepareRouteHook,
   ProgressHook,
   QuestionHook,
   RouteConfig,
@@ -21,6 +22,7 @@ interface RuntimeOptions {
   onStart?: StartHook;
   onProgress?: ProgressHook;
   onQuestion?: QuestionHook;
+  prepareRoute?: PrepareRouteHook;
   maxConcurrent: number;
   maxAttempts: number;
   deliveryRetryMs?: number;
@@ -35,6 +37,7 @@ export class JobRuntime {
   private readonly onStart: StartHook | undefined;
   private readonly onProgress: ProgressHook | undefined;
   private readonly onQuestion: QuestionHook | undefined;
+  private readonly prepareRoute: PrepareRouteHook | undefined;
   private readonly maxConcurrent: number;
   private readonly maxAttempts: number;
   private readonly deliveryRetryMs: number;
@@ -49,6 +52,7 @@ export class JobRuntime {
     this.onStart = options.onStart;
     this.onProgress = options.onProgress;
     this.onQuestion = options.onQuestion;
+    this.prepareRoute = options.prepareRoute;
     this.maxConcurrent = options.maxConcurrent;
     this.maxAttempts = options.maxAttempts;
     this.deliveryRetryMs = options.deliveryRetryMs ?? 5_000;
@@ -149,6 +153,27 @@ export class JobRuntime {
       }
     }
 
+    let preparedRoute = route;
+    if (this.prepareRoute) {
+      try {
+        preparedRoute = await this.prepareRoute(route, job);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.store.retryOrFail(
+          job.id,
+          {
+            ok: false,
+            result: `conversation worktree preparation failed: ${message}`,
+            sessionId: job.sessionId,
+            stderr: message,
+            exitCode: 1,
+          },
+          this.maxAttempts,
+        );
+        return;
+      }
+    }
+
     if (this.onStart) {
       try {
         await this.onStart(job);
@@ -160,14 +185,20 @@ export class JobRuntime {
 
     const settings = this.store.getConversationSettings(job.conversationKey);
     const effectiveRoute: RouteConfig = {
-      ...route,
-      model: settings.model ?? route.model,
-      permissionMode: settings.permissionMode ?? route.permissionMode,
-      effort: settings.effort ?? route.effort,
+      ...preparedRoute,
+      model: settings.model ?? preparedRoute.model,
+      permissionMode: settings.permissionMode ?? preparedRoute.permissionMode,
+      effort: settings.effort ?? preparedRoute.effort,
     };
     const hasContinuation = Boolean(job.continuationPrompt && job.continuationSessionId);
     const resume = hasContinuation || job.pinnedSession || job.startedBefore || this.store.sessionHasHistory(job.conversationKey);
-    const forkSession = hasContinuation || job.pinnedSession ? false : resume && this.store.consumeFork(job.conversationKey);
+    const sessionWorkspace = this.store.sessionWorkspace(job.conversationKey);
+    const workspaceMoved =
+      resume &&
+      sessionWorkspace !== effectiveRoute.cwd &&
+      (effectiveRoute.conversationWorktrees === true || sessionWorkspace !== null);
+    const requestedFork = hasContinuation || job.pinnedSession ? false : resume && this.store.consumeFork(job.conversationKey);
+    const forkSession = hasContinuation || job.pinnedSession ? false : resume && (workspaceMoved || requestedFork);
     const recoverySteering = job.recoveryReason ? this.store.listRecoverySteeringInputs(job.id) : [];
     const taskPrompt =
       recoverySteering.length === 0
@@ -195,6 +226,7 @@ export class JobRuntime {
         ? job.prompt
         : buildGoalPrompt(effectiveRoute, taskPrompt, job.attachmentPaths, job.recoveryReason);
     let execution: ClaudeExecution;
+    let executorReturned = false;
     try {
       execution = await this.executor({
         job,
@@ -223,6 +255,7 @@ export class JobRuntime {
           );
         },
       });
+      executorReturned = true;
     } catch (error) {
       execution = {
         ok: false,
@@ -237,9 +270,14 @@ export class JobRuntime {
     if (current?.status === "cancelled") return;
     if (execution.ok) {
       this.store.acceptPendingSteeringInputs(job.id);
-      this.store.stageDelivery(job.id, execution, "completed");
+      this.store.stageDelivery(job.id, execution, "completed", effectiveRoute.cwd);
       return;
     }
-    this.store.retryOrFail(job.id, execution, this.maxAttempts);
+    this.store.retryOrFail(
+      job.id,
+      execution,
+      this.maxAttempts,
+      executorReturned && !job.pinnedSession ? effectiveRoute.cwd : undefined,
+    );
   }
 }

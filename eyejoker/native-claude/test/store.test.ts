@@ -30,17 +30,90 @@ function input(routeId: string, conversationKey: string, messageId: string) {
 }
 
 describe("durable job store", () => {
-  test("serializes jobs per project while allowing another project", () => {
+  test("runs different conversations in one route concurrently but serializes one conversation", () => {
     const db = store();
     db.enqueue(input("cleanapo", "cleanapo:one", "m1"));
     db.enqueue(input("cleanapo", "cleanapo:two", "m2"));
-    db.enqueue(input("crawler", "crawler:one", "m3"));
+    db.enqueue(input("cleanapo", "cleanapo:one", "m3"));
 
     const first = db.claimNext(2);
     expect(first?.routeId).toBe("cleanapo");
     const second = db.claimNext(2);
-    expect(second?.routeId).toBe("crawler");
+    expect(second?.routeId).toBe("cleanapo");
+    expect(new Set([first?.conversationKey, second?.conversationKey])).toEqual(
+      new Set(["cleanapo:one", "cleanapo:two"]),
+    );
     expect(db.claimNext(2)).toBeNull();
+  });
+
+  test("keeps an explicit shared lock available for routes that opt out of conversation worktrees", () => {
+    const db = store();
+    db.enqueue({ ...input("legacy", "legacy:one", "legacy-1"), lockKey: "legacy-shared" });
+    db.enqueue({ ...input("legacy", "legacy:two", "legacy-2"), lockKey: "legacy-shared" });
+
+    expect(db.claimNext(2)?.messageId).toBe("legacy-1");
+    expect(db.claimNext(2)).toBeNull();
+  });
+
+  test("migrates only queued jobs from a legacy route lock", () => {
+    const db = store();
+    const running = db.enqueue({ ...input("cleanapo", "cleanapo:one", "legacy-running"), lockKey: "cleanapo" });
+    const queued = db.enqueue({ ...input("cleanapo", "cleanapo:two", "legacy-queued"), lockKey: "cleanapo" });
+    db.claimNext(2);
+
+    expect(db.setQueuedLock(running.id, running.conversationKey)).toBe(false);
+    expect(db.setQueuedLock(queued.id, queued.conversationKey)).toBe(true);
+    expect(db.getJob(running.id)?.lockKey).toBe("cleanapo");
+    expect(db.getJob(queued.id)?.lockKey).toBe("cleanapo:two");
+  });
+
+  test("persists a queued progress card before execution starts", () => {
+    const db = store();
+    const queued = db.enqueue(input("cleanapo", "cleanapo:queued", "queued-card"));
+
+    db.setProgress(queued.id, "discord-progress", "⏳ 대기 중");
+
+    expect(db.getJob(queued.id)).toMatchObject({
+      status: "queued",
+      progressMessageId: "discord-progress",
+      progressText: "⏳ 대기 중",
+    });
+  });
+
+  test("tracks the workspace bound to a conversation session", () => {
+    const db = store();
+    db.enqueue(input("cleanapo", "cleanapo:workspace", "workspace-message"));
+
+    expect(db.sessionWorkspace("cleanapo:workspace")).toBeNull();
+    db.setSessionWorkspace("cleanapo:workspace", "/tmp/worktree-a");
+    expect(db.sessionWorkspace("cleanapo:workspace")).toBe("/tmp/worktree-a");
+  });
+
+  test("adds workspace binding to an existing sessions schema", () => {
+    const path = join(tmpdir(), `native-legacy-session-${crypto.randomUUID()}.sqlite`);
+    paths.push(path);
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE sessions (
+        conversation_key TEXT PRIMARY KEY,
+        route_id TEXT NOT NULL,
+        session_id TEXT NOT NULL UNIQUE,
+        has_history INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    legacy.close();
+
+    const migrated = new StateStore(path);
+    const inspected = new Database(path, { readonly: true });
+    const columns = inspected
+      .query<{ name: string }, []>("PRAGMA table_info(sessions)")
+      .all()
+      .map((column: { name: string }) => column.name);
+    expect(columns).toContain("workspace_path");
+    inspected.close();
+    migrated.close();
   });
 
   test("persists one Claude session per Discord thread", () => {

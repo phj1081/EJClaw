@@ -33,6 +33,7 @@ import {
   buildUnixBrokeredBubblewrapInvocation,
 } from "./cohort-sandbox";
 import { loadConfig } from "./config";
+import { conversationLockKey } from "./conversation-workspace";
 import { StateStore } from "./store";
 
 const home = process.env.HOME;
@@ -446,10 +447,11 @@ function ensureNotice(state: CohortState): ReturnType<typeof cohortNoticeAction>
     const action = cohortNoticeAction(existing?.status ?? null);
     const prompt = noticePrompt(state);
     if (action === "enqueue") {
+      const conversationKey = `cohort-verifier:${route.id}`;
       store.enqueue({
         routeId: route.id,
-        lockKey: route.lockKey ?? route.cwd,
-        conversationKey: `cohort-verifier:${route.id}`,
+        lockKey: conversationLockKey(route, conversationKey),
+        conversationKey,
         channelId: route.discordChannelId,
         threadId: null,
         messageId: state.noticeMessageId,

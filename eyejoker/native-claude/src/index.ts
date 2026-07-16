@@ -51,6 +51,8 @@ import {
 import { ProgressEditGate } from "./progress-edit-cadence";
 import { deliverPendingChunks } from "./final-delivery";
 import { JobRuntime } from "./runtime";
+import { ConversationWorkspaceManager, conversationLockKey } from "./conversation-workspace";
+import { progressNonce, renderQueuedProgress } from "./queued-progress";
 import {
   StreamProgressAggregator,
   renderProgressCard,
@@ -100,10 +102,12 @@ const executor = new ClaudeSdkExecutor({
   claudeExecutable,
   timeoutSeconds: config.jobTimeoutSeconds,
 });
+const workspaceManager = new ConversationWorkspaceManager(join(stateDir, "worktrees"));
 const typingTimers = new Map<string, ReturnType<typeof setInterval>>();
 const progressBoards = new Map<string, ProgressBoard>();
 const questionBroker = new QuestionBroker();
 const messageLifecycleQueue = new KeyedSerialQueue();
+const progressLifecycleQueue = new KeyedSerialQueue();
 const attachmentRoot = join(stateDir, "attachments");
 const outboundRoot = join(stateDir, "outbound");
 const attachmentTtlMs = 7 * 24 * 60 * 60 * 1_000;
@@ -123,6 +127,18 @@ function cleanupExpiredAttachments(): number {
   return inboundDeleted.length + outboundDeleted.length;
 }
 
+function migrateQueuedConversationLocks(): number {
+  let migrated = 0;
+  for (const job of store.listActive()) {
+    if (job.status !== "queued") continue;
+    const route = routes.get(job.routeId);
+    if (!route) continue;
+    const target = conversationLockKey(route, job.conversationKey);
+    if (target !== job.lockKey && store.setQueuedLock(job.id, target)) migrated += 1;
+  }
+  return migrated;
+}
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -136,6 +152,54 @@ async function textChannel(id: string): Promise<GuildTextBasedChannel> {
   const channel = await client.channels.fetch(id);
   if (!channel?.isTextBased() || channel.isDMBased()) throw new Error(`Discord channel is unavailable: ${id}`);
   return channel as GuildTextBasedChannel;
+}
+
+async function postQueuedProgress(job: JobRecord): Promise<void> {
+  await progressLifecycleQueue.run(job.id, async () => {
+    const current = store.getJob(job.id);
+    if (!current || current.status !== "queued" || current.progressMessageId) return;
+
+    const active = store.listActive();
+    const running = active.filter((candidate) => candidate.status === "running").length;
+    const sameConversationAhead = active.filter(
+      (candidate) =>
+        candidate.id !== current.id &&
+        candidate.lockKey === current.lockKey &&
+        (candidate.status === "running" ||
+          (candidate.status === "queued" && candidate.createdAt <= current.createdAt)),
+    ).length;
+    const content = renderQueuedProgress({
+      running,
+      maxConcurrent: config.maxConcurrent,
+      sameConversationAhead,
+      prompt: current.prompt,
+    });
+    const channel = await textChannel(current.channelId);
+    const options: MessageCreateOptions = {
+      content,
+      allowedMentions: { parse: [] },
+      nonce: progressNonce(current.id),
+      enforceNonce: true,
+    };
+    if (isReplyableMessageId(current.messageId)) {
+      options.reply = { messageReference: current.messageId, failIfNotExists: false };
+    }
+    const message = await channel.send(options);
+    const latest = store.getJob(current.id);
+    if (!latest) {
+      await message.delete().catch(() => undefined);
+      return;
+    }
+    if (latest.progressMessageId) {
+      if (latest.progressMessageId !== message.id) await message.delete().catch(() => undefined);
+      return;
+    }
+    const queuedMessage =
+      message.content === content
+        ? message
+        : await message.edit({ content, allowedMentions: { parse: [] } });
+    store.setProgress(current.id, queuedMessage.id, content);
+  });
 }
 
 function questionComponents(interactionId: string, choices: string[]): ActionRowBuilder<ButtonBuilder>[] {
@@ -252,6 +316,8 @@ class ProgressBoard {
     const options: MessageCreateOptions = {
       content,
       allowedMentions: { parse: [] },
+      nonce: progressNonce(this.job.id),
+      enforceNonce: true,
     };
     if (isReplyableMessageId(this.job.messageId)) {
       options.reply = { messageReference: this.job.messageId, failIfNotExists: false };
@@ -268,6 +334,9 @@ class ProgressBoard {
       }
     } else {
       message = await channel.send(options);
+    }
+    if (message.content !== content) {
+      message = await message.edit({ content, allowedMentions: { parse: [] } });
     }
     this.message = message;
     this.lifecycle.recordPosted(message.id);
@@ -404,12 +473,15 @@ async function startTyping(job: JobRecord): Promise<void> {
   typingTimers.set(job.id, timer);
   console.log(`job start id=${job.id} route=${job.routeId} attempt=${job.attempts}`);
 
-  let board = progressBoards.get(job.id);
-  if (!board) {
-    board = new ProgressBoard(job);
-    progressBoards.set(job.id, board);
-  }
-  await board.start();
+  await progressLifecycleQueue.run(job.id, async () => {
+    const latestJob = store.getJob(job.id) ?? job;
+    let board = progressBoards.get(job.id);
+    if (!board) {
+      board = new ProgressBoard(latestJob);
+      progressBoards.set(job.id, board);
+    }
+    await board.start();
+  });
 }
 
 function stopTyping(jobId: string): void {
@@ -487,6 +559,7 @@ const runtime = new JobRuntime({
   store,
   routes,
   executor: (request) => executor.run(request),
+  prepareRoute: (route, job) => workspaceManager.prepare(route, job),
   preflight: async (job) => {
     const route = routes.get(job.routeId);
     if (!route) throw new Error(`route not found: ${job.routeId}`);
@@ -640,11 +713,18 @@ client.once("clientReady", async () => {
   try {
     await validateRouteChannels();
     const recovered = runtime.recoverInterrupted("bridge service restart");
+    const queuedLocksMigrated = migrateQueuedConversationLocks();
+    for (const job of store.listActive()) {
+      if (job.status !== "queued" || job.progressMessageId || !isReplyableMessageId(job.messageId)) continue;
+      await postQueuedProgress(job).catch((error) =>
+        console.warn(`startup queued progress failed id=${job.id}`, error instanceof Error ? error.message : String(error)),
+      );
+    }
     const terminalProgressCleaned = await cleanupTerminalProgress();
     const orphanedQuestionsCleaned = await cleanupOrphanedQuestionComponents();
     const expiredAttachmentsCleaned = cleanupExpiredAttachments();
     console.log(
-      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} terminal_progress_cleanup=${terminalProgressCleaned} orphaned_question_cleanup=${orphanedQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} state=${statePath}`,
+      `native bridge ready bot=${client.user?.tag} routes=${config.routes.length} recovered=${recovered} queued_lock_migrations=${queuedLocksMigrated} terminal_progress_cleanup=${terminalProgressCleaned} orphaned_question_cleanup=${orphanedQuestionsCleaned} attachment_cleanup=${expiredAttachmentsCleaned} state=${statePath}`,
     );
     queuePoll = setInterval(() => {
       if (store.hasRunnable()) void runtime.runUntilIdle().catch((error) => console.error("queue poll failed", error));
@@ -822,7 +902,12 @@ client.on("messageCreate", (message) => {
         return;
       }
       try {
-        const preview = await executor.rewindSession(route.cwd, checkpoint.sessionId, checkpoint.userMessageId, true);
+        const preview = await executor.rewindSession(
+          store.sessionWorkspace(key) ?? route.cwd,
+          checkpoint.sessionId,
+          checkpoint.userMessageId,
+          true,
+        );
         if (!preview.canRewind) {
           await message.reply({ content: `rewind 불가: ${preview.error ?? "원인 없음"}`, allowedMentions: { parse: [] } });
           return;
@@ -862,7 +947,12 @@ client.on("messageCreate", (message) => {
         return;
       }
       try {
-        const applied = await executor.rewindSession(route.cwd, operation.sessionId, operation.checkpoint, false);
+        const applied = await executor.rewindSession(
+          store.sessionWorkspace(key) ?? route.cwd,
+          operation.sessionId,
+          operation.checkpoint,
+          false,
+        );
         await message.reply({
           content: applied.canRewind
             ? `rewind 적용됨 · files=${applied.filesChanged?.length ?? operation.preview.filesChanged?.length ?? 0}`
@@ -937,7 +1027,7 @@ client.on("messageCreate", (message) => {
 
     const job = store.enqueue({
       routeId: route.id,
-      lockKey: route.lockKey ?? route.cwd,
+      lockKey: conversationLockKey(route, key),
       conversationKey: key,
       channelId: message.channelId,
       threadId: parentId ? message.channelId : null,
@@ -948,6 +1038,9 @@ client.on("messageCreate", (message) => {
       attachmentPaths: attachments.paths,
     }, pendingSteeringFallback ? message.id : undefined);
     await message.react("👀").catch(() => undefined);
+    await postQueuedProgress(job).catch((error) =>
+      console.warn(`queued progress failed id=${job.id}`, error instanceof Error ? error.message : String(error)),
+    );
     console.log(
       `job queued id=${job.id} route=${route.id} channel=${message.channelId} author=${message.author.id} len=${prompt.length}`,
     );
