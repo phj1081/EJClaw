@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { cleanupExpiredAttachmentDirs } from "../src/attachment-cleanup";
+import {
+  cleanupExpiredAttachmentDirs,
+  steeringAttachmentProtectionPaths,
+} from "../src/attachment-cleanup";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -35,6 +38,29 @@ describe("attachment retention", () => {
     expect(deleted).toEqual([stale]);
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(active)).toBe(true);
+  });
+
+  test("protects active steering message directories without accepting path traversal", () => {
+    const root = join(tmpdir(), `native-steering-attachments-${crypto.randomUUID()}`);
+    roots.push(root);
+    const messageId = "1527480195374776330";
+    const active = join(root, messageId);
+    mkdirSync(active, { recursive: true });
+    writeFileSync(join(active, "follow-up.png"), "fixture");
+    const nowMs = Date.parse("2026-07-17T12:00:00.000Z");
+    const old = new Date(nowMs - 8 * 24 * 60 * 60 * 1000);
+    utimesSync(active, old, old);
+
+    const protectedPaths = steeringAttachmentProtectionPaths(root, [messageId, "../../outside"]);
+    expect(protectedPaths).toEqual([join(active, ".active")]);
+    expect(
+      cleanupExpiredAttachmentDirs(root, {
+        activePaths: protectedPaths,
+        nowMs,
+        ttlMs: 7 * 24 * 60 * 60 * 1000,
+      }),
+    ).toEqual([]);
     expect(existsSync(active)).toBe(true);
   });
 });

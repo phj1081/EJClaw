@@ -16,6 +16,13 @@ function messageDirectory(root: string, filePath: string): string | null {
   return first ? join(absoluteRoot, first) : dirname(absoluteFile);
 }
 
+export function steeringAttachmentProtectionPaths(root: string, messageIds: string[]): string[] {
+  const absoluteRoot = resolve(root);
+  return messageIds
+    .filter((messageId) => /^[1-9]\d{16,19}$/.test(messageId))
+    .map((messageId) => join(absoluteRoot, messageId, ".active"));
+}
+
 export function cleanupExpiredAttachmentDirs(
   root: string,
   options: AttachmentCleanupOptions,

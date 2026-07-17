@@ -862,6 +862,7 @@ describe("durable job store", () => {
     expect(first.countDeliveredSteeringInputs(job.id)).toBe(0);
     expect(first.acceptSteeringInput("followup-message").state).toBe("accepted");
     expect(first.countDeliveredSteeringInputs(job.id)).toBe(1);
+    expect(first.listActiveSteeringMessageIds()).toEqual(["followup-message"]);
 
     const reopened = new StateStore(path);
     expect(reopened.getSteeringInput("followup-message")?.sdkMessageId).toBe(initialSdkId);
@@ -880,6 +881,7 @@ describe("durable job store", () => {
     expect(deleted?.deletedAt).not.toBeNull();
     expect(reopened.countDeliveredSteeringInputs(job.id)).toBe(0);
     expect(reopened.listJobSteeringInputs(job.id)).toHaveLength(1);
+    expect(reopened.listActiveSteeringMessageIds()).toEqual([]);
   });
 
   test("recovers the latest desired state for accepted, edited and deleted steering", () => {
@@ -945,6 +947,32 @@ describe("durable job store", () => {
 
     expect(fallback.messageId).toBe("fallback-followup");
     expect(db.getSteeringInput("fallback-followup")).toBeNull();
+  });
+
+  test("atomically transfers an edited steering row into one fallback job", () => {
+    const db = store();
+    const running = db.enqueue(input("steering", "steering:edited-fallback", "source-edited-fallback"));
+    db.beginSteeringInput({
+      messageId: "edited-fallback-followup",
+      jobId: running.id,
+      conversationKey: running.conversationKey,
+      content: "처음 지시",
+      sdkMessageId: crypto.randomUUID(),
+    });
+    db.acceptSteeringInput("edited-fallback-followup");
+    db.prepareSteeringEdit("edited-fallback-followup", "수정 지시\n\n첨부:\n/tmp/edited-fallback.png");
+
+    const fallback = db.enqueue(
+      {
+        ...input("steering", running.conversationKey, "edited-fallback-job"),
+        attachmentPaths: ["/tmp/edited-fallback.png"],
+      },
+      "edited-fallback-followup",
+    );
+
+    expect(fallback.attachmentPaths).toEqual(["/tmp/edited-fallback.png"]);
+    expect(db.getSteeringInput("edited-fallback-followup")).toBeNull();
+    expect(db.listRecoverySteeringInputs(running.id)).toEqual([]);
   });
 
   test("deduplicates and reuses durable interaction answers after restart", () => {

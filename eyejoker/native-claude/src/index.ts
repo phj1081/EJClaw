@@ -35,7 +35,7 @@ import {
   progressReplyMessageId,
   startProgressBeforeTyping,
 } from "./progress-start";
-import { cleanupExpiredAttachmentDirs } from "./attachment-cleanup";
+import { cleanupExpiredAttachmentDirs, steeringAttachmentProtectionPaths } from "./attachment-cleanup";
 import { writeBoundedResponse } from "./bounded-download";
 import { extractOutboundArtifacts } from "./outbound-artifacts";
 import { removeOutboundSpool, spoolOutboundArtifacts } from "./outbound-spool";
@@ -146,7 +146,10 @@ let queuedProgressReconcilePromise: Promise<void> | null = null;
 function cleanupExpiredAttachments(): number {
   const active = store.listActive();
   const inboundDeleted = cleanupExpiredAttachmentDirs(attachmentRoot, {
-    activePaths: active.flatMap((job) => job.attachmentPaths),
+    activePaths: [
+      ...active.flatMap((job) => job.attachmentPaths),
+      ...steeringAttachmentProtectionPaths(attachmentRoot, store.listActiveSteeringMessageIds()),
+    ],
     ttlMs: attachmentTtlMs,
   });
   const outboundDeleted = cleanupExpiredAttachmentDirs(outboundRoot, {
@@ -1422,17 +1425,20 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
       if (mutation) {
         store.recordSteeringMutation(message.id, mutation.sdkMessageId);
       } else if (job.status === "running") {
-        const fallback = store.enqueue({
-          routeId: job.routeId,
-          lockKey: job.lockKey,
-          conversationKey: job.conversationKey,
-          channelId: job.channelId,
-          threadId: job.threadId,
-          messageId: steeringFallbackMessageId("edit", message.id, basePrompt),
-          authorId: job.authorId,
-          prompt: `[Discord 추가 지시 수정 · message=${message.id}]\n${contextualPrompt}`,
-          attachmentPaths: attachments.paths,
-        });
+        const fallback = store.enqueue(
+          {
+            routeId: job.routeId,
+            lockKey: job.lockKey,
+            conversationKey: job.conversationKey,
+            channelId: job.channelId,
+            threadId: job.threadId,
+            messageId: steeringFallbackMessageId("edit", message.id, basePrompt),
+            authorId: job.authorId,
+            prompt: `[Discord 추가 지시 수정 · message=${message.id}]\n${contextualPrompt}`,
+            attachmentPaths: attachments.paths,
+          },
+          message.id,
+        );
         console.log(`steering edit actor closed; fallback job=${fallback.id} source_job=${job.id} message=${message.id}`);
         void runtime.runUntilIdle().catch((error) => console.error("steering edit fallback pump failed", error));
       }

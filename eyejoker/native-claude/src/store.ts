@@ -564,13 +564,15 @@ export class StateStore {
     }
   }
 
-  enqueue(input: EnqueueInput, replacePendingSteeringMessageId?: string): JobRecord {
+  enqueue(input: EnqueueInput, transferSteeringMessageId?: string): JobRecord {
     if (input.pinnedSession && !input.sessionId?.trim()) {
       throw new Error("pinned session id is required");
     }
     const existing = this.db.query<JobRow, [string]>("SELECT * FROM jobs WHERE message_id = ?").get(input.messageId);
     if (existing) {
-      if (replacePendingSteeringMessageId) this.discardPendingSteeringInput(replacePendingSteeringMessageId);
+      if (transferSteeringMessageId) {
+        this.db.query("DELETE FROM steering_inputs WHERE message_id=?").run(transferSteeringMessageId);
+      }
       return fromRow(existing);
     }
 
@@ -633,10 +635,10 @@ export class StateStore {
           timestamp,
           timestamp,
         );
-      if (replacePendingSteeringMessageId) {
+      if (transferSteeringMessageId) {
         this.db
-          .query("DELETE FROM steering_inputs WHERE message_id=? AND state='pending'")
-          .run(replacePendingSteeringMessageId);
+          .query("DELETE FROM steering_inputs WHERE message_id=?")
+          .run(transferSteeringMessageId);
       }
     });
     tx();
@@ -1734,6 +1736,19 @@ export class StateStore {
       )
       .get(jobId);
     return Number(row?.count ?? 0);
+  }
+
+  listActiveSteeringMessageIds(): string[] {
+    return this.db
+      .query<{ message_id: string }, []>(
+        `SELECT steering_inputs.message_id
+         FROM steering_inputs
+         INNER JOIN jobs ON jobs.id=steering_inputs.job_id
+         WHERE jobs.status IN ('queued','running','delivering') AND steering_inputs.state!='deleted'
+         ORDER BY steering_inputs.created_at, steering_inputs.rowid`,
+      )
+      .all()
+      .map((row) => row.message_id);
   }
 
   listRecoverySteeringInputs(jobId: string): SteeringInputRecord[] {
