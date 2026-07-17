@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ensureSteeringProgress,
   progressReplyMessageId,
   recoverMissingSteeringProgress,
   startProgressBeforeTyping,
@@ -74,5 +75,15 @@ describe("Discord progress startup isolation", () => {
     ).resolves.toBe(false);
 
     expect(recoveryCalls).toBe(0);
+  });
+
+  test("reconciles an existing durable progress id when its in-memory board is not open", async () => {
+    let starts = 0;
+    const recovered = await ensureSteeringProgress("existing-progress", async () => {
+      starts += 1;
+    });
+
+    expect(recovered).toBe(false);
+    expect(starts).toBe(1);
   });
 });

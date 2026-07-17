@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   appendDiscordContext,
+  buildSteeringUserTurn,
   conversationKey,
   isReplyableMessageId,
   isSupportedMessageType,
@@ -40,9 +41,9 @@ describe("Discord bridge helpers", () => {
     expect(isReplyableMessageId("steering-delete:message:1")).toBe(false);
   });
 
-  test("adds explicit reply and bounded recent history as quoted Discord context", () => {
+  test("keeps only an explicit bounded reply and drops ambient Discord history", () => {
     const prompt = appendDiscordContext("현재 요청", {
-      reply: { id: "r1", author: "눈쟁이", content: "원본 요청", attachments: ["spec.png"] },
+      reply: { id: "r1", author: "눈쟁이", content: `원본 요청${"x".repeat(2_000)}`, attachments: ["spec.png"] },
       history: [
         { id: "h1", author: "Claude", content: "이전 답변", attachments: [] },
         { id: "r1", author: "눈쟁이", content: "중복 reply", attachments: [] },
@@ -51,10 +52,26 @@ describe("Discord bridge helpers", () => {
     expect(prompt).toContain("명시적으로 답장한 메시지");
     expect(prompt).toContain("눈쟁이: 원본 요청");
     expect(prompt).toContain("첨부: spec.png");
-    expect(prompt).toContain("최근 대화");
-    expect(prompt).toContain("Claude: 이전 답변");
+    expect(prompt).not.toContain("최근 대화");
+    expect(prompt).not.toContain("Claude: 이전 답변");
     expect(prompt).not.toContain("중복 reply");
     expect(prompt.endsWith("현재 요청")).toBe(true);
+    expect(prompt.length).toBeLessThan(1_500);
+  });
+
+  test("returns the exact request when there is no explicit reply even if ambient history exists", () => {
+    const prompt = appendDiscordContext("현재 요청", {
+      reply: null,
+      history: [{ id: "h1", author: "Claude", content: "자동 주입하면 안 됨", attachments: [] }],
+    });
+    expect(prompt).toBe("현재 요청");
+  });
+
+  test("keeps an ordinary same-thread steering turn free of bridge provenance wrappers", () => {
+    expect(buildSteeringUserTurn("contextual", false, "/compact", ["/tmp/follow-up.png"])).toBe(
+      "contextual\n\n첨부:\n/tmp/follow-up.png",
+    );
+    expect(buildSteeringUserTurn("contextual", true, "/compact", ["/tmp/ignored.png"])).toBe("/compact");
   });
 
   test("prevents attachment path traversal", () => {

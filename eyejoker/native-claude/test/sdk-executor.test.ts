@@ -6,6 +6,7 @@ import {
   splitInitialSdkMessages,
   type SdkQueryFactory,
 } from "../src/sdk-executor";
+import { nativeBridgeSystemPrompt } from "../src/protocol";
 import type { ExecutionRequest, InteractiveQuestion } from "../src/types";
 
 function request(overrides: Partial<ExecutionRequest> = {}): ExecutionRequest {
@@ -139,17 +140,46 @@ describe("ClaudeSdkExecutor", () => {
     expect(initial?.message).toEqual({ role: "user", content: "SDK TASK" });
     expect(options?.model).toBe("claude-fable-5");
     expect(options?.fallbackModel).toBe("gpt-5.6-sol");
-    expect(options?.agents?.["fable-worker"]?.model).toBe("claude-fable-5");
-    expect(options?.agents?.["gpt-worker"]?.model).toBe("gpt-5.6-sol");
+    expect(options?.agents).toBeUndefined();
     expect(options?.pathToClaudeCodeExecutable).toBe("/home/ejclaw/.hermes/node/bin/claude");
     expect(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
     expect(options?.env?.AGENTMEMORY_PROJECT_NAME).toBe("eyejokerdb");
+    expect(options?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
+    expect(options?.env?.CLAUDE_CODE_OAUTH_TOKENS).toBe("");
+    expect(options?.env?.ANTHROPIC_AUTH_TOKEN).toBe("");
     expect(options?.settings).toEqual({
-      enabledPlugins: { "discord@claude-plugins-official": false },
+      enabledPlugins: {
+        "agentmemory@agentmemory": false,
+        "discord@claude-plugins-official": false,
+      },
     });
+    expect(options?.systemPrompt).toEqual({
+      type: "preset",
+      preset: "claude_code",
+      append: nativeBridgeSystemPrompt(request().route),
+    });
+    expect(options?.strictMcpConfig).toBe(true);
+    expect(options?.mcpServers).toEqual({});
     expect(execution.ok).toBe(true);
     expect(execution.result).toBe("SDK_OK");
     expect(execution.sessionId).toBe("sdk-session");
+  });
+
+  test("registers custom agents only for an explicit mixed-agent route", async () => {
+    let options: Options | undefined;
+    const factory: SdkQueryFactory = ({ prompt, options: received }) => {
+      options = received;
+      return (async function* () {
+        await prompt[Symbol.asyncIterator]().next();
+        yield result();
+      })() as Query;
+    };
+    const base = request();
+    const executor = new ClaudeSdkExecutor({ queryFactory: factory, timeoutSeconds: 5 });
+    await executor.run(request({ route: { ...base.route, mixedAgents: true } }));
+
+    expect(options?.agents?.["fable-worker"]?.model).toBe("claude-fable-5");
+    expect(options?.agents?.["gpt-worker"]?.model).toBe("gpt-5.6-sol");
   });
 
   test("feeds the initial SDK input to unlock init and persists init before later events", async () => {
@@ -366,7 +396,9 @@ describe("ClaudeSdkExecutor", () => {
     let resume: string | undefined;
     let dryRun: boolean | undefined;
     let checkpoint = "";
+    let controlOptions: Options | undefined;
     const factory: SdkQueryFactory = ({ options }) => {
+      controlOptions = options;
       resume = options?.resume;
       const generator = (async function* () {})();
       return Object.assign(generator, {
@@ -384,6 +416,17 @@ describe("ClaudeSdkExecutor", () => {
     expect(resume).toBe("session-rewind");
     expect(checkpoint).toBe("checkpoint-1");
     expect(dryRun).toBe(true);
+    expect(controlOptions?.strictMcpConfig).toBe(true);
+    expect(controlOptions?.mcpServers).toEqual({});
+    expect(controlOptions?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
+    expect(controlOptions?.env?.CLAUDE_CODE_OAUTH_TOKENS).toBe("");
+    expect(controlOptions?.env?.ANTHROPIC_AUTH_TOKEN).toBe("");
+    expect(controlOptions?.settings).toEqual({
+      enabledPlugins: {
+        "agentmemory@agentmemory": false,
+        "discord@claude-plugins-official": false,
+      },
+    });
     expect(result.filesChanged).toEqual(["src/a.ts"]);
   });
 

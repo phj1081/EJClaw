@@ -11,7 +11,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { AsyncMailbox } from "./async-mailbox";
 import { markerContinuationPrompt, parseInteractiveQuestion } from "./interactive-control";
-import { defaultAgents } from "./protocol";
+import { defaultAgents, nativeBridgeSystemPrompt } from "./protocol";
 import { finalizeStreamJsonResult, StreamProgressAggregator } from "./stream-progress";
 import type { ClaudeExecution, ExecutionRequest, InteractiveQuestion, PermissionMode } from "./types";
 
@@ -42,9 +42,22 @@ type SdkUuid = NonNullable<SDKUserMessage["uuid"]>;
 
 const nativeSessionSettings = {
   enabledPlugins: {
+    "agentmemory@agentmemory": false,
     "discord@claude-plugins-official": false,
   },
 } as const;
+
+function nativeChildEnv(memoryProject?: string): Record<string, string | undefined> {
+  return {
+    ...process.env,
+    CLAUDE_CODE_OAUTH_TOKEN: "",
+    CLAUDE_CODE_OAUTH_TOKENS: "",
+    ANTHROPIC_AUTH_TOKEN: "",
+    CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0",
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+    ...(memoryProject ? { AGENTMEMORY_PROJECT_NAME: memoryProject } : {}),
+  };
+}
 
 function sdkUserMessage(content: string, uuid: SdkUuid = crypto.randomUUID()): SDKUserMessage {
   return {
@@ -223,22 +236,21 @@ export class ClaudeSdkExecutor {
         allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
         pathToClaudeCodeExecutable: this.claudeExecutable,
         tools: { type: "preset", preset: "claude_code" },
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: nativeBridgeSystemPrompt(request.route),
+        },
+        mcpServers: {},
+        strictMcpConfig: true,
         settings: nativeSessionSettings,
         includePartialMessages: true,
         includeHookEvents: true,
         forwardSubagentText: true,
         enableFileCheckpointing: true,
-        ...(request.route.mixedAgents === false ? {} : { agents: defaultAgents }),
+        ...(request.route.mixedAgents === true ? { agents: defaultAgents } : {}),
         canUseTool,
-        env: {
-          ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0",
-          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-          ...(request.route.memoryProject
-            ? { AGENTMEMORY_PROJECT_NAME: request.route.memoryProject }
-            : {}),
-        },
+        env: nativeChildEnv(request.route.memoryProject),
       };
       if (request.route.fallbackModel) options.fallbackModel = request.route.fallbackModel;
       if (resume) {
@@ -447,15 +459,12 @@ export class ClaudeSdkExecutor {
         pathToClaudeCodeExecutable: this.claudeExecutable,
         tools: { type: "preset", preset: "claude_code" },
         systemPrompt: { type: "preset", preset: "claude_code" },
+        mcpServers: {},
+        strictMcpConfig: true,
         settings: nativeSessionSettings,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        env: {
-          ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0",
-          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-          ...(memoryProject ? { AGENTMEMORY_PROJECT_NAME: memoryProject } : {}),
-        },
+        env: nativeChildEnv(memoryProject),
       },
     });
     const timeout = setTimeout(() => {

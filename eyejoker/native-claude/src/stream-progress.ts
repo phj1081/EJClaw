@@ -612,6 +612,7 @@ export interface ProgressRenderInput {
   elapsedSeconds: number;
   promptPreview: string;
   recoveryReason?: string | null;
+  steeringCount?: number;
   snapshot: ProgressSnapshot;
   mode?: "running" | "final" | "cancelled";
   ok?: boolean;
@@ -634,6 +635,10 @@ export function renderProgressCard(input: ProgressRenderInput): string {
           ? `✅ **작업 완료** — ${elapsed}${modelSuffix}`
           : `⛔ **작업 실패** — ${elapsed}${modelSuffix}`
         : `⏳ **작업 중** — ${elapsed}${modelSuffix}`;
+  const steeringLine =
+    mode === "running" && (input.steeringCount ?? 0) > 0
+      ? `📥 **추가 지시 ${input.steeringCount}개 · SDK 전달됨**`
+      : "";
 
   const trackLabel = (track: SubagentProgress): string => {
     const model = track.model ? shortModelLabel(track.model) : "";
@@ -647,6 +652,7 @@ export function renderProgressCard(input: ProgressRenderInput): string {
       const activity = track.lastActivity && !track.done ? ` · ${track.lastActivity}` : "";
       lines.push(`${icon} ${trackLabel(track)}${activity}`);
     }
+    if (steeringLine) lines.push(steeringLine);
     return lines.join("\n");
   }
 
@@ -679,10 +685,11 @@ export function renderProgressCard(input: ProgressRenderInput): string {
   }
   const lines = [header];
   for (const [index, activity] of recent.entries()) {
-    const branch = index === recent.length - 1 ? "└" : "├";
+    const branch = index === recent.length - 1 && !steeringLine ? "└" : "├";
     const current = index === activeIndex ? " ←" : "";
     lines.push(`${branch} ${activity.text}${current}`);
   }
+  if (steeringLine) lines.push(`└ ${steeringLine}`);
   return lines.join("\n");
 }
 

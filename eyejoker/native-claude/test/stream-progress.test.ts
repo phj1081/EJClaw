@@ -88,6 +88,35 @@ describe("stream progress aggregator", () => {
     expect(longCard).not.toContain("72분");
   });
 
+  test("shows accepted same-thread follow-up turns as SDK-delivered without claiming model consumption", () => {
+    const agg = new StreamProgressAggregator();
+    for (const line of sample.split("\n")) agg.ingestLine(line);
+    const running = renderProgressCard({
+      routeId: "cleanapo",
+      attempt: 1,
+      maxAttempts: 2,
+      elapsedSeconds: 30,
+      promptPreview: "원래 작업",
+      snapshot: agg.snapshot(),
+      steeringCount: 2,
+      mode: "running",
+    });
+    const final = renderProgressCard({
+      routeId: "cleanapo",
+      attempt: 1,
+      maxAttempts: 2,
+      elapsedSeconds: 30,
+      promptPreview: "원래 작업",
+      snapshot: agg.snapshot(),
+      steeringCount: 2,
+      mode: "final",
+    });
+
+    expect(running).toContain("📥 **추가 지시 2개 · SDK 전달됨**");
+    expect(running).not.toContain("처리 완료");
+    expect(final).not.toContain("추가 지시");
+  });
+
   test("tracks actual subagent models and renders old EJClaw-style model tags", () => {
     const agg = new StreamProgressAggregator();
     for (const line of subagentSample.split("\n")) agg.ingestLine(line);

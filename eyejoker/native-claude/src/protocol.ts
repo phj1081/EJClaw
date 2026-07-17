@@ -1,4 +1,5 @@
 import type { ClaudeExecution, RouteConfig } from "./types";
+import { appendAttachmentContext } from "./bridge-utils";
 import { formatElapsedKorean } from "./duration";
 import { formatModelUsage } from "./model-visibility";
 import { parseStreamJsonResult } from "./stream-progress";
@@ -16,34 +17,32 @@ export const defaultAgents = {
   },
 };
 
+export function nativeBridgeSystemPrompt(route: RouteConfig): string {
+  const lines = [
+    "호스트가 최종 답변을 현재 대화에 자동 전달한다. Discord·send_message·MCP 전송 도구를 찾거나 호출하거나 전송 방식을 설명하지 마.",
+    "생성 파일은 최종 답변 끝에 파일마다 단독 줄 MEDIA:/absolute/path로 적어. 사용자 선택이 꼭 필요할 때만 AskUserQuestion을 사용해.",
+    "직접 만든 PR의 CI·리뷰·merge 후속 감시가 필요할 때만 단독 줄 PR_WATCH: https://github.com/owner/repo/pull/123을 적어.",
+    "기존 변경을 보존하고 실제 확인한 실행 결과만 보고해.",
+    "확인·추적 요청은 읽기 전용으로 원인부터 설명하고 승인 전 수정하지 마. 싹 처리·올리자·추천대로·ㄱㄱ는 제안한 전체 실행 승인이다.",
+  ];
+  if (route.instructions) lines.push(`범위: ${route.instructions}`);
+  return lines.join("\n");
+}
+
 export function buildGoalPrompt(
-  route: RouteConfig,
+  _route: RouteConfig,
   userPrompt: string,
   attachmentPaths: string[],
   recoveryReason: string | null,
 ): string {
-  const lines = [
-    "너는 눈쟁이의 신뢰된 프로젝트 코딩 에이전트다. 한국어 반말, 결론 먼저.",
-    "기존 사용자 변경을 보존하고, 추측한 결과나 실행하지 않은 테스트를 성공했다고 쓰지 마.",
-    "완료 판단은 자연어 약속이 아니라 diff, 테스트, 커밋, PR, CI, 배포/런타임 증거로 해.",
-    "사용자 요청을 실제 산출물·테스트·필요 시 PR/CI 증거로 완수하고, 계획만 하고 멈추지 마.",
-    "진짜 외부 블로커가 증명되거나 실행 한도에 도달하면 중단하고 증거를 보고한다.",
-    "Discord에 전달할 생성 파일이 있으면 최종 응답 끝에 파일마다 단독 줄 MEDIA:/absolute/path 형식으로 적어. 민감 파일은 절대 첨부하지 마.",
-    "네가 이번 작업에서 직접 생성·소유하고 CI/리뷰/merge 후속 감시가 필요한 GitHub PR이 있으면 최종 응답 끝에 PR마다 단독 줄 PR_WATCH: https://github.com/owner/repo/pull/123 형식으로 적어. 단순 조사·리뷰 대상 PR에는 붙이지 마. bridge가 marker를 숨기고 내구성 watcher에 등록한다.",
-    "진행에 사용자 선택이 반드시 필요하면 반드시 native AskUserQuestion 도구를 호출해. Discord bridge가 선택지를 버튼으로 보여주고 답변을 같은 세션에 반환한다.",
-    'native AskUserQuestion 도구를 사용할 수 없는 경우에만 최종 응답 끝에 단독 한 줄 DISCORD_QUESTION:{"question":"질문","choices":["선택1","선택2"]}를 fallback으로 적어. 선택지는 최대 4개.',
-  ];
-  if (route.instructions) lines.push("", `프로젝트 범위:\n${route.instructions}`);
+  const lines = [userPrompt];
   if (recoveryReason) {
     lines.push(
       "",
-      `호스트 복구 사유: ${recoveryReason}`,
-      "이전 프로세스가 중단됐다. 현재 브랜치·작업트리·대화 기록을 먼저 확인하고 기존 변경을 버리지 말고 이어서 완수해.",
+      `[호스트 복구: ${recoveryReason}] 기존 변경을 버리지 말고 현재 상태에서 이어서 완수해.`,
     );
   }
-  if (attachmentPaths.length > 0) lines.push("", `첨부 파일 경로:\n${attachmentPaths.join("\n")}`);
-  lines.push("", `사용자 요청:\n${userPrompt}`);
-  return lines.join("\n");
+  return appendAttachmentContext(lines.join("\n"), attachmentPaths);
 }
 
 export function buildClaudeInvocation(
@@ -70,11 +69,21 @@ export function buildClaudeInvocation(
     "--include-partial-messages",
     "--include-hook-events",
     "--settings",
-    JSON.stringify({ enabledPlugins: { "discord@claude-plugins-official": false } }),
+    JSON.stringify({
+      enabledPlugins: {
+        "agentmemory@agentmemory": false,
+        "discord@claude-plugins-official": false,
+      },
+    }),
+    "--mcp-config",
+    JSON.stringify({ mcpServers: {} }),
+    "--strict-mcp-config",
+    "--append-system-prompt",
+    nativeBridgeSystemPrompt(route),
     "--name",
     `native-${route.id}`,
   ];
-  if (route.mixedAgents !== false) args.push("--agents", JSON.stringify(defaultAgents));
+  if (route.mixedAgents === true) args.push("--agents", JSON.stringify(defaultAgents));
   if (route.fallbackModel) args.push("--fallback-model", route.fallbackModel);
   if (resume && forkSession) args.push("--fork-session");
   args.push(resume ? "--resume" : "--session-id", sessionId);
