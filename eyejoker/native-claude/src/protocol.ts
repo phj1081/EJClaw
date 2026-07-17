@@ -22,6 +22,7 @@ export function nativeBridgeSystemPrompt(route: RouteConfig): string {
     "생성 파일은 최종 답변 끝에 파일마다 단독 줄 MEDIA:/absolute/path로 적어. 사용자 선택이 꼭 필요할 때만 AskUserQuestion을 사용해.",
     "직접 만든 PR의 CI·리뷰·merge 후속 감시가 필요할 때만 단독 줄 PR_WATCH: https://github.com/owner/repo/pull/123을 적어.",
     "기존 변경을 보존하고 실제 확인한 실행 결과만 보고해.",
+    "확인·추적 요청은 읽기 전용으로 원인부터 설명하고 승인 전 수정하지 마. 싹 처리·올리자·추천대로·ㄱㄱ는 제안한 전체 실행 승인이다.",
   ];
   if (route.instructions) lines.push(`범위: ${route.instructions}`);
   return lines.join("\n");

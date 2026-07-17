@@ -51,7 +51,9 @@ describe("Claude protocol", () => {
     expect(prompt).toContain("MEDIA:/absolute/path");
     expect(prompt).toContain("AskUserQuestion");
     expect(prompt).toContain("PR_WATCH:");
-    expect(prompt).toContain("apps/soriq만 담당");
+    expect(prompt).toContain("확인·추적 요청은 읽기 전용");
+    expect(prompt).toContain("싹 처리·올리자·추천대로·ㄱㄱ");
+    expect(prompt).toContain(route.instructions!);
     expect(prompt.length).toBeLessThan(650);
   });
 
