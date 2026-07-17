@@ -25,4 +25,26 @@ describe("progress edit cadence", () => {
     gate.finishEdit(10_700, true);
     expect(gate.scheduleDelay(10_700)).toBe(2_000);
   });
+
+  test("keeps a failed Discord edit dirty so it is retried", () => {
+    const gate = new ProgressEditGate();
+    gate.markDirty();
+    expect(gate.scheduleDelay(10_000)).toBe(0);
+    expect(gate.beginEdit()).toBe(true);
+
+    gate.finishEdit(10_000, false);
+
+    expect(gate.scheduleDelay(10_000)).toBe(0);
+  });
+
+  test("does not retry a clean no-op card render", () => {
+    const gate = new ProgressEditGate();
+    gate.markDirty();
+    expect(gate.scheduleDelay(10_000)).toBe(0);
+    expect(gate.beginEdit()).toBe(true);
+
+    gate.finishEdit(10_000, false, false);
+
+    expect(gate.scheduleDelay(10_000)).toBeNull();
+  });
 });

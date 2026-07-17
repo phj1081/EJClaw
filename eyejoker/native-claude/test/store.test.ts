@@ -857,6 +857,7 @@ describe("durable job store", () => {
       conversationKey: job.conversationKey,
       content: "처음 지시",
       sdkMessageId: initialSdkId,
+      rawPrompt: true,
     });
     expect(pending.state).toBe("pending");
     expect(first.countDeliveredSteeringInputs(job.id)).toBe(0);
@@ -866,10 +867,12 @@ describe("durable job store", () => {
 
     const reopened = new StateStore(path);
     expect(reopened.getSteeringInput("followup-message")?.sdkMessageId).toBe(initialSdkId);
+    expect(reopened.getSteeringInput("followup-message")?.rawPrompt).toBe(true);
     const editedSdkId = crypto.randomUUID();
     const edited = reopened.updateSteeringInput("followup-message", "수정 지시", editedSdkId);
     expect(edited).toMatchObject({
       content: "수정 지시",
+      rawPrompt: true,
       sdkMessageId: editedSdkId,
       originalSdkMessageId: initialSdkId,
       state: "edited",
@@ -1033,8 +1036,12 @@ describe("durable job store", () => {
     db.claimNext(1);
     db.setProgress(job.id, "discord-progress-123", "⏳ 작업 진행 중");
     expect(db.getJob(job.id)?.progressMessageId).toBe("discord-progress-123");
+    expect(db.getByProgressMessageId("discord-progress-123")?.id).toBe(job.id);
 
-    db.clearProgress(job.id);
+    expect(db.clearProgressIfMatches(job.id, "stale-progress-id")).toBe(false);
+    expect(db.getJob(job.id)?.progressMessageId).toBe("discord-progress-123");
+
+    expect(db.clearProgressIfMatches(job.id, "discord-progress-123")).toBe(true);
     expect(db.getJob(job.id)?.progressMessageId).toBeNull();
     expect(db.getJob(job.id)?.progressText).toBeNull();
   });

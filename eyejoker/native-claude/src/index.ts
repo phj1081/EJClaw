@@ -39,7 +39,7 @@ import { cleanupExpiredAttachmentDirs, steeringAttachmentProtectionPaths } from 
 import { writeBoundedResponse } from "./bounded-download";
 import { extractOutboundArtifacts } from "./outbound-artifacts";
 import { removeOutboundSpool, spoolOutboundArtifacts } from "./outbound-spool";
-import { parseControlCommand } from "./control-commands";
+import { parseControlCommand, parseMessageEditPrompt } from "./control-commands";
 import {
   parseQuestionButtonId,
   questionButtonId,
@@ -56,7 +56,8 @@ import {
   verifyPullRequestWatchPreflight,
   watchMarkersForSuccessfulExecution,
 } from "./github-watch-registration";
-import { ProgressEditGate } from "./progress-edit-cadence";
+import { PROGRESS_EDIT_INTERVAL_MS, ProgressEditGate } from "./progress-edit-cadence";
+import { isUnknownDiscordMessage, resolveExistingDiscordMessage } from "./discord-message-error";
 import { deliverPendingChunks } from "./final-delivery";
 import { findBotMessageByNonce, type ReconcileMessageFetcher } from "./discord-reconcile";
 import { JobRuntime } from "./runtime";
@@ -496,7 +497,7 @@ class ProgressBoard {
     }
     this.visibleTimer = setTimeout(() => {
       this.visibleTimer = null;
-      void this.openCard();
+      void this.openCard().catch((error) => console.warn("progress card open failed", this.job.id, String(error)));
     }, this.lifecycle.delayUntilVisible());
     this.visibleTimer.unref?.();
   }
@@ -504,42 +505,72 @@ class ProgressBoard {
   private async openCard(): Promise<void> {
     if (this.closed || this.message) return;
     if (store.getJob(this.job.id)?.status !== "running") return;
-    const channel = await textChannel(this.job.channelId);
-    const content = this.render("running");
-    const options: MessageCreateOptions = {
-      content,
-      allowedMentions: { parse: [] },
-      nonce: progressNonce(this.job.id),
-      enforceNonce: true,
-    };
-    if (this.replyMessageId) {
-      options.reply = { messageReference: this.replyMessageId, failIfNotExists: false };
-    }
+    try {
+      const channel = await textChannel(this.job.channelId);
+      const content = this.render("running");
+      const options: MessageCreateOptions = {
+        content,
+        allowedMentions: { parse: [] },
+        nonce: progressNonce(this.job.id),
+        enforceNonce: true,
+      };
+      if (this.replyMessageId) {
+        options.reply = { messageReference: this.replyMessageId, failIfNotExists: false };
+      }
 
-    const existingMessageId = this.lifecycle.existingMessageId();
-    let message: Message;
-    if (existingMessageId) {
-      try {
-        const existing = await channel.messages.fetch(existingMessageId);
-        message = await existing.edit({ content, allowedMentions: { parse: [] } });
-      } catch {
+      const existingMessageId = this.lifecycle.existingMessageId();
+      let message: Message;
+      if (existingMessageId) {
+        const existing = await resolveExistingDiscordMessage(async () => {
+          const fetched = await channel.messages.fetch(existingMessageId);
+          return fetched.edit({ content, allowedMentions: { parse: [] } });
+        });
+        if (existing) message = existing;
+        else {
+          this.lifecycle.forgetMessage(existingMessageId);
+          store.clearProgressIfMatches(this.job.id, existingMessageId);
+          message = await channel.send(options);
+        }
+      } else {
         message = await channel.send(options);
       }
-    } else {
-      message = await channel.send(options);
+      if (message.content !== content) {
+        message = await message.edit({ content, allowedMentions: { parse: [] } });
+      }
+      this.message = message;
+      this.lifecycle.recordPosted(message.id);
+      this.lastCard = content;
+      this.editGate.recordEdit();
+      if (!store.setProgress(this.job.id, message.id, content)) {
+        this.closed = true;
+        await message.delete().catch(() => undefined);
+        this.message = null;
+      }
+    } catch (error) {
+      this.scheduleOpenRetry();
+      console.warn("progress card open deferred", this.job.id, String(error));
     }
-    if (message.content !== content) {
-      message = await message.edit({ content, allowedMentions: { parse: [] } });
+  }
+
+  private scheduleOpenRetry(): void {
+    if (this.closed || this.message || this.visibleTimer) return;
+    this.visibleTimer = setTimeout(() => {
+      this.visibleTimer = null;
+      void this.openCard().catch((error) => console.warn("progress card retry failed", this.job.id, String(error)));
+    }, PROGRESS_EDIT_INTERVAL_MS);
+    this.visibleTimer.unref?.();
+  }
+
+  async reconcileRemoteMissing(expectedMessageId: string): Promise<boolean> {
+    if (!this.lifecycle.forgetMessage(expectedMessageId)) return false;
+    if (this.message?.id === expectedMessageId) this.message = null;
+    this.lastCard = "";
+    store.clearProgressIfMatches(this.job.id, expectedMessageId);
+    if (!this.closed && store.getJob(this.job.id)?.status === "running") {
+      this.editGate.markDirty();
+      await this.start(true);
     }
-    this.message = message;
-    this.lifecycle.recordPosted(message.id);
-    this.lastCard = content;
-    this.editGate.recordEdit();
-    if (!store.setProgress(this.job.id, message.id, content)) {
-      this.closed = true;
-      await message.delete().catch(() => undefined);
-      this.message = null;
-    }
+    return true;
   }
 
   handleEvent(_event: ProgressEvent, aggregator: StreamProgressAggregator): void {
@@ -601,23 +632,35 @@ class ProgressBoard {
 
     const content = this.render(mode, ok);
     if (content === this.lastCard && mode === "running") {
-      this.editGate.finishEdit(Date.now(), false);
+      this.editGate.finishEdit(Date.now(), false, false);
       void this.queueCardEdit();
       return;
     }
 
     let committed = false;
+    let missingMessageId: string | null = null;
     try {
-      this.message = await this.message.edit({ content, allowedMentions: { parse: [] } });
-      this.lastCard = content;
-      store.setProgress(this.job.id, this.message.id, content);
-      committed = true;
+      const currentMessage = this.message;
+      const edited = await resolveExistingDiscordMessage(() =>
+        currentMessage.edit({ content, allowedMentions: { parse: [] } }),
+      );
+      if (!edited) missingMessageId = currentMessage.id;
+      else {
+        this.message = edited;
+        this.lastCard = content;
+        store.setProgress(this.job.id, edited.id, content);
+        committed = true;
+      }
     } catch (error) {
       console.warn("progress card edit failed", this.job.id, String(error));
     } finally {
       this.editGate.finishEdit(Date.now(), committed);
-      void this.queueCardEdit();
     }
+    if (missingMessageId) {
+      await progressLifecycleQueue.run(this.job.id, () => this.reconcileRemoteMissing(missingMessageId!));
+      return;
+    }
+    void this.queueCardEdit();
   }
 
   async cleanupAfterFinalDelivery(): Promise<void> {
@@ -630,15 +673,24 @@ class ProgressBoard {
       const channel = await textChannel(this.job.channelId);
       const message = this.message ?? (await channel.messages.fetch(messageId));
       await message.delete();
-      store.clearProgress(this.job.id);
+      store.clearProgressIfMatches(this.job.id, messageId);
       return;
     } catch (deleteError) {
+      if (isUnknownDiscordMessage(deleteError)) {
+        store.clearProgressIfMatches(this.job.id, messageId);
+        return;
+      }
       try {
         const channel = await textChannel(this.job.channelId);
         const message = this.message ?? (await channel.messages.fetch(messageId));
         await message.edit({ content: progressCleanupFallbackText(), allowedMentions: { parse: [] } });
-        store.clearProgress(this.job.id);
+        store.clearProgressIfMatches(this.job.id, messageId);
       } catch (fallbackError) {
+        if (isUnknownDiscordMessage(fallbackError)) {
+          store.clearProgressIfMatches(this.job.id, messageId);
+          return;
+        }
+        this.lifecycle.recordPosted(messageId);
         console.warn(
           "progress cleanup failed",
           this.job.id,
@@ -1331,6 +1383,7 @@ client.on("messageCreate", (message) => {
         authorId: message.author.id,
         content: steeringContent,
         sdkMessageId,
+        rawPrompt,
       });
       if (executor.steer(running.id, steeringPrompt, sdkMessageId)) {
         store.acceptSteeringInput(message.id);
@@ -1392,6 +1445,15 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
     let basePrompt = stripBotMention(message.content ?? "", client.user.id);
     if (!basePrompt && attachments.paths.length > 0) basePrompt = "첨부 파일을 확인하고 필요한 작업을 수행해.";
     if (attachments.errors.length > 0) basePrompt += `\n\n첨부 다운로드 오류:\n${attachments.errors.join("\n")}`;
+
+    if (basePrompt.trim()) {
+      const editPrompt = parseMessageEditPrompt(basePrompt, steering?.rawPrompt ?? sourceJob?.rawPrompt ?? false);
+      if (!editPrompt.ok) {
+        await message.reply({ content: editPrompt.message, allowedMentions: { parse: [] } });
+        return;
+      }
+      basePrompt = editPrompt.prompt;
+    }
 
     if (steering) {
       if (!basePrompt.trim()) {
@@ -1530,7 +1592,47 @@ async function retractDeletedSteering(messageId: string, reason = "follow-up mes
   );
 }
 
+async function handleDeletedProgressMessage(messageId: string): Promise<boolean> {
+  const matched = store.getByProgressMessageId(messageId);
+  if (!matched) return false;
+  let repostQueued = false;
+
+  await progressLifecycleQueue.run(matched.id, async () => {
+    const current = store.getJob(matched.id);
+    if (!current || current.progressMessageId !== messageId) return;
+    const board = progressBoards.get(current.id);
+    if (board) {
+      if (!(await board.reconcileRemoteMissing(messageId))) {
+        store.clearProgressIfMatches(current.id, messageId);
+      }
+      return;
+    }
+
+    store.clearProgressIfMatches(current.id, messageId);
+    if (current.status === "running") {
+      const refreshed = store.getJob(current.id);
+      if (!refreshed || refreshed.status !== "running") return;
+      const replacement = new ProgressBoard(refreshed);
+      progressBoards.set(refreshed.id, replacement);
+      await replacement.start(true);
+    } else if (current.status === "queued") {
+      repostQueued = true;
+    }
+  });
+
+  if (repostQueued) {
+    const current = store.getJob(matched.id);
+    if (current?.status === "queued") {
+      await postQueuedProgress(current).catch((error) =>
+        console.warn(`deleted queued progress reconciliation failed id=${current.id}`, String(error)),
+      );
+    }
+  }
+  return true;
+}
+
 async function handleDeletedMessage(messageId: string): Promise<void> {
+  if (await handleDeletedProgressMessage(messageId)) return;
   if (store.getByMessageId(messageId)) {
     await cancelDeletedSource(messageId);
     return;

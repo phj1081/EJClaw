@@ -35,6 +35,12 @@ export class ProgressLifecycle {
     this.progressMessageId = messageId;
   }
 
+  forgetMessage(expectedMessageId: string): boolean {
+    if (this.progressMessageId !== expectedMessageId) return false;
+    this.progressMessageId = null;
+    return true;
+  }
+
   takeCleanupAfterFinalDelivery(): string | null {
     const messageId = this.progressMessageId;
     this.progressMessageId = null;

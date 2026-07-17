@@ -88,3 +88,17 @@ export function parseControlCommand(content: string): ControlCommand | null {
   }
   return null;
 }
+
+export type MessageEditPromptDecision =
+  | { ok: true; prompt: string }
+  | { ok: false; message: string };
+
+export function parseMessageEditPrompt(content: string, existingRawPrompt: boolean): MessageEditPromptDecision {
+  if (existingRawPrompt || parseControlCommand(content)) {
+    return {
+      ok: false,
+      message: "Claude control/raw 명령은 수정할 수 없어. 원본을 삭제하거나 새 메시지로 다시 보내줘.",
+    };
+  }
+  return { ok: true, prompt: content };
+}

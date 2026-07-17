@@ -114,6 +114,7 @@ interface SteeringInputRow {
   conversation_key: string;
   author_id: string | null;
   content: string;
+  raw_prompt: number;
   sdk_message_id: string;
   original_sdk_message_id: string | null;
   state: SteeringInputState;
@@ -130,6 +131,7 @@ function steeringInputFromRow(row: SteeringInputRow): SteeringInputRecord {
     conversationKey: row.conversation_key,
     authorId: row.author_id,
     content: row.content,
+    rawPrompt: row.raw_prompt === 1,
     sdkMessageId: row.sdk_message_id,
     originalSdkMessageId: row.original_sdk_message_id ?? row.sdk_message_id,
     state: row.state,
@@ -372,6 +374,7 @@ export class StateStore {
         conversation_key TEXT NOT NULL,
         author_id TEXT,
         content TEXT NOT NULL,
+        raw_prompt INTEGER NOT NULL DEFAULT 0,
         sdk_message_id TEXT NOT NULL,
         original_sdk_message_id TEXT,
         state TEXT NOT NULL CHECK(state IN ('pending','accepted','edited','deleted')),
@@ -415,6 +418,9 @@ export class StateStore {
     this.ensureColumn("jobs", "raw_prompt", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("jobs", "progress_message_id", "TEXT");
     this.ensureColumn("jobs", "progress_text", "TEXT");
+    this.db.exec(
+      "CREATE INDEX IF NOT EXISTS jobs_progress_message_idx ON jobs(progress_message_id) WHERE progress_message_id IS NOT NULL",
+    );
     this.ensureColumn("jobs", "main_model", "TEXT");
     this.ensureColumn("jobs", "subagent_models", "TEXT");
     this.ensureColumn("jobs", "delivery_chunks", "TEXT");
@@ -432,6 +438,7 @@ export class StateStore {
     this.ensureColumn("interactions", "discord_settled_at", "TEXT");
     this.ensureColumn("steering_inputs", "event_sequence", "INTEGER");
     this.ensureColumn("steering_inputs", "author_id", "TEXT");
+    this.ensureColumn("steering_inputs", "raw_prompt", "INTEGER NOT NULL DEFAULT 0");
     const closeLegacyWatcherJobs = this.db.transaction(() => {
       const malformedActiveWatcher = `
         jobs.status IN ('queued','running','delivering')
@@ -1328,10 +1335,21 @@ export class StateStore {
     );
   }
 
-  clearProgress(id: string): void {
-    this.db
-      .query("UPDATE jobs SET progress_message_id=NULL, progress_text=NULL WHERE id=?")
-      .run(id);
+  getByProgressMessageId(progressMessageId: string): JobRecord | null {
+    const row = this.db
+      .query<JobRow, [string]>("SELECT * FROM jobs WHERE progress_message_id=? LIMIT 1")
+      .get(progressMessageId);
+    return row ? fromRow(row) : null;
+  }
+
+  clearProgressIfMatches(id: string, progressMessageId: string): boolean {
+    return (
+      this.db
+        .query(
+          "UPDATE jobs SET progress_message_id=NULL, progress_text=NULL WHERE id=? AND progress_message_id=?",
+        )
+        .run(id, progressMessageId).changes === 1
+    );
   }
 
   prepareDelivery(
@@ -1634,6 +1652,7 @@ export class StateStore {
     authorId?: string;
     content: string;
     sdkMessageId: string;
+    rawPrompt?: boolean;
   }): SteeringInputRecord {
     const authorId = input.authorId ?? this.getJob(input.jobId)?.authorId;
     if (!authorId) throw new Error(`steering job author not found: ${input.jobId}`);
@@ -1643,8 +1662,8 @@ export class StateStore {
       this.db
         .query(
           `INSERT OR IGNORE INTO steering_inputs(
-            message_id,job_id,conversation_key,author_id,content,sdk_message_id,original_sdk_message_id,state,event_sequence,created_at,updated_at
-          ) VALUES(?,?,?,?,?,?,?,'pending',?,?,?)`,
+            message_id,job_id,conversation_key,author_id,content,raw_prompt,sdk_message_id,original_sdk_message_id,state,event_sequence,created_at,updated_at
+          ) VALUES(?,?,?,?,?,?,?,?,'pending',?,?,?)`,
         )
         .run(
           input.messageId,
@@ -1652,6 +1671,7 @@ export class StateStore {
           input.conversationKey,
           authorId,
           input.content,
+          input.rawPrompt ? 1 : 0,
           input.sdkMessageId,
           input.sdkMessageId,
           sequence,

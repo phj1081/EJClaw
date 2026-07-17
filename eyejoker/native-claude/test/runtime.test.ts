@@ -98,6 +98,29 @@ describe("job runtime", () => {
     expect(env.calls[0]?.prompt).toBe("/compact");
   });
 
+  test("does not automatically replay an interrupted raw Claude command", async () => {
+    const env = setup([]);
+    const job = env.store.enqueue({
+      routeId: route.id,
+      conversationKey: `${route.id}:raw-recovery`,
+      channelId: "raw-recovery",
+      threadId: "raw-recovery",
+      messageId: "raw-recovery-command",
+      authorId: "owner",
+      prompt: "/clear",
+      attachmentPaths: [],
+      rawPrompt: true,
+    });
+    env.store.claimNext(1);
+    env.store.recoverInterrupted("service restart");
+
+    await env.runtime.runUntilIdle();
+
+    expect(env.calls).toHaveLength(0);
+    expect(env.delivered.join("\n")).toContain("자동 재실행하지 않았어");
+    expect(env.store.getJob(job.id)?.status).toBe("failed");
+  });
+
   test("passes interactive questions through the job-scoped runtime hook", async () => {
     const store = freshStore();
     const seen: string[] = [];
@@ -676,6 +699,28 @@ describe("job runtime", () => {
     expect(env.calls[0]?.prompt).toContain("재시작 경계 추가 지시");
     expect(env.calls[0]?.prompt).toContain("중복 실행하지 마");
     expect(env.store.getSteeringInput("pending-followup")?.state).toBe("accepted");
+  });
+
+  test("does not replay raw follow-up steering across a restart boundary", async () => {
+    const env = setup([ok("raw-steering-session", "recovered")]);
+    const job = enqueue(env.store, "raw-steering-recovery");
+    env.store.claimNext(1);
+    env.store.beginSteeringInput({
+      messageId: "raw-followup",
+      jobId: job.id,
+      conversationKey: job.conversationKey,
+      content: "/compact",
+      sdkMessageId: crypto.randomUUID(),
+      rawPrompt: true,
+    });
+    env.store.acceptSteeringInput("raw-followup");
+    env.store.recoverInterrupted("service restart");
+
+    await env.runtime.runUntilIdle();
+
+    expect(env.calls).toHaveLength(1);
+    expect(env.calls[0]?.prompt).not.toContain("/compact");
+    expect(env.calls[0]?.prompt).toContain("자동 재실행하지 않았어");
   });
 
   test("startup recovery resumes the exact persisted marker continuation instead of the original task", async () => {
