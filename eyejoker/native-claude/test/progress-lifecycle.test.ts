@@ -27,6 +27,15 @@ describe("transient Discord progress lifecycle", () => {
     expect(lifecycle.takeCleanupAfterFinalDelivery()).toBeNull();
   });
 
+  test("forgets only the exact remotely missing progress message", () => {
+    const lifecycle = new ProgressLifecycle({ startedAt: 1_000_000, existingMessageId: "progress-123" });
+
+    expect(lifecycle.forgetMessage("another-message")).toBe(false);
+    expect(lifecycle.messageId()).toBe("progress-123");
+    expect(lifecycle.forgetMessage("progress-123")).toBe(true);
+    expect(lifecycle.messageId()).toBeNull();
+  });
+
   test("uses a neutral cleanup fallback without redundant completion decoration", () => {
     const text = progressCleanupFallbackText();
     expect(text).toBe("최종 응답 전송됨");

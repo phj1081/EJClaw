@@ -19,6 +19,10 @@ export class ProgressEditGate {
     this.dirty = true;
   }
 
+  releaseSchedule(): void {
+    this.scheduled = false;
+  }
+
   scheduleDelay(now = Date.now()): number | null {
     if (!this.dirty || this.scheduled || this.editing) return null;
     this.scheduled = true;
@@ -33,9 +37,10 @@ export class ProgressEditGate {
     return true;
   }
 
-  finishEdit(now = Date.now(), committed = true): void {
+  finishEdit(now = Date.now(), committed = true, retry = !committed): void {
     this.editing = false;
-    if (committed) this.lastEditAt = now;
+    if (committed || retry) this.lastEditAt = now;
+    if (retry) this.dirty = true;
   }
 
   recordEdit(now = Date.now()): void {

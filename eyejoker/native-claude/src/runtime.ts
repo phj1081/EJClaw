@@ -309,6 +309,11 @@ export class JobRuntime {
                     `message=${input.messageId} state=deleted original_sdk_message=${input.originalSdkMessageId}`,
                     "이 Discord 추가 지시와 관련된 원본 및 모든 수정본은 삭제됐으므로 더 이상 따르지 마.",
                   ]
+                : input.rawPrompt
+                  ? [
+                      `message=${input.messageId} state=${input.state} original_sdk_message=${input.originalSdkMessageId}`,
+                      "이 raw Claude 명령은 재시작 경계에서 소비 여부를 확인할 수 없어 자동 재실행하지 않았어. 사용자에게 새 메시지로 다시 보내달라고 알려.",
+                    ]
                 : [
                     `message=${input.messageId} state=${input.state} original_sdk_message=${input.originalSdkMessageId}`,
                     input.content,
@@ -320,8 +325,17 @@ export class JobRuntime {
       : job.rawPrompt
         ? job.prompt
         : buildGoalPrompt(effectiveRoute, taskPrompt, job.attachmentPaths, job.recoveryReason);
+    const rawRecoveryBlocked = !hasContinuation && job.rawPrompt && Boolean(job.recoveryReason);
     let execution: ClaudeExecution;
-    try {
+    if (rawRecoveryBlocked) {
+      execution = {
+        ok: false,
+        result: "⛔ raw Claude 명령은 재시작 경계에서 소비 여부를 확인할 수 없어 자동 재실행하지 않았어. 같은 명령을 새 메시지로 다시 보내줘.",
+        sessionId: sourceSessionId,
+        stderr: "raw command replay blocked at recovery boundary",
+        exitCode: 1,
+      };
+    } else try {
       execution = await this.executor({
         job,
         route: effectiveRoute,
@@ -369,6 +383,16 @@ export class JobRuntime {
 
     const current = this.store.getJob(job.id);
     if (current?.status === "cancelled") return;
+    if (job.rawPrompt && !execution.ok) {
+      if (!rawRecoveryBlocked) {
+        execution = {
+          ...execution,
+          result: `${execution.result}\n\n⛔ raw Claude 명령은 실행 실패 뒤 side effect 여부를 확인할 수 없어 자동 재시도하지 않았어. 같은 명령을 새 메시지로 다시 보내줘.`,
+        };
+      }
+      this.store.stageDelivery(job.id, execution, "failed", effectiveRoute.cwd);
+      return;
+    }
     if (execution.ok) {
       this.store.acceptPendingSteeringInputs(job.id);
       this.store.stageDelivery(job.id, execution, "completed", effectiveRoute.cwd);

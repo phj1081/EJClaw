@@ -207,6 +207,7 @@ export interface SteeringInputRecord {
   conversationKey: string;
   authorId: string | null;
   content: string;
+  rawPrompt: boolean;
   sdkMessageId: string;
   originalSdkMessageId: string;
   state: SteeringInputState;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseControlCommand } from "../src/control-commands";
+import { parseControlCommand, parseMessageEditPrompt, prepareIngressPrompt } from "../src/control-commands";
 
 describe("Discord Claude controls", () => {
   test("parses persistent conversation overrides", () => {
@@ -40,5 +40,45 @@ describe("Discord Claude controls", () => {
 
   test("leaves normal prompts untouched", () => {
     expect(parseControlCommand("버그 고쳐줘")).toBeNull();
+  });
+
+  test("rejects edits that would add, remove, or mutate a raw Claude command", () => {
+    expect(parseMessageEditPrompt("일반 수정", false)).toEqual({ ok: true, prompt: "일반 수정" });
+    expect(parseMessageEditPrompt("!compact", false)).toMatchObject({ ok: false });
+    expect(parseMessageEditPrompt("!model claude-fable-5", false)).toMatchObject({ ok: false });
+    expect(parseMessageEditPrompt("/clear", false)).toMatchObject({ ok: false });
+    expect(parseMessageEditPrompt("  /compact", false)).toMatchObject({ ok: false });
+    expect(parseMessageEditPrompt("일반 요청으로 변경", true)).toMatchObject({ ok: false });
+    expect(parseMessageEditPrompt("!claude /clear", true)).toMatchObject({ ok: false });
+  });
+
+  test("keeps standalone raw ingress exact and rejects raw commands with attachments", () => {
+    expect(
+      prepareIngressPrompt({
+        promptText: "/compact",
+        rawPrompt: true,
+        attachmentCount: 0,
+        attachmentPaths: [],
+        attachmentErrors: [],
+      }),
+    ).toEqual({ ok: true, prompt: "/compact" });
+    expect(
+      prepareIngressPrompt({
+        promptText: "/compact",
+        rawPrompt: true,
+        attachmentCount: 1,
+        attachmentPaths: [],
+        attachmentErrors: ["download failed"],
+      }),
+    ).toMatchObject({ ok: false });
+    expect(
+      prepareIngressPrompt({
+        promptText: "파일 확인",
+        rawPrompt: false,
+        attachmentCount: 1,
+        attachmentPaths: [],
+        attachmentErrors: ["download failed"],
+      }),
+    ).toEqual({ ok: true, prompt: "파일 확인\n\n첨부 다운로드 오류:\ndownload failed" });
   });
 });
