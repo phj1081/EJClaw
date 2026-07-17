@@ -11,7 +11,7 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { AsyncMailbox } from "./async-mailbox";
 import { markerContinuationPrompt, parseInteractiveQuestion } from "./interactive-control";
-import { defaultAgents } from "./protocol";
+import { defaultAgents, nativeBridgeSystemPrompt } from "./protocol";
 import { finalizeStreamJsonResult, StreamProgressAggregator } from "./stream-progress";
 import type { ClaudeExecution, ExecutionRequest, InteractiveQuestion, PermissionMode } from "./types";
 
@@ -42,6 +42,7 @@ type SdkUuid = NonNullable<SDKUserMessage["uuid"]>;
 
 const nativeSessionSettings = {
   enabledPlugins: {
+    "agentmemory@agentmemory": false,
     "discord@claude-plugins-official": false,
   },
 } as const;
@@ -223,13 +224,19 @@ export class ClaudeSdkExecutor {
         allowDangerouslySkipPermissions: permissionMode === "bypassPermissions",
         pathToClaudeCodeExecutable: this.claudeExecutable,
         tools: { type: "preset", preset: "claude_code" },
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: nativeBridgeSystemPrompt(request.route),
+        },
+        mcpServers: {},
+        strictMcpConfig: true,
         settings: nativeSessionSettings,
         includePartialMessages: true,
         includeHookEvents: true,
         forwardSubagentText: true,
         enableFileCheckpointing: true,
-        ...(request.route.mixedAgents === false ? {} : { agents: defaultAgents }),
+        ...(request.route.mixedAgents === true ? { agents: defaultAgents } : {}),
         canUseTool,
         env: {
           ...process.env,

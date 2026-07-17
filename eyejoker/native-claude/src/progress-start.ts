@@ -23,9 +23,18 @@ export function progressReplyMessageId(jobMessageId: string, steeringMessageId: 
 
 export async function recoverMissingSteeringProgress(
   progressMessageId: string | null,
-  recover: () => Promise<void>,
+  startProgress: () => Promise<void>,
 ): Promise<boolean> {
   if (progressMessageId) return false;
-  await recover();
+  await startProgress();
   return true;
+}
+
+export async function ensureSteeringProgress(
+  progressMessageId: string | null,
+  startProgress: () => Promise<void>,
+): Promise<boolean> {
+  const recovered = await recoverMissingSteeringProgress(progressMessageId, startProgress);
+  if (!recovered) await startProgress();
+  return recovered;
 }

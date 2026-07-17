@@ -859,7 +859,9 @@ describe("durable job store", () => {
       sdkMessageId: initialSdkId,
     });
     expect(pending.state).toBe("pending");
+    expect(first.countDeliveredSteeringInputs(job.id)).toBe(0);
     expect(first.acceptSteeringInput("followup-message").state).toBe("accepted");
+    expect(first.countDeliveredSteeringInputs(job.id)).toBe(1);
 
     const reopened = new StateStore(path);
     expect(reopened.getSteeringInput("followup-message")?.sdkMessageId).toBe(initialSdkId);
@@ -871,10 +873,12 @@ describe("durable job store", () => {
       originalSdkMessageId: initialSdkId,
       state: "edited",
     });
+    expect(reopened.countDeliveredSteeringInputs(job.id)).toBe(1);
     const deletedSdkId = crypto.randomUUID();
     const deleted = reopened.deleteSteeringInput("followup-message", deletedSdkId);
     expect(deleted).toMatchObject({ sdkMessageId: deletedSdkId, state: "deleted" });
     expect(deleted?.deletedAt).not.toBeNull();
+    expect(reopened.countDeliveredSteeringInputs(job.id)).toBe(0);
     expect(reopened.listJobSteeringInputs(job.id)).toHaveLength(1);
   });
 

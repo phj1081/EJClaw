@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import {
   appendDiscordContext,
+  buildSteeringUserTurn,
   conversationKey,
   isReplyableMessageId,
   isSupportedMessageType,
@@ -30,8 +31,8 @@ import { buildFinalChunkOptions, formatFinalMessage, splitDiscordMessage } from 
 import { progressElapsedSeconds, workElapsedSeconds } from "./duration";
 import { ProgressLifecycle, progressCleanupFallbackText } from "./progress-lifecycle";
 import {
+  ensureSteeringProgress,
   progressReplyMessageId,
-  recoverMissingSteeringProgress,
   startProgressBeforeTyping,
 } from "./progress-start";
 import { cleanupExpiredAttachmentDirs } from "./attachment-cleanup";
@@ -552,6 +553,12 @@ class ProgressBoard {
     void this.queueCardEdit();
   }
 
+  noteSteering(): void {
+    if (this.closed) return;
+    this.editGate.markDirty();
+    void this.queueCardEdit();
+  }
+
   private elapsedSeconds(): number {
     return progressElapsedSeconds(this.job.startedAt, this.job.createdAt);
   }
@@ -566,6 +573,7 @@ class ProgressBoard {
       elapsedSeconds: this.elapsedSeconds(),
       promptPreview: this.job.prompt,
       recoveryReason: this.job.recoveryReason,
+      steeringCount: store.countDeliveredSteeringInputs(this.job.id),
       snapshot,
       mode,
       ok,
@@ -694,15 +702,16 @@ async function recoverSteeringProgress(job: JobRecord, messageId: string): Promi
   await progressLifecycleQueue.run(job.id, async () => {
     const current = store.getJob(job.id);
     if (!current || current.status !== "running") return;
-    await recoverMissingSteeringProgress(current.progressMessageId, async () => {
-      let board = progressBoards.get(current.id);
-      if (!board) {
-        board = new ProgressBoard(current);
-        progressBoards.set(current.id, board);
-      }
-      board.adoptReplyMessageId(messageId);
-      await board.start(true);
+    let board = progressBoards.get(current.id);
+    if (!board) {
+      board = new ProgressBoard(current);
+      progressBoards.set(current.id, board);
+    }
+    board.adoptReplyMessageId(messageId);
+    await ensureSteeringProgress(current.progressMessageId, async () => {
+      await board!.start(true);
     });
+    board.noteSteering();
   });
 }
 
@@ -925,7 +934,6 @@ async function downloadAttachments(messageId: string, attachments: Iterable<{
 
 async function discordContextFor(
   message: Message<true>,
-  includeHistory: boolean,
 ): Promise<{ reply: DiscordContextEntry | null; history: DiscordContextEntry[] }> {
   const toEntry = (item: Message): DiscordContextEntry => ({
     id: item.id,
@@ -945,26 +953,7 @@ async function discordContextFor(
       console.warn(`reply context unavailable message=${message.id}`, String(error));
     }
   }
-
-  let history: DiscordContextEntry[] = [];
-  if (includeHistory) {
-    try {
-      const recent = await message.channel.messages.fetch({ before: message.id, limit: 20 });
-      history = [...recent.values()]
-        .filter(
-          (item) =>
-            item.id !== reply?.id &&
-            isSupportedMessageType(Number(item.type)) &&
-            (allowedUsers.has(item.author.id) || item.author.id === client.user?.id),
-        )
-        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-        .slice(-8)
-        .map(toEntry);
-    } catch (error) {
-      console.warn(`history context unavailable message=${message.id}`, String(error));
-    }
-  }
-  return { reply, history };
+  return { reply, history: [] };
 }
 
 client.once("clientReady", async () => {
@@ -1285,13 +1274,13 @@ client.on("messageCreate", (message) => {
     const steeringContent = prompt;
     let pendingSteeringFallback = false;
     if (!rawPrompt) {
-      prompt = appendDiscordContext(prompt, await discordContextFor(message, !store.sessionHasHistory(key)));
+      prompt = appendDiscordContext(prompt, await discordContextFor(message));
     }
 
     const running = store
       .listActive()
       .find((candidate) => candidate.conversationKey === key && candidate.status === "running");
-    const steeringPrompt = rawPrompt ? promptText : `[Discord 실행 중 추가 지시 · message=${message.id}]\n${prompt}`;
+    const steeringPrompt = buildSteeringUserTurn(prompt, rawPrompt, promptText);
     if (running) {
       const pendingQuestion = store.pendingInteractionForJob(running.id);
       if (pendingQuestion) {
@@ -1409,7 +1398,7 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
       if (steering.content === basePrompt) return;
       const contextualPrompt = appendDiscordContext(
         basePrompt,
-        await discordContextFor(message, !store.sessionHasHistory(job.conversationKey)),
+        await discordContextFor(message),
       );
       const desired = store.prepareSteeringEdit(message.id, basePrompt);
       if (!desired) return;
@@ -1453,7 +1442,7 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
     }
     const prompt = appendDiscordContext(
       basePrompt,
-      await discordContextFor(message, !store.sessionHasHistory(job.conversationKey)),
+      await discordContextFor(message),
     );
     const queued = store.updateQueuedPrompt(message.id, prompt, attachments.paths);
     if (queued) {
@@ -1517,6 +1506,11 @@ async function retractDeletedSteering(messageId: string, reason = "follow-up mes
     });
     console.log(`steering delete actor closed; fallback job=${fallback.id} source_job=${job.id} message=${messageId}`);
     void runtime.runUntilIdle().catch((error) => console.error("steering delete fallback pump failed", error));
+  }
+  if (job.status === "running") {
+    await recoverSteeringProgress(job, messageId).catch((error) =>
+      console.warn(`steering delete progress refresh failed id=${job.id}`, String(error)),
+    );
   }
   console.log(
     `steering message deleted job=${job.id} message=${messageId} mode=${mutation?.mode ?? "record-or-fallback"} status=${job.status} reason=${reason}`,

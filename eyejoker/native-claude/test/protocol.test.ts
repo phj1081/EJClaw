@@ -5,6 +5,7 @@ import {
   buildGoalPrompt,
   formatFinalMessage,
   formatProgressMessage,
+  nativeBridgeSystemPrompt,
   parseClaudeOutput,
 } from "../src/protocol";
 
@@ -25,26 +26,33 @@ const route: RouteConfig = {
 };
 
 describe("Claude protocol", () => {
-  test("keeps the real user request in the first turn without forcing a slash goal", () => {
+  test("keeps an ordinary first user turn byte-for-byte free of bridge boilerplate", () => {
     const prompt = buildGoalPrompt(route, "버그 고치고 PR까지", [], null);
-    expect(prompt.startsWith("/goal ")).toBe(false);
-    expect(prompt).not.toContain("\n/goal ");
-    expect(prompt).toContain("버그 고치고 PR까지");
-    expect(prompt).toContain("테스트");
-    expect(prompt).toContain("진짜 외부 블로커");
-    expect(prompt).toContain("apps/soriq만 담당");
-    expect(prompt).not.toContain("중간 진행은 Discord progress 카드");
-    expect(prompt).toContain("MEDIA:/absolute/path");
-    expect(prompt).toContain("DISCORD_QUESTION:");
-    expect(prompt).toContain("PR_WATCH: https://github.com/");
-    expect(prompt).toContain("사용자 요청:\n버그 고치고 PR까지");
+    expect(prompt).toBe("버그 고치고 PR까지");
+    expect(prompt).not.toContain("Discord");
+    expect(prompt).not.toContain("MEDIA:");
+    expect(prompt).not.toContain("PR_WATCH:");
   });
 
-  test("recovery prompt explicitly resumes existing artifacts", () => {
+  test("adds only dynamic attachment and recovery facts to a recovery turn", () => {
     const prompt = buildGoalPrompt(route, "원래 작업", ["/tmp/a.png"], "service restart");
+    expect(prompt.startsWith("원래 작업")).toBe(true);
     expect(prompt).toContain("service restart");
     expect(prompt).toContain("/tmp/a.png");
     expect(prompt).toContain("기존 변경을 버리지 말고");
+    expect(prompt).not.toContain("apps/soriq만 담당");
+    expect(prompt).not.toContain("MEDIA:");
+  });
+
+  test("keeps only essential transport and route invariants in a compact system append", () => {
+    const prompt = nativeBridgeSystemPrompt(route);
+    expect(prompt).toContain("자동 전달");
+    expect(prompt).toContain("send_message");
+    expect(prompt).toContain("MEDIA:/absolute/path");
+    expect(prompt).toContain("AskUserQuestion");
+    expect(prompt).toContain("PR_WATCH:");
+    expect(prompt).toContain("apps/soriq만 담당");
+    expect(prompt.length).toBeLessThan(650);
   });
 
   test("uses session-id for a new run and resume for subsequent runs", () => {
@@ -64,8 +72,24 @@ describe("Claude protocol", () => {
     const settingsIndex = resumed.args.indexOf("--settings");
     expect(settingsIndex).toBeGreaterThan(-1);
     expect(JSON.parse(resumed.args[settingsIndex + 1] ?? "{}")).toEqual({
-      enabledPlugins: { "discord@claude-plugins-official": false },
+      enabledPlugins: {
+        "agentmemory@agentmemory": false,
+        "discord@claude-plugins-official": false,
+      },
     });
+    expect(resumed.args).not.toContain("--agents");
+    const systemIndex = resumed.args.indexOf("--append-system-prompt");
+    expect(systemIndex).toBeGreaterThan(-1);
+    expect(resumed.args[systemIndex + 1]).toBe(nativeBridgeSystemPrompt(route));
+    expect(resumed.args).toContain("--strict-mcp-config");
+    const mcpIndex = resumed.args.indexOf("--mcp-config");
+    expect(mcpIndex).toBeGreaterThan(-1);
+    expect(JSON.parse(resumed.args[mcpIndex + 1] ?? "{}")).toEqual({ mcpServers: {} });
+  });
+
+  test("loads custom cross-provider agents only when a route explicitly opts in", () => {
+    const optedIn = buildClaudeInvocation({ ...route, mixedAgents: true }, "hello", "session-1", false);
+    expect(optedIn.args).toContain("--agents");
   });
 
   test("uses stream-json with partial messages for live progress", () => {

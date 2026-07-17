@@ -1727,6 +1727,15 @@ export class StateStore {
       .map(steeringInputFromRow);
   }
 
+  countDeliveredSteeringInputs(jobId: string): number {
+    const row = this.db
+      .query<{ count: number }, [string]>(
+        "SELECT COUNT(*) AS count FROM steering_inputs WHERE job_id=? AND state IN ('accepted','edited')",
+      )
+      .get(jobId);
+    return Number(row?.count ?? 0);
+  }
+
   listRecoverySteeringInputs(jobId: string): SteeringInputRecord[] {
     return this.listJobSteeringInputs(jobId);
   }
