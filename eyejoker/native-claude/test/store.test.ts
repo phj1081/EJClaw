@@ -886,7 +886,7 @@ describe("durable job store", () => {
     const db = store();
     const job = db.enqueue(input("steering", "steering:recovery", "source-recovery"));
     for (const [messageId, content] of [
-      ["accepted-followup", "수락된 지시"],
+      ["accepted-followup", "수락된 지시\n\n첨부:\n/tmp/accepted.png"],
       ["edited-followup", "편집 전 지시"],
       ["deleted-followup", "삭제 전 지시"],
     ] as const) {
@@ -899,12 +899,16 @@ describe("durable job store", () => {
       });
       db.acceptSteeringInput(messageId);
     }
-    db.updateSteeringInput("edited-followup", "편집된 현재 지시", crypto.randomUUID());
+    db.updateSteeringInput(
+      "edited-followup",
+      "편집된 현재 지시\n\n첨부:\n/tmp/edited.png",
+      crypto.randomUUID(),
+    );
     db.deleteSteeringInput("deleted-followup", crypto.randomUUID());
 
     expect(db.listRecoverySteeringInputs(job.id).map((record) => [record.messageId, record.state, record.content])).toEqual([
-      ["accepted-followup", "accepted", "수락된 지시"],
-      ["edited-followup", "edited", "편집된 현재 지시"],
+      ["accepted-followup", "accepted", "수락된 지시\n\n첨부:\n/tmp/accepted.png"],
+      ["edited-followup", "edited", "편집된 현재 지시\n\n첨부:\n/tmp/edited.png"],
       ["deleted-followup", "deleted", "삭제 전 지시"],
     ]);
   });

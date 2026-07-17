@@ -47,6 +47,18 @@ const nativeSessionSettings = {
   },
 } as const;
 
+function nativeChildEnv(memoryProject?: string): Record<string, string | undefined> {
+  return {
+    ...process.env,
+    CLAUDE_CODE_OAUTH_TOKEN: "",
+    CLAUDE_CODE_OAUTH_TOKENS: "",
+    ANTHROPIC_AUTH_TOKEN: "",
+    CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0",
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+    ...(memoryProject ? { AGENTMEMORY_PROJECT_NAME: memoryProject } : {}),
+  };
+}
+
 function sdkUserMessage(content: string, uuid: SdkUuid = crypto.randomUUID()): SDKUserMessage {
   return {
     type: "user",
@@ -238,14 +250,7 @@ export class ClaudeSdkExecutor {
         enableFileCheckpointing: true,
         ...(request.route.mixedAgents === true ? { agents: defaultAgents } : {}),
         canUseTool,
-        env: {
-          ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0",
-          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-          ...(request.route.memoryProject
-            ? { AGENTMEMORY_PROJECT_NAME: request.route.memoryProject }
-            : {}),
-        },
+        env: nativeChildEnv(request.route.memoryProject),
       };
       if (request.route.fallbackModel) options.fallbackModel = request.route.fallbackModel;
       if (resume) {
@@ -459,12 +464,7 @@ export class ClaudeSdkExecutor {
         settings: nativeSessionSettings,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
-        env: {
-          ...process.env,
-          CLAUDE_AGENT_SDK_CLIENT_APP: "eyejoker-native-claude/0.1.0",
-          CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-          ...(memoryProject ? { AGENTMEMORY_PROJECT_NAME: memoryProject } : {}),
-        },
+        env: nativeChildEnv(memoryProject),
       },
     });
     const timeout = setTimeout(() => {

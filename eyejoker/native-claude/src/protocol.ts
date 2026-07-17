@@ -1,4 +1,5 @@
 import type { ClaudeExecution, RouteConfig } from "./types";
+import { appendAttachmentContext } from "./bridge-utils";
 import { formatElapsedKorean } from "./duration";
 import { formatModelUsage } from "./model-visibility";
 import { parseStreamJsonResult } from "./stream-progress";
@@ -41,8 +42,7 @@ export function buildGoalPrompt(
       `[호스트 복구: ${recoveryReason}] 기존 변경을 버리지 말고 현재 상태에서 이어서 완수해.`,
     );
   }
-  if (attachmentPaths.length > 0) lines.push("", `첨부:\n${attachmentPaths.join("\n")}`);
-  return lines.join("\n");
+  return appendAttachmentContext(lines.join("\n"), attachmentPaths);
 }
 
 export function buildClaudeInvocation(

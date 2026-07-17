@@ -1271,7 +1271,6 @@ client.on("messageCreate", (message) => {
       await message.reply({ content: "작업 내용을 적어줘.", allowedMentions: { parse: [] } });
       return;
     }
-    const steeringContent = prompt;
     let pendingSteeringFallback = false;
     if (!rawPrompt) {
       prompt = appendDiscordContext(prompt, await discordContextFor(message));
@@ -1280,7 +1279,8 @@ client.on("messageCreate", (message) => {
     const running = store
       .listActive()
       .find((candidate) => candidate.conversationKey === key && candidate.status === "running");
-    const steeringPrompt = buildSteeringUserTurn(prompt, rawPrompt, promptText);
+    const steeringPrompt = buildSteeringUserTurn(prompt, rawPrompt, promptText, attachments.paths);
+    const steeringContent = steeringPrompt;
     if (running) {
       const pendingQuestion = store.pendingInteractionForJob(running.id);
       if (pendingQuestion) {
@@ -1395,14 +1395,20 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
         await retractDeletedSteering(message.id, "follow-up message cleared by edit");
         return;
       }
-      if (steering.content === basePrompt) return;
       const contextualPrompt = appendDiscordContext(
         basePrompt,
         await discordContextFor(message),
       );
-      const desired = store.prepareSteeringEdit(message.id, basePrompt);
+      const steeringEditContent = buildSteeringUserTurn(
+        contextualPrompt,
+        false,
+        basePrompt,
+        attachments.paths,
+      );
+      if (steering.content === steeringEditContent && attachments.paths.length === 0) return;
+      const desired = store.prepareSteeringEdit(message.id, steeringEditContent);
       if (!desired) return;
-      const steeringEditPrompt = `[Discord 추가 지시 수정 · message=${message.id}]\n${contextualPrompt}`;
+      const steeringEditPrompt = `[Discord 추가 지시 수정 · message=${message.id}]\n${steeringEditContent}`;
       const mutation =
         job.status === "running"
           ? executor.editSteering(
@@ -1424,7 +1430,7 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
           threadId: job.threadId,
           messageId: steeringFallbackMessageId("edit", message.id, basePrompt),
           authorId: job.authorId,
-          prompt: steeringEditPrompt,
+          prompt: `[Discord 추가 지시 수정 · message=${message.id}]\n${contextualPrompt}`,
           attachmentPaths: attachments.paths,
         });
         console.log(`steering edit actor closed; fallback job=${fallback.id} source_job=${job.id} message=${message.id}`);
@@ -1449,7 +1455,8 @@ client.on("messageUpdate", (_oldMessage, updatedMessage) => {
       console.log(`queued job updated id=${queued.id} message=${message.id} len=${prompt.length}`);
       return;
     }
-    if (executor.steer(job.id, `[Discord 원본 요청 수정 · message=${message.id}]\n${prompt}`)) {
+    const runningSourceEdit = buildSteeringUserTurn(prompt, false, basePrompt, attachments.paths);
+    if (executor.steer(job.id, `[Discord 원본 요청 수정 · message=${message.id}]\n${runningSourceEdit}`)) {
       console.log(`running source edit steered id=${job.id} message=${message.id}`);
       return;
     }

@@ -144,6 +144,9 @@ describe("ClaudeSdkExecutor", () => {
     expect(options?.pathToClaudeCodeExecutable).toBe("/home/ejclaw/.hermes/node/bin/claude");
     expect(options?.env?.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe("1");
     expect(options?.env?.AGENTMEMORY_PROJECT_NAME).toBe("eyejokerdb");
+    expect(options?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
+    expect(options?.env?.CLAUDE_CODE_OAUTH_TOKENS).toBe("");
+    expect(options?.env?.ANTHROPIC_AUTH_TOKEN).toBe("");
     expect(options?.settings).toEqual({
       enabledPlugins: {
         "agentmemory@agentmemory": false,
@@ -415,6 +418,9 @@ describe("ClaudeSdkExecutor", () => {
     expect(dryRun).toBe(true);
     expect(controlOptions?.strictMcpConfig).toBe(true);
     expect(controlOptions?.mcpServers).toEqual({});
+    expect(controlOptions?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("");
+    expect(controlOptions?.env?.CLAUDE_CODE_OAUTH_TOKENS).toBe("");
+    expect(controlOptions?.env?.ANTHROPIC_AUTH_TOKEN).toBe("");
     expect(controlOptions?.settings).toEqual({
       enabledPlugins: {
         "agentmemory@agentmemory": false,

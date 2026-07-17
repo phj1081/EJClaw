@@ -25,8 +25,17 @@ export function appendDiscordContext(
   return lines.join("\n");
 }
 
-export function buildSteeringUserTurn(contextualPrompt: string, rawPrompt: boolean, rawPromptText: string): string {
-  return rawPrompt ? rawPromptText : contextualPrompt;
+export function appendAttachmentContext(prompt: string, attachmentPaths: string[]): string {
+  return attachmentPaths.length > 0 ? `${prompt}\n\n첨부:\n${attachmentPaths.join("\n")}` : prompt;
+}
+
+export function buildSteeringUserTurn(
+  contextualPrompt: string,
+  rawPrompt: boolean,
+  rawPromptText: string,
+  attachmentPaths: string[] = [],
+): string {
+  return rawPrompt ? rawPromptText : appendAttachmentContext(contextualPrompt, attachmentPaths);
 }
 
 export function conversationKey(route: { id: string }, actualChannelId: string): string {

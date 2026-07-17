@@ -68,8 +68,10 @@ describe("Discord bridge helpers", () => {
   });
 
   test("keeps an ordinary same-thread steering turn free of bridge provenance wrappers", () => {
-    expect(buildSteeringUserTurn("후속 요청", false, "unused")).toBe("후속 요청");
-    expect(buildSteeringUserTurn("contextual", true, "/compact")).toBe("/compact");
+    expect(buildSteeringUserTurn("contextual", false, "/compact", ["/tmp/follow-up.png"])).toBe(
+      "contextual\n\n첨부:\n/tmp/follow-up.png",
+    );
+    expect(buildSteeringUserTurn("contextual", true, "/compact", ["/tmp/ignored.png"])).toBe("/compact");
   });
 
   test("prevents attachment path traversal", () => {
