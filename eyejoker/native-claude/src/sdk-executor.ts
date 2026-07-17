@@ -454,6 +454,8 @@ export class ClaudeSdkExecutor {
         pathToClaudeCodeExecutable: this.claudeExecutable,
         tools: { type: "preset", preset: "claude_code" },
         systemPrompt: { type: "preset", preset: "claude_code" },
+        mcpServers: {},
+        strictMcpConfig: true,
         settings: nativeSessionSettings,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,

@@ -393,7 +393,9 @@ describe("ClaudeSdkExecutor", () => {
     let resume: string | undefined;
     let dryRun: boolean | undefined;
     let checkpoint = "";
+    let controlOptions: Options | undefined;
     const factory: SdkQueryFactory = ({ options }) => {
+      controlOptions = options;
       resume = options?.resume;
       const generator = (async function* () {})();
       return Object.assign(generator, {
@@ -411,6 +413,14 @@ describe("ClaudeSdkExecutor", () => {
     expect(resume).toBe("session-rewind");
     expect(checkpoint).toBe("checkpoint-1");
     expect(dryRun).toBe(true);
+    expect(controlOptions?.strictMcpConfig).toBe(true);
+    expect(controlOptions?.mcpServers).toEqual({});
+    expect(controlOptions?.settings).toEqual({
+      enabledPlugins: {
+        "agentmemory@agentmemory": false,
+        "discord@claude-plugins-official": false,
+      },
+    });
     expect(result.filesChanged).toEqual(["src/a.ts"]);
   });
 
