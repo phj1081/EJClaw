@@ -383,7 +383,13 @@ export class JobRuntime {
 
     const current = this.store.getJob(job.id);
     if (current?.status === "cancelled") return;
-    if (rawRecoveryBlocked) {
+    if (job.rawPrompt && !execution.ok) {
+      if (!rawRecoveryBlocked) {
+        execution = {
+          ...execution,
+          result: `${execution.result}\n\n⛔ raw Claude 명령은 실행 실패 뒤 side effect 여부를 확인할 수 없어 자동 재시도하지 않았어. 같은 명령을 새 메시지로 다시 보내줘.`,
+        };
+      }
       this.store.stageDelivery(job.id, execution, "failed", effectiveRoute.cwd);
       return;
     }

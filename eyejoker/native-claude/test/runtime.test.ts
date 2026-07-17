@@ -121,6 +121,29 @@ describe("job runtime", () => {
     expect(env.store.getJob(job.id)?.status).toBe("failed");
   });
 
+  test("does not automatically retry a failed raw Claude command", async () => {
+    const env = setup([
+      { ok: false, result: "transport failed", sessionId: "raw-failed", stderr: "network", exitCode: 1 },
+      ok("raw-should-not-retry", "unexpected retry"),
+    ]);
+    env.store.enqueue({
+      routeId: route.id,
+      conversationKey: `${route.id}:raw-failure`,
+      channelId: "raw-failure",
+      threadId: "raw-failure",
+      messageId: "raw-failure-command",
+      authorId: "owner",
+      prompt: "/compact",
+      attachmentPaths: [],
+      rawPrompt: true,
+    });
+
+    await env.runtime.runUntilIdle();
+
+    expect(env.calls).toHaveLength(1);
+    expect(env.delivered.join("\n")).toContain("자동 재시도하지 않았어");
+  });
+
   test("passes interactive questions through the job-scoped runtime hook", async () => {
     const store = freshStore();
     const seen: string[] = [];

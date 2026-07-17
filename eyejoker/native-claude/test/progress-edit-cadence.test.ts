@@ -34,7 +34,7 @@ describe("progress edit cadence", () => {
 
     gate.finishEdit(10_000, false);
 
-    expect(gate.scheduleDelay(10_000)).toBe(0);
+    expect(gate.scheduleDelay(10_000)).toBe(PROGRESS_EDIT_INTERVAL_MS);
   });
 
   test("does not retry a clean no-op card render", () => {

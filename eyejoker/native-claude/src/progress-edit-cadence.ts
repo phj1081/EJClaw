@@ -35,8 +35,8 @@ export class ProgressEditGate {
 
   finishEdit(now = Date.now(), committed = true, retry = !committed): void {
     this.editing = false;
-    if (committed) this.lastEditAt = now;
-    else if (retry) this.dirty = true;
+    if (committed || retry) this.lastEditAt = now;
+    if (retry) this.dirty = true;
   }
 
   recordEdit(now = Date.now()): void {
