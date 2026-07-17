@@ -29,6 +29,11 @@ import { assertClaudeExecutableCompatibility } from "./sdk-compat";
 import { buildFinalChunkOptions, formatFinalMessage, splitDiscordMessage } from "./protocol";
 import { progressElapsedSeconds, workElapsedSeconds } from "./duration";
 import { ProgressLifecycle, progressCleanupFallbackText } from "./progress-lifecycle";
+import {
+  progressReplyMessageId,
+  recoverMissingSteeringProgress,
+  startProgressBeforeTyping,
+} from "./progress-start";
 import { cleanupExpiredAttachmentDirs } from "./attachment-cleanup";
 import { writeBoundedResponse } from "./bounded-download";
 import { extractOutboundArtifacts } from "./outbound-artifacts";
@@ -459,6 +464,7 @@ class ProgressBoard {
   private lastCard = "";
   private latest = new StreamProgressAggregator();
   private readonly lifecycle: ProgressLifecycle;
+  private replyMessageId: string | null;
 
   constructor(private job: JobRecord) {
     const startedAt = Date.parse(job.startedAt ?? job.createdAt);
@@ -466,10 +472,20 @@ class ProgressBoard {
       startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
       existingMessageId: job.progressMessageId,
     });
+    this.replyMessageId = progressReplyMessageId(job.messageId, null);
+  }
+
+  adoptReplyMessageId(messageId: string): void {
+    if (!this.message) this.replyMessageId = progressReplyMessageId(this.job.messageId, messageId);
   }
 
   async start(immediate = false): Promise<void> {
-    if (this.closed || this.message || this.visibleTimer) return;
+    if (this.closed || this.message) return;
+    if (immediate && this.visibleTimer) {
+      clearTimeout(this.visibleTimer);
+      this.visibleTimer = null;
+    }
+    if (this.visibleTimer) return;
     if (immediate || this.lifecycle.existingMessageId() || this.lifecycle.isDue()) {
       await this.openCard();
       return;
@@ -492,8 +508,8 @@ class ProgressBoard {
       nonce: progressNonce(this.job.id),
       enforceNonce: true,
     };
-    if (isReplyableMessageId(this.job.messageId)) {
-      options.reply = { messageReference: this.job.messageId, failIfNotExists: false };
+    if (this.replyMessageId) {
+      options.reply = { messageReference: this.replyMessageId, failIfNotExists: false };
     }
 
     const existingMessageId = this.lifecycle.existingMessageId();
@@ -644,18 +660,6 @@ async function startTyping(job: JobRecord): Promise<void> {
     stopTyping(job.id);
     const current = store.getJob(job.id);
     if (!current || current.status !== "running") return;
-    const channel = await textChannel(current.channelId);
-    await channel.sendTyping();
-    if (store.getJob(job.id)?.status !== "running") return;
-    const timer = setInterval(() => {
-      if (store.getJob(job.id)?.status !== "running") {
-        stopTyping(job.id);
-        return;
-      }
-      void channel.sendTyping().catch((error) => console.warn("typing failed", current.routeId, String(error)));
-    }, 8_000);
-    timer.unref();
-    typingTimers.set(job.id, timer);
     console.log(`job start id=${job.id} route=${current.routeId} attempt=${current.attempts}`);
 
     let board = progressBoards.get(job.id);
@@ -663,7 +667,42 @@ async function startTyping(job: JobRecord): Promise<void> {
       board = new ProgressBoard(current);
       progressBoards.set(job.id, board);
     }
-    await board.start(true);
+    const channel = await startProgressBeforeTyping({
+      startProgress: () => board!.start(true),
+      sendTyping: async () => {
+        const typingChannel = await textChannel(current.channelId);
+        await typingChannel.sendTyping();
+        return typingChannel;
+      },
+      onTypingError: (error) => console.warn("typing failed", current.routeId, String(error)),
+    });
+    if (!channel || store.getJob(job.id)?.status !== "running") return;
+    const typingChannel = channel;
+    const timer = setInterval(() => {
+      if (store.getJob(job.id)?.status !== "running") {
+        stopTyping(job.id);
+        return;
+      }
+      void typingChannel.sendTyping().catch((error) => console.warn("typing failed", current.routeId, String(error)));
+    }, 8_000);
+    timer.unref();
+    typingTimers.set(job.id, timer);
+  });
+}
+
+async function recoverSteeringProgress(job: JobRecord, messageId: string): Promise<void> {
+  await progressLifecycleQueue.run(job.id, async () => {
+    const current = store.getJob(job.id);
+    if (!current || current.status !== "running") return;
+    await recoverMissingSteeringProgress(current.progressMessageId, async () => {
+      let board = progressBoards.get(current.id);
+      if (!board) {
+        board = new ProgressBoard(current);
+        progressBoards.set(current.id, board);
+      }
+      board.adoptReplyMessageId(messageId);
+      await board.start(true);
+    });
   });
 }
 
@@ -1304,6 +1343,9 @@ client.on("messageCreate", (message) => {
       if (executor.steer(running.id, steeringPrompt, sdkMessageId)) {
         store.acceptSteeringInput(message.id);
         await message.react("👀").catch(() => undefined);
+        await recoverSteeringProgress(running, message.id).catch((error) =>
+          console.warn(`steering progress recovery failed id=${running.id}`, String(error)),
+        );
         console.log(`job steered id=${running.id} message=${message.id} sdk_message=${sdkMessageId} len=${prompt.length}`);
         return;
       }
