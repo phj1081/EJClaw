@@ -46,6 +46,8 @@ describe("Discord Claude controls", () => {
     expect(parseMessageEditPrompt("일반 수정", false)).toEqual({ ok: true, prompt: "일반 수정" });
     expect(parseMessageEditPrompt("!compact", false)).toMatchObject({ ok: false });
     expect(parseMessageEditPrompt("!model claude-fable-5", false)).toMatchObject({ ok: false });
+    expect(parseMessageEditPrompt("/clear", false)).toMatchObject({ ok: false });
+    expect(parseMessageEditPrompt("  /compact", false)).toMatchObject({ ok: false });
     expect(parseMessageEditPrompt("일반 요청으로 변경", true)).toMatchObject({ ok: false });
     expect(parseMessageEditPrompt("!claude /clear", true)).toMatchObject({ ok: false });
   });

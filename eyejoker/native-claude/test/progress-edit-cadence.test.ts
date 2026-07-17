@@ -47,4 +47,14 @@ describe("progress edit cadence", () => {
 
     expect(gate.scheduleDelay(10_000)).toBeNull();
   });
+
+  test("releases a stale schedule so a later dirty repost can arm again", () => {
+    const gate = new ProgressEditGate();
+    gate.markDirty();
+    expect(gate.scheduleDelay(10_000)).toBe(0);
+
+    gate.releaseSchedule();
+    expect(gate.scheduleDelay(10_000)).toBe(0);
+    expect(gate.beginEdit()).toBe(true);
+  });
 });

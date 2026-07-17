@@ -94,7 +94,8 @@ export type MessageEditPromptDecision =
   | { ok: false; message: string };
 
 export function parseMessageEditPrompt(content: string, existingRawPrompt: boolean): MessageEditPromptDecision {
-  if (existingRawPrompt || parseControlCommand(content)) {
+  const trimmed = content.trim();
+  if (existingRawPrompt || parseControlCommand(content) || /^\/\S/.test(trimmed)) {
     return {
       ok: false,
       message: "Claude control/raw 명령은 수정할 수 없어. 원본을 삭제하거나 새 메시지로 다시 보내줘.",

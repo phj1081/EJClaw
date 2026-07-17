@@ -529,10 +529,10 @@ class ProgressBoard {
         else {
           this.lifecycle.forgetMessage(existingMessageId);
           store.clearProgressIfMatches(this.job.id, existingMessageId);
-          message = await channel.send(options);
+          message = await this.sendProgressMessage(channel, options);
         }
       } else {
-        message = await channel.send(options);
+        message = await this.sendProgressMessage(channel, options);
       }
       if (message.content !== content) {
         message = await message.edit({ content, allowedMentions: { parse: [] } });
@@ -561,12 +561,31 @@ class ProgressBoard {
     this.visibleTimer.unref?.();
   }
 
+  private async sendProgressMessage(
+    channel: GuildTextBasedChannel,
+    options: MessageCreateOptions,
+  ): Promise<Message> {
+    const botUserId = client.user?.id;
+    if (!botUserId) throw new Error("Discord client user is unavailable");
+    const nonce = String(options.nonce ?? progressNonce(this.job.id));
+    const notBeforeMs = Date.parse(this.job.startedAt ?? this.job.createdAt);
+    const reconciled = await findBotMessageByNonce<Message>(
+      channel.messages as unknown as ReconcileMessageFetcher<Message>,
+      botUserId,
+      nonce,
+      Number.isFinite(notBeforeMs) ? notBeforeMs : Date.now(),
+    );
+    if (reconciled) return reconciled;
+    return channel.send(options);
+  }
+
   async reconcileRemoteMissing(expectedMessageId: string): Promise<boolean> {
     if (!this.lifecycle.forgetMessage(expectedMessageId)) return false;
     if (this.message?.id === expectedMessageId) this.message = null;
     this.lastCard = "";
     store.clearProgressIfMatches(this.job.id, expectedMessageId);
     if (!this.closed && store.getJob(this.job.id)?.status === "running") {
+      this.editGate.releaseSchedule();
       this.editGate.markDirty();
       await this.start(true);
     }

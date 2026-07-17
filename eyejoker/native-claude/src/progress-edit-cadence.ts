@@ -19,6 +19,10 @@ export class ProgressEditGate {
     this.dirty = true;
   }
 
+  releaseSchedule(): void {
+    this.scheduled = false;
+  }
+
   scheduleDelay(now = Date.now()): number | null {
     if (!this.dirty || this.scheduled || this.editing) return null;
     this.scheduled = true;
