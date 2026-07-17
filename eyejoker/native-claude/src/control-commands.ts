@@ -102,3 +102,28 @@ export function parseMessageEditPrompt(content: string, existingRawPrompt: boole
   }
   return { ok: true, prompt: content };
 }
+
+export type IngressPromptDecision =
+  | { ok: true; prompt: string }
+  | { ok: false; message: string };
+
+export function prepareIngressPrompt(input: {
+  promptText: string;
+  rawPrompt: boolean;
+  attachmentCount: number;
+  attachmentPaths: string[];
+  attachmentErrors: string[];
+}): IngressPromptDecision {
+  if (input.rawPrompt && (input.attachmentCount > 0 || input.attachmentErrors.length > 0)) {
+    return {
+      ok: false,
+      message: "raw Claude 명령에는 첨부를 같이 보낼 수 없어. 명령과 첨부 작업을 각각 새 메시지로 보내줘.",
+    };
+  }
+  let prompt = input.promptText;
+  if (!prompt && input.attachmentPaths.length > 0) prompt = "첨부 파일을 확인하고 필요한 작업을 수행해.";
+  if (input.attachmentErrors.length > 0) {
+    prompt += `\n\n첨부 다운로드 오류:\n${input.attachmentErrors.join("\n")}`;
+  }
+  return { ok: true, prompt };
+}

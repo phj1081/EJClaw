@@ -39,7 +39,7 @@ import { cleanupExpiredAttachmentDirs, steeringAttachmentProtectionPaths } from 
 import { writeBoundedResponse } from "./bounded-download";
 import { extractOutboundArtifacts } from "./outbound-artifacts";
 import { removeOutboundSpool, spoolOutboundArtifacts } from "./outbound-spool";
-import { parseControlCommand, parseMessageEditPrompt } from "./control-commands";
+import { parseControlCommand, parseMessageEditPrompt, prepareIngressPrompt } from "./control-commands";
 import {
   parseQuestionButtonId,
   questionButtonId,
@@ -1318,10 +1318,32 @@ client.on("messageCreate", (message) => {
       promptText = control.prompt;
     }
 
+    if (rawPrompt && message.attachments.size > 0) {
+      const rejected = prepareIngressPrompt({
+        promptText,
+        rawPrompt,
+        attachmentCount: message.attachments.size,
+        attachmentPaths: [],
+        attachmentErrors: [],
+      });
+      if (!rejected.ok) {
+        await message.reply({ content: rejected.message, allowedMentions: { parse: [] } });
+        return;
+      }
+    }
     const attachments = await downloadAttachments(message.id, message.attachments.values());
-    let prompt = promptText;
-    if (!prompt && attachments.paths.length > 0) prompt = "첨부 파일을 확인하고 필요한 작업을 수행해.";
-    if (attachments.errors.length > 0) prompt += `\n\n첨부 다운로드 오류:\n${attachments.errors.join("\n")}`;
+    const prepared = prepareIngressPrompt({
+      promptText,
+      rawPrompt,
+      attachmentCount: message.attachments.size,
+      attachmentPaths: attachments.paths,
+      attachmentErrors: attachments.errors,
+    });
+    if (!prepared.ok) {
+      await message.reply({ content: prepared.message, allowedMentions: { parse: [] } });
+      return;
+    }
+    let prompt = prepared.prompt;
     if (!prompt.trim()) {
       await message.reply({ content: "작업 내용을 적어줘.", allowedMentions: { parse: [] } });
       return;
