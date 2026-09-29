@@ -72,6 +72,7 @@ import { StateStore } from "./store";
 import { StartupBarrier } from "./startup-barrier";
 import { prepareConversationRoute } from "./workspace-route";
 import { formatDiscordStatus, renderStatusSnapshot } from "./status-format";
+import { registerSlashCommands, handleSlashCommand } from "./slash-commands";
 import type { ClaudeExecution, InteractionRecord, InteractiveQuestion, JobRecord } from "./types";
 
 const home = process.env.HOME;
@@ -1077,6 +1078,12 @@ client.once("clientReady", async () => {
     }, 6 * 60 * 60 * 1_000);
     workspaceCleanupTimer.unref();
     startupBarrier.ready();
+    const guildIds = client.guilds.cache.map((g) => g.id);
+    if (guildIds.length > 0 && token) {
+      void registerSlashCommands(token, client.user!.id, guildIds).catch((error) =>
+        console.error("failed to register slash commands", error),
+      );
+    }
     void runtime.runUntilIdle().catch((error) => console.error("startup pump failed", error));
   } catch (error) {
     startupBarrier.fail(error);
@@ -1701,8 +1708,38 @@ client.on("messageDeleteBulk", (messages) => {
   }
 });
 
+client.on("guildCreate", (guild) => {
+  if (token && client.user) {
+    void registerSlashCommands(token, client.user.id, [guild.id]).catch((error) =>
+      console.error(`failed to register slash commands for new guild=${guild.id}`, error),
+    );
+  }
+});
+
 client.on("interactionCreate", async (interaction) => {
   await startupBarrier.wait();
+  if (interaction.isChatInputCommand()) {
+    try {
+      await handleSlashCommand({
+        interaction,
+        store,
+        config,
+        runtime,
+        executor,
+        allowedUsers,
+        cancelJobLifecycle,
+        postQueuedProgress,
+      });
+    } catch (error) {
+      console.error("slash command handler failed", error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction
+          .reply({ content: "명령어 처리 중 오류가 발생했어.", ephemeral: true })
+          .catch(() => undefined);
+      }
+    }
+    return;
+  }
   if (!interaction.isButton()) return;
   const parsed = parseQuestionButtonId(interaction.customId);
   if (!parsed) return;
